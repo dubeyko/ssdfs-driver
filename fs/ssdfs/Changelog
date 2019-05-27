@@ -1,0 +1,380 @@
+
+********************************************************************************
+*                            CHANGELOG SECTION                                 *
+********************************************************************************
+
+v.1.00 [May 26, 2019]
+    (*) WDC has released incomplete source code.
+
+v.0.89 [August 01, 2018]
+    (*) Fix bugs in btree functionality (step 2).
+
+v.0.88 [May 25, 2018]
+    (*) Fix bugs in btree functionality (step 1).
+
+v.0.87 [March 09, 2018]
+    (*) Synchronize on-disk layout declarations between
+        driver and utils.
+
+v.0.86 [March 02, 2018]
+    (*) Fix compilation errors.
+
+v.0.85 [February 02, 2018]
+    (*) Btree support was implemented (inodes, dentries, xattrs btree).
+
+v.0.84 [October 05, 2016]
+    (*) Fix bugs in PEB migration scheme functionality (step 2).
+
+v.0.83 [June 22, 2016]
+    (*) Fix bugs in PEB migration scheme functionality (step 1).
+
+v.0.82 [June 02, 2016]
+    (*) Synchronize on-disk layout declarations between
+        driver and utils.
+
+v.0.81 [May 31, 2016]
+    (*) Fix compilation errors.
+
+v.0.80 [May 19, 2016] (**not compilable**)
+    (*) Implement PEBs' migration scheme.
+
+v.0.79 [March 04, 2016]
+    (*) Implement ssdfs_writepages().
+
+v.0.78 [February 05, 2016]
+    (*) Implement block layer support.
+
+v.0.77 [January 25, 2016]
+    (*) Fix bugs in truncate functionality.
+
+v.0.76 [January 14, 2016]
+    (*) Implement truncate functionality.
+
+v.0.75 [December 02, 2015]
+    (*) Fix bugs in flush operation (step 4)
+
+v.0.74 [November 18, 2015]
+    (*) Fix bugs in flush operation (step 3)
+
+v.0.73 [November 11, 2015]
+    (*) Fix bugs in flush operation (step 2)
+
+v.0.72 [November 04, 2015]
+    (*) Fix bugs in flush operation (step 1)
+
+v.0.71 [October 21, 2015]
+    (*) Fix bugs in mount operation (step 5)
+
+v.0.70 [October 14, 2015]
+    (*) Fix bugs in mount operation (step 4)
+
+v.0.69 [October 07, 2015]
+    (*) Fix bugs in mount operation (step 3)
+
+v.0.68 [September 30, 2015]
+    (*) Fix bugs in mount operation (step 2)
+
+v.0.67 [September 23, 2015]
+    (*) Fix bugs in mount operation (step 1)
+
+v.0.66 [August 12, 2015]
+    (*) Fix compilation errors.
+
+v.0.65 [August 05, 2015] (**not compilable**)
+    (*) Integrate maptbl into driver logic (second try).
+
+v.0.64 [July 29, 2015] (**not compilable**)
+    (*) Integrate maptbl into driver logic (first try).
+
+v.0.63 [June 24, 2015] (**not compilable**)
+    (*) Finish mapping table object's API implementation.
+
+v.0.62 [June 17, 2015] (**not compilable**)
+    (*) Implement functionality of conversion LEB to PEB number.
+    (*) Implement functionality of mapping LEB to PEB.
+    (*) Implement functionality of association PEB for migration.
+
+v.0.61 [June 10, 2015] (**not compilable**)
+    (*) Implement functionality of flush the dirty mapping table object.
+    (*) Implement functionality of conversion LEB into PEB number.
+
+v.0.60 [June 03, 2015] (**not compilable**)
+    (*) Implement functionality of mapping table's fragment initialization.
+
+v.0.59 [May 27, 2015] (**not compilable**)
+    (*) Implement create/destroy mapping table object functionality.
+    (*) Rework mapping table's on-disk layout.
+
+v.0.58 [May 20, 2015] (**not compilable**)
+    (*) Implement mapping table object creation (step 1).
+    (*) Define mapping table in-core object architecture.
+    (*) Define mapping table on-disk layout.
+
+v.0.57 [May 13, 2015]
+    (*) Define mapping table's in-core structures and API partially (step 1).
+    (*) Define mapping table's on-disk layout partially (step 1).
+
+v.0.56 [May 06, 2015]
+    (*) Integrate the segment bitmap into file system driver logic (step 2).
+
+v.0.55 [April 29, 2015] (**not compilable**)
+    (*) Integrate the segment bitmap into file system driver logic (step 1).
+
+v.0.54 [April 22, 2015] (**not compilable**)
+    (*) Implement first step of segbmap integration in driver logic.
+    (*) Implement segment bitmap's flushing on volume functionality.
+    (*) Elaborate first vision of dentries' on-disk layout.
+
+v.0.53 [April 15, 2015] (**not compilable**)
+    (*) Implement ssdfs_segbmap_find() method.
+
+v.0.52 [April 08, 2015] (**not compilable**)
+    (*) Implement check/get/set methods of segbmap API.
+    (*) Implement segbmap initialization logic.
+    (*) Elaborate initial vision of on-disk inode structure.
+
+v.0.51 [April 01, 2015] (**not compilable**)
+    (*) Implement segment bitmap construction/destruction functionality.
+    (*) Fix bugs in compression subsystem.
+    (*) Rework segment bitmap's on-disk layout.
+
+v.0.50 [March 25, 2015]
+    (*) Prepare initial vision of structures and API of segment bitmap.
+    (*) Prepare initial vision of diff-on-write subsystem's interface.
+    (*) Fix compilation errors in offset translation table implementation.
+
+v.0.49 [March 18, 2015] (**not compilable**)
+    (*) Implement Copy-on-Write policy in stack model of erase block.
+
+v.0.48 [March 11, 2015] (**not compilable**)
+    (*) Implement initialization of blk2off table during PEB object
+        creation.
+
+v.0.47 [March 04, 2015] (**not compilable**)
+    (*) Implement commit of offsets translation table into PEB's log.
+    (*) Integrate offsets translation table object into segment object.
+    (*) Implement support of log commit on offsets translation table side.
+
+v.0.46 [February 25, 2015]
+    (*) Segment's offset translation table's API has been
+        fully implemented.
+
+v.0.45 [February 18, 2015]
+    (*) Implement method of offset translation table initialization.
+
+v.0.44 [February 11, 2015]
+    (*) Implement allocate/free/change_offset methods of
+        offsets table API.
+
+v.0.43 [February 04, 2015]
+    (*) Implement create/destroy/convert methods of offset translation
+        table API.
+    (*) Define offset translation table's API.
+    (*) Rework in-core structures of segment's offset translation table.
+    (*) Rework on-disk layout for segment's offset translation table.
+
+v.0.42 [January 28, 2015]
+    (*) Add initial definition of in-core structures for
+        offsets translation table.
+    (*) Define initial structures of offsets translation
+        table's on-disk layout.
+    (*) Fix bugs in stack model of erase block implementation.
+    (*) Extend copyright on 2015 year.
+    (*) Add small description of block bitmap.
+
+v.0.41 [January 21, 2015]
+    (*) Fix bugs in stack model of erase block implementation (try 9).
+
+v.0.40 [January 14, 2015]
+    (*) Fix bugs in stack model of erase block implementation (try 8).
+
+v.0.39 [January 07, 2015]
+    (*) Fix bugs in stack model of erase block implementation (try 7).
+
+v.0.38 [December 24, 2014]
+    (*) Fix bugs in stack model of erase block implementation (try 6).
+
+v.0.37 [December 17, 2014]
+    (*) Fix bugs in stack model of erase block implementation (try 5).
+
+v.0.36 [December 10, 2014]
+    (*) Fix bugs in stack model of erase block implementation (try 4).
+
+v.0.35 [December 03, 2014]
+    (*) Fix bugs in stack model of erase block implementation (try 3).
+
+v.0.34 [November 26, 2014]
+    (*) Fix bugs in stack model of erase block implementation (try 2).
+    (*) Add output for segment and peb objects into sysfs interface.
+
+v.0.33 [November 19, 2014]
+    (*) Fix bugs in stack model of erase block implementation (try 1).
+
+v.0.32 [November 12, 2014]
+    (*) Fix compilation errors.
+
+v.0.31 [November 05, 2014] (**not compilable**)
+    (*) Implement read/write file's content functionality (first try).
+    (*) Rework and implement read/add block methods of segment's API.
+    (*) Add look-aside cache for segment requests.
+    (*) Add temporary mount options for testing stack model of peb.
+
+v.0.30 [October 29, 2014] (**not compilable**)
+    (*) Reimplement ssdfs_peb_read_page() method.
+
+v.0.29 [October 22, 2014] (**not compilable**)
+    (*) Refactoring of create segment's log functionality.
+    (*) Refactoring of on-disk layout declarations.
+
+v.0.28 [October 15, 2014] (**not compilable**)
+    (*) Implement segment's log creation functionality
+        (inconsistent code state).
+    (*) Rework in-core log object structure.
+    (*) Add ssdfs_requests_queue_add_head() method into
+        request queue's API.
+    (*) Rework on-disk layout of segment's log.
+
+v.0.27 [September 17, 2014] (**not compilable**)
+    (*) Prepare initial framework of block/extent creation.
+    (*) Introduce ssdfs_peb_area structure.
+    (*) Rework segment request structure.
+    (*) Introduce block state and block descriptors in on-disk layout.
+    (*) Add initial description of PEB's on-disk architecture.
+
+v.0.26 [September 10, 2014] (**not compilable**)
+    (*) Implement log commit functionality.
+    (*) Rework ssdfs_segment_create_object() method.
+    (*) Rework ssdfs_prepare_volume_state_info_for_commit() and
+        ssdfs_prepare_log_footer_for_commit() methods.
+    (*) Rework ssdfs_mtd_writepage() method.
+    (*) Correct ssdfs_block_bmap_create() method.
+
+v.0.25 [September 03, 2014] (**not compilable**)
+    (*) Implement logic of storing the block bitmap into the log.
+    (*) Implement ssdfs_create_volume_header() method.
+    (*) Implement ssdfs_none_compress() method.
+    (*) Add tracking of pre-allocated pages in block bitmap.
+    (*) Correct block bitmap's on-disk layout declarations.
+
+v.0.24 [August 27, 2014] (**not compilable**)
+    (*) Implement logic of PEB's flush thread.
+    (*) Rework requests queue architecture and functionality.
+    (*) Implement logic of log creation role delegation between PEB objects.
+
+v.0.23 [August 20, 2014] (**not compilable**)
+    (*) Prepare approach of using PEBs' flush threads
+        for new page processing.
+
+v.0.22 [August 13, 2014] (**not compilable**)
+    (*) Implement reading of block bitmap from the volume.
+    (*) Implement ssdfs_block_bmap_get_free_pages() method.
+    (*) Implement read_checked_segment_header() and read_checked_log_footer().
+    (*) Add comments for MTD device access code.
+    (*) Rework read/write primitives.
+    (*) Rework block bitmap's on-disk layout.
+
+v.0.21 [August 06, 2014] (**not compilable**)
+    (*) Add segment concept initial description.
+    (*) Rework block bitmap initialization functionality.
+    (*) Rework ssdfs_read_buffer() functionality.
+    (*) Prepare PEB's GC thread function's infrastructure.
+    (*) Prepare PEB's flush thread function's infrastructure.
+    (*) Prepare PEB's read thread function's infrastructure.
+    (*) Implements I/O requests queue API.
+    (*) Implement functionality of start/stop PEB's thread.
+    (*) Implement PEB object create/destroy functionality.
+    (*) Declare PEB object structures and API.
+
+v.0.20 [July 30, 2014] (**not compilable**)
+    (*) Implement initial state of create/destroy segment object
+        functionality.
+    (*) Add look-aside cache for segment objects.
+    (*) Define principal states of segment in bitmap of segments.
+    (*) Define interface of segment object.
+
+v.0.19 [July 23, 2014] (**not compilable**)
+    (*) Elaborate first raw vision of segment object.
+    (*) Implement block bitmap initialization and getting snapshot.
+    (*) Implement block bitmap's searching family of methods.
+
+v.0.18 [July 16, 2014] (**not compilable**)
+    (*) Implement ssdfs_set_range_in_pagevec() method.
+    (*) Enhance block bitmap on-disk layout.
+    (*) Implement get/set methods family of block bitmap.
+    (*) Restructure file system documentation.
+
+v.0.17 [July 09, 2014] (**not compilable**)
+    (*) Define interface of segment's block bitmap.
+    (*) Implement segment's block bitmap API functions.
+    (*) Prepare comments for segment's block bitmap API functions.
+    (*) Prepare stub functions of segment's block bitmap's core functionality.
+
+v.0.16 [July 02, 2014]
+    (*) Implement showing superblock info via sysfs attributes.
+    (*) Fix issue with second mount after file system creation.
+    (*) Implement support of root folder with one "virtual" file.
+    (*) Prepare segment header and log footer structures for block bitmap
+        and segment's offset translation table support.
+
+v.0.15 [June 25, 2014]
+    (*) Fix issue with CONFIG_SSDFS_DEBUG macro.
+    (*) Add enabling of all debug output with CONFIG_SSDFS_DEBUG enabling.
+    (*) Fix bugs in mount logic.
+
+v.0.14 [June 18, 2014]
+    (*) It was implemented logic of next sb segment's log placement
+        definition.
+    (*) It was implemented logic of segment header and log footer commit.
+    (*) It was fixed compile errors and bugs in file system registration
+        functionality.
+
+v.0.12 [June 11, 2014]
+    (*) It was implemented logic of volume state info checking
+        during mount operation.
+    (*) It was implemented logic of searching last valid log footer
+        with valid volume state info in the latest superblock segment
+        and logic of initialization file system info during mount operation.
+    (*) It was prepared superblock info commit infrastructure.
+
+v.0.11 [June 04, 2014]
+    (*) It was implemented logic of searching last valid sb segment on mount.
+    (*) It was implemented logic of searching last valid volume header.
+    (*) It was fixed different compile time errors.
+
+v.0.10 [May 28, 2014] (**not compilable**)
+    (*) It was implemented logic of searching any valid volume header on mount.
+    (*) It was implemented logic of searching first valid sb segment on mount.
+
+v.0.9 [May 07, 2014]
+    (*) It was implemented preliminary support of MTD device operations.
+
+v.0.8 [April 02, 2014]
+    (*) It was prepared initial state of ZLIB compression support.
+    (*) It was prepared initial state of LZO compression support.
+
+v.0.7 [March 26, 2014]
+    (*) It was prepared initial state of ftrace support infrastructure.
+
+v.0.6 [March 19, 2014]
+    (*) It was prepared initial state of xattrs and ACLs support.
+
+v.0.5 [March 12, 2014]
+    (*) It was prepared initial state of sysfs support.
+
+v.0.4 [March 05, 2014]
+    (*) It was implemented stubs for page cache operations
+        (struct address_space_operations).
+
+v.0.3 [February 26, 2014]
+    (*) It was implemented initial stubs for file operations
+        (struct file_operations).
+    (*) It was implemented initial state of IOCTL operations support.
+
+v.0.2 [February 19, 2014]
+    (*) It was implemented initial stubs for inode operations
+        (struct inode_operations).
+
+v.0.1 [February 12, 2014]
+    (*) It was implemented file system registration infrastructure.
+    (*) It was implemented initial state of mounting infrastructure.
+    (*) It was implemented initial state of mounting options infrastructure.

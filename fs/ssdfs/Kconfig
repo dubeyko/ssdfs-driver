@@ -1,0 +1,119 @@
+config SSDFS
+	tristate "SSDFS file system support (EXPERIMENTAL)"
+	depends on BLOCK || MTD
+	help
+	  SSDFS experimental file system <TODO: describe in details>.
+
+	  In its current state it is very experimental and should
+	  not be used for other than testing purposes.
+
+	  If unsure, say N.
+
+config SSDFS_BLOCK_DEVICE
+	bool "Block layer support"
+	depends on BLOCK && SSDFS
+	default y
+	help
+	  This option enables block layer support.
+
+	  If unsure, say N.
+
+config SSDFS_MTD_DEVICE
+	bool "MTD support"
+	depends on !SSDFS_BLOCK_DEVICE && MTD && SSDFS
+	default n
+	help
+	  This option enables MTD layer support.
+
+	  If unsure, say N.
+
+config SSDFS_DEBUG
+	bool "SSDFS debugging"
+	depends on SSDFS
+	help
+	  This option enables additional pre-condition and post-condition
+	  checking in functions. The main goal of this option is providing
+	  environment for debugging code in SSDFS driver and excluding
+	  debug checking from end-users' kernel build. This option enables
+	  debug output by means of pr_debug() from all files too. You can
+	  disable debug output from any file via the 'dynamic_debug/control'
+	  file. Please, see Documentation/dynamic-debug-howto.txt for
+	  additional information.
+
+	  If you are going to debug SSDFS driver then choose Y here.
+	  If unsure, say N.
+
+config SSDFS_POSIX_ACL
+	bool "SSDFS POSIX Access Control Lists"
+	depends on SSDFS
+	select FS_POSIX_ACL
+	help
+	  POSIX Access Control Lists (ACLs) support permissions for users and
+	  groups beyond the owner/group/world scheme.
+
+	  To learn more about Access Control Lists, visit the POSIX ACLs for
+	  Linux website <http://acl.bestbits.at/>.
+
+	  If you don't know what Access Control Lists are, say N
+
+config SSDFS_SECURITY
+	bool "SSDFS Security Labels"
+	depends on SSDFS
+	help
+	  Security labels support alternative access control models
+	  implemented by security modules like SELinux.  This option
+	  enables an extended attribute handler for file security
+	  labels in the SSDFS filesystem.
+
+	  If you are not using a security module that requires using
+	  extended attributes for file security labels, say N.
+
+config SSDFS_ZLIB
+	bool "SSDFS ZLIB compression support"
+	select ZLIB_INFLATE
+	select ZLIB_DEFLATE
+	depends on SSDFS
+	default y
+	help
+	  Zlib is designed to be a free, general-purpose, legally unencumbered,
+	  lossless data-compression library for use on virtually any computer
+	  hardware and operating system. It offers a good trade-off between
+	  compression achieved and the amount of CPU time and memory necessary
+	  to compress and decompress. See <http://www.gzip.org/zlib/> for
+	  further information.
+
+	  If unsure, say Y.
+
+config SSDFS_ZLIB_COMR_LEVEL
+	int "Zlib compression level (0 => NO_COMPRESSION, 9 => BEST_COMPRESSION)"
+	depends on SSDFS_ZLIB
+	range 0 9
+	default 9
+	help
+	  Select Zlib compression level.
+	  Examples:
+		     0  => Z_NO_COMPRESSION
+		     1  => Z_BEST_SPEED
+		     9  => Z_BEST_COMPRESSION
+
+config SSDFS_LZO
+	bool "SSDFS LZO compression support"
+	select LZO_COMPRESS
+	select LZO_DECOMPRESS
+	depends on SSDFS
+	default n
+	help
+	  minilzo-based compression. Generally works better than Zlib.
+	  LZO compression is mainly aimed at embedded systems with slower
+	  CPUs where the overheads of zlib are too high.
+
+	  If unsure, say N.
+
+config SSDFS_DIFF_ON_WRITE
+	bool "SSDFS Diff-On-Write support"
+	depends on SSDFS
+	help
+	  This option enables delta-encoding support for user data and
+	  metadata.
+
+	  If unsure, say N.
