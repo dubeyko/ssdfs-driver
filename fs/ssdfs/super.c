@@ -11,7 +11,7 @@
  * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <Vyacheslav.Dubeyko@wdc.com>
+ * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
  * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
  *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
@@ -1655,5 +1655,5 @@ module_exit(ssdfs_exit);
 
 MODULE_DESCRIPTION("SSDFS -- SSD-oriented File System");
 MODULE_AUTHOR("HGST, San Jose Research Center, Storage Architecture Group");
-MODULE_AUTHOR("Vyacheslav Dubeyko <Vyacheslav.Dubeyko@wdc.com>");
+MODULE_AUTHOR("Vyacheslav Dubeyko <slava@dubeyko.com>");
 MODULE_LICENSE("GPL");

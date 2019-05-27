@@ -11,9 +11,10 @@
  * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <Vyacheslav.Dubeyko@wdc.com>
- *          Cyril Guyot <Cyril.Guyot@wdc.com>
- *          Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
+ *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
  */
 
 #include <linux/string.h>
