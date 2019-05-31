@@ -19,13 +19,38 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/crc32.h>
+#include <linux/kobject.h>
+#include <linux/sched.h>
+#include <linux/fs.h>
+#include <linux/pagemap.h>
 #include <linux/ssdfs_fs.h>
 
 #include "ssdfs_constants.h"
-#include "ssdfs_inline.h"
 #include "ssdfs_thread_info.h"
 #include "ssdfs_inode_info.h"
 #include "ssdfs_fs_info.h"
+#include "ssdfs_inline.h"
+
+/*
+ * struct ssdfs_value_pair - value/position pair
+ * @value: some value
+ * @pos: position of value
+ */
+struct ssdfs_value_pair {
+	int value;
+	int pos;
+};
+
+/*
+ * struct ssdfs_min_max_pair - minimum and maximum values pair
+ * @min: minimum value/position pair
+ * @max: maximum value/position pair
+ */
+struct ssdfs_min_max_pair {
+	struct ssdfs_value_pair min;
+	struct ssdfs_value_pair max;
+};
 
 struct ssdfs_peb_info;
 struct ssdfs_peb_container;

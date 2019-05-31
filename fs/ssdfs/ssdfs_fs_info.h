@@ -60,6 +60,43 @@ struct ssdfs_sb_info {
 };
 
 /*
+ * struct ssdfs_device_ops - device operations
+ * @device_name: get device name
+ * @device_size: get device size in bytes
+ * @read: read from device
+ * @readpage: read page
+ * @readpages: read sequence of pages
+ * @can_write_page: can we write into page?
+ * @writepage: write page to device
+ * @writepages: write sequence of pages to device
+ * @erase: erase block
+ * @trim: support of background erase operation
+ * @peb_isbad: check that physical erase block is bad
+ * @sync: synchronize page cache with device
+ */
+struct ssdfs_device_ops {
+	const char * (*device_name)(struct super_block *sb);
+	__u64 (*device_size)(struct super_block *sb);
+	int (*read)(struct super_block *sb, loff_t offset, size_t len,
+		    void *buf);
+	int (*readpage)(struct super_block *sb, struct page *page,
+			loff_t offset);
+	int (*readpages)(struct super_block *sb, struct pagevec *pvec,
+			 loff_t offset);
+	int (*can_write_page)(struct super_block *sb, loff_t offset,
+				bool need_check);
+	int (*writepage)(struct super_block *sb, loff_t to_off,
+			 struct page *page, u32 from_off, size_t len);
+	int (*writepages)(struct super_block *sb, loff_t to_off,
+			  struct pagevec *pvec, u32 from_off, size_t len);
+	int (*erase)(struct super_block *sb, loff_t offset, size_t len);
+	int (*trim)(struct super_block *sb, loff_t offset, size_t len);
+	int (*peb_isbad)(struct super_block *sb, loff_t offset);
+	int (*mark_peb_bad)(struct super_block *sb, loff_t offset);
+	void (*sync)(struct super_block *sb);
+};
+
+/*
  * struct ssdfs_fs_info - in-core fs information
  * @log_pagesize: log2(page size)
  * @pagesize: page size in bytes
@@ -195,5 +232,11 @@ struct ssdfs_fs_info {
 
 #define SSDFS_FS_I(sb) \
 	((struct ssdfs_fs_info *)(sb->s_fs_info))
+
+/*
+ * Device operations
+ */
+extern const struct ssdfs_device_ops ssdfs_mtd_devops;
+extern const struct ssdfs_device_ops ssdfs_bdev_devops;
 
 #endif /* _SSDFS_FS_INFO_H */

@@ -3,7 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
-v.1.00 [May 29, 2019]
+v.1.02 [May 30, 2019]
+    (*) Fix compilation errors - reimplement base declarations (step 2).
+
+v.1.01 [May 29, 2019]
     (*) Fix compilation errors - reimplement base declarations (step 1).
 
 v.1.00 [May 26, 2019]

@@ -103,4 +103,36 @@ static inline struct ssdfs_inode_info *SSDFS_I(struct inode *inode)
 	return container_of(inode, struct ssdfs_inode_info, vfs_inode);
 }
 
+static inline
+struct ssdfs_extents_btree_info *SSDFS_EXTREE(struct ssdfs_inode_info *ii)
+{
+	if (S_ISDIR(ii->vfs_inode.i_mode))
+		return NULL;
+	else
+		return ii->extents_tree;
+}
+
+static inline
+struct ssdfs_dentries_btree_info *SSDFS_DTREE(struct ssdfs_inode_info *ii)
+{
+	if (S_ISDIR(ii->vfs_inode.i_mode))
+		return ii->dentries_tree;
+	else
+		return NULL;
+}
+
+static inline
+struct ssdfs_xattrs_btree_info *SSDFS_XATTREE(struct ssdfs_inode_info *ii)
+{
+	return ii->xattrs_tree;
+}
+
+extern const struct file_operations ssdfs_dir_operations;
+extern const struct inode_operations ssdfs_dir_inode_operations;
+extern const struct file_operations ssdfs_file_operations;
+extern const struct inode_operations ssdfs_file_inode_operations;
+extern const struct address_space_operations ssdfs_aops;
+extern const struct inode_operations ssdfs_special_inode_operations;
+extern const struct inode_operations ssdfs_symlink_inode_operations;
+
 #endif /* _SSDFS_INODE_INFO_H */
