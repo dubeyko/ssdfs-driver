@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.1.04 [June 01, 2019]
+    (*) Reimplement compression logic (step 2).
+
 v.1.03 [May 31, 2019]
     (*) Reimplement compression logic (step 1).
 
