@@ -8,3 +8,7 @@ SSDFS is flash-friendly file system is designed with the goals:
  (3) decrease as much as possible the GC activity;
  (4) widely use the compression, delta-encoding, and deduplication.
 
+* WARNING
+
+The driver is not ready for real use yet. It's still under implementation
+and it has experimental status.
