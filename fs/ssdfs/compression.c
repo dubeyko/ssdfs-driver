@@ -21,26 +21,32 @@ static int compr_num_workspace[SSDFS_COMPR_TYPES_CNT];
 static atomic_t compr_alloc_workspace[SSDFS_COMPR_TYPES_CNT];
 static wait_queue_head_t compr_workspace_wait[SSDFS_COMPR_TYPES_CNT];
 
-#define SSDFS_CHECK_COMPRESSOR_OP(name) \
-static inline bool unable_##name(int type) \
-{ \
-	if (!ssdfs_compressors[type]) \
-		return true; \
-	else if (!ssdfs_compressors[type]->compr_ops) \
-		return true; \
-	else if (!ssdfs_compressors[type]->compr_ops->##name) \
-		return true; \
-	return false; \
+static inline bool unable_compress(int type)
+{
+	if (!ssdfs_compressors[type])
+		return true;
+	else if (!ssdfs_compressors[type]->compr_ops)
+		return true;
+	else if (!ssdfs_compressors[type]->compr_ops->compress)
+		return true;
+	return false;
 }
 
-SSDFS_CHECK_COMPRESSOR_OP(compress);
-SSDFS_CHECK_COMPRESSOR_OP(decompress);
+static inline bool unable_decompress(int type)
+{
+	if (!ssdfs_compressors[type])
+		return true;
+	else if (!ssdfs_compressors[type]->compr_ops)
+		return true;
+	else if (!ssdfs_compressors[type]->compr_ops->decompress)
+		return true;
+	return false;
+}
 
 static int ssdfs_none_compress(struct list_head *ws_ptr,
 				unsigned char *data_in,
 				unsigned char *cdata_out,
-				u64 *srclen,
-				u64 *destlen)
+				size_t *srclen, size_t *destlen)
 {
 	/* TODO: implement ssdfs_none_compress() */
 	SSDFS_WARN("TODO: implement %s\n", __func__);
@@ -50,8 +56,7 @@ static int ssdfs_none_compress(struct list_head *ws_ptr,
 static int ssdfs_none_decompress(struct list_head *ws_ptr,
 				 unsigned char *cdata_in,
 				 unsigned char *data_out,
-				 u64 srclen,
-				 u64 destlen)
+				 size_t srclen, size_t destlen)
 {
 	/* TODO: implement ssdfs_none_decompress() */
 	SSDFS_WARN("TODO: implement %s\n", __func__);
@@ -180,6 +185,8 @@ static struct list_head *ssdfs_find_workspace(int type)
 	}
 #endif /* SSDFS_DEBUG */
 
+	ops = ssdfs_compressors[type]->compr_ops;
+
 	if (!ops->alloc_workspace)
 		return ERR_PTR(-EOPNOTSUPP);
 
@@ -189,7 +196,6 @@ static struct list_head *ssdfs_find_workspace(int type)
 	alloc_workspace = &compr_alloc_workspace[type];
 	workspace_wait = &compr_workspace_wait[type];
 	num_workspace = &compr_num_workspace[type];
-	ops = ssdfs_compressors[type]->compr_ops;
 
 again:
 	spin_lock(workspace_lock);
@@ -242,6 +248,8 @@ static void ssdfs_free_workspace(int type, struct list_head *workspace)
 	}
 #endif /* SSDFS_DEBUG */
 
+	ops = ssdfs_compressors[type]->compr_ops;
+
 	if (!ops->free_workspace)
 		return;
 
@@ -250,7 +258,6 @@ static void ssdfs_free_workspace(int type, struct list_head *workspace)
 	alloc_workspace = &compr_alloc_workspace[type];
 	workspace_wait = &compr_workspace_wait[type];
 	num_workspace = &compr_num_workspace[type];
-	ops = ssdfs_compressors[type]->compr_ops;
 
 	spin_lock(workspace_lock);
 	if (*num_workspace < num_online_cpus()) {
@@ -270,9 +277,9 @@ wake:
 }
 
 int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
-		    u64 *srclen, u64 *destlen)
+		    size_t *srclen, size_t *destlen)
 {
-	struct ssdfs_compress_ops *ops;
+	const struct ssdfs_compress_ops *ops;
 	struct list_head *workspace;
 	int err;
 
@@ -293,7 +300,7 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 		goto failed_compress;
 	}
 
-	workspace = find_workspace(type);
+	workspace = ssdfs_find_workspace(type);
 	if (PTR_ERR(workspace) == -EOPNOTSUPP &&
 	    ssdfs_compressors[type]->type == SSDFS_COMPR_NONE) {
 		/*
@@ -308,11 +315,11 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 	ops = ssdfs_compressors[type]->compr_ops;
 	err = ops->compress(workspace, data_in, cdata_out, srclen, destlen);
 
-	free_workspace(type, workspace);
+	ssdfs_free_workspace(type, workspace);
 	if (unlikely(err)) {
-		SSDFS_ERR("%s compresor fails to compress data %p of size %llu because of err %d\n",
+		SSDFS_ERR("%s compresor fails to compress data %p of size %zu because of err %d\n",
 			  ssdfs_compressors[type]->name,
-			  data_in, srclen, err);
+			  data_in, *srclen, err);
 		goto failed_compress;
 	}
 
@@ -323,13 +330,13 @@ failed_compress:
 }
 
 int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
-			u64 srclen, u64 destlen)
+			size_t srclen, size_t destlen)
 {
-	struct ssdfs_compress_ops *ops;
+	const struct ssdfs_compress_ops *ops;
 	struct list_head *workspace;
 	int err;
 
-	SSDFS_DBG("type %d, cdata_in %p, data_out %p, srclen %llu, destlen %llu\n",
+	SSDFS_DBG("type %d, cdata_in %p, data_out %p, srclen %zu, destlen %zu\n",
 		  type, cdata_in, data_out, srclen, destlen);
 
 #ifdef SSDFS_DEBUG
@@ -346,7 +353,7 @@ int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 		goto failed_decompress;
 	}
 
-	workspace = find_workspace(type);
+	workspace = ssdfs_find_workspace(type);
 	if (PTR_ERR(workspace) == -EOPNOTSUPP &&
 	    ssdfs_compressors[type]->type == SSDFS_COMPR_NONE) {
 		/*
@@ -361,9 +368,9 @@ int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 	ops = ssdfs_compressors[type]->compr_ops;
 	err = ops->decompress(workspace, cdata_in, data_out, srclen, destlen);
 
-	free_workspace(type, workspace);
+	ssdfs_free_workspace(type, workspace);
 	if (unlikely(err)) {
-		SSDFS_ERR("%s compresor fails to decompress data %p of size %llu because of err %d\n",
+		SSDFS_ERR("%s compresor fails to decompress data %p of size %zu because of err %d\n",
 			  ssdfs_compressors[type]->name,
 			  cdata_in, srclen, err);
 		goto failed_decompress;
