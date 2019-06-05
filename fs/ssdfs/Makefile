@@ -27,11 +27,11 @@ ssdfs-y	:= super.o fs_error.o recovery.o options.o \
 		inodes_tree.o dentries_tree.o \
 		shared_dictionary.o shared_dictionary_thread.o \
 		xattr_tree.o \
-		inode.o ioctl.o \
+		inode.o file.o dir.o ioctl.o \
 		xattr.o xattr_user.o xattr_trusted.o \
 		compression.o
 
-# file.o dir.o sysfs.o
+# sysfs.o
 
 ssdfs-$(CONFIG_SSDFS_POSIX_ACL)		+= acl.o
 ssdfs-$(CONFIG_SSDFS_SECURITY)		+= xattr_security.o
