@@ -10,6 +10,11 @@
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
  */
 
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/highmem.h>
+#include <linux/pagemap.h>
+
 #include "ssdfs.h"
 #include "xattr.h"
 #include "acl.h"
@@ -22,9 +27,35 @@
  */
 static int ssdfs_readpage(struct file *file, struct page *page)
 {
-	/* TODO: implement ssdfs_readpage() */
-	SSDFS_WARN("TODO: implement ssdfs_readpage()\n");
-	return -EIO;
+	ino_t ino = file_inode(file)->i_ino;
+	const char *tmp_str = "Hello";
+	pgoff_t index = page_index(page);
+	void *buf;
+
+	SSDFS_DBG("ino %lu, page_index %llu\n",
+		  ino, (u64)index);
+
+	/* TODO: implement */
+	SSDFS_WARN("TODO: implement %s\n", __func__);
+
+	/* TODO: temporary solution */
+	if (index > 1)
+		return -EIO;
+
+	buf = kmap_atomic(page);
+	memcpy(buf, tmp_str, strlen(tmp_str) + 1);
+	kunmap_atomic(buf);
+
+	file_inode(file)->i_size = strlen(tmp_str) + 1;
+	file_inode(file)->i_blocks = 1;
+
+	SetPageUptodate(page);
+	ClearPageError(page);
+	flush_dcache_page(page);
+
+	unlock_page(page);
+
+	return 0;
 }
 
 /*

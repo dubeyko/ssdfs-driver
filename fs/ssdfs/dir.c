@@ -22,6 +22,151 @@
 
 #include <trace/events/ssdfs.h>
 
+static int ssdfs_inode_by_name(struct inode *dir,
+				const struct qstr *child,
+				ino_t *ino)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(dir);
+	struct ssdfs_btree_search *search;
+	struct ssdfs_dir_entry *raw_dentry;
+	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
+	int private_flags;
+	int err = 0;
+
+	SSDFS_DBG("dir_ino %lu, target_name %s\n",
+		  (unsigned long)dir->i_ino,
+		  child->name);
+
+	*ino = 0;
+	private_flags = atomic_read(&ii->private_flags);
+
+	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&ii->lock);
+
+		if (!ii->dentries_tree) {
+			err = -ERANGE;
+			SSDFS_WARN("dentries tree absent!!!\n");
+			goto finish_search_dentry;
+		}
+
+		search = ssdfs_btree_search_alloc();
+		if (!search) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate btree search object\n");
+			goto finish_search_dentry;
+		}
+
+		ssdfs_btree_search_init(search);
+
+		err = ssdfs_dentries_tree_find(ii->dentries_tree,
+						child->name,
+						child->len,
+						search);
+		if (err == -ENODATA) {
+			err = 0;
+			SSDFS_DBG("dir %lu hasn't child %s\n",
+				  (unsigned long)dir->i_ino,
+				  child->name);
+			goto dentry_is_not_available;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find the dentry: "
+				  "dir %lu, child %s\n",
+				  (unsigned long)dir->i_ino,
+				  child->name);
+			goto dentry_is_not_available;
+		}
+
+		if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid result's state %#x\n",
+				  search->result.state);
+			goto dentry_is_not_available;
+		}
+
+		switch (search->result.buf_state) {
+		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+		case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+			/* expected state */
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid buffer state %#x\n");
+			goto dentry_is_not_available;
+		}
+
+		if (!search->result.buf) {
+			err = -ERANGE;
+			SSDFS_ERR("buffer is absent\n");
+			goto dentry_is_not_available;
+		}
+
+		if (search->result.buf_size < dentry_size) {
+			err = -ERANGE;
+			SSDFS_ERR("buf_size %zu < dentry_size %zu\n",
+				  search->result.buf_size,
+				  dentry_size);
+			goto dentry_is_not_available;
+		}
+
+		raw_dentry = (struct ssdfs_dir_entry *)search->result.buf;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(le64_to_cpu(raw_dentry->ino) >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		*ino = (ino_t)le64_to_cpu(raw_dentry->ino);
+
+dentry_is_not_available:
+		ssdfs_btree_search_free(search);
+
+finish_search_dentry:
+		up_read(&ii->lock);
+	} else {
+		SSDFS_DBG("dentries tree is absent: "
+			  "ino %lu\n",
+			  (unsigned long)dir->i_ino);
+	}
+
+	return err;
+}
+
+/*
+ * The ssdfs_lookup() is called when the VFS needs
+ * to look up an inode in a parent directory.
+ */
+static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
+				  unsigned int flags)
+{
+	struct inode *inode = NULL;
+	ino_t ino;
+	int err;
+
+	SSDFS_DBG("dir %lu, flags %#x\n", (unsigned long)dir->i_ino, flags);
+
+	if (target->d_name.len > SSDFS_MAX_NAME_LEN)
+		return ERR_PTR(-ENAMETOOLONG);
+
+	err = ssdfs_inode_by_name(dir, &target->d_name, &ino);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the inode: "
+			  "err %d\n",
+			  err);
+		return ERR_PTR(err);
+	}
+
+	if (ino) {
+		inode = ssdfs_iget(dir->i_sb, ino);
+		if (inode == ERR_PTR(-ESTALE)) {
+			SSDFS_ERR("deleted inode referenced: %lu\n",
+				  (unsigned long)ino);
+			return ERR_PTR(-EIO);
+		}
+	}
+
+	return d_splice_alias(inode, target);
+}
+
 static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 			  struct inode *inode)
 {
@@ -44,6 +189,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 		if (!dir_ii->dentries_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("dentries tree absent!!!\n");
+			goto finish_add_link;
 		}
 	} else {
 		down_write(&dir_ii->lock);
@@ -51,6 +197,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 		if (dir_ii->dentries_tree) {
 			err = -ERANGE;
 			SSDFS_WARN("dentries tree exists unexpectedly!!!\n");
+			goto finish_create_dentries_tree;
 		} else {
 			err = ssdfs_dentries_tree_create(fsi, dir_ii);
 			if (unlikely(err)) {
@@ -271,12 +418,105 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 }
 
 /*
+ * Set the first fragment of directory.
+ */
+static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_inode_info *parent_ii = SSDFS_I(parent);
+	struct ssdfs_btree_search *search;
+	int private_flags;
+	struct qstr dot = QSTR_INIT(".", 1);
+	struct qstr dotdot = QSTR_INIT("..", 2);
+	int err = 0;
+
+	SSDFS_DBG("Created ino %lu with mode %o, nlink %d, nrpages %ld\n",
+		  (unsigned long)inode->i_ino, inode->i_mode,
+		  inode->i_nlink, inode->i_mapping->nrpages);
+
+	private_flags = atomic_read(&ii->private_flags);
+
+	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&inode->lock);
+
+		if (!ii->dentries_tree) {
+			err = -ERANGE;
+			SSDFS_WARN("dentries tree absent!!!\n");
+			goto finish_make_empty_dir;
+		}
+	} else {
+		down_write(&ii->lock);
+
+		if (ii->dentries_tree) {
+			err = -ERANGE;
+			SSDFS_WARN("dentries tree exists unexpectedly!!!\n");
+			goto finish_create_dentries_tree;
+		} else {
+			err = ssdfs_dentries_tree_create(fsi, ii);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to create the dentries tree: "
+					  "ino %lu, err %d\n",
+					  inode->i_ino, err);
+				goto finish_create_dentries_tree;
+			}
+
+			atomic_or(SSDFS_INODE_HAS_DENTRIES_BTREE,
+				  &ii->private_flags);
+		}
+
+finish_create_dentries_tree:
+		downgrade_write(&ii->lock);
+
+		if (unlikely(err))
+			goto finish_make_empty_dir;
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_make_empty_dir;
+	}
+
+	ssdfs_btree_search_init(search);
+
+	err = ssdfs_dentries_tree_add(ii->dentries_tree,
+				      &dot, ii, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add dentry: "
+			  "ino %lu, err %d\n",
+			  inode->i_ino, err);
+		goto free_search_object;
+	}
+
+	err = ssdfs_dentries_tree_add(ii->dentries_tree,
+				      &dotdot, parent_ii,
+				      search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add dentry: "
+			  "ino %lu, err %d\n",
+			  parent->i_ino, err);
+		goto free_search_object;
+	}
+
+free_search_object:
+	ssdfs_btree_search_free(search);
+
+finish_make_empty_dir:
+	up_read(&ii->lock);
+
+	return err;
+}
+
+/*
  * Create subdirectory.
  * The ssdfs_mkdir() is called by the mkdir(2) system call.
  */
 static int ssdfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
+	int err = 0;
 
 	SSDFS_DBG("dir %lu, mode %o\n",
 		  (unsigned long)dir->i_ino, mode);
@@ -284,67 +524,35 @@ static int ssdfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
 
-	inode = ssdfs_new_inode(dir, mode);
+	inode_inc_link_count(dir);
+
+	inode = ssdfs_new_inode(dir, S_IFDIR | mode, &dentry->d_name);
+	err = PTR_ERR(inode);
 	if (IS_ERR(inode))
-		return PTR_ERR(inode);
+		goto out_dir;
 
-	return __ssdfs_create(dir, dentry, inode, NULL, 0);
-}
+	inode_inc_link_count(inode);
 
-static ino_t ssdfs_inode_by_name(struct inode *dir, const struct qstr *qstr)
-{
-	SSDFS_DBG("dir_ino %lu, target_name %s\n",
-		  (unsigned long)dir->i_ino,
-		  qstr->name);
+	err = ssdfs_make_empty(inode, dir);
+	if (err)
+		goto out_fail;
 
-	/* TODO: temporary solution */
-	if (dir->i_ino == SSDFS_ROOT_INO) {
-		size_t len = strlen(SSDFS_TEMP_FILE_NAME);
+	err = ssdfs_add_link(dir, dentry, inode);
+	if (err)
+		goto out_fail;
 
-		if (strncmp(qstr->name, SSDFS_TEMP_FILE_NAME, len) == 0)
-			return SSDFS_TEMP_FILE_INO;
-	}
-
-	/* TODO: implement */
-	SSDFS_WARN("TODO: implement %s\n", __func__);
+	d_instantiate(dentry, inode);
+	unlock_new_inode(inode);
 	return 0;
-}
 
-/*
- * The ssdfs_lookup() is called when the VFS needs
- * to look up an inode in a parent directory.
- */
-static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
-				  unsigned int flags)
-{
-	struct inode *inode;
-	ino_t ino;
-
-	SSDFS_DBG("dir %lu, flags %#x\n", (unsigned long)dir->i_ino, flags);
-
-	if (target->d_name.len > SSDFS_MAX_NAME_LEN)
-		return ERR_PTR(-ENAMETOOLONG);
-
-	ino = ssdfs_inode_by_name(dir, &target->d_name);
-
-	inode = ino ? ssdfs_iget(dir->i_sb, ino) : NULL;
-	return d_splice_alias(inode, target);
-}
-
-static int ssdfs_do_unlink(struct inode *dir, struct dentry *dentry)
-{
-	/* TODO: implement ssdfs_do_unlink() */
-	SSDFS_WARN("TODO: implement ssdfs_do_unlink()\n");
-	return -ENOMEM;
-
-	/*if (inode->i_nlink == 1) {
-		err = ssdfs_xattr_delete_inode(inode);
-		if (err)
-			goto failed_unlink;
-	}
-
-failed_unlink:
-	return err;*/
+out_fail:
+	inode_dec_link_count(inode);
+	inode_dec_link_count(inode);
+	unlock_new_inode(inode);
+	iput(inode);
+out_dir:
+	inode_dec_link_count(dir);
+	return err;
 }
 
 /*
@@ -353,30 +561,118 @@ failed_unlink:
  */
 static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 {
-	struct inode *inode = dentry->d_inode;
-	int err;
+	struct ssdfs_inode_info *ii = SSDFS_I(dir);
+	struct inode *inode = d_inode(dentry);
+	struct ssdfs_btree_search *search;
+	int private_flags;
+	u64 name_hash;
+	int err = 0;
 
 	SSDFS_DBG("dir %lu, inode %lu\n",
 		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
 
 	trace_ssdfs_unlink_enter(dir, dentry);
 
-	err = ssdfs_do_unlink(dir, dentry);
-	if (!err) {
-		mark_inode_dirty(dir);
-		mark_inode_dirty(inode);
-		inode->i_ctime = dir->i_ctime = dir->i_mtime = CURRENT_TIME;
+	private_flags = atomic_read(&ii->private_flags);
+
+	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&ii->lock);
+
+		if (!ii->dentries_tree) {
+			err = -ERANGE;
+			SSDFS_WARN("dentries tree absent!!!\n");
+			goto finish_delete_dentry;
+		}
+
+		search = ssdfs_btree_search_alloc();
+		if (!search) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate btree search object\n");
+			goto finish_delete_dentry;
+		}
+
+		ssdfs_btree_search_init(search);
+
+		name_hash = ssdfs_generate_name_hash(dentry->d_name);
+		if (name_hash >= U64_MAX) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid name hash\n");
+			goto dentry_is_not_available;
+		}
+
+		err = ssdfs_dentries_tree_delete(ii->dentries_tree,
+						 name_hash,
+						 inode->i_ino,
+						 search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to delete the dentry: "
+				  "name_hash %llu, ino %lu, err %d\n",
+				  name_hash, inode->i_ino, err);
+			goto dentry_is_not_available;
+		}
+
+dentry_is_not_available:
+		ssdfs_btree_search_free(search);
+
+finish_delete_dentry:
+		up_read(&ii->lock);
+
+		if (unlikely(err))
+			goto finish_unlink;
+	} else {
+		err = -ENOENT;
+		SSDFS_ERR("dentries tree is absent\n");
+		goto finish_unlink;
 	}
 
+	mark_inode_dirty(dir);
+	mark_inode_dirty(inode);
+	inode->i_ctime = dir->i_ctime = dir->i_mtime = current_time(dir);
+	inode_dec_link_count(inode);
+
+finish_unlink:
 	trace_ssdfs_unlink_exit(inode, err);
 	return err;
 }
 
 static inline bool ssdfs_empty_dir(struct inode *dir)
 {
-	/* TODO: implement ssdfs_empty_dir() */
-	SSDFS_WARN("TODO: implement ssdfs_empty_dir()\n");
-	return false;
+	struct ssdfs_inode_info *ii = SSDFS_I(dir);
+	bool is_empty = flase;
+	int private_flags;
+	u64 dentries_count;
+	u64 threshold = 2; /* . and .. */
+
+	private_flags = atomic_read(&ii->private_flags);
+
+	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&ii->lock);
+
+		if (!ii->dentries_tree) {
+			SSDFS_WARN("dentries tree absent!!!\n");
+			is_empty = true;
+		} else {
+			dentries_count =
+			    atomic64_read(&ii->dentries_tree->dentries_count);
+
+			if (dentries_count > threshold) {
+				/* not empty folder */
+				is_empty = false;
+			} else if (dentries_count < threshold) {
+				SSDFS_WARN("unexpected dentries count %llu\n",
+					   dentries_count);
+				is_empty = true;
+			} else
+				is_empty = true;
+		}
+
+		up_read(&ii->lock);
+	} else {
+		/* dentries tree is absent */
+		is_empty = true;
+	}
+
+	return is_empty;
 }
 
 /*
@@ -385,15 +681,22 @@ static inline bool ssdfs_empty_dir(struct inode *dir)
  */
 static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 {
-	struct inode *inode = dentry->d_inode;
+	struct inode *inode = d_inode(dentry);
+	int err = -ENOTEMPTY;
 
 	SSDFS_DBG("dir %lu, subdir %lu\n",
 		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
 
-	if (!ssdfs_empty_dir(inode))
-		return -ENOTEMPTY;
+	if (ssdfs_empty_dir(inode)) {
+		err = ssdfs_unlink(dir, dentry);
+		if (!err) {
+			inode->i_size = 0;
+			inode_dec_link_count(inode);
+			inode_dec_link_count(dir);
+		}
+	}
 
-	return ssdfs_unlink(dir, dentry);
+	return err;
 }
 
 /*
