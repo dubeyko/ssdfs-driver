@@ -22,9 +22,9 @@
 
 #include <trace/events/ssdfs.h>
 
-static int ssdfs_inode_by_name(struct inode *dir,
-				const struct qstr *child,
-				ino_t *ino)
+int ssdfs_inode_by_name(struct inode *dir,
+			const struct qstr *child,
+			ino_t *ino)
 {
 	struct ssdfs_inode_info *ii = SSDFS_I(dir);
 	struct ssdfs_btree_search *search;
@@ -63,7 +63,7 @@ static int ssdfs_inode_by_name(struct inode *dir,
 						child->len,
 						search);
 		if (err == -ENODATA) {
-			err = 0;
+			err = -ENOENT;
 			SSDFS_DBG("dir %lu hasn't child %s\n",
 				  (unsigned long)dir->i_ino,
 				  child->name);
@@ -123,6 +123,7 @@ dentry_is_not_available:
 finish_search_dentry:
 		up_read(&ii->lock);
 	} else {
+		err = -ENOENT;
 		SSDFS_DBG("dentries tree is absent: "
 			  "ino %lu\n",
 			  (unsigned long)dir->i_ino);
@@ -148,7 +149,10 @@ static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
 		return ERR_PTR(-ENAMETOOLONG);
 
 	err = ssdfs_inode_by_name(dir, &target->d_name, &ino);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		err = 0;
+		ino = 0;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the inode: "
 			  "err %d\n",
 			  err);
@@ -593,7 +597,7 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 
 		ssdfs_btree_search_init(search);
 
-		name_hash = ssdfs_generate_name_hash(dentry->d_name);
+		name_hash = ssdfs_generate_name_hash(&dentry->d_name);
 		if (name_hash >= U64_MAX) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid name hash\n");
@@ -699,30 +703,426 @@ static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 	return err;
 }
 
+static void lock_4_inodes(struct inode *inode1, struct inode *inode2,
+			  struct inode *inode3, struct inode *inode4)
+{
+	down_write(&SSDFS_I(inode1)->lock);
+	if (inode2 != inode1)
+		down_write(&SSDFS_I(inode2)->lock);
+	if (inode3)
+		down_write(&SSDFS_I(inode3)->lock);
+	if (inode4)
+		down_write(&SSDFS_I(inode4)->lock);
+}
+
+static void unlock_4_inodes(struct inode *inode1, struct inode *inode2,
+			    struct inode *inode3, struct inode *inode4)
+{
+	if (inode4)
+		up_write(&SSDFS_I(inode4)->lock);
+	if (inode3)
+		up_write(&SSDFS_I(inode3)->lock);
+	if (inode1 != inode2)
+		up_write(&SSDFS_I(inode2)->lock);
+	up_write(&SSDFS_I(inode1)->lock);
+}
+
 /*
- * Target dentry exists.
+ * Regular rename.
  */
 static int ssdfs_rename_target(struct inode *old_dir,
 				struct dentry *old_dentry,
 				struct inode *new_dir,
-				struct dentry *new_dentry)
+				struct dentry *new_dentry,
+				unsigned int flags)
 {
-	/* TODO: implement ssdfs_rename_target() */
-	SSDFS_WARN("TODO: implement ssdfs_rename_target()\n");
-	return -ENOMEM;
+	struct ssdfs_inode_info *old_dir_ii = SSDFS_I(old_dir);
+	struct ssdfs_inode_info *new_dir_ii = SSDFS_I(new_dir);
+	struct inode *old_inode = d_inode(old_dentry);
+	struct ssdfs_inode_info *old_ii = SSDFS_I(old_inode);
+	struct inode *new_inode = d_inode(new_dentry);
+	struct ssdfs_btree_search *search;
+	struct qstr dotdot = QSTR_INIT("..", 2);
+	bool is_dir = S_ISDIR(old_inode->i_mode);
+	bool move = (new_dir != old_dir);
+	bool unlink = new_inode == NULL;
+	ino_t old_ino, old_parent_ino, new_ino;
+	struct timespec time;
+	u64 name_hash;
+	int err = -ENOENT;
+
+	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
+		  (unsigned long)old_dir->i_ino,
+		  (unsigned long)old_inode->i_ino,
+		  (unsigned long)new_dir->i_ino);
+
+	err = ssdfs_inode_by_name(old_dir, &old_dentry->d_name, &old_ino);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find old dentry: err %d\n", err);
+		goto out;
+	} else if (old_ino != old_inode->i_ino) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid ino: found ino %lu != requested ino %lu\n",
+			  old_ino, old_inode->i_ino);
+		goto out;
+	}
+
+	if (S_ISDIR(old_inode->i_mode)) {
+		err = ssdfs_inode_by_name(old_inode, &dotdot, &old_parent_ino);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find parent dentry: err %d\n", err);
+			goto out;
+		} else if (old_parent_ino != old_dir->i_ino) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid ino: "
+				  "found ino %lu != requested ino %lu\n",
+				  old_parent_ino, old_dir->i_ino);
+			goto out;
+		}
+	}
+
+	if (!old_dir_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("old dir hasn't dentries tree\n");
+		goto out;
+	}
+
+	if (!new_dir_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("new dir hasn't dentries tree\n");
+		goto out;
+	}
+
+	if (S_ISDIR(old_inode->i_mode) && !old_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("old inode hasn't dentries tree\n");
+		goto out;
+	}
+
+	if (flags & RENAME_WHITEOUT) {
+		/* TODO: implement support */
+		SSDFS_WARN("TODO: implement support of RENAME_WHITEOUT\n");
+		/*err = -EOPNOTSUPP;
+		goto out;*/
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto out;
+	}
+
+	ssdfs_btree_search_init(search);
+
+	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+
+	if (new_inode) {
+		err = -ENOTEMPTY;
+		if (is_dir && !ssdfs_empty_dir(new_inode))
+			goto finish_target_rename;
+
+		err = ssdfs_inode_by_name(new_dir, &new_dentry->d_name,
+					  &new_ino);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find new dentry: err %d\n", err);
+			goto finish_target_rename;
+		} else if (new_ino != new_inode->i_ino) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid ino: "
+				  "found ino %lu != requested ino %lu\n",
+				  new_ino, new_inode->i_ino);
+			goto finish_target_rename;
+		}
+
+		name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
+
+		err = ssdfs_dentries_tree_change(new_dir_ii->dentries_tree,
+						 name_hash,
+						 new_inode->i_ino,
+						 &old_dentry->d_name,
+						 old_ii,
+						 search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to update dentry: err %d\n",
+					err);
+			goto finish_target_rename;
+		}
+	} else {
+		err = ssdfs_add_link(new_dir, new_dentry, old_inode);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add the link: err %d\n",
+					err);
+			goto finish_target_rename;
+		}
+	}
+
+	name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+
+	err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
+					 name_hash,
+					 old_inode->i_ino,
+					 search);
+	if (unlikely(err)) {
+		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+				"fail to delete the dentry: "
+				"name_hash %llu, ino %lu, err %d\n",
+				name_hash, old_inode->i_ino, err);
+		goto finish_target_rename;
+	}
+
+	if (is_dir && move) {
+		/* update ".." directory entry info of old dentry */
+		name_hash = ssdfs_generate_name_hash(&dotdot);
+		err = ssdfs_dentries_tree_change(old_ii->dentries_tree,
+						 name_hash, old_dir->i_ino,
+						 &dotdot, new_dir_ii,
+						 search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to update dentry: err %d\n",
+					err);
+			goto finish_target_rename;
+		}
+	}
+
+	old_ii->parent_ino = new_dir->i_ino;
+
+	/*
+	 * Like most other Unix systems, set the @i_ctime for inodes on a
+	 * rename.
+	 */
+	time = current_time(old_dir);
+	old_inode->i_ctime = time;
+	mark_inode_dirty(old_inode);
+
+	/* We must adjust parent link count when renaming directories */
+	if (is_dir) {
+		if (move) {
+			/*
+			 * @old_dir loses a link because we are moving
+			 * @old_inode to a different directory.
+			 */
+			inode_dec_link_count(old_dir);
+			/*
+			 * @new_dir only gains a link if we are not also
+			 * overwriting an existing directory.
+			 */
+			if (!unlink)
+				inode_inc_link_count(new_dir);
+		} else {
+			/*
+			 * @old_inode is not moving to a different directory,
+			 * but @old_dir still loses a link if we are
+			 * overwriting an existing directory.
+			 */
+			if (unlink)
+				inode_dec_link_count(old_dir);
+		}
+	}
+
+	old_dir->i_mtime = old_dir->i_ctime = time;
+	new_dir->i_mtime = new_dir->i_ctime = time;
+
+	/*
+	 * And finally, if we unlinked a direntry which happened to have the
+	 * same name as the moved direntry, we have to decrement @i_nlink of
+	 * the unlinked inode and change its ctime.
+	 */
+	if (unlink) {
+		/*
+		 * Directories cannot have hard-links, so if this is a
+		 * directory, just clear @i_nlink.
+		 */
+		if (is_dir) {
+			clear_nlink(new_inode);
+			mark_inode_dirty(new_inode);
+		} else
+			inode_dec_link_count(new_inode);
+		new_inode->i_ctime = time;
+	}
+
+finish_target_rename:
+	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+	ssdfs_btree_search_free(search);
+
+out:
+	return err;
 }
 
 /*
- * Cross-directory rename, target does not exist.
+ * Cross-directory rename.
  */
 static int ssdfs_cross_rename(struct inode *old_dir,
 				struct dentry *old_dentry,
 				struct inode *new_dir,
 				struct dentry *new_dentry)
 {
-	/* TODO: implement ssdfs_cross_rename() */
-	SSDFS_WARN("TODO: implement ssdfs_cross_rename()\n");
-	return -ENOMEM;
+	struct ssdfs_inode_info *old_dir_ii = SSDFS_I(old_dir);
+	struct ssdfs_inode_info *new_dir_ii = SSDFS_I(new_dir);
+	struct inode *old_inode = d_inode(old_dentry);
+	struct ssdfs_inode_info *old_ii = SSDFS_I(old_inode);
+	struct inode *new_inode = d_inode(new_dentry);
+	struct ssdfs_inode_info *new_ii = SSDFS_I(new_inode);
+	struct ssdfs_btree_search *search;
+	struct qstr dotdot = QSTR_INIT("..", 2);
+	ino_t old_ino, new_ino;
+	struct timespec time;
+	u64 name_hash;
+	int err = -ENOENT;
+
+	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
+		  (unsigned long)old_dir->i_ino,
+		  (unsigned long)old_inode->i_ino,
+		  (unsigned long)new_dir->i_ino);
+
+	err = ssdfs_inode_by_name(old_dir, &old_dentry->d_name, &old_ino);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find old dentry: err %d\n", err);
+		goto out;
+	} else if (old_ino != old_inode->i_ino) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid ino: found ino %lu != requested ino %lu\n",
+			  old_ino, old_inode->i_ino);
+		goto out;
+	}
+
+	err = ssdfs_inode_by_name(new_dir, &new_dentry->d_name, &new_ino);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find new dentry: err %d\n", err);
+		goto out;
+	} else if (new_ino != new_inode->i_ino) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid ino: found ino %lu != requested ino %lu\n",
+			  new_ino, new_inode->i_ino);
+		goto out;
+	}
+
+	if (!old_dir_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("old dir hasn't dentries tree\n");
+		goto out;
+	}
+
+	if (!new_dir_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("new dir hasn't dentries tree\n");
+		goto out;
+	}
+
+	if (S_ISDIR(old_inode->i_mode) && !old_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("old inode hasn't dentries tree\n");
+		goto out;
+	}
+
+	if (S_ISDIR(new_inode->i_mode) && !new_ii->dentries_tree) {
+		err = -ERANGE;
+		SSDFS_ERR("new inode hasn't dentries tree\n");
+		goto out;
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto out;
+	}
+
+	ssdfs_btree_search_init(search);
+	name_hash = ssdfs_generate_name_hash(&dotdot);
+
+	lock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+
+	/* update ".." directory entry info of old dentry */
+	if (S_ISDIR(old_inode->i_mode)) {
+		err = ssdfs_dentries_tree_change(old_ii->dentries_tree,
+						 name_hash, old_dir->i_ino,
+						 &dotdot, new_dir_ii,
+						 search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to update dentry: err %d\n",
+					err);
+			goto finish_cross_rename;
+		}
+	}
+
+	/* update ".." directory entry info of new dentry */
+	if (S_ISDIR(new_inode->i_mode)) {
+		err = ssdfs_dentries_tree_change(new_ii->dentries_tree,
+						 name_hash, new_dir->i_ino,
+						 &dotdot, old_dir_ii,
+						 search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to update dentry: err %d\n",
+					err);
+			goto finish_cross_rename;
+		}
+	}
+
+	/* update directory entry info of old dir inode */
+	name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+
+	err = ssdfs_dentries_tree_change(old_dir_ii->dentries_tree,
+					 name_hash, old_inode->i_ino,
+					 &new_dentry->d_name, new_ii,
+					 search);
+	if (unlikely(err)) {
+		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+				"fail to update dentry: err %d\n",
+				err);
+		goto finish_cross_rename;
+	}
+
+	/* update directory entry info of new dir inode */
+	name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
+
+	err = ssdfs_dentries_tree_change(new_dir_ii->dentries_tree,
+					 name_hash, new_inode->i_ino,
+					 &old_dentry->d_name, old_ii,
+					 search);
+	if (unlikely(err)) {
+		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+				"fail to update dentry: err %d\n",
+				err);
+		goto finish_cross_rename;
+	}
+
+	old_ii->parent_ino = new_dir->i_ino;
+	new_ii->parent_ino = old_dir->i_ino;
+
+	time = current_time(old_dir);
+	old_inode->i_ctime = time;
+	new_inode->i_ctime = time;
+	old_dir->i_mtime = old_dir->i_ctime = time;
+	new_dir->i_mtime = new_dir->i_ctime = time;
+
+	if (old_dir != new_dir) {
+		if (S_ISDIR(old_inode->i_mode) &&
+		    !S_ISDIR(new_inode->i_mode)) {
+			inode_inc_link_count(new_dir);
+			inode_dec_link_count(old_dir);
+		}
+		else if (!S_ISDIR(old_inode->i_mode) &&
+			 S_ISDIR(new_inode->i_mode)) {
+			inode_dec_link_count(new_dir);
+			inode_inc_link_count(old_dir);
+		}
+	}
+
+	mark_inode_dirty(old_inode);
+	mark_inode_dirty(new_inode);
+
+finish_cross_rename:
+	unlock_4_inodes(old_dir, new_dir, old_inode, new_inode);
+	ssdfs_btree_search_free(search);
+
+out:
+	return err;
 }
 
 /*
@@ -731,17 +1131,24 @@ static int ssdfs_cross_rename(struct inode *old_dir,
  * the second inode and dentry.
  */
 static int ssdfs_rename(struct inode *old_dir, struct dentry *old_dentry,
-			struct inode *new_dir, struct dentry *new_dentry)
+			struct inode *new_dir, struct dentry *new_dentry,
+			unsigned int flags)
 {
 	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
 		  (unsigned long)old_dir->i_ino,
 		  (unsigned long)old_dentry->d_inode->i_ino,
 		  (unsigned long)new_dir->i_ino);
 
-	if (new_dentry->d_inode)
-		return ssdfs_rename_target(old_dir, old_dentry,
-					   new_dir, new_dentry);
-	return ssdfs_cross_rename(old_dir, old_dentry, new_dir, new_dentry);
+	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT))
+		return -EINVAL;
+
+	if (flags & RENAME_EXCHANGE) {
+		return ssdfs_cross_rename(old_dir, old_dentry,
+					  new_dir, new_dentry);
+	}
+
+	return ssdfs_rename_target(old_dir, old_dentry, new_dir, new_dentry,
+				   flags);
 }
 
 /*
