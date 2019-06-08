@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.1.11 [June 08, 2019]
+    (*) Reimplement file and folder operations (step 5).
+
 v.1.10 [June 07, 2019]
     (*) Reimplement file and folder operations (step 4).
 

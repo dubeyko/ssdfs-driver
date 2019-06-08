@@ -22,6 +22,18 @@
 
 #include <trace/events/ssdfs.h>
 
+static unsigned char
+ssdfs_filetype_table[SSDFS_FT_MAX] = {
+	[SSDFS_FT_UNKNOWN]	= DT_UNKNOWN,
+	[SSDFS_FT_REG_FILE]	= DT_REG,
+	[SSDFS_FT_DIR]		= DT_DIR,
+	[SSDFS_FT_CHRDEV]	= DT_CHR,
+	[SSDFS_FT_BLKDEV]	= DT_BLK,
+	[SSDFS_FT_FIFO]		= DT_FIFO,
+	[SSDFS_FT_SOCK]		= DT_SOCK,
+	[SSDFS_FT_SYMLINK]	= DT_LNK,
+};
+
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
 			ino_t *ino)
@@ -1157,29 +1169,255 @@ static int ssdfs_rename(struct inode *old_dir, struct dentry *old_dentry,
  */
 static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 {
-	loff_t pos;
-
-	/* TODO: implement */
-	SSDFS_WARN("TODO: implement %s\n", __func__);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct qstr dot = QSTR_INIT(".", 1);
+	u64 dot_hash;
+	struct qstr dotdot = QSTR_INIT("..", 2);
+	u64 dotdot_hash;
+	struct ssdfs_shared_dict_btree_info *dict;
+	struct ssdfs_btree_search *search;
+	struct ssdfs_dir_entry *dentry;
+	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
+	int private_flags;
+	u64 start_hash, end_hash, hash;
+	u16 items_count;
+	int i;
+	int err = 0;
 
 	if (ctx->pos < 0)
 		return -EINVAL;
 
-	if (!dir_emit_dots(file, ctx))
-		return 0;
+	dict = fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
 
-	/* TODO: temporary solution */
-	if (ctx->pos >= 3)
-		return 0;
+	dot_hash = ssdfs_generate_name_hash(&dot);
+	dotdot_hash = ssdfs_generate_name_hash(&dotdot);
 
-	pos = ctx->pos - 2;
-	BUG_ON(pos < 0);
+	private_flags = atomic_read(&ii->private_flags);
 
-	dir_emit(ctx, SSDFS_TEMP_FILE_NAME, strlen(SSDFS_TEMP_FILE_NAME) + 1,
-		 SSDFS_TEMP_FILE_INO, DT_REG);
-	ctx->pos += 1;
+	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&ii->lock);
+		if (!ii->dentries_tree)
+			err = -ERANGE;
+		up_read(&ii->lock);
 
-	return 0;
+		if (unlikely(err)) {
+			SSDFS_WARN("dentries tree is absent\n");
+			return -ERANGE;
+		}
+	} else {
+		if (!S_ISDIR(inode->i_mode)) {
+			SSDFS_WARN("this is not folder!!!\n");
+			return -EINVAL;
+		}
+
+		down_read(&ii->lock);
+		if (ii->dentries_tree)
+			err = -ERANGE;
+		up_read(&ii->lock);
+
+		if (unlikely(err)) {
+			SSDFS_WARN("dentries tree exists!!!!\n");
+			return err;
+		}
+	}
+
+	if (ctx->pos == 0) {
+		err = ssdfs_inode_by_name(inode, &dot, &ino);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find dentry: err %d\n", err);
+			goto out;
+		}
+
+		if (!dir_emit_dot(file, ctx)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to emit dentry\n");
+			goto out;
+		}
+
+		ctx->pos = 1;
+	}
+
+	if (ctx->pos == 1) {
+		err = ssdfs_inode_by_name(inode, &dotdot, &ino);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find dentry: err %d\n", err);
+			goto out;
+		}
+
+		if (!dir_emit_dotdot(file, ctx)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to emit dentry\n");
+			goto out;
+		}
+
+		ctx->pos = 2;
+	}
+
+	if (ctx->pos == 2) {
+		down_read(&ii->lock);
+		err = ssdfs_dentries_tree_get_start_hash(ii->dentries_tree,
+							 &start_hash);
+		up_read(&ii->lock);
+
+		if (err == -ENOENT) {
+			err = 0;
+			ctx->pos = 2;
+			goto out;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to get start root hash: err %d\n", err);
+			goto out;
+		} else if (start_hash >= U64_MAX) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid hash value\n");
+			goto out;
+		}
+
+		ctx->pos = start_hash;
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto out;
+	}
+
+	ssdfs_btree_search_init(search);
+
+	do {
+		/* allow readdir() to be interrupted */
+		if (fatal_signal_pending(current)) {
+			err = -ERESTARTSYS;
+			goto out_free;
+		}
+		cond_resched();
+
+		down_read(&ii->lock);
+
+		err = ssdfs_dentries_tree_find_leaf_node(ii->dentries_tree,
+							 ctx->pos,
+							 search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find a leaf node: "
+				  "hash %llu, err %d\n",
+				  (u64)ctx->pos, err);
+			goto finish_tree_processing;
+		}
+
+		err = ssdfs_dentries_tree_node_hash_range(ii->dentries_tree,
+							  search,
+							  &start_hash,
+							  &end_hash,
+							  &items_count);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get node's hash range: "
+				  "err %d\n", err);
+			goto finish_tree_processing;
+		}
+
+		if (items_count == 0) {
+			err = -ENOENT;
+			SSDFS_DBG("empty leaf node\n");
+			goto finish_tree_processing;
+		}
+
+		if (ctx->pos >= end_hash) {
+			err = -ENOENT;
+			goto finish_tree_processing;
+		}
+
+		err = ssdfs_dentries_tree_extract_range(ii->dentries_tree,
+							0, items_count,
+							search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to extract the range: "
+				  "items_count %u, err %d\n",
+				  items_count, err);
+			goto finish_tree_processing;
+		}
+
+finish_tree_processing:
+		up_read(&ii->lock);
+
+		if (err == -ENOENT) {
+			err = 0;
+			goto out_free;
+		} else if (unlikely(err))
+			goto out_free;
+
+		err = ssdfs_dentries_tree_check_search_result(search);
+		if (unlikely(err)) {
+			SSDFS_ERR("corrupted search result: "
+				  "err %d\n", err);
+			goto out_free;
+		}
+
+		items_count = search->result.count;
+
+		for (i = 0; i < items_count; i++) {
+			dentry =
+			    (struct ssdfs_dir_entry *)(search->result.buf +
+							(i * dentry_size));
+
+			if (is_invalid_dentry(dentry)) {
+				err = -EIO;
+				SSDFS_ERR("found corrupted dentry\n");
+				goto out_free;
+			}
+
+			hash = le64_to_cpu(dentry->hash_code);
+
+			if (dot_hash == hash || dotdot_hash == hash) {
+				/*
+				 * These items were created already.
+				 * Simply skip the case.
+				 */
+			} else if (dentry->flags & SSDFS_DENTRY_HAS_EXTERNAL_STRING) {
+				err = ssdfs_shared_dict_get_name(dict, hash,
+								 &search->name);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to extract the name: "
+						  "hash %llu, err %d\n",
+						  hash, err);
+					goto out_free;
+				}
+
+				dir_emit(ctx,
+				    search->name.str,
+				    search->name.len,
+				    (ino_t)le64_to_cpu(dentry->ino),
+				    ssdfs_filetype_table[dentry->file_type]);
+			} else {
+				dir_emit(ctx,
+				    dentry->inline_string,
+				    dentry->name_len,
+				    (ino_t)le64_to_cpu(dentry->ino),
+				    ssdfs_filetype_table[dentry->file_type]);
+			}
+
+			ctx->pos = hash + 1;
+		}
+
+		if (ctx->pos <= end_hash) {
+			err = -ERANGE;
+			SSDFS_ERR("ctx->pos %llu <= end_hash %llu\n",
+				  (u64)ctx->pos,
+				  end_hash);
+			goto out_free;
+		}
+	} while (ctx->pos < U64_MAX);
+
+out_free:
+	ssdfs_btree_search_free(search);
+
+out:
+	return err;
 }
 
 const struct inode_operations ssdfs_dir_inode_operations = {
