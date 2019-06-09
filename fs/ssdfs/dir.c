@@ -14,9 +14,15 @@
 #include <linux/rwsem.h>
 #include <linux/slab.h>
 #include <linux/pagevec.h>
+#include <linux/sched/signal.h>
 
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
+#include "dentries_tree.h"
+#include "shared_dictionary.h"
 #include "xattr.h"
 #include "acl.h"
 
@@ -52,7 +58,8 @@ int ssdfs_inode_by_name(struct inode *dir,
 	*ino = 0;
 	private_flags = atomic_read(&ii->private_flags);
 
-	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 		down_read(&ii->lock);
 
 		if (!ii->dentries_tree) {
@@ -103,7 +110,8 @@ int ssdfs_inode_by_name(struct inode *dir,
 
 		default:
 			err = -ERANGE;
-			SSDFS_ERR("invalid buffer state %#x\n");
+			SSDFS_ERR("invalid buffer state %#x\n",
+				  search->result.buf_state);
 			goto dentry_is_not_available;
 		}
 
@@ -199,8 +207,9 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 
 	private_flags = atomic_read(&dir_ii->private_flags);
 
-	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&dir->lock);
+	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&dir_ii->lock);
 
 		if (!dir_ii->dentries_tree) {
 			err = -ERANGE;
@@ -223,7 +232,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 				goto finish_create_dentries_tree;
 			}
 
-			atomic_or(SSDFS_INODE_HAS_DENTRIES_BTREE,
+			atomic_or(SSDFS_INODE_HAS_INLINE_DENTRIES,
 				  &dir_ii->private_flags);
 		}
 
@@ -296,7 +305,7 @@ static int ssdfs_create(struct inode *dir, struct dentry *dentry,
 
 	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
 
-	inode = ssdfs_new_inode(dir, mode, dentry->d_name);
+	inode = ssdfs_new_inode(dir, mode, &dentry->d_name);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto failed_create;
@@ -325,7 +334,7 @@ static int ssdfs_mknod(struct inode *dir, struct dentry *dentry,
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
 
-	inode = ssdfs_new_inode(dir, mode, dentry->d_name);
+	inode = ssdfs_new_inode(dir, mode, &dentry->d_name);
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
 
@@ -342,6 +351,7 @@ static int ssdfs_mknod(struct inode *dir, struct dentry *dentry,
 static int ssdfs_symlink(struct inode *dir, struct dentry *dentry,
 			 const char *target)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(dir->i_sb);
 	struct inode *inode;
 	size_t target_len = strlen(target) + 1;
 	size_t raw_inode_size;
@@ -368,7 +378,7 @@ static int ssdfs_symlink(struct inode *dir, struct dentry *dentry,
 
 	inline_len = raw_inode_size - inline_len;
 
-	inode = ssdfs_new_inode(dir, S_IFLNK | S_IRWXUGO, dentry->d_name);
+	inode = ssdfs_new_inode(dir, S_IFLNK | S_IRWXUGO, &dentry->d_name);
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
 
@@ -453,8 +463,9 @@ static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
 
 	private_flags = atomic_read(&ii->private_flags);
 
-	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&inode->lock);
+	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+		down_read(&ii->lock);
 
 		if (!ii->dentries_tree) {
 			err = -ERANGE;
@@ -477,7 +488,7 @@ static int ssdfs_make_empty(struct inode *inode, struct inode *parent)
 				goto finish_create_dentries_tree;
 			}
 
-			atomic_or(SSDFS_INODE_HAS_DENTRIES_BTREE,
+			atomic_or(SSDFS_INODE_HAS_INLINE_DENTRIES,
 				  &ii->private_flags);
 		}
 
@@ -591,7 +602,8 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	private_flags = atomic_read(&ii->private_flags);
 
-	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 		down_read(&ii->lock);
 
 		if (!ii->dentries_tree) {
@@ -654,14 +666,15 @@ finish_unlink:
 static inline bool ssdfs_empty_dir(struct inode *dir)
 {
 	struct ssdfs_inode_info *ii = SSDFS_I(dir);
-	bool is_empty = flase;
+	bool is_empty = false;
 	int private_flags;
 	u64 dentries_count;
 	u64 threshold = 2; /* . and .. */
 
 	private_flags = atomic_read(&ii->private_flags);
 
-	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 		down_read(&ii->lock);
 
 		if (!ii->dentries_tree) {
@@ -748,6 +761,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 				struct dentry *new_dentry,
 				unsigned int flags)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(old_dir->i_sb);
 	struct ssdfs_inode_info *old_dir_ii = SSDFS_I(old_dir);
 	struct ssdfs_inode_info *new_dir_ii = SSDFS_I(new_dir);
 	struct inode *old_inode = d_inode(old_dentry);
@@ -814,8 +828,6 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	if (flags & RENAME_WHITEOUT) {
 		/* TODO: implement support */
 		SSDFS_WARN("TODO: implement support of RENAME_WHITEOUT\n");
-		/*err = -EOPNOTSUPP;
-		goto out;*/
 	}
 
 	search = ssdfs_btree_search_alloc();
@@ -972,6 +984,7 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 				struct inode *new_dir,
 				struct dentry *new_dentry)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(old_dir->i_sb);
 	struct ssdfs_inode_info *old_dir_ii = SSDFS_I(old_dir);
 	struct ssdfs_inode_info *new_dir_ii = SSDFS_I(new_dir);
 	struct inode *old_inode = d_inode(old_dentry);
@@ -1163,6 +1176,280 @@ static int ssdfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 				   flags);
 }
 
+static
+int ssdfs_dentries_tree_get_start_hash(struct ssdfs_dentries_btree_info *tree,
+					u64 *start_hash)
+{
+	struct ssdfs_btree_index *index;
+	u64 dentries_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, start_hash %p\n",
+		  tree, start_hash);
+
+	*start_hash = U64_MAX;
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_DENTRIES_BTREE_CREATED:
+	case SSDFS_DENTRIES_BTREE_INITIALIZED:
+	case SSDFS_DENTRIES_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid dentries tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	dentries_count = atomic64_read(&tree->dentries_count);
+
+	if (dentries_count < 2) {
+		SSDFS_WARN("folder is corrupted: "
+			   "dentries_count %llu\n",
+			   dentries_count);
+		return -ERANGE;
+	} else if (dentries_count == 2)
+		return -ENOENT;
+
+	down_read(&tree->lock);
+
+	if (!tree->root) {
+		err = -ERANGE;
+		SSDFS_ERR("root node pointer is NULL\n");
+		goto finish_get_start_hash;
+	}
+
+	index = &tree->root->indexes[SSDFS_ROOT_NODE_LEFT_LEAF_NODE];
+	*start_hash = le64_to_cpu(index->hash);
+
+finish_get_start_hash:
+	up_read(&tree->lock);
+
+	return err;
+}
+
+static
+int ssdfs_dentries_tree_node_hash_range(struct ssdfs_dentries_btree_info *tree,
+					struct ssdfs_btree_search *search,
+					u64 *start_hash, u64 *end_hash,
+					u16 *items_count)
+{
+	struct ssdfs_dir_entry *cur_dentry;
+	u64 dentries_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search || !start_hash || !end_hash || !items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("search %p, start_hash %p, "
+		  "end_hash %p, items_count %p\n",
+		  tree, start_hash, end_hash, items_count);
+
+	*start_hash = *end_hash = U64_MAX;
+	*items_count = 0;
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_DENTRIES_BTREE_CREATED:
+	case SSDFS_DENTRIES_BTREE_INITIALIZED:
+	case SSDFS_DENTRIES_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid dentries tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		dentries_count = atomic64_read(&tree->dentries_count);
+		if (dentries_count >= U16_MAX) {
+			err = -ERANGE;
+			SSDFS_ERR("unexpected dentries count %llu\n",
+				  dentries_count);
+			goto finish_extract_hash_range;
+		}
+
+		*items_count = (u16)dentries_count;
+
+		if (*items_count == 0)
+			goto finish_extract_hash_range;
+
+		down_read(&tree->lock);
+
+		if (!tree->inline_dentries) {
+			err = -ERANGE;
+			SSDFS_ERR("inline tree's pointer is empty\n");
+			goto finish_process_inline_tree;
+		}
+
+		cur_dentry = &tree->inline_dentries[0];
+		*start_hash = le64_to_cpu(cur_dentry->hash_code);
+
+		if (dentries_count > SSDFS_INLINE_DENTRIES_COUNT) {
+			err = -ERANGE;
+			SSDFS_ERR("dentries_count %llu > max_value %u\n",
+				  dentries_count,
+				  SSDFS_INLINE_DENTRIES_COUNT);
+			goto finish_process_inline_tree;
+		}
+
+		cur_dentry = &tree->inline_dentries[dentries_count - 1];
+		*end_hash = le64_to_cpu(cur_dentry->hash_code);
+
+finish_process_inline_tree:
+		up_read(&tree->lock);
+		break;
+
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		err = ssdfs_btree_node_get_hash_range(search,
+						      start_hash,
+						      end_hash,
+						      items_count);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get hash range: err %d\n",
+				  err);
+			goto finish_extract_hash_range;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("invalid tree type %#x\n",
+			  atomic_read(&tree->type));
+		return -ERANGE;
+	}
+
+finish_extract_hash_range:
+	return err;
+}
+
+static
+int ssdfs_dentries_tree_check_search_result(struct ssdfs_btree_search *search)
+{
+	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
+	u16 items_count;
+	size_t buf_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected result's state %#x\n",
+			  search->result.state);
+		return  -ERANGE;
+	}
+
+	switch (search->result.buf_state) {
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+		if (!search->result.buf) {
+			SSDFS_ERR("buffer pointer is NULL\n");
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected buffer's state\n");
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(search->result.items_in_buffer >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	items_count = (u16)search->result.items_in_buffer;
+
+	if (items_count == 0) {
+		SSDFS_ERR("items_in_buffer %u\n",
+			  items_count);
+		return -ENOENT;
+	} else if (items_count != search->result.count) {
+		SSDFS_ERR("items_count %u != search->result.count %u\n",
+			  items_count, search->result.count);
+		return -ERANGE;
+	}
+
+	buf_size = dentry_size * items_count;
+
+	if (buf_size != search->result.buf_size) {
+		SSDFS_ERR("buf_size %zu != search->result.buf_size %zu\n",
+			  buf_size,
+			  search->result.buf_size);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static
+bool is_invalid_dentry(struct ssdfs_dir_entry *dentry)
+{
+	u8 name_len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dentry);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (dentry->dentry_type) {
+	case SSDFS_INLINE_DENTRY:
+	case SSDFS_REGULAR_DENTRY:
+		/* expected dentry type */
+		break;
+
+	default:
+		SSDFS_ERR("invalid dentry type %#x\n",
+			  dentry->dentry_type);
+		return true;
+	}
+
+	if (SSDFS_FT_UNKNOWN <= dentry->file_type ||
+	    dentry->file_type >= SSDFS_FT_MAX) {
+		SSDFS_ERR("invalid file type %#x\n",
+			  dentry->file_type);
+		return true;
+	}
+
+	if (dentry->flags & ~SSDFS_DENTRY_FLAGS_MASK) {
+		SSDFS_ERR("invalid set of flags %#x\n",
+			  dentry->flags);
+		return true;
+	}
+
+	name_len = dentry->name_len;
+
+	if (name_len > SSDFS_MAX_NAME_LEN) {
+		SSDFS_ERR("invalid name_len %u\n",
+			  name_len);
+		return true;
+	}
+
+	if (le64_to_cpu(dentry->hash_code) >= U64_MAX) {
+		SSDFS_ERR("invalid hash_code\n");
+		return true;
+	}
+
+	if (le64_to_cpu(dentry->ino) >= U32_MAX) {
+		SSDFS_ERR("ino %llu is too huge\n",
+			  le64_to_cpu(dentry->ino));
+		return true;
+	}
+
+	return false;
+}
+
 /*
  * The ssdfs_readdir() is called when the VFS needs
  * to read the directory contents.
@@ -1183,6 +1470,7 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 	int private_flags;
 	u64 start_hash, end_hash, hash;
 	u16 items_count;
+	ino_t ino;
 	int i;
 	int err = 0;
 
@@ -1200,7 +1488,8 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 
 	private_flags = atomic_read(&ii->private_flags);
 
-	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
+	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
+	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
 		down_read(&ii->lock);
 		if (!ii->dentries_tree)
 			err = -ERANGE;
@@ -1431,10 +1720,7 @@ const struct inode_operations ssdfs_dir_inode_operations = {
 	.mknod		= ssdfs_mknod,
 	.rename		= ssdfs_rename,
 	.setattr	= ssdfs_setattr,
-	.setxattr	= generic_setxattr,
-	.getxattr	= generic_getxattr,
 	.listxattr	= ssdfs_listxattr,
-	.removexattr	= generic_removexattr,
 	.get_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
 };
