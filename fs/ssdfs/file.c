@@ -10,12 +10,15 @@
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
  */
 
+#include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/writeback.h>
+#include <linux/pagevec.h>
 
+#include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "segment.h"
 #include "xattr.h"
@@ -41,11 +44,17 @@ static
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req)
 {
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_raw_fork *fork = NULL;
+	struct ssdfs_raw_extent *extent = NULL;
 	u32 pagesize = fsi->pagesize;
 	u64 seg_id;
-	u32 start_blk, logical_blk = U32_MAX;
-	u32 len;
-	int i = 0;
+	u32 logical_blk = U32_MAX, len;
+	u64 start_blk;
+	u64 blks_count;
+	u32 requested_blk, requested_len;
+	u64 processed_blks = 0;
+	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
@@ -61,36 +70,84 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 		  req->extent.cno,
 		  req->extent.parent_snapshot);
 
-	start_blk = req->extent.logical_offset >> fsi->log_pagesize;
-	len = (req->extent.data_bytes + pagesize - 1) >> fsi->log_pagesize;
+	ii = SSDFS_I(req->result.pvec.pages[0]->mapping->host);
 
-	for (; i < SSDFS_INODE_INLINE_EXTENTS_COUNT; i++) {
-		struct ssdfs_raw_extent *extent;
-		u32 pages_count;
+	requested_blk = req->extent.logical_offset >> fsi->log_pagesize;
+	requested_len = (req->extent.data_bytes + pagesize - 1) >>
+				fsi->log_pagesize;
 
-		extent = &fsi->internal_file.inline_array[i];
-
-		pages_count = le32_to_cpu(extent->len);
-		if (pages_count == 0) {
-			SSDFS_DBG("extent %d has zero length\n", i);
-			return -ENODATA;
-		}
-
-		if (start_blk <= pages_count) {
-			seg_id = le64_to_cpu(extent->seg_id);
-			logical_blk = le32_to_cpu(extent->logical_blk);
-			logical_blk += start_blk;
-			len = min_t(u32, len,
-				    le32_to_cpu(extent->len) - start_blk);
-			break;
-		} else
-			start_blk -= pages_count;
+	if (ii->forks_count == 0) {
+		SSDFS_ERR("extents tree hasn't any fork\n");
+		return -ENODATA;
 	}
 
-	if (logical_blk == U32_MAX) {
-		SSDFS_DBG("unable to define logical block: "
-			  "logical_offset %llu\n",
-			  req->extent.logical_offset);
+	for (i = 0; i < ii->forks_count; fork = NULL, i++) {
+		fork = &ii->forks[i];
+
+		start_blk = le64_to_cpu(fork->start_offset);
+		blks_count = le64_to_cpu(fork->blks_count);
+
+		if (start_blk == U64_MAX || blks_count == U64_MAX) {
+			SSDFS_ERR("corrupted fork\n");
+			return -ERANGE;
+		}
+
+		if (blks_count == 0) {
+			SSDFS_ERR("empty extent\n");
+			return -ERANGE;
+		}
+
+		if (start_blk <= requested_blk &&
+		    requested_blk < (start_blk + blks_count)) {
+			/* fork is found */
+			break;
+		} else if (requested_blk < start_blk) {
+			fork = NULL;
+			break;
+		}
+	}
+
+	if (!fork) {
+		SSDFS_DBG("fork hasn't been found\n");
+		return -ENODATA;
+	}
+
+	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; extent = NULL, i++) {
+		if (processed_blks >= blks_count)
+			break;
+
+		extent = &fork->extents[i];
+
+		seg_id = le64_to_cpu(extent->seg_id);
+		logical_blk = le32_to_cpu(extent->logical_blk);
+		len = le32_to_cpu(extent->len);
+
+		if (seg_id == U64_MAX || logical_blk == U32_MAX ||
+		    len == U32_MAX) {
+			SSDFS_ERR("corrupted extent: index %d\n", i);
+			return -ERANGE;
+		}
+
+		if (len == 0) {
+			SSDFS_ERR("corrupted extent: index %d\n", i);
+			return -ERANGE;
+		}
+
+		if ((start_blk + processed_blks) <= requested_blk &&
+		    requested_blk < (start_blk + processed_blks + len)) {
+			u64 diff = requested_blk - (start_blk + processed_blks);
+
+			logical_blk += (u32)diff;
+			len -= (u32)diff;
+			len = min_t(u32, len, requested_len);
+			break;
+		}
+
+		processed_blks += len;
+	}
+
+	if (!extent) {
+		SSDFS_DBG("extent hasn't been found\n");
 		return -ENODATA;
 	}
 
@@ -153,7 +210,7 @@ int ssdfs_read_block_sync(struct ssdfs_fs_info *fsi,
 	err = ssdfs_segment_read_block_sync(si, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("read request failed: "
-			  "ino %lu, logical_offset %llu, size %u, err %d\n",
+			  "ino %llu, logical_offset %llu, size %u, err %d\n",
 			  req->extent.ino, req->extent.logical_offset,
 			  req->extent.data_bytes, err);
 		return err;
@@ -289,6 +346,300 @@ int ssdfs_readpages(struct file *file, struct address_space *mapping,
 	return -EIO;
 }
 
+static
+struct ssdfs_raw_fork *ssdfs_find_fork_in_extents_tree(u64 blk_offset,
+						struct ssdfs_inode_info *ii,
+						int *fork_index)
+{
+	struct ssdfs_raw_fork *fork = NULL;
+	u64 start_offset;
+	u64 blks_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ii);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("blk_offset %llu, ii %p\n",
+		  blk_offset, ii);
+
+	if (ii->forks_count >= SSDFS_INLINE_FORKS_COUNT) {
+		SSDFS_ERR("invalid forks count: forks_count %u\n",
+			  ii->forks_count);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (*fork_index >= SSDFS_INLINE_FORKS_COUNT) {
+		SSDFS_DBG("all forks were used\n");
+		return ERR_PTR(-ENOSPC);
+	}
+
+	for (; *fork_index < SSDFS_INLINE_FORKS_COUNT; ++(*fork_index)) {
+		fork = &ii->forks[*fork_index];
+		start_offset = le64_to_cpu(fork->start_offset);
+		blks_count = le64_to_cpu(fork->blks_count);
+
+		if (start_offset == U64_MAX)
+			break;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(start_offset >= (U64_MAX - blks_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (blk_offset <= start_offset) {
+			SSDFS_ERR("holes are not supported yet\n");
+			return ERR_PTR(-EOPNOTSUPP);
+		}
+
+		if ((start_offset + blks_count) == blk_offset)
+			break;
+	}
+
+	if (*fork_index >= SSDFS_INLINE_FORKS_COUNT) {
+		SSDFS_ERR("not enough extents\n");
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	return fork;
+}
+
+static
+struct ssdfs_raw_extent *ssdfs_find_extent_in_fork(u64 blk_offset,
+					    struct ssdfs_raw_fork *fork,
+					    struct ssdfs_segment_request *req)
+{
+	struct ssdfs_raw_extent *extent = NULL;
+	u64 start_offset;
+	u64 blks_count;
+	u64 seg_id;
+	u32 logical_blk;
+	u32 len;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fork);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("blk_offset %llu, fork %p\n",
+		  blk_offset, fork);
+
+	start_offset = le64_to_cpu(fork->start_offset);
+	blks_count = le64_to_cpu(fork->blks_count);
+
+	if (start_offset == U64_MAX)
+		return &fork->extents[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(start_offset >= (U64_MAX - blks_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if ((start_offset + blks_count) != blk_offset) {
+		SSDFS_ERR("start_offset %llu + blks_count %llu "
+			  "!= blk_offset %llu\n",
+			  start_offset, blks_count, blk_offset);
+		return ERR_PTR(-ERANGE);
+	}
+
+	seg_id = le64_to_cpu(fork->extents[0].seg_id);
+	logical_blk = le32_to_cpu(fork->extents[0].logical_blk);
+	len = le32_to_cpu(fork->extents[0].len);
+
+	if (seg_id == U64_MAX || logical_blk == U32_MAX || len == U32_MAX) {
+		SSDFS_ERR("corrupted fork: "
+			  "start_offset %llu, blks_count %llu\n",
+			  start_offset, blks_count);
+		return ERR_PTR(-ERANGE);
+	}
+
+	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; i++) {
+		extent = &fork->extents[i];
+
+		if (le64_to_cpu(extent->seg_id) == U64_MAX)
+			break;
+	}
+
+	i--;
+
+	if (i < 0) {
+		SSDFS_ERR("fork is corrupted: "
+			  "start_offset %llu, blks_count %llu\n",
+			  start_offset, blks_count);
+		return ERR_PTR(-ERANGE);
+	}
+
+	extent = &fork->extents[i];
+
+	seg_id = le64_to_cpu(extent->seg_id);
+	logical_blk = le32_to_cpu(extent->logical_blk);
+	len = le32_to_cpu(extent->len);
+
+	if (seg_id == U64_MAX || logical_blk == U32_MAX || len == U32_MAX) {
+		SSDFS_ERR("corrupted fork: "
+			  "start_offset %llu, blks_count %llu\n",
+			  start_offset, blks_count);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (seg_id != req->place.start.seg_id) {
+		i++;
+
+		if (i >= SSDFS_INLINE_EXTENTS_COUNT) {
+			SSDFS_DBG("fork hasn't unused extents\n");
+			return ERR_PTR(-ENOSPC);
+		}
+
+		return &fork->extents[i];
+	}
+
+	if (logical_blk <= req->place.start.blk_index &&
+	    req->place.start.blk_index < (logical_blk + len)) {
+		SSDFS_ERR("intersection takes place: "
+			  "extent1 (new_block %u, len %u), "
+			  "extent2 (start %u, len %u)\n",
+			  req->place.start.blk_index,
+			  req->place.len,
+			  logical_blk, len);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (req->place.start.blk_index <= logical_blk &&
+	    logical_blk < (req->place.start.blk_index +
+			    req->place.len)) {
+		SSDFS_ERR("intersection takes place: "
+			  "extent1 (new_block %u, len %u), "
+			  "extent2 (start %u, len %u)\n",
+			  req->place.start.blk_index,
+			  req->place.len,
+			  logical_blk, len);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (logical_blk + len == req->place.start.blk_index)
+		return extent;
+
+	i++;
+
+	if (i >= SSDFS_INLINE_EXTENTS_COUNT) {
+		SSDFS_DBG("fork hasn't unused extents\n");
+		return ERR_PTR(-ENOSPC);
+	}
+
+	return &fork->extents[i];
+}
+
+static
+int ssdfs_add_block_in_extents_tree(struct inode *inode,
+				    struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_raw_fork *fork = NULL;
+	struct ssdfs_raw_extent *extent = NULL;
+	ino_t ino;
+	u64 blk_offset;
+	u64 start_offset;
+	u64 blks_count;
+	int fork_index = 0;
+	u64 seg_id;
+	u32 logical_blk;
+	u32 len;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!inode || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = SSDFS_FS_I(inode->i_sb);
+	ii = SSDFS_I(inode);
+	ino = inode->i_ino;
+
+	SSDFS_DBG("ino %lu, logical_offset %llu, "
+		  "seg_id %llu, start_blk %u, len %u\n",
+		  ino, req->extent.logical_offset,
+		  req->place.start.seg_id,
+		  req->place.start.blk_index, req->place.len);
+
+	blk_offset = req->extent.logical_offset >> fsi->log_pagesize;
+
+try_fork:
+	fork = ssdfs_find_fork_in_extents_tree(blk_offset, ii, &fork_index);
+	if (IS_ERR_OR_NULL(fork)) {
+		err = fork == NULL ? -ERANGE : PTR_ERR(fork);
+		SSDFS_ERR("fail to find fork: "
+			  "blk_offset %llu, err %d\n",
+			  blk_offset, err);
+		return err;
+	}
+
+	extent = ssdfs_find_extent_in_fork(blk_offset, fork, req);
+	if (IS_ERR_OR_NULL(extent)) {
+		if (PTR_ERR(extent) == -ENOSPC) {
+			fork_index++;
+			goto try_fork;
+		}
+
+		err = extent == NULL ? -ERANGE : PTR_ERR(extent);
+		SSDFS_ERR("fail to find extent: "
+			  "blk_offset %llu, err %d\n",
+			  blk_offset, err);
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fork || !extent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	start_offset = le64_to_cpu(fork->start_offset);
+	blks_count = le64_to_cpu(fork->blks_count);
+
+	seg_id = le64_to_cpu(extent->seg_id);
+	logical_blk = le32_to_cpu(extent->logical_blk);
+	len = le32_to_cpu(extent->len);
+
+	if (seg_id == U64_MAX) {
+		if (logical_blk != U32_MAX || len != U32_MAX) {
+			SSDFS_ERR("corrupted extent: "
+				  "logical_blk %u, len %u\n",
+				  logical_blk, len);
+			return -ERANGE;
+		}
+
+		extent->seg_id = cpu_to_le64(req->place.start.seg_id);
+		extent->logical_blk = cpu_to_le32(req->place.start.blk_index);
+		extent->len = cpu_to_le32(req->place.len);
+	} else {
+		if (seg_id != req->place.start.seg_id ||
+		    (logical_blk + len) != req->place.start.blk_index) {
+			SSDFS_ERR("invalid extent: "
+				  "found (seg %llu, start %u, len %u), "
+				  "requested (seg %llu, start %u, len %u)\n",
+				  seg_id, logical_blk, len,
+				  req->place.start.seg_id,
+				  req->place.start.blk_index,
+				  req->place.len);
+			return -ERANGE;
+		}
+
+		extent->len = cpu_to_le32(len + req->place.len);
+	}
+
+	if (start_offset == U64_MAX) {
+		if (blks_count != U64_MAX) {
+			SSDFS_ERR("corrupted fork: "
+				  "blks_count %llu\n",
+				  blks_count);
+			return -ERANGE;
+		}
+
+		fork->start_offset = cpu_to_le64(blk_offset);
+		fork->blks_count = cpu_to_le64(req->place.len);
+
+		ii->forks_count++;
+	} else
+		le64_add_cpu(&fork->blks_count, req->place.len);
+
+	return 0;
+}
+
 /*
  * ssdfs_update_block() - update block.
  * @fsi: pointer on shared file system object
@@ -344,7 +695,7 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("update request failed: "
-			  "ino %lu, logical_offset %llu, size %u, err %d\n",
+			  "ino %llu, logical_offset %llu, size %u, err %d\n",
 			  req->extent.ino, req->extent.logical_offset,
 			  req->extent.data_bytes, err);
 		return err;
@@ -370,6 +721,8 @@ int __ssdfs_writepage(struct page *page, u32 len,
 	SSDFS_DBG("ino %lu, page_index %llu, len %u, sync_mode %#x\n",
 		  ino, (u64)index, len, wbc->sync_mode);
 
+	set_page_writeback(page);
+
 	logical_offset = (loff_t)index << PAGE_CACHE_SHIFT;
 
 	req = ssdfs_request_alloc();
@@ -377,7 +730,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		return err;
+		goto fail_write_page;
 	}
 
 	ssdfs_request_init(req);
@@ -390,32 +743,49 @@ int __ssdfs_writepage(struct page *page, u32 len,
 		SSDFS_ERR("fail to add page into request: "
 			  "ino %lu, page_index %lu, err %d\n",
 			  ino, index, err);
-		goto fail_write_page;
+		goto free_request;
 	}
 
 	if (wbc->sync_mode == WB_SYNC_NONE) {
-		if (need_add_block(page))
+		if (need_add_block(page)) {
 			err = ssdfs_segment_add_data_block_async(fsi, req);
-		else
+			if (!err) {
+				err = ssdfs_add_block_in_extents_tree(inode,
+									req);
+				if (err) {
+					SSDFS_ERR("fail to add extent: "
+						  "ino %lu, page_index %llu, "
+						  "len %u, err %d\n",
+						  ino, (u64)index, len, err);
+					ssdfs_request_free(req);
+					SetPageError(page);
+					return err;
+				}
+			}
+		} else
 			err = ssdfs_update_block(fsi, req, wbc);
 
 		if (err) {
 			SSDFS_ERR("fail to write page async: "
 				  "ino %lu, page_index %llu, len %u, err %d\n",
 				  ino, (u64)index, len, err);
-				goto fail_write_page;
+				goto free_request;
 		}
 	} else if (wbc->sync_mode == WB_SYNC_ALL) {
-		if (need_add_block(page))
+		if (need_add_block(page)) {
 			err = ssdfs_segment_add_data_block_sync(fsi, req);
-		else
+			if (!err) {
+				err = ssdfs_add_block_in_extents_tree(inode,
+									req);
+			}
+		} else
 			err = ssdfs_update_block(fsi, req, wbc);
 
 		if (err) {
 			SSDFS_ERR("fail to write page sync: "
 				  "ino %lu, page_index %llu, len %u, err %d\n",
 				  ino, (u64)index, len, err);
-				goto fail_write_page;
+				goto free_request;
 		}
 
 		err = wait_for_completion_killable(&req->result.wait);
@@ -424,7 +794,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 				  "ino %lu, logical_offset %llu, size %u, "
 				  "err %d\n",
 				  ino, (u64)logical_offset, (u32)len, err);
-			goto fail_write_page;
+			goto free_request;
 		}
 
 		if (req->result.err) {
@@ -434,7 +804,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 				  "err %d\n",
 				  ino, (u64)logical_offset, (u32)len,
 				  req->result.err);
-			goto fail_write_page;
+			goto free_request;
 		}
 
 		ssdfs_request_free(req);
@@ -445,15 +815,18 @@ int __ssdfs_writepage(struct page *page, u32 len,
 		ClearPageError(page);
 
 		unlock_page(page);
+		end_page_writeback(page);
 	} else
 		BUG();
 
 	return 0;
 
-fail_write_page:
-	SetPageDirty(page);
-	SetPageError(page);
+free_request:
 	ssdfs_request_free(req);
+
+fail_write_page:
+	SetPageError(page);
+	end_page_writeback(page);
 
 	return err;
 }
@@ -542,6 +915,8 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 	return 0;
 
 discard_page:
+	ClearPageUptodate(page);
+	ClearPageMappedToDisk(page);
 	ssdfs_clear_dirty_page(page);
 
 finish_write_page:
