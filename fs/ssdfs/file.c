@@ -427,15 +427,95 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
+
+
+static
+int ssdfs_issue_write_request(struct writeback_control *wbc,
+				struct ssdfs_segment_request **req)
+{
+	struct page *page;
+	struct inode *inode;
+	struct ssdfs_fs_info *fsi;
+	ino_t ino;
+	u64 logical_offset;
+	u32 data_bytes;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!wbc || !req || !*req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_count(&(*req)->result.pvec) == 0) {
+		SSDFS_ERR("pagevec is empty\n");
+		return -ERANGE;
+	}
+
+	page = (*req)->result.pvec.pages[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	inode = page->mapping->host;
+	fsi = SSDFS_FS_I(inode->i_sb);
+	ino = inode->i_ino;
+	logical_offset = (*req)->extent.logical_offset;
+	data_bytes = (*req)->extent.data_bytes;
+
+	SSDFS_DBG("ino %lu, logical_offset %llu, "
+		  "data_bytes %u, sync_mode %#x\n",
+		  ino, logical_offset, data_bytes, wbc->sync_mode);
+
+	if (wbc->sync_mode == WB_SYNC_NONE) {
+		if (need_add_block(page)) {
+			err = ssdfs_segment_add_data_block_async(fsi, *req);
+			if (!err) {
+				err = ssdfs_extents_tree_add_block(inode, *req);
+				if (err) {
+					SSDFS_ERR("fail to add extent: "
+						  "ino %lu, page_index %llu, "
+						  "len %u, err %d\n",
+						  ino, (u64)index, len, err);
+					ssdfs_request_free(*req);
+					SetPageError(page);
+					return err;
+				}
+
+				inode_add_bytes(inode, PAGE_CACHE_SIZE);
+			}
+		} else
+			err = ssdfs_update_block(fsi, *req, wbc);
+
+		if (err) {
+			SSDFS_ERR("fail to write page async: "
+				  "ino %lu, page_index %llu, len %u, err %d\n",
+				  ino, (u64)index, len, err);
+				goto free_request;
+		}
+	}
+
+
+
+
+
+
+
+
+
+}
+
+
+
+
+
 static
 int __ssdfs_writepage(struct page *page, u32 len,
-		      struct writeback_control *wbc)
+		      struct writeback_control *wbc,
+		      struct ssdfs_segment_request **req)
 {
 	struct inode *inode = page->mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
-	struct ssdfs_segment_request *req;
 	loff_t logical_offset;
 	int err;
 
@@ -446,20 +526,20 @@ int __ssdfs_writepage(struct page *page, u32 len,
 
 	logical_offset = (loff_t)index << PAGE_CACHE_SHIFT;
 
-	req = ssdfs_request_alloc();
-	if (IS_ERR_OR_NULL(req)) {
-		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+	*req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(*req)) {
+		err = (*req == NULL ? -ENOMEM : PTR_ERR(*req));
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
 		goto fail_write_page;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(*req);
 
 	ssdfs_request_prepare_logical_extent(ino, (u64)logical_offset,
-					     len, 0, 0, req);
+					     len, 0, 0, *req);
 
-	err = ssdfs_request_add_page(page, req);
+	err = ssdfs_request_add_page(page, *req);
 	if (err) {
 		SSDFS_ERR("fail to add page into request: "
 			  "ino %lu, page_index %lu, err %d\n",
@@ -469,15 +549,15 @@ int __ssdfs_writepage(struct page *page, u32 len,
 
 	if (wbc->sync_mode == WB_SYNC_NONE) {
 		if (need_add_block(page)) {
-			err = ssdfs_segment_add_data_block_async(fsi, req);
+			err = ssdfs_segment_add_data_block_async(fsi, *req);
 			if (!err) {
-				err = ssdfs_extents_tree_add_block(inode, req);
+				err = ssdfs_extents_tree_add_block(inode, *req);
 				if (err) {
 					SSDFS_ERR("fail to add extent: "
 						  "ino %lu, page_index %llu, "
 						  "len %u, err %d\n",
 						  ino, (u64)index, len, err);
-					ssdfs_request_free(req);
+					ssdfs_request_free(*req);
 					SetPageError(page);
 					return err;
 				}
@@ -485,7 +565,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 				inode_add_bytes(inode, PAGE_CACHE_SIZE);
 			}
 		} else
-			err = ssdfs_update_block(fsi, req, wbc);
+			err = ssdfs_update_block(fsi, *req, wbc);
 
 		if (err) {
 			SSDFS_ERR("fail to write page async: "
@@ -495,14 +575,14 @@ int __ssdfs_writepage(struct page *page, u32 len,
 		}
 	} else if (wbc->sync_mode == WB_SYNC_ALL) {
 		if (need_add_block(page)) {
-			err = ssdfs_segment_add_data_block_sync(fsi, req);
+			err = ssdfs_segment_add_data_block_sync(fsi, *req);
 			if (!err) {
-				err = ssdfs_extents_tree_add_block(inode, req);
+				err = ssdfs_extents_tree_add_block(inode, *req);
 				if (!err)
 					inode_add_bytes(inode, PAGE_CACHE_SIZE);
 			}
 		} else
-			err = ssdfs_update_block(fsi, req, wbc);
+			err = ssdfs_update_block(fsi, *req, wbc);
 
 		if (err) {
 			SSDFS_ERR("fail to write page sync: "
@@ -511,7 +591,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 				goto free_request;
 		}
 
-		err = wait_for_completion_killable(&req->result.wait);
+		err = wait_for_completion_killable(&(*req)->result.wait);
 		if (unlikely(err)) {
 			SSDFS_ERR("write request failed: "
 				  "ino %lu, logical_offset %llu, size %u, "
@@ -520,17 +600,17 @@ int __ssdfs_writepage(struct page *page, u32 len,
 			goto free_request;
 		}
 
-		if (req->result.err) {
-			err = req->result.err;
+		if ((*req)->result.err) {
+			err = (*req)->result.err;
 			SSDFS_ERR("write request failed: "
 				  "ino %lu, logical_offset %llu, size %u, "
 				  "err %d\n",
 				  ino, (u64)logical_offset, (u32)len,
-				  req->result.err);
+				  (*req)->result.err);
 			goto free_request;
 		}
 
-		ssdfs_request_free(req);
+		ssdfs_request_free(*req);
 
 		clear_page_new(page);
 		ClearPageDirty(page);
@@ -545,7 +625,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 	return 0;
 
 free_request:
-	ssdfs_request_free(req);
+	ssdfs_request_free(*req);
 
 fail_write_page:
 	SetPageError(page);
@@ -558,14 +638,93 @@ fail_write_page:
 	return err;
 }
 
-/*
- * The ssdfs_writepage() is called by the VM to write
- * a dirty page to backing store. This may happen for data
- * integrity reasons (i.e. 'sync'), or to free up memory
- * (flush). The difference can be seen in wbc->sync_mode.
- */
 static
-int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
+int __ssdfs_writepages(struct page *page, u32 len,
+			struct writeback_control *wbc,
+			struct ssdfs_segment_request **req)
+{
+	/* TODO: implement */
+	SSDFS_DBG("TODO: implement\n");
+	return -ENOSYS;
+
+
+	struct inode *inode = page->mapping->host;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	ino_t ino = inode->i_ino;
+	pgoff_t index = page_index(page);
+	loff_t logical_offset;
+	bool need_create_request;
+	int err;
+
+	SSDFS_DBG("ino %lu, page_index %llu, len %u, sync_mode %#x\n",
+		  ino, (u64)index, len, wbc->sync_mode);
+
+	set_page_writeback(page);
+
+	logical_offset = (loff_t)index << PAGE_CACHE_SHIFT;
+
+try_add_page_into_request:
+	need_create_request = *req == NULL;
+
+	if (need_create_request) {
+		*req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(*req)) {
+			err = (*req == NULL ? -ENOMEM : PTR_ERR(*req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto fail_write_page;
+		}
+
+		ssdfs_request_init(*req);
+
+		ssdfs_request_prepare_logical_extent(ino, (u64)logical_offset,
+						     len, 0, 0, *req);
+
+		err = ssdfs_request_add_page(page, *req);
+		if (err) {
+			SSDFS_ERR("fail to add page into request: "
+				  "ino %lu, page_index %lu, err %d\n",
+				  ino, index, err);
+			goto free_request;
+		}
+	} else {
+
+
+
+
+
+	}
+
+	return 0;
+
+free_request:
+	ssdfs_request_free(*req);
+
+fail_write_page:
+	SetPageError(page);
+
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		unlock_page(page);
+
+	end_page_writeback(page);
+
+	return err;
+}
+
+
+
+
+
+/* writepage function prototype */
+typedef int (*ssdfs_writepagefn)(struct page *page, u32 len,
+				 struct writeback_control *wbc,
+				 struct ssdfs_segment_request **req);
+
+static
+int ssdfs_writepage_wrapper(struct page *page,
+			    struct writeback_control *wbc,
+			    struct ssdfs_segment_request **req,
+			    ssdfs_writepagefn writepage)
 {
 	struct inode *inode = page->mapping->host;
 	ino_t ino = inode->i_ino;
@@ -603,7 +762,7 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 		if (err)
 			goto finish_write_page;*/
 
-		err = __ssdfs_writepage(page, PAGE_CACHE_SIZE, wbc);
+		err = (*writepage)(page, PAGE_CACHE_SIZE, wbc, req);
 		if (unlikely(err)) {
 			ssdfs_fs_error(inode->i_sb, __FILE__,
 					__func__, __LINE__,
@@ -629,7 +788,7 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 	if (err)
 		goto finish_write_page;*/
 
-	err = __ssdfs_writepage(page, len, wbc);
+	err = (*writepage)(page, len, wbc, req);
 	if (unlikely(err)) {
 		ssdfs_fs_error(inode->i_sb, __FILE__,
 				__func__, __LINE__,
@@ -649,6 +808,215 @@ discard_page:
 finish_write_page:
 	unlock_page(page);
 	return err;
+}
+
+/*
+ * The ssdfs_writepage() is called by the VM to write
+ * a dirty page to backing store. This may happen for data
+ * integrity reasons (i.e. 'sync'), or to free up memory
+ * (flush). The difference can be seen in wbc->sync_mode.
+ */
+static
+int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
+{
+	struct inode *inode = page->mapping->host;
+	ino_t ino = inode->i_ino;
+	pgoff_t index = page_index(page);
+	struct ssdfs_segment_request *req = NULL;
+
+	SSDFS_DBG("ino %lu, page_index %llu, "
+		  "i_size %llu, len %d\n",
+		  ino, (u64)index,
+		  (u64)i_size, len);
+
+	return ssdfs_writepage_wrapper(page, wbc, &req,
+					__ssdfs_writepage);
+}
+
+
+
+static
+int ssdfs_writepages(struct address_space *mapping,
+		     struct writeback_control *wbc)
+{
+	struct ssdfs_segment_request *req = NULL;
+	struct pagevec pvec;
+	int nr_pages;
+	pgoff_t uninitialized_var(writeback_index);
+	pgoff_t index;
+	pgoff_t end;		/* Inclusive */
+	pgoff_t done_index;
+	int cycled;
+	int range_whole = 0;
+	int tag;
+	int ret = 0;
+
+	SSDFS_DBG("ino %lu, nr_to_write %lu, "
+		  "range_start %llu, range_end %llu\n",
+		  ino, wbc->nr_to_write,
+		  (u64)wbc->range_start,
+		  (u64)wbc->range_end);
+
+	/*
+	 * No pages to write?
+	 */
+	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
+		goto out_writepages;
+
+	pagevec_init(&pvec, 0);
+
+	if (wbc->range_cyclic) {
+		writeback_index = mapping->writeback_index; /* prev offset */
+		index = writeback_index;
+		if (index == 0)
+			cycled = 1;
+		else
+			cycled = 0;
+		end = -1;
+	} else {
+		index = wbc->range_start >> PAGE_CACHE_SHIFT;
+		end = wbc->range_end >> PAGE_CACHE_SHIFT;
+		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
+			range_whole = 1;
+		cycled = 1; /* ignore range_cyclic tests */
+	}
+
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
+		tag = PAGECACHE_TAG_TOWRITE;
+	else
+		tag = PAGECACHE_TAG_DIRTY;
+
+retry:
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
+		tag_pages_for_writeback(mapping, index, end);
+
+	done_index = index;
+
+	while (!done && (index <= end)) {
+		int i;
+
+		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
+			      min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
+		if (nr_pages == 0)
+			break;
+
+		for (i = 0; i < nr_pages; i++) {
+			struct page *page = pvec.pages[i];
+
+			/*
+			 * At this point, the page may be truncated or
+			 * invalidated (changing page->mapping to NULL), or
+			 * even swizzled back from swapper_space to tmpfs file
+			 * mapping. However, page->index will not change
+			 * because we have a reference on the page.
+			 */
+			if (page->index > end) {
+				/*
+				 * can't be range_cyclic (1st pass) because
+				 * end == -1 in that case.
+				 */
+				done = 1;
+				break;
+			}
+
+			done_index = page->index;
+
+			lock_page(page);
+
+			/*
+			 * Page truncated or invalidated. We can freely skip it
+			 * then, even for data integrity operations: the page
+			 * has disappeared concurrently, so there could be no
+			 * real expectation of this data interity operation
+			 * even if there is now a new, dirty page at the same
+			 * pagecache address.
+			 */
+			if (unlikely(page->mapping != mapping)) {
+continue_unlock:
+				unlock_page(page);
+				continue;
+			}
+
+			if (!PageDirty(page)) {
+				/* someone wrote it for us */
+				goto continue_unlock;
+			}
+
+			if (PageWriteback(page)) {
+				if (wbc->sync_mode != WB_SYNC_NONE)
+					wait_on_page_writeback(page);
+				else
+					goto continue_unlock;
+			}
+
+			BUG_ON(PageWriteback(page));
+			if (!clear_page_dirty_for_io(page))
+				goto continue_unlock;
+
+			ret = ssdfs_writepage_wrapper(page, wbc, &req,
+						      __ssdfs_writepages);
+			if (unlikely(ret)) {
+				if (ret == -EROFS) {
+					/*
+					 * continue to discard pages
+					 */
+				} else {
+					/*
+					 * done_index is set past this page,
+					 * so media errors will not choke
+					 * background writeout for the entire
+					 * file. This has consequences for
+					 * range_cyclic semantics (ie. it may
+					 * not be suitable for data integrity
+					 * writeout).
+					 */
+					done_index = page->index + 1;
+					done = 1;
+					break;
+				}
+			}
+
+			/*
+			 * We stop writing back only if we are not doing
+			 * integrity sync. In case of integrity sync we have to
+			 * keep going until we have written all the pages
+			 * we tagged for writeback prior to entering this loop.
+			 */
+			if (--wbc->nr_to_write <= 0 &&
+			    wbc->sync_mode == WB_SYNC_NONE) {
+				done = 1;
+				break;
+			}
+		}
+
+		pagevec_release(&pvec);
+		cond_resched();
+	};
+
+
+
+/* TODO: place last request into queue */
+BUG();
+
+
+
+	if (!cycled && !done) {
+		/*
+		 * range_cyclic:
+		 * We hit the last page and there is more work to be done: wrap
+		 * back to the start of the file
+		 */
+		cycled = 1;
+		index = 0;
+		end = writeback_index - 1;
+		goto retry;
+	}
+
+	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
+		mapping->writeback_index = done_index;
+
+out_writepages:
+	return ret;
 }
 
 /*
@@ -889,7 +1257,7 @@ const struct address_space_operations ssdfs_aops = {
 	.readpage		= ssdfs_readpage,
 	.readpages		= ssdfs_readpages,
 	.writepage		= ssdfs_writepage,
-	.writepages		= generic_writepages,
+	.writepages		= ssdfs_writepages,
 	.write_begin		= ssdfs_write_begin,
 	.write_end		= ssdfs_write_end,
 	.direct_IO		= ssdfs_direct_IO,
