@@ -338,4 +338,45 @@ pgoff_t ssdfs_mem_page_to_phys_page(struct ssdfs_fs_info *fsi,
 #define SSDFS_BTN(ptr) \
 	((struct ssdfs_btree_node *)(ptr))
 
+static inline
+bool need_add_block(struct page *page)
+{
+	return PageChecked(page);
+}
+
+static inline
+void set_page_new(struct page *page)
+{
+	SetPageChecked(page);
+}
+
+static inline
+void clear_page_new(struct page *page)
+{
+	ClearPageChecked(page);
+}
+
+static inline
+bool can_be_merged_into_extent(struct page *page1, struct page *page2)
+{
+	ino_t ino1 = page1->mapping->host->i_ino;
+	ino_t ino2 = page2->mapping->host->i_ino;
+	pgoff_t index1 = page_index(page1);
+	pgoff_t index2 = page_index(page2);
+	pgoff_t diff_index;
+	bool has_identical_type;
+	bool has_identical_ino;
+
+	has_identical_type = (PageChecked(page1) && PageChecked(page2)) ||
+				(!PageChecked(page1) && !PageChecked(page2));
+	has_identical_ino = ino1 == ino2;
+
+	if (index1 >= index2)
+		diff_index = index1 - index2;
+	else
+		diff_index = index2 - index1;
+
+	return has_identical_type && has_identical_ino && (diff_index == 1);
+}
+
 #endif /* _SSDFS_INLINE_H */

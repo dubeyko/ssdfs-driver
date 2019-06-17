@@ -17,26 +17,33 @@
 #include <linux/pagemap.h>
 #include <linux/writeback.h>
 #include <linux/pagevec.h>
+#include <linux/blkdev.h>
 
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "request_queue.h"
+#include "offset_translation_table.h"
+#include "page_array.h"
+#include "peb_container.h"
+#include "segment_bitmap.h"
 #include "segment.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
+#include "extents_tree.h"
 #include "xattr.h"
 #include "acl.h"
-#include "request_queue.h"
-#include "extents_tree.h"
-#include "offset_translation_table.h"
 
 #include <trace/events/ssdfs.h>
 
 enum {
-	SSDFS_CURRENT_THREAD_READ,
-	SSDFS_DELEGATE_TO_READ_THREAD,
+	SSDFS_BLOCK_BASED_REQUEST,
+	SSDFS_EXTENT_BASED_REQUEST,
 };
 
 enum {
-	SSDFS_BLOCK_BASED_REQUEST,
-	SSDFS_EXTENT_BASED_REQUEST,
+	SSDFS_CURRENT_THREAD_READ,
+	SSDFS_DELEGATE_TO_READ_THREAD,
 };
 
 /*
@@ -108,7 +115,7 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req)
 {
 	struct ssdfs_segment_info *si;
-	struct ssdfs_peb_info *pebi;
+	struct ssdfs_peb_container *pebc;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_offset_position pos;
 	u16 logical_blk;
@@ -181,9 +188,9 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 		goto finish_read_block;
 	}
 
-	pebi = &si->peb_array[pos.peb_index];
+	pebc = &si->peb_array[pos.peb_index];
 
-	err = ssdfs_peb_read_page(pebi, req);
+	err = ssdfs_peb_read_page(pebc, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read page: err %d\n",
 			  err);
@@ -191,7 +198,7 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	}
 
 	for (i = 0; i < req->result.processed_blks; i++)
-		ssdfs_peb_mark_request_block_uptodate(pebi, req, i);
+		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
 finish_read_block:
 	req->result.err = err;
@@ -218,16 +225,16 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 	SSDFS_DBG("ino %lu, page_index %llu, read_mode %#x\n",
 		  ino, (u64)index, read_mode);
 
-	logical_offset = (loff_t)index << PAGE_CACHE_SHIFT;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 
 	file_size = i_size_read(file_inode(file));
 	data_bytes = file_size - logical_offset;
-	data_bytes = min_t(loff_t, PAGE_CACHE_SIZE, data_bytes);
+	data_bytes = min_t(loff_t, PAGE_SIZE, data_bytes);
 
 	BUG_ON(data_bytes > U32_MAX);
 
 	kaddr = kmap_atomic(page);
-	memset(kaddr, 0, PAGE_CACHE_SIZE);
+	memset(kaddr, 0, PAGE_SIZE);
 	kunmap_atomic(kaddr);
 
 	if (logical_offset >= file_size) {
@@ -300,8 +307,6 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 			SSDFS_ERR("fail to read block: err %d\n", err);
 			goto fail_read_page;
 		}
-
-		ssdfs_put_request(req);
 		break;
 
 	default:
@@ -412,9 +417,11 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 		return PTR_ERR(si);
 	}
 
-	if (wbc->sync_mode == WB_SYNC_NONE)
-		err = ssdfs_segment_update_block_async(si, req);
-	else if (wbc->sync_mode == WB_SYNC_ALL)
+	if (wbc->sync_mode == WB_SYNC_NONE) {
+		err = ssdfs_segment_update_block_async(si,
+						       SSDFS_REQ_ASYNC,
+						       req);
+	} else if (wbc->sync_mode == WB_SYNC_ALL)
 		err = ssdfs_segment_update_block_sync(si, req);
 	else
 		BUG();
@@ -431,7 +438,6 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 
 	return 0;
 }
-
 
 /*
  * ssdfs_update_extent() - update extent.
@@ -477,9 +483,11 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 		return PTR_ERR(si);
 	}
 
-	if (wbc->sync_mode == WB_SYNC_NONE)
-		err = ssdfs_segment_update_extent_async(si, req);
-	else if (wbc->sync_mode == WB_SYNC_ALL)
+	if (wbc->sync_mode == WB_SYNC_NONE) {
+		err = ssdfs_segment_update_extent_async(si,
+							SSDFS_REQ_ASYNC,
+							req);
+	} else if (wbc->sync_mode == WB_SYNC_ALL)
 		err = ssdfs_segment_update_extent_sync(si, req);
 	else
 		BUG();
@@ -493,70 +501,6 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 	}
 
 	ssdfs_segment_put_object(si);
-
-	return 0;
-}
-
-static
-int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
-					  struct ssdfs_segment_request **req)
-{
-	struct page *page;
-	struct inode *inode;
-	struct ssdfs_fs_info *fsi;
-	ino_t ino;
-	u64 logical_offset;
-	u32 data_bytes;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!wbc || !req || !*req);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (pagevec_count(&(*req)->result.pvec) == 0) {
-		SSDFS_ERR("pagevec is empty\n");
-		return -ERANGE;
-	}
-
-	page = (*req)->result.pvec.pages[0];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	inode = page->mapping->host;
-	fsi = SSDFS_FS_I(inode->i_sb);
-	ino = inode->i_ino;
-	logical_offset = (*req)->extent.logical_offset;
-	data_bytes = (*req)->extent.data_bytes;
-
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
-		  "data_bytes %u, sync_mode %#x\n",
-		  ino, logical_offset, data_bytes, wbc->sync_mode);
-
-	if (need_add_block(page)) {
-		err = ssdfs_segment_add_data_block_async(fsi, *req);
-		if (!err) {
-			err = ssdfs_extents_tree_add_block(inode, *req);
-			if (err) {
-				SSDFS_ERR("fail to add extent: "
-					  "ino %lu, page_index %llu, "
-					  "len %u, err %d\n",
-					  ino, (u64)index, len, err);
-				return err;
-			}
-
-			inode_add_bytes(inode, fsi->pagesize);
-		}
-	} else
-		err = ssdfs_update_block(fsi, *req, wbc);
-
-	if (err) {
-		SSDFS_ERR("fail to write page async: "
-			  "ino %lu, page_index %llu, len %u, err %d\n",
-			  ino, (u64)index, len, err);
-		return err;
-	}
 
 	return 0;
 }
@@ -610,82 +554,8 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 
 	if (err) {
 		SSDFS_ERR("fail to write page sync: "
-			  "ino %lu, page_index %llu, len %u, err %d\n",
-			  ino, (u64)index, len, err);
-		return err;
-	}
-
-	return 0;
-}
-
-static
-int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
-					   struct ssdfs_segment_request **req)
-{
-	struct page *page;
-	struct inode *inode;
-	struct ssdfs_fs_info *fsi;
-	ino_t ino;
-	u64 logical_offset;
-	u32 data_bytes;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!wbc || !req || !*req);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (pagevec_count(&(*req)->result.pvec) == 0) {
-		SSDFS_ERR("pagevec is empty\n");
-		return -ERANGE;
-	}
-
-	page = (*req)->result.pvec.pages[0];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	inode = page->mapping->host;
-	fsi = SSDFS_FS_I(inode->i_sb);
-	ino = inode->i_ino;
-	logical_offset = (*req)->extent.logical_offset;
-	data_bytes = (*req)->extent.data_bytes;
-
-	SSDFS_DBG("ino %lu, logical_offset %llu, "
-		  "data_bytes %u, sync_mode %#x\n",
-		  ino, logical_offset, data_bytes, wbc->sync_mode);
-
-	if (need_add_block(page)) {
-		err = ssdfs_segment_add_data_extent_async(fsi, *req);
-		if (!err) {
-			u32 extent_bytes = data_bytes;
-
-			err = ssdfs_extents_tree_add_block(inode, *req);
-			if (err) {
-				SSDFS_ERR("fail to add extent: "
-					  "ino %lu, page_index %llu, "
-					  "len %u, err %d\n",
-					  ino, (u64)index, len, err);
-				return err;
-			}
-
-			if (fsi->pagesize > PAGE_CACHE_SIZE)
-				extent_bytes += fsi->pagesize - 1;
-			else if (fsi->pagesize <= PAGE_CACHE_SIZE)
-				extent_bytes += PAGE_CACHE_SIZE - 1;
-
-			extent_bytes >>= fsi->log_pagesize;
-			extent_bytes <<= fsi->log_pagesize;
-
-			inode_add_bytes(inode, extent_bytes);
-		}
-	} else
-		err = ssdfs_update_extent(fsi, *req, wbc);
-
-	if (err) {
-		SSDFS_ERR("fail to write extent async: "
-			  "ino %lu, page_index %llu, len %u, err %d\n",
-			  ino, (u64)index, len, err);
+			  "ino %lu, page_index %llu, err %d\n",
+			  ino, (u64)page_index(page), err);
 		return err;
 	}
 
@@ -738,15 +608,15 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 			if (err) {
 				SSDFS_ERR("fail to add extent: "
 					  "ino %lu, page_index %llu, "
-					  "len %u, err %d\n",
-					  ino, (u64)index, len, err);
+					  "err %d\n",
+					  ino, (u64)page_index(page), err);
 				return err;
 			}
 
-			if (fsi->pagesize > PAGE_CACHE_SIZE)
+			if (fsi->pagesize > PAGE_SIZE)
 				extent_bytes += fsi->pagesize - 1;
-			else if (fsi->pagesize <= PAGE_CACHE_SIZE)
-				extent_bytes += PAGE_CACHE_SIZE - 1;
+			else if (fsi->pagesize <= PAGE_SIZE)
+				extent_bytes += PAGE_SIZE - 1;
 
 			extent_bytes >>= fsi->log_pagesize;
 			extent_bytes <<= fsi->log_pagesize;
@@ -758,8 +628,147 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 
 	if (err) {
 		SSDFS_ERR("fail to write page sync: "
-			  "ino %lu, page_index %llu, len %u, err %d\n",
-			  ino, (u64)index, len, err);
+			  "ino %lu, page_index %llu, err %d\n",
+			  ino, (u64)page_index(page), err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
+					  struct ssdfs_segment_request **req)
+{
+	struct page *page;
+	struct inode *inode;
+	struct ssdfs_fs_info *fsi;
+	ino_t ino;
+	u64 logical_offset;
+	u32 data_bytes;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!wbc || !req || !*req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_count(&(*req)->result.pvec) == 0) {
+		SSDFS_ERR("pagevec is empty\n");
+		return -ERANGE;
+	}
+
+	page = (*req)->result.pvec.pages[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	inode = page->mapping->host;
+	fsi = SSDFS_FS_I(inode->i_sb);
+	ino = inode->i_ino;
+	logical_offset = (*req)->extent.logical_offset;
+	data_bytes = (*req)->extent.data_bytes;
+
+	SSDFS_DBG("ino %lu, logical_offset %llu, "
+		  "data_bytes %u, sync_mode %#x\n",
+		  ino, logical_offset, data_bytes, wbc->sync_mode);
+
+	if (need_add_block(page)) {
+		err = ssdfs_segment_add_data_block_async(fsi, *req);
+		if (!err) {
+			err = ssdfs_extents_tree_add_block(inode, *req);
+			if (err) {
+				SSDFS_ERR("fail to add extent: "
+					  "ino %lu, page_index %llu, "
+					  "err %d\n",
+					  ino, (u64)page_index(page),
+					  err);
+				return err;
+			}
+
+			inode_add_bytes(inode, fsi->pagesize);
+		}
+	} else
+		err = ssdfs_update_block(fsi, *req, wbc);
+
+	if (err) {
+		SSDFS_ERR("fail to write page async: "
+			  "ino %lu, page_index %llu, err %d\n",
+			  ino, (u64)page_index(page), err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
+					   struct ssdfs_segment_request **req)
+{
+	struct page *page;
+	struct inode *inode;
+	struct ssdfs_fs_info *fsi;
+	ino_t ino;
+	u64 logical_offset;
+	u32 data_bytes;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!wbc || !req || !*req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_count(&(*req)->result.pvec) == 0) {
+		SSDFS_ERR("pagevec is empty\n");
+		return -ERANGE;
+	}
+
+	page = (*req)->result.pvec.pages[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	inode = page->mapping->host;
+	fsi = SSDFS_FS_I(inode->i_sb);
+	ino = inode->i_ino;
+	logical_offset = (*req)->extent.logical_offset;
+	data_bytes = (*req)->extent.data_bytes;
+
+	SSDFS_DBG("ino %lu, logical_offset %llu, "
+		  "data_bytes %u, sync_mode %#x\n",
+		  ino, logical_offset, data_bytes, wbc->sync_mode);
+
+	if (need_add_block(page)) {
+		err = ssdfs_segment_add_data_extent_async(fsi, *req);
+		if (!err) {
+			u32 extent_bytes = data_bytes;
+
+			err = ssdfs_extents_tree_add_block(inode, *req);
+			if (err) {
+				SSDFS_ERR("fail to add extent: "
+					  "ino %lu, page_index %llu, "
+					  "err %d\n",
+					  ino, (u64)page_index(page), err);
+				return err;
+			}
+
+			if (fsi->pagesize > PAGE_SIZE)
+				extent_bytes += fsi->pagesize - 1;
+			else if (fsi->pagesize <= PAGE_SIZE)
+				extent_bytes += PAGE_SIZE - 1;
+
+			extent_bytes >>= fsi->log_pagesize;
+			extent_bytes <<= fsi->log_pagesize;
+
+			inode_add_bytes(inode, extent_bytes);
+		}
+	} else
+		err = ssdfs_update_extent(fsi, *req, wbc);
+
+	if (err) {
+		SSDFS_ERR("fail to write extent async: "
+			  "ino %lu, page_index %llu, err %d\n",
+			  ino, (u64)page_index(page), err);
 		return err;
 	}
 
@@ -781,8 +790,13 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!wbc || !req || !*req);
+	BUG_ON(!wbc || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!*req) {
+		SSDFS_ERR("empty segment request\n");
+		return -ERANGE;
+	}
 
 	if (pagevec_count(&(*req)->result.pvec) == 0) {
 		SSDFS_ERR("pagevec is empty\n");
@@ -825,8 +839,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 
 		if (err) {
 			SSDFS_ERR("fail to write async: "
-				  "ino %lu, page_index %llu, len %u, err %d\n",
-				  ino, (u64)index, len, err);
+				  "ino %lu, err %d\n",
+				  ino, err);
 				goto fail_issue_write_request;
 		}
 	} else if (wbc->sync_mode == WB_SYNC_ALL) {
@@ -838,9 +852,9 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			BUG();
 
 		if (err) {
-			SSDFS_ERR("fail to write page sync: "
-				  "ino %lu, page_index %llu, len %u, err %d\n",
-				  ino, (u64)index, len, err);
+			SSDFS_ERR("fail to write sync: "
+				  "ino %lu, err %d\n",
+				  ino, err);
 				goto fail_issue_write_request;
 		}
 
@@ -849,7 +863,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			SSDFS_ERR("write request failed: "
 				  "ino %lu, logical_offset %llu, size %u, "
 				  "err %d\n",
-				  ino, (u64)logical_offset, (u32)len, err);
+				  ino, (u64)logical_offset,
+				  (u32)data_bytes, err);
 			goto fail_issue_write_request;
 		}
 
@@ -858,7 +873,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			SSDFS_ERR("write request failed: "
 				  "ino %lu, logical_offset %llu, size %u, "
 				  "err %d\n",
-				  ino, (u64)logical_offset, (u32)len,
+				  ino, (u64)logical_offset, (u32)data_bytes,
 				  (*req)->result.err);
 			goto fail_issue_write_request;
 		}
@@ -879,6 +894,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			end_page_writeback(page);
 		}
 
+		ssdfs_put_request(*req);
 		ssdfs_request_free(*req);
 	} else
 		BUG();
@@ -901,6 +917,7 @@ fail_issue_write_request:
 		end_page_writeback(page);
 	}
 
+	ssdfs_put_request(*req);
 	ssdfs_request_free(*req);
 
 	return err;
@@ -912,7 +929,6 @@ int __ssdfs_writepage(struct page *page, u32 len,
 		      struct ssdfs_segment_request **req)
 {
 	struct inode *inode = page->mapping->host;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
 	loff_t logical_offset;
@@ -930,8 +946,9 @@ int __ssdfs_writepage(struct page *page, u32 len,
 	}
 
 	ssdfs_request_init(*req);
+	ssdfs_get_request(*req);
 
-	logical_offset = (loff_t)index << PAGE_CACHE_SHIFT;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 	ssdfs_request_prepare_logical_extent(ino, (u64)logical_offset,
 					     len, 0, 0, *req);
 
@@ -946,6 +963,7 @@ int __ssdfs_writepage(struct page *page, u32 len,
 	return ssdfs_issue_write_request(wbc, req, SSDFS_BLOCK_BASED_REQUEST);
 
 free_request:
+	ssdfs_put_request(*req);
 	ssdfs_request_free(*req);
 
 	return err;
@@ -957,7 +975,6 @@ int __ssdfs_writepages(struct page *page, u32 len,
 			struct ssdfs_segment_request **req)
 {
 	struct inode *inode = page->mapping->host;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
 	loff_t logical_offset;
@@ -967,7 +984,7 @@ int __ssdfs_writepages(struct page *page, u32 len,
 	SSDFS_DBG("ino %lu, page_index %llu, len %u, sync_mode %#x\n",
 		  ino, (u64)index, len, wbc->sync_mode);
 
-	logical_offset = (loff_t)index << PAGE_CACHE_SHIFT;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 
 try_add_page_into_request:
 	need_create_request = *req == NULL;
@@ -982,6 +999,7 @@ try_add_page_into_request:
 		}
 
 		ssdfs_request_init(*req);
+		ssdfs_get_request(*req);
 
 		err = ssdfs_request_add_page(page, *req);
 		if (err) {
@@ -1040,6 +1058,7 @@ try_add_page_into_request:
 	return 0;
 
 free_request:
+	ssdfs_put_request(*req);
 	ssdfs_request_free(*req);
 
 fail_write_pages:
@@ -1061,8 +1080,8 @@ int ssdfs_writepage_wrapper(struct page *page,
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
 	loff_t i_size =  i_size_read(inode);
-	pgoff_t end_index = i_size >> PAGE_CACHE_SHIFT;
-	int len = i_size & (PAGE_CACHE_SIZE - 1);
+	pgoff_t end_index = i_size >> PAGE_SHIFT;
+	int len = i_size & (PAGE_SIZE - 1);
 	int err = 0;
 
 	SSDFS_DBG("ino %lu, page_index %llu, "
@@ -1089,11 +1108,7 @@ int ssdfs_writepage_wrapper(struct page *page,
 
 	/* Is the page fully inside @i_size? */
 	if (index < end_index) {
-		/*err = inode->i_sb->s_op->write_inode(inode, NULL);
-		if (err)
-			goto finish_write_page;*/
-
-		err = (*writepage)(page, PAGE_CACHE_SIZE, wbc, req);
+		err = (*writepage)(page, PAGE_SIZE, wbc, req);
 		if (unlikely(err)) {
 			ssdfs_fs_error(inode->i_sb, __FILE__,
 					__func__, __LINE__,
@@ -1113,11 +1128,7 @@ int ssdfs_writepage_wrapper(struct page *page,
 	 * the page size, the remaining memory is zeroed when mapped, and
 	 * writes to that region are not written out to the file."
 	 */
-	zero_user_segment(page, len, PAGE_CACHE_SIZE);
-
-	/*err = inode->i_sb->s_op->write_inode(inode, NULL);
-	if (err)
-		goto finish_write_page;*/
+	zero_user_segment(page, len, PAGE_SIZE);
 
 	err = (*writepage)(page, len, wbc, req);
 	if (unlikely(err)) {
@@ -1155,10 +1166,8 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 	pgoff_t index = page_index(page);
 	struct ssdfs_segment_request *req = NULL;
 
-	SSDFS_DBG("ino %lu, page_index %llu, "
-		  "i_size %llu, len %d\n",
-		  ino, (u64)index,
-		  (u64)i_size, len);
+	SSDFS_DBG("ino %lu, page_index %llu\n",
+		  ino, (u64)index);
 
 	return ssdfs_writepage_wrapper(page, wbc, &req,
 					__ssdfs_writepage);
@@ -1178,6 +1187,8 @@ static
 int ssdfs_writepages(struct address_space *mapping,
 		     struct writeback_control *wbc)
 {
+	struct inode *inode = mapping->host;
+	ino_t ino = inode->i_ino;
 	struct ssdfs_segment_request *req = NULL;
 	struct pagevec pvec;
 	int nr_pages;
@@ -1188,6 +1199,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	int cycled;
 	int range_whole = 0;
 	int tag;
+	int done = 0;
 	int ret = 0;
 
 	SSDFS_DBG("ino %lu, nr_to_write %lu, "
@@ -1202,7 +1214,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	if (!mapping->nrpages || !mapping_tagged(mapping, PAGECACHE_TAG_DIRTY))
 		goto out_writepages;
 
-	pagevec_init(&pvec, 0);
+	pagevec_init(&pvec);
 
 	if (wbc->range_cyclic) {
 		writeback_index = mapping->writeback_index; /* prev offset */
@@ -1213,8 +1225,8 @@ int ssdfs_writepages(struct address_space *mapping,
 			cycled = 0;
 		end = -1;
 	} else {
-		index = wbc->range_start >> PAGE_CACHE_SHIFT;
-		end = wbc->range_end >> PAGE_CACHE_SHIFT;
+		index = wbc->range_start >> PAGE_SHIFT;
+		end = wbc->range_end >> PAGE_SHIFT;
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
 		cycled = 1; /* ignore range_cyclic tests */
@@ -1234,8 +1246,10 @@ retry:
 	while (!done && (index <= end)) {
 		int i;
 
-		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
-			      min(end - index, (pgoff_t)PAGEVEC_SIZE-1) + 1);
+		nr_pages = (int)min_t(pgoff_t, end - index,
+					(pgoff_t)PAGEVEC_SIZE-1) + 1;
+		nr_pages = pagevec_lookup_range_nr_tag(&pvec, mapping, &index,
+							end, tag, nr_pages);
 		if (nr_pages == 0)
 			break;
 
@@ -1332,7 +1346,7 @@ continue_unlock:
 		cond_resched();
 	};
 
-	ret = ssdfs_issue_write_request(wbc, req, SSDFS_EXTENT_BASED_REQUEST);
+	ret = ssdfs_issue_write_request(wbc, &req, SSDFS_EXTENT_BASED_REQUEST);
 	if (ret < 0)
 		goto out_writepages;
 
@@ -1368,7 +1382,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct page *page;
-	pgoff_t index = pos >> PAGE_CACHE_SHIFT;
+	pgoff_t index = pos >> PAGE_SHIFT;
 	unsigned blks = 0;
 	loff_t start_blk, end_blk, cur_blk;
 	bool is_new_blk = false;
@@ -1410,7 +1424,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 				spin_unlock(&fsi->volume_state_lock);
 
 				unlock_page(page);
-				page_cache_release(page);
+				put_page(page);
 
 				SSDFS_DBG("volume hasn't free space\n");
 				return err;
@@ -1425,15 +1439,15 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 
 	*pagep = page;
 
-	if ((len == PAGE_CACHE_SIZE) || PageUptodate(page))
+	if ((len == PAGE_SIZE) || PageUptodate(page))
 		return 0;
 
-	if ((pos & PAGE_CACHE_MASK) >= i_size_read(inode)) {
-		unsigned start = pos & (PAGE_CACHE_SIZE - 1);
+	if ((pos & PAGE_MASK) >= i_size_read(inode)) {
+		unsigned start = pos & (PAGE_SIZE - 1);
 		unsigned end = start + len;
 
 		/* Reading beyond i_size is simple: memset to zero */
-		zero_user_segments(page, 0, start, end, PAGE_CACHE_SIZE);
+		zero_user_segments(page, 0, start, end, PAGE_SIZE);
 		return 0;
 	}
 
@@ -1451,7 +1465,7 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 {
 	struct inode *inode = mapping->host;
 	pgoff_t index = page->index;
-	unsigned start = pos & (PAGE_CACHE_SIZE - 1);
+	unsigned start = pos & (PAGE_SIZE - 1);
 	unsigned end = start + copied;
 	loff_t old_size = i_size_read(inode);
 	int err = 0;
@@ -1473,8 +1487,8 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 		}
 	}
 
-	if (old_size < (index << PAGE_CACHE_SHIFT) + end) {
-		i_size_write(inode, (index << PAGE_CACHE_SHIFT) + end);
+	if (old_size < (index << PAGE_SHIFT) + end) {
+		i_size_write(inode, (index << PAGE_SHIFT) + end);
 		mark_inode_dirty_sync(inode);
 	}
 
@@ -1486,7 +1500,7 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 
 out:
 	unlock_page(page);
-	page_cache_release(page);
+	put_page(page);
 	return err ? err : copied;
 }
 
@@ -1496,13 +1510,10 @@ out:
  * bypass the page cache and transfer data directly between
  * the storage and the application's address space.
  */
-static ssize_t ssdfs_direct_IO(int rw, struct kiocb *iocb,
-				const struct iovec *iov,
-				loff_t offset, unsigned long nr_segs)
+static ssize_t ssdfs_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
-	/* TODO: implement ssdfs_direct_IO() */
-	SSDFS_WARN("TODO: implement ssdfs_direct_IO()\n");
-	return 0;
+	/* TODO: implement */
+	return -ERANGE;
 }
 
 /*
@@ -1531,12 +1542,11 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 		return err;
 	}
 
-	/* mutex_lock(&inode->i_mutex); */
-	/* TODO: implement core logic of ssdfs_fsync() */
-	SSDFS_WARN("TODO: implement ssdfs_fsync()\n");
-	/* mutex_unlock(&inode->i_mutex); */
+	inode_lock(inode);
+	sync_inode_metadata(inode, 1);
+	blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+	inode_unlock(inode);
 
-	err = -EIO;
 	trace_ssdfs_sync_file_exit(file, datasync, err);
 
 	return err;
@@ -1544,49 +1554,36 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 const struct file_operations ssdfs_file_operations = {
 	.llseek		= generic_file_llseek,
-	.open		= generic_file_open,
-	.read		= do_sync_read,
-	.write		= do_sync_write,
-	.aio_read	= generic_file_aio_read,
-	.aio_write	= generic_file_aio_write,
+	.read_iter	= generic_file_read_iter,
+	.write_iter	= generic_file_write_iter,
 	.unlocked_ioctl	= ssdfs_ioctl,
-	.mmap		= generic_file_readonly_mmap,
+	.mmap		= generic_file_mmap,
+	.open		= generic_file_open,
 	.fsync		= ssdfs_fsync,
 	.splice_read	= generic_file_splice_read,
+	.splice_write	= iter_file_splice_write,
 };
 
 const struct inode_operations ssdfs_file_inode_operations = {
 	.getattr	= ssdfs_getattr,
 	.setattr	= ssdfs_setattr,
-	.setxattr	= generic_setxattr,
-	.getxattr	= generic_getxattr,
 	.listxattr	= ssdfs_listxattr,
-	.removexattr	= generic_removexattr,
 	.get_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
 };
 
 const struct inode_operations ssdfs_special_inode_operations = {
-	/*.getattr	= ssdfs_getattr,*/
 	.setattr	= ssdfs_setattr,
-	.setxattr	= generic_setxattr,
-	.getxattr	= generic_getxattr,
 	.listxattr	= ssdfs_listxattr,
-	.removexattr	= generic_removexattr,
 	.get_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
 };
 
 const struct inode_operations ssdfs_symlink_inode_operations = {
-	.readlink	= generic_readlink,
-	.follow_link	= page_follow_link_light,
-	.put_link	= page_put_link,
+	.get_link	= page_get_link,
 	.getattr	= ssdfs_getattr,
 	.setattr	= ssdfs_setattr,
-	.setxattr	= generic_setxattr,
-	.getxattr	= generic_getxattr,
 	.listxattr	= ssdfs_listxattr,
-	.removexattr	= generic_removexattr,
 };
 
 const struct address_space_operations ssdfs_aops = {
