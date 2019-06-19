@@ -20,51 +20,369 @@
  */
 static struct kset *ssdfs_kset;
 
+#define SSDFS_SHOW_TIME(ns, buf) ({ \
+	struct timespec timespec_val; \
+	struct tm res; \
+	int count = 0; \
+	timespec_val = ns_to_timespec(ns); \
+	time_to_tm(timespec_val.tv_sec, 0, &res); \
+	res.tm_year += 1900; \
+	res.tm_mon += 1; \
+	count = scnprintf(buf, PAGE_SIZE, \
+			    "%ld-%.2d-%.2d %.2d:%.2d:%.2d\n", \
+			    res.tm_year, res.tm_mon, res.tm_mday, \
+			    res.tm_hour, res.tm_min, res.tm_sec);\
+	count; \
+})
+
 /************************************************************************
  *                        SSDFS device attrs                            *
  ************************************************************************/
 
-static ssize_t ssdfs_dev_test_ro_attr_show(struct ssdfs_dev_attr *attr,
+static ssize_t ssdfs_dev_revision_show(struct ssdfs_dev_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	u8 major, minor;
+
+	down_read(&fsi->volume_sem);
+	major = fsi->vh->magic.version.major;
+	minor = fsi->vh->magic.version.minor;
+	up_read(&fsi->volume_sem);
+
+	return snprintf(buf, PAGE_SIZE, "%d.%d\n", major, minor);
+}
+
+static ssize_t ssdfs_dev_pagesize_show(struct ssdfs_dev_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", fsi->pagesize);
+}
+
+static ssize_t ssdfs_dev_erasesize_show(struct ssdfs_dev_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", fsi->erasesize);
+}
+
+static ssize_t ssdfs_dev_segsize_show(struct ssdfs_dev_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", fsi->segsize);
+}
+
+static ssize_t ssdfs_dev_pebs_per_seg_show(struct ssdfs_dev_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", fsi->pebs_per_seg);
+}
+
+static ssize_t ssdfs_dev_pages_per_peb_show(struct ssdfs_dev_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", fsi->pages_per_peb);
+}
+
+static ssize_t ssdfs_dev_pages_per_seg_show(struct ssdfs_dev_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", fsi->pages_per_seg);
+}
+
+static ssize_t ssdfs_dev_create_time_show(struct ssdfs_dev_attr *attr,
+					  struct ssdfs_fs_info *fsi,
+					  char *buf)
+{
+	return SSDFS_SHOW_TIME(fsi->fs_ctime, buf);
+}
+
+static ssize_t ssdfs_dev_create_time_ns_show(struct ssdfs_dev_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n", fsi->fs_ctime);
+}
+
+static ssize_t ssdfs_dev_create_cno_show(struct ssdfs_dev_attr *attr,
+					 struct ssdfs_fs_info *fsi,
+					 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n", fsi->fs_cno);
+}
+
+static ssize_t ssdfs_dev_mount_time_show(struct ssdfs_dev_attr *attr,
+					  struct ssdfs_fs_info *fsi,
+					  char *buf)
+{
+	u64 mount_time_ns;
+
+	spin_lock(&fsi->volume_state_lock);
+	mount_time_ns = fsi->fs_mount_time;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return SSDFS_SHOW_TIME(mount_time_ns, buf);
+}
+
+static ssize_t ssdfs_dev_mount_time_ns_show(struct ssdfs_dev_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	u64 mount_time_ns;
+
+	spin_lock(&fsi->volume_state_lock);
+	mount_time_ns = fsi->fs_mount_time;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", mount_time_ns);
+}
+
+static ssize_t ssdfs_dev_write_time_show(struct ssdfs_dev_attr *attr,
+					  struct ssdfs_fs_info *fsi,
+					  char *buf)
+{
+	u64 write_time_ns;
+
+	spin_lock(&fsi->volume_state_lock);
+	write_time_ns = fsi->fs_mod_time;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return SSDFS_SHOW_TIME(write_time_ns, buf);
+}
+
+static ssize_t ssdfs_dev_write_time_ns_show(struct ssdfs_dev_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	u64 write_time_ns;
+
+	spin_lock(&fsi->volume_state_lock);
+	write_time_ns = fsi->fs_mod_time;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", write_time_ns);
+}
+
+static ssize_t ssdfs_dev_mount_cno_show(struct ssdfs_dev_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	u64 mount_cno;
+
+	spin_lock(&fsi->volume_state_lock);
+	mount_cno = fsi->fs_mount_cno;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", mount_cno);
+}
+
+static ssize_t ssdfs_dev_superblock_segments_show(struct ssdfs_dev_attr *attr,
+						  struct ssdfs_fs_info *fsi,
+						  char *buf)
+{
+	u64 sb_segs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
+	size_t size = sizeof(u64) * SSDFS_SB_CHAIN_MAX * SSDFS_SB_SEG_COPY_MAX;
+	int i, j;
+	ssize_t bytes_out = 0;
+
+	down_read(&fsi->sb_segs_sem);
+	memcpy(sb_segs, fsi->sb_segs, size);
+	up_read(&fsi->sb_segs_sem);
+
+	for (i = 0; i < SSDFS_SB_CHAIN_MAX; i++) {
+		for (j = 0; j < SSDFS_SB_SEG_COPY_MAX; j++) {
+			if (bytes_out == PAGE_SIZE) {
+				SSDFS_WARN("fail to output full details\n");
+				return bytes_out;
+			}
+			bytes_out += snprintf(buf + bytes_out,
+					     PAGE_SIZE - bytes_out,
+					     "sb_seg[%d][%d] = %llu\n",
+					     i, j, sb_segs[i][j]);
+			if (unlikely(bytes_out < 0))
+				return bytes_out;
+			BUG_ON(bytes_out > PAGE_SIZE);
+		}
+	}
+
+	return bytes_out;
+}
+
+static ssize_t ssdfs_dev_last_superblock_log_show(struct ssdfs_dev_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	struct ssdfs_extent last_log;
+
+	down_read(&fsi->volume_sem);
+	memcpy(&last_log, &fsi->sbi.last_log, sizeof(struct ssdfs_extent));
+	up_read(&fsi->volume_sem);
+
+	return snprintf(buf, PAGE_SIZE, "SEG: %llu, OFF: %u, SIZE: %u\n",
+			last_log.seg, last_log.offset, last_log.size);
+}
+
+static ssize_t ssdfs_dev_segments_count_show(struct ssdfs_dev_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	int is_locked;
+	u64 nsegs;
+
+	is_locked = mutex_trylock(&fsi->resize_mutex);
+
+	if (!is_locked) {
+		SSDFS_WARN("volume is under resize!!!\n");
+		return -ENOLCK;
+	}
+
+	nsegs = fsi->vs->nsegs;
+
+	mutex_unlock(&fsi->resize_mutex);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", nsegs);
+}
+
+static ssize_t ssdfs_dev_free_pages_show(struct ssdfs_dev_attr *attr,
+					 struct ssdfs_fs_info *fsi,
+					 char *buf)
+{
+	u64 free_pages;
+
+	spin_lock(&fsi->volume_state_lock);
+	free_pages = fsi->free_pages;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", free_pages);
+}
+
+static ssize_t ssdfs_dev_uuid_show(struct ssdfs_dev_attr *attr,
+				    struct ssdfs_fs_info *fsi,
+				    char *buf)
+{
+	__le8 uuid[SSDFS_UUID_SIZE];
+
+	down_read(&fsi->volume_sem);
+	memcpy(uuid, fsi->vs->uuid, SSDFS_UUID_SIZE);
+	up_read(&fsi->volume_sem);
+
+	return snprintf(buf, PAGE_SIZE, "%pUb\n", uuid);
+}
+
+static ssize_t ssdfs_dev_volume_label_show(struct ssdfs_dev_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	char label[SSDFS_VOLUME_LABEL_MAX];
+
+	down_read(&fsi->volume_sem);
+	memcpy(label, fsi->vs->label, SSDFS_VOLUME_LABEL_MAX);
+	up_read(&fsi->volume_sem);
+
+	return scnprintf(buf, sizeof(label), "%s\n", label);
+}
+
+static ssize_t ssdfs_dev_error_behavior_show(struct ssdfs_dev_attr *attr,
 						struct ssdfs_fs_info *fsi,
 						char *buf)
 {
-	SSDFS_WARN("TODO: implement %s\n", __func__);
-	return snprintf(buf, PAGE_SIZE, "%s\n", __func__);
+	u16 fs_errors;
+
+	spin_lock(&fsi->volume_state_lock);
+	fs_errors = fsi->fs_errors;
+	spin_unlock(&fsi->volume_state_lock);
+
+	switch(fs_errors) {
+	case SSDFS_ERRORS_CONTINUE:
+		return snprintf(buf, PAGE_SIZE, "ERRORS_CONTINUE\n");
+
+	case SSDFS_ERRORS_RO:
+		return snprintf(buf, PAGE_SIZE, "ERRORS_RO\n");
+
+	case SSDFS_ERRORS_PANIC:
+		return snprintf(buf, PAGE_SIZE, "ERRORS_PANIC\n");
+	}
+
+	SSDFS_WARN("unknown fs behavior\n");
+	return -EINVAL;
 }
 
-static ssize_t ssdfs_dev_test_rw_attr_show(struct ssdfs_dev_attr *attr,
-						struct ssdfs_fs_info *fsi,
-						char *buf)
-{
-	SSDFS_WARN("TODO: implement %s\n", __func__);
-	return snprintf(buf, PAGE_SIZE, "%s\n", __func__);
-}
-
-static ssize_t ssdfs_dev_test_rw_attr_store(struct ssdfs_dev_attr *attr,
+static ssize_t ssdfs_dev_error_behavior_store(struct ssdfs_dev_attr *attr,
 						struct ssdfs_fs_info *fsi,
 						const char *buf, size_t count)
 {
-	unsigned long long val;
+	unsigned int val;
 	int err;
 
-	err = kstrtoull(skip_spaces(buf), 0, &val);
+	err = kstrtouint(skip_spaces(buf), 0, &val);
 	if (err) {
 		SSDFS_ERR("unable to convert string: err %d\n", err);
 		return err;
 	}
 
-	SSDFS_INFO("value %llu\n", val);
-	SSDFS_WARN("TODO: implement %s\n", __func__);
+	if (val == 0 || val > SSDFS_LAST_KNOWN_FS_ERROR) {
+		SSDFS_ERR("unknown fs behavior: %u\n", val);
+		return -EINVAL;
+	}
 
-	return count;
+	spin_lock(&fsi->volume_state_lock);
+	fsi->fs_errors = val;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return sizeof(val);
 }
 
-SSDFS_DEV_RO_ATTR(test_ro_attr);
-SSDFS_DEV_RW_ATTR(test_rw_attr);
+SSDFS_DEV_RO_ATTR(revision);
+SSDFS_DEV_RO_ATTR(pagesize);
+SSDFS_DEV_RO_ATTR(erasesize);
+SSDFS_DEV_RO_ATTR(segsize);
+SSDFS_DEV_RO_ATTR(pebs_per_seg);
+SSDFS_DEV_RO_ATTR(pages_per_peb);
+SSDFS_DEV_RO_ATTR(pages_per_seg);
+SSDFS_DEV_RO_ATTR(create_time);
+SSDFS_DEV_RO_ATTR(create_time_ns);
+SSDFS_DEV_RO_ATTR(create_cno);
+SSDFS_DEV_RO_ATTR(mount_time);
+SSDFS_DEV_RO_ATTR(mount_time_ns);
+SSDFS_DEV_RO_ATTR(write_time);
+SSDFS_DEV_RO_ATTR(write_time_ns);
+SSDFS_DEV_RO_ATTR(mount_cno);
+SSDFS_DEV_RO_ATTR(superblock_segments);
+SSDFS_DEV_RO_ATTR(last_superblock_log);
+SSDFS_DEV_RO_ATTR(segments_count);
+SSDFS_DEV_RO_ATTR(free_pages);
+SSDFS_DEV_RO_ATTR(uuid);
+SSDFS_DEV_RO_ATTR(volume_label);
+SSDFS_DEV_RW_ATTR(error_behavior);
 
 static struct attribute *ssdfs_dev_attrs[] = {
-	SSDFS_DEV_ATTR_LIST(test_ro_attr),
-	SSDFS_DEV_ATTR_LIST(test_rw_attr),
+	SSDFS_DEV_ATTR_LIST(revision),
+	SSDFS_DEV_ATTR_LIST(pagesize),
+	SSDFS_DEV_ATTR_LIST(erasesize),
+	SSDFS_DEV_ATTR_LIST(segsize),
+	SSDFS_DEV_ATTR_LIST(pebs_per_seg),
+	SSDFS_DEV_ATTR_LIST(pages_per_peb),
+	SSDFS_DEV_ATTR_LIST(pages_per_seg),
+	SSDFS_DEV_ATTR_LIST(create_time),
+	SSDFS_DEV_ATTR_LIST(create_time_ns),
+	SSDFS_DEV_ATTR_LIST(create_cno),
+	SSDFS_DEV_ATTR_LIST(mount_time),
+	SSDFS_DEV_ATTR_LIST(mount_time_ns),
+	SSDFS_DEV_ATTR_LIST(write_time),
+	SSDFS_DEV_ATTR_LIST(write_time_ns),
+	SSDFS_DEV_ATTR_LIST(mount_cno),
+	SSDFS_DEV_ATTR_LIST(superblock_segments),
+	SSDFS_DEV_ATTR_LIST(last_superblock_log),
+	SSDFS_DEV_ATTR_LIST(segments_count),
+	SSDFS_DEV_ATTR_LIST(free_pages),
+	SSDFS_DEV_ATTR_LIST(uuid),
+	SSDFS_DEV_ATTR_LIST(volume_label),
+	SSDFS_DEV_ATTR_LIST(error_behavior),
 	NULL,
 };
 
@@ -117,8 +435,7 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	fsi->dev_kobj.kset = ssdfs_kset;
 	init_completion(&fsi->dev_kobj_unregister);
 	err = kobject_init_and_add(&fsi->dev_kobj, &ssdfs_dev_ktype, NULL,
-				   "%d (\"%s\")", sb->s_mtd->index,
-				    sb->s_mtd->name);
+				   "%s", fsi->devops->device_name(sb));
 	if (err)
 		return err;
 
@@ -200,7 +517,7 @@ failed_sysfs_init:
 	return err;
 }
 
-void ssdfs_sysfs_exit(void)
+void __exit ssdfs_sysfs_exit(void)
 {
 	SSDFS_DBG("deinitialize sysfs entry\n");
 
