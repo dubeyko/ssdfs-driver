@@ -10,9 +10,14 @@
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
  */
 
+#include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/mtd/mtd.h>
 
 #include "ssdfs.h"
+#include "peb.h"
+#include "segment.h"
+#include "segment_bitmap.h"
 #include "sysfs.h"
 
 /*
@@ -34,6 +39,567 @@ static struct kset *ssdfs_kset;
 			    res.tm_hour, res.tm_min, res.tm_sec);\
 	count; \
 })
+
+#define SSDFS_SEG_INT_GROUP_OPS(name) \
+static ssize_t ssdfs_##name##_attr_show(struct kobject *kobj, \
+					struct attribute *attr, char *buf) \
+{ \
+	struct ssdfs_segment_info *si = container_of(kobj->parent, \
+						struct ssdfs_segment_info, \
+						seg_kobj); \
+	struct ssdfs_##name##_attr *a = container_of(attr, \
+						struct ssdfs_##name##_attr, \
+						attr); \
+	return a->show ? a->show(a, si, buf) : 0; \
+} \
+static ssize_t ssdfs_##name##_attr_store(struct kobject *kobj, \
+					 struct attribute *attr, \
+					 const char *buf, size_t len) \
+{ \
+	struct ssdfs_segment_info *si = container_of(kobj->parent, \
+						struct ssdfs_segment_info, \
+						seg_kobj); \
+	struct ssdfs_##name##_attr *a = container_of(attr, \
+						struct ssdfs_##name##_attr, \
+						attr); \
+	return a->store ? a->store(a, si, buf, len) : 0; \
+} \
+static const struct sysfs_ops ssdfs_##name##_attr_ops = { \
+	.show	= ssdfs_##name##_attr_show, \
+	.store	= ssdfs_##name##_attr_store, \
+};
+
+#define SSDFS_SEG_INT_GROUP_TYPE(name) \
+static void ssdfs_##name##_attr_release(struct kobject *kobj) \
+{ \
+	struct ssdfs_sysfs_seg_subgroups *subgroups; \
+	struct ssdfs_segment_info *si = container_of(kobj->parent, \
+						struct ssdfs_segment_info, \
+						seg_kobj); \
+	subgroups = si->seg_subgroups; \
+	complete(&subgroups->sg_##name##_kobj_unregister); \
+} \
+static struct kobj_type ssdfs_##name##_ktype = { \
+	.default_attrs	= ssdfs_##name##_attrs, \
+	.sysfs_ops	= &ssdfs_##name##_attr_ops, \
+	.release	= ssdfs_##name##_attr_release, \
+};
+
+#define SSDFS_SEG_INT_GROUP_FNS(name) \
+static int ssdfs_sysfs_create_##name##_group(struct ssdfs_segment_info *si) \
+{ \
+	struct kobject *parent; \
+	struct kobject *kobj; \
+	struct completion *kobj_unregister; \
+	struct ssdfs_sysfs_seg_subgroups *subgroups; \
+	int err; \
+	subgroups = si->seg_subgroups; \
+	kobj = &subgroups->sg_##name##_kobj; \
+	kobj_unregister = &subgroups->sg_##name##_kobj_unregister; \
+	parent = &si->seg_kobj; \
+	kobj->kset = ssdfs_kset; \
+	init_completion(kobj_unregister); \
+	err = kobject_init_and_add(kobj, &ssdfs_##name##_ktype, parent, \
+				    #name); \
+	if (err) \
+		return err; \
+	return 0; \
+} \
+static void ssdfs_sysfs_delete_##name##_group(struct ssdfs_segment_info *si) \
+{ \
+	kobject_del(&si->seg_subgroups->sg_##name##_kobj); \
+}
+
+#define SSDFS_DEV_INT_GROUP_OPS(name) \
+static ssize_t ssdfs_##name##_attr_show(struct kobject *kobj, \
+					struct attribute *attr, char *buf) \
+{ \
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent, \
+						 struct ssdfs_fs_info, \
+						 dev_kobj); \
+	struct ssdfs_##name##_attr *a = container_of(attr, \
+						struct ssdfs_##name##_attr, \
+						attr); \
+	return a->show ? a->show(a, fsi, buf) : 0; \
+} \
+static ssize_t ssdfs_##name##_attr_store(struct kobject *kobj, \
+					 struct attribute *attr, \
+					 const char *buf, size_t len) \
+{ \
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent, \
+						 struct ssdfs_fs_info, \
+						 dev_kobj); \
+	struct ssdfs_##name##_attr *a = container_of(attr, \
+						struct ssdfs_##name##_attr, \
+						attr); \
+	return a->store ? a->store(a, fsi, buf, len) : 0; \
+} \
+static const struct sysfs_ops ssdfs_##name##_attr_ops = { \
+	.show	= ssdfs_##name##_attr_show, \
+	.store	= ssdfs_##name##_attr_store, \
+};
+
+#define SSDFS_DEV_INT_GROUP_TYPE(name) \
+static void ssdfs_##name##_attr_release(struct kobject *kobj) \
+{ \
+	struct ssdfs_sysfs_dev_subgroups *subgroups; \
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent, \
+						 struct ssdfs_fs_info, \
+						 dev_kobj); \
+	subgroups = fsi->dev_subgroups; \
+	complete(&subgroups->sg_##name##_kobj_unregister); \
+} \
+static struct kobj_type ssdfs_##name##_ktype = { \
+	.default_attrs	= ssdfs_##name##_attrs, \
+	.sysfs_ops	= &ssdfs_##name##_attr_ops, \
+	.release	= ssdfs_##name##_attr_release, \
+};
+
+#define SSDFS_DEV_INT_GROUP_FNS(name) \
+static int ssdfs_sysfs_create_##name##_group(struct ssdfs_fs_info *fsi) \
+{ \
+	struct kobject *parent; \
+	struct kobject *kobj; \
+	struct completion *kobj_unregister; \
+	struct ssdfs_sysfs_dev_subgroups *subgroups; \
+	int err; \
+	subgroups = fsi->dev_subgroups; \
+	kobj = &subgroups->sg_##name##_kobj; \
+	kobj_unregister = &subgroups->sg_##name##_kobj_unregister; \
+	parent = &fsi->dev_kobj; \
+	kobj->kset = ssdfs_kset; \
+	init_completion(kobj_unregister); \
+	err = kobject_init_and_add(kobj, &ssdfs_##name##_ktype, parent, \
+				    #name); \
+	if (err) \
+		return err; \
+	return 0; \
+} \
+static void ssdfs_sysfs_delete_##name##_group(struct ssdfs_fs_info *fsi) \
+{ \
+	kobject_del(&fsi->dev_subgroups->sg_##name##_kobj); \
+}
+
+/************************************************************************
+ *                          SSDFS peb attrs                             *
+ ************************************************************************/
+
+static ssize_t ssdfs_peb_id_show(struct ssdfs_peb_attr *attr,
+				 struct ssdfs_peb_info *pebi,
+				 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n", pebi->peb_id);
+}
+
+static ssize_t ssdfs_peb_peb_index_show(struct ssdfs_peb_attr *attr,
+					struct ssdfs_peb_info *pebi,
+					char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebi->peb_index);
+}
+
+static ssize_t ssdfs_peb_log_pages_show(struct ssdfs_peb_attr *attr,
+					struct ssdfs_peb_info *pebi,
+					char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebi->log_pages);
+}
+
+static ssize_t ssdfs_peb_free_pages_show(struct ssdfs_peb_attr *attr,
+					 struct ssdfs_peb_info *pebi,
+					 char *buf)
+{
+	int free_pages;
+
+	free_pages = ssdfs_peb_get_free_pages(pebi);
+	if (free_pages < 0)
+		return free_pages;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", free_pages);
+}
+
+/******************************************************************************
+ * BEGIN                     adopted from procfs code                   BEGIN *
+ ******************************************************************************/
+
+/*
+ * The task state array is a strange "bitmap" of
+ * reasons to sleep. Thus "running" is zero, and
+ * you can test for combinations of others with
+ * simple bit tests.
+ */
+static const char * const task_state_array[] = {
+	"R (running)",		/*   0 */
+	"S (sleeping)",		/*   1 */
+	"D (disk sleep)",	/*   2 */
+	"T (stopped)",		/*   4 */
+	"t (tracing stop)",	/*   8 */
+	"X (dead)",		/*  16 */
+	"Z (zombie)",		/*  32 */
+};
+
+static inline const char *get_task_state(struct task_struct *tsk)
+{
+	unsigned int state = (tsk->state | tsk->exit_state) & TASK_REPORT;
+
+	BUILD_BUG_ON(1 + ilog2(TASK_REPORT) != ARRAY_SIZE(task_state_array)-1);
+
+	return task_state_array[fls(state)];
+}
+
+/******************************************************************************
+ * END                      adopted from procfs code                      END *
+ ******************************************************************************/
+
+static const char * const thread_type_array[] = {
+	"READ thread",		/* SSDFS_PEB_READ_THREAD */
+	"FLUSH thread",		/* SSDFS_PEB_FLUSH_THREAD */
+	"GC thread",		/* SSDFS_PEB_GC_THREAD */
+};
+
+static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
+					   struct ssdfs_peb_info *pebi,
+					   char *buf)
+{
+	int count = 0;
+	pid_t pid;
+	const char *state = NULL;
+	const char *type = NULL;
+	int i;
+
+	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		pid = task_pid_nr(pebi->thread[i].task);
+		state = get_task_state(pebi->thread[i].task);
+		type = thread_type_array[i];
+		count += snprintf(buf + count, PAGE_SIZE - count,
+				  "%s: pid %d, state %s\n",
+				  type, pid, state);
+	}
+
+	return count;
+}
+
+SSDFS_PEB_RO_ATTR(id);
+SSDFS_PEB_RO_ATTR(peb_index);
+SSDFS_PEB_RO_ATTR(log_pages);
+SSDFS_PEB_RO_ATTR(free_pages);
+SSDFS_PEB_RO_ATTR(threads_info);
+
+static struct attribute *ssdfs_peb_attrs[] = {
+	SSDFS_PEB_ATTR_LIST(id),
+	SSDFS_PEB_ATTR_LIST(peb_index),
+	SSDFS_PEB_ATTR_LIST(log_pages),
+	SSDFS_PEB_ATTR_LIST(free_pages),
+	SSDFS_PEB_ATTR_LIST(threads_info),
+	NULL,
+};
+
+static ssize_t ssdfs_peb_attr_show(struct kobject *kobj,
+				    struct attribute *attr, char *buf)
+{
+	struct ssdfs_peb_info *pebi = container_of(kobj,
+						   struct ssdfs_peb_info,
+						   peb_kobj);
+	struct ssdfs_peb_attr *a = container_of(attr, struct ssdfs_peb_attr,
+						attr);
+
+	return a->show ? a->show(a, pebi, buf) : 0;
+}
+
+static ssize_t ssdfs_peb_attr_store(struct kobject *kobj,
+				    struct attribute *attr,
+				    const char *buf, size_t len)
+{
+	struct ssdfs_peb_info *pebi = container_of(kobj,
+						   struct ssdfs_peb_info,
+						   peb_kobj);
+	struct ssdfs_peb_attr *a = container_of(attr, struct ssdfs_peb_attr,
+						attr);
+
+	return a->store ? a->store(a, pebi, buf, len) : 0;
+}
+
+static void ssdfs_peb_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_peb_info *pebi = container_of(kobj,
+						   struct ssdfs_peb_info,
+						   peb_kobj);
+	complete(&pebi->peb_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_peb_attr_ops = {
+	.show	= ssdfs_peb_attr_show,
+	.store	= ssdfs_peb_attr_store,
+};
+
+static struct kobj_type ssdfs_peb_ktype = {
+	.default_attrs	= ssdfs_peb_attrs,
+	.sysfs_ops	= &ssdfs_peb_attr_ops,
+	.release	= ssdfs_peb_attr_release,
+};
+
+int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_segment_info *si = pebi->seg_info;
+	struct kobject *parent;
+	int err;
+
+	parent = &si->seg_subgroups->sg_pebs_kobj;
+
+	pebi->peb_kobj.kset = ssdfs_kset;
+	init_completion(&pebi->peb_kobj_unregister);
+	err = kobject_init_and_add(&pebi->peb_kobj,
+				   &ssdfs_peb_ktype,
+				   parent,
+				   "peb%u",
+				   pebi->peb_index);
+	if (err)
+		return err;
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_info *pebi)
+{
+	kobject_del(&pebi->peb_kobj);
+}
+
+/************************************************************************
+ *                          SSDFS pebs group                            *
+ ************************************************************************/
+
+static struct attribute *ssdfs_pebs_attrs[] = {
+	NULL,
+};
+
+SSDFS_SEG_INT_GROUP_OPS(pebs);
+SSDFS_SEG_INT_GROUP_TYPE(pebs);
+SSDFS_SEG_INT_GROUP_FNS(pebs);
+
+/************************************************************************
+ *                        SSDFS segment attrs                           *
+ ************************************************************************/
+
+static ssize_t ssdfs_seg_id_show(struct ssdfs_seg_attr *attr,
+				 struct ssdfs_segment_info *si,
+				 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%llu\n", si->seg_id);
+}
+
+static ssize_t ssdfs_seg_log_pages_show(struct ssdfs_seg_attr *attr,
+					struct ssdfs_segment_info *si,
+					char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", si->log_pages);
+}
+
+static ssize_t ssdfs_seg_create_threads_show(struct ssdfs_seg_attr *attr,
+					     struct ssdfs_segment_info *si,
+					     char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", si->create_threads);
+}
+
+static ssize_t ssdfs_seg_seg_type_show(struct ssdfs_seg_attr *attr,
+					struct ssdfs_segment_info *si,
+					char *buf)
+{
+	switch(si->seg_type) {
+	case SSDFS_SB_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SB_SEG_TYPE\n");
+
+	case SSDFS_INITIAL_SNAPSHOT_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_INITIAL_SNAPSHOT_SEG_TYPE\n");
+
+	case SSDFS_USER_DATA_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_USER_DATA_SEG_TYPE\n");
+	}
+
+	SSDFS_WARN("unknown segment type\n");
+	return -EINVAL;
+}
+
+static ssize_t ssdfs_seg_pebs_count_show(struct ssdfs_seg_attr *attr,
+					 struct ssdfs_segment_info *si,
+					 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", si->pebs_count);
+}
+
+static ssize_t ssdfs_seg_refs_count_show(struct ssdfs_seg_attr *attr,
+					 struct ssdfs_segment_info *si,
+					 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&si->refs_count));
+}
+
+static ssize_t ssdfs_seg_free_pages_show(struct ssdfs_seg_attr *attr,
+					 struct ssdfs_segment_info *si,
+					 char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&si->free_pages));
+}
+
+static ssize_t ssdfs_seg_seg_state_show(struct ssdfs_seg_attr *attr,
+					struct ssdfs_segment_info *si,
+					char *buf)
+{
+	switch(atomic_read(&si->seg_state)) {
+	case SSDFS_SEG_CLEAN:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_CLEAN\n");
+
+	case SSDFS_SEG_DATA_USING:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_DATA_USING\n");
+
+	case SSDFS_SEG_LEAF_NODE_USING:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_LEAF_NODE_USING\n");
+
+	case SSDFS_SEG_HYBRID_NODE_USING:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_SEG_HYBRID_NODE_USING\n");
+
+	case SSDFS_SEG_INDEX_NODE_USING:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_SEG_INDEX_NODE_USING\n");
+
+	case SSDFS_SEG_USED:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_USED\n");
+
+	case SSDFS_SEG_PRE_DIRTY:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_PRE_DIRTY\n");
+
+	case SSDFS_SEG_DIRTY:
+		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_DIRTY\n");
+	}
+
+	SSDFS_WARN("unknown segment state\n");
+	return -EINVAL;
+}
+
+SSDFS_SEG_RO_ATTR(id);
+SSDFS_SEG_RO_ATTR(log_pages);
+SSDFS_SEG_RO_ATTR(create_threads);
+SSDFS_SEG_RO_ATTR(seg_type);
+SSDFS_SEG_RO_ATTR(pebs_count);
+SSDFS_SEG_RO_ATTR(refs_count);
+SSDFS_SEG_RO_ATTR(free_pages);
+SSDFS_SEG_RO_ATTR(seg_state);
+
+static struct attribute *ssdfs_seg_attrs[] = {
+	SSDFS_SEG_ATTR_LIST(id),
+	SSDFS_SEG_ATTR_LIST(log_pages),
+	SSDFS_SEG_ATTR_LIST(create_threads),
+	SSDFS_SEG_ATTR_LIST(seg_type),
+	SSDFS_SEG_ATTR_LIST(pebs_count),
+	SSDFS_SEG_ATTR_LIST(refs_count),
+	SSDFS_SEG_ATTR_LIST(free_pages),
+	SSDFS_SEG_ATTR_LIST(seg_state),
+	NULL,
+};
+
+static ssize_t ssdfs_seg_attr_show(struct kobject *kobj,
+				    struct attribute *attr, char *buf)
+{
+	struct ssdfs_segment_info *si = container_of(kobj,
+						     struct ssdfs_segment_info,
+						     seg_kobj);
+	struct ssdfs_seg_attr *a = container_of(attr, struct ssdfs_seg_attr,
+						attr);
+
+	return a->show ? a->show(a, si, buf) : 0;
+}
+
+static ssize_t ssdfs_seg_attr_store(struct kobject *kobj,
+				    struct attribute *attr,
+				    const char *buf, size_t len)
+{
+	struct ssdfs_segment_info *si = container_of(kobj,
+						     struct ssdfs_segment_info,
+						     seg_kobj);
+	struct ssdfs_seg_attr *a = container_of(attr, struct ssdfs_seg_attr,
+						attr);
+
+	return a->store ? a->store(a, si, buf, len) : 0;
+}
+
+static void ssdfs_seg_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_segment_info *si = container_of(kobj,
+						     struct ssdfs_segment_info,
+						     seg_kobj);
+	complete(&si->seg_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_seg_attr_ops = {
+	.show	= ssdfs_seg_attr_show,
+	.store	= ssdfs_seg_attr_store,
+};
+
+static struct kobj_type ssdfs_seg_ktype = {
+	.default_attrs	= ssdfs_seg_attrs,
+	.sysfs_ops	= &ssdfs_seg_attr_ops,
+	.release	= ssdfs_seg_attr_release,
+};
+
+int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si)
+{
+	struct ssdfs_fs_info *fsi = si->fsi;
+	size_t seggrp_size = sizeof(struct ssdfs_sysfs_seg_subgroups);
+	struct kobject *parent;
+	int err;
+
+	si->seg_subgroups = kzalloc(seggrp_size, GFP_KERNEL);
+	if (unlikely(!si->seg_subgroups))
+		return -ENOMEM;
+
+	parent = &fsi->dev_subgroups->sg_segments_kobj;
+
+	si->seg_kobj.kset = ssdfs_kset;
+	init_completion(&si->seg_kobj_unregister);
+	err = kobject_init_and_add(&si->seg_kobj,
+				   &ssdfs_seg_ktype,
+				   parent,
+				   "seg%llu",
+				   si->seg_id);
+	if (err)
+		goto free_seg_subgroups;
+
+	err = ssdfs_sysfs_create_pebs_group(si);
+	if (err)
+		goto cleanup_seg_kobject;
+
+	return 0;
+
+cleanup_seg_kobject:
+	kobject_del(&si->seg_kobj);
+
+free_seg_subgroups:
+	kfree(si->seg_subgroups);
+
+	return err;
+}
+
+void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si)
+{
+	ssdfs_sysfs_delete_pebs_group(si);
+	kobject_del(&si->seg_kobj);
+	kfree(si->seg_subgroups);
+}
+
+/************************************************************************
+ *                        SSDFS segments group                          *
+ ************************************************************************/
+
+static struct attribute *ssdfs_segments_attrs[] = {
+	NULL,
+};
+
+SSDFS_DEV_INT_GROUP_OPS(segments);
+SSDFS_DEV_INT_GROUP_TYPE(segments);
+SSDFS_DEV_INT_GROUP_FNS(segments);
 
 /************************************************************************
  *                        SSDFS device attrs                            *
@@ -430,21 +996,40 @@ static struct kobj_type ssdfs_dev_ktype = {
 int ssdfs_sysfs_create_device_group(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	size_t devgrp_size = sizeof(struct ssdfs_sysfs_dev_subgroups);
 	int err;
+
+	fsi->dev_subgroups = kzalloc(devgrp_size, GFP_KERNEL);
+	if (unlikely(!fsi->dev_subgroups))
+		return -ENOMEM;
 
 	fsi->dev_kobj.kset = ssdfs_kset;
 	init_completion(&fsi->dev_kobj_unregister);
 	err = kobject_init_and_add(&fsi->dev_kobj, &ssdfs_dev_ktype, NULL,
 				   "%s", fsi->devops->device_name(sb));
 	if (err)
-		return err;
+		goto free_dev_subgroups;
+
+	err = ssdfs_sysfs_create_segments_group(fsi);
+	if (err)
+		goto cleanup_dev_kobject;
 
 	return 0;
+
+cleanup_dev_kobject:
+	kobject_del(&fsi->dev_kobj);
+
+free_dev_subgroups:
+	kfree(fsi->dev_subgroups);
+
+	return err;
 }
 
 void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi)
 {
+	ssdfs_sysfs_delete_segments_group(fsi);
 	kobject_del(&fsi->dev_kobj);
+	kfree(fsi->dev_subgroups);
 }
 
 /************************************************************************
