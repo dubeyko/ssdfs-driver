@@ -13,11 +13,15 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/mtd/mtd.h>
+#include <linux/pagevec.h>
 
+#include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "peb.h"
 #include "segment.h"
 #include "segment_bitmap.h"
+#include "peb_mapping_table.h"
+#include "current_segment.h"
 #include "sysfs.h"
 
 /*
@@ -413,6 +417,26 @@ static ssize_t ssdfs_seg_seg_type_show(struct ssdfs_seg_attr *attr,
 		return snprintf(buf, PAGE_SIZE,
 				"SSDFS_INITIAL_SNAPSHOT_SEG_TYPE\n");
 
+	case SSDFS_SEGBMAP_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_SEGBMAP_SEG_TYPE\n");
+
+	case SSDFS_MAPTBL_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_MAPTBL_SEG_TYPE\n");
+
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_LEAF_NODE_SEG_TYPE\n");
+
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_HYBRID_NODE_SEG_TYPE\n");
+
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_INDEX_NODE_SEG_TYPE\n");
+
 	case SSDFS_USER_DATA_SEG_TYPE:
 		return snprintf(buf, PAGE_SIZE,
 				"SSDFS_USER_DATA_SEG_TYPE\n");
@@ -593,13 +617,726 @@ void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si)
  *                        SSDFS segments group                          *
  ************************************************************************/
 
+static
+ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	struct ssdfs_current_segs_array *array = fsi->cur_segs;
+	u64 seg_id;
+	int count = 0;
+	int i, j;
+
+	if (!array) {
+		SSDFS_WARN("current_segments array is empty\n");
+		return 0;
+	}
+
+	down_read(&array->lock);
+	for (i = 0; i < SSDFS_CUR_SEGS_COUNT; i++) {
+		struct ssdfs_current_segment *cur_seg;
+		struct ssdfs_segment_info *real_seg;
+		const char *type = NULL;
+
+		switch (i) {
+		case SSDFS_CUR_DATA_SEG:
+			type = "CURRENT_DATA_SEGMENT";
+			break;
+		case SSDFS_CUR_LNODE_SEG:
+			type = "CURRENT_LEAF_NODE_SEGMENT";
+			break;
+		case SSDFS_CUR_HNODE_SEG:
+			type = "CURRENT_HYBRID_NODE_SEGMENT";
+			break;
+		case SSDFS_CUR_IDXNODE_SEG:
+			type = "CURRENT_INDEX_NODE_SEGMENT";
+			break;
+		default:
+			BUG();
+		}
+
+		cur_seg = array->objects[i];
+
+		if (cur_seg == NULL) {
+			count += snprintf(buf + count,
+					  PAGE_SIZE - count,
+					  "%s: <empty>\n",
+					  type);
+			continue;
+		}
+
+		real_seg = cur_seg->real_seg;
+
+		if (real_seg == NULL) {
+			count += snprintf(buf + count,
+					  PAGE_SIZE - count,
+					  "%s: <empty>\n",
+					  type);
+			continue;
+		}
+
+		seg_id = real_seg->seg_id;
+
+		count += snprintf(buf + count,
+				  PAGE_SIZE - count,
+				  "%s: seg_id %llu: < ",
+				  type, seg_id);
+
+		for (j = 0; j < real_seg->pebs_count; j++) {
+			struct ssdfs_peb_info *pebi = &real_seg->peb_array[j];
+
+			if (is_peb_joined_into_create_requests_queue(pebi)) {
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "peb_id %llu ",
+						  pebi->peb_id);
+			}
+		}
+
+		count += snprintf(buf + count,
+				  PAGE_SIZE - count,
+				  ">, create_threads %u\n",
+				  real_seg->create_threads);
+	}
+	up_read(&array->lock);
+
+	return count;
+}
+
+
+SSDFS_SEGMENTS_RO_ATTR(current_segments);
+
 static struct attribute *ssdfs_segments_attrs[] = {
+	SSDFS_SEGMENTS_ATTR_LIST(current_segments),
 	NULL,
 };
 
 SSDFS_DEV_INT_GROUP_OPS(segments);
 SSDFS_DEV_INT_GROUP_TYPE(segments);
 SSDFS_DEV_INT_GROUP_FNS(segments);
+
+/************************************************************************
+ *                        SSDFS segbmap attrs                           *
+ ************************************************************************/
+
+static ssize_t ssdfs_segbmap_flags_show(struct ssdfs_segbmap_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u16 flags;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	flags = bmap->flags;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%#x\n", flags);
+}
+
+static ssize_t ssdfs_segbmap_bytes_count_show(struct ssdfs_segbmap_attr *attr,
+						struct ssdfs_fs_info *fsi,
+						char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u32 bytes_count;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	bytes_count = bmap->bytes_count;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", bytes_count);
+}
+
+static ssize_t ssdfs_segbmap_items_count_show(struct ssdfs_segbmap_attr *attr,
+						struct ssdfs_fs_info *fsi,
+						char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u64 items_count;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	items_count = bmap->items_count;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", items_count);
+}
+
+static
+ssize_t ssdfs_segbmap_fragments_count_show(struct ssdfs_segbmap_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u16 fragments_count;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	fragments_count = bmap->fragments_count;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragments_count);
+}
+
+static
+ssize_t ssdfs_segbmap_fragments_per_seg_show(struct ssdfs_segbmap_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u16 fragments_per_seg;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	fragments_per_seg = bmap->fragments_per_seg;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragments_per_seg);
+}
+
+static
+ssize_t ssdfs_segbmap_fragments_per_peb_show(struct ssdfs_segbmap_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u16 fragments_per_peb;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	fragments_per_peb = bmap->fragments_per_peb;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragments_per_peb);
+}
+
+static
+ssize_t ssdfs_segbmap_fragment_size_show(struct ssdfs_segbmap_attr *attr,
+					 struct ssdfs_fs_info *fsi,
+					 char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u16 fragment_size;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	fragment_size = bmap->fragment_size;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragment_size);
+}
+
+static
+ssize_t ssdfs_segbmap_segs_count_show(struct ssdfs_segbmap_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u16 segs_count;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	down_read(&bmap->resize_lock);
+	segs_count = bmap->segs_count;
+	up_read(&bmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", segs_count);
+}
+
+static
+ssize_t ssdfs_segbmap_seg_numbers_show(struct ssdfs_segbmap_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	struct ssdfs_segment_bmap *bmap = fsi->segbmap;
+	u64 seg_numbers[SSDFS_SEGBMAP_SEGS][SSDFS_SEGBMAP_SEG_COPY_MAX];
+	size_t array_size;
+	int count = 0;
+	int i, j;
+
+	if (!bmap) {
+		SSDFS_WARN("segbmap is absent\n");
+		return 0;
+	}
+
+	array_size = sizeof(u64);
+	array_size *= SSDFS_SEGBMAP_SEGS;
+	array_size *= SSDFS_SEGBMAP_SEG_COPY_MAX;
+
+	down_read(&bmap->resize_lock);
+	memcpy(seg_numbers, bmap->seg_numbers, array_size);
+	up_read(&bmap->resize_lock);
+
+	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++) {
+		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
+			if (seg_numbers[i][j] == U64_MAX) {
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "seg[%d][%d] = U64_MAX\n",
+						  i, j);
+			} else {
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "seg[%d][%d] = %llu\n",
+						  i, j,
+						  seg_numbers[i][j]);
+			}
+		}
+	}
+
+	return count;
+}
+
+SSDFS_SEGBMAP_RO_ATTR(flags);
+SSDFS_SEGBMAP_RO_ATTR(bytes_count);
+SSDFS_SEGBMAP_RO_ATTR(items_count);
+SSDFS_SEGBMAP_RO_ATTR(fragments_count);
+SSDFS_SEGBMAP_RO_ATTR(fragments_per_seg);
+SSDFS_SEGBMAP_RO_ATTR(fragments_per_peb);
+SSDFS_SEGBMAP_RO_ATTR(fragment_size);
+SSDFS_SEGBMAP_RO_ATTR(segs_count);
+SSDFS_SEGBMAP_RO_ATTR(seg_numbers);
+
+static struct attribute *ssdfs_segbmap_attrs[] = {
+	SSDFS_SEGBMAP_ATTR_LIST(flags),
+	SSDFS_SEGBMAP_ATTR_LIST(bytes_count),
+	SSDFS_SEGBMAP_ATTR_LIST(items_count),
+	SSDFS_SEGBMAP_ATTR_LIST(fragments_count),
+	SSDFS_SEGBMAP_ATTR_LIST(fragments_per_seg),
+	SSDFS_SEGBMAP_ATTR_LIST(fragments_per_peb),
+	SSDFS_SEGBMAP_ATTR_LIST(fragment_size),
+	SSDFS_SEGBMAP_ATTR_LIST(segs_count),
+	SSDFS_SEGBMAP_ATTR_LIST(seg_numbers),
+	NULL,
+};
+
+static ssize_t ssdfs_segbmap_attr_show(struct kobject *kobj,
+					struct attribute *attr, char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 dev_kobj);
+	struct ssdfs_segbmap_attr *a = container_of(attr,
+						struct ssdfs_segbmap_attr,
+						attr);
+	return a->show ? a->show(a, fsi, buf) : 0;
+}
+
+static ssize_t ssdfs_segbmap_attr_store(struct kobject *kobj,
+					struct attribute *attr,
+					const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 dev_kobj);
+	struct ssdfs_segbmap_attr *a = container_of(attr,
+						struct ssdfs_segbmap_attr,
+						attr);
+	return a->store ? a->store(a, fsi, buf, len) : 0;
+}
+
+static void ssdfs_segbmap_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_sysfs_dev_subgroups *subgroups;
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 dev_kobj);
+	subgroups = fsi->dev_subgroups;
+	complete(&subgroups->sg_segbmap_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_segbmap_attr_ops = {
+	.show	= ssdfs_segbmap_attr_show,
+	.store	= ssdfs_segbmap_attr_store,
+};
+
+static struct kobj_type ssdfs_segbmap_ktype = {
+	.default_attrs	= ssdfs_segbmap_attrs,
+	.sysfs_ops	= &ssdfs_segbmap_attr_ops,
+	.release	= ssdfs_segbmap_attr_release,
+};
+
+int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
+{
+	struct kobject *parent;
+	struct kobject *kobj;
+	struct completion *kobj_unregister;
+	struct ssdfs_sysfs_dev_subgroups *subgroups;
+	int err;
+
+	subgroups = fsi->dev_subgroups;
+	kobj = &subgroups->sg_segbmap_kobj;
+	kobj_unregister = &subgroups->sg_segbmap_kobj_unregister;
+	parent = &fsi->dev_kobj;
+	kobj->kset = ssdfs_kset;
+	init_completion(kobj_unregister);
+
+	err = kobject_init_and_add(kobj, &ssdfs_segbmap_ktype, parent,
+				   "segbmap");
+	if (err)
+		return err;
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
+{
+	kobject_del(&fsi->dev_subgroups->sg_segbmap_kobj);
+}
+
+/************************************************************************
+ *                        SSDFS maptbl attrs                            *
+ ************************************************************************/
+
+static
+ssize_t ssdfs_maptbl_fragments_count_show(struct ssdfs_maptbl_attr *attr,
+					  struct ssdfs_fs_info *fsi,
+					  char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u32 fragments_count;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	fragments_count = tbl->fragments_count;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragments_count);
+}
+
+static
+ssize_t ssdfs_maptbl_fragments_per_seg_show(struct ssdfs_maptbl_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u16 fragments_per_seg;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	fragments_per_seg = tbl->fragments_per_seg;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragments_per_seg);
+}
+
+static
+ssize_t ssdfs_maptbl_fragments_per_peb_show(struct ssdfs_maptbl_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u16 fragments_per_peb;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	fragments_per_peb = tbl->fragments_per_peb;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragments_per_peb);
+}
+
+static
+ssize_t ssdfs_maptbl_fragment_bytes_show(struct ssdfs_maptbl_attr *attr,
+					 struct ssdfs_fs_info *fsi,
+					 char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u32 fragment_bytes;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	fragment_bytes = tbl->fragment_bytes;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragment_bytes);
+}
+
+static
+ssize_t ssdfs_maptbl_flags_show(struct ssdfs_maptbl_attr *attr,
+				struct ssdfs_fs_info *fsi,
+				char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%#x\n",
+			atomic_read(&tbl->flags));
+}
+
+static
+ssize_t ssdfs_maptbl_lebs_count_show(struct ssdfs_maptbl_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u64 lebs_count;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	lebs_count = tbl->lebs_count;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", lebs_count);
+}
+
+static
+ssize_t ssdfs_maptbl_pebs_count_show(struct ssdfs_maptbl_attr *attr,
+					struct ssdfs_fs_info *fsi,
+					char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u64 pebs_count;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	pebs_count = tbl->pebs_count;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", pebs_count);
+}
+
+static
+ssize_t ssdfs_maptbl_lebs_per_fragment_show(struct ssdfs_maptbl_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u16 lebs_per_fragment;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	lebs_per_fragment = tbl->lebs_per_fragment;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", lebs_per_fragment);
+}
+
+static
+ssize_t ssdfs_maptbl_pebs_per_fragment_show(struct ssdfs_maptbl_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u16 pebs_per_fragment;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	pebs_per_fragment = tbl->pebs_per_fragment;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebs_per_fragment);
+}
+
+static
+ssize_t ssdfs_maptbl_pebs_per_stripe_show(struct ssdfs_maptbl_attr *attr,
+					    struct ssdfs_fs_info *fsi,
+					    char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u16 pebs_per_stripe;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	pebs_per_stripe = tbl->pebs_per_stripe;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebs_per_stripe);
+}
+
+static
+ssize_t ssdfs_maptbl_stripes_per_fragment_show(struct ssdfs_maptbl_attr *attr,
+						struct ssdfs_fs_info *fsi,
+						char *buf)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	u16 stripes_per_fragment;
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return 0;
+	}
+
+	down_read(&tbl->tbl_lock);
+	stripes_per_fragment = tbl->stripes_per_fragment;
+	up_read(&tbl->tbl_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", stripes_per_fragment);
+}
+
+SSDFS_MAPTBL_RO_ATTR(fragments_count);
+SSDFS_MAPTBL_RO_ATTR(fragments_per_seg);
+SSDFS_MAPTBL_RO_ATTR(fragments_per_peb);
+SSDFS_MAPTBL_RO_ATTR(fragment_bytes);
+SSDFS_MAPTBL_RO_ATTR(flags);
+SSDFS_MAPTBL_RO_ATTR(lebs_count);
+SSDFS_MAPTBL_RO_ATTR(pebs_count);
+SSDFS_MAPTBL_RO_ATTR(lebs_per_fragment);
+SSDFS_MAPTBL_RO_ATTR(pebs_per_fragment);
+SSDFS_MAPTBL_RO_ATTR(pebs_per_stripe);
+SSDFS_MAPTBL_RO_ATTR(stripes_per_fragment);
+
+static struct attribute *ssdfs_maptbl_attrs[] = {
+	SSDFS_MAPTBL_ATTR_LIST(fragments_count),
+	SSDFS_MAPTBL_ATTR_LIST(fragments_per_seg),
+	SSDFS_MAPTBL_ATTR_LIST(fragments_per_peb),
+	SSDFS_MAPTBL_ATTR_LIST(fragment_bytes),
+	SSDFS_MAPTBL_ATTR_LIST(flags),
+	SSDFS_MAPTBL_ATTR_LIST(lebs_count),
+	SSDFS_MAPTBL_ATTR_LIST(pebs_count),
+	SSDFS_MAPTBL_ATTR_LIST(lebs_per_fragment),
+	SSDFS_MAPTBL_ATTR_LIST(pebs_per_fragment),
+	SSDFS_MAPTBL_ATTR_LIST(pebs_per_stripe),
+	SSDFS_MAPTBL_ATTR_LIST(stripes_per_fragment),
+	NULL,
+};
+
+static ssize_t ssdfs_maptbl_attr_show(struct kobject *kobj,
+					struct attribute *attr, char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 dev_kobj);
+	struct ssdfs_maptbl_attr *a = container_of(attr,
+						struct ssdfs_maptbl_attr,
+						attr);
+	return a->show ? a->show(a, fsi, buf) : 0;
+}
+
+static ssize_t ssdfs_maptbl_attr_store(struct kobject *kobj,
+					struct attribute *attr,
+					const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 dev_kobj);
+	struct ssdfs_maptbl_attr *a = container_of(attr,
+						struct ssdfs_maptbl_attr,
+						attr);
+	return a->store ? a->store(a, fsi, buf, len) : 0;
+}
+
+static void ssdfs_maptbl_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_sysfs_dev_subgroups *subgroups;
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 dev_kobj);
+	subgroups = fsi->dev_subgroups;
+	complete(&subgroups->sg_maptbl_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_maptbl_attr_ops = {
+	.show	= ssdfs_maptbl_attr_show,
+	.store	= ssdfs_maptbl_attr_store,
+};
+
+static struct kobj_type ssdfs_maptbl_ktype = {
+	.default_attrs	= ssdfs_maptbl_attrs,
+	.sysfs_ops	= &ssdfs_maptbl_attr_ops,
+	.release	= ssdfs_maptbl_attr_release,
+};
+
+int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
+{
+	struct kobject *parent;
+	struct kobject *kobj;
+	struct completion *kobj_unregister;
+	struct ssdfs_sysfs_dev_subgroups *subgroups;
+	int err;
+
+	subgroups = fsi->dev_subgroups;
+	kobj = &subgroups->sg_maptbl_kobj;
+	kobj_unregister = &subgroups->sg_maptbl_kobj_unregister;
+	parent = &fsi->dev_kobj;
+	kobj->kset = ssdfs_kset;
+	init_completion(kobj_unregister);
+
+	err = kobject_init_and_add(kobj, &ssdfs_maptbl_ktype, parent,
+				   "maptbl");
+	if (err)
+		return err;
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi)
+{
+	kobject_del(&fsi->dev_subgroups->sg_maptbl_kobj);
+}
 
 /************************************************************************
  *                        SSDFS device attrs                            *
@@ -751,13 +1488,15 @@ static ssize_t ssdfs_dev_superblock_segments_show(struct ssdfs_dev_attr *attr,
 						  struct ssdfs_fs_info *fsi,
 						  char *buf)
 {
-	u64 sb_segs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
+	u64 sb_lebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
+	u64 sb_pebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
 	size_t size = sizeof(u64) * SSDFS_SB_CHAIN_MAX * SSDFS_SB_SEG_COPY_MAX;
 	int i, j;
 	ssize_t bytes_out = 0;
 
 	down_read(&fsi->sb_segs_sem);
-	memcpy(sb_segs, fsi->sb_segs, size);
+	memcpy(sb_lebs, fsi->sb_lebs, size);
+	memcpy(sb_pebs, fsi->sb_pebs, size);
 	up_read(&fsi->sb_segs_sem);
 
 	for (i = 0; i < SSDFS_SB_CHAIN_MAX; i++) {
@@ -768,8 +1507,10 @@ static ssize_t ssdfs_dev_superblock_segments_show(struct ssdfs_dev_attr *attr,
 			}
 			bytes_out += snprintf(buf + bytes_out,
 					     PAGE_SIZE - bytes_out,
-					     "sb_seg[%d][%d] = %llu\n",
-					     i, j, sb_segs[i][j]);
+					     "sb_lebs[%d][%d] = %llu, "
+					     "sb_pebs[%d][%d] = %llu\n",
+					     i, j, sb_lebs[i][j],
+					     i, j, sb_pebs[i][j]);
 			if (unlikely(bytes_out < 0))
 				return bytes_out;
 			BUG_ON(bytes_out > PAGE_SIZE);
@@ -783,14 +1524,16 @@ static ssize_t ssdfs_dev_last_superblock_log_show(struct ssdfs_dev_attr *attr,
 					struct ssdfs_fs_info *fsi,
 					char *buf)
 {
-	struct ssdfs_extent last_log;
+	struct ssdfs_peb_extent last_log;
 
 	down_read(&fsi->volume_sem);
-	memcpy(&last_log, &fsi->sbi.last_log, sizeof(struct ssdfs_extent));
+	memcpy(&last_log, &fsi->sbi.last_log, sizeof(struct ssdfs_peb_extent));
 	up_read(&fsi->volume_sem);
 
-	return snprintf(buf, PAGE_SIZE, "SEG: %llu, OFF: %u, SIZE: %u\n",
-			last_log.seg, last_log.offset, last_log.size);
+	return snprintf(buf, PAGE_SIZE,
+			"LEB: %llu, PEB: %llu, OFF: %u, SIZE: %u\n",
+			last_log.leb_id, last_log.peb_id,
+			last_log.page_offset, last_log.pages_count);
 }
 
 static ssize_t ssdfs_dev_segments_count_show(struct ssdfs_dev_attr *attr,
@@ -1014,7 +1757,21 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	if (err)
 		goto cleanup_dev_kobject;
 
+	err = ssdfs_sysfs_create_segbmap_group(fsi);
+	if (err)
+		goto delete_segments_group;
+
+	err = ssdfs_sysfs_create_maptbl_group(fsi);
+	if (err)
+		goto delete_segbmap_group;
+
 	return 0;
+
+delete_segbmap_group:
+	ssdfs_sysfs_delete_segbmap_group(fsi);
+
+delete_segments_group:
+	ssdfs_sysfs_delete_segments_group(fsi);
 
 cleanup_dev_kobject:
 	kobject_del(&fsi->dev_kobj);
@@ -1027,6 +1784,8 @@ free_dev_subgroups:
 
 void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi)
 {
+	ssdfs_sysfs_delete_maptbl_group(fsi);
+	ssdfs_sysfs_delete_segbmap_group(fsi);
 	ssdfs_sysfs_delete_segments_group(fsi);
 	kobject_del(&fsi->dev_kobj);
 	kfree(fsi->dev_subgroups);
