@@ -18,10 +18,11 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "peb.h"
+#include "peb_container.h"
 #include "segment.h"
+#include "current_segment.h"
 #include "segment_bitmap.h"
 #include "peb_mapping_table.h"
-#include "current_segment.h"
 #include "sysfs.h"
 
 /*
@@ -209,13 +210,39 @@ static ssize_t ssdfs_peb_log_pages_show(struct ssdfs_peb_attr *attr,
 	return snprintf(buf, PAGE_SIZE, "%u\n", pebi->log_pages);
 }
 
+static ssize_t ssdfs_peb_valid_pages_show(struct ssdfs_peb_attr *attr,
+					 struct ssdfs_peb_info *pebi,
+					 char *buf)
+{
+	int valid_pages;
+
+	valid_pages = ssdfs_peb_get_used_data_pages(pebi->pebc);
+	if (valid_pages < 0)
+		return valid_pages;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", valid_pages);
+}
+
+static ssize_t ssdfs_peb_invalid_pages_show(struct ssdfs_peb_attr *attr,
+					    struct ssdfs_peb_info *pebi,
+					    char *buf)
+{
+	int invalid_pages;
+
+	invalid_pages = ssdfs_peb_get_invalid_pages(pebi->pebc);
+	if (invalid_pages < 0)
+		return invalid_pages;
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", invalid_pages);
+}
+
 static ssize_t ssdfs_peb_free_pages_show(struct ssdfs_peb_attr *attr,
 					 struct ssdfs_peb_info *pebi,
 					 char *buf)
 {
 	int free_pages;
 
-	free_pages = ssdfs_peb_get_free_pages(pebi);
+	free_pages = ssdfs_peb_get_free_pages(pebi->pebc);
 	if (free_pages < 0)
 		return free_pages;
 
@@ -272,8 +299,8 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 	int i;
 
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
-		pid = task_pid_nr(pebi->thread[i].task);
-		state = get_task_state(pebi->thread[i].task);
+		pid = task_pid_nr(pebi->pebc->thread[i].task);
+		state = get_task_state(pebi->pebc->thread[i].task);
 		type = thread_type_array[i];
 		count += snprintf(buf + count, PAGE_SIZE - count,
 				  "%s: pid %d, state %s\n",
@@ -286,6 +313,8 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 SSDFS_PEB_RO_ATTR(id);
 SSDFS_PEB_RO_ATTR(peb_index);
 SSDFS_PEB_RO_ATTR(log_pages);
+SSDFS_PEB_RO_ATTR(valid_pages);
+SSDFS_PEB_RO_ATTR(invalid_pages);
 SSDFS_PEB_RO_ATTR(free_pages);
 SSDFS_PEB_RO_ATTR(threads_info);
 
@@ -293,6 +322,8 @@ static struct attribute *ssdfs_peb_attrs[] = {
 	SSDFS_PEB_ATTR_LIST(id),
 	SSDFS_PEB_ATTR_LIST(peb_index),
 	SSDFS_PEB_ATTR_LIST(log_pages),
+	SSDFS_PEB_ATTR_LIST(valid_pages),
+	SSDFS_PEB_ATTR_LIST(invalid_pages),
 	SSDFS_PEB_ATTR_LIST(free_pages),
 	SSDFS_PEB_ATTR_LIST(threads_info),
 	NULL,
@@ -344,7 +375,7 @@ static struct kobj_type ssdfs_peb_ktype = {
 
 int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_info *pebi)
 {
-	struct ssdfs_segment_info *si = pebi->seg_info;
+	struct ssdfs_segment_info *si = pebi->pebc->parent_si;
 	struct kobject *parent;
 	int err;
 
@@ -460,11 +491,28 @@ static ssize_t ssdfs_seg_refs_count_show(struct ssdfs_seg_attr *attr,
 	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&si->refs_count));
 }
 
+static ssize_t ssdfs_seg_valid_pages_show(struct ssdfs_seg_attr *attr,
+					  struct ssdfs_segment_info *si,
+					  char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			atomic_read(&si->blk_bmap.valid_logical_blks));
+}
+
+static ssize_t ssdfs_seg_invalid_pages_show(struct ssdfs_seg_attr *attr,
+					    struct ssdfs_segment_info *si,
+					    char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			atomic_read(&si->blk_bmap.invalid_logical_blks));
+}
+
 static ssize_t ssdfs_seg_free_pages_show(struct ssdfs_seg_attr *attr,
 					 struct ssdfs_segment_info *si,
 					 char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&si->free_pages));
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			atomic_read(&si->blk_bmap.free_logical_blks));
 }
 
 static ssize_t ssdfs_seg_seg_state_show(struct ssdfs_seg_attr *attr,
@@ -509,6 +557,8 @@ SSDFS_SEG_RO_ATTR(create_threads);
 SSDFS_SEG_RO_ATTR(seg_type);
 SSDFS_SEG_RO_ATTR(pebs_count);
 SSDFS_SEG_RO_ATTR(refs_count);
+SSDFS_SEG_RO_ATTR(valid_pages);
+SSDFS_SEG_RO_ATTR(invalid_pages);
 SSDFS_SEG_RO_ATTR(free_pages);
 SSDFS_SEG_RO_ATTR(seg_state);
 
@@ -519,6 +569,8 @@ static struct attribute *ssdfs_seg_attrs[] = {
 	SSDFS_SEG_ATTR_LIST(seg_type),
 	SSDFS_SEG_ATTR_LIST(pebs_count),
 	SSDFS_SEG_ATTR_LIST(refs_count),
+	SSDFS_SEG_ATTR_LIST(valid_pages),
+	SSDFS_SEG_ATTR_LIST(invalid_pages),
 	SSDFS_SEG_ATTR_LIST(free_pages),
 	SSDFS_SEG_ATTR_LIST(seg_state),
 	NULL,
@@ -683,13 +735,14 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 				  type, seg_id);
 
 		for (j = 0; j < real_seg->pebs_count; j++) {
-			struct ssdfs_peb_info *pebi = &real_seg->peb_array[j];
+			struct ssdfs_peb_container *pebc =
+					&real_seg->peb_array[j];
 
-			if (is_peb_joined_into_create_requests_queue(pebi)) {
+			if (is_peb_joined_into_create_requests_queue(pebc)) {
 				count += snprintf(buf + count,
 						  PAGE_SIZE - count,
-						  "peb_id %llu ",
-						  pebi->peb_id);
+						  "peb_index %u ",
+						  pebc->peb_index);
 			}
 		}
 
