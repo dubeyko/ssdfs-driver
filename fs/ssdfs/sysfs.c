@@ -17,11 +17,12 @@
 
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "page_array.h"
 #include "peb.h"
 #include "peb_container.h"
+#include "segment_bitmap.h"
 #include "segment.h"
 #include "current_segment.h"
-#include "segment_bitmap.h"
 #include "peb_mapping_table.h"
 #include "sysfs.h"
 
@@ -267,6 +268,7 @@ static const char * const task_state_array[] = {
 	"t (tracing stop)",	/*   8 */
 	"X (dead)",		/*  16 */
 	"Z (zombie)",		/*  32 */
+	"P (parked)",		/*  64 */
 };
 
 static inline const char *get_task_state(struct task_struct *tsk)
@@ -717,6 +719,8 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 			continue;
 		}
 
+		ssdfs_current_segment_lock(cur_seg);
+
 		real_seg = cur_seg->real_seg;
 
 		if (real_seg == NULL) {
@@ -750,6 +754,8 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 				  PAGE_SIZE - count,
 				  ">, create_threads %u\n",
 				  real_seg->create_threads);
+
+		ssdfs_current_segment_unlock(cur_seg);
 	}
 	up_read(&array->lock);
 

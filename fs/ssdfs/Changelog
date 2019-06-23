@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.1.25 [June 23, 2019]
+    (*) Sysfs support has been reimplemented.
+
 v.1.24 [June 22, 2019]
     (*) Sysfs support reimplementation (step 5).
 
