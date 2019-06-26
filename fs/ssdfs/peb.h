@@ -89,8 +89,6 @@ struct ssdfs_peb_log {
  * @current_log: PEB's current log
  * @cache: PEB's memory pages
  * @pebc: pointer on parent container
- * @peb_kobj: /sys/fs/ssdfs/<device>/<segN>/<pebN> kernel object
- * @peb_kobj_unregister: completion state for <pebN> kernel object
  */
 struct ssdfs_peb_info {
 	/* Static data */
@@ -131,10 +129,6 @@ struct ssdfs_peb_info {
 
 	/* Parent container */
 	struct ssdfs_peb_container *pebc;
-
-	/* /sys/fs/ssdfs/<device>/<segN>/<pebN> */
-	struct kobject peb_kobj;
-	struct completion peb_kobj_unregister;
 };
 
 #define SSDFS_AREA_TYPE2INDEX(type)({ \

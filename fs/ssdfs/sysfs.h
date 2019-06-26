@@ -98,9 +98,9 @@ struct ssdfs_pebs_attr {
 
 struct ssdfs_peb_attr {
 	struct attribute attr;
-	ssize_t (*show)(struct ssdfs_peb_attr *, struct ssdfs_peb_info *,
+	ssize_t (*show)(struct ssdfs_peb_attr *, struct ssdfs_peb_container *,
 			char *);
-	ssize_t (*store)(struct ssdfs_peb_attr *, struct ssdfs_peb_info *,
+	ssize_t (*store)(struct ssdfs_peb_attr *, struct ssdfs_peb_container *,
 			 const char *, size_t);
 };
 

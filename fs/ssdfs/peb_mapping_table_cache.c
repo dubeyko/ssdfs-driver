@@ -324,6 +324,8 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 	u64 cur_leb_id;
 	u16 items_count;
 	int i = 0;
+	int step, cur_index;
+	bool disable_step = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!kaddr || !item_index);
@@ -377,12 +379,22 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 
 	if (start_diff <= end_diff) {
 		/* straight search */
-		for (i = 0; i < items_count; i++) {
-			cur_pair = start_pair + i;
+		i = 0;
+		cur_index = 0;
+		step = 1;
+		while (i < items_count) {
+			cur_pair = start_pair + cur_index;
 			cur_leb_id = le64_to_cpu(cur_pair->leb_id);
 
+			if (leb_id < cur_leb_id) {
+				disable_step = true;
+				cur_index = i;
+				cur_pair = start_pair + cur_index;
+				cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+			}
+
 			if (leb_id > cur_leb_id)
-				continue;
+				goto continue_straight_search;
 			else if (cur_leb_id == leb_id) {
 				*item_index = i;
 				*found = cur_pair;
@@ -392,42 +404,88 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 				*found = cur_pair;
 				return -EFAULT;
 			}
+
+continue_straight_search:
+			if (!disable_step)
+				step *= 2;
+
+			i = cur_index + 1;
+
+			if (disable_step)
+				cur_index = i;
+			else if ((i + step) < items_count) {
+				cur_index = i + step;
+			} else {
+				disable_step = true;
+				cur_index = i;
+			}
 		}
 	} else {
 		/* reverse search */
-		for (i = items_count - 1; i >= 0; i--) {
-			cur_pair = start_pair + i;
+		i = items_count - 1;
+		cur_index = i;
+		step = 1;
+		while (i >= 0) {
+			cur_pair = start_pair + cur_index;
 			cur_leb_id = le64_to_cpu(cur_pair->leb_id);
 
+			if (leb_id > cur_leb_id) {
+				disable_step = true;
+				cur_index = i;
+				cur_pair = start_pair + cur_index;
+				cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+			}
+
 			if (leb_id < cur_leb_id)
-				continue;
+				goto continue_reverse_search;
 			else if (cur_leb_id == leb_id) {
 				*item_index = i;
 				*found = cur_pair;
 
-				cur_pair--;
-				cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+				if (*item_index > 0) {
+					cur_pair--;
+					cur_leb_id =
+						le64_to_cpu(cur_pair->leb_id);
 
-				if (cur_leb_id == leb_id) {
-					--*item_index;
-					*found = cur_pair;
-				} else
-					return -EEXIST;
+					if (cur_leb_id == leb_id) {
+						--*item_index;
+						*found = cur_pair;
+					} else
+						return -EEXIST;
+				}
 
-				cur_pair--;
-				cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+				if (*item_index > 0) {
+					cur_pair--;
+					cur_leb_id =
+					    le64_to_cpu(cur_pair->leb_id);
 
-				if (cur_leb_id == leb_id) {
-					SSDFS_ERR("unexpected pairs count\n");
-					return -ERANGE;
-				} else
-					return -EEXIST;
+					if (cur_leb_id == leb_id) {
+						SSDFS_ERR("unexpected pairs\n");
+						return -ERANGE;
+					} else
+						return -EEXIST;
+				}
 			} else {
 				*item_index = i;
 				*found = cur_pair;
 				return -EFAULT;
 			}
-		}
+
+continue_reverse_search:
+			if (!disable_step)
+				step *= 2;
+
+			i = cur_index - 1;
+
+			if (disable_step)
+				cur_index = i;
+			else if (i >= step && ((i - step) >= 0))
+				cur_index = i - step;
+			else {
+				disable_step = true;
+				cur_index = i;
+			}
+		};
 	}
 
 	return -ERANGE;
@@ -1760,9 +1818,6 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 
 	memcpy(&cur_pair, pair, pair_size);
 	memcpy(&cur_state, state, peb_state_size);
-
-	/* it needs to insert the item after the found index */
-	item_index++;
 
 	for (; start_page < pagevec_count(&cache->pvec); start_page++) {
 		bool need_move_item = false;

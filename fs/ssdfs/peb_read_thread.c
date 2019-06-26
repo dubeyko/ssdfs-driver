@@ -2075,7 +2075,16 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 	 *       logs support.
 	 */
 	BUG_ON(new_log_start_page == U16_MAX);
-	ssdfs_peb_current_log_init(pebi, pebi->log_pages, new_log_start_page);
+
+	if (new_log_start_page < fsi->pages_per_peb) {
+		ssdfs_peb_current_log_init(pebi,
+					   pebi->log_pages,
+					   new_log_start_page);
+	} else {
+		ssdfs_peb_current_log_init(pebi,
+					   0,
+					   new_log_start_page);
+	}
 
 fail_init_using_blk_bmap:
 	if (unlikely(err))

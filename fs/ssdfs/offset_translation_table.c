@@ -3196,6 +3196,8 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 	SSDFS_DBG("table %p, logical_blk %u, pos %p\n",
 		  table, logical_blk, pos);
 
+	ssdfs_debug_blk2off_table_object(table);
+
 	if (logical_blk >= table->lblk2off_capacity) {
 		SSDFS_ERR("logical_blk %u >= lblk2off_capacity %u\n",
 			  logical_blk, table->lblk2off_capacity);
@@ -4193,6 +4195,8 @@ finish_allocation:
 		SSDFS_DBG("extent (start %u, len %u) has been allocated\n",
 			  extent->start_lblk, extent->len);
 	}
+
+	ssdfs_debug_blk2off_table_object(table);
 
 	return err;
 }

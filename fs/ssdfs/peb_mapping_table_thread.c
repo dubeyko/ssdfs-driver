@@ -131,10 +131,11 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 		page = ssdfs_page_array_get_page_locked(&fdesc->array,
 							page_index);
-		if (!page) {
+		if (IS_ERR_OR_NULL(page)) {
+			err = page == NULL ? -ERANGE : PTR_ERR(page);
 			SSDFS_ERR("fail to find page: page_index %lu\n",
 				  page_index);
-			return -ERANGE;
+			return err;
 		}
 
 		kaddr = kmap(page);
@@ -396,10 +397,11 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	page_index += (pgoff_t)fdesc->fragment_id * fdesc->fragment_pages;
 
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (!page) {
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
 		SSDFS_ERR("fail to find page: page_index %lu\n",
 			  page_index);
-		return -ERANGE;
+		return err;
 	}
 
 	kaddr = kmap(page);
@@ -718,10 +720,11 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 	page_index += (pgoff_t)fdesc->fragment_id * fdesc->fragment_pages;
 
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (!page) {
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
 		SSDFS_ERR("fail to find page: page_index %lu\n",
 			  page_index);
-		return -ERANGE;
+		return err;
 	}
 
 	kaddr = kmap(page);
@@ -1076,10 +1079,11 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	page_index += (pgoff_t)ptr->fragment_id * ptr->fragment_pages;
 
 	page = ssdfs_page_array_get_page_locked(&ptr->array, page_index);
-	if (!page) {
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
 		SSDFS_ERR("fail to find page: page_index %lu\n",
 			  page_index);
-		return -ERANGE;
+		return err;
 	}
 
 	kaddr = kmap(page);

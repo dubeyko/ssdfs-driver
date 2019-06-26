@@ -1102,6 +1102,11 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 	down_read(&array->lock);
 
 	capacity = atomic_read(&array->pages_capacity);
+	if (capacity <= 0) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid capacity %d\n", capacity);
+		goto finish_search;
+	}
 
 	bmap = &array->bmap[SSDFS_PAGE_ARRAY_DIRTY_BMAP];
 	if (!bmap->ptr) {
@@ -1109,6 +1114,8 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 		SSDFS_WARN("dirty bitmap is empty\n");
 		goto finish_search;
 	}
+
+	end = min_t(int, capacity - 1, end);
 
 	spin_lock(&bmap->lock);
 	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
@@ -1121,6 +1128,10 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 		page = array->pages[found];
 
 		if (page) {
+			if (!PageDirty(page)) {
+				SSDFS_ERR("page %lu is not dirty\n",
+					  page_index(page));
+			}
 			pagevec_add(pvec, page);
 			count++;
 		}
@@ -1129,6 +1140,9 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 			goto finish_search;
 
 		found++;
+
+		if (found >= capacity)
+			break;
 
 		spin_lock(&bmap->lock);
 		found = bitmap_find_next_zero_area(bmap->ptr, capacity,
@@ -1314,6 +1328,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 	down_write(&array->lock);
 
 	capacity = atomic_read(&array->pages_capacity);
+	if (capacity <= 0) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid capacity %d\n", capacity);
+		goto finish_release_pages_range;
+	}
 
 	if (array->pages_count == 0) {
 		err = 0;
@@ -1340,6 +1359,8 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 	found = bitmap_find_next_zero_area(alloc_bmap->ptr, capacity,
 					   *start, 1, 0);
 	spin_unlock(&alloc_bmap->lock);
+
+	end = min_t(int, capacity - 1, end);
 
 	*start = (int)found;
 

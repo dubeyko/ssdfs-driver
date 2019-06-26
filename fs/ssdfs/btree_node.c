@@ -174,6 +174,7 @@ int ssdfs_btree_node_create_empty_index_area(struct ssdfs_btree *tree,
 		 */
 		atomic_set(&node->index_area.state,
 				SSDFS_BTREE_NODE_INDEX_AREA_EXIST);
+		atomic_or(SSDFS_BTREE_NODE_HAS_INDEX_AREA, &node->flags);
 		node->index_area.index_size =
 					sizeof(struct ssdfs_btree_index_key);
 		node->index_area.index_count = 0;
@@ -258,6 +259,7 @@ int ssdfs_btree_node_create_empty_items_area(struct ssdfs_btree *tree,
 		 */
 		atomic_set(&node->items_area.state,
 				SSDFS_BTREE_NODE_ITEMS_AREA_EXIST);
+		atomic_or(SSDFS_BTREE_NODE_HAS_ITEMS_AREA, &node->flags);
 		node->items_area.item_size = tree->item_size;
 		node->items_area.min_item_size = tree->min_item_size;
 		node->items_area.max_item_size = tree->max_item_size;
@@ -268,6 +270,7 @@ int ssdfs_btree_node_create_empty_items_area(struct ssdfs_btree *tree,
 	case SSDFS_BTREE_LEAF_NODE:
 		atomic_set(&node->items_area.state,
 				SSDFS_BTREE_NODE_ITEMS_AREA_EXIST);
+		atomic_or(SSDFS_BTREE_NODE_HAS_ITEMS_AREA, &node->flags);
 		node->items_area.item_size = tree->item_size;
 		node->items_area.min_item_size = tree->min_item_size;
 		node->items_area.max_item_size = tree->max_item_size;
@@ -1326,7 +1329,11 @@ int ssdfs_btree_init_node_index_area(struct ssdfs_btree_node *node,
 
 	flags = le16_to_cpu(hdr->flags);
 
-	index_area_size = 1 << hdr->log_index_area_size;
+	if (hdr->log_index_area_size > 0)
+		index_area_size = 1 << hdr->log_index_area_size;
+	else
+		index_area_size = 0;
+
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
 		if (index_area_size == 0 ||
 		    index_area_size > node->node_size) {
@@ -1385,23 +1392,24 @@ int ssdfs_btree_init_node_index_area(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	offset = le16_to_cpu(hdr->index_area_offset);
-
-	if (offset != hdr_size) {
-		SSDFS_ERR("invalid index_area_offset %u\n",
-			  offset);
-		return -EIO;
-	}
-
-	if ((offset + index_area_size) > node->node_size) {
-		SSDFS_ERR("offset %u + index_area_size %u > node_size %u\n",
-			  offset, index_area_size, node->node_size);
-		return -ERANGE;
-	}
-
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
 		atomic_set(&node->index_area.state,
 				SSDFS_BTREE_NODE_INDEX_AREA_EXIST);
+
+		offset = le16_to_cpu(hdr->index_area_offset);
+
+		if (offset != hdr_size) {
+			SSDFS_ERR("invalid index_area_offset %u\n",
+				  offset);
+			return -EIO;
+		}
+
+		if ((offset + index_area_size) > node->node_size) {
+			SSDFS_ERR("offset %u + area_size %u > node_size %u\n",
+				  offset, index_area_size, node->node_size);
+			return -ERANGE;
+		}
+
 		node->index_area.offset = offset;
 		node->index_area.area_size = index_area_size;
 		node->index_area.index_size = index_size;
@@ -1469,6 +1477,7 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 				     size_t hdr_size)
 {
 	u16 flags;
+	u32 index_area_size;
 	u32 items_area_size;
 	u8 min_item_size;
 	u16 max_item_size;
@@ -1489,11 +1498,17 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 
 	flags = le16_to_cpu(hdr->flags);
 
+	if (hdr->log_index_area_size > 0)
+		index_area_size = 1 << hdr->log_index_area_size;
+	else
+		index_area_size = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(((1 << hdr->log_index_area_size) + hdr_size) > node->node_size);
+	BUG_ON((index_area_size + hdr_size) > node->node_size);
 #endif /* CONFIG_SSDFS_DEBUG */
+
 	items_area_size = node->node_size;
-	items_area_size -= 1 << hdr->log_index_area_size;
+	items_area_size -= index_area_size;
 	items_area_size -= hdr_size;
 
 	if (flags & SSDFS_BTREE_NODE_HAS_ITEMS_AREA) {
@@ -1533,7 +1548,7 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 		}
 	}
 
-	offset = hdr_size + (1 << hdr->log_index_area_size);
+	offset = hdr_size + index_area_size;
 
 	if (offset != le32_to_cpu(hdr->item_area_offset)) {
 		SSDFS_ERR("invalid item_area_offset %u\n",
@@ -1550,7 +1565,7 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 	min_item_size = hdr->min_item_size;
 	max_item_size = le16_to_cpu(hdr->max_item_size);
 
-	if (min_item_size == 0 || max_item_size < min_item_size) {
+	if (max_item_size < min_item_size) {
 		SSDFS_ERR("invalid item size: "
 			  "min size %u, max size %u\n",
 			  min_item_size, max_item_size);
@@ -1949,6 +1964,13 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 			  flags);
 		return -ERANGE;
 	}
+
+	/*
+	 * Flag SSDFS_BTREE_NODE_PRE_ALLOCATED needs to be excluded.
+	 * The pre-allocated node will be created during the flush
+	 * operation. This flag needs only on kernel side.
+	 */
+	flags &= ~SSDFS_BTREE_NODE_PRE_ALLOCATED;
 
 	hdr->flags = cpu_to_le16((u16)flags);
 
@@ -12013,6 +12035,8 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u, item_size %zu, new_size %u\n",
 		  node->node_id, item_size, new_size);
 
+	ssdfs_debug_btree_node_object(node);
+
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -12487,6 +12511,8 @@ int ssdfs_btree_node_get_hash_range(struct ssdfs_btree_search *search,
 	SSDFS_DBG("search %p, start_hash %p, "
 		  "end_hash %p, items_count %p\n",
 		  search, start_hash, end_hash, items_count);
+
+	ssdfs_debug_btree_search_object(search);
 
 	*start_hash = *end_hash = U64_MAX;
 	*items_count = 0;

@@ -238,13 +238,20 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 	 */
 
 	if (log->start_page >= pages_per_peb) {
-		SSDFS_ERR("current_log.start_page %u >= log_pages %u\n",
-			  log->start_page, pebi->log_pages);
+		SSDFS_ERR("current_log.start_page %u >= pages_per_peb %u\n",
+			  log->start_page, pages_per_peb);
 		err = -ENOSPC;
 		goto finish_log_create;
 	}
 
-	BUG_ON((log->start_page + log->free_data_pages) % pebi->log_pages);
+	if ((log->start_page + log->free_data_pages) % pebi->log_pages) {
+		SSDFS_WARN("unexpected state: "
+			   "log->start_page %u, log->free_data_pages %u, "
+			   "pebi->log_pages %u\n",
+			   log->start_page,
+			   log->free_data_pages,
+			   pebi->log_pages);
+	}
 
 	/*
 	 * TODO: Temporary the rough estimation will be:
@@ -615,8 +622,8 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 		area_pages = &pebi->current_log.area[type].array;
 		page = ssdfs_page_array_get_page_locked(area_pages,
 							page_index);
-		if (!page) {
-			err = -ERANGE;
+		if (IS_ERR_OR_NULL(page)) {
+			err = page == NULL ? -ERANGE : PTR_ERR(page);
 			SSDFS_ERR("fail to get page %lu for area %#x\n",
 				  page_index, type);
 			goto free_compr_buffer;
@@ -705,10 +712,11 @@ int ssdfs_peb_store_block_state_desc(struct ssdfs_peb_info *pebi,
 	area_pages = &pebi->current_log.area[type].array;
 
 	page = ssdfs_page_array_get_page_locked(area_pages, page_index);
-	if (!page) {
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
 		SSDFS_ERR("fail to get page %lu for area %#x\n",
 			  page_index, type);
-		return -ERANGE;
+		return err;
 	}
 
 	page_off = write_offset % PAGE_SIZE;
@@ -5668,7 +5676,8 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 		pgoff_t written_pages = 0;
 
 		index = pebi->current_log.start_page + flushed_pages;
-		end = index + PAGEVEC_SIZE - 1;
+		end = (pgoff_t)pebi->current_log.start_page + pebi->log_pages;
+		end = min_t(pgoff_t, end, (pgoff_t)(index + PAGEVEC_SIZE - 1));
 
 		err = ssdfs_page_array_lookup_range(&pebi->cache,
 						    &index, end,
@@ -5708,7 +5717,7 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 			page2 = pvec.pages[i];
 
 			if ((page_index(page1) + 1) != page_index(page2)) {
-				SSDFS_ERR("not contigous log: "
+				SSDFS_ERR("not contiguous log: "
 					  "page_index1 %lu, page_index2 %lu\n",
 					  page_index(page1),
 					  page_index(page2));
@@ -5956,19 +5965,23 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	}
 
 define_next_log_start:
-	pebi->current_log.start_page = cur_page + 1;
+	if (cur_page % pebi->log_pages) {
+		cur_page += pebi->log_pages - 1;
+		cur_page = (cur_page / pebi->log_pages) * pebi->log_pages;
+	}
+
+	pebi->current_log.start_page = cur_page;
 
 	if (pebi->current_log.start_page >= fsi->pages_per_peb)
 		pebi->current_log.free_data_pages = 0;
 	else {
-		/* TODO: temporary solution before partial logs support */
-		if (pebi->current_log.start_page % pebi->log_pages) {
-			pebi->current_log.start_page += pebi->log_pages - 1;
-			pebi->current_log.start_page /= pebi->log_pages;
-			pebi->current_log.start_page *= pebi->log_pages;
-		}
+		u16 pages_diff;
 
-		pebi->current_log.free_data_pages = pebi->log_pages;
+		pages_diff = fsi->pages_per_peb;
+		pages_diff -= pebi->current_log.start_page;
+
+		pebi->current_log.free_data_pages =
+			min_t(u16, pebi->log_pages, pages_diff);
 	}
 
 	pebi->current_log.reserved_pages = 0;
@@ -6022,7 +6035,7 @@ int ssdfs_peb_remain_log_creation_thread(struct ssdfs_peb_container *pebc)
 	SSDFS_DBG("peb_free_pages %d\n", peb_free_pages);
 
 	if (peb_free_pages == 0) {
-		SSDFS_WARN("PEB hasn't free space\n");
+		SSDFS_DBG("PEB hasn't free space\n");
 		return -ENOSPC;
 	}
 
@@ -6177,7 +6190,7 @@ int ssdfs_peb_find_next_log_creation_thread(struct ssdfs_peb_container *pebc)
 	if (start_pos == pebc->peb_index) {
 		err = ssdfs_peb_remain_log_creation_thread(pebc);
 		if (err == -ENOSPC) {
-			SSDFS_WARN("PEB hasn't free space\n");
+			SSDFS_DBG("PEB hasn't free space\n");
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remain log creation thread: "
@@ -6709,6 +6722,36 @@ finish_get_current_log_state:
 	return state;
 }
 
+static inline
+bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
+			    struct ssdfs_peb_info *pebi)
+{
+	bool is_exhausted = false;
+	u16 start_page;
+	u16 pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pebi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	start_page = pebi->current_log.start_page;
+	pages_per_peb = fsi->pages_per_peb;
+
+	switch (atomic_read(&pebi->current_log.state)) {
+	case SSDFS_LOG_INITIALIZED:
+	case SSDFS_LOG_COMMITTED:
+	case SSDFS_LOG_CREATED:
+		is_exhausted = start_page >= pages_per_peb;
+		break;
+
+	default:
+		is_exhausted = false;
+		break;
+	};
+
+	return is_exhausted;
+}
+
 /* Flush thread possible states */
 enum {
 	SSDFS_FLUSH_THREAD_ERROR,
@@ -6751,6 +6794,7 @@ int ssdfs_peb_flush_thread_func(void *data)
 	int thread_state = SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
 	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
+	bool is_peb_exhausted = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6994,6 +7038,57 @@ stop_flush_thread:
 			goto repeat;
 		}
 
+		if (is_ssdfs_peb_exhausted(fsi, pebi)) {
+			ssdfs_unlock_current_peb(pebc);
+
+			if (is_peb_under_migration(pebc)) {
+				err = ssdfs_peb_finish_migration(pebc);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to finish migration: "
+						  "seg %llu, peb_index %u, "
+						  "err %d\n",
+						  pebc->parent_si->seg_id,
+						  pebc->peb_index, err);
+					thread_state = SSDFS_FLUSH_THREAD_ERROR;
+					goto repeat;
+				}
+			}
+
+			if (!has_peb_migration_done(pebc)) {
+					SSDFS_ERR("migration is not finished: "
+						  "seg %llu, peb_index %u, "
+						  "err %d\n",
+						  pebc->parent_si->seg_id,
+						  pebc->peb_index, err);
+					thread_state = SSDFS_FLUSH_THREAD_ERROR;
+					goto repeat;
+			}
+
+			err = ssdfs_peb_start_migration(pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to start migration: "
+					  "seg %llu, peb_index %u, "
+					  "err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+
+			pebi = ssdfs_get_current_peb_locked(pebc);
+			if (IS_ERR_OR_NULL(pebi)) {
+				err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+				SSDFS_ERR("fail to get PEB object: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+		}
+
+
+
 		err = ssdfs_peb_create_log(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
@@ -7156,21 +7251,6 @@ process_flush_requests:
 		if (is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
 			thread_state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 			goto sleep_flush_thread;
-		}
-
-		if (!is_peb_under_migration(pebc)) {
-			if (!has_peb_migration_done(pebc)) {
-				err = ssdfs_peb_start_migration(pebc);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to start migration: "
-						  "seg %llu, peb_index %u, "
-						  "err %d\n",
-						  pebc->parent_si->seg_id,
-						  pebc->peb_index, err);
-					thread_state = SSDFS_FLUSH_THREAD_ERROR;
-					goto repeat;
-				}
-			}
 		}
 
 		err = ssdfs_requests_queue_remove_first(&pebc->update_rq, &req);
@@ -7407,11 +7487,11 @@ finish_update_request_processing:
 		if (unlikely(err))
 			goto repeat;
 
-		if (!is_peb_under_migration(pebc)) {
-			if (!has_peb_migration_done(pebc)) {
-				err = ssdfs_peb_start_migration(pebc);
+		if (is_peb_exhausted) {
+			if (is_peb_under_migration(pebc)) {
+				err = ssdfs_peb_finish_migration(pebc);
 				if (unlikely(err)) {
-					SSDFS_ERR("fail to start migration: "
+					SSDFS_ERR("fail to finish migration: "
 						  "seg %llu, peb_index %u, "
 						  "err %d\n",
 						  pebc->parent_si->seg_id,
@@ -7419,6 +7499,27 @@ finish_update_request_processing:
 					thread_state = SSDFS_FLUSH_THREAD_ERROR;
 					goto repeat;
 				}
+			}
+
+			if (!has_peb_migration_done(pebc)) {
+					SSDFS_ERR("migration is not finished: "
+						  "seg %llu, peb_index %u, "
+						  "err %d\n",
+						  pebc->parent_si->seg_id,
+						  pebc->peb_index, err);
+					thread_state = SSDFS_FLUSH_THREAD_ERROR;
+					goto repeat;
+			}
+
+			err = ssdfs_peb_start_migration(pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to start migration: "
+					  "seg %llu, peb_index %u, "
+					  "err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
 			}
 		}
 
@@ -7475,7 +7576,7 @@ sleep_flush_thread:
 				 FLUSH_THREAD_WAKE_CONDITION(pebc));
 
 	if (is_peb_under_migration(pebc)) {
-		if (!is_pebs_relation_alive(pebc)) {
+		if (is_pebs_relation_alive(pebc)) {
 			err = ssdfs_peb_finish_migration(pebc);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to finish migration: "

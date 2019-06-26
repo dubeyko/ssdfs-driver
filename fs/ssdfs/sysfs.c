@@ -191,33 +191,47 @@ static void ssdfs_sysfs_delete_##name##_group(struct ssdfs_fs_info *fsi) \
  ************************************************************************/
 
 static ssize_t ssdfs_peb_id_show(struct ssdfs_peb_attr *attr,
-				 struct ssdfs_peb_info *pebi,
+				 struct ssdfs_peb_container *pebc,
 				 char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%llu\n", pebi->peb_id);
+	int count = 0;
+
+	if (pebc->src_peb) {
+		count += snprintf(buf + count, PAGE_SIZE - count,
+				  "SOURCE PEB: %llu\n",
+				  pebc->src_peb->peb_id);
+	}
+
+	if (pebc->dst_peb) {
+		count += snprintf(buf + count, PAGE_SIZE - count,
+				  "DESTINATION PEB: %llu\n",
+				  pebc->dst_peb->peb_id);
+	}
+
+	return count;
 }
 
 static ssize_t ssdfs_peb_peb_index_show(struct ssdfs_peb_attr *attr,
-					struct ssdfs_peb_info *pebi,
+					struct ssdfs_peb_container *pebc,
 					char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n", pebi->peb_index);
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebc->peb_index);
 }
 
 static ssize_t ssdfs_peb_log_pages_show(struct ssdfs_peb_attr *attr,
-					struct ssdfs_peb_info *pebi,
+					struct ssdfs_peb_container *pebc,
 					char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n", pebi->log_pages);
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebc->log_pages);
 }
 
 static ssize_t ssdfs_peb_valid_pages_show(struct ssdfs_peb_attr *attr,
-					 struct ssdfs_peb_info *pebi,
+					 struct ssdfs_peb_container *pebc,
 					 char *buf)
 {
 	int valid_pages;
 
-	valid_pages = ssdfs_peb_get_used_data_pages(pebi->pebc);
+	valid_pages = ssdfs_peb_get_used_data_pages(pebc);
 	if (valid_pages < 0)
 		return valid_pages;
 
@@ -225,12 +239,12 @@ static ssize_t ssdfs_peb_valid_pages_show(struct ssdfs_peb_attr *attr,
 }
 
 static ssize_t ssdfs_peb_invalid_pages_show(struct ssdfs_peb_attr *attr,
-					    struct ssdfs_peb_info *pebi,
+					    struct ssdfs_peb_container *pebc,
 					    char *buf)
 {
 	int invalid_pages;
 
-	invalid_pages = ssdfs_peb_get_invalid_pages(pebi->pebc);
+	invalid_pages = ssdfs_peb_get_invalid_pages(pebc);
 	if (invalid_pages < 0)
 		return invalid_pages;
 
@@ -238,12 +252,12 @@ static ssize_t ssdfs_peb_invalid_pages_show(struct ssdfs_peb_attr *attr,
 }
 
 static ssize_t ssdfs_peb_free_pages_show(struct ssdfs_peb_attr *attr,
-					 struct ssdfs_peb_info *pebi,
+					 struct ssdfs_peb_container *pebc,
 					 char *buf)
 {
 	int free_pages;
 
-	free_pages = ssdfs_peb_get_free_pages(pebi->pebc);
+	free_pages = ssdfs_peb_get_free_pages(pebc);
 	if (free_pages < 0)
 		return free_pages;
 
@@ -291,7 +305,7 @@ static const char * const thread_type_array[] = {
 };
 
 static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
-					   struct ssdfs_peb_info *pebi,
+					   struct ssdfs_peb_container *pebc,
 					   char *buf)
 {
 	int count = 0;
@@ -301,8 +315,8 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 	int i;
 
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
-		pid = task_pid_nr(pebi->pebc->thread[i].task);
-		state = get_task_state(pebi->pebc->thread[i].task);
+		pid = task_pid_nr(pebc->thread[i].task);
+		state = get_task_state(pebc->thread[i].task);
 		type = thread_type_array[i];
 		count += snprintf(buf + count, PAGE_SIZE - count,
 				  "%s: pid %d, state %s\n",
@@ -334,34 +348,34 @@ static struct attribute *ssdfs_peb_attrs[] = {
 static ssize_t ssdfs_peb_attr_show(struct kobject *kobj,
 				    struct attribute *attr, char *buf)
 {
-	struct ssdfs_peb_info *pebi = container_of(kobj,
-						   struct ssdfs_peb_info,
+	struct ssdfs_peb_container *pebc = container_of(kobj,
+						   struct ssdfs_peb_container,
 						   peb_kobj);
 	struct ssdfs_peb_attr *a = container_of(attr, struct ssdfs_peb_attr,
 						attr);
 
-	return a->show ? a->show(a, pebi, buf) : 0;
+	return a->show ? a->show(a, pebc, buf) : 0;
 }
 
 static ssize_t ssdfs_peb_attr_store(struct kobject *kobj,
 				    struct attribute *attr,
 				    const char *buf, size_t len)
 {
-	struct ssdfs_peb_info *pebi = container_of(kobj,
-						   struct ssdfs_peb_info,
+	struct ssdfs_peb_container *pebc = container_of(kobj,
+						   struct ssdfs_peb_container,
 						   peb_kobj);
 	struct ssdfs_peb_attr *a = container_of(attr, struct ssdfs_peb_attr,
 						attr);
 
-	return a->store ? a->store(a, pebi, buf, len) : 0;
+	return a->store ? a->store(a, pebc, buf, len) : 0;
 }
 
 static void ssdfs_peb_attr_release(struct kobject *kobj)
 {
-	struct ssdfs_peb_info *pebi = container_of(kobj,
-						   struct ssdfs_peb_info,
+	struct ssdfs_peb_container *pebc = container_of(kobj,
+						   struct ssdfs_peb_container,
 						   peb_kobj);
-	complete(&pebi->peb_kobj_unregister);
+	complete(&pebc->peb_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_peb_attr_ops = {
@@ -375,30 +389,30 @@ static struct kobj_type ssdfs_peb_ktype = {
 	.release	= ssdfs_peb_attr_release,
 };
 
-int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_info *pebi)
+int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc)
 {
-	struct ssdfs_segment_info *si = pebi->pebc->parent_si;
+	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct kobject *parent;
 	int err;
 
 	parent = &si->seg_subgroups->sg_pebs_kobj;
 
-	pebi->peb_kobj.kset = ssdfs_kset;
-	init_completion(&pebi->peb_kobj_unregister);
-	err = kobject_init_and_add(&pebi->peb_kobj,
+	pebc->peb_kobj.kset = ssdfs_kset;
+	init_completion(&pebc->peb_kobj_unregister);
+	err = kobject_init_and_add(&pebc->peb_kobj,
 				   &ssdfs_peb_ktype,
 				   parent,
 				   "peb%u",
-				   pebi->peb_index);
+				   pebc->peb_index);
 	if (err)
 		return err;
 
 	return 0;
 }
 
-void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_info *pebi)
+void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc)
 {
-	kobject_del(&pebi->peb_kobj);
+	kobject_del(&pebc->peb_kobj);
 }
 
 /************************************************************************

@@ -104,11 +104,17 @@ check_migration_state:
  */
 bool is_peb_under_migration(struct ssdfs_peb_container *pebc)
 {
+	int state;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	switch (atomic_read(&pebc->migration_state)) {
+	state = atomic_read(&pebc->migration_state);
+
+	SSDFS_DBG("migration state %#x\n", state);
+
+	switch (state) {
 	case SSDFS_PEB_NOT_MIGRATING:
 		return false;
 
@@ -144,6 +150,9 @@ bool is_pebs_relation_alive(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
+
+	SSDFS_DBG("items_state %#x\n",
+		  atomic_read(&pebc->items_state));
 
 try_define_items_state:
 	switch (atomic_read(&pebc->items_state)) {
@@ -244,6 +253,9 @@ bool has_peb_migration_done(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("migration_state %#x\n",
+		  atomic_read(&pebc->migration_state));
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_NOT_MIGRATING:

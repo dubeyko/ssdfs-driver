@@ -409,18 +409,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		goto fail_conctruct_peb_obj;
 	};
 
-	err = ssdfs_sysfs_create_peb_group(pebi);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to create peb's sysfs group: "
-			  "seg %llu, peb_index %u\n",
-			  pebc->parent_si->seg_id, pebi->peb_index);
-		goto delete_sysfs_peb_group;
-	}
-
 	return 0;
-
-delete_sysfs_peb_group:
-	ssdfs_sysfs_delete_peb_group(pebi);
 
 fail_conctruct_peb_obj:
 	memset(pebi, 0, pebi_size);
@@ -472,8 +461,6 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	}
 
 	ssdfs_destroy_page_array(&pebi->cache);
-
-	ssdfs_sysfs_delete_peb_group(pebi);
 
 	return err;
 }

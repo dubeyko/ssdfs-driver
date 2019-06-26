@@ -1975,12 +1975,7 @@ init_failed:
 
 	invalid_blks = atomic_xchg(&bmap->invalid_logical_blks, 0);
 	atomic_sub(invalid_blks, &bmap->parent->invalid_logical_blks);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(atomic_read(&bmap->free_logical_blks) != 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	atomic_set(&bmap->free_logical_blks, invalid_blks);
+	atomic_add(invalid_blks, &bmap->free_logical_blks);
 	atomic_set(&pebc->shared_free_dst_blks, invalid_blks);
 	atomic_add(invalid_blks, &bmap->parent->free_logical_blks);
 

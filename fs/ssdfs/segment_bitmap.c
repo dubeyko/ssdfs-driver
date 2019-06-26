@@ -4101,7 +4101,7 @@ finish_reserve_segment:
 
 finish_segment_check:
 	up_read(&segbmap->resize_lock);
-	inode_lock_shared(segbmap->fsi->segbmap_inode);
+	inode_unlock_shared(segbmap->fsi->segbmap_inode);
 
 	return err;
 }

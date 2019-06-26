@@ -121,6 +121,8 @@ int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
 	ptr->fsi = fsi;
 	atomic_set(&ptr->state, SSDFS_EXTENTS_BTREE_CREATED);
 
+	ssdfs_debug_extents_btree_object(ptr);
+
 	ii->extents_tree = ptr;
 
 	return 0;
@@ -421,6 +423,8 @@ fail_create_generic_tree:
 
 finish_tree_init:
 	up_write(&tree->lock);
+
+	ssdfs_debug_extents_btree_object(tree);
 
 	return err;
 }
@@ -5265,6 +5269,7 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree *tree;
 	struct page *page;
+	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	size_t hdr_size = sizeof(struct ssdfs_extents_btree_node_header);
 	u32 node_size;
 	u32 items_area_size = 0;
@@ -5439,26 +5444,32 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 		goto finish_create_node;
 	}
 
-	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		spin_lock(&node->bmap_array.bmap[i].lock);
-		node->bmap_array.bmap[i].ptr = kzalloc(bmap_bytes, GFP_KERNEL);
-		if (!node->bmap_array.bmap[i].ptr)
-			err = -ENOMEM;
-		spin_unlock(&node->bmap_array.bmap[i].lock);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
-				  i);
-			goto finish_create_node;
-		}
-	}
-
 finish_create_node:
 	up_write(&node->bmap_array.lock);
 	up_write(&node->header_lock);
 
 	if (unlikely(err))
 		return err;
+
+	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
+		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		if (!addr[i]) {
+			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
+				  i);
+			for (; i >= 0; i--)
+				kfree(addr[i]);
+			return -ENOMEM;
+		}
+	}
+
+	down_write(&node->bmap_array.lock);
+	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
+		spin_lock(&node->bmap_array.bmap[i].lock);
+		node->bmap_array.bmap[i].ptr = addr[i];
+		addr[i] = NULL;
+		spin_unlock(&node->bmap_array.bmap[i].lock);
+	}
+	up_write(&node->bmap_array.lock);
 
 	pages_count = node_size / PAGE_SIZE;
 
@@ -5518,6 +5529,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_extents_btree_node_header *hdr;
 	size_t hdr_size = sizeof(struct ssdfs_extents_btree_node_header);
+	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	struct page *page;
 	void *kaddr;
 	u64 start_hash, end_hash;
@@ -5618,6 +5630,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	start_hash = le64_to_cpu(hdr->node.start_hash);
 	end_hash = le64_to_cpu(hdr->node.end_hash);
 	node_size = 1 << hdr->node.log_node_size;
+	index_size = hdr->node.index_size;
 	item_size = hdr->node.min_item_size;
 	items_capacity = le16_to_cpu(hdr->node.items_capacity);
 	parent_ino = le64_to_cpu(hdr->parent_ino);
@@ -5701,6 +5714,39 @@ finish_header_init:
 
 	items_count = node_size / item_size;
 
+	if (item_size > 0)
+		items_capacity = node_size / item_size;
+	else
+		items_capacity = 0;
+
+	if (index_size > 0)
+		index_capacity = node_size / index_size;
+	else
+		index_capacity = 0;
+
+	bmap_bytes = index_capacity + items_capacity + 1;
+	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes /= BITS_PER_BYTE;
+
+	if (bmap_bytes == 0 || bmap_bytes > SSDFS_EXTENT_MAX_BMAP_SIZE) {
+		err = -EIO;
+		SSDFS_ERR("invalid bmap_bytes %zu\n",
+			  bmap_bytes);
+		goto finish_init_operation;
+	}
+
+	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
+		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		if (!addr[i]) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
+				  i);
+			for (; i >= 0; i--)
+				kfree(addr[i]);
+			goto finish_init_operation;
+		}
+	}
+
 	down_write(&node->bmap_array.lock);
 
 	flags = atomic_read(&node->flags);
@@ -5711,7 +5757,6 @@ finish_header_init:
 		 * Reserve the whole node space as
 		 * potential space for indexes.
 		 */
-		index_size = hdr->node.index_size;
 		index_capacity = node_size / index_size;
 		node->bmap_array.item_start_bit =
 			node->bmap_array.index_start_bit + index_capacity;
@@ -5721,35 +5766,14 @@ finish_header_init:
 	} else
 		BUG();
 
-	items_capacity = node_size / item_size;
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
-	index_capacity = node_size / hdr->node.index_size;
-
-	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
-	bmap_bytes /= BITS_PER_BYTE;
-
 	node->bmap_array.bmap_bytes = bmap_bytes;
-
-	if (bmap_bytes == 0 || bmap_bytes > SSDFS_EXTENT_MAX_BMAP_SIZE) {
-		err = -EIO;
-		SSDFS_ERR("invalid bmap_bytes %zu\n",
-			  bmap_bytes);
-		goto finish_bmap_init;
-	}
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
 		spin_lock(&node->bmap_array.bmap[i].lock);
-		node->bmap_array.bmap[i].ptr = kzalloc(bmap_bytes, GFP_KERNEL);
-		if (!node->bmap_array.bmap[i].ptr)
-			err = -ENOMEM;
+		node->bmap_array.bmap[i].ptr = addr[i];
+		addr[i] = NULL;
 		spin_unlock(&node->bmap_array.bmap[i].lock);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
-				  i);
-			goto finish_bmap_init;
-		}
 	}
 
 	spin_lock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
@@ -5757,7 +5781,6 @@ finish_header_init:
 		   0, forks_count);
 	spin_unlock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
 
-finish_bmap_init:
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
 	kunmap(page);
@@ -5983,6 +6006,11 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->header_lock);
 
 	memcpy(&extents_header, &node->raw.extents_header, hdr_size);
+
+	extents_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
+	extents_header.node.magic.key = cpu_to_le16(SSDFS_EXTENTS_BNODE_MAGIC);
+	extents_header.node.magic.version.major = SSDFS_MAJOR_REVISION;
+	extents_header.node.magic.version.minor = SSDFS_MINOR_REVISION;
 
 	err = ssdfs_btree_node_pre_flush_header(node, &extents_header.node);
 	if (unlikely(err)) {

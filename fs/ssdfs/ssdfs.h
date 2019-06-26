@@ -19,10 +19,10 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/crc32.h>
 #include <linux/kobject.h>
 #include <linux/sched.h>
 #include <linux/fs.h>
+#include <linux/crc32.h>
 #include <linux/pagemap.h>
 #include <linux/ssdfs_fs.h>
 
@@ -165,9 +165,6 @@ int __init ssdfs_init_seg_obj_cache(void);
 void __exit ssdfs_destroy_seg_obj_cache(void);
 int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si);
 
-/* super.c */
-int ssdfs_commit_super(struct super_block *sb, u16 fs_state);
-
 /* sysfs.c */
 int __init ssdfs_sysfs_init(void);
 void __exit ssdfs_sysfs_exit(void);
@@ -175,8 +172,8 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb);
 void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi);
 int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si);
 void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si);
-int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_info *pebi);
-void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_info *pebi);
+int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc);
+void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc);
 
 /* volume_header.c */
 bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr);

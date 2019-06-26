@@ -1361,9 +1361,8 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 
 	pebc->peb_type = peb_type;
 	if (peb_type >= SSDFS_MAPTBL_PEB_TYPE_MAX) {
-		err = -EINVAL;
 		SSDFS_ERR("invalid seg_type %#x\n", si->seg_type);
-		goto fail_init_peb_container;
+		return -EINVAL;
 	}
 
 	pebc->peb_index = peb_index;
@@ -1572,6 +1571,14 @@ start_container_threads:
 		goto fail_init_peb_container;
 	}
 
+	err = ssdfs_sysfs_create_peb_group(pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create peb's sysfs group: "
+			  "seg %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id, pebc->peb_index);
+		goto fail_init_peb_container;
+	}
+
 finish_init_peb_container:
 	return 0;
 
@@ -1740,6 +1747,8 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 		sizeof(struct ssdfs_peb_info) * SSDFS_SEG_PEB_ITEMS_MAX);
 
 	up_write(&ptr->lock);
+
+	ssdfs_sysfs_delete_peb_group(ptr);
 
 	atomic_set(&ptr->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
 	atomic_set(&ptr->items_state, SSDFS_PEB_CONTAINER_EMPTY);
@@ -2044,7 +2053,7 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 		goto fail_prepare_destination;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add migration PEB: "
-			  "leb_id %llu, peb_type %#x"
+			  "leb_id %llu, peb_type %#x, "
 			  "err %d\n",
 			  leb_id, ptr->peb_type, err);
 		goto fail_prepare_destination;

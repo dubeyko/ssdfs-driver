@@ -2337,9 +2337,13 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 		int node_type;
 		prev_height = search->node.height;
 
+		ssdfs_btree_search_define_parent_node(search,
+							search->node.child);
+
 		err = ssdfs_btree_radix_tree_find(tree, search->node.id,
 						  &node);
 		if (err == -ENOENT) {
+			err = 0;
 			node = ssdfs_btree_read_node(tree, search);
 			if (unlikely(IS_ERR_OR_NULL(node))) {
 				err = !node ? -ENOMEM : PTR_ERR(node);
@@ -2359,8 +2363,6 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 			goto finish_search_leaf_node;
 		}
 
-		ssdfs_btree_search_define_parent_node(search,
-							search->node.child);
 		ssdfs_btree_search_define_child_node(search, node);
 		node_height = atomic_read(&node->height);
 
@@ -4959,6 +4961,8 @@ int ssdfs_btree_extract_range(struct ssdfs_btree *tree,
 		  "start_index %u, count %u\n",
 		  tree, tree->type, tree_state,
 		  start_index, count);
+
+	ssdfs_debug_btree_object(tree);
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:

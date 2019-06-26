@@ -389,7 +389,10 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 		goto fail_create_inodes_tree;
 	}
 
-	vs_flags = le32_to_cpu(fsi->vs->flags);
+	spin_lock(&fsi->volume_state_lock);
+	vs_flags = fsi->fs_flags;
+	spin_unlock(&fsi->volume_state_lock);
+
 	is_tree_inline = vs_flags & SSDFS_HAS_INLINE_INODES_TREE;
 
 	spin_lock_init(&ptr->lock);
@@ -518,9 +521,11 @@ free_search_object:
 		if (unlikely(err))
 			goto fail_create_inodes_tree;
 
-		vs_flags = le32_to_cpu(fsi->vs->flags);
+		spin_lock(&fsi->volume_state_lock);
+		vs_flags = fsi->fs_flags;
 		vs_flags &= ~SSDFS_HAS_INLINE_INODES_TREE;
-		fsi->vs->flags = cpu_to_le32(vs_flags);
+		fsi->fs_flags = vs_flags;
+		spin_unlock(&fsi->volume_state_lock);
 	} else {
 		search = ssdfs_btree_search_alloc();
 		if (!search) {
@@ -566,6 +571,8 @@ void ssdfs_inodes_btree_destroy(struct ssdfs_fs_info *fsi)
 
 	if (!fsi->inodes_tree)
 		return;
+
+	ssdfs_debug_inodes_btree_object(fsi->inodes_tree);
 
 	tree = fsi->inodes_tree;
 	ssdfs_btree_destroy(&tree->generic_tree);
@@ -643,6 +650,8 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 	fsi->vs->inodes_btree.nodes_count = cpu_to_le32(nodes_count);
 	fsi->vs->inodes_btree.upper_allocated_ino =
 				cpu_to_le64(upper_allocated_ino);
+
+	ssdfs_debug_inodes_btree_object(fsi->inodes_tree);
 
 	return 0;
 }
@@ -804,11 +813,6 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 			  search->request.start.hash, err);
 		goto finish_inode_allocation;
 	}
-
-	spin_lock(&tree->lock);
-	if (tree->upper_allocated_ino < *ino)
-		tree->upper_allocated_ino = *ino;
-	spin_unlock(&tree->lock);
 
 finish_inode_allocation:
 	ssdfs_free_inodes_range_free(range);
@@ -1533,6 +1537,8 @@ finish_create_node:
 finish_init_pvec:
 	up_write(&node->full_lock);
 
+	ssdfs_debug_btree_node_object(node);
+
 	return err;
 }
 
@@ -1558,6 +1564,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	size_t hdr_size = sizeof(struct ssdfs_inodes_btree_node_header);
 	struct ssdfs_free_inode_range_queue q;
 	struct ssdfs_inodes_btree_range *range;
+	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	struct page *page;
 	void *kaddr;
 	u32 node_size;
@@ -1650,6 +1657,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	start_hash = le64_to_cpu(hdr->node.start_hash);
 	end_hash = le64_to_cpu(hdr->node.end_hash);
 	node_size = 1 << hdr->node.log_node_size;
+	index_size = hdr->node.index_size;
 	item_size = node->tree->item_size;
 	items_capacity = le16_to_cpu(hdr->node.items_capacity);
 	inodes_count = le16_to_cpu(hdr->inodes_count);
@@ -1705,13 +1713,45 @@ finish_header_init:
 
 	items_count = node_size / item_size;
 
+	if (item_size > 0)
+		items_capacity = node_size / item_size;
+	else
+		items_capacity = 0;
+
+	if (index_size > 0)
+		index_capacity = node_size / index_size;
+	else
+		index_capacity = 0;
+
+	bmap_bytes = index_capacity + items_capacity + 1;
+	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes /= BITS_PER_BYTE;
+
+	if (bmap_bytes == 0 || bmap_bytes > SSDFS_INODE_BMAP_SIZE) {
+		err = -EIO;
+		SSDFS_ERR("invalid bmap_bytes %zu\n",
+			  bmap_bytes);
+		goto finish_init_operation;
+	}
+
+	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
+		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		if (!addr[i]) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
+				  i);
+			for (; i >= 0; i--)
+				kfree(addr[i]);
+			goto finish_init_operation;
+		}
+	}
+
 	down_write(&node->bmap_array.lock);
 
 	flags = atomic_read(&node->flags);
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
-		index_size = hdr->node.index_size;
 		index_area_size = 1 << hdr->node.log_index_area_size;
 		index_area_size += index_size - 1;
 		index_capacity = index_area_size / index_size;
@@ -1725,34 +1765,11 @@ finish_header_init:
 
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
 
-	items_capacity = node_size / item_size;
-	index_capacity = node_size / hdr->node.index_size;
-
-	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
-	bmap_bytes /= BITS_PER_BYTE;
-
-	node->bmap_array.bmap_bytes = bmap_bytes;
-
-	if (bmap_bytes == 0 || bmap_bytes > SSDFS_INODE_BMAP_SIZE) {
-		err = -EIO;
-		SSDFS_ERR("invalid bmap_bytes %zu\n",
-			  bmap_bytes);
-		goto finish_bmap_init;
-	}
-
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
 		spin_lock(&node->bmap_array.bmap[i].lock);
-		node->bmap_array.bmap[i].ptr = kzalloc(bmap_bytes, GFP_KERNEL);
-		if (!node->bmap_array.bmap[i].ptr)
-			err = -ENOMEM;
+		node->bmap_array.bmap[i].ptr = addr[i];
+		addr[i] = NULL;
 		spin_unlock(&node->bmap_array.bmap[i].lock);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
-				  i);
-			goto finish_bmap_init;
-		}
 	}
 
 	spin_lock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
@@ -1762,7 +1779,6 @@ finish_header_init:
 
 	start = node->bmap_array.item_start_bit;
 
-finish_bmap_init:
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
 	kunmap(page);
@@ -1844,6 +1860,8 @@ finish_init_operation:
 
 finish_init_node:
 	up_read(&node->full_lock);
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
@@ -1954,6 +1972,8 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 	itree->free_inodes += items_capacity;
 	spin_unlock(&itree->lock);
 
+	ssdfs_debug_btree_node_object(node);
+
 	return 0;
 }
 
@@ -2022,6 +2042,8 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 
+	ssdfs_debug_btree_node_object(node);
+
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_DIRTY:
 		/* expected state */
@@ -2055,6 +2077,11 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 
 	memcpy(&inodes_header, &node->raw.inodes_header,
 		sizeof(struct ssdfs_inodes_btree_node_header));
+
+	inodes_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
+	inodes_header.node.magic.key = cpu_to_le16(SSDFS_INODES_BNODE_MAGIC);
+	inodes_header.node.magic.version.major = SSDFS_MAJOR_REVISION;
+	inodes_header.node.magic.version.minor = SSDFS_MINOR_REVISION;
 
 	err = ssdfs_btree_node_pre_flush_header(node, &inodes_header.node);
 	if (unlikely(err)) {
@@ -2209,7 +2236,7 @@ int ssdfs_inodes_btree_node_find_range(struct ssdfs_btree_node *node,
 	u16 items_capacity;
 	u64 start_hash;
 	u64 end_hash;
-	u64 found_index, start_index;
+	u64 found_index, start_index = U64_MAX;
 	struct ssdfs_state_bitmap *bmap;
 	bool is_allocated = false;
 	int i;
@@ -2228,6 +2255,8 @@ int ssdfs_inodes_btree_node_find_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+
+	ssdfs_debug_btree_search_object(search);
 
 	down_read(&node->header_lock);
 	state = atomic_read(&node->items_area.state);
@@ -2352,6 +2381,7 @@ int ssdfs_inodes_btree_node_find_range(struct ssdfs_btree_node *node,
 		goto finish_bmap_operation;
 	}
 	start_index = found_index + node->bmap_array.item_start_bit;
+
 	spin_lock(&bmap->lock);
 	if (start_index == bitmap_find_next_zero_area(bmap->ptr,
 						      items_capacity,
@@ -2441,6 +2471,8 @@ finish_bmap_operation:
 		  search->result.search_cno,
 		  search->result.buf_state,
 		  search->result.buf);
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
@@ -2906,8 +2938,8 @@ finish_allocate_item:
 	else {
 		itree->allocated_inodes += count;
 		itree->free_inodes -= count;
-		if (itree->upper_allocated_ino < (start + count))
-			itree->upper_allocated_ino = start + count;
+		if (itree->upper_allocated_ino < (start + count - 1))
+			itree->upper_allocated_ino = start + count - 1;
 	}
 	spin_unlock(&itree->lock);
 
@@ -2960,6 +2992,8 @@ int ssdfs_inodes_btree_node_allocate_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+
+	ssdfs_debug_btree_search_object(search);
 
 	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
 		SSDFS_ERR("invalid result's state %#x\n",
@@ -3020,6 +3054,8 @@ int ssdfs_inodes_btree_node_allocate_item(struct ssdfs_btree_node *node,
 			  start, count, err);
 		return err;
 	}
+
+	ssdfs_debug_btree_node_object(node);
 
 	return 0;
 }
@@ -3175,6 +3211,8 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
+	ssdfs_debug_btree_search_object(search);
+
 	if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
 		SSDFS_ERR("invalid result's state %#x\n",
 			  search->result.state);
@@ -3279,6 +3317,9 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 
 finish_change_item:
 	up_read(&node->full_lock);
+
+	ssdfs_debug_btree_node_object(node);
+
 	return err;
 }
 

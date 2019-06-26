@@ -74,6 +74,8 @@ enum {
  * @dst_peb: pointer on destination PEB
  * @dst_peb_refs: reference counter of destination PEB (sharing counter)
  * @items: buffers for PEB objects
+ * @peb_kobj: /sys/fs/ssdfs/<device>/<segN>/<pebN> kernel object
+ * @peb_kobj_unregister: completion state for <pebN> kernel object
  */
 struct ssdfs_peb_container {
 	/* Static data */
@@ -108,6 +110,10 @@ struct ssdfs_peb_container {
 	struct ssdfs_peb_info *dst_peb;
 	atomic_t dst_peb_refs;
 	struct ssdfs_peb_info items[SSDFS_SEG_PEB_ITEMS_MAX];
+
+	/* /sys/fs/ssdfs/<device>/<segN>/<pebN> */
+	struct kobject peb_kobj;
+	struct completion peb_kobj_unregister;
 };
 
 /*

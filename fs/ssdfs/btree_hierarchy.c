@@ -5621,6 +5621,8 @@ int ssdfs_btree_process_level_for_update(struct ssdfs_btree_hierarchy *ptr,
 	SSDFS_DBG("hierarchy %p, cur_height %d\n",
 		  ptr, cur_height);
 
+	ssdfs_debug_btree_hierarchy_object(ptr);
+
 	if (cur_height >= ptr->desc.height) {
 		SSDFS_ERR("invalid hierarchy: "
 			  "cur_height %d, tree_height %d\n",

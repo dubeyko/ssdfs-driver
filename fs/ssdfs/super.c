@@ -64,6 +64,12 @@ struct ssdfs_sb_log_payload {
 
 static struct kmem_cache *ssdfs_inode_cachep;
 
+static int ssdfs_prepare_sb_log_payload(struct super_block *sb,
+					struct ssdfs_peb_extent *last_sb_log,
+					struct ssdfs_sb_log_payload *payload);
+static int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
+				struct ssdfs_peb_extent *last_sb_log,
+				struct ssdfs_sb_log_payload *payload);
 static void ssdfs_put_super(struct super_block *sb);
 
 static void init_once(void *foo)
@@ -136,6 +142,8 @@ static void ssdfs_init_inode_once(void *obj)
 static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct ssdfs_peb_extent last_sb_log = {0};
+	struct ssdfs_sb_log_payload payload;
 	unsigned long old_sb_flags;
 	unsigned long old_mount_opts;
 	int err;
@@ -156,7 +164,17 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 
 	if (*flags & MS_RDONLY) {
 		down_write(&fsi->volume_sem);
-		err = ssdfs_commit_super(sb, SSDFS_VALID_FS);
+		err = ssdfs_prepare_sb_log_payload(sb,
+						   &last_sb_log,
+						   &payload);
+		if (!err) {
+			err = ssdfs_commit_super(sb, SSDFS_VALID_FS,
+						 &last_sb_log,
+						 &payload);
+		} else {
+			SSDFS_ERR("fail to prepare sb log payload: "
+				  "err %d\n", err);
+		}
 		up_write(&fsi->volume_sem);
 
 		if (err)
@@ -166,7 +184,17 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		SSDFS_DBG("remount in RO mode\n");
 	} else {
 		down_write(&fsi->volume_sem);
-		err = ssdfs_commit_super(sb, SSDFS_MOUNTED_FS);
+		err = ssdfs_prepare_sb_log_payload(sb,
+						   &last_sb_log,
+						   &payload);
+		if (!err) {
+			err = ssdfs_commit_super(sb, SSDFS_MOUNTED_FS,
+						 &last_sb_log,
+						 &payload);
+		} else {
+			SSDFS_ERR("fail to prepare sb log payload: "
+				  "err %d\n", err);
+		}
 		up_write(&fsi->volume_sem);
 
 		if (err) {
@@ -178,12 +206,15 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		SSDFS_DBG("remount in RW mode\n");
 	}
 
+	pagevec_release(&payload.maptbl_cache.pvec);
+
 out:
 	return 0;
 
 restore_opts:
 	sb->s_flags = old_sb_flags;
 	fsi->mount_opts = old_mount_opts;
+	pagevec_release(&payload.maptbl_cache.pvec);
 	return err;
 }
 
@@ -623,8 +654,12 @@ finish_reservation:
 	return reserved_seg;
 }
 
+typedef u64 sb_pebs_array[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
+
 static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
-				     int sb_seg_type)
+				     int sb_seg_type,
+				     sb_pebs_array *sb_lebs,
+				     sb_pebs_array *sb_pebs)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct ssdfs_segment_bmap *segbmap = fsi->segbmap;
@@ -639,6 +674,8 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb || !sb_lebs || !sb_pebs);
+
 	if (sb_seg_type >= SSDFS_SB_SEG_COPY_MAX) {
 		SSDFS_ERR("invalid sb_seg_type %#x\n",
 			  sb_seg_type);
@@ -648,15 +685,15 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 
 	SSDFS_DBG("sb %p, sb_seg_type %#x\n", sb, sb_seg_type);
 
-	prev_leb = fsi->sb_lebs[SSDFS_PREV_SB_SEG][sb_seg_type];
-	cur_leb = fsi->sb_lebs[SSDFS_CUR_SB_SEG][sb_seg_type];
+	prev_leb = (*sb_lebs)[SSDFS_PREV_SB_SEG][sb_seg_type];
+	cur_leb = (*sb_lebs)[SSDFS_CUR_SB_SEG][sb_seg_type];
 	next_leb = cur_leb + 1;
-	reserved_leb = fsi->sb_lebs[SSDFS_RESERVED_SB_SEG][sb_seg_type];
+	reserved_leb = (*sb_lebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type];
 
-	prev_peb = fsi->sb_pebs[SSDFS_PREV_SB_SEG][sb_seg_type];
-	cur_peb = fsi->sb_pebs[SSDFS_CUR_SB_SEG][sb_seg_type];
+	prev_peb = (*sb_pebs)[SSDFS_PREV_SB_SEG][sb_seg_type];
+	cur_peb = (*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type];
 	next_peb = U64_MAX;
-	reserved_peb = fsi->sb_pebs[SSDFS_RESERVED_SB_SEG][sb_seg_type];
+	reserved_peb = (*sb_pebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type];
 
 	if (!ssdfs_sb_seg_exhausted(cur_leb, next_leb, fsi->pebs_per_seg)) {
 		err = ssdfs_maptbl_convert_leb2peb(fsi, next_leb,
@@ -690,16 +727,16 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 		BUG_ON(next_peb == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		fsi->sb_lebs[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_leb;
-		fsi->sb_pebs[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_peb;
+		(*sb_lebs)[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_leb;
+		(*sb_pebs)[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_peb;
 
-		fsi->sb_lebs[SSDFS_CUR_SB_SEG][sb_seg_type] = next_leb;
-		fsi->sb_pebs[SSDFS_CUR_SB_SEG][sb_seg_type] = next_peb;
+		(*sb_lebs)[SSDFS_CUR_SB_SEG][sb_seg_type] = next_leb;
+		(*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type] = next_peb;
 
 		return 0;
 	} else {
-		next_leb = fsi->sb_lebs[SSDFS_NEXT_SB_SEG][sb_seg_type];
-		next_peb = fsi->sb_pebs[SSDFS_NEXT_SB_SEG][sb_seg_type];
+		next_leb = (*sb_lebs)[SSDFS_NEXT_SB_SEG][sb_seg_type];
+		next_peb = (*sb_pebs)[SSDFS_NEXT_SB_SEG][sb_seg_type];
 	}
 
 reserve_clean_segment:
@@ -751,17 +788,17 @@ reserve_clean_segment:
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
-	fsi->sb_lebs[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_leb;
-	fsi->sb_pebs[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_peb;
+	(*sb_lebs)[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_leb;
+	(*sb_pebs)[SSDFS_PREV_SB_SEG][sb_seg_type] = cur_peb;
 
-	fsi->sb_lebs[SSDFS_CUR_SB_SEG][sb_seg_type] = next_leb;
-	fsi->sb_pebs[SSDFS_CUR_SB_SEG][sb_seg_type] = next_peb;
+	(*sb_lebs)[SSDFS_CUR_SB_SEG][sb_seg_type] = next_leb;
+	(*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type] = next_peb;
 
-	fsi->sb_lebs[SSDFS_NEXT_SB_SEG][sb_seg_type] = reserved_leb;
-	fsi->sb_pebs[SSDFS_NEXT_SB_SEG][sb_seg_type] = reserved_peb;
+	(*sb_lebs)[SSDFS_NEXT_SB_SEG][sb_seg_type] = reserved_leb;
+	(*sb_pebs)[SSDFS_NEXT_SB_SEG][sb_seg_type] = reserved_peb;
 
-	fsi->sb_lebs[SSDFS_RESERVED_SB_SEG][sb_seg_type] = new_leb;
-	fsi->sb_pebs[SSDFS_RESERVED_SB_SEG][sb_seg_type] = new_peb;
+	(*sb_lebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type] = new_leb;
+	(*sb_pebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type] = new_peb;
 
 	if (prev_leb == U64_MAX)
 		goto finish_move_sb_seg;
@@ -799,6 +836,9 @@ finish_move_sb_seg:
 static int ssdfs_move_on_next_sb_segs_pair(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	sb_pebs_array sb_lebs;
+	sb_pebs_array sb_pebs;
+	size_t array_size;
 	int i;
 	int err = 0;
 
@@ -810,21 +850,76 @@ static int ssdfs_move_on_next_sb_segs_pair(struct super_block *sb)
 		return -EIO;
 	}
 
-	down_write(&fsi->sb_segs_sem);
+	array_size = sizeof(u64);
+	array_size *= SSDFS_SB_CHAIN_MAX;
+	array_size *= SSDFS_SB_SEG_COPY_MAX;
+
+	down_read(&fsi->sb_segs_sem);
+	memcpy(sb_lebs, fsi->sb_lebs, array_size);
+	memcpy(sb_pebs, fsi->sb_pebs, array_size);
+	up_read(&fsi->sb_segs_sem);
 
 	for (i = 0; i < SSDFS_SB_SEG_COPY_MAX; i++) {
-		err = ssdfs_move_on_next_sb_seg(sb, i);
+		err = ssdfs_move_on_next_sb_seg(sb, i, &sb_lebs, &sb_pebs);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move on next sb PEB: err %d\n",
 				  err);
-			goto finish_move_sb_segs;
+			return err;
 		}
 	}
 
-finish_move_sb_segs:
+	down_write(&fsi->sb_segs_sem);
+	memcpy(fsi->sb_lebs, sb_lebs, array_size);
+	memcpy(fsi->sb_pebs, sb_pebs, array_size);
 	up_write(&fsi->sb_segs_sem);
 
-	return err;
+	return 0;
+}
+
+static
+int ssdfs_prepare_sb_log_payload(struct super_block *sb,
+				 struct ssdfs_peb_extent *last_sb_log,
+				 struct ssdfs_sb_log_payload *payload)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb || !last_sb_log || !payload);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("sb %p, last_sb_log %p, payload %p\n",
+		  sb, last_sb_log, payload);
+
+	pagevec_init(&payload->maptbl_cache.pvec);
+
+	err = ssdfs_define_next_sb_log_place(sb, last_sb_log, payload);
+	switch (err) {
+	case -EFBIG: /* current sb segment is exhausted */
+	case -EIO: /* current sb segment is corrupted */
+		err = ssdfs_move_on_next_sb_segs_pair(sb);
+		if (err) {
+			SSDFS_ERR("fail to move on next sb segs pair: err %d\n",
+				  err);
+			return err;
+		}
+		err = ssdfs_define_next_sb_log_place(sb, last_sb_log, payload);
+		if (unlikely(err)) {
+			SSDFS_ERR("unable to define next sb log place: err %d\n",
+				  err);
+			return err;
+		}
+		break;
+
+	default:
+		if (err) {
+			SSDFS_ERR("unable to define next sb log place: err %d\n",
+				  err);
+			return err;
+		}
+		break;
+	}
+
+	return 0;
 }
 
 static void
@@ -1076,15 +1171,20 @@ cleanup_after_failure:
 	return err;
 }
 
-int ssdfs_commit_super(struct super_block *sb, u16 fs_state)
+static
+int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
+			struct ssdfs_peb_extent *last_sb_log,
+			struct ssdfs_sb_log_payload *payload)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	struct ssdfs_peb_extent last_sb_log = {0};
-	struct ssdfs_sb_log_payload payload;
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
 	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
 	int i;
 	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb || !last_sb_log || !payload);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("sb %p, fs_state %u", sb, fs_state);
 
@@ -1094,36 +1194,6 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state)
 	    !ssdfs_test_opt(fsi->mount_opts, IGNORE_FS_STATE)) {
 		SSDFS_DBG("refuse commit superblock: fs erroneous state\n");
 		return 0;
-	}
-
-	pagevec_init(&payload.maptbl_cache.pvec);
-
-	err = ssdfs_define_next_sb_log_place(sb, &last_sb_log, &payload);
-	switch (err) {
-	case -EFBIG: /* current sb segment is exhausted */
-	case -EIO: /* current sb segment is corrupted */
-		err = ssdfs_move_on_next_sb_segs_pair(sb);
-		if (err) {
-			SSDFS_ERR("fail to move on next sb segs pair: err %d\n",
-				  err);
-			goto finish_commit_super;
-		}
-		err = ssdfs_define_next_sb_log_place(sb, &last_sb_log,
-						     &payload);
-		if (unlikely(err)) {
-			SSDFS_ERR("unable to define next sb log place: err %d\n",
-				  err);
-			goto finish_commit_super;
-		}
-		break;
-
-	default:
-		if (err) {
-			SSDFS_ERR("unable to define next sb log place: err %d\n",
-				  err);
-			goto finish_commit_super;
-		}
-		break;
 	}
 
 	err = ssdfs_prepare_volume_header_for_commit(fsi, fsi->vh);
@@ -1148,36 +1218,37 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state)
 	}
 
 	for (i = 0; i < SSDFS_SB_SEG_COPY_MAX; i++) {
-		last_sb_log.leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][i];
-		last_sb_log.peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
-		err = ssdfs_commit_sb_log(sb, &last_sb_log, &payload);
+		last_sb_log->leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][i];
+		last_sb_log->peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
+		err = ssdfs_commit_sb_log(sb, last_sb_log, payload);
 		if (err) {
 			SSDFS_ERR("fail to commit superblock log: "
 				  "leb_id %llu, peb_id %llu, "
 				  "page_offset %u, pages_count %u, "
 				  "err %d\n",
-				  last_sb_log.leb_id,
-				  last_sb_log.peb_id,
-				  last_sb_log.page_offset,
-				  last_sb_log.pages_count,
+				  last_sb_log->leb_id,
+				  last_sb_log->peb_id,
+				  last_sb_log->page_offset,
+				  last_sb_log->pages_count,
 				  err);
 			goto finish_commit_super;
 		}
 	}
 
-	last_sb_log.leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG];
-	last_sb_log.peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG];
-	memcpy(&fsi->sbi.last_log, &last_sb_log,
+	last_sb_log->leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG];
+	last_sb_log->peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG];
+	memcpy(&fsi->sbi.last_log, last_sb_log,
 		sizeof(struct ssdfs_peb_extent));
 
 finish_commit_super:
-	pagevec_release(&payload.maptbl_cache.pvec);
 	return err;
 }
 
 static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct ssdfs_fs_info *fs_info;
+	struct ssdfs_peb_extent last_sb_log = {0};
+	struct ssdfs_sb_log_payload payload;
 	struct inode *root_i;
 	u64 fs_feature_compat;
 	int err = 0;
@@ -1328,8 +1399,20 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	if (!(sb->s_flags & MS_RDONLY)) {
 		down_write(&fs_info->volume_sem);
-		err = ssdfs_commit_super(sb, SSDFS_MOUNTED_FS);
+		err = ssdfs_prepare_sb_log_payload(sb,
+						   &last_sb_log,
+						   &payload);
+		if (!err) {
+			err = ssdfs_commit_super(sb, SSDFS_MOUNTED_FS,
+						 &last_sb_log,
+						 &payload);
+		} else {
+			SSDFS_ERR("fail to prepare sb log payload: "
+				  "err %d\n", err);
+		}
 		up_write(&fs_info->volume_sem);
+
+		pagevec_release(&payload.maptbl_cache.pvec);
 
 		if (err) {
 			SSDFS_NOTICE("fail to commit superblock info: "
@@ -1386,8 +1469,11 @@ free_erase_page:
 static void ssdfs_put_super(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct ssdfs_peb_extent last_sb_log = {0};
+	struct ssdfs_sb_log_payload payload;
 	u64 fs_feature_compat;
 	u16 fs_state;
+	bool can_commit_super = true;
 	int err;
 
 	spin_lock(&fsi->volume_state_lock);
@@ -1400,6 +1486,15 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	if (!(sb->s_flags & MS_RDONLY)) {
 		down_write(&fsi->volume_sem);
+
+		err = ssdfs_prepare_sb_log_payload(sb,
+						   &last_sb_log,
+						   &payload);
+		if (unlikely(err)) {
+			can_commit_super = false;
+			SSDFS_ERR("fail to prepare sb log payload: "
+				  "err %d\n", err);
+		}
 
 		if (fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
 			err = ssdfs_inodes_btree_flush(fsi->inodes_tree);
@@ -1433,7 +1528,15 @@ static void ssdfs_put_super(struct super_block *sb)
 			}
 		}
 
-		err = ssdfs_commit_super(sb, SSDFS_VALID_FS);
+		if (can_commit_super) {
+			err = ssdfs_commit_super(sb, SSDFS_VALID_FS,
+						 &last_sb_log,
+						 &payload);
+		} else {
+			/* prepare error code */
+			err = -ERANGE;
+		}
+
 		if (err) {
 			SSDFS_ERR("fail to commit superblock info: "
 				  "err %d\n", err);
@@ -1443,7 +1546,19 @@ static void ssdfs_put_super(struct super_block *sb)
 	} else {
 		if (fs_state == SSDFS_ERROR_FS) {
 			down_write(&fsi->volume_sem);
-			err = ssdfs_commit_super(sb, SSDFS_ERROR_FS);
+
+			err = ssdfs_prepare_sb_log_payload(sb,
+							   &last_sb_log,
+							   &payload);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare sb log payload: "
+					  "err %d\n", err);
+			} else {
+				err = ssdfs_commit_super(sb, SSDFS_ERROR_FS,
+							 &last_sb_log,
+							 &payload);
+			}
+
 			up_write(&fsi->volume_sem);
 
 			if (err) {
@@ -1453,6 +1568,7 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
+	pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
