@@ -326,7 +326,7 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 	blk_bmap->metadata_items = metadata_blks;
 
 	if (invalid_blks > blk_bmap->items_count ||
-	    invalid_blks >= last_free_blk) {
+	    invalid_blks > last_free_blk) {
 		SSDFS_ERR("invalid values: "
 			  "invalid_blks %u, last_free_blk %u, "
 			  "items_count %zu\n",
@@ -2668,7 +2668,7 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	}
 
 	if (is_cache_invalid(blk_bmap, SSDFS_BLK_FREE)) {
-		SSDFS_WARN("cache for free states is invalid!!!\n");
+		SSDFS_DBG("cache for free states is invalid!!!\n");
 
 		err = ssdfs_block_bmap_find_block(blk_bmap,
 						  0, blk_bmap->items_count,

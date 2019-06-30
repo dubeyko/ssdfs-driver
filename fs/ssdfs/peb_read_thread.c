@@ -183,7 +183,6 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 		  log_index);
 
 	fsi = pebi->pebc->parent_si->fsi;
-
 	page_off = log_index * pebi->log_pages;
 
 	page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
@@ -2298,7 +2297,7 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 	struct ssdfs_peb_info *pebi;
 	struct ssdfs_segment_header *seg_hdr;
 	int items_state;
-	u8 id;
+	int id1, id2;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2346,20 +2345,40 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_using_metadata_state;
 	}
 
-	id = seg_hdr->peb_migration_id[SSDFS_CUR_MIGRATING_PEB];
+	id1 = seg_hdr->peb_migration_id[SSDFS_CUR_MIGRATING_PEB];
 
-	if (!is_peb_migration_id_valid(id)) {
+	if (!is_peb_migration_id_valid(id1)) {
 		err = -EIO;
 		SSDFS_ERR("invalid peb_migration_id: "
 			  "seg_id %llu, peb_index %u, "
 			  "peb_migration_id %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
-			  id);
+			  id1);
 		goto finish_src_init_using_metadata_state;
 	}
 
-	ssdfs_set_peb_migration_id(pebi, id);
+	id2 = ssdfs_get_peb_migration_id(pebi);
+
+	if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+		/* it needs to initialize the migration id */
+		ssdfs_set_peb_migration_id(pebi, id1);
+	} else if (is_peb_migration_id_valid(id2)) {
+		if (id1 != id2) {
+			err = -ERANGE;
+			SSDFS_ERR("migration_id1 %d != migration_id2 %d\n",
+				  id1, id2);
+			goto finish_src_init_using_metadata_state;
+		} else {
+			/*
+			 * Do nothing.
+			 */
+		}
+	} else {
+		err = -ERANGE;
+		SSDFS_ERR("invalid migration_id %d\n", id2);
+		goto finish_src_init_using_metadata_state;
+	}
 
 finish_src_init_using_metadata_state:
 	up_read(&pebc->lock);
@@ -2467,30 +2486,34 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 			err = -EIO;
 			SSDFS_ERR("invalid peb_migration_id: "
 				  "seg_id %llu, peb_index %u, "
-				  "peb_migration_id %u\n",
+				  "peb_migration_id %d\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index,
 				  id1);
 			goto finish_dst_init_using_metadata_state;
 		}
 
-		id2 = ssdfs_get_peb_migration_id_checked(pebc->src_peb);
-		if (id2 < 0) {
-			err = id2;
-			SSDFS_ERR("fail to get peb_migration_id: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index,
-				  err);
-			goto finish_dst_init_using_metadata_state;
-		} else if (id1 != id2) {
+		id2 = ssdfs_get_peb_migration_id(pebc->src_peb);
+
+		if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+			/* it needs to initialize the migration id */
+			ssdfs_set_peb_migration_id(pebc->src_peb, id1);
+		} else if (is_peb_migration_id_valid(id2)) {
+			if (id1 != id2) {
+				err = -ERANGE;
+				SSDFS_ERR("id1 %d != id2 %d\n",
+					  id1, id2);
+				goto finish_dst_init_using_metadata_state;
+			} else {
+				/*
+				 * Do nothing.
+				 */
+			}
+		} else {
 			err = -ERANGE;
-			SSDFS_WARN("id1 %u != id2 %u\n",
-				   id1, id2);
+			SSDFS_ERR("invalid migration_id %d\n", id2);
 			goto finish_dst_init_using_metadata_state;
 		}
-
-		ssdfs_set_peb_migration_id(pebc->src_peb, id1);
 		break;
 
 	default:
@@ -2589,7 +2612,27 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_used_metadata_state;
 	}
 
-	ssdfs_set_peb_migration_id(pebc->src_peb, id1);
+	id2 = ssdfs_get_peb_migration_id(pebi);
+
+	if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+		/* it needs to initialize the migration id */
+		ssdfs_set_peb_migration_id(pebi, id1);
+	} else if (is_peb_migration_id_valid(id2)) {
+		if (id1 != id2) {
+			err = -ERANGE;
+			SSDFS_ERR("migration_id1 %d != migration_id2 %d\n",
+				  id1, id2);
+			goto finish_src_init_used_metadata_state;
+		} else {
+			/*
+			 * Do nothing.
+			 */
+		}
+	} else {
+		err = -ERANGE;
+		SSDFS_ERR("invalid migration_id %d\n", id2);
+		goto finish_src_init_used_metadata_state;
+	}
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -2600,24 +2643,39 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 			goto finish_src_init_used_metadata_state;
 		}
 
-		id1 = ssdfs_define_next_peb_migration_id(pebc->src_peb);
-		id2 = ssdfs_get_peb_migration_id_checked(pebc->dst_peb);
-		if (id2 < 0) {
-			err = id2;
-			SSDFS_ERR("fail to get peb_migration_id: "
-				  "seg %llu, peb_index %u, err %d\n",
+		id1 = __ssdfs_define_next_peb_migration_id(id1);
+		if (!is_peb_migration_id_valid(id1)) {
+			err = -EIO;
+			SSDFS_ERR("invalid peb_migration_id: "
+				  "seg_id %llu, peb_index %u, "
+				  "peb_migration_id %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index,
-				  err);
-			goto finish_src_init_used_metadata_state;
-		} else if (id1 != id2) {
-			err = -ERANGE;
-			SSDFS_WARN("id1 %u != id2 %u\n",
-				   id1, id2);
+				  id1);
 			goto finish_src_init_used_metadata_state;
 		}
 
-		ssdfs_set_peb_migration_id(pebc->dst_peb, id1);
+		id2 = ssdfs_get_peb_migration_id(pebc->dst_peb);
+
+		if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+			/* it needs to initialize the migration id */
+			ssdfs_set_peb_migration_id(pebc->dst_peb, id1);
+		} else if (is_peb_migration_id_valid(id2)) {
+			if (id1 != id2) {
+				err = -ERANGE;
+				SSDFS_ERR("id1 %d != id2 %d\n",
+					  id1, id2);
+				goto finish_src_init_used_metadata_state;
+			} else {
+				/*
+				 * Do nothing.
+				 */
+			}
+		} else {
+			err = -ERANGE;
+			SSDFS_ERR("invalid migration_id %d\n", id2);
+			goto finish_src_init_used_metadata_state;
+		}
 		break;
 
 	default:
@@ -2714,7 +2772,27 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_dst_init_used_metadata_state;
 	}
 
-	ssdfs_set_peb_migration_id(pebc->dst_peb, id1);
+	id2 = ssdfs_get_peb_migration_id(pebi);
+
+	if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+		/* it needs to initialize the migration id */
+		ssdfs_set_peb_migration_id(pebi, id1);
+	} else if (is_peb_migration_id_valid(id2)) {
+		if (id1 != id2) {
+			err = -ERANGE;
+			SSDFS_ERR("migration_id1 %d != migration_id2 %d\n",
+				  id1, id2);
+			goto finish_dst_init_used_metadata_state;
+		} else {
+			/*
+			 * Do nothing.
+			 */
+		}
+	} else {
+		err = -ERANGE;
+		SSDFS_ERR("invalid migration_id %d\n", id2);
+		goto finish_dst_init_used_metadata_state;
+	}
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -2731,30 +2809,34 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 			err = -EIO;
 			SSDFS_ERR("invalid peb_migration_id: "
 				  "seg_id %llu, peb_index %u, "
-				  "peb_migration_id %u\n",
+				  "peb_migration_id %d\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index,
 				  id1);
 			goto finish_dst_init_used_metadata_state;
 		}
 
-		id2 = ssdfs_get_peb_migration_id_checked(pebc->src_peb);
-		if (id2 < 0) {
-			err = id2;
-			SSDFS_ERR("fail to get peb_migration_id: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index,
-				  err);
-			goto finish_dst_init_used_metadata_state;
-		} else if (id1 != id2) {
+		id2 = ssdfs_get_peb_migration_id(pebc->src_peb);
+
+		if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+			/* it needs to initialize the migration id */
+			ssdfs_set_peb_migration_id(pebc->src_peb, id1);
+		} else if (is_peb_migration_id_valid(id2)) {
+			if (id1 != id2) {
+				err = -ERANGE;
+				SSDFS_ERR("id1 %d != id2 %d\n",
+					  id1, id2);
+				goto finish_dst_init_used_metadata_state;
+			} else {
+				/*
+				 * Do nothing.
+				 */
+			}
+		} else {
 			err = -ERANGE;
-			SSDFS_WARN("id1 %u != id2 %u\n",
-				   id1, id2);
+			SSDFS_ERR("invalid migration_id %d\n", id2);
 			goto finish_dst_init_used_metadata_state;
 		}
-
-		ssdfs_set_peb_migration_id(pebc->src_peb, id1);
 		break;
 
 	default:
@@ -3359,8 +3441,10 @@ static
 int ssdfs_start_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 					    struct ssdfs_segment_request *req)
 {
+	struct ssdfs_fs_info *fsi;
 	u16 log_pages;
-	int cur_log_index;
+	int pages_per_peb;
+	int cur_log_index = -1;
 	int start_log_index;
 	int err = 0;
 
@@ -3371,16 +3455,32 @@ int ssdfs_start_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("peb_id %llu, peb_index %u\n",
 		  pebi->peb_id, pebi->peb_index);
 
+	fsi = pebi->pebc->parent_si->fsi;
+	pages_per_peb = (int)fsi->pages_per_peb;
 	log_pages = pebi->log_pages;
-	cur_log_index = pebi->current_log.start_page / log_pages;
 
-	/*
-	 * The cur_log_index defines index ot the new empty log.
-	 * The last log was processed during initialization of
-	 * "using" or "used" PEB. So, it needs to process the
-	 * log before the last one.
-	 */
-	start_log_index = cur_log_index - 2;
+	switch (atomic_read(&pebi->current_log.state)) {
+	case SSDFS_LOG_INITIALIZED:
+	case SSDFS_LOG_CREATED:
+	case SSDFS_LOG_COMMITTED:
+		ssdfs_peb_current_log_lock(pebi);
+		cur_log_index = pebi->current_log.start_page / log_pages;
+		ssdfs_peb_current_log_unlock(pebi);
+
+		/*
+		 * The cur_log_index defines index ot the new empty log.
+		 * The last log was processed during initialization of
+		 * "using" or "used" PEB. So, it needs to process the
+		 * log before the last one.
+		 */
+		start_log_index = cur_log_index - 2;
+		break;
+
+	default:
+		start_log_index = pages_per_peb / log_pages;
+		start_log_index--;
+		break;
+	}
 
 	err = ssdfs_peb_complete_init_blk2off_table(pebi,
 						    start_log_index,
@@ -3416,8 +3516,10 @@ static
 int ssdfs_finish_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 					     struct ssdfs_segment_request *req)
 {
+	struct ssdfs_fs_info *fsi;
 	u16 log_pages;
-	int cur_log_index;
+	int pages_per_peb;
+	int cur_log_index = -1;
 	int start_log_index;
 	int err = 0;
 
@@ -3428,16 +3530,32 @@ int ssdfs_finish_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("peb_id %llu, peb_index %u\n",
 		  pebi->peb_id, pebi->peb_index);
 
+	fsi = pebi->pebc->parent_si->fsi;
+	pages_per_peb = (int)fsi->pages_per_peb;
 	log_pages = pebi->log_pages;
-	cur_log_index = pebi->current_log.start_page / log_pages;
 
-	/*
-	 * The cur_log_index defines index ot the new empty log.
-	 * So, it needs to process the log before the new
-	 * empty one. The destination PEB was been/will be
-	 * processed in a real pair.
-	 */
-	start_log_index = cur_log_index - 1;
+	switch (atomic_read(&pebi->current_log.state)) {
+	case SSDFS_LOG_INITIALIZED:
+	case SSDFS_LOG_CREATED:
+	case SSDFS_LOG_COMMITTED:
+		ssdfs_peb_current_log_lock(pebi);
+		cur_log_index = pebi->current_log.start_page / log_pages;
+		ssdfs_peb_current_log_unlock(pebi);
+
+		/*
+		 * The cur_log_index defines index ot the new empty log.
+		 * So, it needs to process the log before the new
+		 * empty one. The destination PEB was been/will be
+		 * processed in a real pair.
+		 */
+		start_log_index = cur_log_index - 1;
+		break;
+
+	default:
+		start_log_index = pages_per_peb / log_pages;
+		start_log_index--;
+		break;
+	}
 
 	err = ssdfs_peb_complete_init_blk2off_table(pebi,
 						    start_log_index,

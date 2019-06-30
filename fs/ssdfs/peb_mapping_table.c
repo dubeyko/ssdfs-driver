@@ -2321,6 +2321,7 @@ finish_flush_dirty_fragments:
 
 /*
  * ssdfs_maptbl_check_request() - check request
+ * @fdesc: pointer on fragment descriptor
  * @req: segment request
  *
  * This method tries to check the state of request.
@@ -2332,17 +2333,19 @@ finish_flush_dirty_fragments:
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_maptbl_check_request(struct ssdfs_segment_request *req)
+int ssdfs_maptbl_check_request(struct ssdfs_maptbl_fragment_desc *fdesc,
+				struct ssdfs_segment_request *req)
 {
 	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!req);
+	BUG_ON(!fdesc || !req);
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("req %p\n", req);
+	SSDFS_DBG("fdesc %p, req %p\n", fdesc, req);
 
 check_req_state:
 	switch (atomic_read(&req->result.state)) {
@@ -2352,8 +2355,10 @@ check_req_state:
 		wq = &req->private.wait_queue;
 
 		if (atomic_read(refs_count) != 0) {
+			up_write(&fdesc->lock);
 			err = wait_event_killable(*wq,
 					atomic_read(refs_count) == 0);
+			down_write(&fdesc->lock);
 			WARN_ON(err != 0);
 			goto check_req_state;
 		} else {
@@ -2437,7 +2442,7 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 				req1 = &fdesc->flush_req1[j];
 				req2 = &fdesc->flush_req2[j];
 
-				err = ssdfs_maptbl_check_request(req1);
+				err = ssdfs_maptbl_check_request(fdesc, req1);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -2447,7 +2452,7 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 				if (!has_backup)
 					continue;
 
-				err = ssdfs_maptbl_check_request(req2);
+				err = ssdfs_maptbl_check_request(fdesc, req2);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -2748,7 +2753,7 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 				req1 = &fdesc->flush_req1[j];
 				req2 = &fdesc->flush_req2[j];
 
-				err = ssdfs_maptbl_check_request(req1);
+				err = ssdfs_maptbl_check_request(fdesc, req1);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -2758,11 +2763,11 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 				if (!has_backup)
 					continue;
 
-				err = ssdfs_maptbl_check_request(req2);
+				err = ssdfs_maptbl_check_request(fdesc, req2);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
-					goto finish_fragment_processing;;
+					goto finish_fragment_processing;
 				}
 			}
 
@@ -3037,7 +3042,7 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 			req1 = &fdesc->flush_req1[j];
 			req2 = &fdesc->flush_req2[j];
 
-			err = ssdfs_maptbl_check_request(req1);
+			err = ssdfs_maptbl_check_request(fdesc, req1);
 			if (unlikely(err)) {
 				SSDFS_ERR("flush request failed: "
 					  "err %d\n", err);
@@ -3047,7 +3052,7 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 			if (!has_backup)
 				continue;
 
-			err = ssdfs_maptbl_check_request(req2);
+			err = ssdfs_maptbl_check_request(fdesc, req2);
 			if (unlikely(err)) {
 				SSDFS_ERR("flush request failed: "
 					  "err %d\n", err);
@@ -4578,6 +4583,19 @@ finish_conversion:
 		}
 	}
 
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+
 	SSDFS_DBG("finished\n");
 
 	return err;
@@ -5382,6 +5400,19 @@ finish_mapping:
 		}
 	}
 
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+
 	SSDFS_DBG("finished\n");
 
 	return err;
@@ -5422,7 +5453,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	struct page *page;
 	void *kaddr;
 	struct ssdfs_peb_table_fragment_header *hdr;
-	u16 physical_index;
+	u16 selected_index;
 	struct ssdfs_peb_descriptor *peb_desc;
 	u16 item_index;
 	int consistency;
@@ -5560,16 +5591,41 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		goto finish_page_processing;
 	}
 
-	physical_index = le16_to_cpu(leb_desc.physical_index);
+	switch (peb_state) {
+	case SSDFS_MAPTBL_BAD_PEB_STATE:
+	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+	case SSDFS_MAPTBL_USING_PEB_STATE:
+	case SSDFS_MAPTBL_USED_PEB_STATE:
+	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+	case SSDFS_MAPTBL_PRE_ERASE_STATE:
+	case SSDFS_MAPTBL_RECOVERING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+		selected_index = le16_to_cpu(leb_desc.physical_index);
+		break;
 
-	if (physical_index == U16_MAX) {
+	case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+		selected_index = le16_to_cpu(leb_desc.relation_index);
+		break;
+
+	default:
+		BUG();
+	}
+
+	if (selected_index == U16_MAX) {
 		err = -ENODATA;
 		SSDFS_DBG("unitialized leb descriptor: "
 			  "leb_id %llu\n", leb_id);
 		goto finish_page_processing;
 	}
 
-	item_index = physical_index % fdesc->pebs_per_page;
+	item_index = selected_index % fdesc->pebs_per_page;
 
 	peb_desc = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(peb_desc)) {

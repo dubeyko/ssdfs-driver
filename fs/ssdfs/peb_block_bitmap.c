@@ -260,7 +260,6 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	}
 
 	pebc = &si->peb_array[bmap->peb_index];
-	atomic_set(&pebc->shared_free_dst_blks, 0);
 
 	flags = le16_to_cpu(hdr->flags);
 	type = le16_to_cpu(hdr->type);
@@ -358,29 +357,47 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to initialize block bitmap: "
 			  "err %d\n", err);
-		goto fail_init_blk_bmap;
+		goto fail_define_pages_count;
 	}
 
 	err = ssdfs_block_bmap_get_free_pages(blk_bmap);
-	if (unlikely(err < 0 || err >= U16_MAX)) {
+	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
 		goto fail_define_pages_count;
-	} else
+	} else if (unlikely(err >= U16_MAX)) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get free pages: err %d\n", err);
+		goto fail_define_pages_count;
+	} else {
 		free_blks = (u16)err;
+		err = 0;
+	}
 
 	err = ssdfs_block_bmap_get_used_pages(blk_bmap);
-	if (unlikely(err < 0 || err >= U16_MAX)) {
+	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get used pages: err %d\n", err);
 		goto fail_define_pages_count;
-	} else
+	} else if (unlikely(err >= U16_MAX)) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		goto fail_define_pages_count;
+	} else {
 		used_blks = (u16)err;
+		err = 0;
+	}
 
 	err = ssdfs_block_bmap_get_invalid_pages(blk_bmap);
-	if (unlikely(err < 0 || err >= U16_MAX)) {
+	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
 		goto fail_define_pages_count;
-	} else
+	} else if (unlikely(err >= U16_MAX)) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
+		goto fail_define_pages_count;
+	} else {
 		invalid_blks = (u16)err;
+		err = 0;
+	}
 
 fail_define_pages_count:
 	ssdfs_block_bmap_unlock(blk_bmap);
@@ -391,11 +408,12 @@ fail_define_pages_count:
 	switch (type) {
 	case SSDFS_SRC_BLK_BMAP:
 		if (under_migration && has_relation) {
+			atomic_add(used_blks, &bmap->valid_logical_blks);
 			atomic_sub(used_blks, &pebc->shared_free_dst_blks);
 		} else if (under_migration && has_ext_ptr) {
-			atomic_set(&bmap->valid_logical_blks, used_blks);
-			atomic_set(&bmap->invalid_logical_blks, invalid_blks);
-			atomic_set(&bmap->free_logical_blks, free_blks);
+			atomic_add(used_blks, &bmap->valid_logical_blks);
+			atomic_add(invalid_blks, &bmap->invalid_logical_blks);
+			atomic_add(free_blks, &bmap->free_logical_blks);
 		} else if (under_migration) {
 			err = -EIO;
 			SSDFS_ERR("invalid flags set: %#x\n", flags);
@@ -409,9 +427,9 @@ fail_define_pages_count:
 
 	case SSDFS_DST_BLK_BMAP:
 		if (under_migration) {
-			atomic_set(&bmap->valid_logical_blks, used_blks);
-			atomic_set(&bmap->invalid_logical_blks, invalid_blks);
-			atomic_set(&bmap->free_logical_blks, free_blks);
+			atomic_add(used_blks, &bmap->valid_logical_blks);
+			atomic_add(invalid_blks, &bmap->invalid_logical_blks);
+			atomic_add(free_blks, &bmap->free_logical_blks);
 			atomic_add(free_blks, &pebc->shared_free_dst_blks);
 		} else {
 			err = -EIO;

@@ -337,9 +337,9 @@ u64 ssdfs_get_leb_id_for_peb_index(struct ssdfs_fs_info *fsi,
  * @pebi: pointer on PEB object
  */
 static inline
-u8 ssdfs_get_peb_migration_id(struct ssdfs_peb_info *pebi)
+int ssdfs_get_peb_migration_id(struct ssdfs_peb_info *pebi)
 {
-	u8 id;
+	int id;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
@@ -352,7 +352,7 @@ u8 ssdfs_get_peb_migration_id(struct ssdfs_peb_info *pebi)
 	BUG_ON(id < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return (u8)id;
+	return id;
 }
 
 /*
@@ -391,7 +391,7 @@ int ssdfs_get_peb_migration_id_checked(struct ssdfs_peb_info *pebi)
 	if (!is_peb_migration_id_valid(res)) {
 		res = -ERANGE;
 		SSDFS_WARN("invalid peb_migration_id: "
-			   "peb %llu, peb_index %u, id %u\n",
+			   "peb %llu, peb_index %u, id %d\n",
 			   pebi->peb_id, pebi->peb_index, res);
 	}
 
@@ -405,7 +405,7 @@ int ssdfs_get_peb_migration_id_checked(struct ssdfs_peb_info *pebi)
  */
 static inline
 void ssdfs_set_peb_migration_id(struct ssdfs_peb_info *pebi,
-				u8 id)
+				int id)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
@@ -414,12 +414,28 @@ void ssdfs_set_peb_migration_id(struct ssdfs_peb_info *pebi,
 	atomic_set(&pebi->peb_migration_id, id);
 }
 
+static inline
+int __ssdfs_define_next_peb_migration_id(int prev_id)
+{
+	int id = prev_id;
+
+	if (id < 0)
+		return SSDFS_PEB_MIGRATION_ID_START;
+
+	id += 1;
+
+	if (id >= SSDFS_PEB_MIGRATION_ID_MAX)
+		id = SSDFS_PEB_MIGRATION_ID_START;
+
+	return id;
+}
+
 /*
  * ssdfs_define_next_peb_migration_id() - define next PEB's migration_id
  * @pebi: pointer on source PEB object
  */
 static inline
-u8 ssdfs_define_next_peb_migration_id(struct ssdfs_peb_info *src_peb)
+int ssdfs_define_next_peb_migration_id(struct ssdfs_peb_info *src_peb)
 {
 	int id;
 
@@ -439,12 +455,7 @@ u8 ssdfs_define_next_peb_migration_id(struct ssdfs_peb_info *src_peb)
 		return SSDFS_PEB_MIGRATION_ID_MAX;
 	}
 
-	id += 1;
-
-	if (id >= SSDFS_PEB_MIGRATION_ID_MAX)
-		id = SSDFS_PEB_MIGRATION_ID_START;
-
-	return (u8)id;
+	return __ssdfs_define_next_peb_migration_id(id);
 }
 
 /*
@@ -452,7 +463,7 @@ u8 ssdfs_define_next_peb_migration_id(struct ssdfs_peb_info *src_peb)
  * @pebi: pointer on source PEB object
  */
 static inline
-u8 ssdfs_define_prev_peb_migration_id(struct ssdfs_peb_info *pebi)
+int ssdfs_define_prev_peb_migration_id(struct ssdfs_peb_info *pebi)
 {
 	int id;
 
@@ -477,7 +488,7 @@ u8 ssdfs_define_prev_peb_migration_id(struct ssdfs_peb_info *pebi)
 	if (id == SSDFS_PEB_UNKNOWN_MIGRATION_ID)
 		id = SSDFS_PEB_MIGRATION_ID_MAX - 1;
 
-	return (u8)id;
+	return id;
 }
 
 /*

@@ -278,7 +278,7 @@ int ssdfs_peb_map_leb2peb(struct ssdfs_fs_info *fsi,
 		return -ENODATA;
 	} else if (err == -EEXIST) {
 		err = 0;
-		SSDFS_DBG("LEB is mapped yet: "
+		SSDFS_DBG("LEB is mapped already: "
 			  "leb_id %llu, peb_type %#x\n",
 			  leb_id, peb_type);
 
@@ -1392,6 +1392,19 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 			  seg, peb_index, peb_type, err);
 		goto fail_init_peb_container;
 	}
+
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 
 	down_write(&pebc->lock);
 
@@ -3483,13 +3496,14 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("pebc %p, peb_index %u, "
-		  "peb_type %#x, log_pages %u\n",
-		  pebc, pebc->peb_index,
-		  pebc->peb_type, pebc->log_pages);
-
 	si = pebc->parent_si;
 	fsi = pebc->parent_si->fsi;
+
+	SSDFS_DBG("pebc %p, seg %llu, peb_index %u, "
+		  "peb_type %#x, log_pages %u\n",
+		  pebc, si->seg_id, pebc->peb_index,
+		  pebc->peb_type, pebc->log_pages);
+
 	seg_blkbmap = &si->blk_bmap;
 	maptbl = fsi->maptbl;
 

@@ -396,11 +396,11 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 			if (leb_id > cur_leb_id)
 				goto continue_straight_search;
 			else if (cur_leb_id == leb_id) {
-				*item_index = i;
+				*item_index = cur_index;
 				*found = cur_pair;
 				return -EEXIST;
 			} else {
-				*item_index = i;
+				*item_index = cur_index;
 				*found = cur_pair;
 				return -EFAULT;
 			}
@@ -439,7 +439,7 @@ continue_straight_search:
 			if (leb_id < cur_leb_id)
 				goto continue_reverse_search;
 			else if (cur_leb_id == leb_id) {
-				*item_index = i;
+				*item_index = cur_index;
 				*found = cur_pair;
 
 				if (*item_index > 0) {
@@ -466,7 +466,7 @@ continue_straight_search:
 						return -EEXIST;
 				}
 			} else {
-				*item_index = i;
+				*item_index = cur_index;
 				*found = cur_pair;
 				return -EFAULT;
 			}
@@ -1679,6 +1679,7 @@ finish_remove_item:
  *
  * %-ERANGE     - internal error.
  * %-ENODATA    - requested LEB is absent.
+ * %-ENOENT     - requested LEB exists and should be saved.
  */
 static
 int ssdfs_check_pre_deleted_peb_state(struct ssdfs_maptbl_cache *cache,
@@ -1730,7 +1731,17 @@ int ssdfs_check_pre_deleted_peb_state(struct ssdfs_maptbl_cache *cache,
 		goto finish_check_pre_deleted_state;
 	}
 
-	if (cur_state->state != SSDFS_PEB_STATE_PRE_DELETED) {
+	switch (cur_state->consistency) {
+	case SSDFS_PEB_STATE_CONSISTENT:
+	case SSDFS_PEB_STATE_INCONSISTENT:
+		err = -ENOENT;
+		goto finish_check_pre_deleted_state;
+
+	case SSDFS_PEB_STATE_PRE_DELETED:
+		/* continue to delete */
+		break;
+
+	default:
 		err = -ERANGE;
 		SSDFS_ERR("unexpected PEB's state %#x\n",
 			  cur_state->state);
@@ -1810,6 +1821,12 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 		 * No pre-deleted item was found.
 		 * Continue the logic.
 		 */
+	} else if (err == -ENOENT) {
+		/*
+		 * Valid item was found.
+		 */
+		err = 0;
+		item_index++;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to check the pre-deleted state: "
 			  "err %d\n", err);
@@ -2064,6 +2081,82 @@ finish_leb_caching:
 }
 
 /*
+ * __ssdfs_maptbl_cache_change_peb_state() - change PEB state of the item
+ * @cache: maptbl cache object
+ * @page_index: index of memory page
+ * @item_index: index of the item in the page
+ * @peb_state: new state of the PEB
+ * @consistency: consistency of the item
+ *
+ * This method tries to change the PEB state.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - unable to get peb state.
+ * %-ERANGE     - internal error.
+ */
+static inline
+int __ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
+					  unsigned page_index,
+					  u16 item_index,
+					  int peb_state,
+					  int consistency)
+{
+	struct ssdfs_maptbl_cache_peb_state *found_state = NULL;
+	struct page *page;
+	void *kaddr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache);
+	BUG_ON(!rwsem_is_locked(&cache->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p, page_index %u, item_index %u, "
+		  "peb_state %#x, consistency %#x\n",
+		  cache, page_index, item_index,
+		  peb_state, consistency);
+
+	if (page_index >= pagevec_count(&cache->pvec)) {
+		SSDFS_ERR("invalid page index %u\n", page_index);
+		return -ERANGE;
+	}
+
+	page = cache->pvec.pages[page_index];
+	lock_page(page);
+	kaddr = kmap(page);
+
+	err = ssdfs_maptbl_cache_get_peb_state(kaddr, item_index,
+						&found_state);
+	if (err == -EINVAL) {
+		SSDFS_DBG("unable to get peb state: "
+			  "item_index %u\n",
+			  item_index);
+		goto finish_page_modification;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to get peb state: "
+			  "item_index %u, err %d\n",
+			  item_index, err);
+		goto finish_page_modification;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!found_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	found_state->consistency = (u8)consistency;
+	found_state->state = (u8)peb_state;
+
+finish_page_modification:
+	kunmap(page);
+	unlock_page(page);
+
+	return err;
+}
+
+/*
  * ssdfs_maptbl_cache_change_peb_state() - change PEB state of the item
  * @cache: maptbl cache object
  * @leb_id: LEB ID number
@@ -2088,7 +2181,6 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 					int consistency)
 {
 	struct ssdfs_leb2peb_pair *tmp_pair = NULL;
-	struct ssdfs_maptbl_cache_peb_state *found_state = NULL;
 	u16 item_index = U16_MAX;
 	struct page *page;
 	void *kaddr;
@@ -2174,29 +2266,98 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 		goto finish_peb_state_change;
 	}
 
-	page = cache->pvec.pages[i];
-	lock_page(page);
-	kaddr = kmap(page);
+	switch (peb_state) {
+	case SSDFS_MAPTBL_BAD_PEB_STATE:
+	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+	case SSDFS_MAPTBL_USING_PEB_STATE:
+	case SSDFS_MAPTBL_USED_PEB_STATE:
+	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+	case SSDFS_MAPTBL_PRE_ERASE_STATE:
+	case SSDFS_MAPTBL_RECOVERING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+		err = __ssdfs_maptbl_cache_change_peb_state(cache, i,
+							    item_index,
+							    peb_state,
+							    consistency);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change peb state: "
+				  "page_index %u, item_index %u, "
+				  "err %d\n",
+				  i, item_index, err);
+			goto finish_peb_state_change;
+		}
+		break;
 
-	err = ssdfs_maptbl_cache_get_peb_state(kaddr, item_index,
-						&found_state);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to get peb state: "
-			  "item_index %u, err %d\n",
-			  item_index, err);
-		goto finish_page_modification;
-	}
+	case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+		item_index++;
+
+		err = __ssdfs_maptbl_cache_change_peb_state(cache, i,
+							    item_index,
+							    peb_state,
+							    consistency);
+		if (err == -EINVAL) {
+			i++;
+
+			if (i >= pagevec_count(&cache->pvec)) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid page index %u\n", i);
+				goto finish_peb_state_change;
+			}
+
+			page = cache->pvec.pages[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!found_state);
+			BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	found_state->consistency = (u8)consistency;
-	found_state->state = (u8)peb_state;
+			lock_page(page);
+			kaddr = kmap(page);
+			err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
+							    &tmp_pair,
+							    &item_index);
+			kunmap(page);
+			unlock_page(page);
 
-finish_page_modification:
-	kunmap(page);
-	unlock_page(page);
+			if (err == -EEXIST) {
+				err =
+				    __ssdfs_maptbl_cache_change_peb_state(cache,
+								i, item_index,
+								peb_state,
+								consistency);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to change peb state: "
+						  "page_index %u, "
+						  "item_index %u, "
+						  "err %d\n",
+						  i, item_index, err);
+					goto finish_peb_state_change;
+				}
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to find leb: "
+					  "leb_id %llu, page_index %u, "
+					  "err %d\n",
+					  leb_id, i, err);
+				goto finish_peb_state_change;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to change peb state: "
+				  "page_index %u, item_index %u, "
+				  "err %d\n",
+				  i, item_index, err);
+			goto finish_peb_state_change;
+		}
+		break;
+
+	default:
+		BUG();
+	}
 
 finish_peb_state_change:
 	up_write(&cache->lock);

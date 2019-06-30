@@ -1288,12 +1288,14 @@ struct ssdfs_segment_header {
 /* 0x0418 */
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
 
-/* 0x0428 */
+/* 0x0498 */
 #define SSDFS_PEB_UNKNOWN_MIGRATION_ID		(0)
 #define SSDFS_PEB_MIGRATION_ID_START		(1)
 #define SSDFS_PEB_MIGRATION_ID_MAX		(U8_MAX)
 	__le8 peb_migration_id[SSDFS_MIGRATING_PEBS_CHAIN];
-	__le8 payload[0x3D6];
+
+/* 0x49A */
+	__le8 payload[0x366];
 
 /* 0x0800 */
 } __packed;
