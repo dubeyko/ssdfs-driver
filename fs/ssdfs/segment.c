@@ -2770,6 +2770,93 @@ int ssdfs_segment_update_pre_alloc_extent_async(struct ssdfs_segment_info *si,
 }
 
 /*
+ * ssdfs_segment_prepare_migration_sync() - request to prepare migration
+ * @si: segment info
+ * @req: segment request [in|out]
+ *
+ * This function tries to request to prepare or to start the migration
+ * synchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_prepare_migration_sync(struct ssdfs_segment_info *si,
+					 struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
+					    SSDFS_START_MIGRATION_NOW,
+					    SSDFS_REQ_SYNC,
+					    req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_update_extent(si, req);
+}
+
+/*
+ * ssdfs_segment_prepare_migration_async() - request to prepare migration
+ * @si: segment info
+ * @req_type: request type
+ * @req: segment request [in|out]
+ *
+ * This function tries to request to prepare or to start the migration
+ * asynchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_prepare_migration_async(struct ssdfs_segment_info *si,
+					  int req_type,
+					  struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
+					    SSDFS_START_MIGRATION_NOW,
+					    req_type, req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_update_extent(si, req);
+}
+
+/*
  * ssdfs_segment_commit_log_sync() - request the commit log operation
  * @si: segment info
  * @req: segment request [in|out]

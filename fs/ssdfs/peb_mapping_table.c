@@ -2792,6 +2792,279 @@ finish_fragment_processing:
 	return 0;
 }
 
+/*
+ * __ssdfs_maptbl_prepare_migration() - issue prepare migration requests
+ * @tbl: mapping table object
+ * @fdesc: pointer on fragment descriptor
+ * @fragment_index: index of fragment in the array
+ *
+ * This method tries to issue prepare migration requests.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     u32 fragment_index)
+{
+	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_segment_info *si;
+	u64 ino = SSDFS_MAPTBL_INO;
+	bool has_backup;
+	pgoff_t area_start;
+	pgoff_t area_size, processed_pages;
+	u32 request_index = 0;
+	u64 offset;
+	u16 seg_index;
+	struct page *page;
+	void *kaddr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !fdesc);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("maptbl %p, fragment_index %u\n",
+		  tbl, fragment_index);
+
+	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
+
+	area_start = 0;
+	area_size = min_t(pgoff_t,
+			  (pgoff_t)PAGEVEC_SIZE,
+			  (pgoff_t)tbl->fragment_pages);
+	processed_pages = 0;
+
+	do {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(area_size == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		req1 = &fdesc->flush_req1[request_index];
+		req2 = &fdesc->flush_req2[request_index];
+		request_index++;
+
+		ssdfs_request_init(req1);
+		ssdfs_get_request(req1);
+		if (has_backup) {
+			ssdfs_request_init(req2);
+			ssdfs_get_request(req2);
+		}
+
+		offset = area_start * PAGE_SIZE;
+		offset += fragment_index * tbl->fragment_bytes;
+
+		ssdfs_request_prepare_logical_extent(ino, offset,
+						     0, 0, 0, req1);
+		if (has_backup) {
+			ssdfs_request_prepare_logical_extent(ino,
+							     offset,
+							     0, 0, 0,
+							     req2);
+		}
+
+		page = ssdfs_page_array_get_page_locked(&fdesc->array,
+							area_start);
+		if (IS_ERR_OR_NULL(page)) {
+			err = page == NULL ? -ERANGE : PTR_ERR(page);
+			SSDFS_ERR("fail to get page: "
+				  "index %lu, err %d\n",
+				  area_start, err);
+			goto finish_issue_prepare_migration_request;
+		}
+
+		kaddr = kmap(page);
+		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
+							area_start, area_size,
+							&seg_index);
+		kunmap(page);
+
+		unlock_page(page);
+		put_page(page);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to define volume extent: "
+				  "err %d\n",
+				  err);
+			goto finish_issue_prepare_migration_request;
+		}
+
+		if (has_backup) {
+			memcpy(&req2->place, &req1->place,
+				sizeof(struct ssdfs_volume_extent));
+		}
+
+		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+		err = ssdfs_segment_prepare_migration_async(si,
+						SSDFS_REQ_ASYNC_NO_FREE,
+						req1);
+		if (!err && has_backup) {
+			if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
+				err = -ERANGE;
+				SSDFS_ERR("copy of maptbl doesn't exist\n");
+				goto finish_issue_prepare_migration_request;
+			}
+
+			si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
+			err = ssdfs_segment_prepare_migration_async(si,
+						SSDFS_REQ_ASYNC_NO_FREE,
+						req2);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to update extent: "
+				  "seg_index %u, err %d\n",
+				  seg_index, err);
+			goto finish_issue_prepare_migration_request;
+		}
+
+		area_start += area_size;
+		processed_pages += area_size;
+		area_size = min_t(pgoff_t,
+				  (pgoff_t)PAGEVEC_SIZE,
+				  (pgoff_t)(tbl->fragment_pages -
+					    processed_pages));
+	} while (processed_pages < tbl->fragment_pages);
+
+finish_issue_prepare_migration_request:
+	if (err) {
+		ssdfs_put_request(req1);
+		if (has_backup)
+			ssdfs_put_request(req2);
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_prepare_migration() - issue prepare migration requests
+ * @tbl: mapping table object
+ *
+ * This method tries to issue prepare migration requests.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	u32 fragments_count;
+	bool has_backup;
+	u32 i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("maptbl %p\n", tbl);
+
+	fragments_count = tbl->fragments_count;
+	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
+
+	for (i = 0; i < fragments_count; i++) {
+		fdesc = &tbl->desc_array[i];
+
+		down_write(&fdesc->lock);
+
+		err = __ssdfs_maptbl_prepare_migration(tbl, fdesc, i);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare migration: "
+				  "fragment_index %u, err %d\n",
+				  i, err);
+			goto finish_fragment_processing;
+		}
+
+finish_fragment_processing:
+		up_write(&fdesc->lock);
+
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_maptbl_wait_prepare_migration_end() - wait migration preparation ending
+ * @tbl: mapping table object
+ *
+ * This method is waiting the end of migration preparation operation.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	bool has_backup;
+	u32 fragments_count;
+	u32 i, j;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("maptbl %p\n", tbl);
+
+	fragments_count = tbl->fragments_count;
+	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
+
+	for (i = 0; i < fragments_count; i++) {
+		fdesc = &tbl->desc_array[i];
+
+		down_write(&fdesc->lock);
+
+		for (j = 0; j < fdesc->flush_seq_size; j++) {
+			req1 = &fdesc->flush_req1[j];
+			req2 = &fdesc->flush_req2[j];
+
+			err = ssdfs_maptbl_check_request(req1);
+			if (unlikely(err)) {
+				SSDFS_ERR("flush request failed: "
+					  "err %d\n", err);
+				goto finish_fragment_processing;
+			}
+
+			if (!has_backup)
+				continue;
+
+			err = ssdfs_maptbl_check_request(req2);
+			if (unlikely(err)) {
+				SSDFS_ERR("flush request failed: "
+					  "err %d\n", err);
+				goto finish_fragment_processing;
+			}
+		}
+
+finish_fragment_processing:
+		up_write(&fdesc->lock);
+
+		if (unlikely(err))
+			return err;
+	}
+
+	return 0;
+}
+
 static
 int ssdfs_maptbl_create_checkpoint(struct ssdfs_peb_mapping_table *tbl)
 {
@@ -2828,6 +3101,32 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 				"maptbl has corrupted state\n");
 		return -EFAULT;
 	}
+
+	down_read(&tbl->tbl_lock);
+
+	err = ssdfs_maptbl_prepare_migration(tbl);
+	if (unlikely(err)) {
+		ssdfs_fs_error(tbl->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to prepare migration: err %d\n",
+				err);
+		goto finish_prepare_migration;
+	}
+
+	err = ssdfs_maptbl_wait_prepare_migration_end(tbl);
+	if (unlikely(err)) {
+		ssdfs_fs_error(tbl->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to prepare migration: err %d\n",
+				err);
+		goto finish_prepare_migration;
+	}
+
+finish_prepare_migration:
+	up_read(&tbl->tbl_lock);
+
+	if (unlikely(err))
+		return err;
 
 	down_write(&tbl->tbl_lock);
 
@@ -5716,6 +6015,7 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 	struct ssdfs_leb_descriptor leb_desc;
 	pgoff_t pebtbl_page = ULONG_MAX;
 	u16 item_index;
+	int consistency;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5858,7 +6158,7 @@ finish_add_migrating_peb:
 	up_read(&tbl->tbl_lock);
 
 	if (!err && should_cache_peb_info(peb_type)) {
-		int consistency = SSDFS_PEB_STATE_CONSISTENT;
+		consistency = SSDFS_PEB_STATE_CONSISTENT;
 		err = ssdfs_maptbl_cache_add_migration_peb(cache, leb_id,
 							   pebr,
 							   consistency);

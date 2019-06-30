@@ -378,6 +378,12 @@ int SEG2PEB_TYPE(int seg_type)
 }
 
 static inline
+bool is_ssdfs_maptbl_under_flush(struct ssdfs_fs_info *fsi)
+{
+	return atomic_read(&fsi->maptbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH;
+}
+
+static inline
 void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG

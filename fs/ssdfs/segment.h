@@ -335,6 +335,11 @@ int ssdfs_segment_update_pre_alloc_extent_async(struct ssdfs_segment_info *si,
 					    int req_type,
 					    struct ssdfs_segment_request *req);
 
+int ssdfs_segment_prepare_migration_sync(struct ssdfs_segment_info *si,
+					 struct ssdfs_segment_request *req);
+int ssdfs_segment_prepare_migration_async(struct ssdfs_segment_info *si,
+					  int req_type,
+					  struct ssdfs_segment_request *req);
 int ssdfs_segment_commit_log_sync(struct ssdfs_segment_info *si,
 				  struct ssdfs_segment_request *req);
 int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
