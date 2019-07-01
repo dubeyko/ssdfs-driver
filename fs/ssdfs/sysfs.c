@@ -1613,18 +1613,10 @@ static ssize_t ssdfs_dev_segments_count_show(struct ssdfs_dev_attr *attr,
 					     struct ssdfs_fs_info *fsi,
 					     char *buf)
 {
-	int is_locked;
 	u64 nsegs;
 
-	is_locked = mutex_trylock(&fsi->resize_mutex);
-
-	if (!is_locked) {
-		SSDFS_WARN("volume is under resize!!!\n");
-		return -ENOLCK;
-	}
-
+	mutex_lock(&fsi->resize_mutex);
 	nsegs = fsi->vs->nsegs;
-
 	mutex_unlock(&fsi->resize_mutex);
 
 	return snprintf(buf, PAGE_SIZE, "%llu\n", nsegs);

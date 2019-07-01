@@ -6951,11 +6951,29 @@ stop_flush_thread:
 
 			if (is_peb_under_migration(pebc)) {
 				err = ssdfs_peb_finish_migration(pebc);
+				if (unlikely(err))
+					goto finish_process_free_space_absence;
 			}
 
-			if (!err)
-				err = ssdfs_peb_start_migration(pebc);
+			err = ssdfs_peb_start_migration(pebc);
+			if (unlikely(err))
+				goto finish_process_free_space_absence;
 
+			pebi = ssdfs_get_current_peb_locked(pebc);
+			if (IS_ERR_OR_NULL(pebi)) {
+				err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+				SSDFS_ERR("fail to get PEB object: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto finish_process_free_space_absence;
+			}
+
+			err = ssdfs_peb_container_change_state(pebc);
+			ssdfs_unlock_current_peb(pebc);
+
+finish_process_free_space_absence:
 			if (unlikely(err)) {
 				SSDFS_WARN("fail to start PEB's migration: "
 					   "seg %llu, peb_index %u, err %d\n",
@@ -7170,6 +7188,15 @@ stop_flush_thread:
 				thread_state = SSDFS_FLUSH_THREAD_ERROR;
 				goto repeat;
 			}
+
+			err = ssdfs_peb_container_change_state(pebc);
+			if (unlikely(err)) {
+				ssdfs_unlock_current_peb(pebc);
+				SSDFS_ERR("fail to change peb state: "
+					  "err %d\n", err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
 		}
 
 		err = ssdfs_peb_create_log(pebi);
@@ -7338,7 +7365,6 @@ process_flush_requests:
 		}
 
 		err = ssdfs_requests_queue_remove_first(&pebc->update_rq, &req);
-
 		if (err == -ENODATA) {
 			SSDFS_DBG("empty update queue\n");
 			err = 0;
@@ -7526,9 +7552,9 @@ finish_update_request_processing:
 			ssdfs_peb_has_partial_empty_log(fsi, pebi);
 		ssdfs_peb_current_log_unlock(pebi);
 
-		ssdfs_unlock_current_peb(pebc);
-
 		if (is_peb_exhausted) {
+			ssdfs_unlock_current_peb(pebc);
+
 			if (is_peb_under_migration(pebc)) {
 				err = ssdfs_peb_finish_migration(pebc);
 				if (unlikely(err)) {
@@ -7562,22 +7588,31 @@ finish_update_request_processing:
 				thread_state = SSDFS_FLUSH_THREAD_ERROR;
 				goto repeat;
 			}
+
+			pebi = ssdfs_get_current_peb_locked(pebc);
+			if (IS_ERR_OR_NULL(pebi)) {
+				err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+				SSDFS_ERR("fail to get PEB object: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+
+			err = ssdfs_peb_container_change_state(pebc);
+			if (unlikely(err)) {
+				ssdfs_unlock_current_peb(pebc);
+				SSDFS_ERR("fail to change peb state: "
+					  "err %d\n", err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
 		} else if (has_partial_empty_log) {
 			/*
 			 * TODO: it will need to implement logic here
 			 */
 			SSDFS_WARN("log is partially empty\n");
-		}
-
-		pebi = ssdfs_get_current_peb_locked(pebc);
-		if (IS_ERR_OR_NULL(pebi)) {
-			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
-			thread_state = SSDFS_FLUSH_THREAD_ERROR;
-			goto repeat;
 		}
 
 		ssdfs_peb_current_log_lock(pebi);

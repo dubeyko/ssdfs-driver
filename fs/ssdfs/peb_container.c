@@ -1011,6 +1011,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 				      int dst_peb_state,
 				      u8 src_peb_flags)
 {
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	bool peb_has_ext_ptr;
 	int err = 0;
 
@@ -1139,6 +1140,11 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 		switch (dst_peb_state) {
 		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			peb_blkbmap =
+			    &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+			atomic_set(&peb_blkbmap->state,
+					SSDFS_PEB_BLK_BMAP_HAS_CLEAN_DST);
+
 			err = ssdfs_create_used_peb_container(pebc,
 							      SSDFS_SRC_PEB);
 			if (unlikely(err)) {
@@ -1176,6 +1182,11 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 		switch (dst_peb_state) {
 		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			peb_blkbmap =
+			    &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+			atomic_set(&peb_blkbmap->state,
+					SSDFS_PEB_BLK_BMAP_HAS_CLEAN_DST);
+
 			err = ssdfs_create_pre_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
 			if (unlikely(err)) {

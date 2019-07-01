@@ -224,9 +224,13 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_block_bmap *blk_bmap = NULL;
+	int bmap_state = SSDFS_PEB_BLK_BMAP_STATE_UNKNOWN;
+	bool is_dst_peb_clean = false;
 	u16 flags;
 	u16 type;
-	bool under_migration, has_ext_ptr, has_relation;
+	bool under_migration = false;
+	bool has_ext_ptr = false;
+	bool has_relation = false;
 	u64 old_cno = U64_MAX;
 	u16 last_free_blk;
 	u16 metadata_blks;
@@ -247,7 +251,23 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu\n",
 		  si->seg_id, bmap->peb_index, cno);
 
-	if (atomic_read(&bmap->state) != SSDFS_PEB_BLK_BMAP_CREATED) {
+	bmap_state = atomic_read(&bmap->state);
+	switch (bmap_state) {
+	case SSDFS_PEB_BLK_BMAP_CREATED:
+		/* regular init */
+		break;
+
+	case SSDFS_PEB_BLK_BMAP_HAS_CLEAN_DST:
+		/*
+		 * PEB container is under migration.
+		 * But the destination PEB is clean.
+		 * It means that destination PEB doesn't need
+		 * in init operation.
+		 */
+		is_dst_peb_clean = true;
+		break;
+
+	default:
 		SSDFS_ERR("invalid PEB block bitmap state %#x\n",
 			  atomic_read(&bmap->state));
 		return -ERANGE;
@@ -274,9 +294,14 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 		return -EIO;
 	}
 
-	under_migration = flags & SSDFS_MIGRATING_BLK_BMAP;
-	has_ext_ptr = flags & SSDFS_PEB_HAS_EXT_PTR;
-	has_relation = flags & SSDFS_PEB_HAS_RELATION;
+	if (is_dst_peb_clean) {
+		under_migration = true;
+		has_relation = true;
+	} else {
+		under_migration = flags & SSDFS_MIGRATING_BLK_BMAP;
+		has_ext_ptr = flags & SSDFS_PEB_HAS_EXT_PTR;
+		has_relation = flags & SSDFS_PEB_HAS_RELATION;
+	}
 
 	if (type == SSDFS_SRC_BLK_BMAP && (has_ext_ptr && has_relation)) {
 		SSDFS_ERR("invalid flags set: %#x\n", flags);
@@ -299,6 +324,8 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	switch (type) {
 	case SSDFS_SRC_BLK_BMAP:
 		if (under_migration && has_relation) {
+			if (is_dst_peb_clean)
+				bmap->dst = &bmap->buffer[SSDFS_PEB_BLK_BMAP2];
 			bmap->src = &bmap->buffer[SSDFS_PEB_BLK_BMAP1];
 			blk_bmap = bmap->src;
 			atomic_set(&bmap->buffers_state,
@@ -360,6 +387,7 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 		goto fail_define_pages_count;
 	}
 
+get_block_bmap_pages_count:
 	err = ssdfs_block_bmap_get_free_pages(blk_bmap);
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
@@ -473,6 +501,19 @@ fail_define_pages_count:
 		   &bmap->parent->free_logical_blks);
 
 	WARN_ON(atomic_read(&pebc->shared_free_dst_blks) < 0);
+
+	if (type == SSDFS_SRC_BLK_BMAP && is_dst_peb_clean) {
+		type = SSDFS_DST_BLK_BMAP;
+		blk_bmap = bmap->dst;
+
+		err = ssdfs_block_bmap_lock(blk_bmap);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to lock bitmap: err %d\n", err);
+			goto fail_init_blk_bmap;
+		}
+
+		goto get_block_bmap_pages_count;
+	}
 
 	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
 	complete_all(&bmap->init_end);

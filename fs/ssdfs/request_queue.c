@@ -250,6 +250,12 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 		unsigned int i;
 
 		req = list_entry(this, struct ssdfs_segment_request, list);
+
+		if (!req) {
+			SSDFS_WARN("empty request ptr\n");
+			continue;
+		}
+
 		list_del(&req->list);
 
 		SSDFS_WARN("delete request: "
@@ -278,6 +284,11 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 			for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 				struct page *page = req->result.pvec.pages[i];
 
+				if (!page) {
+					SSDFS_WARN("empty page ptr: index %u\n", i);
+					continue;
+				}
+
 #ifdef CONFIG_SSDFS_DEBUG
 				WARN_ON(!test_bit(PG_locked, &page->flags));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -299,6 +310,11 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 
 			for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 				struct page *page = req->result.pvec.pages[i];
+
+				if (!page) {
+					SSDFS_WARN("empty page ptr: index %u\n", i);
+					continue;
+				}
 
 #ifdef CONFIG_SSDFS_DEBUG
 				WARN_ON(!test_bit(PG_locked, &page->flags));

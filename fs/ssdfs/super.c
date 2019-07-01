@@ -64,9 +64,10 @@ struct ssdfs_sb_log_payload {
 
 static struct kmem_cache *ssdfs_inode_cachep;
 
-static int ssdfs_prepare_sb_log_payload(struct super_block *sb,
-					struct ssdfs_peb_extent *last_sb_log,
-					struct ssdfs_sb_log_payload *payload);
+static int ssdfs_prepare_sb_log(struct super_block *sb,
+				struct ssdfs_peb_extent *last_sb_log);
+static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
+					 struct ssdfs_sb_log_payload *payload);
 static int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 				struct ssdfs_peb_extent *last_sb_log,
 				struct ssdfs_sb_log_payload *payload);
@@ -153,6 +154,8 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 	old_sb_flags = sb->s_flags;
 	old_mount_opts = fsi->mount_opts;
 
+	pagevec_init(&payload.maptbl_cache.pvec);
+
 	err = ssdfs_parse_options(fsi, data);
 	if (err)
 		goto restore_opts;
@@ -164,9 +167,19 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 
 	if (*flags & MS_RDONLY) {
 		down_write(&fsi->volume_sem);
-		err = ssdfs_prepare_sb_log_payload(sb,
-						   &last_sb_log,
-						   &payload);
+
+		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare sb log: err %d\n",
+				  err);
+		}
+
+		err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
+				  err);
+		}
+
 		if (!err) {
 			err = ssdfs_commit_super(sb, SSDFS_VALID_FS,
 						 &last_sb_log,
@@ -175,6 +188,7 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 			SSDFS_ERR("fail to prepare sb log payload: "
 				  "err %d\n", err);
 		}
+
 		up_write(&fsi->volume_sem);
 
 		if (err)
@@ -184,9 +198,19 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		SSDFS_DBG("remount in RO mode\n");
 	} else {
 		down_write(&fsi->volume_sem);
-		err = ssdfs_prepare_sb_log_payload(sb,
-						   &last_sb_log,
-						   &payload);
+
+		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare sb log: err %d\n",
+				  err);
+		}
+
+		err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
+				  err);
+		}
+
 		if (!err) {
 			err = ssdfs_commit_super(sb, SSDFS_MOUNTED_FS,
 						 &last_sb_log,
@@ -195,6 +219,7 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 			SSDFS_ERR("fail to prepare sb log payload: "
 				  "err %d\n", err);
 		}
+
 		up_write(&fsi->volume_sem);
 
 		if (err) {
@@ -205,10 +230,8 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		sb->s_flags &= ~MS_RDONLY;
 		SSDFS_DBG("remount in RW mode\n");
 	}
-
-	pagevec_release(&payload.maptbl_cache.pvec);
-
 out:
+	pagevec_release(&payload.maptbl_cache.pvec);
 	return 0;
 
 restore_opts:
@@ -426,8 +449,7 @@ finish_maptbl_snapshot:
 }
 
 static int ssdfs_define_next_sb_log_place(struct super_block *sb,
-					  struct ssdfs_peb_extent *last_sb_log,
-					  struct ssdfs_sb_log_payload *payload)
+					  struct ssdfs_peb_extent *last_sb_log)
 {
 	struct ssdfs_fs_info *fsi;
 	u32 offset;
@@ -438,11 +460,11 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!sb || !last_sb_log || !payload);
+	BUG_ON(!sb || !last_sb_log);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("sb %p, last_sb_log %p, payload %p\n",
-		  sb, last_sb_log, payload);
+	SSDFS_DBG("sb %p, last_sb_log %p\n",
+		  sb, last_sb_log);
 	SSDFS_DBG("last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
 		  last_sb_log->leb_id, last_sb_log->peb_id,
@@ -512,13 +534,6 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		return err;
 	}
 
-	err = ssdfs_snapshot_sb_log_payload(sb, payload);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
-			  err);
-		return err;
-	}
-
 	for (i = 0; i < SSDFS_SB_SEG_COPY_MAX; i++) {
 		last_sb_log->leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][i];
 		last_sb_log->peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
@@ -526,7 +541,6 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		if (err) {
 			SSDFS_ERR("fail to write sb log into PEB %llu\n",
 				  last_sb_log->peb_id);
-			pagevec_release(&payload->maptbl_cache.pvec);
 			return err;
 		}
 	}
@@ -877,22 +891,19 @@ static int ssdfs_move_on_next_sb_segs_pair(struct super_block *sb)
 }
 
 static
-int ssdfs_prepare_sb_log_payload(struct super_block *sb,
-				 struct ssdfs_peb_extent *last_sb_log,
-				 struct ssdfs_sb_log_payload *payload)
+int ssdfs_prepare_sb_log(struct super_block *sb,
+			 struct ssdfs_peb_extent *last_sb_log)
 {
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!sb || !last_sb_log || !payload);
+	BUG_ON(!sb || !last_sb_log);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("sb %p, last_sb_log %p, payload %p\n",
-		  sb, last_sb_log, payload);
+	SSDFS_DBG("sb %p, last_sb_log %p\n",
+		  sb, last_sb_log);
 
-	pagevec_init(&payload->maptbl_cache.pvec);
-
-	err = ssdfs_define_next_sb_log_place(sb, last_sb_log, payload);
+	err = ssdfs_define_next_sb_log_place(sb, last_sb_log);
 	switch (err) {
 	case -EFBIG: /* current sb segment is exhausted */
 	case -EIO: /* current sb segment is corrupted */
@@ -902,7 +913,7 @@ int ssdfs_prepare_sb_log_payload(struct super_block *sb,
 				  err);
 			return err;
 		}
-		err = ssdfs_define_next_sb_log_place(sb, last_sb_log, payload);
+		err = ssdfs_define_next_sb_log_place(sb, last_sb_log);
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to define next sb log place: err %d\n",
 				  err);
@@ -1398,10 +1409,22 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	if (!(sb->s_flags & MS_RDONLY)) {
+		pagevec_init(&payload.maptbl_cache.pvec);
+
 		down_write(&fs_info->volume_sem);
-		err = ssdfs_prepare_sb_log_payload(sb,
-						   &last_sb_log,
-						   &payload);
+
+		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare sb log: err %d\n",
+				  err);
+		}
+
+		err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to snapshot sb log's payload: err %d\n",
+				  err);
+		}
+
 		if (!err) {
 			err = ssdfs_commit_super(sb, SSDFS_MOUNTED_FS,
 						 &last_sb_log,
@@ -1410,6 +1433,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 			SSDFS_ERR("fail to prepare sb log payload: "
 				  "err %d\n", err);
 		}
+
 		up_write(&fs_info->volume_sem);
 
 		pagevec_release(&payload.maptbl_cache.pvec);
@@ -1481,19 +1505,19 @@ static void ssdfs_put_super(struct super_block *sb)
 	fs_state = fsi->fs_state;
 	spin_unlock(&fsi->volume_state_lock);
 
+	pagevec_init(&payload.maptbl_cache.pvec);
+
 	/* TODO: flush shared extents tree */
 	ssdfs_shextree_destroy(fsi);
 
 	if (!(sb->s_flags & MS_RDONLY)) {
 		down_write(&fsi->volume_sem);
 
-		err = ssdfs_prepare_sb_log_payload(sb,
-						   &last_sb_log,
-						   &payload);
+		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
 		if (unlikely(err)) {
 			can_commit_super = false;
-			SSDFS_ERR("fail to prepare sb log payload: "
-				  "err %d\n", err);
+			SSDFS_ERR("fail to prepare sb log: err %d\n",
+				  err);
 		}
 
 		if (fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
@@ -1529,9 +1553,15 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 
 		if (can_commit_super) {
-			err = ssdfs_commit_super(sb, SSDFS_VALID_FS,
-						 &last_sb_log,
-						 &payload);
+			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to snapshot log's payload: "
+					  "err %d\n", err);
+			} else {
+				err = ssdfs_commit_super(sb, SSDFS_VALID_FS,
+							 &last_sb_log,
+							 &payload);
+			}
 		} else {
 			/* prepare error code */
 			err = -ERANGE;
@@ -1547,13 +1577,19 @@ static void ssdfs_put_super(struct super_block *sb)
 		if (fs_state == SSDFS_ERROR_FS) {
 			down_write(&fsi->volume_sem);
 
-			err = ssdfs_prepare_sb_log_payload(sb,
-							   &last_sb_log,
-							   &payload);
+			err = ssdfs_prepare_sb_log(sb, &last_sb_log);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare sb log payload: "
+				SSDFS_ERR("fail to prepare sb log: err %d\n",
+					  err);
+			}
+
+			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to snapshot log's payload: "
 					  "err %d\n", err);
-			} else {
+			}
+
+			if (!err) {
 				err = ssdfs_commit_super(sb, SSDFS_ERROR_FS,
 							 &last_sb_log,
 							 &payload);

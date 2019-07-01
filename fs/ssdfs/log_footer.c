@@ -348,17 +348,8 @@ static inline
 int ssdfs_store_nsegs(struct ssdfs_fs_info *fsi,
 			struct ssdfs_volume_state *vs)
 {
-	int is_locked;
-
-	is_locked = mutex_trylock(&fsi->resize_mutex);
-
-	if (!is_locked) {
-		SSDFS_WARN("volume is under resize!!!\n");
-		return -ENOLCK;
-	}
-
+	mutex_lock(&fsi->resize_mutex);
 	vs->nsegs = cpu_to_le64(fsi->nsegs);
-
 	mutex_unlock(&fsi->resize_mutex);
 
 	return 0;

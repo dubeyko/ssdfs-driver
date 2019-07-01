@@ -2456,7 +2456,7 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
-					goto finish_fragment_processing;;
+					goto finish_fragment_processing;
 				}
 			}
 			break;
@@ -5419,6 +5419,121 @@ finish_mapping:
 }
 
 /*
+ * __ssdfs_maptbl_change_peb_state() - change PEB state
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
+ * @leb_id: LEB ID number
+ * @selected_index: index of item in the whole fragment
+ * @peb_state: new state of the PEB
+ *
+ * This method tries to change the state of the PEB
+ * in the mapping table.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EACCES     - PEB stripe is under recovering.
+ */
+static
+int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    u64 leb_id,
+				    u16 selected_index,
+				    int peb_state)
+{
+	struct ssdfs_peb_table_fragment_header *hdr;
+	struct ssdfs_peb_descriptor *peb_desc;
+	pgoff_t page_index;
+	struct page *page;
+	void *kaddr;
+	u16 item_index;
+	int err = 0;
+
+	SSDFS_DBG("tbl %p, fdesc %p, leb_id %llu, selected_index %u\n",
+		  tbl, fdesc, leb_id, selected_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !fdesc);
+	BUG_ON(selected_index >= U16_MAX);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
+
+	if (peb_state <= SSDFS_MAPTBL_UNKNOWN_PEB_STATE ||
+	    peb_state >= SSDFS_MAPTBL_PEB_STATE_MAX) {
+		SSDFS_ERR("invalid PEB state %#x\n",
+			  peb_state);
+		return -EINVAL;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc, leb_id);
+	if (page_index == ULONG_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to define PEB table's page_index: "
+			  "leb_id %llu\n", leb_id);
+		goto finish_fragment_change;
+	}
+
+	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
+		SSDFS_ERR("fail to find page: page_index %lu\n",
+			  page_index);
+		goto finish_fragment_change;
+	}
+
+	kaddr = kmap(page);
+
+	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
+
+	if (is_pebtbl_stripe_recovering(hdr)) {
+		err = -EACCES;
+		SSDFS_DBG("unable to change the PEB state: "
+			  "leb_id %llu: "
+			  "stripe %u is under recovering\n",
+			  leb_id,
+			  le16_to_cpu(hdr->stripe_id));
+		goto finish_page_processing;
+	}
+
+	item_index = selected_index % fdesc->pebs_per_page;
+
+	peb_desc = GET_PEB_DESCRIPTOR(kaddr, item_index);
+	if (IS_ERR_OR_NULL(peb_desc)) {
+		err = IS_ERR(peb_desc) ? PTR_ERR(peb_desc) : -ERANGE;
+		SSDFS_ERR("fail to get peb_descriptor: "
+			  "page_index %lu, item_index %u, err %d\n",
+			  page_index, item_index, err);
+		goto finish_page_processing;
+	}
+
+	peb_desc->state = (u8)peb_state;
+
+finish_page_processing:
+	kunmap(page);
+
+	if (!err) {
+		SetPagePrivate(page);
+		SetPageUptodate(page);
+		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
+						      page_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
+				  page_index, err);
+		}
+	}
+
+	unlock_page(page);
+	put_page(page);
+
+finish_fragment_change:
+	return err;
+}
+
+/*
  * ssdfs_maptbl_change_peb_state() - change PEB state
  * @fsi: file system info object
  * @leb_id: LEB ID number
@@ -5449,13 +5564,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	struct ssdfs_leb_descriptor leb_desc;
 	int state;
-	pgoff_t page_index;
-	struct page *page;
-	void *kaddr;
-	struct ssdfs_peb_table_fragment_header *hdr;
 	u16 selected_index;
-	struct ssdfs_peb_descriptor *peb_desc;
-	u16 item_index;
 	int consistency;
 	int err = 0;
 
@@ -5561,36 +5670,6 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		goto finish_fragment_change;
 	}
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc, leb_id);
-	if (page_index == ULONG_MAX) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to define PEB table's page_index: "
-			  "leb_id %llu\n", leb_id);
-		goto finish_fragment_change;
-	}
-
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
-		goto finish_fragment_change;
-	}
-
-	kaddr = kmap(page);
-
-	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
-
-	if (is_pebtbl_stripe_recovering(hdr)) {
-		err = -EACCES;
-		SSDFS_DBG("unable to change the PEB state: "
-			  "leb_id %llu: "
-			  "stripe %u is under recovering\n",
-			  leb_id,
-			  le16_to_cpu(hdr->stripe_id));
-		goto finish_page_processing;
-	}
-
 	switch (peb_state) {
 	case SSDFS_MAPTBL_BAD_PEB_STATE:
 	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
@@ -5622,38 +5701,24 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		err = -ENODATA;
 		SSDFS_DBG("unitialized leb descriptor: "
 			  "leb_id %llu\n", leb_id);
-		goto finish_page_processing;
+		goto finish_fragment_change;
 	}
 
-	item_index = selected_index % fdesc->pebs_per_page;
-
-	peb_desc = GET_PEB_DESCRIPTOR(kaddr, item_index);
-	if (IS_ERR_OR_NULL(peb_desc)) {
-		err = IS_ERR(peb_desc) ? PTR_ERR(peb_desc) : -ERANGE;
-		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+	err = __ssdfs_maptbl_change_peb_state(tbl, fdesc, leb_id,
+					      selected_index,
+					      peb_state);
+	if (err == -EACCES) {
+		SSDFS_DBG("unable to change the PEB state: "
+			  "leb_id %llu: "
+			  "stripe is under recovering\n",
+			  leb_id);
+		goto finish_fragment_change;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to change the PEB state: "
+			  "leb_id %llu, peb_state %#x, err %d\n",
+			  leb_id, peb_state, err);
+		goto finish_fragment_change;
 	}
-
-	peb_desc->state = (u8)peb_state;
-
-finish_page_processing:
-	kunmap(page);
-
-	if (!err) {
-		SetPagePrivate(page);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
-		}
-	}
-
-	unlock_page(page);
-	put_page(page);
 
 finish_fragment_change:
 	up_write(&fdesc->lock);
