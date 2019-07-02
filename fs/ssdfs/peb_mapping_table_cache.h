@@ -20,6 +20,8 @@
 #ifndef _SSDFS_PEB_MAPPING_TABLE_CACHE_H
 #define _SSDFS_PEB_MAPPING_TABLE_CACHE_H
 
+#include <linux/ssdfs_fs.h>
+
 /*
  * struct ssdfs_maptbl_cache - maptbl cache
  * @lock: lock of maptbl cache
@@ -30,6 +32,36 @@ struct ssdfs_maptbl_cache {
 	struct rw_semaphore lock;
 	struct pagevec pvec;
 	atomic_t bytes_count;
+};
+
+/*
+ * struct ssdfs_maptbl_cache_item - cache item descriptor
+ * @page_index: index of the found memory page
+ * @item_index: item of found index
+ * @found: found LEB2PEB pair
+ */
+struct ssdfs_maptbl_cache_item {
+#define SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN		(0)
+#define SSDFS_MAPTBL_CACHE_ITEM_FOUND		(1)
+#define SSDFS_MAPTBL_CACHE_ITEM_ABSENT		(2)
+#define SSDFS_MAPTBL_CACHE_SEARCH_ERROR		(3)
+#define SSDFS_MAPTBL_CACHE_SEARCH_MAX		(4)
+	int state;
+	unsigned page_index;
+	u16 item_index;
+	struct ssdfs_leb2peb_pair found;
+};
+
+#define SSDFS_MAPTBL_MAIN_INDEX		(0)
+#define SSDFS_MAPTBL_RELATION_INDEX	(1)
+#define SSDFS_MAPTBL_RELATION_MAX	(2)
+
+/*
+ * struct ssdfs_maptbl_cache_search_result - PEBs association
+ * @pebs: array of PEB descriptors
+ */
+struct ssdfs_maptbl_cache_search_result {
+	struct ssdfs_maptbl_cache_item pebs[SSDFS_MAPTBL_RELATION_MAX];
 };
 
 struct ssdfs_maptbl_peb_relation;

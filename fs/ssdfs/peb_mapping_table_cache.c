@@ -290,18 +290,301 @@ struct ssdfs_maptbl_cache_peb_state *FIRST_PEB_STATE(void *kaddr)
 }
 
 /*
+ * ssdfs_find_range_lower_limit() - find the first item of range
+ * @hdr: mapping table cache's header
+ * @leb_id: LEB ID
+ * @start_index: starting index
+ * @start_pair: pointer on starting LEB2PEB pair
+ * @found_index: pointer on found index [out]
+ *
+ * This method tries to find position of the first item
+ * for the same @leb_id in the range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL    - invalid input.
+ * %-ERANGE    - internal error.
+ */
+static
+int ssdfs_find_range_lower_limit(struct ssdfs_maptbl_cache_header *hdr,
+				 u64 leb_id, int start_index,
+				 struct ssdfs_leb2peb_pair *start_pair,
+				 int *found_index)
+{
+	struct ssdfs_leb2peb_pair *cur_pair = NULL;
+	u16 items_count;
+	u64 cur_leb_id;
+	int i = 0, j = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr || !start_pair || !found_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("hdr %p, leb_id %llu, start_index %d, "
+		  "start_pair %p, found_index %p\n",
+		  hdr, leb_id, start_index, start_pair, found_index);
+
+	items_count = le16_to_cpu(hdr->items_count);
+
+	if (items_count == 0) {
+		SSDFS_ERR("empty maptbl cache\n");
+		return -ERANGE;
+	}
+
+	if (start_index < 0 || start_index >= items_count) {
+		SSDFS_ERR("invalid index: "
+			  "start_index %d, items_count %u\n",
+			  start_index, items_count);
+		return -EINVAL;
+	}
+
+	if (leb_id != le64_to_cpu(start_pair->leb_id)) {
+		SSDFS_ERR("invalid ID: "
+			  "leb_id1 %llu, leb_id2 %llu\n",
+			  leb_id,
+			  le64_to_cpu(start_pair->leb_id));
+		return -EINVAL;
+	}
+
+	*found_index = start_index;
+
+	for (i = start_index - 1, j = 0; i >= 0; i--, j++) {
+		cur_pair = start_pair - j;
+		cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+
+		if (cur_leb_id == leb_id) {
+			*found_index = i;
+			continue;
+		} else
+			return 0;
+
+		if ((start_index - i) >= 2) {
+			SSDFS_ERR("corrupted cache\n");
+			return -ERANGE;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_find_range_upper_limit() - find the last item of range
+ * @hdr: mapping table cache's header
+ * @leb_id: LEB ID
+ * @start_index: starting index
+ * @start_pair: pointer on starting LEB2PEB pair
+ * @found_index: pointer on found index [out]
+ *
+ * This method tries to find position of the last item
+ * for the same @leb_id in the range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL    - invalid input.
+ * %-ERANGE    - internal error.
+ */
+static
+int ssdfs_find_range_upper_limit(struct ssdfs_maptbl_cache_header *hdr,
+				 u64 leb_id, int start_index,
+				 struct ssdfs_leb2peb_pair *start_pair,
+				 int *found_index)
+{
+	struct ssdfs_leb2peb_pair *cur_pair = NULL;
+	u16 items_count;
+	u64 cur_leb_id;
+	int i = 0, j = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr || !start_pair || !found_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("hdr %p, leb_id %llu, start_index %d, "
+		  "start_pair %p, found_index %p\n",
+		  hdr, leb_id, start_index, start_pair, found_index);
+
+	items_count = le16_to_cpu(hdr->items_count);
+
+	if (items_count == 0) {
+		SSDFS_ERR("empty maptbl cache\n");
+		return -ERANGE;
+	}
+
+	if (start_index < 0 || start_index >= items_count) {
+		SSDFS_ERR("invalid index: "
+			  "start_index %d, items_count %u\n",
+			  start_index, items_count);
+		return -EINVAL;
+	}
+
+	if (leb_id != le64_to_cpu(start_pair->leb_id)) {
+		SSDFS_ERR("invalid ID: "
+			  "leb_id1 %llu, leb_id2 %llu\n",
+			  leb_id,
+			  le64_to_cpu(start_pair->leb_id));
+		return -EINVAL;
+	}
+
+	*found_index = start_index;
+
+	for (i = start_index + 1, j = 0; i < items_count; i++, j++) {
+		cur_pair = start_pair + j;
+		cur_leb_id = le64_to_cpu(cur_pair->leb_id);
+
+		if (cur_leb_id == leb_id) {
+			*found_index = i;
+			continue;
+		} else
+			return 0;
+
+		if ((i - start_index) >= 2) {
+			SSDFS_ERR("corrupted cache\n");
+			return -ERANGE;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_find_result_pair() - extract pair of descriptors
+ * @hdr: mapping table cache's header
+ * @sequence_id: fragment ID
+ * @leb_id: LEB ID
+ * @peb_index: main/relation PEB index
+ * @cur_index: current index of item in cache
+ * @start_pair: pointer on starting pair in cache
+ * @cur_pair: pointer on current pair for @current_index
+ * @res: pointer on the extracted pair of descriptors [out]
+ *
+ * This method tries to extract the pair of descriptor for
+ * main and relation LEB2PEB pairs.
+ *
+ * RETURN:
+ * [success] - error code:
+ * %-EAGAIN    - repeat the search for the next memory page
+ * %-EEXIST    - @leb_id is found.
+ *
+ * [failure] - error code:
+ * %-ERANGE    - internal error.
+ */
+static
+int ssdfs_find_result_pair(struct ssdfs_maptbl_cache_header *hdr,
+			   unsigned sequence_id,
+			   u64 leb_id,
+			   int peb_index,
+			   int cur_index,
+			   struct ssdfs_leb2peb_pair *start_pair,
+			   struct ssdfs_leb2peb_pair *cur_pair,
+			   struct ssdfs_maptbl_cache_search_result *res)
+{
+	struct ssdfs_maptbl_cache_item *cur_item;
+	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
+	int lo_limit = -1;
+	int up_limit = -1;
+	u16 items_count;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr || !start_pair || !cur_pair || !res);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("sequence_id %u, leb_id %llu, "
+		  "peb_index %#x, cur_index %d\n",
+		  sequence_id, leb_id, peb_index, cur_index);
+
+	cur_item = &res->pebs[peb_index];
+	cur_item->state = SSDFS_MAPTBL_CACHE_SEARCH_ERROR;
+
+	items_count = le16_to_cpu(hdr->items_count);
+	if (items_count == 0) {
+		SSDFS_ERR("empty maptbl cache\n");
+		return -ERANGE;
+	}
+
+	err = ssdfs_find_range_lower_limit(hdr, leb_id, cur_index,
+					   cur_pair, &lo_limit);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find lower_limit: "
+			  "leb_id %llu, cur_index %d, "
+			  "err %d\n",
+			  leb_id, cur_index, err);
+		return err;
+	}
+
+	err = ssdfs_find_range_upper_limit(hdr, leb_id, cur_index,
+					   cur_pair, &up_limit);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find upper_limit: "
+			  "leb_id %llu, cur_index %d, "
+			  "err %d\n",
+			  leb_id, cur_index, err);
+		return err;
+	}
+
+	switch (peb_index) {
+	case SSDFS_MAPTBL_MAIN_INDEX:
+		/* save main item */
+		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_FOUND;
+		cur_item->page_index = sequence_id;
+		cur_item->item_index = lo_limit;
+		cur_pair = start_pair + lo_limit;
+		memcpy(&cur_item->found, cur_pair, pair_size);
+
+		peb_index = SSDFS_MAPTBL_RELATION_INDEX;
+		cur_item = &res->pebs[peb_index];
+		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
+
+		if (lo_limit == up_limit && (up_limit + 1) == items_count)
+			return -EAGAIN;
+		else if (lo_limit == up_limit)
+			return -EEXIST;
+
+		/* save relation item */
+		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_FOUND;
+		cur_item->page_index = sequence_id;
+		cur_item->item_index = up_limit;
+		cur_pair = start_pair + up_limit;
+		memcpy(&cur_item->found, cur_pair, pair_size);
+		break;
+
+	case SSDFS_MAPTBL_RELATION_INDEX:
+		if (lo_limit != up_limit && lo_limit != 0) {
+			SSDFS_ERR("corrupted cache\n");
+			return -ERANGE;
+		}
+
+		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_FOUND;
+		cur_item->page_index = sequence_id;
+		cur_item->item_index = lo_limit;
+		cur_pair = start_pair + lo_limit;
+		memcpy(&cur_item->found, cur_pair, pair_size);
+		break;
+
+	default:
+		SSDFS_ERR("invalid index %d\n", peb_index);
+		return -ERANGE;
+	}
+
+	return -EEXIST;
+}
+
+/*
  * __ssdfs_maptbl_cache_find_leb() - find position of LEB
  * @kaddr: pointer on maptbl cache's fragment
  * @sequence_id: fragment ID
  * @leb_id: LEB ID
- * @found: pointer on found LEB/PEB pair [out]
- * @item_index: pointer on index of found LEB/PEB pair [out]
+ * @res: pointer on the extracted pair of descriptors [out]
  *
  * This method tries to find position of LEB for extracting
  * or inserting a LEB/PEB pair.
  *
  * RETURN:
  * [success] - error code:
+ * %-EAGAIN    - repeat the search for the next memory page
  * %-EFAULT    - @leb_id doesn't found; position can be used for inserting.
  * %-E2BIG     - page is full; @leb_id is greater than ending LEB number.
  * %-ENODATA   - @leb_id is greater than ending LEB number.
@@ -314,11 +597,13 @@ static
 int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 				  unsigned sequence_id,
 				  u64 leb_id,
-				  struct ssdfs_leb2peb_pair **found,
-				  u16 *item_index)
+				  struct ssdfs_maptbl_cache_search_result *res)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
+	struct ssdfs_maptbl_cache_item *cur_item;
+	int cur_item_index = SSDFS_MAPTBL_MAIN_INDEX;
 	struct ssdfs_leb2peb_pair *start_pair, *cur_pair;
+	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
 	u64 start_leb, end_leb;
 	u64 start_diff, end_diff;
 	u64 cur_leb_id;
@@ -328,17 +613,14 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 	bool disable_step = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr || !item_index);
+	BUG_ON(!kaddr || !res);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p, sequence_id %u, "
-		  "leb_id %llu, item_index %p\n",
-		  kaddr, sequence_id, leb_id, item_index);
+		  "leb_id %llu, res %p\n",
+		  kaddr, sequence_id, leb_id, res);
 
 	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
-	*item_index = U16_MAX;
-	*found = NULL;
-
 	if (le16_to_cpu(hdr->sequence_id) != sequence_id) {
 		SSDFS_ERR("invalid sequence_id %u\n", sequence_id);
 		return -ERANGE;
@@ -356,9 +638,44 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 	start_leb = le64_to_cpu(hdr->start_leb);
 	end_leb = le64_to_cpu(hdr->end_leb);
 
+	cur_item = &res->pebs[cur_item_index];
+
+	switch (cur_item->state) {
+	case SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN:
+		/*
+		 * Continue the search for main item
+		 */
+		break;
+
+	case SSDFS_MAPTBL_CACHE_ITEM_FOUND:
+		cur_item_index = SSDFS_MAPTBL_RELATION_INDEX;
+		cur_item = &res->pebs[cur_item_index];
+
+		switch (cur_item->state) {
+		case SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN:
+			/*
+			 * Continue the search for relation item
+			 */
+			break;
+
+		default:
+			SSDFS_ERR("invalid search result's state %#x\n",
+				  cur_item->state);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("invalid search result's state %#x\n",
+			  cur_item->state);
+		return -ERANGE;
+	}
+
 	if (leb_id < start_leb) {
-		*item_index = 0;
-		*found = start_pair;
+		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
+		cur_item->page_index = sequence_id;
+		cur_item->item_index = 0;
+		memcpy(&cur_item->found, start_pair, pair_size);
 		return -EFAULT;
 	}
 
@@ -368,8 +685,11 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 		if ((items_count + 1) > capacity)
 			return -E2BIG;
 		else {
-			*item_index = items_count;
-			*found = start_pair + items_count;
+			cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
+			cur_item->page_index = sequence_id;
+			cur_item->item_index = items_count;
+			memcpy(&cur_item->found,
+				start_pair + items_count, pair_size);
 			return -ENODATA;
 		}
 	}
@@ -396,12 +716,19 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 			if (leb_id > cur_leb_id)
 				goto continue_straight_search;
 			else if (cur_leb_id == leb_id) {
-				*item_index = cur_index;
-				*found = cur_pair;
-				return -EEXIST;
+				return ssdfs_find_result_pair(hdr, sequence_id,
+							      leb_id,
+							      cur_item_index,
+							      cur_index,
+							      start_pair,
+							      cur_pair,
+							      res);
 			} else {
-				*item_index = cur_index;
-				*found = cur_pair;
+				cur_item->state =
+					SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
+				cur_item->page_index = sequence_id;
+				cur_item->item_index = cur_index;
+				memcpy(&cur_item->found, cur_pair, pair_size);
 				return -EFAULT;
 			}
 
@@ -439,35 +766,19 @@ continue_straight_search:
 			if (leb_id < cur_leb_id)
 				goto continue_reverse_search;
 			else if (cur_leb_id == leb_id) {
-				*item_index = cur_index;
-				*found = cur_pair;
-
-				if (*item_index > 0) {
-					cur_pair--;
-					cur_leb_id =
-						le64_to_cpu(cur_pair->leb_id);
-
-					if (cur_leb_id == leb_id) {
-						--*item_index;
-						*found = cur_pair;
-					} else
-						return -EEXIST;
-				}
-
-				if (*item_index > 0) {
-					cur_pair--;
-					cur_leb_id =
-					    le64_to_cpu(cur_pair->leb_id);
-
-					if (cur_leb_id == leb_id) {
-						SSDFS_ERR("unexpected pairs\n");
-						return -ERANGE;
-					} else
-						return -EEXIST;
-				}
+				return ssdfs_find_result_pair(hdr, sequence_id,
+							      leb_id,
+							      cur_item_index,
+							      cur_index,
+							      start_pair,
+							      cur_pair,
+							      res);
 			} else {
-				*item_index = cur_index;
-				*found = cur_pair;
+				cur_item->state =
+					SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
+				cur_item->page_index = sequence_id;
+				cur_item->item_index = cur_index;
+				memcpy(&cur_item->found, cur_pair, pair_size);
 				return -EFAULT;
 			}
 
@@ -598,10 +909,9 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 
 /*
  * ssdfs_maptbl_cache_find_leb() - find LEB ID inside maptbl cache's fragment
- * @kaddr: pointer on maptbl cache's fragment
- * @sequence_id: fragment ID
+ * @cache: maptbl cache object
  * @leb_id: LEB ID
- * @descriptor_index: index of descriptor in relation
+ * @res: pointer on the extracted pair of descriptors [out]
  * @pebr: description of PEBs relation [out]
  *
  * This method tries to find LEB/PEB pair for requested LEB ID
@@ -618,108 +928,136 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
  * %-EAGAIN    - try to search the relation LEB/PEB pair in the next page.
  */
 static
-int ssdfs_maptbl_cache_find_leb(void *kaddr,
-				unsigned sequence_id,
+int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 				u64 leb_id,
-				int descriptor_index,
+				struct ssdfs_maptbl_cache_search_result *res,
 				struct ssdfs_maptbl_peb_relation *pebr)
 {
-	struct ssdfs_maptbl_cache_header *hdr;
-	struct ssdfs_leb2peb_pair *found = NULL;
 	struct ssdfs_maptbl_cache_peb_state *peb_state = NULL;
-	u16 item_index = U16_MAX;
-	u16 items_count;
-	u64 peb_id1 = U64_MAX, peb_id2 = U64_MAX;
+	struct page *page;
+	unsigned page_index;
+	u16 item_index;
+	struct ssdfs_leb2peb_pair *found;
+	void *kaddr;
+	u64 peb_id = U64_MAX;
+	unsigned i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr || !pebr);
+	BUG_ON(!cache || !res || !pebr);
+	BUG_ON(!rwsem_is_locked(&cache->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("kaddr %p, leb_id %llu, descriptor_index %d, pebr %p\n",
-		  kaddr, leb_id, descriptor_index, pebr);
+	SSDFS_DBG("cache %p, leb_id %llu, res %p, pebr %p\n",
+		  cache, leb_id, res, pebr);
+
+	memset(res, 0xFF, sizeof(struct ssdfs_maptbl_cache_search_result));
+	res->pebs[SSDFS_MAPTBL_MAIN_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
+	res->pebs[SSDFS_MAPTBL_RELATION_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
 
 	memset(pebr, 0xFF, sizeof(struct ssdfs_maptbl_peb_relation));
 
-	if (descriptor_index < 0 ||
-	    descriptor_index >= SSDFS_MAPTBL_RELATION_MAX) {
-		SSDFS_ERR("invalid descriptor_index %d\n",
-			  descriptor_index);
-		return -EINVAL;
+	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
+		page = cache->pvec.pages[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		lock_page(page);
+		kaddr = kmap(page);
+		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, res);
+		kunmap(page);
+		unlock_page(page);
+
+		if (err == -ENODATA || err == -E2BIG)
+			continue;
+		else if (err == -EAGAIN)
+			continue;
+		else if (err == -EFAULT) {
+			err = -ENODATA;
+			goto finish_leb_id_search;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find LEB: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_leb_id_search;
+		}
 	}
 
-	err = __ssdfs_maptbl_cache_find_leb(kaddr, sequence_id, leb_id,
-					    &found, &item_index);
-	if (err == -EEXIST) {
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!found || item_index == U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
+	for (i = SSDFS_MAPTBL_MAIN_INDEX; i < SSDFS_MAPTBL_RELATION_MAX; i++) {
+		switch (res->pebs[i].state) {
+		case SSDFS_MAPTBL_CACHE_ITEM_FOUND:
+			page_index = res->pebs[i].page_index;
+			item_index = res->pebs[i].item_index;
+			found = &res->pebs[i].found;
 
-		peb_id1 = le64_to_cpu(found->peb_id);
+			if (page_index >= pagevec_count(&cache->pvec)) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid page index %u\n",
+					  page_index);
+				goto finish_leb_id_search;
+			}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(peb_id1 == U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-	} else
-		return !err ? -ERANGE : err;
-
-	err = ssdfs_maptbl_cache_get_peb_state(kaddr, item_index,
-						&peb_state);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to get peb state: "
-			  "item_index %u, err %d\n",
-			  item_index, err);
-		return err;
-	}
+			page = cache->pvec.pages[page_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!peb_state);
+			BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	pebr->pebs[descriptor_index].peb_id = peb_id1;
-	pebr->pebs[descriptor_index].shared_peb_index =
+			lock_page(page);
+			kaddr = kmap(page);
+			err = ssdfs_maptbl_cache_get_peb_state(kaddr,
+								item_index,
+								&peb_state);
+			kunmap(page);
+			unlock_page(page);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to get peb state: "
+					  "item_index %u, err %d\n",
+					  item_index, err);
+				goto finish_leb_id_search;
+			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!peb_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			if (le64_to_cpu(found->leb_id) != leb_id) {
+				err = -ERANGE;
+				SSDFS_ERR("leb_id1 %llu != leb_id2 %llu\n",
+					  le64_to_cpu(found->leb_id),
+					  leb_id);
+				goto finish_leb_id_search;
+			}
+
+			peb_id = le64_to_cpu(found->peb_id);
+
+			pebr->pebs[i].peb_id = peb_id;
+			pebr->pebs[i].shared_peb_index =
 					peb_state->shared_peb_index;
-	pebr->pebs[descriptor_index].type =
-				SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
-	pebr->pebs[descriptor_index].state = peb_state->state;
-	pebr->pebs[descriptor_index].flags = peb_state->flags;
-	pebr->pebs[descriptor_index].consistency = peb_state->consistency;
+			pebr->pebs[i].type =
+					SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
+			pebr->pebs[i].state = peb_state->state;
+			pebr->pebs[i].flags = peb_state->flags;
+			pebr->pebs[i].consistency = peb_state->consistency;
+			break;
 
-	if (descriptor_index == SSDFS_MAPTBL_RELATION_INDEX)
-		return 0;
+		case SSDFS_MAPTBL_CACHE_ITEM_ABSENT:
+			continue;
 
-	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
-	items_count = le16_to_cpu(hdr->items_count);
-
-	if ((item_index + 1) > items_count) {
-		/* try the next page */
-		return -EAGAIN;
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("search failure: leb_id %llu\n", leb_id);
+			goto finish_leb_id_search;
+		}
 	}
 
-	descriptor_index++;
-	found++;
-	peb_state++;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(leb_id > le64_to_cpu(found->leb_id));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (le64_to_cpu(found->leb_id) != leb_id)
-		goto finish_leb_conversion;
-
-	peb_id2 = le64_to_cpu(found->peb_id);
-
-	pebr->pebs[descriptor_index].peb_id = peb_id2;
-	pebr->pebs[descriptor_index].shared_peb_index =
-					peb_state->shared_peb_index;
-	pebr->pebs[descriptor_index].type =
-				SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
-	pebr->pebs[descriptor_index].state = peb_state->state;
-	pebr->pebs[descriptor_index].flags = peb_state->flags;
-	pebr->pebs[descriptor_index].consistency = peb_state->consistency;
-
-finish_leb_conversion:
-	return 0;
+finish_leb_id_search:
+	return err;
 }
 
 /*
@@ -741,10 +1079,7 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 					u64 leb_id,
 					struct ssdfs_maptbl_peb_relation *pebr)
 {
-	struct page *page;
-	void *kaddr;
-	unsigned i;
-	int index = SSDFS_MAPTBL_MAIN_INDEX;
+	struct ssdfs_maptbl_cache_search_result res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -761,80 +1096,14 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 		  cache, leb_id, pebr);
 
 	down_read(&cache->lock);
-
-	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
-		page = cache->pvec.pages[i];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		lock_page(page);
-		kaddr = kmap(page);
-		err = ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-						  index, pebr);
-		kunmap(page);
-		unlock_page(page);
-
-		if (err == -ENODATA || err == -E2BIG)
-			continue;
-		else if (err == -EAGAIN)
-			break;
-		else if (err == -EFAULT) {
-			err = -ENODATA;
-			goto finish_leb_id_search;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find LEB: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-			goto finish_leb_id_search;
-		} else {
-			SSDFS_DBG("leb_id %llu, main peb_id %llu, "
-				  "relation peb_id %llu\n",
-				leb_id,
-				pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
-				pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id);
-			goto finish_leb_id_search;
-		}
-	}
-
-	if ((i + 1) < pagevec_count(&cache->pvec)) {
-		page = cache->pvec.pages[i + 1];
-		index = SSDFS_MAPTBL_RELATION_INDEX;
-
-		lock_page(page);
-		kaddr = kmap(page);
-		err = ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-						  index, pebr);
-		kunmap(page);
-		unlock_page(page);
-
-		if (err == -EFAULT) {
-			/* there is no relation PEB */
-			err = 0;
-			SSDFS_DBG("leb_id %llu, main peb_id %llu, "
-				  "relation peb_id %llu\n",
-				leb_id,
-				pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
-				pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id);
-			goto finish_leb_id_search;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find LEB: "
-				  "leb_id %llu, err %d\n",
-				  leb_id, err);
-			goto finish_leb_id_search;
-		} else {
-			SSDFS_DBG("leb_id %llu, main peb_id %llu, "
-				  "relation peb_id %llu\n",
-				leb_id,
-				pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
-				pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id);
-			goto finish_leb_id_search;
-		}
-	}
-
-finish_leb_id_search:
+	err = ssdfs_maptbl_cache_find_leb(cache, leb_id, &res, pebr);
 	up_read(&cache->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert leb %llu to peb: "
+			  "err %d\n",
+			  leb_id, err);
+	}
 
 	return err;
 }
@@ -1947,6 +2216,7 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 				   struct ssdfs_maptbl_peb_relation *pebr,
 				   int consistency)
 {
+	struct ssdfs_maptbl_cache_search_result res;
 	struct ssdfs_leb2peb_pair *tmp_pair = NULL;
 	u16 item_index = U16_MAX;
 	struct ssdfs_leb2peb_pair cur_pair;
@@ -1963,6 +2233,12 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 	SSDFS_DBG("cache %p, leb_id %llu, pebr %p, consistency %#x\n",
 		  cache, leb_id, pebr, consistency);
+
+	memset(&res, 0xFF, sizeof(struct ssdfs_maptbl_cache_search_result));
+	res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
+	res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
 
 	cur_pair.leb_id = cpu_to_le64(leb_id);
 	cur_pair.peb_id =
@@ -1997,8 +2273,9 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 		lock_page(page);
 		kaddr = kmap(page);
-		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-						    &tmp_pair, &item_index);
+		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, &res);
+		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
+		tmp_pair = &res.pebs[SSDFS_MAPTBL_MAIN_INDEX].found;
 		kunmap(page);
 		unlock_page(page);
 
@@ -2180,11 +2457,11 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 					u64 leb_id, int peb_state,
 					int consistency)
 {
-	struct ssdfs_leb2peb_pair *tmp_pair = NULL;
+	struct ssdfs_maptbl_cache_search_result res;
+	struct ssdfs_maptbl_peb_relation pebr;
+	int state;
+	unsigned page_index;
 	u16 item_index = U16_MAX;
-	struct page *page;
-	void *kaddr;
-	unsigned i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2232,37 +2509,10 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 
 	down_write(&cache->lock);
 
-	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
-		page = cache->pvec.pages[i];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		lock_page(page);
-		kaddr = kmap(page);
-		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-						    &tmp_pair, &item_index);
-		kunmap(page);
-		unlock_page(page);
-
-		if (err == -EEXIST) {
-			/* the position was found */
-			break;
-		} else if (!err)
-			BUG();
-	}
-
-	if (err != -EEXIST) {
-		SSDFS_ERR("fail to find the LEB %llu: err %d\n",
+	err = ssdfs_maptbl_cache_find_leb(cache, leb_id, &res, &pebr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find: leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_peb_state_change;
-	} else
-		err = 0;
-
-	if (i >= pagevec_count(&cache->pvec)) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid page index %u\n", i);
 		goto finish_peb_state_change;
 	}
 
@@ -2278,7 +2528,20 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
-		err = __ssdfs_maptbl_cache_change_peb_state(cache, i,
+		state = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
+		if (state != SSDFS_MAPTBL_CACHE_ITEM_FOUND) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to change peb state: "
+				  "state %#x\n",
+				  state);
+			goto finish_peb_state_change;
+		}
+
+		page_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].page_index;
+		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
+
+		err = __ssdfs_maptbl_cache_change_peb_state(cache,
+							    page_index,
 							    item_index,
 							    peb_state,
 							    consistency);
@@ -2286,7 +2549,7 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 			SSDFS_ERR("fail to change peb state: "
 				  "page_index %u, item_index %u, "
 				  "err %d\n",
-				  i, item_index, err);
+				  page_index, item_index, err);
 			goto finish_peb_state_change;
 		}
 		break;
@@ -2296,61 +2559,28 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 	case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
-		item_index++;
+		state = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
+		if (state != SSDFS_MAPTBL_CACHE_ITEM_FOUND) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to change peb state: "
+				  "state %#x\n",
+				  state);
+			goto finish_peb_state_change;
+		}
 
-		err = __ssdfs_maptbl_cache_change_peb_state(cache, i,
+		page_index = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].page_index;
+		item_index = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].item_index;
+
+		err = __ssdfs_maptbl_cache_change_peb_state(cache,
+							    page_index,
 							    item_index,
 							    peb_state,
 							    consistency);
-		if (err == -EINVAL) {
-			i++;
-
-			if (i >= pagevec_count(&cache->pvec)) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid page index %u\n", i);
-				goto finish_peb_state_change;
-			}
-
-			page = cache->pvec.pages[i];
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			lock_page(page);
-			kaddr = kmap(page);
-			err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-							    &tmp_pair,
-							    &item_index);
-			kunmap(page);
-			unlock_page(page);
-
-			if (err == -EEXIST) {
-				err =
-				    __ssdfs_maptbl_cache_change_peb_state(cache,
-								i, item_index,
-								peb_state,
-								consistency);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to change peb state: "
-						  "page_index %u, "
-						  "item_index %u, "
-						  "err %d\n",
-						  i, item_index, err);
-					goto finish_peb_state_change;
-				}
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to find leb: "
-					  "leb_id %llu, page_index %u, "
-					  "err %d\n",
-					  leb_id, i, err);
-				goto finish_peb_state_change;
-			}
-		} else if (unlikely(err)) {
+		if (unlikely(err)) {
 			SSDFS_ERR("fail to change peb state: "
 				  "page_index %u, item_index %u, "
 				  "err %d\n",
-				  i, item_index, err);
+				  page_index, item_index, err);
 			goto finish_peb_state_change;
 		}
 		break;
@@ -2391,6 +2621,7 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 					 struct ssdfs_maptbl_peb_relation *pebr,
 					 int consistency)
 {
+	struct ssdfs_maptbl_cache_search_result res;
 	struct ssdfs_leb2peb_pair *tmp_pair = NULL;
 	u16 item_index = U16_MAX, items_count = U16_MAX;
 	struct ssdfs_leb2peb_pair cur_pair;
@@ -2407,6 +2638,12 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 
 	SSDFS_DBG("cache %p, leb_id %llu, pebr %p, consistency %#x\n",
 		  cache, leb_id, pebr, consistency);
+
+	memset(&res, 0xFF, sizeof(struct ssdfs_maptbl_cache_search_result));
+	res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
+	res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
 
 	cur_pair.leb_id = cpu_to_le64(leb_id);
 	cur_pair.peb_id =
@@ -2443,13 +2680,11 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 
 		lock_page(page);
 		kaddr = kmap(page);
-
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		items_count = le16_to_cpu(hdr->items_count);
-
-		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-						    &tmp_pair, &item_index);
-
+		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, &res);
+		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
+		tmp_pair = &res.pebs[SSDFS_MAPTBL_MAIN_INDEX].found;
 		kunmap(page);
 		unlock_page(page);
 
@@ -2727,6 +2962,7 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 					     u64 leb_id,
 					     int consistency)
 {
+	struct ssdfs_maptbl_cache_search_result res;
 	struct ssdfs_maptbl_cache_header *hdr;
 	struct ssdfs_leb2peb_pair *found_pair = NULL;
 	struct ssdfs_leb2peb_pair saved_pair;
@@ -2746,6 +2982,12 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 
 	SSDFS_DBG("cache %p, leb_id %llu\n",
 		  cache, leb_id);
+
+	memset(&res, 0xFF, sizeof(struct ssdfs_maptbl_cache_search_result));
+	res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
+	res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state =
+				SSDFS_MAPTBL_CACHE_ITEM_UNKNOWN;
 
 	switch (consistency) {
 	case SSDFS_PEB_STATE_CONSISTENT:
@@ -2776,10 +3018,11 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		items_count = le16_to_cpu(hdr->items_count);
 
-		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id,
-						    &found_pair, &item_index);
+		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, &res);
+		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
+		found_pair = &res.pebs[SSDFS_MAPTBL_MAIN_INDEX].found;
 
-		if (err == -EEXIST) {
+		if (err == -EEXIST || err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(le64_to_cpu(found_pair->leb_id) != leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2802,6 +3045,9 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 				memcpy(&saved_state, found_state,
 					peb_state_size);
 			}
+
+			/* it is expected existence of the item */
+			err = -EEXIST;
 		}
 
 		kunmap(page);

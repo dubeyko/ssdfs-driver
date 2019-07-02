@@ -178,9 +178,6 @@ struct ssdfs_maptbl_peb_descriptor {
  * @pebs: array of PEB descriptors
  */
 struct ssdfs_maptbl_peb_relation {
-#define SSDFS_MAPTBL_MAIN_INDEX		(0)
-#define SSDFS_MAPTBL_RELATION_INDEX	(1)
-#define SSDFS_MAPTBL_RELATION_MAX	(2)
 	struct ssdfs_maptbl_peb_descriptor pebs[SSDFS_MAPTBL_RELATION_MAX];
 };
 

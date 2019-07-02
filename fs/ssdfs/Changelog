@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.1.30 [July 02, 2019]
+    (*) Fix bugs in mapping table implementation (step 5).
+
 v.1.29 [July 01, 2019]
     (*) Fix bugs in mapping table implementation (step 4).
 
