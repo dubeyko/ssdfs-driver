@@ -544,7 +544,7 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	int migration_state, items_state;
 	bool need_migrate = false;
 	bool need_move = false;
-	int src_migration_id, dst_migration_id;
+	int src_migration_id = -1, dst_migration_id = -1;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG

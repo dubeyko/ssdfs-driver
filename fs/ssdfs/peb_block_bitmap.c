@@ -433,6 +433,15 @@ fail_define_pages_count:
 	if (unlikely(err))
 		goto fail_init_blk_bmap;
 
+	SSDFS_DBG("type %#x, under_migration %#x, has_relation %#x, "
+		  "last_free_blk %u, metadata_blks %u, "
+		  "free_blks %u, used_blks %u, "
+		  "invalid_blks %u, shared_free_dst_blks %d\n",
+		  type, under_migration, has_relation,
+		  last_free_blk, metadata_blks,
+		  free_blks, used_blks, invalid_blks,
+		  atomic_read(&pebc->shared_free_dst_blks));
+
 	switch (type) {
 	case SSDFS_SRC_BLK_BMAP:
 		if (under_migration && has_relation) {
@@ -450,15 +459,31 @@ fail_define_pages_count:
 			atomic_set(&bmap->valid_logical_blks, used_blks);
 			atomic_set(&bmap->invalid_logical_blks, invalid_blks);
 			atomic_set(&bmap->free_logical_blks, free_blks);
+
+			atomic_add(atomic_read(&bmap->valid_logical_blks),
+				   &bmap->parent->valid_logical_blks);
+			atomic_add(atomic_read(&bmap->invalid_logical_blks),
+				   &bmap->parent->invalid_logical_blks);
+			atomic_add(atomic_read(&bmap->free_logical_blks),
+				   &bmap->parent->free_logical_blks);
 		}
 		break;
 
 	case SSDFS_DST_BLK_BMAP:
 		if (under_migration) {
+			free_blks -= atomic_read(&bmap->valid_logical_blks);
+
 			atomic_add(used_blks, &bmap->valid_logical_blks);
 			atomic_add(invalid_blks, &bmap->invalid_logical_blks);
 			atomic_add(free_blks, &bmap->free_logical_blks);
 			atomic_add(free_blks, &pebc->shared_free_dst_blks);
+
+			atomic_add(atomic_read(&bmap->valid_logical_blks),
+				   &bmap->parent->valid_logical_blks);
+			atomic_add(atomic_read(&bmap->invalid_logical_blks),
+				   &bmap->parent->invalid_logical_blks);
+			atomic_add(atomic_read(&bmap->free_logical_blks),
+				   &bmap->parent->free_logical_blks);
 		} else {
 			err = -EIO;
 			SSDFS_ERR("invalid flags set: %#x\n", flags);
@@ -493,15 +518,6 @@ fail_define_pages_count:
 		BUG();
 	}
 
-	atomic_add(atomic_read(&bmap->valid_logical_blks),
-		   &bmap->parent->valid_logical_blks);
-	atomic_add(atomic_read(&bmap->invalid_logical_blks),
-		   &bmap->parent->invalid_logical_blks);
-	atomic_add(atomic_read(&bmap->free_logical_blks),
-		   &bmap->parent->free_logical_blks);
-
-	WARN_ON(atomic_read(&pebc->shared_free_dst_blks) < 0);
-
 	if (type == SSDFS_SRC_BLK_BMAP && is_dst_peb_clean) {
 		type = SSDFS_DST_BLK_BMAP;
 		blk_bmap = bmap->dst;
@@ -513,6 +529,17 @@ fail_define_pages_count:
 		}
 
 		goto get_block_bmap_pages_count;
+	}
+
+	if (atomic_read(&pebc->shared_free_dst_blks) < 0) {
+		SSDFS_WARN("type %#x, under_migration %#x, has_relation %#x, "
+			   "last_free_blk %u, metadata_blks %u, "
+			   "free_blks %u, used_blks %u, "
+			   "invalid_blks %u, shared_free_dst_blks %d\n",
+			   type, under_migration, has_relation,
+			   last_free_blk, metadata_blks,
+			   free_blks, used_blks, invalid_blks,
+			   atomic_read(&pebc->shared_free_dst_blks));
 	}
 
 	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
@@ -599,9 +626,17 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
+
+	if ((atomic_read(&bmap->free_logical_blks) +
 	    atomic_read(&bmap->valid_logical_blks) +
-	    atomic_read(&bmap->invalid_logical_blks)) > bmap->pages_per_peb);
+	    atomic_read(&bmap->invalid_logical_blks)) > bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	log_pages = bmap->parent->parent_si->log_pages;
@@ -681,9 +716,17 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
+
+	if ((atomic_read(&bmap->free_logical_blks) +
 	    atomic_read(&bmap->valid_logical_blks) +
-	    atomic_read(&bmap->invalid_logical_blks)) > bmap->pages_per_peb);
+	    atomic_read(&bmap->invalid_logical_blks)) > bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return atomic_read(&bmap->valid_logical_blks);
@@ -732,9 +775,17 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
+
+	if ((atomic_read(&bmap->free_logical_blks) +
 	    atomic_read(&bmap->valid_logical_blks) +
-	    atomic_read(&bmap->invalid_logical_blks)) > bmap->pages_per_peb);
+	    atomic_read(&bmap->invalid_logical_blks)) > bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return atomic_read(&bmap->invalid_logical_blks);
@@ -1139,11 +1190,27 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON(atomic_read(&bmap->free_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
-		 atomic_read(&bmap->valid_logical_blks) +
-		 atomic_read(&bmap->invalid_logical_blks)) >
-			bmap->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic_sub(count, &bmap->parent->free_logical_blks);
@@ -1152,16 +1219,32 @@ init_failed:
 	SSDFS_DBG("parent->free_logical_blks %u, "
 		  "parent->valid_logical_blks %u, "
 		  "parent->invalid_logical_blks %u, "
-		  "pages_per_seg %u\n",
+		  "pages_per_peb %u\n",
 		  atomic_read(&bmap->parent->free_logical_blks),
 		  atomic_read(&bmap->parent->valid_logical_blks),
 		  atomic_read(&bmap->parent->invalid_logical_blks),
-		  bmap->parent->pages_per_seg);
-	WARN_ON(atomic_read(&bmap->parent->free_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->parent->free_logical_blks) +
-		 atomic_read(&bmap->parent->valid_logical_blks) +
-		 atomic_read(&bmap->parent->invalid_logical_blks)) >
-			bmap->parent->pages_per_seg);
+		  bmap->parent->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_reserve_metapages:
@@ -1298,11 +1381,27 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON(atomic_read(&bmap->free_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
-		 atomic_read(&bmap->valid_logical_blks) +
-		 atomic_read(&bmap->invalid_logical_blks)) >
-			bmap->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION) {
@@ -1318,16 +1417,32 @@ init_failed:
 	SSDFS_DBG("parent->free_logical_blks %u, "
 		  "parent->valid_logical_blks %u, "
 		  "parent->invalid_logical_blks %u, "
-		  "pages_per_seg %u\n",
+		  "pages_per_peb %u\n",
 		  atomic_read(&bmap->parent->free_logical_blks),
 		  atomic_read(&bmap->parent->valid_logical_blks),
 		  atomic_read(&bmap->parent->invalid_logical_blks),
-		  bmap->parent->pages_per_seg);
-	WARN_ON(atomic_read(&bmap->parent->free_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->parent->free_logical_blks) +
-		 atomic_read(&bmap->parent->valid_logical_blks) +
-		 atomic_read(&bmap->parent->invalid_logical_blks)) >
-			bmap->parent->pages_per_seg);
+		  bmap->parent->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_pre_allocate:
@@ -1464,11 +1579,27 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON(atomic_read(&bmap->free_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
-		 atomic_read(&bmap->valid_logical_blks) +
-		 atomic_read(&bmap->invalid_logical_blks)) >
-			bmap->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION) {
@@ -1484,16 +1615,32 @@ init_failed:
 	SSDFS_DBG("parent->free_logical_blks %u, "
 		  "parent->valid_logical_blks %u, "
 		  "parent->invalid_logical_blks %u, "
-		  "pages_per_seg %u\n",
+		  "pages_per_peb %u\n",
 		  atomic_read(&bmap->parent->free_logical_blks),
 		  atomic_read(&bmap->parent->valid_logical_blks),
 		  atomic_read(&bmap->parent->invalid_logical_blks),
-		  bmap->parent->pages_per_seg);
-	WARN_ON(atomic_read(&bmap->parent->free_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->parent->free_logical_blks) +
-		 atomic_read(&bmap->parent->valid_logical_blks) +
-		 atomic_read(&bmap->parent->invalid_logical_blks)) >
-		bmap->parent->pages_per_seg);
+		  bmap->parent->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_allocate:
@@ -1613,27 +1760,59 @@ init_failed:
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
 		  bmap->pages_per_peb);
-	WARN_ON(atomic_read(&bmap->valid_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->free_logical_blks) +
-		 atomic_read(&bmap->valid_logical_blks) +
-		 atomic_read(&bmap->invalid_logical_blks)) >
-			bmap->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("parent->free_logical_blks %u, "
 		  "parent->valid_logical_blks %u, "
 		  "parent->invalid_logical_blks %u, "
-		  "pages_per_seg %u\n",
+		  "pages_per_peb %u\n",
 		  atomic_read(&bmap->parent->free_logical_blks),
 		  atomic_read(&bmap->parent->valid_logical_blks),
 		  atomic_read(&bmap->parent->invalid_logical_blks),
-		  bmap->parent->pages_per_seg);
-	WARN_ON(atomic_read(&bmap->parent->valid_logical_blks) < 0);
-	WARN_ON((atomic_read(&bmap->parent->free_logical_blks) +
-		 atomic_read(&bmap->parent->valid_logical_blks) +
-		 atomic_read(&bmap->parent->invalid_logical_blks)) >
-			bmap->parent->pages_per_seg);
+		  bmap->parent->pages_per_peb);
+
+	if (atomic_read(&bmap->free_logical_blks) < 0) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_invalidate:

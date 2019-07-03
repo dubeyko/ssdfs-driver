@@ -230,6 +230,13 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 		}
 	}
 
+	err = ssdfs_cache_block_state(ptr, 0, SSDFS_BLK_FREE);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to cache last free page: err %d\n",
+			  err);
+		goto destroy_pagevec;
+	}
+
 	set_block_bmap_initialized(ptr);
 
 alloc_end:
@@ -724,7 +731,7 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (is_block_state_cached(blk_bmap, blk)) {
-		SSDFS_DBG("block %u has been cached yet\n", blk);
+		SSDFS_DBG("block %u has been cached already\n", blk);
 		return 0;
 	}
 
@@ -755,7 +762,6 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	blk_bmap->last_search[cache_type].cache = cache;
 
 	SSDFS_DBG("last_search.cache %lx\n", cache);
-
 
 	return 0;
 }
@@ -2744,9 +2750,15 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 			  found_blk, blk_bmap->items_count);
 		return -ERANGE;
 	}
+
+	if (unlikely(blk_bmap->invalid_blks > found_blk)) {
+		SSDFS_ERR("invalid_blks %u > found_blk %u\n",
+			  blk_bmap->invalid_blks, found_blk);
+		return -ERANGE;
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return found_blk;
+	return found_blk - blk_bmap->invalid_blks;
 }
 
 /*
@@ -3178,6 +3190,7 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 {
 	struct ssdfs_block_bmap_range range;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3195,6 +3208,15 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 		return -ENOENT;
 	}
 
+	blk_bmap->metadata_items = 0;
+	blk_bmap->invalid_blks = 0;
+
+	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
+		blk_bmap->last_search[i].page_index = PAGEVEC_SIZE;
+		blk_bmap->last_search[i].offset = U16_MAX;
+		blk_bmap->last_search[i].cache = 0;
+	}
+
 	range.start = 0;
 	range.len = blk_bmap->items_count;
 
@@ -3204,6 +3226,13 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 			  "range (start %u, len %u), "
 			  "err %d\n",
 			  range.start, range.len, err);
+		return err;
+	}
+
+	err = ssdfs_cache_block_state(blk_bmap, 0, SSDFS_BLK_FREE);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to cache last free page: err %d\n",
+			  err);
 		return err;
 	}
 

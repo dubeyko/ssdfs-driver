@@ -2473,7 +2473,7 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	si = ptr->parent_si;
 	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
 
-	if (atomic_read(&ptr->dst_peb_refs) != 0) {
+	if (atomic_read(&ptr->dst_peb_refs) > 1) {
 		SSDFS_DBG("leb_id %llu, peb_index %u, "
 			  "refs_count %u\n",
 			  leb_id, ptr->peb_index,

@@ -2376,8 +2376,10 @@ check_req_state:
 		err = req->result.err;
 
 		if (!err) {
+			SSDFS_ERR("error code is absent: "
+				  "req %p, err %d\n",
+				  req, err);
 			err = -ERANGE;
-			SSDFS_ERR("error code is absent\n");
 		}
 
 		SSDFS_ERR("flush request is failed: "
@@ -4390,6 +4392,8 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 	}
 
 	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		struct ssdfs_maptbl_peb_descriptor *peb_desc;
+
 		err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
 							 &cached_pebr);
 		if (unlikely(err)) {
@@ -4399,8 +4403,12 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 			return err;
 		}
 
-		consistency =
-			cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency;
+		peb_desc = &cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+		consistency = peb_desc->consistency;
+
+		peb_desc = &cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
+		if (peb_desc->consistency == SSDFS_PEB_STATE_INCONSISTENT)
+			consistency = peb_desc->consistency;
 	}
 
 	down_read(&tbl->tbl_lock);
@@ -4423,6 +4431,8 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 			  leb_id);
 		goto finish_conversion;
 	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+		SSDFS_DBG("fragment is under initialization: "
+			  "leb_id %llu\n", leb_id);
 		if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
 			/* use the cached value */
 			err = 0;
@@ -4430,8 +4440,6 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 			goto finish_conversion;
 		} else {
 			err = -EAGAIN;
-			SSDFS_DBG("fragment is under initialization: "
-				  "leb_id %llu\n", leb_id);
 			goto finish_conversion;
 		}
 	}
@@ -4558,6 +4566,22 @@ finish_conversion:
 
 		peb_id = cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id;
 		peb_state = cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
+		if (peb_id != U64_MAX) {
+			consistency = SSDFS_PEB_STATE_CONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state(cache,
+								  leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  leb_id, peb_state, err);
+			}
+		}
+
+		peb_id = cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id;
+		peb_state = cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
 		if (peb_id != U64_MAX) {
 			consistency = SSDFS_PEB_STATE_CONSISTENT;
 			err = ssdfs_maptbl_cache_change_peb_state(cache,
@@ -5436,6 +5460,7 @@ finish_mapping:
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  * %-EACCES     - PEB stripe is under recovering.
+ * %-EEXIST     - PEB has this state already.
  */
 static
 int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
@@ -5510,7 +5535,14 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_page_processing;
 	}
 
-	peb_desc->state = (u8)peb_state;
+	if (peb_desc->state == (u8)peb_state) {
+		err = -EEXIST;
+		SSDFS_DBG("peb_state1 %#x == peb_state2 %#x\n",
+			  peb_desc->state,
+			  (u8)peb_state);
+		goto finish_page_processing;
+	} else
+		peb_desc->state = (u8)peb_state;
 
 finish_page_processing:
 	kunmap(page);
@@ -5568,8 +5600,9 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	int consistency;
 	int err = 0;
 
-	SSDFS_DBG("fsi %p, leb_id %llu, peb_state %#x, init_end %p\n",
-		  fsi, leb_id, peb_state, end);
+	SSDFS_DBG("fsi %p, leb_id %llu, peb_type %#x, "
+		  "peb_state %#x, init_end %p\n",
+		  fsi, leb_id, peb_type, peb_state, end);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !end);
@@ -5630,6 +5663,25 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 					  leb_id, peb_state, err);
 			}
 
+			return err;
+		}
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		struct ssdfs_maptbl_peb_relation pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
 			return err;
 		}
 	}
@@ -5707,7 +5759,13 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	err = __ssdfs_maptbl_change_peb_state(tbl, fdesc, leb_id,
 					      selected_index,
 					      peb_state);
-	if (err == -EACCES) {
+	if (err == -EEXIST) {
+		/*
+		 * PEB has this state already.
+		 * Don't set fragment dirty!!!
+		 */
+		goto finish_fragment_change;
+	} else if (err == -EACCES) {
 		SSDFS_DBG("unable to change the PEB state: "
 			  "leb_id %llu: "
 			  "stripe is under recovering\n",
@@ -5753,6 +5811,9 @@ finish_change_state:
 				  "err %d\n",
 				  leb_id, peb_state, err);
 		}
+	} else if (err == -EEXIST) {
+		/* PEB has this state already */
+		err = 0;
 	}
 
 	SSDFS_DBG("finished\n");
@@ -6164,6 +6225,25 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		struct ssdfs_maptbl_peb_relation prev_pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &prev_pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			return err;
+		}
+	}
+
 	down_read(&tbl->tbl_lock);
 
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
@@ -6268,6 +6348,19 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 			  leb_id, err);
 		goto finish_fragment_change;
 	}
+
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 
 finish_fragment_change:
 	up_write(&fdesc->lock);
@@ -6381,6 +6474,25 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 					  leb_id, err);
 			}
 
+			return err;
+		}
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		struct ssdfs_maptbl_peb_relation prev_pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &prev_pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
 			return err;
 		}
 	}
@@ -6952,6 +7064,7 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 					u64 dst_leb_id, u16 dst_peb_index,
 					struct completion **end)
 {
+	struct ssdfs_fs_info *fsi;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6963,12 +7076,32 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		  tbl, leb_id, peb_type, dst_peb_index);
 
 	*end = NULL;
+	fsi = tbl->fsi;
 
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
 		ssdfs_fs_error(tbl->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"maptbl has corrupted state\n");
 		return -EFAULT;
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		struct ssdfs_maptbl_peb_relation prev_pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &prev_pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			return err;
+		}
 	}
 
 	down_read(&tbl->tbl_lock);
@@ -7475,6 +7608,7 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 					  u64 dst_leb_id, int dst_peb_refs,
 					  struct completion **end)
 {
+	struct ssdfs_fs_info *fsi;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7487,6 +7621,7 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		  tbl, leb_id, peb_type,
 		  dst_leb_id, dst_peb_refs);
 
+	fsi = tbl->fsi;
 	*end = NULL;
 
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
@@ -7499,6 +7634,25 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 	if (dst_peb_refs <= 0) {
 		SSDFS_ERR("invalid dst_peb_refs\n");
 		return -ERANGE;
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+		struct ssdfs_maptbl_peb_relation prev_pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &prev_pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			return err;
+		}
 	}
 
 	down_read(&tbl->tbl_lock);

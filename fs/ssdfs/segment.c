@@ -213,6 +213,7 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	ptr->fsi = fsi;
 	atomic_set(&ptr->seg_state, seg_state);
 	atomic_set(&ptr->refs_count, 0);
+	ssdfs_requests_queue_init(&ptr->create_rq);
 
 	err = ssdfs_sysfs_create_seg_group(ptr);
 	if (unlikely(err)) {
@@ -317,8 +318,6 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	destination->destination_pebs = destination_pebs;
 	destination->state = SSDFS_VALID_DESTINATION;
 	spin_unlock(&ptr->migration.lock);
-
-	ssdfs_requests_queue_init(&ptr->create_rq);
 
 	/*
 	 * The goal of this cycle is to finish segment object

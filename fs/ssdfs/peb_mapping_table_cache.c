@@ -350,7 +350,7 @@ int ssdfs_find_range_lower_limit(struct ssdfs_maptbl_cache_header *hdr,
 
 	*found_index = start_index;
 
-	for (i = start_index - 1, j = 0; i >= 0; i--, j++) {
+	for (i = start_index - 1, j = 1; i >= 0; i--, j++) {
 		cur_pair = start_pair - j;
 		cur_leb_id = le64_to_cpu(cur_pair->leb_id);
 
@@ -430,7 +430,7 @@ int ssdfs_find_range_upper_limit(struct ssdfs_maptbl_cache_header *hdr,
 
 	*found_index = start_index;
 
-	for (i = start_index + 1, j = 0; i < items_count; i++, j++) {
+	for (i = start_index + 1, j = 1; i < items_count; i++, j++) {
 		cur_pair = start_pair + j;
 		cur_leb_id = le64_to_cpu(cur_pair->leb_id);
 
@@ -979,6 +979,9 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 		else if (err == -EFAULT) {
 			err = -ENODATA;
 			goto finish_leb_id_search;
+		} else if (err == -EEXIST) {
+			err = 0;
+			break;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find LEB: "
 				  "leb_id %llu, err %d\n",
@@ -2423,8 +2426,29 @@ int __ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 	BUG_ON(!found_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	found_state->consistency = (u8)consistency;
-	found_state->state = (u8)peb_state;
+	switch (consistency) {
+	case SSDFS_PEB_STATE_CONSISTENT:
+		found_state->consistency = (u8)consistency;
+		found_state->state = (u8)peb_state;
+		break;
+
+	case SSDFS_PEB_STATE_INCONSISTENT:
+		if (found_state->state != (u8)peb_state) {
+			found_state->consistency = (u8)consistency;
+			found_state->state = (u8)peb_state;
+		}
+		break;
+
+	case SSDFS_PEB_STATE_PRE_DELETED:
+		found_state->consistency = (u8)consistency;
+		found_state->state = (u8)peb_state;
+		break;
+
+	default:
+		SSDFS_ERR("unexpected consistency %#x\n",
+			  consistency);
+		return -EINVAL;
+	}
 
 finish_page_modification:
 	kunmap(page);

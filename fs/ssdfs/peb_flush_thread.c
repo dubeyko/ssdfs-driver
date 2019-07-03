@@ -7564,7 +7564,7 @@ finish_update_request_processing:
 						  pebc->parent_si->seg_id,
 						  pebc->peb_index, err);
 					thread_state = SSDFS_FLUSH_THREAD_ERROR;
-					goto repeat;
+					goto process_migration_failure;
 				}
 			}
 
@@ -7575,7 +7575,7 @@ finish_update_request_processing:
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index, err);
 				thread_state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
+				goto process_migration_failure;
 			}
 
 			err = ssdfs_peb_start_migration(pebc);
@@ -7586,11 +7586,27 @@ finish_update_request_processing:
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index, err);
 				thread_state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
+				goto process_migration_failure;
 			}
 
+process_migration_failure:
 			pebi = ssdfs_get_current_peb_locked(pebc);
-			if (IS_ERR_OR_NULL(pebi)) {
+			if (err) {
+				if (IS_ERR_OR_NULL(pebi)) {
+					thread_state = SSDFS_FLUSH_THREAD_ERROR;
+					goto repeat;
+				}
+
+				ssdfs_peb_current_log_lock(pebi);
+				ssdfs_finish_flush_request(pebc, req,
+							   wait_queue,
+							   err);
+				ssdfs_peb_current_log_unlock(pebi);
+				ssdfs_unlock_current_peb(pebc);
+
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			} else if (IS_ERR_OR_NULL(pebi)) {
 				err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
 				SSDFS_ERR("fail to get PEB object: "
 					  "seg %llu, peb_index %u, err %d\n",

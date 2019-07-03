@@ -5673,6 +5673,8 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	memcpy(&buffer[0], ptr, index_size);
+
 	do {
 		u32 rest_capacity;
 		u32 moving_count;
@@ -5720,11 +5722,7 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 		memmove((u8 *)kaddr + page_off + index_size,
 			(u8 *)kaddr + page_off,
 			moving_count * index_size);
-
-		if (cur_pos == position)
-			memcpy((u8 *)kaddr + page_off, ptr, index_size);
-		else
-			memcpy((u8 *)kaddr + page_off, &buffer[0], index_size);
+		memcpy((u8 *)kaddr + page_off, &buffer[0], index_size);
 
 		kunmap_atomic(kaddr);
 

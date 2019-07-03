@@ -506,7 +506,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 	BUG_ON(!tree->inline_dentries || tree->generic_tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	memset(dentries, 0xFF, SSDFS_INLINE_DENTRIES_COUNT);
+	memset(dentries, 0xFF,
+		sizeof(struct ssdfs_dir_entry) * SSDFS_INLINE_DENTRIES_COUNT);
 	memcpy(dentries, tree->inline_dentries,
 		sizeof(struct ssdfs_dir_entry) * dentries_capacity);
 	tree->inline_dentries = NULL;

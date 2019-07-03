@@ -519,7 +519,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 	BUG_ON(!tree->inline_forks || tree->generic_tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	memset(inline_forks, 0xFF, SSDFS_INLINE_FORKS_COUNT);
+	memset(inline_forks, 0xFF,
+		sizeof(struct ssdfs_raw_fork) * SSDFS_INLINE_FORKS_COUNT);
 	memcpy(inline_forks, tree->inline_forks,
 		sizeof(struct ssdfs_raw_fork) * forks_capacity);
 	tree->inline_forks = NULL;
