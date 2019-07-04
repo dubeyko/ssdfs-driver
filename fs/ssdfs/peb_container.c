@@ -22,6 +22,7 @@
 #include <linux/kthread.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "page_array.h"
@@ -2886,7 +2887,7 @@ finish_forget_source:
 					TASK_UNINTERRUPTIBLE);
 			schedule();
 			finish_wait(&si->migration.wait, &wait);
-		} while (atomic_read(&ptr->dst_peb_refs) > 0);
+		} while (atomic_read(&ptr->dst_peb_refs) > 1);
 
 		down_write(&ptr->lock);
 

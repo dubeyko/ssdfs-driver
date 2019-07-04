@@ -21,6 +21,7 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "block_bitmap.h"
@@ -270,6 +271,7 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  u16 metadata_blks,
 			  u16 invalid_blks)
 {
+	void *kaddr;
 	int free_pages;
 	int i;
 	int err;
@@ -305,6 +307,11 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		if (free_pages != blk_bmap->items_count) {
 			SSDFS_WARN("block bitmap has been initialized\n");
 			return -ERANGE;
+		}
+
+		for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
+			blk_bmap->last_search[i].page_index = PAGEVEC_SIZE;
+			blk_bmap->last_search[i].offset = U16_MAX;
 		}
 
 		pagevec_release(&blk_bmap->pvec);

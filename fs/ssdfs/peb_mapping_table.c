@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
@@ -3524,7 +3525,6 @@ u32 FRAGMENT_INDEX(struct ssdfs_peb_mapping_table *tbl, u64 leb_id)
  *
  * %-ERANGE     - internal error.
  */
-static inline
 struct ssdfs_maptbl_fragment_desc *
 ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
 				     u64 leb_id)
@@ -3736,7 +3736,6 @@ bool is_pebtbl_stripe_recovering(struct ssdfs_peb_table_fragment_header *hdr)
  * %-ERANGE     - internal error.
  * %-ENODATA    - unitialized leb descriptor.
  */
-static
 int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id,
@@ -4189,7 +4188,7 @@ finish_page_processing:
  *
  * %-ERANGE     - internal error.
  */
-static int
+int
 ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id)
@@ -4272,7 +4271,6 @@ ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
  */
-static inline
 void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id)
@@ -4391,7 +4389,7 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_descriptor *peb_desc;
 
 		err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
@@ -5667,7 +5665,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation pebr;
 
 		/* resolve potential inconsistency */
@@ -6225,7 +6223,7 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
 		/* resolve potential inconsistency */
@@ -6478,7 +6476,7 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
 		/* resolve potential inconsistency */
@@ -7085,7 +7083,7 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -EFAULT;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
 		/* resolve potential inconsistency */
@@ -7636,7 +7634,7 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
 		/* resolve potential inconsistency */

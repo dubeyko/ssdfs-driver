@@ -19,8 +19,9 @@ ssdfs-y	:= super.o fs_error.o recovery.o options.o \
 		peb_container.o \
 		segment.o segment_tree.o current_segment.o \
 		segment_bitmap.o segment_bitmap_tables.o \
+		peb_mapping_queue.o \
 		peb_mapping_table.o peb_mapping_table_thread.o \
-		peb_mapping_table_cache.o peb_migration_scheme.o\
+		peb_mapping_table_cache.o peb_migration_scheme.o \
 		btree_search.o btree_node.o btree_hierarchy.o btree.o \
 		extents_queue.o extents_tree.o \
 		shared_extents_tree.o shared_extents_tree_thread.o \

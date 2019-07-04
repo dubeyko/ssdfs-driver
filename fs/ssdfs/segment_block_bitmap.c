@@ -21,6 +21,7 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "peb_block_bitmap.h"

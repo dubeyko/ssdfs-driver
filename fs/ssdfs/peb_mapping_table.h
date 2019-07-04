@@ -548,4 +548,18 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl);
 int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl);
 
+struct ssdfs_maptbl_fragment_desc *
+ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
+				     u64 leb_id);
+void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     u64 leb_id);
+int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     u64 leb_id,
+				     struct ssdfs_maptbl_peb_relation *pebr);
+int ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     u64 leb_id);
+
 #endif /* _SSDFS_PEB_MAPPING_TABLE_H */

@@ -23,6 +23,7 @@
 #include <linux/kthread.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "page_array.h"
@@ -1570,6 +1571,244 @@ int ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 }
 
 /*
+ * ssdfs_maptbl_resolve_peb_mapping() - resolve inconsistency
+ * @tbl: mapping table object
+ * @cache: mapping table cache
+ * @pmi: PEB mapping info
+ *
+ * This method tries to resolve inconsistency of states between
+ * mapping table and cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ *  %-EINVAL  - invalid input.
+ *  %-EFAULT  - unable to do resolving.
+ *  %-ENODATA - PEB ID is not found.
+ *  %-EAGAIN  - repeat resolving again.
+ */
+static
+int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_cache *cache,
+				     struct ssdfs_peb_mapping_info *pmi)
+{
+	struct ssdfs_maptbl_peb_relation pebr;
+	int consistency = SSDFS_PEB_STATE_UNKNOWN;
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	int state;
+	bool need_make_consistent = false;
+	bool need_exclude_migration_peb = false;
+	u64 peb_id;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !cache || !pmi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("leb_id %llu, peb_id %llu, consistency %#x\n",
+		  pmi->leb_id, pmi->peb_id, pmi->consistency);
+
+	if (pmi->leb_id >= U64_MAX) {
+		SSDFS_ERR("invalid leb_id %llu\n", pmi->leb_id);
+		return -EINVAL;
+	}
+
+	if (pmi->peb_id >= U64_MAX) {
+		SSDFS_ERR("invalid peb_id %llu\n", pmi->peb_id);
+		return -EINVAL;
+	}
+
+	switch (pmi->consistency) {
+	case SSDFS_PEB_STATE_CONSISTENT:
+		SSDFS_WARN("unexpected consistency %#x\n",
+			   pmi->consistency);
+		return -EINVAL;
+
+	case SSDFS_PEB_STATE_INCONSISTENT:
+	case SSDFS_PEB_STATE_PRE_DELETED:
+		/* expected consistency */
+		break;
+
+	default:
+		SSDFS_ERR("invalid consistency %#x\n",
+			  pmi->consistency);
+		return -ERANGE;
+	}
+
+	err = ssdfs_maptbl_cache_convert_leb2peb(cache,
+						 pmi->leb_id,
+						 &pebr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert LEB to PEB: "
+			  "leb_id %llu, err %d\n",
+			  pmi->leb_id, err);
+		return err;
+	}
+
+	for (i = SSDFS_MAPTBL_MAIN_INDEX; i < SSDFS_MAPTBL_RELATION_MAX; i++) {
+		peb_id = pebr.pebs[i].peb_id;
+
+		if (peb_id == pmi->peb_id) {
+			consistency = pebr.pebs[i].consistency;
+			break;
+		}
+	}
+
+	if (consistency == SSDFS_PEB_STATE_UNKNOWN) {
+		SSDFS_DBG("peb_id %llu isn't be found\n", pmi->peb_id);
+		return -ENODATA;
+	}
+
+	switch (consistency) {
+	case SSDFS_PEB_STATE_CONSISTENT:
+		SSDFS_DBG("peb_id %llu has consistent state already\n",
+			  pmi->peb_id);
+		return 0;
+
+	default:
+		if (consistency != pmi->consistency) {
+			SSDFS_DBG("consistency1 %#x != consistency2 %#x\n",
+				  consistency, pmi->consistency);
+		}
+		break;
+	}
+
+	down_read(&tbl->tbl_lock);
+
+	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, pmi->leb_id);
+	if (IS_ERR_OR_NULL(fdesc)) {
+		err = IS_ERR(fdesc) ? PTR_ERR(fdesc) : -ERANGE;
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "leb_id %llu, err %d\n",
+			  pmi->leb_id, err);
+		goto finish_resolving;
+	}
+
+	state = atomic_read(&fdesc->state);
+	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
+		err = -EFAULT;
+		SSDFS_ERR("fragment is corrupted: leb_id %llu\n",
+			  pmi->leb_id);
+		goto finish_resolving;
+	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+		SSDFS_DBG("fragment is under initialization: "
+			  "leb_id %llu\n", pmi->leb_id);
+		err = -EAGAIN;
+		goto finish_resolving;
+	}
+
+	switch (consistency) {
+	case SSDFS_PEB_STATE_INCONSISTENT:
+		down_write(&fdesc->lock);
+
+		err = ssdfs_maptbl_solve_inconsistency(tbl, fdesc,
+							pmi->leb_id,
+							&pebr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+			goto finish_inconsistent_case;
+		}
+
+		need_make_consistent = true;
+
+finish_inconsistent_case:
+		up_write(&fdesc->lock);
+
+		if (!err) {
+			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
+							pmi->leb_id);
+		}
+		break;
+
+	case SSDFS_PEB_STATE_PRE_DELETED:
+		down_write(&fdesc->lock);
+
+		err = ssdfs_maptbl_solve_pre_deleted_state(tbl, fdesc,
+							   pmi->leb_id);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve pre-deleted state: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+			goto finish_pre_deleted_case;
+		}
+
+		need_exclude_migration_peb = true;
+
+finish_pre_deleted_case:
+		up_write(&fdesc->lock);
+
+		if (!err) {
+			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
+							pmi->leb_id);
+		}
+		break;
+
+	default:
+		err = -EFAULT;
+		SSDFS_ERR("invalid consistency %#x\n",
+			  consistency);
+		goto finish_resolving;
+	}
+
+finish_resolving:
+	up_read(&tbl->tbl_lock);
+
+	if (!err && need_make_consistent) {
+		u8 peb_state;
+
+		peb_id = pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id;
+		peb_state = pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
+		if (peb_id != U64_MAX) {
+			consistency = SSDFS_PEB_STATE_CONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state(cache,
+								  pmi->leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  pmi->leb_id, peb_state, err);
+			}
+		}
+
+		peb_id = pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id;
+		peb_state = pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
+		if (peb_id != U64_MAX) {
+			consistency = SSDFS_PEB_STATE_CONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state(cache,
+								  pmi->leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  pmi->leb_id, peb_state, err);
+			}
+		}
+	} else if (!err && need_exclude_migration_peb) {
+		consistency = SSDFS_PEB_STATE_CONSISTENT;
+		err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
+								pmi->leb_id,
+								consistency);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to exclude migration PEB: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+		}
+	}
+
+	SSDFS_DBG("finished\n");
+
+	return err;
+}
+
+/*
  * has_maptbl_pre_erase_pebs() - check that maptbl contains pre-erased PEBs
  * @tbl: mapping table object
  */
@@ -1585,9 +1824,10 @@ bool has_maptbl_pre_erase_pebs(struct ssdfs_peb_mapping_table *tbl)
 
 #define MAPTBL_PTR(tbl) \
 	((struct ssdfs_peb_mapping_table *)(tbl))
-#define MAPTBL_THREAD_WAKE_CONDITION(tbl) \
+#define MAPTBL_THREAD_WAKE_CONDITION(tbl, cache) \
 	(kthread_should_stop() || \
-	 has_maptbl_pre_erase_pebs(MAPTBL_PTR(tbl)))
+	 has_maptbl_pre_erase_pebs(MAPTBL_PTR(tbl)) || \
+	 !is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue))
 
 /*
  * ssdfs_maptbl_thread_func() - maptbl object's thread's function
@@ -1595,7 +1835,10 @@ bool has_maptbl_pre_erase_pebs(struct ssdfs_peb_mapping_table *tbl)
 static
 int ssdfs_maptbl_thread_func(void *data)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_mapping_table *tbl = data;
+	struct ssdfs_maptbl_cache *cache;
+	struct ssdfs_peb_mapping_info *pmi;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_erase_result_array array = {NULL, 0, 0};
 	int err = 0;
@@ -1609,6 +1852,8 @@ int ssdfs_maptbl_thread_func(void *data)
 
 	SSDFS_DBG("MAPTBL thread\n");
 
+	fsi = tbl->fsi;
+	cache = &fsi->maptbl_cache;
 	wait_queue = &tbl->wait_queue;
 
 	array.capacity = tbl->pebs_per_fragment;
@@ -1634,18 +1879,61 @@ repeat:
 	if (unlikely(err))
 		goto sleep_maptbl_thread;
 
-	if (!has_maptbl_pre_erase_pebs(tbl))
-		goto sleep_maptbl_thread;
-
-	err = ssdfs_maptbl_process_dirty_pebs(tbl, &array);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to process dirty PEBs: err %d\n",
-			  err);
+	if (!has_maptbl_pre_erase_pebs(tbl) &&
+	    is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
+		/* go to sleep */
 		goto sleep_maptbl_thread;
 	}
 
+	while (!is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
+		err = ssdfs_peb_mapping_queue_remove_first(&cache->pm_queue,
+							   &pmi);
+		if (err == -ENODATA) {
+			/* empty queue */
+			err = 0;
+			break;
+		} else if (err == -ENOENT) {
+			SSDFS_WARN("request queue contains NULL request\n");
+			err = 0;
+			continue;
+		} else if (unlikely(err < 0)) {
+			SSDFS_CRIT("fail to get request from the queue: "
+				   "err %d\n",
+				   err);
+			goto check_next_step;
+		}
+
+		err = ssdfs_maptbl_resolve_peb_mapping(tbl, cache, pmi);
+		if (err == -EAGAIN) {
+			ssdfs_peb_mapping_queue_add_tail(&cache->pm_queue,
+							 pmi);
+			continue;
+		} else if (unlikely(err)) {
+			ssdfs_peb_mapping_queue_add_tail(&cache->pm_queue,
+							 pmi);
+			SSDFS_ERR("failed to resolve inconsistency: "
+				  "leb_id %llu, peb_id %llu, err %d\n",
+				  pmi->leb_id, pmi->peb_id, err);
+			goto check_next_step;
+		}
+
+		ssdfs_peb_mapping_info_free(pmi);
+	}
+
+	if (has_maptbl_pre_erase_pebs(tbl)) {
+		err = ssdfs_maptbl_process_dirty_pebs(tbl, &array);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to process dirty PEBs: err %d\n",
+				  err);
+		}
+	}
+
+check_next_step:
 	if (kthread_should_stop())
 		goto repeat;
+
+	if (unlikely(err))
+		goto sleep_maptbl_thread;
 
 	if (!is_time_to_recover_pebs(tbl))
 		goto sleep_maptbl_thread;
@@ -1679,7 +1967,7 @@ repeat:
 
 sleep_maptbl_thread:
 	wait_event_interruptible(*wait_queue,
-				 MAPTBL_THREAD_WAKE_CONDITION(tbl));
+				 MAPTBL_THREAD_WAKE_CONDITION(tbl, cache));
 	goto repeat;
 }
 

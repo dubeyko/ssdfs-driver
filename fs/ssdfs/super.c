@@ -27,6 +27,7 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "version.h"
@@ -1479,7 +1480,7 @@ destroy_sysfs_device_group:
 	ssdfs_sysfs_delete_device_group(fs_info);
 
 release_maptbl_cache:
-	pagevec_release(&fs_info->maptbl_cache.pvec);
+	ssdfs_maptbl_cache_destroy(&fs_info->maptbl_cache);
 
 free_erase_page:
 	if (fs_info->erase_page)
@@ -1620,7 +1621,7 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	if (fsi->erase_page)
 		ssdfs_free_page(fsi->erase_page);
-	pagevec_release(&fsi->maptbl_cache.pvec);
+	ssdfs_maptbl_cache_destroy(&fsi->maptbl_cache);
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
 	kfree(fsi);
@@ -1676,6 +1677,7 @@ static void __exit ssdfs_destroy_caches(void)
 	ssdfs_destroy_btree_node_obj_cache();
 	ssdfs_destroy_seg_obj_cache();
 	ssdfs_destroy_extent_info_cache();
+	ssdfs_destroy_peb_mapping_info_cache();
 }
 
 static int __init ssdfs_init_caches(void)
@@ -1732,6 +1734,14 @@ static int __init ssdfs_init_caches(void)
 	err = ssdfs_init_free_ino_desc_cache();
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to create free inode descriptors cache: "
+			  "err %d\n",
+			  err);
+		goto destroy_caches;
+	}
+
+	err = ssdfs_init_peb_mapping_info_cache();
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to create PEB mapping descriptors cache: "
 			  "err %d\n",
 			  err);
 		goto destroy_caches;

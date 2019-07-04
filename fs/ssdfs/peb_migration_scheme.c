@@ -21,6 +21,7 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "block_bitmap.h"
@@ -372,6 +373,12 @@ bool should_migration_be_finished(struct ssdfs_peb_container *pebc)
  */
 int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 {
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	int used_pages;
+	u32 pages_per_peb;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -384,6 +391,12 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 		  pebc->peb_index, pebc->peb_type,
 		  atomic_read(&pebc->migration_state),
 		  atomic_read(&pebc->items_state));
+
+	si = pebc->parent_si;
+	fsi = pebc->parent_si->fsi;
+	pages_per_peb = fsi->pages_per_peb;
+	seg_blkbmap = &si->blk_bmap;
+	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_UNDER_MIGRATION:

@@ -22,12 +22,45 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "page_array.h"
 #include "peb_mapping_table.h"
 
 #include <trace/events/ssdfs.h>
+
+/*
+ * ssdfs_maptbl_cache_init() - init mapping table cache
+ */
+void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p\n", cache);
+
+	init_rwsem(&cache->lock);
+	pagevec_init(&cache->pvec);
+	atomic_set(&cache->bytes_count, 0);
+	ssdfs_peb_mapping_queue_init(&cache->pm_queue);
+}
+
+/*
+ * ssdfs_maptbl_cache_destroy() - destroy mapping table cache
+ */
+void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p\n", cache);
+
+	pagevec_release(&cache->pvec);
+	ssdfs_peb_mapping_queue_remove_all(&cache->pm_queue);
+}
 
 /*
  * __ssdfs_maptbl_cache_area_size() - calculate areas' size in fragment
@@ -1083,6 +1116,7 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 					struct ssdfs_maptbl_peb_relation *pebr)
 {
 	struct ssdfs_maptbl_cache_search_result res;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1106,8 +1140,34 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 		SSDFS_ERR("fail to convert leb %llu to peb: "
 			  "err %d\n",
 			  leb_id, err);
+		return err;
 	}
 
+	for (i = SSDFS_MAPTBL_MAIN_INDEX; i < SSDFS_MAPTBL_RELATION_MAX; i++) {
+		struct ssdfs_peb_mapping_info *pmi = NULL;
+		int consistency = pebr->pebs[i].consistency;
+		u64 peb_id = pebr->pebs[i].peb_id;
+
+		switch (consistency) {
+		case SSDFS_PEB_STATE_INCONSISTENT:
+		case SSDFS_PEB_STATE_PRE_DELETED:
+			pmi = ssdfs_peb_mapping_info_alloc();
+			if (IS_ERR_OR_NULL(pmi)) {
+				err = !pmi ? -ENOMEM : PTR_ERR(pmi);
+				SSDFS_ERR("fail to alloc PEB mapping info: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+				goto finish_leb2peb_conversion;
+			}
+
+			ssdfs_peb_mapping_info_init(leb_id, peb_id,
+						    consistency, pmi);
+			ssdfs_peb_mapping_queue_add_tail(&cache->pm_queue, pmi);
+			break;
+		}
+	}
+
+finish_leb2peb_conversion:
 	return err;
 }
 
@@ -3089,13 +3149,8 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 		goto finish_exclude_migration_peb;
 
 	if (consistency == SSDFS_PEB_STATE_PRE_DELETED) {
-		err = ssdfs_maptbl_cache_change_peb_state(cache, leb_id,
-							  saved_state.state,
-							  consistency);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change PEB state: err %d\n", err);
-			goto finish_exclude_migration_peb;
-		}
+		/* simply change the state */
+		goto finish_exclude_migration_peb;
 	} else {
 		err = ssdfs_maptbl_cache_remove_leb(cache, i, item_index);
 		if (unlikely(err)) {
@@ -3201,6 +3256,16 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 
 finish_exclude_migration_peb:
 	up_write(&cache->lock);
+
+	if (consistency == SSDFS_PEB_STATE_PRE_DELETED) {
+		err = ssdfs_maptbl_cache_change_peb_state(cache, leb_id,
+							  saved_state.state,
+							  consistency);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change PEB state: err %d\n", err);
+			return err;
+		}
+	}
 
 	return err;
 }

@@ -21,6 +21,7 @@
 #include <linux/pagevec.h>
 #include <linux/blkdev.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "page_array.h"
@@ -1071,9 +1072,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->sb->s_blocksize = fsi->pagesize;
 	fsi->sb->s_blocksize_bits = blksize_bits(fsi->pagesize);
 
-	init_rwsem(&fsi->maptbl_cache.lock);
-	pagevec_init(&fsi->maptbl_cache.pvec);
-	atomic_set(&fsi->maptbl_cache.bytes_count, 0);
+	ssdfs_maptbl_cache_init(&fsi->maptbl_cache);
 
 	err = ssdfs_check_fs_state(fsi);
 	if (err && err != -EROFS)

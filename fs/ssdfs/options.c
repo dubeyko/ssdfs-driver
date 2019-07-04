@@ -25,6 +25,7 @@
 #include <linux/seq_file.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"

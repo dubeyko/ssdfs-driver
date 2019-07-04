@@ -20,6 +20,7 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
@@ -237,6 +238,8 @@ void ssdfs_extents_queue_remove_all(struct ssdfs_extents_queue *eq)
 				   ei->type);
 			break;
 		}
+
+		ssdfs_extent_info_free(ei);
 	}
 }
 

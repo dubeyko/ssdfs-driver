@@ -27,11 +27,14 @@
  * @lock: lock of maptbl cache
  * @pvec: memory pages of maptbl cache
  * @bytes_count: count of bytes in maptbl cache
+ * @pm_queue: PEB mappings queue
  */
 struct ssdfs_maptbl_cache {
 	struct rw_semaphore lock;
 	struct pagevec pvec;
 	atomic_t bytes_count;
+
+	struct ssdfs_peb_mapping_queue pm_queue;
 };
 
 /*
@@ -69,6 +72,9 @@ struct ssdfs_maptbl_peb_relation;
 /*
  * PEB mapping table cache's API
  */
+void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache);
+void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache);
+
 int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 					u64 leb_id,
 					struct ssdfs_maptbl_peb_relation *pebr);
