@@ -825,10 +825,13 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	err = ssdfs_blk2off_table_get_offset_position(table, logical_blk, &pos);
 	if (err == -EAGAIN) {
 		struct completion *end;
+		unsigned long res;
 
 		end = &table->full_init_end;
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+
+		res = wait_for_completion_timeout(end, SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			goto fail_read_node;

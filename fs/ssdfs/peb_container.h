@@ -20,6 +20,7 @@
 #ifndef _SSDFS_PEB_CONTAINER_H
 #define _SSDFS_PEB_CONTAINER_H
 
+#include "block_bitmap.h"
 #include "peb.h"
 
 /* PEB container's array indexes */
@@ -173,5 +174,21 @@ int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
 void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 					   struct ssdfs_segment_request *req,
 					   int blk_index);
+int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
+				struct ssdfs_block_bmap_range *range,
+				struct ssdfs_segment_request *req);
+int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
+				  u32 logical_blk,
+				  struct ssdfs_segment_request *req);
+int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
+				struct ssdfs_metadata_descriptor *area_desc,
+				struct ssdfs_block_state_descriptor *desc,
+				u64 *cno, u64 *parent_snapshot);
+int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_metadata_descriptor *array,
+				size_t array_size,
+				struct ssdfs_block_descriptor *blk_desc,
+				int blk_state_index);
 
 #endif /* _SSDFS_PEB_CONTAINER_H */

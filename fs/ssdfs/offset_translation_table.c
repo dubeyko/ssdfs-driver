@@ -1451,6 +1451,9 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		} else
 			BUG();
 
+		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
+			   logical_blk, len);
+
 		++*extent_index;
 	} while (*extent_index < portion->extents_count);
 
@@ -1494,6 +1497,9 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 				 u16 peb_index)
 {
 	int state;
+	u16 last_allocated_blk;
+	u16 allocated_blks;
+	int init_bits;
 	int count;
 	int last_id;
 
@@ -1504,12 +1510,19 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 
 	count = atomic_read(&table->peb[peb_index].fragment_count);
 	last_id = atomic_read(&table->peb[peb_index].last_sequence_id);
+	last_allocated_blk = table->last_allocated_blk;
 
-	SSDFS_DBG("table %p, peb_index %u, count %d, last_id %d\n",
-		  table, peb_index, count, last_id);
+	if (last_allocated_blk >= U16_MAX)
+		allocated_blks = 0;
+	else
+		allocated_blks = last_allocated_blk + 1;
 
-	if (last_id >= SSDFS_INVALID_FRAG_ID) {
-		SSDFS_ERR("invalid last_sequence_id\n");
+	init_bits = bitmap_weight(table->lbmap[SSDFS_LBMAP_INIT_INDEX],
+				  allocated_blks);
+
+	if (init_bits < 0) {
+		SSDFS_ERR("invalid init bmap: weight %d\n",
+			  init_bits);
 		return -ERANGE;
 	}
 
@@ -1522,7 +1535,7 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 		SSDFS_ERR("fragment_count %d, last_sequence_id %d\n",
 			   count, last_id);
 		return -ERANGE;
-	} else if ((count - 1) < last_id) {
+	} else if (count == 1) {
 		state = atomic_cmpxchg(&table->peb[peb_index].state,
 					SSDFS_BLK2OFF_TABLE_CREATED,
 					SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
@@ -1532,13 +1545,27 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 				   state);
 			return -ERANGE;
 		}
+	}
+
+	if (init_bits > 0) {
+		if (init_bits >= allocated_blks) {
+			state = atomic_cmpxchg(&table->peb[peb_index].state,
+					SSDFS_BLK2OFF_TABLE_PARTIAL_INIT,
+					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+			if (state < SSDFS_BLK2OFF_TABLE_PARTIAL_INIT ||
+			    state > SSDFS_BLK2OFF_TABLE_COMPLETE_INIT) {
+				SSDFS_WARN("unexpected state %#x\n",
+					   state);
+				return -ERANGE;
+			}
+		}
 	} else {
-		if (count == 1) {
+		if ((count - 1) < last_id) {
 			state = atomic_cmpxchg(&table->peb[peb_index].state,
 					SSDFS_BLK2OFF_TABLE_CREATED,
-					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
-			if (state < SSDFS_BLK2OFF_TABLE_CREATED ||
-			    state > SSDFS_BLK2OFF_TABLE_COMPLETE_INIT) {
+					SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
+			if (state <= SSDFS_BLK2OFF_TABLE_UNDEFINED ||
+			    state > SSDFS_BLK2OFF_TABLE_PARTIAL_INIT) {
 				SSDFS_WARN("unexpected state %#x\n",
 					   state);
 				return -ERANGE;
@@ -1657,7 +1684,6 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     u64 cno)
 {
 	struct ssdfs_blk2off_init portion;
-	int state;
 	int extent_index = 0;
 	int i;
 	int err = 0;
@@ -1677,21 +1703,11 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		return -EINVAL;
 	}
 
-	state = atomic_read(&table->state);
-
-	if (state == SSDFS_BLK2OFF_OBJECT_COMPLETE_INIT) {
-		SSDFS_WARN("table has been initialized yet\n");
-		return -ERANGE;
-	} else if (state >= SSDFS_BLK2OFF_OBJECT_STATE_MAX) {
-		SSDFS_ERR("unknown table state %#x\n", state);
-		return -ERANGE;
-	}
-
 	if (ssdfs_blk2off_table_initialized(table, peb_index)) {
-		SSDFS_WARN("PEB's table has been initialized yet: "
+		SSDFS_DBG("PEB's table has been initialized already: "
 			   "peb_index %u\n",
 			   peb_index);
-		return -ERANGE;
+		return 0;
 	}
 
 	portion.table = table;
@@ -2305,9 +2321,14 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 		};
 		struct ssdfs_offset_position *pos;
 		int state = SSDFS_LOGICAL_BLK_UNKNOWN_STATE;
+		u16 prev_id = SSDFS_BLK2OFF_TABLE_INVALID_ID;
 
 		err = ssdfs_find_changed_area(sp, start, &changed_area);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			err = 0;
+			SSDFS_DBG("nothing found\n");
+			goto finish_extract_extents;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find changed area: err %d\n",
 				  err);
 			return err;
@@ -2327,6 +2348,13 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 			} else if (pos->peb_index != sp->peb_index) {
 				/* changes of another PEB */
 				is_extent_ended = true;
+			} else if (pos->id != SSDFS_BLK2OFF_TABLE_INVALID_ID) {
+				if (prev_id == SSDFS_BLK2OFF_TABLE_INVALID_ID)
+					prev_id = pos->id;
+				else if ((prev_id + 1) != pos->id) {
+					/* split the extent */
+					is_extent_ended = true;
+				}
 			} else if (pos->id == SSDFS_BLK2OFF_TABLE_INVALID_ID &&
 				   state != SSDFS_LOGICAL_BLK_FREE) {
 				/* state is changed */
@@ -2347,11 +2375,18 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 							      *extent_count,
 							      state,
 							      extent);
-
-				found.start_lblk = U16_MAX;
-				found.len = 0;
-				state = SSDFS_LOGICAL_BLK_UNKNOWN_STATE;
 				(*extent_count)++;
+
+				pos = &sp->tbl_copy[blk];
+
+				if (pos->id == SSDFS_BLK2OFF_TABLE_INVALID_ID)
+					state = SSDFS_LOGICAL_BLK_FREE;
+				else
+					state = SSDFS_LOGICAL_BLK_USED;
+
+				found.start_lblk = blk;
+				found.len = 1;
+				prev_id = pos->id;
 			} else {
 				if (pos->id == SSDFS_BLK2OFF_TABLE_INVALID_ID)
 					state = SSDFS_LOGICAL_BLK_FREE;
@@ -2361,6 +2396,7 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 				if (found.start_lblk == U16_MAX)
 					found.start_lblk = blk;
 
+				prev_id = pos->id;
 				found.len++;
 			}
 		}
@@ -2387,6 +2423,7 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 			start = changed_area.start_lblk + changed_area.len;
 	} while (start < sp->capacity);
 
+finish_extract_extents:
 	if (*extent_count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid state of change bitmap\n");
@@ -2714,7 +2751,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		  array, extent_count,
 		  *cur_page, *write_offset);
 
-	rest_bytes = (extent_count - 1) * extent_size;
+	rest_bytes = extent_count * extent_size;
 
 	while (rest_bytes > 0) {
 		u32 bytes;
@@ -2725,7 +2762,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(bytes < extent_size);
-		BUG_ON(written_bytes > ((extent_count - 1) * extent_size));
+		BUG_ON(written_bytes > (extent_count * extent_size));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		page = ssdfs_page_array_get_page_locked(&pebi->cache,
@@ -3076,13 +3113,17 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 		goto fail_store_off_table;
 	}
 
-	err = ssdfs_peb_store_offsets_table_extents(pebi, extents, extent_count,
-						    cur_page, write_offset);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to store offsets table's extents: "
-			  "cur_page %lu, write_offset %u, err %d\n",
-			  *cur_page, *write_offset, err);
-		goto fail_store_off_table;
+	if (extent_count > 1) {
+		err = ssdfs_peb_store_offsets_table_extents(pebi, &extents[1],
+							    extent_count - 1,
+							    cur_page,
+							    write_offset);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to store offsets table's extents: "
+				  "cur_page %lu, write_offset %u, err %d\n",
+				  *cur_page, *write_offset, err);
+			goto fail_store_off_table;
+		}
 	}
 
 	for (i = 0; i < snapshot.dirty_fragments; i++) {
@@ -3186,7 +3227,6 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 	struct ssdfs_phys_offset_table_array *phys_off_table;
 	unsigned long *lbmap = NULL;
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
-	int fragment_count;
 	int state;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3234,11 +3274,11 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 	}
 
 	phys_off_table = &table->peb[pos->peb_index];
-	fragment_count = atomic_read(&phys_off_table->fragment_count);
 
-	if (pos->fragment_index >= fragment_count) {
-		SSDFS_ERR("fragment_index %u >= fragment_count %u\n",
-			  pos->fragment_index, fragment_count);
+	if (pos->fragment_index >= SSDFS_POFF_TBL_ARRAY_MAX) {
+		SSDFS_ERR("fragment_index %u >= capacity %u\n",
+			  pos->fragment_index,
+			  SSDFS_POFF_TBL_ARRAY_MAX);
 		return -ERANGE;
 	}
 

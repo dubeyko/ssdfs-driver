@@ -388,11 +388,94 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
 }
 
 /*
+ * __ssdfs_peb_get_block_state_desc() - get block state descriptor
+ * @pebi: pointer on PEB object
+ * @area_desc: area descriptor
+ * @desc: block state descriptor [out]
+ * @cno: checkpoint ID [out]
+ * @parent_snapshot: parent snapshot ID [out]
+ *
+ * This function tries to get block state descriptor.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EIO        - I/O error.
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
+				struct ssdfs_metadata_descriptor *area_desc,
+				struct ssdfs_block_state_descriptor *desc,
+				u64 *cno, u64 *parent_snapshot)
+{
+	struct ssdfs_fs_info *fsi;
+	size_t state_desc_size = sizeof(struct ssdfs_block_state_descriptor);
+	u32 area_offset;
+	u32 page_off;
+	struct page *page;
+	struct ssdfs_block_state_descriptor *cur_item;
+	void *kaddr;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!area_desc || !desc);
+	BUG_ON(!cno || !parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	area_offset = le32_to_cpu(area_desc->offset);
+	page_off = area_offset >> PAGE_SHIFT;
+
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "area_offset %u, frag_offset %u, page_index %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  area_offset, page_off);
+
+	page = ssdfs_peb_read_page_locked(pebi, page_off);
+	if (IS_ERR_OR_NULL(page)) {
+		SSDFS_ERR("fail to read locked page: index %u\n",
+			  page_off);
+		return -ERANGE;
+	}
+
+	kaddr = kmap_atomic(page);
+	cur_item = (struct ssdfs_block_state_descriptor *)((u8 *)kaddr +
+						(area_offset % PAGE_SIZE));
+	memcpy(desc, cur_item, state_desc_size);
+	kunmap_atomic(kaddr);
+	unlock_page(page);
+	put_page(page);
+
+	if (cur_item->chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
+		SSDFS_ERR("chain header magic invalid\n");
+		return -EIO;
+	}
+
+	if (cur_item->chain_hdr.type != SSDFS_BLK_STATE_CHAIN_HDR) {
+		SSDFS_ERR("chain header type invalid\n");
+		return -EIO;
+	}
+
+	if (le16_to_cpu(cur_item->chain_hdr.desc_size) !=
+	    sizeof(struct ssdfs_fragment_desc)) {
+		SSDFS_ERR("fragment descriptor size is invalid\n");
+		return -EIO;
+	}
+
+	*cno = le64_to_cpu(cur_item->cno);
+	*parent_snapshot = le64_to_cpu(cur_item->parent_snapshot);
+
+	return 0;
+}
+
+/*
  * ssdfs_peb_get_block_state_desc() - get block state descriptor
  * @pebi: pointer on PEB object
  * @req: request
  * @area_desc: area descriptor
- * @state_off: block state offset descriptor
  * @desc: block state descriptor [out]
  *
  * This function tries to get block state descriptor.
@@ -409,80 +492,40 @@ static
 int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 				   struct ssdfs_segment_request *req,
 				   struct ssdfs_metadata_descriptor *area_desc,
-				   struct ssdfs_blk_state_offset *state_off,
 				   struct ssdfs_block_state_descriptor *desc)
 {
-	struct ssdfs_fs_info *fsi;
-	size_t state_desc_size = sizeof(struct ssdfs_block_state_descriptor);
-	u32 area_offset;
-	u32 frag_offset;
-	u32 page_off;
-	struct page *page;
-	struct ssdfs_block_state_descriptor *cur_item;
-	void *kaddr;
+	u64 cno;
+	u64 parent_snapshot;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!req || !area_desc || !state_off || !desc);
+	BUG_ON(!req || !area_desc || !desc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	fsi = pebi->pebc->parent_si->fsi;
-	area_offset = le32_to_cpu(area_desc->offset);
-	frag_offset = le32_to_cpu(state_off->byte_offset);
-	page_off = area_offset + frag_offset;
-	page_off >>= PAGE_SHIFT;
+	SSDFS_DBG("seg %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
-	SSDFS_DBG("seg %llu, peb %llu, "
-		  "area_offset %u, frag_offset %u, page_index %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  area_offset, frag_offset, page_off);
-
-	page = ssdfs_peb_read_page_locked(pebi, page_off);
-	if (IS_ERR_OR_NULL(page)) {
-		SSDFS_ERR("fail to read locked page: index %u\n",
-			  page_off);
-		return -ERANGE;
+	err = __ssdfs_peb_get_block_state_desc(pebi, area_desc,
+						desc, &cno, &parent_snapshot);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get block state descriptor: "
+			  "err %d\n", err);
+		return err;
 	}
 
-	kaddr = kmap_atomic(page);
-
-	cur_item = (struct ssdfs_block_state_descriptor *)((u8 *)kaddr +
-			((area_offset + frag_offset) % PAGE_SIZE));
-	memcpy(desc, cur_item, state_desc_size);
-
-	kunmap_atomic(kaddr);
-	unlock_page(page);
-	put_page(page);
-
-	if (req->extent.cno != le64_to_cpu(cur_item->cno)) {
-		SSDFS_ERR("req->extent.cno %llu != cur_item->cno %llu\n",
-			  req->extent.cno, le64_to_cpu(cur_item->cno));
+	if (req->extent.cno != cno) {
+		SSDFS_ERR("req->extent.cno %llu != cno %llu\n",
+			  req->extent.cno, cno);
 		return -EIO;
 	}
 
-	if (req->extent.parent_snapshot !=
-	    le64_to_cpu(cur_item->parent_snapshot)) {
+	if (req->extent.parent_snapshot != parent_snapshot) {
 		SSDFS_ERR("req->extent.parent_snapshot %llu != "
-			  "cur_item->parent_snapshot %llu\n",
+			  "parent_snapshot %llu\n",
 			  req->extent.parent_snapshot,
-			  le64_to_cpu(cur_item->parent_snapshot));
-		return -EIO;
-	}
-
-	if (cur_item->chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
-		SSDFS_ERR("chain header magic invalid\n");
-		return -EIO;
-	}
-
-	if (cur_item->chain_hdr.type != SSDFS_BLK_STATE_CHAIN_HDR) {
-		SSDFS_ERR("chain header type invalid\n");
-		return -EIO;
-	}
-
-	if (le16_to_cpu(cur_item->chain_hdr.desc_size) !=
-	    sizeof(struct ssdfs_fragment_desc)) {
-		SSDFS_ERR("fragment descriptor size is invalid\n");
+			  parent_snapshot);
 		return -EIO;
 	}
 
@@ -985,12 +1028,11 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		data_bytes = min_t(u32, data_bytes, PAGE_SIZE);
 
 	err = ssdfs_peb_get_block_state_desc(pebi, req, &array[area_index],
-					     blk_state_off, &found_blk_state);
+					     &found_blk_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get block state descriptor: "
-			  "area_offset %u, fragment_offset %u, err %d\n",
+			  "area_offset %u, err %d\n",
 			  le32_to_cpu(array[area_index].offset),
-			  le32_to_cpu(blk_state_off->byte_offset),
 			  err);
 		return err;
 	}
@@ -1128,7 +1170,6 @@ free_bufs:
  * %-ERANGE     - internal error.
  * %-ENOMEM     - fail to allocate memory.
  */
-static
 int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
 				struct ssdfs_segment_request *req,
 				struct ssdfs_metadata_descriptor *array,
@@ -1252,10 +1293,14 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *end;
+		unsigned long res;
 
 		end = &table->full_init_end;
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;

@@ -1831,6 +1831,8 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	if (err)
 		goto delete_segbmap_group;
 
+	SSDFS_DBG("DONE: create device group\n");
+
 	return 0;
 
 delete_segbmap_group:

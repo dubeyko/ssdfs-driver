@@ -750,6 +750,11 @@ try_define_bmap_index:
 				need_move = false;
 				bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
 				peb_index = pebc->dst_peb->peb_index;
+			} else if ((peb_migration_id + 1) == src_migration_id) {
+				need_migrate = false;
+				need_move = false;
+				bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
+				peb_index = pebc->dst_peb->peb_index;
 			} else {
 				err = -ERANGE;
 				SSDFS_ERR("fail to select PEB: "

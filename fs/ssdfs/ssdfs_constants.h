@@ -38,5 +38,6 @@ enum {
 
 #define SSDFS_INVALID_CNO	U64_MAX
 #define SSDFS_SECTOR_SHIFT	9
+#define SSDFS_DEFAULT_TIMEOUT	(msecs_to_jiffies(120000))
 
 #endif /* _SSDFS_CONSTANTS_H */

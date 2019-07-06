@@ -1306,6 +1306,8 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	if (err)
 		goto forget_buf;
 
+	SSDFS_DBG("DONE: gather superblock info\n");
+
 	return 0;
 
 forget_buf:

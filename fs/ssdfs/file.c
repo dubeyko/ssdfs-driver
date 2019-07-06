@@ -168,10 +168,13 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	err = ssdfs_blk2off_table_get_offset_position(table, logical_blk, &pos);
 	if (err == -EAGAIN) {
 		struct completion *end;
+		unsigned long res;
 
 		end = &table->full_init_end;
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			goto finish_read_block;
@@ -221,6 +224,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 	loff_t data_bytes;
 	loff_t file_size;
 	void *kaddr;
+	unsigned long res;
 	int err;
 
 	SSDFS_DBG("ino %lu, page_index %llu, read_mode %#x\n",
@@ -278,8 +282,10 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 			goto fail_read_page;
 		}
 
-		err = wait_for_completion_killable(&req->result.wait);
-		if (unlikely(err)) {
+		res = wait_for_completion_timeout(&req->result.wait,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("read request failed: "
 				  "ino %lu, logical_offset %llu, "
 				  "size %u, err %d\n",
@@ -788,6 +794,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	u64 logical_offset;
 	u32 data_bytes;
 	int i;
+	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -859,8 +866,10 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 				goto fail_issue_write_request;
 		}
 
-		err = wait_for_completion_killable(&(*req)->result.wait);
-		if (unlikely(err)) {
+		res = wait_for_completion_timeout(&(*req)->result.wait,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("write request failed: "
 				  "ino %lu, logical_offset %llu, size %u, "
 				  "err %d\n",

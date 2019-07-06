@@ -131,6 +131,8 @@ int ssdfs_parse_options(struct ssdfs_fs_info *fs_info, char *data)
 		}
 	}
 
+	SSDFS_DBG("DONE: parse options\n");
+
 	return 0;
 }
 

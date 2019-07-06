@@ -679,6 +679,8 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto destroy_seg_objects;
 	}
 
+	SSDFS_DBG("DONE: create segment bitmap\n");
+
 	return 0;
 
 destroy_seg_objects:

@@ -2614,10 +2614,14 @@ int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
 						&blk_desc_off);
 	if (err == -EAGAIN) {
 		struct completion *end;
+		unsigned long res;
 
 		end = &table->full_init_end;
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -3442,6 +3446,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	switch (req->private.class) {
 	case SSDFS_PEB_UPDATE_REQ:
 	case SSDFS_PEB_PRE_ALLOC_UPDATE_REQ:
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 		/* expected case */
 		break;
 	default:
@@ -3471,10 +3476,14 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 	if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
 		struct completion *end;
+		unsigned long res;
 
 		end = &table->full_init_end;
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -3606,6 +3615,7 @@ int ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 	switch (req->private.class) {
 	case SSDFS_PEB_UPDATE_REQ:
 	case SSDFS_PEB_PRE_ALLOC_UPDATE_REQ:
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 		/* expected case */
 		break;
 	default:
@@ -3676,7 +3686,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		  req, req->private.cmd, req->private.type);
 
 	if (req->private.cmd <= SSDFS_CREATE_CMD_MAX ||
-	    req->private.cmd >= SSDFS_UPDATE_CMD_MAX) {
+	    req->private.cmd >= SSDFS_COLLECT_GARBAGE_CMD_MAX) {
 		SSDFS_ERR("unknown create command %d, seg %llu, peb %llu\n",
 			  req->private.cmd, pebi->pebc->parent_si->seg_id,
 			  pebi->peb_id);
@@ -3723,6 +3733,36 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_COMMIT_LOG_NOW:
 	case SSDFS_START_MIGRATION_NOW:
 		/* simply continue logic */
+		break;
+
+	case SSDFS_MIGRATE_RANGE:
+		err = ssdfs_peb_update_extent(pebi, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to update extent: "
+				  "seg %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
+		}
+		break;
+
+	case SSDFS_MIGRATE_PRE_ALLOC_PAGE:
+		err = ssdfs_peb_pre_allocate_block(pebi, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to migrate pre-alloc page: "
+				  "seg %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
+		}
+		break;
+
+	case SSDFS_MIGRATE_FRAGMENT:
+		err = ssdfs_peb_update_block(pebi, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to migrate fragment: "
+				  "seg %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
+		}
 		break;
 
 	default:
@@ -6555,6 +6595,7 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 
 	case SSDFS_PEB_UPDATE_REQ:
 	case SSDFS_PEB_PRE_ALLOC_UPDATE_REQ:
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 		ssdfs_finish_update_request(pebc, req, wait, err);
 		break;
 

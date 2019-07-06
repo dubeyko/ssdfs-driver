@@ -577,6 +577,7 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 	u64 start, max;
 	struct completion *end;
 	int i;
+	unsigned long res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -603,8 +604,10 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 	err = ssdfs_segbmap_reserve_clean_segment(segbmap, start, max,
 						  &reserved_seg, &end);
 	if (err == -EAGAIN) {
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("segbmap init failed: "
 				  "err %d\n", err);
 			return err;
@@ -633,8 +636,10 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 		err = ssdfs_maptbl_map_leb2peb(fsi, leb_id, peb_type,
 						&pebr, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -686,6 +691,7 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	struct ssdfs_maptbl_peb_relation pebr;
 	u8 peb_type = SSDFS_MAPTBL_SBSEG_PEB_TYPE;
 	struct completion *end = NULL;
+	unsigned long res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -715,8 +721,10 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 						   peb_type,
 						   &pebr, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -778,8 +786,10 @@ reserve_clean_segment:
 						   peb_type,
 						   &pebr, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -825,8 +835,10 @@ reserve_clean_segment:
 		err = ssdfs_segbmap_change_state(segbmap, prev_seg,
 						 SSDFS_SEG_DIRTY, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
 				goto finish_move_sb_seg;

@@ -351,4 +351,11 @@ int ssdfs_segment_invalidate_logical_block(struct ssdfs_segment_info *si,
 int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 					    u32 start_off, u32 blks_count);
 
+int ssdfs_segment_migrate_range_async(struct ssdfs_segment_info *si,
+				      struct ssdfs_segment_request *req);
+int ssdfs_segment_migrate_pre_alloc_page_async(struct ssdfs_segment_info *si,
+					    struct ssdfs_segment_request *req);
+int ssdfs_segment_migrate_fragment_async(struct ssdfs_segment_info *si,
+					 struct ssdfs_segment_request *req);
+
 #endif /* _SSDFS_SEGMENT_H */

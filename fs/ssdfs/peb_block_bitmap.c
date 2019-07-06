@@ -606,8 +606,12 @@ int ssdfs_peb_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -689,6 +693,8 @@ init_failed:
  */
 int ssdfs_peb_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 {
+	int err = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -696,8 +702,12 @@ int ssdfs_peb_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -748,6 +758,8 @@ init_failed:
  */
 int ssdfs_peb_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 {
+	int err = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -755,8 +767,12 @@ int ssdfs_peb_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -817,8 +833,12 @@ int ssdfs_src_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -879,8 +899,12 @@ int ssdfs_src_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -941,8 +965,12 @@ int ssdfs_dst_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1003,8 +1031,12 @@ int ssdfs_dst_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1065,8 +1097,12 @@ int ssdfs_dst_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		int err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1131,8 +1167,12 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 		  bmap, bmap_index, count);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1288,8 +1328,12 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 		  bmap, bmap_index, *len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1486,8 +1530,12 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 		  bmap, bmap_index, *len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1682,8 +1730,12 @@ int ssdfs_peb_blk_bmap_invalidate(struct ssdfs_peb_blk_bmap *bmap,
 		  bmap, bmap_index, range->start, range->len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -1859,8 +1911,12 @@ int ssdfs_peb_blk_bmap_update_range(struct ssdfs_peb_blk_bmap *bmap,
 		  range->start, range->len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -2016,8 +2072,12 @@ int ssdfs_peb_blk_bmap_collect_garbage(struct ssdfs_peb_blk_bmap *bmap,
 		  bmap, start, max_len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -2065,8 +2125,12 @@ init_failed:
 
 	ssdfs_block_bmap_unlock(src);
 
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to invalidate blocks: "
+	if (err == -ENODATA) {
+		SSDFS_DBG("range (start %u, len %u) hasn't valid blocks\n",
+			  range->start, range->len);
+		goto finish_collect_garbage;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find valid blocks: "
 			  "len %u, err %d\n",
 			  range->len, err);
 		goto finish_collect_garbage;
@@ -2111,8 +2175,12 @@ int ssdfs_peb_blk_bmap_start_migration(struct ssdfs_peb_blk_bmap *bmap)
 		  atomic_read(&bmap->state));
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -2270,8 +2338,12 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 		  range->start, range->len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);
@@ -2419,8 +2491,12 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap)
 		  atomic_read(&bmap->state));
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		err = wait_for_completion_killable(&bmap->init_end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "err %d\n", err);

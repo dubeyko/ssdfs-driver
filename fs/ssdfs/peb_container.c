@@ -186,6 +186,7 @@ int ssdfs_peb_start_thread(struct ssdfs_peb_container *pebc, int type)
 static
 int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 {
+	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -215,8 +216,10 @@ int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 
 	pebc->thread[type].task = NULL;
 
-	err = wait_for_completion_killable(&pebc->thread[type].full_stop);
-	if (unlikely(err)) {
+	res = wait_for_completion_timeout(&pebc->thread[type].full_stop,
+					  SSDFS_DEFAULT_TIMEOUT);
+	if (res == 0) {
+		err = -ERANGE;
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}
@@ -261,8 +264,12 @@ int ssdfs_peb_map_leb2peb(struct ssdfs_fs_info *fsi,
 	err = ssdfs_maptbl_map_leb2peb(fsi, leb_id, peb_type,
 					pebr, &end);
 	if (err == -EAGAIN) {
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -364,8 +371,12 @@ int ssdfs_peb_convert_leb2peb(struct ssdfs_fs_info *fsi,
 					   peb_type,
 					   pebr, &end);
 	if (err == -EAGAIN) {
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -597,8 +608,12 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
-		err = wait_for_completion_killable(&req1->result.wait);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&req1->result.wait,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
 			goto stop_gc_thread;
@@ -753,8 +768,12 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
-		err = wait_for_completion_killable(&req1->result.wait);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&req1->result.wait,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
 			goto stop_gc_thread;
@@ -1922,8 +1941,12 @@ finish_define_relation:
 							 dst_peb_index,
 							 &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			unsigned long res;
+
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				ptr->dst_peb = NULL;
@@ -2059,8 +2082,12 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	err = ssdfs_maptbl_add_migration_peb(fsi, leb_id, ptr->peb_type,
 					     &pebr, &end);
 	if (err == -EAGAIN) {
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			goto fail_prepare_destination;
@@ -2504,8 +2531,12 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 						 ptr->peb_type,
 						 &end);
 	if (err == -EAGAIN) {
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -2614,8 +2645,12 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 						   dst_peb_refs,
 						   &end);
 	if (err == -EAGAIN) {
-		err = wait_for_completion_killable(end);
-		if (unlikely(err)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -3497,6 +3532,7 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	struct ssdfs_peb_info *pebi;
 	struct ssdfs_peb_mapping_table *maptbl;
 	struct completion *end;
+	unsigned long res;
 	int items_state;
 	int used_pages, free_pages, invalid_pages;
 	int new_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
@@ -3623,8 +3659,10 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -3729,8 +3767,10 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -3802,8 +3842,10 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -3905,8 +3947,10 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			err = wait_for_completion_killable(end);
-			if (unlikely(err)) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;

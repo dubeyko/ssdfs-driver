@@ -789,6 +789,8 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 		goto destroy_seg_objects;
 	}
 
+	SSDFS_DBG("DONE: create mapping table\n");
+
 	return 0;
 
 destroy_seg_objects:

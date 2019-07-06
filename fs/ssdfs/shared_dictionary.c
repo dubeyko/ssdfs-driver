@@ -405,6 +405,9 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 	ssdfs_debug_shdict_btree_object(ptr);
 
 	fsi->shdictree = ptr;
+
+	SSDFS_DBG("DONE: create shared dictionary\n");
+
 	return 0;
 
 destroy_shared_dict_object:

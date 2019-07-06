@@ -644,6 +644,9 @@ bool is_time_to_recover_pebs(struct ssdfs_peb_mapping_table *tbl)
 
 	current_cno = ssdfs_current_cno(tbl->fsi->sb);
 
+	SSDFS_DBG("current_cno %llu, upper_bound_cno %llu\n",
+		  current_cno, upper_bound_cno);
+
 	return current_cno >= upper_bound_cno;
 }
 
@@ -1693,10 +1696,18 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 			  pmi->leb_id);
 		goto finish_resolving;
 	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
-		SSDFS_DBG("fragment is under initialization: "
-			  "leb_id %llu\n", pmi->leb_id);
-		err = -EAGAIN;
-		goto finish_resolving;
+		struct completion *end = &fdesc->init_end;
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl's fragment init failed: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+			goto finish_resolving;
+		}
 	}
 
 	switch (consistency) {
@@ -1876,8 +1887,12 @@ repeat:
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR)
 		err = -EFAULT;
 
-	if (unlikely(err))
-		goto sleep_maptbl_thread;
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to continue activity: err %d\n", err);
+		complete_all(&tbl->thread.full_stop);
+		kfree(array.ptr);
+		return err;
+	}
 
 	if (!has_maptbl_pre_erase_pebs(tbl) &&
 	    is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
@@ -2019,6 +2034,7 @@ int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl)
  */
 int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl)
 {
+	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2038,8 +2054,10 @@ int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl)
 	finish_wait(&tbl->wait_queue, &tbl->thread.wait);
 	tbl->thread.task = NULL;
 
-	err = wait_for_completion_killable(&tbl->thread.full_stop);
-	if (unlikely(err)) {
+	res = wait_for_completion_timeout(&tbl->thread.full_stop,
+					SSDFS_DEFAULT_TIMEOUT);
+	if (res == 0) {
+		err = -ERANGE;
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}

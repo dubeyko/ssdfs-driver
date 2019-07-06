@@ -507,6 +507,8 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		}
 	}
 
+	SSDFS_DBG("DONE: create current segment array\n");
+
 	return 0;
 
 destroy_cur_segs:

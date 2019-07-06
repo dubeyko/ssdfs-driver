@@ -1692,21 +1692,29 @@ struct ssdfs_area_block_table {
 } __packed;
 
 /*
- * ssdfs_block_state_descriptor - block's state descriptor
- * @cno: checkpoint
- * @parent_snapshot: parent snapshot
- * @chain_hdr: descriptor of data fragments' chain
+ * The block to offset table has structure:
+ *
+ * ----------------------------
+ * |                          |
+ * |  Blk2Off table Header    |
+ * |                          |
+ * ----------------------------
+ * |                          |
+ * |   Translation extents    |
+ * |        sequence          |
+ * |                          |
+ * ----------------------------
+ * |                          |
+ * |  Physical offsets table  |
+ * |         header           |
+ * |                          |
+ * ----------------------------
+ * |                          |
+ * |    Physical offset       |
+ * |  descriptors sequence    |
+ * |                          |
+ * ----------------------------
  */
-struct ssdfs_block_state_descriptor {
-/* 0x0000 */
-	__le64 cno;
-	__le64 parent_snapshot;
-
-/* 0x0010 */
-	struct ssdfs_fragments_chain_header chain_hdr;
-
-/* 0x0020 */
-} __packed;
 
 /* Possible log's area types */
 enum {
@@ -1716,6 +1724,21 @@ enum {
 	SSDFS_LOG_JOURNAL_AREA,
 	SSDFS_LOG_AREA_MAX,
 };
+
+/*
+ * struct ssdfs_peb_page_descriptor - PEB's page descriptor
+ * @logical_offset: logical offset from file's begin in pages
+ * @peb_index: PEB's index
+ * @peb_page: PEB's page index
+ */
+struct ssdfs_peb_page_descriptor {
+/* 0x0000 */
+	__le32 logical_offset;
+	__le16 peb_index;
+	__le16 peb_page;
+
+/* 0x0008 */
+} __packed;
 
 /*
  * struct ssdfs_blk_state_offset - block's state offset
@@ -1735,21 +1758,6 @@ struct ssdfs_blk_state_offset {
 } __packed;
 
 /*
- * struct ssdfs_peb_page_descriptor - PEB's page descriptor
- * @logical_offset: logical offset from file's begin in pages
- * @peb_index: PEB's index
- * @peb_page: PEB's page index
- */
-struct ssdfs_peb_page_descriptor {
-/* 0x0000 */
-	__le32 logical_offset;
-	__le16 peb_index;
-	__le16 peb_page;
-
-/* 0x0008 */
-} __packed;
-
-/*
  * struct ssdfs_phys_offset_descriptor - descriptor of physical offset
  * @page_desc: PEB's page descriptor
  * @blk_state: logical block's state offset
@@ -1760,33 +1768,6 @@ struct ssdfs_phys_offset_descriptor {
 	struct ssdfs_blk_state_offset blk_state;
 
 /* 0x0010 */
-} __packed;
-
-#define SSDFS_BLK_STATE_OFF_MAX		5
-
-/*
- * struct ssdfs_block_descriptor - block descriptor
- * @ino: inode identification number
- * @logical_offset: logical offset from file's begin in pages
- * @peb_index: PEB's index
- * @peb_page: PEB's page index
- * @state: array of fragment's offsets
- * @prev_desc: offset in bytes to previous descriptor
- */
-struct ssdfs_block_descriptor {
-/* 0x0000 */
-	__le64 ino;
-	__le32 logical_offset;
-	__le16 peb_index;
-	__le16 peb_page;
-
-/* 0x0010 */
-	struct ssdfs_blk_state_offset state[SSDFS_BLK_STATE_OFF_MAX];
-
-/* 0x0038 */
-	struct ssdfs_blk_state_offset prev_desc;
-
-/* 0x0040 */
 } __packed;
 
 /*
@@ -1901,6 +1882,80 @@ struct ssdfs_blk2off_table_header {
 	struct ssdfs_translation_extent sequence[1];
 
 /* 0x0020 */
+} __packed;
+
+/*
+ * The block's state table has structure:
+ *
+ * ----------------------------
+ * |                          |
+ * |  Block state descriptor  |
+ * |                          |
+ * ----------------------------
+ * |  Fragment #0             |
+ * |                          |
+ * |    Fragment descriptor   |
+ * |    Block descriptor #0   |
+ * |           ***            |
+ * |    Block descriptor #N   |
+ * |                          |
+ * ----------------------------
+ * |                          |
+ * |          ***             |
+ * |                          |
+ * ----------------------------
+ * |  Fragment #N             |
+ * |                          |
+ * |    Fragment descriptor   |
+ * |    Block descriptor #0   |
+ * |           ***            |
+ * |    Block descriptor #N   |
+ * |                          |
+ * ----------------------------
+ */
+
+/*
+ * ssdfs_block_state_descriptor - block's state descriptor
+ * @cno: checkpoint
+ * @parent_snapshot: parent snapshot
+ * @chain_hdr: descriptor of data fragments' chain
+ */
+struct ssdfs_block_state_descriptor {
+/* 0x0000 */
+	__le64 cno;
+	__le64 parent_snapshot;
+
+/* 0x0010 */
+	struct ssdfs_fragments_chain_header chain_hdr;
+
+/* 0x0020 */
+} __packed;
+
+#define SSDFS_BLK_STATE_OFF_MAX		5
+
+/*
+ * struct ssdfs_block_descriptor - block descriptor
+ * @ino: inode identification number
+ * @logical_offset: logical offset from file's begin in pages
+ * @peb_index: PEB's index
+ * @peb_page: PEB's page index
+ * @state: array of fragment's offsets
+ * @prev_desc: offset in bytes to previous descriptor
+ */
+struct ssdfs_block_descriptor {
+/* 0x0000 */
+	__le64 ino;
+	__le32 logical_offset;
+	__le16 peb_index;
+	__le16 peb_page;
+
+/* 0x0010 */
+	struct ssdfs_blk_state_offset state[SSDFS_BLK_STATE_OFF_MAX];
+
+/* 0x0038 */
+	struct ssdfs_blk_state_offset prev_desc;
+
+/* 0x0040 */
 } __packed;
 
 /*

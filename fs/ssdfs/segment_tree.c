@@ -183,6 +183,8 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 	ssdfs_segment_tree_mapping_init(&fsi->segs_tree->pages,
 					fsi->segs_tree_inode);
 
+	SSDFS_DBG("DONE: create segment tree\n");
+
 	return 0;
 
 put_inodes:

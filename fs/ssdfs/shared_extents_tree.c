@@ -67,6 +67,8 @@ int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
 		}
 	}
 
+	SSDFS_DBG("DONE: create shared extents tree\n");
+
 	return 0;
 
 destroy_shextree_object:

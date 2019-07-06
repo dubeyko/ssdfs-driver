@@ -1602,7 +1602,7 @@ u8 GET_FIRST_DIFF_STATE(u8 *value, int blk_state, u8 start_off)
 		if (((*value >> i) & SSDFS_BLK_STATE_MASK) != blk_state) {
 			SSDFS_DBG("blk_state %#x, start_off %u, blk_off %u\n",
 				  blk_state, start_off, i);
-			return i;
+			return i / SSDFS_BLK_STATE_BITS;
 		}
 	}
 
@@ -2148,6 +2148,9 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 		  "state %#x, range %p\n",
 		  blk_bmap, start, len, max_blk, blk_state, range);
 
+	range->start = U32_MAX;
+	range->len = 0;
+
 	if (start >= max_blk) {
 		SSDFS_DBG("start %u >= max_blk %u\n", start, max_blk);
 		return -ENODATA;
@@ -2155,7 +2158,12 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 
 	err = ssdfs_block_bmap_find_block(blk_bmap, start, max_blk,
 					  blk_state, &found_start);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to find block: "
+			  "start %u, max_blk %u, state %#x, err %d\n",
+			  start, max_blk, blk_state, err);
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find block: "
 			  "start %u, max_blk %u, state %#x, err %d\n",
 			  start, max_blk, blk_state, err);

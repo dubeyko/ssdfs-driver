@@ -548,6 +548,8 @@ free_search_object:
 		}
 	}
 
+	SSDFS_DBG("DONE: create inodes btree\n");
+
 	return 0;
 
 fail_create_inodes_tree:
