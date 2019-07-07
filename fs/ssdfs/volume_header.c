@@ -411,6 +411,25 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 
 	vh->create_time = cpu_to_le64(fsi->fs_ctime);
 	vh->create_cno = cpu_to_le64(fsi->fs_cno);
+
+	vh->sb_seg_log_pages = cpu_to_le16(fsi->sb_seg_log_pages);
+	vh->segbmap_log_pages = cpu_to_le16(fsi->segbmap_log_pages);
+	vh->maptbl_log_pages = cpu_to_le16(fsi->maptbl_log_pages);
+	vh->lnodes_seg_log_pages = cpu_to_le16(fsi->lnodes_seg_log_pages);
+	vh->hnodes_seg_log_pages = cpu_to_le16(fsi->hnodes_seg_log_pages);
+	vh->inodes_seg_log_pages = cpu_to_le16(fsi->inodes_seg_log_pages);
+	vh->user_data_log_pages = cpu_to_le16(fsi->user_data_log_pages);
+
+	memcpy(&vh->segbmap, &fsi->vh->segbmap,
+		sizeof(struct ssdfs_segbmap_sb_header));
+	memcpy(&vh->maptbl, &fsi->vh->maptbl,
+		sizeof(struct ssdfs_maptbl_sb_header));
+	memcpy(&vh->dentries_btree, &fsi->vh->dentries_btree,
+		sizeof(struct ssdfs_dentries_btree_descriptor));
+	memcpy(&vh->extents_btree, &fsi->vh->extents_btree,
+		sizeof(struct ssdfs_extents_btree_descriptor));
+	memcpy(&vh->xattr_btree, &fsi->vh->xattr_btree,
+		sizeof(struct ssdfs_xattr_btree_descriptor));
 }
 
 /*

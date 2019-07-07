@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.1.34 [July 07, 2019]
+    (*) Fix bugs in offsets translation table implementation (step 1).
+
 v.1.33 [July 05, 2019]
     (*) Fix bugs in mapping table implementation (step 8).
 

@@ -981,6 +981,14 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->vh = SSDFS_VH(fsi->sbi.vh_buf);
 	fsi->vs = SSDFS_VS(fsi->sbi.vs_buf);
 
+	fsi->sb_seg_log_pages = le16_to_cpu(fsi->vh->sb_seg_log_pages);
+	fsi->segbmap_log_pages = le16_to_cpu(fsi->vh->segbmap_log_pages);
+	fsi->maptbl_log_pages = le16_to_cpu(fsi->vh->maptbl_log_pages);
+	fsi->lnodes_seg_log_pages = le16_to_cpu(fsi->vh->lnodes_seg_log_pages);
+	fsi->hnodes_seg_log_pages = le16_to_cpu(fsi->vh->hnodes_seg_log_pages);
+	fsi->inodes_seg_log_pages = le16_to_cpu(fsi->vh->inodes_seg_log_pages);
+	fsi->user_data_log_pages = le16_to_cpu(fsi->vh->user_data_log_pages);
+
 	/* Static volume information */
 	fsi->log_pagesize = fsi->vh->log_pagesize;
 	fsi->pagesize = 1 << fsi->vh->log_pagesize;

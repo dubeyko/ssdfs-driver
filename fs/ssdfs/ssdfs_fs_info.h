@@ -117,6 +117,13 @@ struct ssdfs_device_ops {
  * @vs: volume state
  * @sbi: superblock info
  * @sbi_backup: backup copy of superblock info
+ * @sb_seg_log_pages: full log size in sb segment (pages count)
+ * @segbmap_log_pages: full log size in segbmap segment (pages count)
+ * @maptbl_log_pages: full log size in maptbl segment (pages count)
+ * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
+ * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
+ * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
+ * @user_data_log_pages: full log size in user data segment (pages count)
  * @volume_state_lock: lock for mutable volume metadata
  * @free_pages: free pages count on the volume
  * @fs_mount_time: file system mount timestamp
@@ -178,6 +185,13 @@ struct ssdfs_fs_info {
 	struct ssdfs_volume_state *vs;
 	struct ssdfs_sb_info sbi;
 	struct ssdfs_sb_info sbi_backup;
+	u16 sb_seg_log_pages;
+	u16 segbmap_log_pages;
+	u16 maptbl_log_pages;
+	u16 lnodes_seg_log_pages;
+	u16 hnodes_seg_log_pages;
+	u16 inodes_seg_log_pages;
+	u16 user_data_log_pages;
 
 	spinlock_t volume_state_lock;
 	u64 free_pages;

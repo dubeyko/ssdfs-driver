@@ -486,6 +486,23 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 
 	spin_unlock(&fsi->volume_state_lock);
 
+	memcpy(&vs->blkbmap, &fsi->vs->blkbmap,
+		sizeof(struct ssdfs_blk_bmap_options));
+	memcpy(&vs->blk2off_tbl, &fsi->vs->blk2off_tbl,
+		sizeof(struct ssdfs_blk2off_tbl_options));
+	memcpy(&vs->user_data, &fsi->vs->user_data,
+		sizeof(struct ssdfs_user_data_options));
+
+	memcpy(&vs->root_folder, &fsi->vs->root_folder,
+		sizeof(struct ssdfs_inode));
+
+	memcpy(&vs->inodes_btree, &fsi->vs->inodes_btree,
+		sizeof(struct ssdfs_inodes_btree));
+	memcpy(&vs->shared_extents_btree, &fsi->vs->shared_extents_btree,
+		sizeof(struct ssdfs_shared_extents_btree));
+	memcpy(&vs->shared_dict_btree, &fsi->vs->shared_dict_btree,
+		sizeof(struct ssdfs_shared_dictionary_btree));
+
 	return 0;
 }
 

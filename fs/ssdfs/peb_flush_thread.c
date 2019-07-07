@@ -173,6 +173,158 @@ pgoff_t ssdfs_write_offset_to_mem_page_index(struct ssdfs_fs_info *fsi,
  ******************************************************************************/
 
 /*
+ * ssdfs_peb_blk_bmap_reserved_bytes() - calculate block bitmap's reserved bytes
+ * @pebi: pointer on PEB object
+ */
+static inline
+int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc = pebi->pebc;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	size_t blk_bmap_hdr_size = sizeof(struct ssdfs_block_bitmap_header);
+	size_t blk_bmap_frag_hdr_size = sizeof(struct ssdfs_block_bitmap_fragment);
+	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
+	size_t blk_bmap_bytes;
+	u32 pages_per_peb = fsi->pages_per_peb;
+	bool is_migrating = false;
+	int reserved_bytes = 0;
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_UNDER_MIGRATION:
+		is_migrating = true;
+		break;
+
+	default:
+		is_migrating = false;
+		break;
+	}
+
+	blk_bmap_bytes = BLK_BMAP_BYTES(pages_per_peb);
+
+	reserved_bytes += blk_bmap_hdr_size;
+
+	if (is_migrating) {
+		reserved_bytes += 2 * blk_bmap_frag_hdr_size;
+		reserved_bytes += 2 * frag_desc_size;
+		reserved_bytes += 2 * blk_bmap_bytes;
+	} else {
+		reserved_bytes += blk_bmap_frag_hdr_size;
+		reserved_bytes += frag_desc_size;
+		reserved_bytes += blk_bmap_bytes;
+	}
+
+	return reserved_bytes;
+}
+
+/*
+ * ssdfs_peb_blk2off_reserved_bytes() - calculate blk2off table's reserved bytes
+ * @pebi: pointer on PEB object
+ */
+static inline
+int ssdfs_peb_blk2off_reserved_bytes(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc = pebi->pebc;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	size_t blk2off_tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
+	size_t pot_tbl_hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
+	size_t phys_off_desc_size = sizeof(struct ssdfs_phys_offset_descriptor);
+	u32 pebs_per_seg = fsi->pebs_per_seg;
+	u16 log_pages = pebi->log_pages;
+	int reserved_bytes = 0;
+
+	reserved_bytes += blk2off_tbl_hdr_size;
+	reserved_bytes += pot_tbl_hdr_size;
+	reserved_bytes += (phys_off_desc_size * log_pages) * pebs_per_seg;
+
+	return reserved_bytes;
+}
+
+/*
+ * ssdfs_peb_blk_desc_tbl_reserved_bytes() - calculate block desc reserved bytes
+ * @pebi: pointer on PEB object
+ */
+static inline
+int ssdfs_peb_blk_desc_tbl_reserved_bytes(struct ssdfs_peb_info *pebi)
+{
+	size_t blk_desc_tbl_hdr_size = sizeof(struct ssdfs_area_block_table);
+	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	u16 log_pages = pebi->log_pages;
+	int reserved_bytes = 0;
+
+	reserved_bytes += blk_desc_tbl_hdr_size;
+	reserved_bytes += blk_desc_size * log_pages;
+
+	return reserved_bytes;
+}
+
+/*
+ * ssdfs_peb_define_reserved_metapages() - calculate reserved metadata pages
+ * @pebi: pointer on PEB object
+ */
+static
+u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc = pebi->pebc;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	u32 reserved_bytes = 0;
+	u32 reserved_pages = 0;
+	size_t seg_hdr_size = sizeof(struct ssdfs_segment_header);
+	u32 page_size = fsi->pagesize;
+	u16 log_pages = pebi->log_pages;
+	size_t lf_hdr_size = sizeof(struct ssdfs_log_footer);
+
+	/* segment header */
+	reserved_bytes += seg_hdr_size;
+
+	/* block bitmap */
+	atomic_set(&pebi->reserved_bytes.blk_bmap,
+		   ssdfs_peb_blk_bmap_reserved_bytes(pebi));
+	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_bmap);
+
+	/* blk2off table */
+	atomic_set(&pebi->reserved_bytes.blk2off_tbl,
+		   ssdfs_peb_blk2off_reserved_bytes(pebi));
+	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk2off_tbl);
+
+	/* block descriptor table */
+	atomic_set(&pebi->reserved_bytes.blk_desc_tbl,
+		   ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi));
+	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
+
+	reserved_bytes += page_size - 1;
+	reserved_bytes /= page_size;
+	reserved_bytes *= page_size;
+
+
+/* TODO: correct block desc table reserved size */
+
+
+	/* log footer header */
+	reserved_bytes += lf_hdr_size;
+
+	/* block bitmap */
+	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_bmap);
+
+	/* blk2off table */
+	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk2off_tbl);
+
+	reserved_bytes += page_size - 1;
+	reserved_bytes /= page_size;
+	reserved_bytes *= page_size;
+
+	reserved_pages = reserved_bytes / page_size;
+
+	BUG_ON(reserved_pages >= U16_MAX);
+
+	return reserved_pages;
+}
+
+/*
  * ssdfs_peb_create_log() - create new log
  * @pebi: pointer on PEB object
  *
@@ -255,12 +407,7 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 			   pebi->log_pages);
 	}
 
-	/*
-	 * TODO: Temporary the rough estimation will be:
-	 *       1 page for header + 1 page for footer.
-	 *       This approach should be reworked.
-	 */
-	log->reserved_pages = 2;
+	log->reserved_pages = ssdfs_peb_define_reserved_metapages(pebi);
 
 	if (log->free_data_pages <= log->reserved_pages) {
 		SSDFS_DBG("log->free_data_pages %u <= log->reserved_pages %u\n",
@@ -286,6 +433,7 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 		struct ssdfs_peb_area *area;
 		struct ssdfs_page_array *area_pages;
 		struct ssdfs_peb_area_metadata *metadata;
+		struct ssdfs_fragments_chain_header *chain_hdr;
 		size_t metadata_size = sizeof(struct ssdfs_peb_area_metadata);
 		size_t blk_table_size = sizeof(struct ssdfs_area_block_table);
 		size_t desc_size = sizeof(struct ssdfs_fragment_desc);
@@ -297,21 +445,36 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 
 		switch (i) {
 		case SSDFS_LOG_BLK_DESC_AREA:
-			metadata->table.chain_hdr.desc_size =
-						cpu_to_le16(desc_size);
-			metadata->table.chain_hdr.magic =
-						SSDFS_CHAIN_HDR_MAGIC;
-			metadata->table.chain_hdr.type =
-						SSDFS_BLK_STATE_CHAIN_HDR;
-
+			chain_hdr = &metadata->area.blk_desc.table.chain_hdr;
+			chain_hdr->desc_size = cpu_to_le16(desc_size);
+			chain_hdr->magic = SSDFS_CHAIN_HDR_MAGIC;
+			chain_hdr->type = SSDFS_BLK_DESC_CHAIN_HDR;
 			area->has_metadata = true;
 			area->write_offset = blk_table_size;
 			area->metadata.reserved_offset = 0;
 			break;
 
-		case SSDFS_LOG_MAIN_AREA:
 		case SSDFS_LOG_DIFFS_AREA:
+			chain_hdr = &metadata->area.diffs.table.hdr.chain_hdr;
+			chain_hdr->desc_size = cpu_to_le16(desc_size);
+			chain_hdr->magic = SSDFS_CHAIN_HDR_MAGIC;
+			chain_hdr->type = SSDFS_BLK_STATE_CHAIN_HDR;
+			area->has_metadata = false;
+			area->write_offset = 0;
+			area->metadata.reserved_offset = 0;
+			break;
+
 		case SSDFS_LOG_JOURNAL_AREA:
+			chain_hdr = &metadata->area.journal.table.hdr.chain_hdr;
+			chain_hdr->desc_size = cpu_to_le16(desc_size);
+			chain_hdr->magic = SSDFS_CHAIN_HDR_MAGIC;
+			chain_hdr->type = SSDFS_BLK_STATE_CHAIN_HDR;
+			area->has_metadata = false;
+			area->write_offset = 0;
+			area->metadata.reserved_offset = 0;
+			break;
+
+		case SSDFS_LOG_MAIN_AREA:
 			area->has_metadata = false;
 			area->write_offset = 0;
 			area->metadata.reserved_offset = 0;
@@ -1018,8 +1181,6 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		goto free_array;
 	}
 
-	stream->write_offset = metadata_offset;
-
 	area->write_offset = metadata_offset;
 	area->write_offset += metadata_space;
 
@@ -1376,7 +1537,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 }
 
 /*
- * ssdfs_peb_get_area_free_blk_desc() - get free block descriptor
+ * ssdfs_peb_get_area_free_blk_desc() - get free fragment descriptor
  * @pebi: pointer on PEB object
  * @area_type: area type
  *
@@ -1399,7 +1560,23 @@ ssdfs_peb_get_area_free_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
 	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	table = &pebi->current_log.area[area_type].metadata.table;
+	switch (area_type) {
+	case SSDFS_LOG_MAIN_AREA:
+	case SSDFS_LOG_DIFFS_AREA:
+	case SSDFS_LOG_JOURNAL_AREA:
+		/* these areas haven't area block table */
+		SSDFS_DBG("area block table doesn't be created\n");
+		return ERR_PTR(-ERANGE);
+
+	case SSDFS_LOG_BLK_DESC_AREA:
+		/* store area block table */
+		break;
+
+	default:
+		BUG();
+	};
+
+	table = &pebi->current_log.area[area_type].metadata.area.blk_desc.table;
 	vacant_item = le16_to_cpu(table->chain_hdr.fragments_count);
 
 	SSDFS_DBG("area_type %#x, vacant_item %u\n",
@@ -1413,6 +1590,67 @@ ssdfs_peb_get_area_free_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
 
 	le16_add_cpu(&table->chain_hdr.fragments_count, 1);
 	return &table->blk[vacant_item];
+}
+
+/*
+ * ssdfs_peb_get_area_cur_blk_desc() - get current fragment descriptor
+ * @pebi: pointer on PEB object
+ * @area_type: area type
+ *
+ * This function tries to get current fragment descriptor
+ * from block table.
+ *
+ * RETURN:
+ * [success] - pointer on current fragment descriptor.
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+struct ssdfs_fragment_desc *
+ssdfs_peb_get_area_cur_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
+{
+	struct ssdfs_area_block_table *table;
+	u16 fragments_count;
+	u16 cur_item = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (area_type) {
+	case SSDFS_LOG_MAIN_AREA:
+	case SSDFS_LOG_DIFFS_AREA:
+	case SSDFS_LOG_JOURNAL_AREA:
+		/* these areas haven't area block table */
+		SSDFS_DBG("area block table doesn't be created\n");
+		return ERR_PTR(-ERANGE);
+
+	case SSDFS_LOG_BLK_DESC_AREA:
+		/* store area block table */
+		break;
+
+	default:
+		BUG();
+	};
+
+	table = &pebi->current_log.area[area_type].metadata.area.blk_desc.table;
+	fragments_count = le16_to_cpu(table->chain_hdr.fragments_count);
+
+	if (fragments_count > 0)
+		cur_item = fragments_count - 1;
+	else {
+		cur_item = 0;
+		le16_add_cpu(&table->chain_hdr.fragments_count, 1);
+	}
+
+	SSDFS_DBG("area_type %#x, cur_item %u\n",
+		  area_type, cur_item);
+
+	BUG_ON(cur_item >= SSDFS_NEXT_BLK_TABLE_INDEX);
+
+	return &table->blk[cur_item];
 }
 
 /*
@@ -1434,11 +1672,13 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 				     int area_type)
 {
 	struct ssdfs_peb_area *area;
+	struct ssdfs_area_block_table *table;
 	struct ssdfs_fragment_desc *last_desc;
 	u16 fragments;
 	u32 reserved_offset, new_offset;
 	size_t blk_table_size = sizeof(struct ssdfs_area_block_table);
 	u16 hdr_flags;
+	u16 flags = 0;
 	struct page *page;
 	pgoff_t page_index;
 	unsigned char *kaddr;
@@ -1472,15 +1712,18 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 		  area_type);
 
 	area = &pebi->current_log.area[area_type];
+	table = &area->metadata.area.blk_desc.table;
 
-	fragments = le16_to_cpu(area->metadata.table.chain_hdr.fragments_count);
+	fragments = le16_to_cpu(table->chain_hdr.fragments_count);
 
 	if (fragments < SSDFS_NEXT_BLK_TABLE_INDEX)
 		goto set_hdr_flag;
 
 	BUG_ON(fragments > SSDFS_NEXT_BLK_TABLE_INDEX);
 
-	last_desc = &area->metadata.table.blk[SSDFS_NEXT_BLK_TABLE_INDEX];
+	flags = SSDFS_MULTIPLE_HDR_CHAIN;
+
+	last_desc = &table->blk[SSDFS_NEXT_BLK_TABLE_INDEX];
 
 	new_offset = ssdfs_peb_correct_area_write_offset(area->write_offset,
 							 blk_table_size);
@@ -1501,9 +1744,9 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 	last_desc->flags = 0;
 
 set_hdr_flag:
-	hdr_flags = le16_to_cpu(area->metadata.table.chain_hdr.flags);
-	hdr_flags |= SSDFS_MULTIPLE_HDR_CHAIN;
-	area->metadata.table.chain_hdr.flags = cpu_to_le16(hdr_flags);
+	hdr_flags = le16_to_cpu(table->chain_hdr.flags);
+	hdr_flags |= flags;
+	table->chain_hdr.flags = cpu_to_le16(hdr_flags);
 
 	reserved_offset = area->metadata.reserved_offset;
 	page_index = reserved_offset / PAGE_SIZE;
@@ -1516,7 +1759,7 @@ set_hdr_flag:
 
 	page_off = reserved_offset % PAGE_SIZE;
 	kaddr = kmap_atomic(page);
-	memcpy(kaddr + page_off, &area->metadata.table, blk_table_size);
+	memcpy(kaddr + page_off, table, blk_table_size);
 	kunmap_atomic(kaddr);
 	SetPageUptodate(page);
 
@@ -1538,8 +1781,7 @@ set_hdr_flag:
  * @pebi: pointer on PEB object
  * @area_type: area type
  *
- * This function tries to reserve block table in area's address
- * space and to prepare new in-core block table.
+ * This function tries to prepare new in-core block table.
  *
  * RETURN:
  * [success]
@@ -1554,6 +1796,7 @@ int ssdfs_peb_allocate_area_block_table(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_peb_area *area;
 	u16 fragments;
+	struct ssdfs_area_block_table *table;
 	struct ssdfs_fragment_desc *last_desc;
 	size_t blk_table_size = sizeof(struct ssdfs_area_block_table);
 	int err;
@@ -1564,12 +1807,29 @@ int ssdfs_peb_allocate_area_block_table(struct ssdfs_peb_info *pebi,
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	switch (area_type) {
+	case SSDFS_LOG_MAIN_AREA:
+	case SSDFS_LOG_DIFFS_AREA:
+	case SSDFS_LOG_JOURNAL_AREA:
+		/* these areas haven't area block table */
+		SSDFS_DBG("area block table doesn't be created\n");
+		return 0;
+
+	case SSDFS_LOG_BLK_DESC_AREA:
+		/* store area block table */
+		break;
+
+	default:
+		BUG();
+	};
+
 	SSDFS_DBG("write_offset %u, area_type %#x\n",
 		  pebi->current_log.area[area_type].write_offset,
 		  area_type);
 
 	area = &pebi->current_log.area[area_type];
-	fragments = le16_to_cpu(area->metadata.table.chain_hdr.fragments_count);
+	table = &area->metadata.area.blk_desc.table;
+	fragments = le16_to_cpu(table->chain_hdr.fragments_count);
 
 	BUG_ON(fragments > SSDFS_NEXT_BLK_TABLE_INDEX);
 
@@ -1578,7 +1838,7 @@ int ssdfs_peb_allocate_area_block_table(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	last_desc = &area->metadata.table.blk[SSDFS_NEXT_BLK_TABLE_INDEX];
+	last_desc = &table->blk[SSDFS_NEXT_BLK_TABLE_INDEX];
 
 	if (le32_to_cpu(last_desc->offset) != area->write_offset) {
 		SSDFS_ERR("last_desc->offset %u != area->write_offset %u\n",
@@ -1599,11 +1859,11 @@ int ssdfs_peb_allocate_area_block_table(struct ssdfs_peb_info *pebi,
 		}
 	}
 
-	area->metadata.table.chain_hdr.compr_bytes = 0;
-	area->metadata.table.chain_hdr.uncompr_bytes = 0;
-	area->metadata.table.chain_hdr.fragments_count = 0;
+	table->chain_hdr.compr_bytes = 0;
+	table->chain_hdr.uncompr_bytes = 0;
+	table->chain_hdr.fragments_count = 0;
 
-	memset(area->metadata.table.blk, 0,
+	memset(table->blk, 0,
 		sizeof(struct ssdfs_fragment_desc) * SSDFS_BLK_TABLE_MAX);
 
 	area->metadata.reserved_offset = area->write_offset;
@@ -1671,6 +1931,7 @@ ssdfs_peb_increase_area_payload_size(struct ssdfs_peb_info *pebi,
 				     struct ssdfs_byte_stream_descriptor *p)
 {
 	struct ssdfs_peb_area *area;
+	struct ssdfs_fragments_chain_header *chain_hdr;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !p);
@@ -1679,10 +1940,29 @@ ssdfs_peb_increase_area_payload_size(struct ssdfs_peb_info *pebi,
 
 	area = &pebi->current_log.area[area_type];
 
-	le32_add_cpu(&area->metadata.table.chain_hdr.compr_bytes,
-			p->compr_bytes);
-	le32_add_cpu(&area->metadata.table.chain_hdr.uncompr_bytes,
-			(u32)p->data_bytes);
+	switch (area_type) {
+	case SSDFS_LOG_BLK_DESC_AREA:
+		chain_hdr = &area->metadata.area.blk_desc.table.chain_hdr;
+		break;
+
+	case SSDFS_LOG_DIFFS_AREA:
+		chain_hdr = &area->metadata.area.diffs.table.hdr.chain_hdr;
+		break;
+
+	case SSDFS_LOG_JOURNAL_AREA:
+		chain_hdr = &area->metadata.area.journal.table.hdr.chain_hdr;
+		break;
+
+	case SSDFS_LOG_MAIN_AREA:
+		chain_hdr = &area->metadata.area.main.desc.chain_hdr;
+		break;
+
+	default:
+		BUG();
+	};
+
+	le32_add_cpu(&chain_hdr->compr_bytes, p->compr_bytes);
+	le32_add_cpu(&chain_hdr->uncompr_bytes, (u32)p->data_bytes);
 }
 
 /*
@@ -2261,7 +2541,7 @@ int ssdfs_peb_reserve_block_descriptor(struct ssdfs_peb_info *pebi,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->result.processed_blks);
 
-	table = &pebi->current_log.area[area_type].metadata.table;
+	table = &pebi->current_log.area[area_type].metadata.area.blk_desc.table;
 
 	vacant_item = le16_to_cpu(table->chain_hdr.fragments_count);
 	BUG_ON(vacant_item > SSDFS_NEXT_BLK_TABLE_INDEX);
@@ -2495,10 +2775,12 @@ int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 {
 	int area_type = SSDFS_LOG_BLK_DESC_AREA;
 	struct ssdfs_peb_area *area;
+	struct ssdfs_fragments_chain_header *chain_hdr;
 	struct ssdfs_fragment_desc *meta_desc;
 	struct ssdfs_block_descriptor blk_desc;
-	u32 write_offset;
+	u32 write_offset, old_offset;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	u16 bytes_count;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2533,33 +2815,65 @@ int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	meta_desc = ssdfs_peb_get_area_free_blk_desc(pebi, area_type);
-	if (!meta_desc) {
-		SSDFS_ERR("fail to get metadata descriptor: area_type %#x\n",
-			  area_type);
-		return -ERANGE;
+	meta_desc = ssdfs_peb_get_area_cur_blk_desc(pebi, area_type);
+	if (IS_ERR(meta_desc)) {
+		SSDFS_ERR("fail to get current fragment descriptor: "
+			  "err %d\n",
+			  (int)PTR_ERR(meta_desc));
+		return PTR_ERR(meta_desc);
+	} else if (!meta_desc) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get current fragment descriptor: "
+			  "err %d\n",
+			  err);
+		return err;
 	}
+
+	old_offset = le32_to_cpu(meta_desc->offset);
+	bytes_count = le16_to_cpu(meta_desc->compr_size);
 
 	area = &pebi->current_log.area[area_type];
 
-	meta_desc->offset = cpu_to_le32(write_offset);
-	meta_desc->compr_size = cpu_to_le16(blk_desc_size);
-	meta_desc->uncompr_size = cpu_to_le16(blk_desc_size);
-	meta_desc->checksum = 0;
+	if ((old_offset / PAGE_SIZE) == (write_offset / PAGE_SIZE)) {
+		bytes_count += blk_desc_size;
 
-	if (area->metadata.sequence_id == U8_MAX)
-		area->metadata.sequence_id = 0;
+		BUG_ON(bytes_count >= U16_MAX);
 
-	meta_desc->sequence_id = area->metadata.sequence_id++;
+		meta_desc->compr_size = cpu_to_le16((u16)bytes_count);
+		meta_desc->uncompr_size = cpu_to_le16((u16)bytes_count);
+	} else {
+		meta_desc = ssdfs_peb_get_area_free_blk_desc(pebi, area_type);
+		if (IS_ERR(meta_desc)) {
+			SSDFS_ERR("fail to get vacant fragment descriptor: "
+				  "err %d\n",
+				  (int)PTR_ERR(meta_desc));
+			return PTR_ERR(meta_desc);
+		} else if (!meta_desc) {
+			SSDFS_ERR("fail to get fragment descriptor: "
+				  "area_type %#x\n",
+				  area_type);
+			return -ERANGE;
+		}
 
-	meta_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
-	meta_desc->type = SSDFS_DATA_BLK_DESC;
-	meta_desc->flags = 0;
+		meta_desc->offset = cpu_to_le32(write_offset);
+		meta_desc->compr_size = cpu_to_le16(blk_desc_size);
+		meta_desc->uncompr_size = cpu_to_le16(blk_desc_size);
+		meta_desc->checksum = 0;
 
-	le32_add_cpu(&area->metadata.table.chain_hdr.compr_bytes,
-			blk_desc_size);
-	le32_add_cpu(&area->metadata.table.chain_hdr.uncompr_bytes,
-			(u32)blk_desc_size);
+		if (area->metadata.sequence_id == U8_MAX)
+			area->metadata.sequence_id = 0;
+
+		meta_desc->sequence_id = area->metadata.sequence_id++;
+
+		meta_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
+		meta_desc->type = SSDFS_DATA_BLK_DESC;
+		meta_desc->flags = 0;
+	}
+
+	chain_hdr = &area->metadata.area.blk_desc.table.chain_hdr;
+
+	le32_add_cpu(&chain_hdr->compr_bytes, (u32)blk_desc_size);
+	le32_add_cpu(&chain_hdr->uncompr_bytes, (u32)blk_desc_size);
 
 	return 0;
 }
@@ -2596,8 +2910,7 @@ int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	blk_desc_off.page_desc.logical_offset =
-		cpu_to_le32(logical_blk * fsi->pagesize);
+	blk_desc_off.page_desc.logical_offset = cpu_to_le32(logical_blk);
 	blk_desc_off.page_desc.peb_index = cpu_to_le16(off->peb_index);
 	blk_desc_off.page_desc.peb_page = cpu_to_le16(off->peb_page);
 
@@ -5001,6 +5314,9 @@ bool is_peb_area_empty(struct ssdfs_peb_info *pebi, int area_type)
 		is_empty = area->write_offset == blk_table_size;
 	else
 		is_empty = area->write_offset == 0;
+
+	SSDFS_DBG("area_type %#x, write_offset %u, is_empty %d\n",
+		  area_type, area->write_offset, (int)is_empty);
 
 	return is_empty;
 }

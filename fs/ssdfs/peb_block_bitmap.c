@@ -1163,8 +1163,13 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("bmap %p, bmap_index %u, count %u\n",
-		  bmap, bmap_index, count);
+	SSDFS_DBG("bmap %p, bmap_index %u, count %u, "
+		  "free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u\n",
+		  bmap, bmap_index, count,
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks));
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -1189,6 +1194,17 @@ init_failed:
 		SSDFS_WARN("invalid bmap_index %u\n",
 			   bmap_index);
 		return -ERANGE;
+	}
+
+	if (count > atomic_read(&bmap->free_logical_blks) ||
+	    count > atomic_read(&bmap->parent->free_logical_blks)) {
+		SSDFS_DBG("unable to reserve: "
+			  "count %u, free_logical_blks %d, "
+			  "parent->free_logical_blks %d\n",
+			  count,
+			  atomic_read(&bmap->free_logical_blks),
+			  atomic_read(&bmap->parent->free_logical_blks));
+		return -ENODATA;
 	}
 
 	down_read(&bmap->lock);
@@ -1416,6 +1432,14 @@ init_failed:
 		goto finish_pre_allocate;
 	}
 
+	if (range->len > atomic_read(&bmap->free_logical_blks)) {
+		err = -ERANGE;
+		SSDFS_ERR("range %u > free_logical_blks %d\n",
+			  range->len,
+			  atomic_read(&bmap->free_logical_blks));
+		goto finish_pre_allocate;
+	}
+
 	atomic_sub(range->len, &bmap->free_logical_blks);
 	atomic_add(range->len, &bmap->valid_logical_blks);
 
@@ -1618,6 +1642,14 @@ init_failed:
 		goto finish_allocate;
 	}
 
+	if (range->len > atomic_read(&bmap->free_logical_blks)) {
+		err = -ERANGE;
+		SSDFS_ERR("range %u > free_logical_blks %d\n",
+			  range->len,
+			  atomic_read(&bmap->free_logical_blks));
+		goto finish_allocate;
+	}
+
 	atomic_sub(range->len, &bmap->free_logical_blks);
 	atomic_add(range->len, &bmap->valid_logical_blks);
 
@@ -1800,6 +1832,14 @@ init_failed:
 		SSDFS_ERR("fail to invalidate blocks: "
 			  "len %u, err %d\n",
 			  range->len, err);
+		goto finish_invalidate;
+	}
+
+	if (range->len > atomic_read(&bmap->valid_logical_blks)) {
+		err = -ERANGE;
+		SSDFS_ERR("range %u > valid_logical_blks %d\n",
+			  range->len,
+			  atomic_read(&bmap->valid_logical_blks));
 		goto finish_invalidate;
 	}
 

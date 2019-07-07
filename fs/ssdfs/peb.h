@@ -23,13 +23,49 @@
 #include "request_queue.h"
 
 /*
+ * struct ssdfs_peb_diffs_area_metadata - diffs area's metadata
+ * @hdr: diffs area's table header
+ */
+struct ssdfs_peb_diffs_area_metadata {
+	struct ssdfs_block_state_descriptor hdr;
+};
+
+/*
+ * struct ssdfs_peb_journal_area_metadata - journal area's metadata
+ * @hdr: journal area's table header
+ */
+struct ssdfs_peb_journal_area_metadata {
+	struct ssdfs_block_state_descriptor hdr;
+};
+
+/*
  * struct ssdfs_peb_area_metadata - descriptor of area's items chain
- * @table: current table of block's fragments
+ * @area.blk_desc.table: block descriptors area table
+ * @area.diffs.table: diffs area's table
+ * @area.journal.table: journal area's table
+ * @area.main.desc: main area's descriptor
  * @reserved_offset: reserved write offset of table
  * @sequence_id: fragment's sequence number
  */
 struct ssdfs_peb_area_metadata {
-	struct ssdfs_area_block_table table;
+	union {
+		struct {
+			struct ssdfs_area_block_table table;
+		} blk_desc;
+
+		struct {
+			struct ssdfs_peb_diffs_area_metadata table;
+		} diffs;
+
+		struct {
+			struct ssdfs_peb_journal_area_metadata table;
+		} journal;
+
+		struct {
+			struct ssdfs_block_state_descriptor desc;
+		} main;
+	} area;
+
 	u32 reserved_offset;
 	u8 sequence_id;
 };
@@ -86,6 +122,9 @@ struct ssdfs_peb_log {
  * @peb_index: PEB index
  * @log_pages: count of pages in full partial log
  * @peb_migration_id: identification number of PEB in migration sequence
+ * @reserved_bytes.blk_bmap: reserved bytes for block bitmap
+ * @reserved_bytes.blk2off_tbl: reserved bytes for blk2off table
+ * @reserved_bytes.blk_desc_tbl: reserved bytes for block descriptor table
  * @current_log: PEB's current log
  * @cache: PEB's memory pages
  * @pebc: pointer on parent container
@@ -120,6 +159,13 @@ struct ssdfs_peb_info {
 	 * header.
 	 */
 	atomic_t peb_migration_id;
+
+	/* Reserved bytes */
+	struct {
+		atomic_t blk_bmap;
+		atomic_t blk2off_tbl;
+		atomic_t blk_desc_tbl;
+	} reserved_bytes;
 
 	/* Current log */
 	struct ssdfs_peb_log current_log;

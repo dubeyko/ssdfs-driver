@@ -340,6 +340,9 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	pebi->peb_index = pebc->peb_index;
 	pebi->log_pages = pebc->log_pages;
 	ssdfs_set_peb_migration_id(pebi, peb_migration_id);
+	atomic_set(&pebi->reserved_bytes.blk_bmap, 0);
+	atomic_set(&pebi->reserved_bytes.blk2off_tbl, 0);
+	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, 0);
 	pebi->pebc = pebc;
 
 	err = ssdfs_create_page_array(fsi->pages_per_peb,
