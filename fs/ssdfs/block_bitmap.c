@@ -271,7 +271,9 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  u16 metadata_blks,
 			  u16 invalid_blks)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int free_pages;
 	int i;
 	int err;
@@ -358,6 +360,15 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		}
 
 		get_page(source->pages[i]);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr = kmap(source->pages[i]);
+		SSDFS_DBG("BMAP INIT\n");
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, 32);
+		kunmap(source->pages[i]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		pagevec_add(&blk_bmap->pvec, source->pages[i]);
 		unlock_page(source->pages[i]);
 		source->pages[i] = NULL;
@@ -493,6 +504,14 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 		memcpy(kaddr2, kaddr1, PAGE_SIZE);
 		kunmap_atomic(kaddr2);
 		kunmap_atomic(kaddr1);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr1 = kmap(page);
+		SSDFS_DBG("BMAP SNAPSHOT\n");
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr1, 32);
+		kunmap(page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		pagevec_add(snapshot, page);
 	}
@@ -1749,6 +1768,16 @@ int ssdfs_block_bmap_find_state_area_end(struct ssdfs_block_bmap *blk_bmap,
 			*found_end += byte_index * items_per_byte;
 			*found_end += found_off;
 
+			SSDFS_DBG("start %u, aligned_start %u, "
+				  "aligned_end %u, value %#x, "
+				  "page_index %d, items_per_page %zu, "
+				  "byte_index %u, "
+				  "items_per_byte %u, start_off %u, "
+				  "found_off %u\n",
+				  start, aligned_start, aligned_end, *value,
+				  page_index, items_per_page, byte_index,
+				  items_per_byte, start_off, found_off);
+
 			if (*found_end > max_blk)
 				*found_end = max_blk;
 
@@ -2195,6 +2224,11 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 
 	range->start = found_start;
 	range->len = min_t(u32, len, found_end - found_start);
+
+	SSDFS_DBG("found_start %u, found_end %u, len %u, "
+		  "range (start %u, len %u)\n",
+		  found_start, found_end, len,
+		  range->start, range->len);
 
 	return 0;
 }

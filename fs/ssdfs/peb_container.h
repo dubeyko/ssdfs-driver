@@ -167,6 +167,9 @@ int ssdfs_peb_gc_thread_func(void *data);
 int ssdfs_peb_read_thread_func(void *data);
 int ssdfs_peb_flush_thread_func(void *data);
 
+u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
+					  u16 log_pages, u32 pebs_per_seg,
+					  bool is_migrating);
 int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 			struct ssdfs_segment_request *req);
 int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,

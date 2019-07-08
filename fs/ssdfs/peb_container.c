@@ -1559,6 +1559,10 @@ try_process_relation:
 		atomic_set(&pebc->items_state,
 				SSDFS_PEB1_SRC_EXT_PTR_DST_CONTAINER);
 		atomic_inc(&si->peb_array[shared_peb_index].dst_peb_refs);
+
+		SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+		    pebi->peb_id,
+		    atomic_read(&si->peb_array[shared_peb_index].dst_peb_refs));
 	} else {
 		pebi = &pebc->items[SSDFS_SEG_PEB2];
 
@@ -1585,6 +1589,10 @@ try_process_relation:
 			atomic_set(&pebc->items_state,
 				    SSDFS_PEB1_SRC_PEB2_DST_CONTAINER);
 			atomic_inc(&pebc->dst_peb_refs);
+
+			SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+				  mtblpd->peb_id,
+				  atomic_read(&pebc->dst_peb_refs));
 		}
 	}
 
@@ -1920,6 +1928,10 @@ try_define_relation:
 		ptr->dst_peb = relation->dst_peb;
 		atomic_inc(&relation->dst_peb_refs);
 
+		SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+			  relation->dst_peb->peb_id,
+			  atomic_read(&relation->dst_peb_refs));
+
 finish_define_relation:
 		up_read(&relation->lock);
 
@@ -2156,6 +2168,10 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	ptr->dst_peb = pebi;
 	atomic_inc(&ptr->dst_peb_refs);
 
+	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+		  pebi->peb_id,
+		  atomic_read(&ptr->dst_peb_refs));
+
 	switch (items_state) {
 	case SSDFS_PEB_CONTAINER_EMPTY:
 		atomic_set(&ptr->items_state,
@@ -2221,6 +2237,14 @@ finish_prepare_destination:
 
 	if (unlikely(err))
 		goto fail_prepare_destination;
+
+	SSDFS_DBG("peb_container_prepare_destination: "
+		  "seg_id %llu, leb_id %llu, peb_id %llu, "
+		  "free_blks %d, used_blks %d, invalid_blks %d\n",
+		  si->seg_id, leb_id, peb_id,
+		  ssdfs_peb_get_free_pages(ptr),
+		  ssdfs_peb_get_used_data_pages(ptr),
+		  ssdfs_peb_get_invalid_pages(ptr));
 
 	spin_lock(&si->migration.lock);
 	memcpy(&si->migration.array[SSDFS_LAST_DESTINATION],
@@ -2451,6 +2475,9 @@ finish_create_destination:
 		atomic_dec(&si->migration.migrating_pebs);
 	}
 
+	SSDFS_DBG("migration_state %d\n",
+		  atomic_read(&ptr->migration_state));
+
 	return err;
 }
 
@@ -2500,6 +2527,10 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
 	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+		  ptr->dst_peb->peb_id,
+		  atomic_read(&ptr->dst_peb_refs));
 
 	if (atomic_read(&ptr->dst_peb_refs) > 1) {
 		SSDFS_DBG("leb_id %llu, peb_index %u, "
@@ -2553,6 +2584,10 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 			  leb_id, ptr->peb_type, err);
 		return err;
 	}
+
+	SSDFS_DBG("ssdfs_peb_container_move_dest2source: "
+		  "seg_id %llu, leb_id %llu\n",
+		  si->seg_id, leb_id);
 
 	if (ptr->src_peb) {
 		err = ssdfs_peb_object_destroy(ptr->src_peb);
@@ -2681,6 +2716,11 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 		ptr->dst_peb = NULL;
 
 	atomic_dec(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs);
+
+	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+	    ptr->dst_peb->peb_id,
+	    atomic_read(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs));
+
 	atomic_set(&ptr->items_state, new_state);
 	atomic_set(&ptr->migration_state, SSDFS_PEB_NOT_MIGRATING);
 	atomic_dec(&ptr->parent_si->migration.migrating_pebs);
@@ -2729,6 +2769,13 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 	si = ptr->parent_si;
 	maptbl = fsi->maptbl;
 	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (rwsem_is_locked(&ptr->lock)) {
+		SSDFS_DBG("PEB is locked: "
+			  "leb_id %llu\n", leb_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 try_forget_source:
 	down_write(&ptr->lock);

@@ -67,13 +67,10 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	u16 log_index;
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
 	struct ssdfs_block_descriptor blk_desc = {0};
-	struct ssdfs_block_state_descriptor found_blk_state;
 	int area_index;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	u32 area_offset;
 	u32 blk_desc_off;
-	u64 cno;
-	u64 parent_snapshot;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -157,19 +154,6 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		req->extent.logical_offset =
 			le32_to_cpu(blk_desc.logical_offset);
 		req->extent.logical_offset *= fsi->pagesize;
-
-		err = __ssdfs_peb_get_block_state_desc(pebi,
-							&desc_array[area_index],
-							&found_blk_state,
-							&cno, &parent_snapshot);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to get block state descriptor: "
-				  "err %d\n", err);
-			goto finish_copy_page;
-		}
-
-		req->extent.cno = cno;
-		req->extent.parent_snapshot = parent_snapshot;
 	} else if (req->extent.ino != le64_to_cpu(blk_desc.ino)) {
 		err = -EAGAIN;
 		SSDFS_DBG("ino1 %llu != ino2 %llu\n",

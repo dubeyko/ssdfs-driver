@@ -919,6 +919,12 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 	items_count = le16_to_cpu(hdr->items_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("CACHE HEADER\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				kaddr, 32);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (item_index >= items_count) {
 		SSDFS_ERR("item_index %u >= items_count %u\n",
 			  item_index, items_count);
@@ -926,6 +932,12 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 	}
 
 	start = FIRST_PEB_STATE(kaddr);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("PEB STATE START\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				start, 32);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (IS_ERR_OR_NULL(start)) {
 		err = start == NULL ? -ERANGE : PTR_ERR(start);
@@ -936,6 +948,12 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 
 	*ptr = (struct ssdfs_maptbl_cache_peb_state *)((u8 *)start +
 					    (peb_state_size * item_index));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("MODIFIED ITEM\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				*ptr, 32);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1917,6 +1935,11 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 	lock_page(page);
 	kaddr = kmap(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 
 	items_count = le16_to_cpu(hdr->items_count);
@@ -1986,6 +2009,11 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 		cur_pair += items_count - 1;
 		hdr->end_leb = cur_pair->leb_id;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_remove_item:
 	kunmap(page);
@@ -2193,12 +2221,22 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 			}
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_shift_right_peb_state_area(kaddr, pair_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to shift the PEB state area: "
 				  "err %d\n", err);
 			goto finish_page_modification;
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_maptbl_cache_move_right_leb2peb_pairs(kaddr,
 								item_index);
@@ -2210,6 +2248,11 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 			goto finish_page_modification;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_cache_move_right_peb_states(kaddr,
 								item_index);
 		if (unlikely(err)) {
@@ -2220,6 +2263,11 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 			goto finish_page_modification;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = __ssdfs_maptbl_cache_insert_leb(kaddr, item_index,
 						      &cur_pair, &cur_state);
 		if (unlikely(err)) {
@@ -2228,6 +2276,11 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 				  start_page, item_index, err);
 			goto finish_page_modification;
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_page_modification:
 		kunmap(page);
@@ -2599,6 +2652,15 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 			  leb_id, err);
 		goto finish_peb_state_change;
 	}
+
+	SSDFS_DBG("MAIN_INDEX: state %#x, page_index %u, item_index %u; "
+		  "RELATION_INDEX: state %#x, page_index %u, item_index %u\n",
+		  res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  res.pebs[SSDFS_MAPTBL_MAIN_INDEX].page_index,
+		  res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index,
+		  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].page_index,
+		  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].item_index);
 
 	switch (peb_state) {
 	case SSDFS_MAPTBL_BAD_PEB_STATE:

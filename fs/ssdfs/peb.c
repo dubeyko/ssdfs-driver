@@ -227,6 +227,12 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 fail_init_current_log:
 	for (--i; i >= 0; i--) {
 		area = &pebi->current_log.area[i];
+
+		if (i == SSDFS_LOG_BLK_DESC_AREA) {
+			area->metadata.area.blk_desc.capacity = 0;
+			area->metadata.area.blk_desc.items_count = 0;
+		}
+
 		ssdfs_destroy_page_array(&area->array);
 	}
 
@@ -263,6 +269,14 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 					"PEB %llu is dirty on destruction\n",
 					pebi->peb_id);
 			err = -EIO;
+		}
+
+		if (i == SSDFS_LOG_BLK_DESC_AREA) {
+			struct ssdfs_peb_area *area;
+
+			area = &pebi->current_log.area[i];
+			area->metadata.area.blk_desc.capacity = 0;
+			area->metadata.area.blk_desc.items_count = 0;
 		}
 
 		ssdfs_destroy_page_array(area_pages);

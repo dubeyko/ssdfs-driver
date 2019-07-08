@@ -430,7 +430,7 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 	page_off = area_offset >> PAGE_SHIFT;
 
 	SSDFS_DBG("seg %llu, peb %llu, "
-		  "area_offset %u, frag_offset %u, page_index %u\n",
+		  "area_offset %u, page_index %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  area_offset, page_off);
 
@@ -1319,6 +1319,31 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 
 	peb_migration_id = desc_off->blk_state.peb_migration_id;
 
+	SSDFS_DBG("logical_blk %u, "
+		  "logical_offset %u, peb_index %u, peb_page %u, "
+		  "log_start_page %u, log_area %u, "
+		  "peb_migration_id %u, byte_offset %u\n",
+		  logical_blk,
+		  le32_to_cpu(desc_off->page_desc.logical_offset),
+		  le16_to_cpu(desc_off->page_desc.peb_index),
+		  le16_to_cpu(desc_off->page_desc.peb_page),
+		  le16_to_cpu(desc_off->blk_state.log_start_page),
+		  desc_off->blk_state.log_area,
+		  desc_off->blk_state.peb_migration_id,
+		  le32_to_cpu(desc_off->blk_state.byte_offset));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (pebc->src_peb) {
+		SSDFS_DBG("SRC: peb_migration_id %d\n",
+			  ssdfs_get_peb_migration_id(pebc->src_peb));
+	}
+
+	if (pebc->dst_peb) {
+		SSDFS_DBG("DST: peb_migration_id %d\n",
+			  ssdfs_get_peb_migration_id(pebc->dst_peb));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	down_read(&pebc->lock);
 
 	if (pebc->src_peb &&
@@ -1333,10 +1358,12 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 
 	if (!pebi) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid peb_migration_id: "
-			  "src_peb %p, dst_peb %p, peb_migration_id %u\n",
-			  pebc->src_peb, pebc->dst_peb,
-			  peb_migration_id);
+		SSDFS_WARN("invalid peb_migration_id: "
+			   "seg %llu, peb_index %u, src_peb %p, "
+			   "dst_peb %p, peb_migration_id %u\n",
+			   pebc->parent_si->seg_id, pebc->peb_index,
+			   pebc->src_peb, pebc->dst_peb,
+			   peb_migration_id);
 		goto finish_read_page;
 	}
 
@@ -2147,6 +2174,9 @@ fail_init_using_blk_bmap:
 		goto fail_init_blk2off_table;
 	}
 
+	SSDFS_DBG("blk2off_table_partial_init: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+
 	cno = le64_to_cpu(t_init.seg_hdr->cno);
 	err = ssdfs_blk2off_table_partial_init(si->blk2off_table,
 						&t_init.pvec,
@@ -2301,6 +2331,9 @@ fail_init_used_blk_bmap:
 			  si->seg_id, pebi->peb_id, err);
 		goto fail_init_blk2off_table;
 	}
+
+	SSDFS_DBG("blk2off_table_partial_init: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
 	cno = le64_to_cpu(t_init.seg_hdr->cno);
 	err = ssdfs_blk2off_table_partial_init(si->blk2off_table,
@@ -3179,6 +3212,7 @@ int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_phys_offset_table_header hdr;
 	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
+	u32 start_off, next_frag_off;
 	u32 read_bytes;
 	int err;
 
@@ -3194,6 +3228,7 @@ int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
 		  init->read_off, init->write_off);
 
 	fsi = pebi->pebc->parent_si->fsi;
+	start_off = init->read_off;
 
 	err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
 					  init->read_off, &hdr, hdr_size);
@@ -3221,8 +3256,20 @@ int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	init->read_off = le16_to_cpu(hdr.next_fragment_off);
+	next_frag_off = le16_to_cpu(hdr.next_fragment_off);
 
+	if (next_frag_off >= U16_MAX)
+		goto finish_read_blk2off_pot_fragment;
+
+	next_frag_off += start_off;
+
+	if (next_frag_off != init->read_off) {
+		SSDFS_ERR("next_frag_off %u != init->read_off %u\n",
+			  next_frag_off, init->read_off);
+		return -EIO;
+	}
+
+finish_read_blk2off_pot_fragment:
 	return 0;
 }
 
@@ -3441,6 +3488,11 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 				  pebi->peb_id, err);
 			goto fail_init_blk2off_fragment;
 		}
+
+		SSDFS_DBG("blk2off_table_partial_init: "
+			  "seg_id %llu, peb %llu\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id);
 
 		cno = le64_to_cpu(init.seg_hdr->cno);
 		err = ssdfs_blk2off_table_partial_init(blk2off_table,

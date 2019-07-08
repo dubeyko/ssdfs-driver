@@ -374,6 +374,9 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	metadata_blks = le16_to_cpu(hdr->metadata_blks);
 	invalid_blks = le16_to_cpu(hdr->invalid_blks);
 
+	SSDFS_DBG("last_free_blk %u, metadata_blks %u, invalid_blks %u\n",
+		  last_free_blk, metadata_blks, invalid_blks);
+
 	err = ssdfs_block_bmap_lock(blk_bmap);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to lock bitmap: err %d\n", err);
@@ -571,10 +574,37 @@ void ssdfs_peb_blk_bmap_init_failed(struct ssdfs_peb_blk_bmap *bmap)
 	complete_all(&bmap->init_end);
 }
 
+/*
+ * ssdfs_peb_define_reserved_pages_per_log() - estimate reserved pages per log
+ * @bmap: pointer on PEB's block bitmap object
+ */
 int ssdfs_peb_define_reserved_pages_per_log(struct ssdfs_peb_blk_bmap *bmap)
 {
-	/* TODO: determine reserved pages per log */
-	return 3;
+	struct ssdfs_segment_blk_bmap *parent = bmap->parent;
+	struct ssdfs_segment_info *si = parent->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	u32 page_size = fsi->pagesize;
+	u32 pages_per_peb = parent->pages_per_peb;
+	u32 pebs_per_seg = fsi->pebs_per_seg;
+	u16 log_pages = si->log_pages;
+	bool is_migrating = false;
+
+	switch (atomic_read(&bmap->buffers_state)) {
+	case SSDFS_PEB_BMAP1_SRC_PEB_BMAP2_DST:
+	case SSDFS_PEB_BMAP2_SRC_PEB_BMAP1_DST:
+		is_migrating = true;
+		break;
+
+	default:
+		is_migrating = false;
+		break;
+	}
+
+	return ssdfs_peb_estimate_reserved_metapages(page_size,
+						     pages_per_peb,
+						     log_pages,
+						     pebs_per_seg,
+						     is_migrating);
 }
 
 /*
@@ -645,7 +675,6 @@ init_failed:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	log_pages = bmap->parent->parent_si->log_pages;
-	/* TODO: determine reserved pages per log */
 	reserved_pages_per_log = ssdfs_peb_define_reserved_pages_per_log(bmap);
 	free_pages = atomic_read(&bmap->free_logical_blks);
 

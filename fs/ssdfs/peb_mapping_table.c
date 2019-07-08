@@ -881,7 +881,7 @@ void ssdfs_maptbl_fragment_desc_init(struct ssdfs_peb_mapping_table *tbl,
 		  "area %p, fdesc %p\n",
 		  area->portion_id, tbl, area, fdesc);
 
-SSDFS_DBG("fix bug here\n");
+/*SSDFS_DBG("fix bug here\n");*/
 
 	fdesc->start_leb = (u64)area->portion_id * tbl->lebs_per_fragment;
 	fdesc->lebs_count = (u32)min_t(u64, (u64)tbl->lebs_per_fragment,
@@ -1437,7 +1437,7 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 		unlock_page(page);
 
 		if (unlikely(err)) {
-			SSDFS_DBG("fail to add page %d: err %d\n",
+			SSDFS_ERR("fail to add page %d: err %d\n",
 				  i, err);
 			goto finish_fragment_init;
 		}
@@ -3112,6 +3112,8 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 		return -EFAULT;
 	}
 
+	SSDFS_DBG("prepare migration\n");
+
 	down_read(&tbl->tbl_lock);
 
 	err = ssdfs_maptbl_prepare_migration(tbl);
@@ -3135,6 +3137,8 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 finish_prepare_migration:
 	up_read(&tbl->tbl_lock);
 
+	SSDFS_DBG("finish prepare migration\n");
+
 	if (unlikely(err))
 		return err;
 
@@ -3149,6 +3153,8 @@ finish_prepare_migration:
 	 * state means the volume corruption.
 	 */
 	atomic_or(SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+
+	SSDFS_DBG("flush dirty fragments\n");
 
 	err = ssdfs_maptbl_flush_dirty_fragments(tbl);
 	if (err == -ENODATA) {
@@ -3175,6 +3181,10 @@ finish_prepare_migration:
 		goto finish_maptbl_flush;
 	}
 
+	SSDFS_DBG("finish flush dirty fragments\n");
+
+	SSDFS_DBG("commit logs\n");
+
 	err = ssdfs_maptbl_commit_logs(tbl);
 	if (unlikely(err)) {
 		up_write(&tbl->tbl_lock);
@@ -3194,6 +3204,8 @@ finish_prepare_migration:
 				err);
 		goto finish_maptbl_flush;
 	}
+
+	SSDFS_DBG("finish commit logs\n");
 
 	downgrade_write(&tbl->tbl_lock);
 
@@ -3684,7 +3696,6 @@ pgoff_t ssdfs_maptbl_define_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 
 	leb_id_diff = leb_id - desc->start_leb;
 	stripe_index = div_u64(leb_id_diff, tbl->pebs_per_stripe);
-
 	page_index = leb_id_diff - (stripe_index * tbl->pebs_per_stripe);
 	page_index = div_u64(page_index, desc->pebs_per_page);
 	page_index += stripe_index * desc->stripe_pages;
@@ -4409,6 +4420,19 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		peb_desc = &cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
 		if (peb_desc->consistency == SSDFS_PEB_STATE_INCONSISTENT)
 			consistency = peb_desc->consistency;
+
+		SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+			  "state %#x, consistency %#x; "
+			  "RELATION_INDEX: peb_id %llu, type %#x, "
+			  "state %#x, consistency %#x\n",
+		    cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		    cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		    cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		    cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 	}
 
 	down_read(&tbl->tbl_lock);
@@ -5171,6 +5195,12 @@ finish_page_processing:
 	kunmap_atomic(kaddr);
 
 	if (!err) {
+		SSDFS_DBG("leb_id %llu, item_index %u, peb_index %u, "
+			  "start_peb %llu, peb_id %llu\n",
+			  leb_id, item_index, peb_index,
+			  le64_to_cpu(hdr->start_peb),
+			  ptr->peb_id);
+
 		SetPagePrivate(page);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
@@ -5711,6 +5741,13 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 			  leb_id);
 		goto finish_change_state;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (rwsem_is_locked(&fdesc->lock)) {
+		SSDFS_DBG("fragment is locked -> lock fragment: "
+			  "leb_id %llu\n", leb_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&fdesc->lock);
 
@@ -6269,6 +6306,13 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		goto finish_add_migrating_peb;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	if (rwsem_is_locked(&fdesc->lock)) {
+		SSDFS_DBG("fragment is locked -> lock fragment: "
+			  "leb_id %llu\n", leb_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	down_write(&fdesc->lock);
 
 	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
@@ -6521,6 +6565,13 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 			  leb_id);
 		goto finish_exclude_migrating_peb;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (rwsem_is_locked(&fdesc->lock)) {
+		SSDFS_DBG("fragment is locked -> lock fragment: "
+			  "leb_id %llu\n", leb_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&fdesc->lock);
 

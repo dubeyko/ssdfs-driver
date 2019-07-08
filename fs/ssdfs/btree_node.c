@@ -776,7 +776,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		SSDFS_WARN("invalid memory pages count: "
 			   "node_size %u, pvec_size %u\n",
 			   node_size, pvec_size);
-		goto fail_get_segment;
+		goto finish_prepare_content;
 	}
 
 	req = ssdfs_request_alloc();
@@ -784,7 +784,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		goto fail_get_segment;
+		goto finish_prepare_content;
 	}
 
 	ssdfs_request_init(req);
@@ -889,8 +889,10 @@ fail_read_node:
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 
-fail_get_segment:
+finish_prepare_content:
 	ssdfs_segment_put_object(*si);
+
+fail_get_segment:
 	return err;
 }
 

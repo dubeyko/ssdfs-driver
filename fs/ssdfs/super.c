@@ -825,6 +825,15 @@ reserve_clean_segment:
 	(*sb_lebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type] = new_leb;
 	(*sb_pebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type] = new_peb;
 
+	SSDFS_DBG("cur_leb %llu, cur_peb %llu, "
+		  "next_leb %llu, next_peb %llu, "
+		  "reserved_leb %llu, reserved_peb %llu, "
+		  "new_leb %llu, new_peb %llu\n",
+		  cur_leb, cur_peb,
+		  next_leb, next_peb,
+		  reserved_leb, reserved_peb,
+		  new_leb, new_peb);
+
 	if (prev_leb == U64_MAX)
 		goto finish_move_sb_seg;
 
@@ -1304,9 +1313,13 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_info->sb = sb;
 	sb->s_fs_info = fs_info;
 
+	SSDFS_DBG("parse options started...\n");
+
 	err = ssdfs_parse_options(fs_info, data);
 	if (err)
 		goto free_erase_page;
+
+	SSDFS_DBG("gather superblock info started...\n");
 
 	err = ssdfs_gather_superblock_info(fs_info, silent);
 	if (err)
@@ -1315,6 +1328,8 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	spin_lock(&fs_info->volume_state_lock);
 	fs_feature_compat = fs_info->fs_feature_compat;
 	spin_unlock(&fs_info->volume_state_lock);
+
+	SSDFS_DBG("create device group started...\n");
 
 	err = ssdfs_sysfs_create_device_group(sb);
 	if (err)
@@ -1328,11 +1343,15 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_xattr = ssdfs_xattr_handlers;
 	set_posix_acl_flag(sb);
 
+	SSDFS_DBG("create segment tree started...\n");
+
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_segment_tree_create(fs_info);
 	up_write(&fs_info->volume_sem);
 	if (err)
 		goto destroy_sysfs_device_group;
+
+	SSDFS_DBG("create mapping table started...\n");
 
 	if (fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
@@ -1346,6 +1365,8 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_segments_tree;
 	}
 
+	SSDFS_DBG("create segment bitmap started...\n");
+
 	if (fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
 		err = ssdfs_segbmap_create(fs_info);
@@ -1358,17 +1379,23 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_maptbl;
 	}
 
+	SSDFS_DBG("create current segment array started...\n");
+
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_current_segment_array_create(fs_info);
 	up_write(&fs_info->volume_sem);
 	if (err)
 		goto destroy_segbmap;
 
+	SSDFS_DBG("create shared extents tree started...\n");
+
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_shextree_create(fs_info);
 	up_write(&fs_info->volume_sem);
 	if (err)
 		goto destroy_current_segment_array;
+
+	SSDFS_DBG("create shared dictionary started...\n");
 
 	if (fs_feature_compat & SSDFS_HAS_SHARED_DICT_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
@@ -1391,6 +1418,8 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		SSDFS_WARN("volume hasn't shared dictionary\n");
 		goto destroy_shextree;
 	}
+
+	SSDFS_DBG("create inodes btree started...\n");
 
 	if (fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);

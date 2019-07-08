@@ -815,6 +815,14 @@ finish_define_bmap_index:
 	BUG_ON(need_migrate && need_move);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("seg_id %llu, migration_state %#x, items_state %#x, "
+		  "peb_migration_id %u, src_migration_id %d, "
+		  "dst_migration_id %d\n",
+		  si->seg_id, migration_state, items_state,
+		  peb_migration_id, src_migration_id, dst_migration_id);
+	SSDFS_DBG("seg_id %llu, need_migrate %#x, need_move %#x\n",
+		  si->seg_id, need_migrate, need_move);
+
 	if (need_migrate) {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(peb_index >= U16_MAX);

@@ -173,34 +173,18 @@ pgoff_t ssdfs_write_offset_to_mem_page_index(struct ssdfs_fs_info *fsi,
  ******************************************************************************/
 
 /*
- * ssdfs_peb_blk_bmap_reserved_bytes() - calculate block bitmap's reserved bytes
- * @pebi: pointer on PEB object
+ * ssdfs_peb_estimate_blk_bmap_bytes() - estimate block bitmap's bytes
+ * @pages_per_peb: number of pages in one PEB
+ * @is_migrating: is PEB migrating?
  */
 static inline
-int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
+int ssdfs_peb_estimate_blk_bmap_bytes(u32 pages_per_peb, bool is_migrating)
 {
-	struct ssdfs_peb_container *pebc = pebi->pebc;
-	struct ssdfs_segment_info *si = pebc->parent_si;
-	struct ssdfs_fs_info *fsi = si->fsi;
 	size_t blk_bmap_hdr_size = sizeof(struct ssdfs_block_bitmap_header);
 	size_t blk_bmap_frag_hdr_size = sizeof(struct ssdfs_block_bitmap_fragment);
 	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
 	size_t blk_bmap_bytes;
-	u32 pages_per_peb = fsi->pages_per_peb;
-	bool is_migrating = false;
 	int reserved_bytes = 0;
-
-	switch (atomic_read(&pebc->migration_state)) {
-	case SSDFS_PEB_MIGRATION_PREPARATION:
-	case SSDFS_PEB_RELATION_PREPARATION:
-	case SSDFS_PEB_UNDER_MIGRATION:
-		is_migrating = true;
-		break;
-
-	default:
-		is_migrating = false;
-		break;
-	}
 
 	blk_bmap_bytes = BLK_BMAP_BYTES(pages_per_peb);
 
@@ -220,20 +204,16 @@ int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
 }
 
 /*
- * ssdfs_peb_blk2off_reserved_bytes() - calculate blk2off table's reserved bytes
- * @pebi: pointer on PEB object
+ * ssdfs_peb_estimate_blk2off_bytes() - estimate blk2off table's bytes
+ * @log_pages: number of pages in the full log
+ * @pebs_per_seg: number of PEBs in one segment
  */
 static inline
-int ssdfs_peb_blk2off_reserved_bytes(struct ssdfs_peb_info *pebi)
+int ssdfs_peb_estimate_blk2off_bytes(u16 log_pages, u32 pebs_per_seg)
 {
-	struct ssdfs_peb_container *pebc = pebi->pebc;
-	struct ssdfs_segment_info *si = pebc->parent_si;
-	struct ssdfs_fs_info *fsi = si->fsi;
 	size_t blk2off_tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	size_t pot_tbl_hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
 	size_t phys_off_desc_size = sizeof(struct ssdfs_phys_offset_descriptor);
-	u32 pebs_per_seg = fsi->pebs_per_seg;
-	u16 log_pages = pebi->log_pages;
 	int reserved_bytes = 0;
 
 	reserved_bytes += blk2off_tbl_hdr_size;
@@ -244,21 +224,133 @@ int ssdfs_peb_blk2off_reserved_bytes(struct ssdfs_peb_info *pebi)
 }
 
 /*
- * ssdfs_peb_blk_desc_tbl_reserved_bytes() - calculate block desc reserved bytes
- * @pebi: pointer on PEB object
+ * ssdfs_peb_estimate_blk_desc_tbl_bytes() - estimate block desc table's bytes
+ * @log_pages: number of pages in the full log
  */
 static inline
-int ssdfs_peb_blk_desc_tbl_reserved_bytes(struct ssdfs_peb_info *pebi)
+int ssdfs_peb_estimate_blk_desc_tbl_bytes(u16 log_pages)
 {
 	size_t blk_desc_tbl_hdr_size = sizeof(struct ssdfs_area_block_table);
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
-	u16 log_pages = pebi->log_pages;
 	int reserved_bytes = 0;
 
 	reserved_bytes += blk_desc_tbl_hdr_size;
 	reserved_bytes += blk_desc_size * log_pages;
 
 	return reserved_bytes;
+}
+
+/*
+ * ssdfs_peb_estimate_reserved_metapages() - estimate reserved metapages in log
+ * @page_size: size of page in bytes
+ * @pages_per_peb: number of pages in one PEB
+ * @log_pages: number of pages in the full log
+ * @pebs_per_seg: number of PEBs in one segment
+ * @is_migrating: is PEB migrating?
+ */
+u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
+					  u16 log_pages, u32 pebs_per_seg,
+					  bool is_migrating)
+{
+	size_t seg_hdr_size = sizeof(struct ssdfs_segment_header);
+	size_t lf_hdr_size = sizeof(struct ssdfs_log_footer);
+	u32 reserved_bytes = 0;
+	u32 reserved_pages = 0;
+
+	/* segment header */
+	reserved_bytes += seg_hdr_size;
+
+	/* block bitmap */
+	reserved_bytes += ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb,
+							    is_migrating);
+
+	/* blk2off table */
+	reserved_bytes += ssdfs_peb_estimate_blk2off_bytes(log_pages,
+							   pebs_per_seg);
+
+	/* block descriptor table */
+	reserved_bytes += ssdfs_peb_estimate_blk_desc_tbl_bytes(log_pages);
+
+	reserved_bytes += page_size - 1;
+	reserved_bytes /= page_size;
+	reserved_bytes *= page_size;
+
+	/* log footer header */
+	reserved_bytes += lf_hdr_size;
+
+	/* block bitmap */
+	reserved_bytes += ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb,
+							    is_migrating);
+
+	/* blk2off table */
+	reserved_bytes += ssdfs_peb_estimate_blk2off_bytes(log_pages,
+							   pebs_per_seg);
+
+	reserved_bytes += page_size - 1;
+	reserved_bytes /= page_size;
+	reserved_bytes *= page_size;
+
+	reserved_pages = reserved_bytes / page_size;
+
+	BUG_ON(reserved_pages >= U16_MAX);
+
+	return reserved_pages;
+}
+
+/*
+ * ssdfs_peb_blk_bmap_reserved_bytes() - calculate block bitmap's reserved bytes
+ * @pebi: pointer on PEB object
+ */
+static inline
+int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc = pebi->pebc;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	u32 pages_per_peb = fsi->pages_per_peb;
+	bool is_migrating = false;
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_UNDER_MIGRATION:
+		is_migrating = true;
+		break;
+
+	default:
+		is_migrating = false;
+		break;
+	}
+
+	return ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb, is_migrating);
+}
+
+/*
+ * ssdfs_peb_blk2off_reserved_bytes() - calculate blk2off table's reserved bytes
+ * @pebi: pointer on PEB object
+ */
+static inline
+int ssdfs_peb_blk2off_reserved_bytes(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc = pebi->pebc;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	u32 pebs_per_seg = fsi->pebs_per_seg;
+	u16 log_pages = pebi->log_pages;
+
+	return ssdfs_peb_estimate_blk2off_bytes(log_pages, pebs_per_seg);
+}
+
+/*
+ * ssdfs_peb_blk_desc_tbl_reserved_bytes() - calculate block desc reserved bytes
+ * @pebi: pointer on PEB object
+ */
+static inline
+int ssdfs_peb_blk_desc_tbl_reserved_bytes(struct ssdfs_peb_info *pebi)
+{
+	u16 log_pages = pebi->log_pages;
+
+	return ssdfs_peb_estimate_blk_desc_tbl_bytes(log_pages);
 }
 
 /*
@@ -275,8 +367,9 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 	u32 reserved_pages = 0;
 	size_t seg_hdr_size = sizeof(struct ssdfs_segment_header);
 	u32 page_size = fsi->pagesize;
-	u16 log_pages = pebi->log_pages;
 	size_t lf_hdr_size = sizeof(struct ssdfs_log_footer);
+	u32 offset;
+	u32 blk_desc_reserved;
 
 	/* segment header */
 	reserved_bytes += seg_hdr_size;
@@ -292,17 +385,19 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk2off_tbl);
 
 	/* block descriptor table */
-	atomic_set(&pebi->reserved_bytes.blk_desc_tbl,
-		   ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi));
+	offset = reserved_bytes;
+	blk_desc_reserved = ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi);
+	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, blk_desc_reserved);
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
 
 	reserved_bytes += page_size - 1;
 	reserved_bytes /= page_size;
 	reserved_bytes *= page_size;
 
-
-/* TODO: correct block desc table reserved size */
-
+	if (blk_desc_reserved < (reserved_bytes - offset)) {
+		atomic_set(&pebi->reserved_bytes.blk_desc_tbl,
+			   (reserved_bytes - offset));
+	}
 
 	/* log footer header */
 	reserved_bytes += lf_hdr_size;
@@ -322,6 +417,74 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 	BUG_ON(reserved_pages >= U16_MAX);
 
 	return reserved_pages;
+}
+
+/*
+ * ssdfs_peb_reserve_blk_desc_space() - reserve space for block descriptors
+ * @pebi: pointer on PEB object
+ * @metadata: pointer on area's metadata
+ *
+ * This function tries to reserve space for block descriptors.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate the memory.
+ */
+static
+int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
+				     struct ssdfs_peb_area_metadata *metadata)
+{
+	struct ssdfs_page_array *area_pages;
+	size_t blk_desc_tbl_hdr_size = sizeof(struct ssdfs_area_block_table);
+	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	size_t count;
+	int buf_size;
+	struct page *page;
+	void *kaddr;
+
+	SSDFS_DBG("peb %llu, current_log.start_page %u\n",
+		  pebi->peb_id, pebi->current_log.start_page);
+
+	buf_size = atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
+
+	if (buf_size <= blk_desc_tbl_hdr_size) {
+		SSDFS_ERR("invalid reserved_size %d\n",
+			  atomic_read(&pebi->reserved_bytes.blk_desc_tbl));
+		return -ERANGE;
+	}
+
+	buf_size -= blk_desc_tbl_hdr_size;
+
+	if (buf_size < blk_desc_size) {
+		SSDFS_ERR("invalid reserved_size %d\n",
+			  buf_size);
+		return -ERANGE;
+	}
+
+	count = buf_size / blk_desc_size;
+
+	area_pages = &pebi->current_log.area[SSDFS_LOG_BLK_DESC_AREA].array;
+
+	page = ssdfs_page_array_grab_page(area_pages, 0);
+	if (IS_ERR_OR_NULL(page)) {
+		SSDFS_ERR("fail to add page into area space\n");
+		return -ENOMEM;
+	}
+
+	kaddr = kmap_atomic(page);
+	memset(kaddr, 0, PAGE_SIZE);
+	kunmap_atomic(kaddr);
+	SetPagePrivate(page);
+	put_page(page);
+	unlock_page(page);
+
+	metadata->area.blk_desc.items_count = 0;
+	metadata->area.blk_desc.capacity = count;
+
+	return 0;
 }
 
 /*
@@ -439,6 +602,26 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 		size_t desc_size = sizeof(struct ssdfs_fragment_desc);
 
 		area = &pebi->current_log.area[i];
+		area_pages = &area->array;
+
+		if (atomic_read(&area_pages->state) == SSDFS_PAGE_ARRAY_DIRTY) {
+			ssdfs_fs_error(si->fsi->sb,
+					__FILE__, __func__, __LINE__,
+					"PEB %llu is dirty on log creation\n",
+					pebi->peb_id);
+			err = -EIO;
+			goto finish_log_create;
+		}
+
+		err = ssdfs_page_array_release_all_pages(area_pages);
+		if (unlikely(err)) {
+			ssdfs_fs_error(si->fsi->sb,
+					__FILE__, __func__, __LINE__,
+					"fail to release pages of PEB %llu\n",
+					pebi->peb_id);
+			err = -EIO;
+			goto finish_log_create;
+		}
 
 		metadata = &area->metadata;
 		memset(metadata, 0, metadata_size);
@@ -452,6 +635,13 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 			area->has_metadata = true;
 			area->write_offset = blk_table_size;
 			area->metadata.reserved_offset = 0;
+
+			err = ssdfs_peb_reserve_blk_desc_space(pebi, metadata);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to reserve blk desc space: "
+					  "err %d\n", err);
+				goto finish_log_create;
+			}
 			break;
 
 		case SSDFS_LOG_DIFFS_AREA:
@@ -483,27 +673,6 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 		default:
 			BUG();
 		};
-
-		area_pages = &area->array;
-
-		if (atomic_read(&area_pages->state) == SSDFS_PAGE_ARRAY_DIRTY) {
-			ssdfs_fs_error(si->fsi->sb,
-					__FILE__, __func__, __LINE__,
-					"PEB %llu is dirty on log creation\n",
-					pebi->peb_id);
-			err = -EIO;
-			goto finish_log_create;
-		}
-
-		err = ssdfs_page_array_release_all_pages(area_pages);
-		if (unlikely(err)) {
-			ssdfs_fs_error(si->fsi->sb,
-					__FILE__, __func__, __LINE__,
-					"fail to release pages of PEB %llu\n",
-					pebi->peb_id);
-			err = -EIO;
-			goto finish_log_create;
-		}
 	}
 
 	ssdfs_peb_set_current_log_state(pebi, SSDFS_LOG_CREATED);
@@ -888,6 +1057,17 @@ int ssdfs_peb_store_block_state_desc(struct ssdfs_peb_info *pebi,
 	kaddr = kmap_atomic(page);
 	memcpy(kaddr + page_off, desc, desc_size);
 	memcpy(kaddr + page_off + desc_size, array, table_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("write_offset %u, page_off %u, "
+		  "desc_size %zu, table_size %zu\n",
+		  write_offset, page_off, desc_size, table_size);
+	SSDFS_DBG("BLOCK STATE DESC AREA DUMP:\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr, PAGE_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	kunmap_atomic(kaddr);
 	SetPageUptodate(page);
 
@@ -1068,6 +1248,9 @@ int ssdfs_peb_define_metadata_space(struct ssdfs_peb_info *pebi,
 	*metadata_offset = area->write_offset;
 	*metadata_space = sizeof(struct ssdfs_block_state_descriptor);
 
+	SSDFS_DBG("metadata_offset %u, metadata_space %u\n",
+		  *metadata_offset, *metadata_space);
+
 	fragments = ssdfs_define_stream_fragments_count(start_offset,
 							data_bytes);
 	if (fragments == 0) {
@@ -1079,8 +1262,8 @@ int ssdfs_peb_define_metadata_space(struct ssdfs_peb_info *pebi,
 	*metadata_offset = ssdfs_peb_correct_area_write_offset(*metadata_offset,
 							       *metadata_space);
 
-	SSDFS_DBG("metadata_offset %u, metadata_space %u\n",
-		  *metadata_offset, *metadata_space);
+	SSDFS_DBG("fragments %u, metadata_offset %u, metadata_space %u\n",
+		  fragments, *metadata_offset, *metadata_space);
 
 	return 0;
 }
@@ -1161,6 +1344,9 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		}
 	}
 
+	SSDFS_DBG("fragments %u, start_offset %u, data_bytes %u\n",
+		  fragments, stream->start_offset, stream->data_bytes);
+
 	start_page = stream->start_offset >> PAGE_SHIFT;
 
 	if ((start_page + fragments) > pagevec_count(stream->pvec)) {
@@ -1169,6 +1355,8 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		err = -ERANGE;
 		goto free_array;
 	}
+
+	stream->write_offset = area->write_offset;
 
 	err = ssdfs_peb_define_metadata_space(pebi, area_type,
 						stream->start_offset,
@@ -1183,6 +1371,8 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 
 	area->write_offset = metadata_offset;
 	area->write_offset += metadata_space;
+
+	SSDFS_DBG("write_offset %u\n", area->write_offset);
 
 	for (page_index = 0; page_index < fragments; page_index++) {
 		int i = start_page + page_index;
@@ -1209,6 +1399,9 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		 */
 		from.fragment_type = fragment_type;
 		from.fragment_flags = SSDFS_FRAGMENT_HAS_CSUM;
+
+		SSDFS_DBG("from.start_offset %u, from.data_bytes %zu\n",
+			  from.start_offset, from.data_bytes);
 
 try_get_next_page:
 		write_offset = area->write_offset;
@@ -1249,10 +1442,16 @@ try_get_next_page:
 
 		written_bytes += from.data_bytes;
 		area->write_offset += le16_to_cpu(cur_desc.compr_size);
+
+		SSDFS_DBG("written_bytes %u, write_offset %u\n",
+			  written_bytes, area->write_offset);
 	}
 
 	stream->compr_bytes =
 		area->write_offset - (metadata_offset + metadata_space);
+
+	SSDFS_DBG("write_offset %u, metadata_offset %u, metadata_space %u\n",
+		  area->write_offset, metadata_offset, metadata_space);
 
 	state_desc.cno = cpu_to_le64(cno);
 	state_desc.parent_snapshot = cpu_to_le64(parent_snapshot);
@@ -1537,7 +1736,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 }
 
 /*
- * ssdfs_peb_get_area_free_blk_desc() - get free fragment descriptor
+ * ssdfs_peb_get_area_free_frag_desc() - get free fragment descriptor
  * @pebi: pointer on PEB object
  * @area_type: area type
  *
@@ -1550,7 +1749,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
  */
 static
 struct ssdfs_fragment_desc *
-ssdfs_peb_get_area_free_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
+ssdfs_peb_get_area_free_frag_desc(struct ssdfs_peb_info *pebi, int area_type)
 {
 	struct ssdfs_area_block_table *table;
 	u16 vacant_item;
@@ -1593,7 +1792,7 @@ ssdfs_peb_get_area_free_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
 }
 
 /*
- * ssdfs_peb_get_area_cur_blk_desc() - get current fragment descriptor
+ * ssdfs_peb_get_area_cur_frag_desc() - get current fragment descriptor
  * @pebi: pointer on PEB object
  * @area_type: area type
  *
@@ -1608,7 +1807,7 @@ ssdfs_peb_get_area_free_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
  */
 static
 struct ssdfs_fragment_desc *
-ssdfs_peb_get_area_cur_blk_desc(struct ssdfs_peb_info *pebi, int area_type)
+ssdfs_peb_get_area_cur_frag_desc(struct ssdfs_peb_info *pebi, int area_type)
 {
 	struct ssdfs_area_block_table *table;
 	u16 fragments_count;
@@ -1716,34 +1915,43 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 
 	fragments = le16_to_cpu(table->chain_hdr.fragments_count);
 
-	if (fragments < SSDFS_NEXT_BLK_TABLE_INDEX)
-		goto set_hdr_flag;
+	if (fragments < SSDFS_NEXT_BLK_TABLE_INDEX) {
+		if (fragments > 0)
+			last_desc = &table->blk[fragments - 1];
+		else
+			last_desc = &table->blk[0];
 
-	BUG_ON(fragments > SSDFS_NEXT_BLK_TABLE_INDEX);
+		last_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
+		last_desc->type = SSDFS_DATA_BLK_DESC;
+		last_desc->flags = 0;
+	} else {
+		BUG_ON(fragments > SSDFS_NEXT_BLK_TABLE_INDEX);
 
-	flags = SSDFS_MULTIPLE_HDR_CHAIN;
+		flags = SSDFS_MULTIPLE_HDR_CHAIN;
 
-	last_desc = &table->blk[SSDFS_NEXT_BLK_TABLE_INDEX];
+		last_desc = &table->blk[SSDFS_NEXT_BLK_TABLE_INDEX];
 
-	new_offset = ssdfs_peb_correct_area_write_offset(area->write_offset,
-							 blk_table_size);
-	area->write_offset = new_offset;
-	last_desc->offset = cpu_to_le32(new_offset);
+		new_offset =
+			ssdfs_peb_correct_area_write_offset(area->write_offset,
+							    blk_table_size);
+		area->write_offset = new_offset;
 
-	last_desc->compr_size = cpu_to_le16(blk_table_size);
-	last_desc->uncompr_size = cpu_to_le16(blk_table_size);
-	last_desc->checksum = 0;
+		last_desc->offset = cpu_to_le32(new_offset);
 
-	if (area->metadata.sequence_id == U8_MAX)
-		area->metadata.sequence_id = 0;
+		last_desc->compr_size = cpu_to_le16(blk_table_size);
+		last_desc->uncompr_size = cpu_to_le16(blk_table_size);
+		last_desc->checksum = 0;
 
-	last_desc->sequence_id = area->metadata.sequence_id++;
+		if (area->metadata.sequence_id == U8_MAX)
+			area->metadata.sequence_id = 0;
 
-	last_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
-	last_desc->type = SSDFS_NEXT_TABLE_DESC;
-	last_desc->flags = 0;
+		last_desc->sequence_id = area->metadata.sequence_id++;
 
-set_hdr_flag:
+		last_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
+		last_desc->type = SSDFS_NEXT_TABLE_DESC;
+		last_desc->flags = 0;
+	}
+
 	hdr_flags = le16_to_cpu(table->chain_hdr.flags);
 	hdr_flags |= flags;
 	table->chain_hdr.flags = cpu_to_le16(hdr_flags);
@@ -2036,6 +2244,7 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 	struct ssdfs_byte_stream_descriptor byte_stream = {0};
 	u32 metadata_offset;
 	u32 metadata_space;
+	u32 estimated_compr_size = data_bytes;
 	u32 check_bytes;
 	int err;
 
@@ -2067,7 +2276,17 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	check_bytes = metadata_space + data_bytes;
+#if defined(CONFIG_SSDFS_ZLIB)
+	estimated_compr_size =
+		ssdfs_peb_estimate_data_fragment_size(data_bytes);
+#elif defined(CONFIG_SSDFS_LZO)
+	estimated_compr_size =
+		ssdfs_peb_estimate_data_fragment_size(data_bytes);
+#else
+	estimated_compr_size = data_bytes;
+#endif
+
+	check_bytes = metadata_space + estimated_compr_size;
 
 	if (!can_area_add_fragment(pebi, area_type, check_bytes)) {
 		pebi->current_log.free_data_pages = 0;
@@ -2525,7 +2744,9 @@ int ssdfs_peb_reserve_block_descriptor(struct ssdfs_peb_info *pebi,
 					struct ssdfs_segment_request *req)
 {
 	int area_type = SSDFS_LOG_BLK_DESC_AREA;
+	struct ssdfs_peb_area_metadata *metadata;
 	struct ssdfs_area_block_table *table;
+	int items_count, capacity;
 	u16 vacant_item;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	int err;
@@ -2541,7 +2762,17 @@ int ssdfs_peb_reserve_block_descriptor(struct ssdfs_peb_info *pebi,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->result.processed_blks);
 
-	table = &pebi->current_log.area[area_type].metadata.area.blk_desc.table;
+	metadata = &pebi->current_log.area[area_type].metadata;
+	table = &metadata->area.blk_desc.table;
+
+	items_count = metadata->area.blk_desc.items_count;
+	capacity = metadata->area.blk_desc.capacity;
+
+	if (items_count < capacity) {
+		/* reserved space can be used */
+		metadata->area.blk_desc.items_count++;
+		return 0;
+	}
 
 	vacant_item = le16_to_cpu(table->chain_hdr.fragments_count);
 	BUG_ON(vacant_item > SSDFS_NEXT_BLK_TABLE_INDEX);
@@ -2582,6 +2813,8 @@ int ssdfs_peb_reserve_block_descriptor(struct ssdfs_peb_info *pebi,
 			return err;
 		}
 	}
+
+	metadata->area.blk_desc.items_count++;
 
 	return 0;
 }
@@ -2637,7 +2870,7 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 	 *       So, block descriptor contains description of
 	 *       one fragment only.
 	 */
-	memset(desc, 0, sizeof(struct ssdfs_block_descriptor));
+	memset(desc, 0xFF, sizeof(struct ssdfs_block_descriptor));
 
 	desc->ino = cpu_to_le64(req->extent.ino);
 	desc->logical_offset = cpu_to_le32((u32)(logical_offset / pagesize));
@@ -2679,12 +2912,14 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 {
 	int area_type = SSDFS_LOG_BLK_DESC_AREA;
 	struct ssdfs_peb_area *area;
+	struct ssdfs_peb_area_metadata *metadata;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	struct page *page;
 	pgoff_t page_index;
 	unsigned char *kaddr;
 	u32 page_off;
 	int id;
+	int items_count, capacity;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2697,11 +2932,22 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 		  req->result.processed_blks);
 
 	area = &pebi->current_log.area[area_type];
-	*write_offset = ssdfs_peb_correct_area_write_offset(area->write_offset,
-							   blk_desc_size);
+	metadata = &area->metadata;
+	items_count = metadata->area.blk_desc.items_count;
+	capacity = metadata->area.blk_desc.capacity;
+
+	if (items_count < 1) {
+		SSDFS_ERR("block descriptor is not reserved\n");
+		return -ERANGE;
+	}
+
+	*write_offset =
+		ssdfs_peb_correct_area_write_offset(area->write_offset,
+						    blk_desc_size);
 	page_index = *write_offset / PAGE_SIZE;
 
-	page = ssdfs_page_array_get_page_locked(&area->array, page_index);
+	page = ssdfs_page_array_get_page_locked(&area->array,
+						page_index);
 	if (IS_ERR_OR_NULL(page)) {
 		SSDFS_ERR("fail to get page %lu for area %#x\n",
 			  page_index, area_type);
@@ -2714,7 +2960,8 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 	kunmap_atomic(kaddr);
 	SetPageUptodate(page);
 
-	err = ssdfs_page_array_set_page_dirty(&area->array, page_index);
+	err = ssdfs_page_array_set_page_dirty(&area->array,
+						page_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set page %lu dirty: "
 			  "err %d\n",
@@ -2815,7 +3062,7 @@ int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	meta_desc = ssdfs_peb_get_area_cur_blk_desc(pebi, area_type);
+	meta_desc = ssdfs_peb_get_area_cur_frag_desc(pebi, area_type);
 	if (IS_ERR(meta_desc)) {
 		SSDFS_ERR("fail to get current fragment descriptor: "
 			  "err %d\n",
@@ -2842,7 +3089,7 @@ int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 		meta_desc->compr_size = cpu_to_le16((u16)bytes_count);
 		meta_desc->uncompr_size = cpu_to_le16((u16)bytes_count);
 	} else {
-		meta_desc = ssdfs_peb_get_area_free_blk_desc(pebi, area_type);
+		meta_desc = ssdfs_peb_get_area_free_frag_desc(pebi, area_type);
 		if (IS_ERR(meta_desc)) {
 			SSDFS_ERR("fail to get vacant fragment descriptor: "
 				  "err %d\n",
@@ -4655,6 +4902,11 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_dst_blk_bmap;
 	}
 
+	SSDFS_DBG("peb_id %llu, DST: last_free_blk %u, "
+		  "metadata_blks %u, invalid_blks %u\n",
+		  pebi->peb_id, desc.last_free_blk,
+		  desc.metadata_blks, desc.invalid_blks);
+
 	if (pagevec_count(&desc.snapshot) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty block bitmap\n");
@@ -4829,6 +5081,11 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 			  pebi->pebc->peb_index, err);
 		goto finish_store_src_blk_bmap;
 	}
+
+	SSDFS_DBG("peb_id %llu, SRC: last_free_blk %u, "
+		  "metadata_blks %u, invalid_blks %u\n",
+		  pebi->peb_id, desc.last_free_blk,
+		  desc.metadata_blks, desc.invalid_blks);
 
 	if (pagevec_count(&desc.snapshot) == 0) {
 		err = -ERANGE;
@@ -5322,6 +5579,251 @@ bool is_peb_area_empty(struct ssdfs_peb_info *pebi, int area_type)
 }
 
 /*
+ * ssdfs_peb_copy_area_pages_into_cache() - copy area pages into cache
+ * @pebi: pointer on PEB object
+ * @area_type: type of area
+ * @desc: descriptor of metadata area
+ * @cur_page: pointer on current page value [in|out]
+ * @write_offset: pointer on write offset value [in|out]
+ *
+ * This function tries to copy area pages into log's page cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - area is empty.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
+					 int area_type,
+					 struct ssdfs_metadata_descriptor *desc,
+					 pgoff_t *cur_page,
+					 u32 *write_offset)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_area *area;
+	size_t blk_table_size = sizeof(struct ssdfs_area_block_table);
+	struct pagevec pvec;
+	struct ssdfs_page_array *smap, *dmap;
+	pgoff_t page_index, end, pages_count, range_len;
+	struct page *page;
+	u32 area_offset, area_size;
+	void *kaddr1, *kaddr2;
+	u16 log_start_page;
+	u32 read_bytes = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
+	BUG_ON(!desc || !cur_page || !write_offset);
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	area = &pebi->current_log.area[area_type];
+	log_start_page = pebi->current_log.start_page;
+
+	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
+		  "area_type %#x, area->write_offset %u, "
+		  "cur_page %lu, write_offset %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  pebi->current_log.start_page,
+		  area_type, area->write_offset,
+		  *cur_page, *write_offset);
+
+	if (is_peb_area_empty(pebi, area_type)) {
+		SSDFS_DBG("area %#x is empty\n", area_type);
+		return -ENODATA;
+	}
+
+	smap = &area->array;
+	dmap = &pebi->cache;
+
+	area_offset = *write_offset;
+	area_size = area->write_offset;
+
+	desc->offset = cpu_to_le32(area_offset +
+					(log_start_page * fsi->pagesize));
+	desc->size = cpu_to_le32(area_size);
+
+	if (area->has_metadata) {
+		void *kaddr;
+
+		page = ssdfs_page_array_get_page_locked(smap, 0);
+		if (IS_ERR_OR_NULL(page)) {
+			SSDFS_ERR("fail to get page of area %#x\n",
+				  area_type);
+			return -ERANGE;
+		}
+
+		kaddr = kmap_atomic(page);
+		desc->check.bytes = cpu_to_le16(blk_table_size);
+		desc->check.flags = cpu_to_le16(SSDFS_CRC32);
+		err = ssdfs_calculate_csum(&desc->check, kaddr, blk_table_size);
+		kunmap_atomic(kaddr);
+		unlock_page(page);
+		put_page(page);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("unable to calculate checksum: err %d\n",
+				  err);
+			return err;
+		}
+
+		err = ssdfs_page_array_set_page_dirty(smap, 0);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page dirty: err %d\n",
+				  err);
+			return err;
+		}
+	}
+
+	pagevec_init(&pvec);
+
+	page_index = 0;
+	pages_count = area->write_offset + PAGE_SIZE - 1;
+	pages_count >>= PAGE_SHIFT;
+
+	while (page_index < pages_count) {
+		int i;
+
+		range_len = min_t(pgoff_t,
+				  (pgoff_t)PAGEVEC_SIZE,
+				  (pgoff_t)(pages_count - page_index));
+		end = page_index + range_len - 1;
+
+		err = ssdfs_page_array_lookup_range(smap, &page_index, end,
+						    SSDFS_DIRTY_PAGE_TAG,
+						    PAGEVEC_SIZE,
+						    &pvec);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find any dirty pages: err %d\n",
+				  err);
+			return err;
+		}
+
+		for (i = 0; i < pagevec_count(&pvec); i++) {
+			struct page *page1 = pvec.pages[i], *page2;
+			pgoff_t src_index = page1->index;
+			u32 src_len, dst_len, copy_len;
+			u32 src_off, dst_off;
+
+			if (read_bytes >= area_size) {
+				err = -E2BIG;
+				SSDFS_ERR("too many pages: "
+					  "pages_count %u, area_size %u\n",
+					  pagevec_count(&pvec),
+					  area_size);
+				goto finish_current_copy;
+			}
+
+			src_off = 0;
+
+try_copy_area_data:
+			get_page(page1);
+			lock_page(page1);
+
+			if (*write_offset >= PAGE_SIZE)
+				dst_off = *write_offset % PAGE_SIZE;
+			else
+				dst_off = *write_offset;
+
+			src_len = min_t(u32, PAGE_SIZE, area_size - read_bytes);
+			dst_len = min_t(u32, PAGE_SIZE, PAGE_SIZE - dst_off);
+			copy_len = min_t(u32, src_len, dst_len);
+
+			page2 = ssdfs_page_array_grab_page(dmap, *cur_page);
+			if (unlikely(IS_ERR_OR_NULL(page2))) {
+				err = -ENOMEM;
+				SSDFS_ERR("fail to grab page: index %lu\n",
+					  *cur_page);
+				goto unlock_page1;
+			}
+
+			kaddr1 = kmap_atomic(page1);
+			kaddr2 = kmap_atomic(page2);
+			memcpy((u8 *)kaddr2 + dst_off,
+				(u8 *)kaddr1 + src_off, copy_len);
+			kunmap_atomic(kaddr2);
+			kunmap_atomic(kaddr1);
+
+			SSDFS_DBG("src_off %u, dst_off %u, src_len %u, "
+				  "dst_len %u, copy_len %u, "
+				  "write_offset %u, cur_page %lu, "
+				  "page_index %d\n",
+				  src_off, dst_off, src_len, dst_len, copy_len,
+				  *write_offset, *cur_page, i);
+
+			if (PageDirty(page1)) {
+				err = ssdfs_page_array_set_page_dirty(dmap,
+								     *cur_page);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to set page dirty: "
+						  "page_index %lu, err %d\n",
+						  *cur_page, err);
+					goto unlock_page2;
+				}
+			} else {
+				err = -ERANGE;
+				SSDFS_ERR("page %d is not dirty\n", i);
+				goto unlock_page2;
+			}
+
+unlock_page2:
+			unlock_page(page2);
+			put_page(page2);
+
+unlock_page1:
+			unlock_page(page1);
+			put_page(page1);
+
+finish_current_copy:
+			if (unlikely(err)) {
+				pagevec_release(&pvec);
+				SSDFS_ERR("fail to copy page: "
+					  " from %lu to %lu, err %d\n",
+					  src_index, *cur_page, err);
+				return err;
+			}
+
+			read_bytes += copy_len;
+			*write_offset += copy_len;
+
+			if ((dst_off + copy_len) >= PAGE_SIZE)
+				++(*cur_page);
+
+			if (copy_len < src_len) {
+				src_off = copy_len;
+				goto try_copy_area_data;
+			} else {
+				err = ssdfs_page_array_clear_dirty_page(smap,
+								page_index + i);
+				if (unlikely(err)) {
+					pagevec_release(&pvec);
+					SSDFS_ERR("fail to mark page clean: "
+						  "page_index %lu\n",
+						  page_index + i);
+					return err;
+				}
+			}
+		}
+
+		page_index += PAGEVEC_SIZE;
+
+		pagevec_reinit(&pvec);
+		cond_resched();
+	};
+
+	pebi->current_log.seg_flags |= SSDFS_AREA_TYPE2FLAG(area_type);
+
+	return 0;
+}
+
+/*
  * ssdfs_peb_move_area_pages_into_cache() - move area pages into cache
  * @pebi: pointer on PEB object
  * @area_type: type of area
@@ -5378,14 +5880,6 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 	if (is_peb_area_empty(pebi, area_type)) {
 		SSDFS_DBG("area %#x is empty\n", area_type);
 		return -ENODATA;
-	}
-
-	err = ssdfs_peb_store_area_block_table(pebi, area_type);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to store area's block table: "
-			  "area %#x, err %d\n",
-			  area_type, err);
-		return err;
 	}
 
 	smap = &area->array;
@@ -5488,6 +5982,10 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 						  *cur_page, err);
 					goto finish_current_move;
 				}
+			} else {
+				err = -ERANGE;
+				SSDFS_ERR("page %d is not dirty\n", i);
+				goto finish_current_move;
 			}
 
 			pvec.pages[i] = NULL;
@@ -5515,6 +6013,74 @@ finish_current_move:
 	};
 
 	pebi->current_log.seg_flags |= SSDFS_AREA_TYPE2FLAG(area_type);
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_store_blk_desc_table() - try to store block descriptor table
+ * @pebi: pointer on PEB object
+ * @desc: descriptor of metadata area
+ * @cur_page: pointer on current page value [in|out]
+ * @write_offset: pointer on write offset value [in|out]
+ *
+ * This function tries to store block descriptor into log's page cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - area is empty.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_store_blk_desc_table(struct ssdfs_peb_info *pebi,
+				   struct ssdfs_metadata_descriptor *desc,
+				   pgoff_t *cur_page,
+				   u32 *write_offset)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_area *area;
+	int area_type = SSDFS_LOG_BLK_DESC_AREA;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(!desc || !cur_page || !write_offset);
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	area = &pebi->current_log.area[area_type];
+
+	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
+		  "area->write_offset %u, "
+		  "cur_page %lu, write_offset %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  pebi->current_log.start_page,
+		  area->write_offset,
+		  *cur_page, *write_offset);
+
+	if (is_peb_area_empty(pebi, area_type)) {
+		SSDFS_DBG("area %#x is empty\n", area_type);
+		return -ENODATA;
+	}
+
+	err = ssdfs_peb_store_area_block_table(pebi, area_type);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to store area's block table: "
+			  "area %#x, err %d\n",
+			  area_type, err);
+		return err;
+	}
+
+	err = ssdfs_peb_copy_area_pages_into_cache(pebi, area_type, desc,
+						   cur_page, write_offset);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move pages in the cache: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -6217,6 +6783,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	memset(hdr_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 	memset(lf_desc, 0, desc_size * SSDFS_LOG_FOOTER_DESC_MAX);
 
+	SSDFS_DBG("0001: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
 	err = ssdfs_reserve_segment_header(pebi, &cur_page, &write_offset);
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to reserve segment header: "
@@ -6224,6 +6793,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			   pebi->pebc->parent_si->seg_id, pebi->peb_id, err);
 		goto finish_commit_log;
 	}
+
+	SSDFS_DBG("0002: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
 
 	/*
 	 * TODO: currently it is used compressed flag
@@ -6243,6 +6815,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
 	cur_hdr_desc = &hdr_desc[SSDFS_OFF_TABLE_INDEX];
 	err = ssdfs_peb_store_offsets_table(pebi, cur_hdr_desc,
 					    &cur_page, &write_offset);
@@ -6255,6 +6830,71 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
+	area_type = SSDFS_LOG_BLK_DESC_AREA;
+	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
+	err = ssdfs_peb_store_blk_desc_table(pebi, cur_hdr_desc,
+					     &cur_page, &write_offset);
+	if (unlikely(err)) {
+		SSDFS_CRIT("fail to store block descriptors table: "
+			   "seg %llu, peb %llu, cur_page %lu, write_offset %u, "
+			   "err %d\n",
+			   pebi->pebc->parent_si->seg_id, pebi->peb_id,
+			   cur_page, write_offset, err);
+		goto finish_commit_log;
+	}
+
+	SSDFS_DBG("0005: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
+	area_type = SSDFS_LOG_DIFFS_AREA;
+	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
+	err = ssdfs_peb_copy_area_pages_into_cache(pebi,
+						   area_type,
+						   cur_hdr_desc,
+						   &cur_page,
+						   &write_offset);
+	if (err == -ENODATA) {
+		err = 0;
+	} else if (unlikely(err)) {
+		SSDFS_CRIT("fail to move the area %d into PEB cache: "
+			   "seg %llu, peb %llu, cur_page %lu, "
+			   "write_offset %u, err %d\n",
+			   area_type, pebi->pebc->parent_si->seg_id,
+			   pebi->peb_id, cur_page, write_offset,
+			   err);
+		goto finish_commit_log;
+	} else
+		log_has_data = true;
+
+	SSDFS_DBG("0006: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
+	area_type = SSDFS_LOG_JOURNAL_AREA;
+	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
+	err = ssdfs_peb_copy_area_pages_into_cache(pebi,
+						   area_type,
+						   cur_hdr_desc,
+						   &cur_page,
+						   &write_offset);
+	if (err == -ENODATA) {
+		err = 0;
+	} else if (unlikely(err)) {
+		SSDFS_CRIT("fail to move the area %d into PEB cache: "
+			   "seg %llu, peb %llu, cur_page %lu, "
+			   "write_offset %u, err %d\n",
+			   area_type, pebi->pebc->parent_si->seg_id,
+			   pebi->peb_id, cur_page, write_offset,
+			   err);
+		goto finish_commit_log;
+	} else
+		log_has_data = true;
+
+	SSDFS_DBG("0007: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
 	if (write_offset % PAGE_SIZE) {
 		cur_page++;
 
@@ -6263,29 +6903,28 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		write_offset <<= PAGE_SHIFT;
 	}
 
-	area_type = SSDFS_LOG_BLK_DESC_AREA;
-	for (; area_type < SSDFS_LOG_AREA_MAX; area_type++) {
-		cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
-		err = ssdfs_peb_move_area_pages_into_cache(pebi,
-							   area_type,
-							   cur_hdr_desc,
-							   &cur_page,
-							   &write_offset);
-		if (err == -ENODATA) {
-			err = 0;
-			continue;
-		} else if (unlikely(err)) {
-			SSDFS_CRIT("fail to move the area %d into PEB cache: "
-				   "seg %llu, peb %llu, cur_page %lu, "
-				   "write_offset %u, err %d\n",
-				   area_type, pebi->pebc->parent_si->seg_id,
-				   pebi->peb_id, cur_page, write_offset,
-				   err);
-			goto finish_commit_log;
-		}
-
+	area_type = SSDFS_LOG_MAIN_AREA;
+	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
+	err = ssdfs_peb_move_area_pages_into_cache(pebi,
+						   area_type,
+						   cur_hdr_desc,
+						   &cur_page,
+						   &write_offset);
+	if (err == -ENODATA) {
+		err = 0;
+	} else if (unlikely(err)) {
+		SSDFS_CRIT("fail to move the area %d into PEB cache: "
+			   "seg %llu, peb %llu, cur_page %lu, "
+			   "write_offset %u, err %d\n",
+			   area_type, pebi->pebc->parent_si->seg_id,
+			   pebi->peb_id, cur_page, write_offset,
+			   err);
+		goto finish_commit_log;
+	} else
 		log_has_data = true;
-	}
+
+	SSDFS_DBG("0008: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
 
 	if (!log_has_data) {
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
@@ -6310,6 +6949,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+	SSDFS_DBG("0009: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
 	err = ssdfs_peb_store_log_header(pebi, hdr_desc,
 					 SSDFS_SEG_HDR_DESC_MAX,
 					 write_offset);
@@ -6322,6 +6964,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+	SSDFS_DBG("0010: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
 	err = ssdfs_peb_flush_current_log_dirty_pages(pebi, write_offset);
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to flush current log: "
@@ -6332,6 +6977,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+	SSDFS_DBG("0011: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
+
 define_next_log_start:
 	if (cur_page % pebi->log_pages) {
 		cur_page += pebi->log_pages - 1;
@@ -6339,6 +6987,9 @@ define_next_log_start:
 	}
 
 	pebi->current_log.start_page = cur_page;
+
+	SSDFS_DBG("0012: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
 
 	if (pebi->current_log.start_page >= fsi->pages_per_peb) {
 		pebi->current_log.free_data_pages = 0;
@@ -6351,6 +7002,9 @@ define_next_log_start:
 		pebi->current_log.free_data_pages =
 			min_t(u16, pebi->log_pages, pages_diff);
 	}
+
+	SSDFS_DBG("0013: cur_page %lu, write_offset %u\n",
+		  cur_page, write_offset);
 
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.seg_flags = 0;
@@ -6656,11 +7310,11 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 	req->result.err = err;
 
-	if (err)
+	if (err) {
+		SSDFS_DBG("failure: req %p, err %d\n", req, err);
 		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
-	else
+	} else
 		atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
-
 
 	switch (req->private.type) {
 	case SSDFS_REQ_SYNC:
@@ -7961,7 +8615,6 @@ process_migration_failure:
 							   err);
 				ssdfs_peb_current_log_unlock(pebi);
 				ssdfs_unlock_current_peb(pebc);
-
 				thread_state = SSDFS_FLUSH_THREAD_ERROR;
 				goto repeat;
 			} else if (IS_ERR_OR_NULL(pebi)) {

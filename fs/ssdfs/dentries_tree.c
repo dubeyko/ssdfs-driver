@@ -962,14 +962,19 @@ int ssdfs_check_dentry_for_request(struct ssdfs_fs_info *fsi,
 	flags = dentry->flags;
 	name_len = dentry->name_len;
 
-	if (SSDFS_DENTRY_UNKNOWN_TYPE <= dentry_type ||
+	SSDFS_DBG("hash_code %llx, ino %llu, "
+		  "type %#x, file_type %#x, flags %#x, name_len %u\n",
+		  hash_code, ino, dentry_type,
+		  file_type, flags, name_len);
+
+	if (dentry_type <= SSDFS_DENTRY_UNKNOWN_TYPE ||
 	    dentry_type >= SSDFS_DENTRY_TYPE_MAX) {
 		SSDFS_ERR("corrupted dentry: dentry_type %#x\n",
 			  dentry_type);
 		return -EIO;
 	}
 
-	if (SSDFS_FT_UNKNOWN <= file_type ||
+	if (file_type <= SSDFS_FT_UNKNOWN ||
 	    file_type >= SSDFS_FT_MAX) {
 		SSDFS_ERR("corrupted dentry: file_type %#x\n",
 			  file_type);
@@ -1162,6 +1167,7 @@ ssdfs_dentries_tree_find_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		u8 flags;
 		u8 name_len;
 
+		search->result.buf = NULL;
 		search->result.state = SSDFS_BTREE_SEARCH_UNKNOWN_RESULT;
 
 		dentry = &tree->inline_dentries[i];
@@ -1170,6 +1176,10 @@ ssdfs_dentries_tree_find_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		type = dentry->dentry_type;
 		flags = dentry->flags;
 		name_len = dentry->name_len;
+
+		SSDFS_DBG("i %llu, hash_code %llx, ino %llu, "
+			  "type %#x, flags %#x, name_len %u\n",
+			  (u64)i, hash_code, ino, type, flags, name_len);
 
 		if (type != SSDFS_INLINE_DENTRY) {
 			SSDFS_ERR("corrupted dentry: "
@@ -1294,7 +1304,7 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 		up_read(&tree->lock);
 
 		if (err == -ENODATA) {
-			SSDFS_ERR("unable to find the inline dentry: "
+			SSDFS_DBG("unable to find the inline dentry: "
 				  "hash %llu\n",
 				  search->request.start.hash);
 		} else if (unlikely(err)) {

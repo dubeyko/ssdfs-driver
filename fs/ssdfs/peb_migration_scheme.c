@@ -96,6 +96,8 @@ check_migration_state:
 		return err;
 	}
 
+	SSDFS_DBG("finished\n");
+
 	return 0;
 }
 
@@ -392,7 +394,7 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 	BUG_ON(!si || !pebc || !peb_blkbmap || !range);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("seg_id %llu, peb_index %u, peb_type %#x, "
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "range (start %u, len %u)\n",
 		  si->seg_id, pebc->peb_index, pebc->peb_type,
 		  range->start, range->len);
@@ -518,7 +520,7 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 	BUG_ON(!si || !pebc || !peb_blkbmap || !range);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("seg_id %llu, peb_index %u, peb_type %#x, "
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "range (start %u, len %u)\n",
 		  si->seg_id, pebc->peb_index, pebc->peb_type,
 		  range->start, range->len);
@@ -683,6 +685,10 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 							 0, pages_per_peb,
 							 SSDFS_BLK_VALID,
 							 &range1);
+
+		SSDFS_DBG("range1.start %u, range1.len %u, err %d\n",
+			  range1.start, range1.len, err);
+
 		if (err == -ENODATA) {
 			/* no valid blocks */
 			err = 0;
@@ -697,6 +703,10 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 							0, pages_per_peb,
 							SSDFS_BLK_PRE_ALLOCATED,
 							&range2);
+
+		SSDFS_DBG("range2.start %u, range2.len %u, err %d\n",
+			  range2.start, range2.len, err);
+
 		if (err == -ENODATA) {
 			/* no valid blocks */
 			err = 0;
@@ -786,6 +796,8 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		return err;
 	}
+
+	SSDFS_DBG("finished\n");
 
 	return 0;
 }

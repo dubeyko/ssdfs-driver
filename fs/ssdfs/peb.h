@@ -41,6 +41,8 @@ struct ssdfs_peb_journal_area_metadata {
 /*
  * struct ssdfs_peb_area_metadata - descriptor of area's items chain
  * @area.blk_desc.table: block descriptors area table
+ * @area.blk_desc.capacity: max number of block descriptors in reserved space
+ * @area.blk_desc.items_count: number of items in the whole table
  * @area.diffs.table: diffs area's table
  * @area.journal.table: journal area's table
  * @area.main.desc: main area's descriptor
@@ -51,6 +53,8 @@ struct ssdfs_peb_area_metadata {
 	union {
 		struct {
 			struct ssdfs_area_block_table table;
+			int capacity;
+			int items_count;
 		} blk_desc;
 
 		struct {
