@@ -22,6 +22,8 @@
 
 #include <linux/pagevec.h>
 
+#include "request_queue.h"
+
 /*
  * struct ssdfs_phys_offset_table_fragment - fragment of phys offsets table
  * @lock: table fragment lock
@@ -105,6 +107,28 @@ struct ssdfs_offset_position {
 	u16 offset_index;
 };
 
+/*
+ * struct ssdfs_migrating_block - migrating block state
+ * @state: logical block's state
+ * @peb_index: PEB's index
+ * @pvec: copy of logical block's content (under migration only)
+ */
+struct ssdfs_migrating_block {
+	int state;
+	u16 peb_index;
+	struct pagevec pvec;
+};
+
+/*
+ * Migrating block's states
+ */
+enum {
+	SSDFS_LBLOCK_UNKNOWN_STATE,
+	SSDFS_LBLOCK_UNDER_MIGRATION,
+	SSDFS_LBLOCK_UNDER_COMMIT,
+	SSDFS_LBLOCK_STATE_MAX
+};
+
 enum {
 	SSDFS_LBMAP_INIT_INDEX,
 	SSDFS_LBMAP_STATE_INDEX,
@@ -126,6 +150,7 @@ enum {
  * @last_allocated_blk: last allocated block (hint for allocation)
  * @lbmap: array of block bitmaps
  * @lblk2off: array of correspondence between logical numbers and phys off ids
+ * @migrating_blks: array of migrating blocks
  * @lblk2off_capacity: capacity of correspondence array
  * @peb: sequence of physical offset arrays
  * @pebs_count: count of PEBs in segment
@@ -148,6 +173,7 @@ struct ssdfs_blk2off_table {
 	u16 last_allocated_blk;
 	unsigned long *lbmap[SSDFS_LBMAP_ARRAY_MAX];
 	struct ssdfs_offset_position *lblk2off;
+	struct ssdfs_migrating_block *migrating_blks;
 	u16 lblk2off_capacity;
 
 	struct ssdfs_phys_offset_table_array *peb;
@@ -376,7 +402,8 @@ int ssdfs_blk2off_table_get_offset_position(struct ssdfs_blk2off_table *table,
 					    struct ssdfs_offset_position *pos);
 struct ssdfs_phys_offset_descriptor *
 ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
-			    u16 logical_blk);
+			    u16 logical_blk, u16 *peb_index,
+			    bool *is_migrating);
 int ssdfs_blk2off_table_allocate_block(struct ssdfs_blk2off_table *table,
 					u16 *logical_blk);
 int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
@@ -390,5 +417,17 @@ int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
 				   u16 logical_blk);
 int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 				    struct ssdfs_blk2off_range *extent);
+
+int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
+					    u16 logical_blk,
+					    u16 peb_index,
+					    struct pagevec *blk_state);
+int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
+					struct ssdfs_segment_request *req);
+int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,
+					 u16 logical_blk,
+					 u16 peb_index);
+int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
+						u16 peb_index);
 
 #endif /* _SSDFS_OFFSET_TRANSLATION_TABLE_H */

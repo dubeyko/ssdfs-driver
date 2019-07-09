@@ -342,6 +342,8 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 
 	fsi = pebc->parent_si->fsi;
 
+	atomic_set(&pebi->state, SSDFS_PEB_OBJECT_UNKNOWN_STATE);
+
 	peb_type = SEG2PEB_TYPE(pebc->parent_si->seg_type);
 	if (peb_type >= SSDFS_MAPTBL_PEB_TYPE_MAX) {
 		err = -EINVAL;
@@ -354,6 +356,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	pebi->peb_index = pebc->peb_index;
 	pebi->log_pages = pebc->log_pages;
 	ssdfs_set_peb_migration_id(pebi, peb_migration_id);
+	init_completion(&pebi->init_end);
 	atomic_set(&pebi->reserved_bytes.blk_bmap, 0);
 	atomic_set(&pebi->reserved_bytes.blk2off_tbl, 0);
 	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, 0);
@@ -426,6 +429,8 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		err = -EINVAL;
 		goto fail_conctruct_peb_obj;
 	};
+
+	atomic_set(&pebi->state, SSDFS_PEB_OBJECT_CREATED);
 
 	return 0;
 

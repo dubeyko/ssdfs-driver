@@ -725,6 +725,8 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	u32 pvec_size;
 	u64 logical_offset;
 	u32 data_bytes;
+	struct completion *end;
+	unsigned long res;
 	int i;
 	int err = 0;
 
@@ -824,9 +826,6 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_blk2off_table_get_offset_position(table, logical_blk, &pos);
 	if (err == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
-
 		end = &table->full_init_end;
 
 		res = wait_for_completion_timeout(end, SSDFS_DEFAULT_TIMEOUT);
@@ -851,7 +850,20 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 
 	pebc = &(*si)->peb_array[pos.peb_index];
 
-	err = ssdfs_peb_readahead_pages(pebc, req);
+	err = ssdfs_peb_readahead_pages(pebc, req, &end);
+	if (err == -EAGAIN) {
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("PEB init failed: "
+				  "err %d\n", err);
+			goto fail_read_node;
+		}
+
+		err = ssdfs_peb_readahead_pages(pebc, req, &end);
+	}
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read page: err %d\n",
 			  err);

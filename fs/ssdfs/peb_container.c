@@ -463,12 +463,18 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 		ssdfs_set_peb_migration_id(pebc->src_peb,
 					   SSDFS_PEB_MIGRATION_ID_START);
+		atomic_set(&pebc->src_peb->state,
+			   SSDFS_PEB_OBJECT_INITIALIZED);
+		complete_all(&pebc->src_peb->init_end);
 	} else if (selected_peb == SSDFS_DST_PEB) {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc->dst_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 		ssdfs_set_peb_migration_id(pebc->dst_peb,
 					   SSDFS_PEB_MIGRATION_ID_START);
+		atomic_set(&pebc->dst_peb->state,
+			   SSDFS_PEB_OBJECT_INITIALIZED);
+		complete_all(&pebc->dst_peb->init_end);
 	}
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
@@ -2168,6 +2174,10 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	ptr->dst_peb = pebi;
 	atomic_inc(&ptr->dst_peb_refs);
 
+	atomic_set(&pebi->state,
+		   SSDFS_PEB_OBJECT_INITIALIZED);
+	complete_all(&pebi->init_end);
+
 	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
 		  pebi->peb_id,
 		  atomic_read(&ptr->dst_peb_refs));
@@ -3352,21 +3362,16 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_migration_id %u, "
-		  "logical_offset %u, peb_page %u\n",
-		  le16_to_cpu(desc->page_desc.peb_index),
+		  "logical_offset %u, logical_blk %u, peb_page %u\n",
+		  pebc->peb_index,
 		  desc->blk_state.peb_migration_id,
 		  le32_to_cpu(desc->page_desc.logical_offset),
+		  le16_to_cpu(desc->page_desc.logical_blk),
 		  le16_to_cpu(desc->page_desc.peb_page));
 
-	peb_index = le16_to_cpu(desc->page_desc.peb_index);
+	peb_index = pebc->peb_index;
 	peb_page = le16_to_cpu(desc->page_desc.peb_page);
 	peb_migration_id = desc->blk_state.peb_migration_id;
-
-	if (peb_index != pebc->peb_index) {
-		SSDFS_ERR("peb_index %u != pebc->peb_index %u\n",
-			  peb_index, pebc->peb_index);
-		return -ERANGE;
-	}
 
 	down_read(&pebc->lock);
 

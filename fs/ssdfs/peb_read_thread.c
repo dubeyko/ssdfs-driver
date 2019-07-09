@@ -1240,7 +1240,8 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_peb_read_page() - read page from PEB
  * @pebc: pointer on PEB container
- * @req: request
+ * @req: request [in|out]
+ * @end: pointer on waiting queue [out]
  *
  * This function tries to read PEB's page.
  *
@@ -1249,9 +1250,11 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - PEB object is not initialized yet.
  */
 int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
-			struct ssdfs_segment_request *req)
+			struct ssdfs_segment_request *req,
+			struct completion **end)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
@@ -1264,6 +1267,8 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_block_descriptor blk_desc = {0};
 	int area_index;
 	u8 peb_migration_id;
+	u16 peb_index;
+	bool is_migrating = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1290,7 +1295,8 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	table = pebc->parent_si->blk2off_table;
 	logical_blk = req->place.start.blk_index + req->result.processed_blks;
 
-	desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
+	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+						&peb_index, &is_migrating);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -1306,7 +1312,9 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 			return err;
 		}
 
-		desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
+		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index,
+							&is_migrating);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -1319,18 +1327,42 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 
 	peb_migration_id = desc_off->blk_state.peb_migration_id;
 
-	SSDFS_DBG("logical_blk %u, "
-		  "logical_offset %u, peb_index %u, peb_page %u, "
+	SSDFS_DBG("logical_blk %u, peb_index %u, "
+		  "logical_offset %u, logical_blk %u, peb_page %u, "
 		  "log_start_page %u, log_area %u, "
 		  "peb_migration_id %u, byte_offset %u\n",
-		  logical_blk,
+		  logical_blk, pebc->peb_index,
 		  le32_to_cpu(desc_off->page_desc.logical_offset),
-		  le16_to_cpu(desc_off->page_desc.peb_index),
+		  le16_to_cpu(desc_off->page_desc.logical_blk),
 		  le16_to_cpu(desc_off->page_desc.peb_page),
 		  le16_to_cpu(desc_off->blk_state.log_start_page),
 		  desc_off->blk_state.log_area,
 		  desc_off->blk_state.peb_migration_id,
 		  le32_to_cpu(desc_off->blk_state.byte_offset));
+
+	if (is_migrating) {
+		err = ssdfs_blk2off_table_get_block_state(table, req);
+		if (err == -EAGAIN) {
+			desc_off = ssdfs_blk2off_table_convert(table,
+								logical_blk,
+								&peb_index,
+								&is_migrating);
+			if (IS_ERR_OR_NULL(desc_off)) {
+				err = (desc_off == NULL ?
+						-ERANGE : PTR_ERR(desc_off));
+				SSDFS_ERR("fail to convert: "
+					  "logical_blk %u, err %d\n",
+					  logical_blk, err);
+				return err;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to get migrating block state: "
+				  "logical_blk %u, peb_index %u, err %d\n",
+				  logical_blk, pebc->peb_index, err);
+			return err;
+		} else
+			return 0;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (pebc->src_peb) {
@@ -1346,18 +1378,88 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 
 	down_read(&pebc->lock);
 
-	if (pebc->src_peb &&
-	    peb_migration_id == ssdfs_get_peb_migration_id(pebc->src_peb)) {
-		/* use source PEB */
-		pebi = pebc->src_peb;
-	} else if (pebc->dst_peb &&
-	    peb_migration_id == ssdfs_get_peb_migration_id(pebc->dst_peb)) {
-		/* use destination PEB */
-		pebi = pebc->dst_peb;
+	if (pebc->src_peb) {
+		int id1;
+
+		switch (atomic_read(&pebc->src_peb->state)) {
+		case SSDFS_PEB_OBJECT_CREATED:
+			if (end == NULL) {
+				err = -ERANGE;
+				SSDFS_ERR("PEB object is not initialized\n");
+				goto finish_read_page;
+			} else {
+				err = -EAGAIN;
+				*end = &pebc->src_peb->init_end;
+				goto finish_read_page;
+			}
+			break;
+
+		case SSDFS_PEB_OBJECT_INITIALIZED:
+			id1 = ssdfs_get_peb_migration_id(pebc->src_peb);
+			if (peb_migration_id == id1) {
+				/* use source PEB */
+				pebi = pebc->src_peb;
+				goto start_read_page;
+			}
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid SRC PEB state %#x\n",
+				  atomic_read(&pebc->src_peb->state));
+			goto finish_read_page;
+		}
 	}
 
+	if (pebc->dst_peb) {
+		int id2;
+
+		switch (atomic_read(&pebc->dst_peb->state)) {
+		case SSDFS_PEB_OBJECT_CREATED:
+			if (end == NULL) {
+				err = -ERANGE;
+				SSDFS_ERR("PEB object is not initialized\n");
+				goto finish_read_page;
+			} else {
+				err = -EAGAIN;
+				*end = &pebc->dst_peb->init_end;
+				goto finish_read_page;
+			}
+			break;
+
+		case SSDFS_PEB_OBJECT_INITIALIZED:
+			id2 = ssdfs_get_peb_migration_id(pebc->dst_peb);
+			if (peb_migration_id == id2) {
+				/* use destination PEB */
+				pebi = pebc->dst_peb;
+				goto start_read_page;
+			}
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid DST PEB state %#x\n",
+				  atomic_read(&pebc->dst_peb->state));
+			goto finish_read_page;
+		}
+	}
+
+start_read_page:
 	if (!pebi) {
 		err = -ERANGE;
+
+		if (pebc->src_peb) {
+			SSDFS_ERR("SRC: peb_id %llu, peb_migration_id %d\n",
+				  pebc->src_peb->peb_id,
+				  ssdfs_get_peb_migration_id(pebc->src_peb));
+		}
+
+		if (pebc->dst_peb) {
+			SSDFS_ERR("DST: peb_id %llu, peb_migration_id %d\n",
+				  pebc->dst_peb->peb_id,
+				  ssdfs_get_peb_migration_id(pebc->dst_peb));
+		}
+
 		SSDFS_WARN("invalid peb_migration_id: "
 			   "seg %llu, peb_index %u, src_peb %p, "
 			   "dst_peb %p, peb_migration_id %u\n",
@@ -1418,15 +1520,14 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 finish_read_page:
 	up_read(&pebc->lock);
 
-/* TODO: too many big structures on the stack!!! Check it. */
-
 	return err;
 }
 
 /*
  * ssdfs_peb_readahead_pages() - read-ahead pages from PEB
  * @pebc: pointer on PEB container
- * @req: request
+ * @req: request [in|out]
+ * @end: pointer on waiting queue [out]
  *
  * This function tries to read-ahead PEB's pages.
  *
@@ -1437,7 +1538,8 @@ finish_read_page:
  * %-ERANGE     - internal error.
  */
 int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
-			      struct ssdfs_segment_request *req)
+			      struct ssdfs_segment_request *req,
+			      struct completion **end)
 {
 	struct ssdfs_fs_info *fsi;
 	u32 pages_count;
@@ -1467,9 +1569,12 @@ int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
 	pages_count = req->extent.data_bytes + fsi->pagesize - 1;
 	pages_count >>= fsi->log_pagesize;
 
-	for (i = 0; i < pages_count; i++) {
-		int err = ssdfs_peb_read_page(pebc, req);
-		if (unlikely(err)) {
+	for (i = req->result.processed_blks; i < pages_count; i++) {
+		int err = ssdfs_peb_read_page(pebc, req, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("unable to process page %d\n", i);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to process page %d, err %d\n",
 				  i, err);
 			return err;
@@ -2459,6 +2564,10 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_using_metadata_state;
 	}
 
+	atomic_set(&pebi->state,
+		   SSDFS_PEB_OBJECT_INITIALIZED);
+	complete_all(&pebi->init_end);
+
 finish_src_init_using_metadata_state:
 	up_read(&pebc->lock);
 	kfree(seg_hdr);
@@ -2550,6 +2659,10 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 	ssdfs_set_peb_migration_id(pebc->dst_peb, id1);
 
+	atomic_set(&pebc->dst_peb->state,
+		   SSDFS_PEB_OBJECT_INITIALIZED);
+	complete_all(&pebc->dst_peb->init_end);
+
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
 	case SSDFS_PEB2_SRC_PEB1_DST_CONTAINER:
@@ -2577,6 +2690,9 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
 			/* it needs to initialize the migration id */
 			ssdfs_set_peb_migration_id(pebc->src_peb, id1);
+			atomic_set(&pebc->src_peb->state,
+				   SSDFS_PEB_OBJECT_INITIALIZED);
+			complete_all(&pebc->src_peb->init_end);
 		} else if (is_peb_migration_id_valid(id2)) {
 			if (id1 != id2) {
 				err = -ERANGE;
@@ -2696,6 +2812,9 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 	if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
 		/* it needs to initialize the migration id */
 		ssdfs_set_peb_migration_id(pebi, id1);
+		atomic_set(&pebi->state,
+			   SSDFS_PEB_OBJECT_INITIALIZED);
+		complete_all(&pebi->init_end);
 	} else if (is_peb_migration_id_valid(id2)) {
 		if (id1 != id2) {
 			err = -ERANGE;
@@ -2900,6 +3019,9 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
 			/* it needs to initialize the migration id */
 			ssdfs_set_peb_migration_id(pebc->src_peb, id1);
+			atomic_set(&pebc->src_peb->state,
+				   SSDFS_PEB_OBJECT_INITIALIZED);
+			complete_all(&pebc->src_peb->init_end);
 		} else if (is_peb_migration_id_valid(id2)) {
 			if (id1 != id2) {
 				err = -ERANGE;
@@ -2922,6 +3044,10 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		/* do nothing */
 		break;
 	};
+
+	atomic_set(&pebc->dst_peb->state,
+		   SSDFS_PEB_OBJECT_INITIALIZED);
+	complete_all(&pebc->dst_peb->init_end);
 
 finish_dst_init_used_metadata_state:
 	up_read(&pebc->lock);
@@ -4124,7 +4250,7 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 
 	ssdfs_request_define_volume_extent(logical_blk, pages_count, req);
 
-	err = ssdfs_peb_read_page(pebc, req);
+	err = ssdfs_peb_read_page(pebc, req, NULL);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read page: "
 			  "seg %llu, peb_index %u, err %d\n",
@@ -4288,7 +4414,7 @@ int ssdfs_peb_read_segbmap_pages(struct ssdfs_peb_container *pebc,
 	pages_count = (read_bytes + fsi->pagesize - 1) >> PAGE_SHIFT;
 	ssdfs_request_define_volume_extent(logical_blk, pages_count, req);
 
-	err = ssdfs_peb_readahead_pages(pebc, req);
+	err = ssdfs_peb_readahead_pages(pebc, req, NULL);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read pages: "
 			  "seg %llu, peb_index %u, err %d\n",
@@ -4612,7 +4738,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		ssdfs_request_define_volume_extent((u16)logical_blk,
 						   pages_count, req);
 
-		err = ssdfs_peb_readahead_pages(pebc, req);
+		err = ssdfs_peb_readahead_pages(pebc, req, NULL);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read pages: "
 				  "seg %llu, peb_index %u, err %d\n",
@@ -4640,9 +4766,18 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 			if (!is_fragment_valid) {
 				err = -ENODATA;
 				area->portion_id = U16_MAX;
-				SSDFS_DBG("empty fragment: "
-					  "peb_index %u, index %d\n",
+				SSDFS_ERR("empty fragment: "
+					  "seg %llu, peb_index %u, index %d\n",
+					  pebc->parent_si->seg_id,
 					  pebc->peb_index, index);
+
+				kaddr = kmap(req->result.pvec.pages[0]);
+				SSDFS_DBG("MAPTBL FRAGMENT PAGE DUMP\n");
+				print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+							kaddr, PAGE_SIZE);
+				SSDFS_DBG("\n");
+				kunmap(req->result.pvec.pages[0]);
+
 				goto fail_read_maptbl_pages;
 			}
 		}
@@ -4819,7 +4954,7 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 
 	switch (req->private.cmd) {
 	case SSDFS_READ_PAGE:
-		err = ssdfs_peb_read_page(pebc, req);
+		err = ssdfs_peb_read_page(pebc, req, NULL);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read page: "
 				  "seg %llu, peb_index %u, err %d\n",
@@ -4829,7 +4964,7 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_READ_PAGES_READAHEAD:
-		err = ssdfs_peb_readahead_pages(pebc, req);
+		err = ssdfs_peb_readahead_pages(pebc, req, NULL);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read pages: "
 				  "seg %llu, peb_index %u, err %d\n",

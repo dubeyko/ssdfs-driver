@@ -2840,6 +2840,7 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 {
 	u64 logical_offset;
 	u32 pagesize;
+	int id;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req || !desc || !data);
@@ -2881,6 +2882,21 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 			cpu_to_le16(pebi->current_log.start_page);
 	desc->state[0].log_area = data->log_area;
 	desc->state[0].byte_offset = cpu_to_le32(data->byte_offset);
+
+	id = ssdfs_get_peb_migration_id_checked(pebi);
+	if (unlikely(id < 0)) {
+		SSDFS_ERR("invalid peb_migration_id: "
+			  "seg %llu, peb_id %llu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, id);
+		return id;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(id > U8_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	desc->state[0].peb_migration_id = (u8)id;
 
 	return 0;
 }
@@ -3128,11 +3144,13 @@ int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_peb_store_block_descriptor_offset() - store offset in blk2off table
  * @pebi: pointer on PEB object
+ * @logical_offset: offset in pages from file's begin
  * @logical_blk: segment's logical block
  * @off: pointer on block descriptor offset
  */
 static
 int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
+					    u32 logical_offset,
 					    u16 logical_blk,
 					    struct ssdfs_peb_phys_offset *off)
 {
@@ -3148,17 +3166,18 @@ int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
 	BUG_ON(logical_blk == U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("seg %llu, peb %llu, logical_blk %u, area_type %#x,"
+	SSDFS_DBG("seg %llu, peb %llu, logical_offset %u, "
+		  "logical_blk %u, area_type %#x,"
 		  "peb_index %u, peb_page %u, byte_offset %u\n",
 		  pebi->pebc->parent_si->seg_id,
-		  pebi->peb_id, logical_blk,
+		  pebi->peb_id, logical_offset, logical_blk,
 		  off->log_area, off->peb_index,
 		  off->peb_page, off->byte_offset);
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	blk_desc_off.page_desc.logical_offset = cpu_to_le32(logical_blk);
-	blk_desc_off.page_desc.peb_index = cpu_to_le16(off->peb_index);
+	blk_desc_off.page_desc.logical_offset = cpu_to_le32(logical_offset);
+	blk_desc_off.page_desc.logical_blk = cpu_to_le16(logical_blk);
 	blk_desc_off.page_desc.peb_page = cpu_to_le16(off->peb_page);
 
 	blk_desc_off.blk_state.log_start_page =
@@ -3225,6 +3244,7 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_peb_phys_offset desc_off = {0};
 	u16 logical_block;
 	int processed_blks;
+	u64 logical_offset;
 	struct ssdfs_block_bmap_range range;
 	u32 rest_bytes, written_bytes;
 	u32 len;
@@ -3246,11 +3266,20 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	processed_blks = req->result.processed_blks;
 	logical_block = req->place.start.blk_index + processed_blks;
 	rest_bytes = ssdfs_request_rest_bytes(pebi, req);
+	logical_offset = req->extent.logical_offset +
+				((u64)processed_blks * fsi->pagesize);
+	logical_offset /= fsi->pagesize;
 
 	SSDFS_DBG("seg %llu, peb %llu, logical_block %u, "
+		  "logical_offset %llu, "
 		  "processed_blks %d, rest_size %u\n",
 		  req->place.start.seg_id, pebi->peb_id,
-		  logical_block, processed_blks, rest_bytes);
+		  logical_block, logical_offset,
+		  processed_blks, rest_bytes);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(logical_offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_reserve_block_descriptor(pebi, req);
 	if (err == -EAGAIN) {
@@ -3321,8 +3350,8 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	err = ssdfs_peb_store_block_descriptor_offset(pebi, logical_block,
-						      &desc_off);
+	err = ssdfs_peb_store_block_descriptor_offset(pebi, (u32)logical_offset,
+						      logical_block, &desc_off);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to store block descriptor offset: "
 			  "err %d\n",
@@ -3515,6 +3544,7 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 	struct ssdfs_peb_phys_offset desc_off = {0};
 	u16 logical_block;
 	int processed_blks;
+	u64 logical_offset;
 	struct ssdfs_block_bmap_range range;
 	u32 rest_bytes;
 	u32 len;
@@ -3539,11 +3569,20 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 	processed_blks = req->result.processed_blks;
 	logical_block = req->place.start.blk_index + processed_blks;
 	rest_bytes = ssdfs_request_rest_bytes(pebi, req);
+	logical_offset = req->extent.logical_offset +
+				((u64)processed_blks * fsi->pagesize);
+	logical_offset /= fsi->pagesize;
 
 	SSDFS_DBG("seg %llu, peb %llu, logical_block %u, "
+		  "logical_offset %llu, "
 		  "processed_blks %d, rest_size %u\n",
 		  req->place.start.seg_id, pebi->peb_id,
-		  logical_block, processed_blks, rest_bytes);
+		  logical_block, logical_offset,
+		  processed_blks, rest_bytes);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(logical_offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	len = req->extent.data_bytes;
 	len -= req->result.processed_blks * si->fsi->pagesize;
@@ -3587,14 +3626,17 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 		desc_off.byte_offset = U32_MAX;
 
 		logical_block += i;
+		logical_offset += i;
 
 		err = ssdfs_peb_store_block_descriptor_offset(pebi,
-							      logical_block,
-							      &desc_off);
+							(u32)logical_offset,
+							logical_block,
+							&desc_off);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to store block descriptor offset: "
-				  "logical_block %u, err %d\n",
-				  logical_block, err);
+				  "logical_block %u, logical_offset %llu, "
+				  "err %d\n",
+				  logical_block, logical_offset, err);
 			return err;
 		}
 	}
@@ -3992,9 +4034,12 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_peb_phys_offset data_off = {0};
 	struct ssdfs_peb_phys_offset desc_off = {0};
 	u16 blk;
+	u64 logical_offset;
 	struct ssdfs_block_bmap_range range;
 	int range_state;
 	u32 written_bytes;
+	u16 peb_index;
+	bool is_migrating = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4032,8 +4077,17 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
 
 	blk = req->place.start.blk_index + req->result.processed_blks;
-	blk_desc_off = ssdfs_blk2off_table_convert(table, blk);
+	logical_offset = req->extent.logical_offset +
+			    ((u64)req->result.processed_blks * fsi->pagesize);
+	logical_offset /= fsi->pagesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(logical_offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	blk_desc_off = ssdfs_blk2off_table_convert(table, blk,
+						   &peb_index,
+						   &is_migrating);
 	if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -4049,7 +4103,9 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			return err;
 		}
 
-		blk_desc_off = ssdfs_blk2off_table_convert(table, blk);
+		blk_desc_off = ssdfs_blk2off_table_convert(table, blk,
+							   &peb_index,
+							   &is_migrating);
 	}
 
 	if (IS_ERR_OR_NULL(blk_desc_off)) {
@@ -4119,12 +4175,25 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	err = ssdfs_peb_store_block_descriptor_offset(pebi, blk, &desc_off);
+	err = ssdfs_peb_store_block_descriptor_offset(pebi,
+							(u32)logical_offset,
+							blk, &desc_off);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to store block descriptor offset: "
 			  "err %d\n",
 			  err);
 		return err;
+	}
+
+	if (is_migrating) {
+		err = ssdfs_blk2off_table_set_block_commit(table, blk,
+							   peb_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set block commit: "
+				  "logical_blk %u, peb_index %u, err %d\n",
+				  blk, peb_index, err);
+			return err;
+		}
 	}
 
 	req->result.processed_blks += range.len;
@@ -6734,6 +6803,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			 __le64 *cur_segs, size_t cur_segs_size)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_blk2off_table *table;
 	struct ssdfs_metadata_descriptor hdr_desc[SSDFS_SEG_HDR_DESC_MAX];
 	struct ssdfs_metadata_descriptor lf_desc[SSDFS_LOG_FOOTER_DESC_MAX];
 	struct ssdfs_metadata_descriptor *cur_hdr_desc;
@@ -6753,6 +6823,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
+	table = pebi->pebc->parent_si->blk2off_table;
 	log_state = atomic_read(&pebi->current_log.state);
 
 	switch (log_state) {
@@ -6979,6 +7050,15 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 
 	SSDFS_DBG("0011: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+
+	err = ssdfs_blk2off_table_revert_migration_state(table,
+							 pebi->peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to revert migration state: "
+			  "peb_index %u, err %d\n",
+			  pebi->peb_index, err);
+		goto finish_commit_log;
+	}
 
 define_next_log_start:
 	if (cur_page % pebi->log_pages) {
@@ -7774,6 +7854,11 @@ bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
 		break;
 	};
 
+	SSDFS_DBG("peb_id %llu, start_page %u, "
+		  "pages_per_peb %u, is_exhausted %#x\n",
+		  pebi->peb_id, start_page,
+		  pages_per_peb, is_exhausted);
+
 	return is_exhausted;
 }
 
@@ -7862,6 +7947,7 @@ int ssdfs_peb_flush_thread_func(void *data)
 	bool is_peb_exhausted = false;
 	bool has_partial_empty_log = false;
 	bool skip_finish_flush_request = false;
+	bool need_create_log = true;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8137,8 +8223,16 @@ finish_process_free_space_absence:
 		}
 
 		ssdfs_peb_current_log_lock(pebi);
+		need_create_log = ssdfs_peb_has_dirty_pages(pebi) ||
+					have_flush_requests(pebc);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
 		ssdfs_peb_current_log_unlock(pebi);
+
+		if (!need_create_log) {
+			ssdfs_unlock_current_peb(pebc);
+			thread_state = SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+			goto sleep_flush_thread;
+		}
 
 		if (is_peb_exhausted) {
 			ssdfs_unlock_current_peb(pebc);

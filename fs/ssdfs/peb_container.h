@@ -171,9 +171,11 @@ u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
 					  u16 log_pages, u32 pebs_per_seg,
 					  bool is_migrating);
 int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
-			struct ssdfs_segment_request *req);
+			struct ssdfs_segment_request *req,
+			struct completion **end);
 int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
-			      struct ssdfs_segment_request *req);
+			      struct ssdfs_segment_request *req,
+			      struct completion **end);
 void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 					   struct ssdfs_segment_request *req,
 					   int blk_index);

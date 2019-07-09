@@ -1873,25 +1873,28 @@ int ssdfs_maptbl_thread_func(void *data)
 			    sizeof(struct ssdfs_erase_result),
 			    GFP_KERNEL);
 	if (!array.ptr) {
+		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate erase_results array\n");
-		return -ENOMEM;
+		goto sleep_maptbl_thread;
 	}
 
 repeat:
 	if (kthread_should_stop()) {
 		complete_all(&tbl->thread.full_stop);
-		kfree(array.ptr);
+		if (array.ptr)
+			kfree(array.ptr);
 		return err;
 	}
+
+	if (unlikely(err))
+		goto sleep_maptbl_thread;
 
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR)
 		err = -EFAULT;
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to continue activity: err %d\n", err);
-		complete_all(&tbl->thread.full_stop);
-		kfree(array.ptr);
-		return err;
+		goto sleep_maptbl_thread;
 	}
 
 	if (!has_maptbl_pre_erase_pebs(tbl) &&

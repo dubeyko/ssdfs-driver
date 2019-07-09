@@ -647,7 +647,7 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_requests_queue *rq;
 	wait_queue_head_t *wait;
-	u16 peb_index;
+	u16 peb_index = U16_MAX;
 	u16 logical_blk;
 	int err;
 
@@ -665,7 +665,8 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 	table = si->blk2off_table;
 	logical_blk = req->place.start.blk_index;
 
-	po_desc = ssdfs_blk2off_table_convert(table, logical_blk);
+	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
+						&peb_index, NULL);
 	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -680,7 +681,8 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		po_desc = ssdfs_blk2off_table_convert(table, logical_blk);
+		po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index, NULL);
 	}
 
 	if (IS_ERR_OR_NULL(po_desc)) {
@@ -690,8 +692,6 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 			  logical_blk, err);
 		return err;
 	}
-
-	peb_index = le16_to_cpu(po_desc->page_desc.peb_index);
 
 	if (peb_index >= si->pebs_count) {
 		SSDFS_ERR("peb_index %u >= si->pebs_count %u\n",
@@ -2293,7 +2293,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_requests_queue *rq;
 	wait_queue_head_t *wait;
-	u16 peb_index;
+	u16 peb_index = U16_MAX;
 	u16 logical_blk;
 	int err;
 
@@ -2311,7 +2311,8 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	table = si->blk2off_table;
 	logical_blk = req->place.start.blk_index;
 
-	po_desc = ssdfs_blk2off_table_convert(table, logical_blk);
+	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
+						&peb_index, NULL);
 	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -2326,7 +2327,8 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		po_desc = ssdfs_blk2off_table_convert(table, logical_blk);
+		po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index, NULL);
 	}
 
 	if (IS_ERR_OR_NULL(po_desc)) {
@@ -2336,8 +2338,6 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 			  logical_blk, err);
 		return err;
 	}
-
-	peb_index = le16_to_cpu(po_desc->page_desc.peb_index);
 
 	if (peb_index >= si->pebs_count) {
 		SSDFS_ERR("peb_index %u >= si->pebs_count %u\n",
@@ -2483,9 +2483,11 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	}
 
 	for (i = 0; i < len; i++) {
-		u16 cur_peb_index;
+		u16 cur_peb_index = U16_MAX;
 
-		po_desc = ssdfs_blk2off_table_convert(table, blk + i);
+		po_desc = ssdfs_blk2off_table_convert(table, blk + i,
+							&cur_peb_index,
+							NULL);
 		if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 			struct completion *end;
 			unsigned long res;
@@ -2500,7 +2502,9 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 				return err;
 			}
 
-			po_desc = ssdfs_blk2off_table_convert(table, blk + i);
+			po_desc = ssdfs_blk2off_table_convert(table, blk + i,
+								&cur_peb_index,
+								NULL);
 		}
 
 		if (IS_ERR_OR_NULL(po_desc)) {
@@ -2511,7 +2515,10 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		cur_peb_index = le16_to_cpu(po_desc->page_desc.peb_index);
+		if (cur_peb_index >= U16_MAX) {
+			SSDFS_ERR("invalid peb_index\n");
+			return -ERANGE;
+		}
 
 		if (peb_index == U16_MAX)
 			peb_index = cur_peb_index;
@@ -3004,7 +3011,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 
 	for (blk = start_off; blk < upper_blk; blk++) {
 		struct ssdfs_peb_container *pebc;
-		u16 peb_index;
+		u16 peb_index = U16_MAX;
 		u16 peb_page;
 
 		if (blk >= U16_MAX) {
@@ -3014,7 +3021,9 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		}
 
 		off_desc = ssdfs_blk2off_table_convert(blk2off_tbl,
-							(u16)blk);
+							(u16)blk,
+							&peb_index,
+							NULL);
 		if (PTR_ERR(off_desc) == -EAGAIN) {
 			init_end = &blk2off_tbl->full_init_end;
 
@@ -3028,7 +3037,9 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			}
 
 			off_desc = ssdfs_blk2off_table_convert(blk2off_tbl,
-								(u16)blk);
+								(u16)blk,
+								&peb_index,
+								NULL);
 		}
 
 		if (IS_ERR_OR_NULL(off_desc)) {
@@ -3039,7 +3050,6 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		peb_index = le16_to_cpu(off_desc->page_desc.peb_index);
 		peb_page = le16_to_cpu(off_desc->page_desc.peb_page);
 
 		if (peb_index >= si->pebs_count) {

@@ -1447,6 +1447,9 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 
 finish_fragment_init:
 	if (err) {
+		SSDFS_DBG("fragment init failed: portion_id %u\n",
+			  area->portion_id);
+
 		state = atomic_cmpxchg(&fdesc->state,
 					SSDFS_MAPTBL_FRAG_CREATED,
 					SSDFS_MAPTBL_FRAG_INIT_FAILED);
@@ -1455,6 +1458,9 @@ finish_fragment_init:
 			SSDFS_WARN("invalid fragment state %#x\n", state);
 		}
 	} else {
+		SSDFS_DBG("fragment init finished; portion_id %u\n",
+			  area->portion_id);
+
 		state = atomic_cmpxchg(&fdesc->state,
 					SSDFS_MAPTBL_FRAG_CREATED,
 					SSDFS_MAPTBL_FRAG_INITIALIZED);
@@ -2683,6 +2689,12 @@ int ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl)
 				  "index %d\n", i);
 			goto finish_fragment_processing;
 
+		case SSDFS_MAPTBL_FRAG_INITIALIZED:
+			atomic_set(&fdesc->state,
+				   SSDFS_MAPTBL_FRAG_TOWRITE);
+			/* Migration preparation could make PEB dirty.
+			 * Continue to commit log.
+			 */
 		case SSDFS_MAPTBL_FRAG_TOWRITE:
 			err = __ssdfs_maptbl_commit_logs(tbl, fdesc, i);
 			if (unlikely(err)) {
@@ -3544,6 +3556,9 @@ ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
 				     u64 leb_id)
 {
 	u32 fragment_index = FRAGMENT_INDEX(tbl, leb_id);
+
+	SSDFS_DBG("leb_id %llu, fragment index %u\n",
+		  leb_id, fragment_index);
 
 	if (fragment_index == U32_MAX) {
 		SSDFS_ERR("invalid fragment_index: leb_id %llu\n",
@@ -5102,8 +5117,9 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_maptbl_fragment_desc *fdesc,
 	struct ssdfs_peb_descriptor *peb_desc;
 	struct ssdfs_leb_table_fragment_header *lebtbl_hdr;
 	struct ssdfs_leb_descriptor *leb_desc;
-	struct ssdfs_maptbl_peb_descriptor *ptr;
-	u16 item_index, peb_index;
+	struct ssdfs_maptbl_peb_descriptor *ptr = NULL;
+	u16 item_index;
+	u16 peb_index = 0;
 	pgoff_t lebtbl_page;
 	struct page *page;
 	void *kaddr;

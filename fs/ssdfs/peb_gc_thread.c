@@ -209,6 +209,7 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_phys_offset_descriptor *desc_off = NULL;
+	u16 peb_index;
 	bool has_data = false;
 	int err = 0;
 
@@ -234,7 +235,8 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 
 	table = pebc->parent_si->blk2off_table;
 
-	desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
+	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+						&peb_index, NULL);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -250,7 +252,8 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 			return err;
 		}
 
-		desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
+		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index, NULL);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -270,6 +273,18 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 			SSDFS_ERR("fail to copy page: "
 				  "logical_blk %u, err %d\n",
 				  logical_blk, err);
+			return err;
+		}
+
+		err = ssdfs_blk2off_table_set_block_migration(table,
+							    logical_blk,
+							    peb_index,
+							    &req->result.pvec);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set migration state: "
+				  "logical_blk %u, peb_index %u, err %d\n",
+				  logical_blk, peb_index, err);
+			return err;
 		}
 	} else {
 		err = -ENODATA;
@@ -303,6 +318,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_phys_offset_descriptor *desc_off = NULL;
+	u16 peb_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -327,7 +343,8 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 
 	table = pebc->parent_si->blk2off_table;
 
-	desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
+	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+						&peb_index, NULL);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -343,7 +360,8 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 			return err;
 		}
 
-		desc_off = ssdfs_blk2off_table_convert(table, logical_blk);
+		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index, NULL);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -354,7 +372,26 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
-	return __ssdfs_peb_copy_page(pebc, desc_off, req);
+	err = __ssdfs_peb_copy_page(pebc, desc_off, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy page: "
+			  "logical_blk %u, peb_index %u, err %d\n",
+			  logical_blk, peb_index, err);
+		return err;
+	}
+
+	err = ssdfs_blk2off_table_set_block_migration(table,
+						    logical_blk,
+						    peb_index,
+						    &req->result.pvec);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set migration state: "
+			  "logical_blk %u, peb_index %u, err %d\n",
+			  logical_blk, peb_index, err);
+		return err;
+	}
+
+	return 0;
 }
 
 /*

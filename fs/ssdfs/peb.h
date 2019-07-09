@@ -126,6 +126,8 @@ struct ssdfs_peb_log {
  * @peb_index: PEB index
  * @log_pages: count of pages in full partial log
  * @peb_migration_id: identification number of PEB in migration sequence
+ * @state: PEB object state
+ * @init_end: wait of full init ending
  * @reserved_bytes.blk_bmap: reserved bytes for block bitmap
  * @reserved_bytes.blk2off_tbl: reserved bytes for blk2off table
  * @reserved_bytes.blk_desc_tbl: reserved bytes for block descriptor table
@@ -164,6 +166,9 @@ struct ssdfs_peb_info {
 	 */
 	atomic_t peb_migration_id;
 
+	atomic_t state;
+	struct completion init_end;
+
 	/* Reserved bytes */
 	struct {
 		atomic_t blk_bmap;
@@ -179,6 +184,14 @@ struct ssdfs_peb_info {
 
 	/* Parent container */
 	struct ssdfs_peb_container *pebc;
+};
+
+/* PEB object states */
+enum {
+	SSDFS_PEB_OBJECT_UNKNOWN_STATE,
+	SSDFS_PEB_OBJECT_CREATED,
+	SSDFS_PEB_OBJECT_INITIALIZED,
+	SSDFS_PEB_OBJECT_STATE_MAX
 };
 
 #define SSDFS_AREA_TYPE2INDEX(type)({ \
