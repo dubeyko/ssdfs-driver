@@ -2349,7 +2349,6 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 
 	rq = &pebc->update_rq;
 	ssdfs_requests_queue_add_tail(rq, req);
-
 	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
 
@@ -2539,7 +2538,6 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 
 	rq = &pebc->update_rq;
 	ssdfs_requests_queue_add_tail(rq, req);
-
 	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
 

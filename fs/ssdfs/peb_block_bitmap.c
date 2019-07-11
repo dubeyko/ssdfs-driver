@@ -1965,6 +1965,9 @@ int ssdfs_peb_blk_bmap_update_range(struct ssdfs_peb_blk_bmap *bmap,
 {
 	struct ssdfs_block_bmap *cur_bmap = NULL;
 	int range_state;
+#ifdef CONFIG_SSDFS_DEBUG
+	int free_blks, used_blks, invalid_blks;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2101,6 +2104,56 @@ finish_process_bmap:
 		goto finish_update_range;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	err = ssdfs_block_bmap_lock(cur_bmap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_update_range;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(cur_bmap);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(cur_bmap);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(cur_bmap);
+	if (err < 0) {
+		SSDFS_ERR("fail to get invalid pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_bmap:
+	ssdfs_block_bmap_unlock(cur_bmap);
+
+	if (unlikely(err))
+		goto finish_update_range;
+
+	SSDFS_DBG("free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_update_range:
 	up_read(&bmap->lock);
 
@@ -2233,6 +2286,9 @@ int ssdfs_peb_blk_bmap_start_migration(struct ssdfs_peb_blk_bmap *bmap)
 	int buffers_state, new_buffers_state;
 	int buffer_index;
 	int invalid_blks;
+#ifdef CONFIG_SSDFS_DEBUG
+	int free_blks, used_blks;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2358,6 +2414,104 @@ init_failed:
 finish_block_bitmap_preparation:
 	ssdfs_block_bmap_unlock(&bmap->buffer[buffer_index]);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	err = ssdfs_block_bmap_lock(bmap->dst);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_migration_start;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get invalid pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_dst_bmap:
+	ssdfs_block_bmap_unlock(bmap->dst);
+
+	if (unlikely(err))
+		goto finish_migration_start;
+
+	SSDFS_DBG("DST: free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+
+	err = ssdfs_block_bmap_lock(bmap->src);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_migration_start;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(bmap->src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(bmap->src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(bmap->src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get invalid pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_src_bmap:
+	ssdfs_block_bmap_unlock(bmap->src);
+
+	if (unlikely(err))
+		goto finish_migration_start;
+
+	SSDFS_DBG("SRC: free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_migration_start:
 	up_write(&bmap->lock);
 
@@ -2392,6 +2546,9 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 	int range_state;
 	struct ssdfs_block_bmap *src;
 	struct ssdfs_block_bmap *dst;
+#ifdef CONFIG_SSDFS_DEBUG
+	int free_blks, used_blks, invalid_blks;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2524,6 +2681,104 @@ finish_process_source_bmap:
 		goto finish_migrate;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	err = ssdfs_block_bmap_lock(src);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_migrate;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get invalid pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_src_bmap:
+	ssdfs_block_bmap_unlock(src);
+
+	if (unlikely(err))
+		goto finish_migrate;
+
+	SSDFS_DBG("SRC: free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+
+	err = ssdfs_block_bmap_lock(dst);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_migrate;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get invalid pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_dst_bmap:
+	ssdfs_block_bmap_unlock(dst);
+
+	if (unlikely(err))
+		goto finish_migrate;
+
+	SSDFS_DBG("DST: free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_migrate:
 	up_read(&bmap->lock);
 
@@ -2549,6 +2804,10 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap)
 	struct ssdfs_peb_container *pebc;
 	int buffers_state, new_buffers_state;
 	int buffer_index;
+#ifdef CONFIG_SSDFS_DEBUG
+	int free_blks, used_blks, invalid_blks;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int shared_free_dst_blks;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2618,21 +2877,126 @@ init_failed:
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+	err = ssdfs_block_bmap_lock(bmap->dst);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_migration_stop;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get invalid pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_dst_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_dst_bmap:
+	ssdfs_block_bmap_unlock(bmap->dst);
+
+	if (unlikely(err))
+		goto finish_migration_stop;
+
+	SSDFS_DBG("DST: free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+
+	err = ssdfs_block_bmap_lock(bmap->src);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_migration_stop;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(bmap->src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(bmap->src);
+	if (err < 0) {
+		SSDFS_ERR("fail to get used pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
 	err = ssdfs_block_bmap_get_invalid_pages(bmap->src);
 	if (err < 0) {
 		SSDFS_ERR("fail to get invalid pages count: "
 			  "peb_index %u, err %d\n",
 			  bmap->peb_index, err);
+		goto unlock_src_bmap;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+unlock_src_bmap:
+	ssdfs_block_bmap_unlock(bmap->src);
+
+	if (unlikely(err))
 		goto finish_migration_stop;
-	} else if (err != bmap->pages_per_peb) {
+
+	SSDFS_DBG("SRC: free_blks %d, used_blks %d, invalid_blks %d\n",
+		  free_blks, used_blks, invalid_blks);
+
+	if ((free_blks + used_blks + invalid_blks) > bmap->pages_per_peb) {
+		SSDFS_WARN("free_blks %d, used_blks %d, "
+			   "invalid_blks %d, pages_per_peb %u\n",
+			   free_blks, used_blks, invalid_blks,
+			   bmap->pages_per_peb);
 		err = -ERANGE;
-		SSDFS_WARN("invalid_pages %d != pages_per_peb %u\n",
-			   err, bmap->pages_per_peb);
+		goto finish_migration_stop;
+	}
+
+	if (used_blks != 0) {
+		SSDFS_ERR("PEB contains valid blocks %d\n",
+			  used_blks);
+		err = -ERANGE;
 		goto finish_migration_stop;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	WARN_ON(atomic_read(&pebc->shared_free_dst_blks) != 0);
+	shared_free_dst_blks = atomic_read(&pebc->shared_free_dst_blks);
+
+	if (shared_free_dst_blks < 0 ||
+	    shared_free_dst_blks > bmap->pages_per_peb) {
+		SSDFS_WARN("invalid shared_free_dst_blks %d\n",
+			   shared_free_dst_blks);
+	}
 
 	bmap->src = &bmap->buffer[buffer_index];
 	bmap->dst = NULL;

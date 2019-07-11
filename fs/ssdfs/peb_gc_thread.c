@@ -99,7 +99,7 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		goto finish_copy_page;
 	}
 
-	if (peb_migration_id != ssdfs_get_peb_migration_id(pebi)) {
+	if (peb_migration_id != ssdfs_get_peb_migration_id_checked(pebi)) {
 		err = -ERANGE;
 		SSDFS_ERR("migration_id1 %u != migration_id2 %u\n",
 			  peb_migration_id,

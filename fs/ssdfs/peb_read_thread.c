@@ -1298,12 +1298,12 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
 						&peb_index, &is_migrating);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
-		struct completion *end;
+		struct completion *init_end;
 		unsigned long res;
 
-		end = &table->full_init_end;
+		init_end = &table->full_init_end;
 
-		res = wait_for_completion_timeout(end,
+		res = wait_for_completion_timeout(init_end,
 						  SSDFS_DEFAULT_TIMEOUT);
 		if (res == 0) {
 			err = -ERANGE;

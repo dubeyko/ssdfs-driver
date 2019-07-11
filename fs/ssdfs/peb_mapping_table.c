@@ -2689,12 +2689,6 @@ int ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl)
 				  "index %d\n", i);
 			goto finish_fragment_processing;
 
-		case SSDFS_MAPTBL_FRAG_INITIALIZED:
-			atomic_set(&fdesc->state,
-				   SSDFS_MAPTBL_FRAG_TOWRITE);
-			/* Migration preparation could make PEB dirty.
-			 * Continue to commit log.
-			 */
 		case SSDFS_MAPTBL_FRAG_TOWRITE:
 			err = __ssdfs_maptbl_commit_logs(tbl, fdesc, i);
 			if (unlikely(err)) {
@@ -2998,6 +2992,9 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 	for (i = 0; i < fragments_count; i++) {
 		fdesc = &tbl->desc_array[i];
 
+		if (atomic_read(&fdesc->state) != SSDFS_MAPTBL_FRAG_DIRTY)
+			continue;
+
 		down_write(&fdesc->lock);
 
 		err = __ssdfs_maptbl_prepare_migration(tbl, fdesc, i);
@@ -3052,6 +3049,9 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 
 	for (i = 0; i < fragments_count; i++) {
 		fdesc = &tbl->desc_array[i];
+
+		if (atomic_read(&fdesc->state) != SSDFS_MAPTBL_FRAG_DIRTY)
+			continue;
 
 		down_write(&fdesc->lock);
 

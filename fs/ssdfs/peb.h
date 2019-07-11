@@ -447,7 +447,35 @@ bool is_peb_migration_id_valid(int peb_migration_id)
 static inline
 int ssdfs_get_peb_migration_id_checked(struct ssdfs_peb_info *pebi)
 {
-	int res;
+	int res, err;
+
+	switch (atomic_read(&pebi->state)) {
+	case SSDFS_PEB_OBJECT_CREATED:
+		res = wait_for_completion_timeout(&pebi->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("PEB init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		if (atomic_read(&pebi->state) != SSDFS_PEB_OBJECT_INITIALIZED) {
+			SSDFS_ERR("PEB %llu is not initialized\n",
+				  pebi->peb_id);
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_PEB_OBJECT_INITIALIZED:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid PEB state %#x\n",
+			  atomic_read(&pebi->state));
+		return -ERANGE;
+	}
 
 	res = ssdfs_get_peb_migration_id(pebi);
 
@@ -473,6 +501,9 @@ void ssdfs_set_peb_migration_id(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("peb_id %llu, peb_migration_id %d\n",
+		  pebi->peb_id, id);
 
 	atomic_set(&pebi->peb_migration_id, id);
 }

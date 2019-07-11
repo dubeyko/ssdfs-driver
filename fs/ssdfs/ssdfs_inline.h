@@ -278,14 +278,8 @@ u64 ssdfs_current_cno(struct super_block *sb)
 
 #define SSDFS_SEG_HDR_MAGIC(vh) \
 	(le16_to_cpu(SSDFS_VH(vh)->magic.key))
-#define SSDFS_SEG_TYPE(seg_hdr) \
-	(le16_to_cpu(SSDFS_SEG_HDR(seg_hdr)->seg_type))
-#define SSDFS_SEG_CNO(seg_hdr) \
-	(le64_to_cpu(SSDFS_SEG_HDR(seg_hdr)->cno))
 #define SSDFS_SEG_TIME(seg_hdr) \
 	(le64_to_cpu(SSDFS_SEG_HDR(seg_hdr)->timestamp))
-#define SSDFS_LOG_PAGES(seg_hdr) \
-	(le16_to_cpu(SSDFS_SEG_HDR(seg_hdr)->log_pages))
 
 #define SSDFS_VH_CNO(vh) \
 	(le64_to_cpu(SSDFS_VH(vh)->create_cno))
@@ -378,5 +372,25 @@ bool can_be_merged_into_extent(struct page *page1, struct page *page2)
 
 	return has_identical_type && has_identical_ino && (diff_index == 1);
 }
+
+#define SSDFS_FSI(ptr) \
+	((struct ssdfs_fs_info *)(ptr))
+#define SSDFS_BLKT(ptr) \
+	((struct ssdfs_area_block_table *)(ptr))
+#define SSDFS_FRAGD(ptr) \
+	((struct ssdfs_fragment_desc *)(ptr))
+#define SSDFS_BLKD(ptr) \
+	((struct ssdfs_block_descriptor *)(ptr))
+#define SSDFS_BLKSTOFF(ptr) \
+	((struct ssdfs_blk_state_offset *)(ptr))
+#define SSDFS_STNODE_HDR(ptr) \
+	((struct ssdfs_segment_tree_node_header *)(ptr))
+
+#define SSDFS_SEG2PEB(fsi, seg) \
+	((u64)seg << (SSDFS_FSI(fsi)->log_segsize - \
+			SSDFS_FSI(fsi)->log_erasesize))
+#define SSDFS_PEB2SEG(fsi, peb) \
+	((u64)peb >> (SSDFS_FSI(fsi)->log_segsize - \
+			SSDFS_FSI(fsi)->log_erasesize))
 
 #endif /* _SSDFS_INLINE_H */

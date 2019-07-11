@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.1.37 [July 10, 2019]
+    (*) Fix bugs in PEB's block bitmap implementation.
+
 v.1.36 [July 09, 2019]
     (*) Fix bugs in offsets translation table implementation (step 3).
 

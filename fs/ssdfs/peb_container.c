@@ -3351,6 +3351,7 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	u16 peb_index;
 	u16 peb_page;
 	u8 peb_migration_id;
+	int id;
 	int items_state;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
 	int err = 0;
@@ -3414,8 +3415,9 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 		}
 
 		bmap_index = SSDFS_PEB_BLK_BMAP_SOURCE;
+		id = ssdfs_get_peb_migration_id_checked(pebi);
 
-		if (peb_migration_id != ssdfs_get_peb_migration_id(pebi)) {
+		if (peb_migration_id != id) {
 			pebi = pebc->dst_peb;
 			if (!pebi) {
 				SSDFS_ERR("PEB pointer is NULL: "
@@ -3436,7 +3438,9 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 		goto finish_invalidate_block;
 	};
 
-	if (peb_migration_id != ssdfs_get_peb_migration_id(pebi)) {
+	id = ssdfs_get_peb_migration_id_checked(pebi);
+
+	if (peb_migration_id != id) {
 		SSDFS_ERR("peb_migration_id %u != pebi->peb_migration_id %u\n",
 			  peb_migration_id,
 			  ssdfs_get_peb_migration_id(pebi));
