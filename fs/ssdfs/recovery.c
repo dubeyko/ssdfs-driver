@@ -744,7 +744,7 @@ check_volume_header:
 mount_fs_read_only:
 	SSDFS_NOTICE("unable to mount in RW mode: "
 		     "chain of superblock's segments is broken\n");
-	fsi->sb->s_flags |= MS_RDONLY;
+	fsi->sb->s_flags |= SB_RDONLY;
 
 rollback_valid_vh:
 	ssdfs_restore_sb_info(fsi);
@@ -905,7 +905,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 
 static int ssdfs_check_fs_state(struct ssdfs_fs_info *fsi)
 {
-	if (fsi->sb->s_flags & MS_RDONLY)
+	if (fsi->sb->s_flags & SB_RDONLY)
 		return 0;
 
 	switch (fsi->fs_state) {
@@ -913,7 +913,7 @@ static int ssdfs_check_fs_state(struct ssdfs_fs_info *fsi)
 		SSDFS_NOTICE("unable to mount in RW mode: "
 			     "file system didn't unmounted cleanly: "
 			     "Please, run fsck utility\n");
-		fsi->sb->s_flags |= MS_RDONLY;
+		fsi->sb->s_flags |= SB_RDONLY;
 		return -EROFS;
 
 	case SSDFS_ERROR_FS:
@@ -921,7 +921,7 @@ static int ssdfs_check_fs_state(struct ssdfs_fs_info *fsi)
 			SSDFS_NOTICE("unable to mount in RW mode: "
 				     "file system contains errors: "
 				     "Please, run fsck utility\n");
-			fsi->sb->s_flags |= MS_RDONLY;
+			fsi->sb->s_flags |= SB_RDONLY;
 			return -EROFS;
 		}
 		break;
@@ -943,11 +943,11 @@ static int ssdfs_check_feature_compatibility(struct ssdfs_fs_info *fsi)
 	}
 
 	features = fsi->fs_feature_compat_ro & ~SSDFS_FEATURE_COMPAT_RO_SUPP;
-	if (!(fsi->sb->s_flags & MS_RDONLY) && features) {
+	if (!(fsi->sb->s_flags & SB_RDONLY) && features) {
 		SSDFS_NOTICE("unable to mount in RW mode: "
 			     "unsupported RO compatible features %llu\n",
 			     features);
-		fsi->sb->s_flags |= MS_RDONLY;
+		fsi->sb->s_flags |= SB_RDONLY;
 		return -EROFS;
 	}
 

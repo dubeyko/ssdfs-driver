@@ -275,7 +275,7 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 	SSDFS_DBG("sb %p, to_off %llu, page %p, from_off %u, len %zu\n",
 		  sb, to_off, page, from_off, len);
 
-	if (sb->s_flags & MS_RDONLY) {
+	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
 		return -EROFS;
 	}
@@ -345,7 +345,7 @@ static int ssdfs_mtd_writepages(struct super_block *sb, loff_t to_off,
 	SSDFS_DBG("sb %p, to_off %llu, pvec %p, from_off %u, len %zu\n",
 		  sb, to_off, pvec, from_off, len);
 
-	if (sb->s_flags & MS_RDONLY) {
+	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
 		return -EROFS;
 	}
@@ -427,7 +427,7 @@ static int ssdfs_mtd_erase(struct super_block *sb, loff_t offset, size_t len)
 	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (sb->s_flags & MS_RDONLY)
+	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
 	div_u64_rem((u64)len, (u64)mtd->erasesize, &remainder);

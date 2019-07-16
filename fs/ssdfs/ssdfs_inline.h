@@ -242,25 +242,27 @@ bool is_ssdfs_magic_valid(struct ssdfs_signature *magic)
 static inline
 u64 ssdfs_current_timestamp(void)
 {
-	struct timespec cur_time = current_kernel_time();
+	struct timespec64 cur_time;
 
-	return (u64)timespec_to_ns(&cur_time);
+	ktime_get_coarse_real_ts64(&cur_time);
+
+	return (u64)timespec64_to_ns(&cur_time);
 }
 
 static inline
 void ssdfs_init_boot_vs_mount_timediff(struct ssdfs_fs_info *fsi)
 {
-	struct timespec uptime;
+	struct timespec64 uptime;
 
-	get_monotonic_boottime(&uptime);
-	fsi->boot_vs_mount_timediff = timespec_to_ns(&uptime);
+	ktime_get_boottime_ts64(&uptime);
+	fsi->boot_vs_mount_timediff = timespec64_to_ns(&uptime);
 }
 
 static inline
 u64 ssdfs_current_cno(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	struct timespec uptime;
+	struct timespec64 uptime;
 	u64 boot_vs_mount_timediff;
 	u64 fs_mount_cno;
 
@@ -269,8 +271,10 @@ u64 ssdfs_current_cno(struct super_block *sb)
 	fs_mount_cno = fsi->fs_mount_cno;
 	spin_unlock(&fsi->volume_state_lock);
 
-	get_monotonic_boottime(&uptime);
-	return fs_mount_cno + timespec_to_ns(&uptime) - boot_vs_mount_timediff;
+	ktime_get_boottime_ts64(&uptime);
+	return fs_mount_cno +
+		timespec64_to_ns(&uptime) -
+		boot_vs_mount_timediff;
 }
 
 #define SSDFS_MAPTBL_CACHE_HDR(ptr) \

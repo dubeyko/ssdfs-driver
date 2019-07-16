@@ -83,7 +83,7 @@ static inline __u32 ssdfs_mask_flags(umode_t mode, __u32 flags)
  */
 struct ssdfs_inode_info {
 	struct inode vfs_inode;
-	struct timespec birthtime;
+	struct timespec64 birthtime;
 
 	atomic_t private_flags;
 

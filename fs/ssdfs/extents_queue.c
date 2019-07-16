@@ -44,13 +44,13 @@ void ssdfs_init_extent_info_once(void *obj)
 	memset(ei_obj, 0, sizeof(struct ssdfs_extent_info));
 }
 
-void __exit ssdfs_destroy_extent_info_cache(void)
+void ssdfs_destroy_extent_info_cache(void)
 {
 	if (ssdfs_extent_info_cachep)
 		kmem_cache_destroy(ssdfs_extent_info_cachep);
 }
 
-int __init ssdfs_init_extent_info_cache(void)
+int ssdfs_init_extent_info_cache(void)
 {
 	ssdfs_extent_info_cachep = kmem_cache_create("ssdfs_extent_info_cache",
 					sizeof(struct ssdfs_extent_info), 0,

@@ -41,13 +41,13 @@ static void ssdfs_init_btree_search_object_once(void *obj)
 	memset(search_obj, 0, sizeof(struct ssdfs_btree_search));
 }
 
-void __exit ssdfs_destroy_btree_search_obj_cache(void)
+void ssdfs_destroy_btree_search_obj_cache(void)
 {
 	if (ssdfs_btree_search_obj_cachep)
 		kmem_cache_destroy(ssdfs_btree_search_obj_cachep);
 }
 
-int __init ssdfs_init_btree_search_obj_cache(void)
+int ssdfs_init_btree_search_obj_cache(void)
 {
 	ssdfs_btree_search_obj_cachep =
 			kmem_cache_create("ssdfs_btree_search_obj_cache",

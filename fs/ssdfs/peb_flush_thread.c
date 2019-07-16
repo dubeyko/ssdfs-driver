@@ -7968,7 +7968,7 @@ repeat:
 
 	if (thread_state != SSDFS_FLUSH_THREAD_ERROR &&
 	    thread_state != SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT) {
-		if (fsi->sb->s_flags & MS_RDONLY)
+		if (fsi->sb->s_flags & SB_RDONLY)
 			thread_state = SSDFS_FLUSH_THREAD_RO_STATE;
 	}
 
@@ -8116,7 +8116,7 @@ finish_process_free_space_absence:
 			goto repeat;
 		}
 
-		if (!(fsi->sb->s_flags & MS_RDONLY)) {
+		if (!(fsi->sb->s_flags & SB_RDONLY)) {
 			/*
 			 * File system state was changed.
 			 * Now file system has RW state.
@@ -8193,7 +8193,7 @@ finish_process_free_space_absence:
 	case SSDFS_FLUSH_THREAD_NEED_CREATE_LOG:
 		SSDFS_DBG("[FLUSH THREAD STATE] NEED CREATE LOG\n");
 
-		if (fsi->sb->s_flags & MS_RDONLY) {
+		if (fsi->sb->s_flags & SB_RDONLY) {
 			thread_state = SSDFS_FLUSH_THREAD_RO_STATE;
 			goto repeat;
 		}

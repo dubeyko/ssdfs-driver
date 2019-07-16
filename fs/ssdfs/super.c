@@ -163,10 +163,10 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 
 	set_posix_acl_flag(sb);
 
-	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY))
+	if ((*flags & SB_RDONLY) == (sb->s_flags & SB_RDONLY))
 		goto out;
 
-	if (*flags & MS_RDONLY) {
+	if (*flags & SB_RDONLY) {
 		down_write(&fsi->volume_sem);
 
 		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
@@ -195,7 +195,7 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		if (err)
 			SSDFS_ERR("fail to commit superblock info\n");
 
-		sb->s_flags |= MS_RDONLY;
+		sb->s_flags |= SB_RDONLY;
 		SSDFS_DBG("remount in RO mode\n");
 	} else {
 		down_write(&fsi->volume_sem);
@@ -228,7 +228,7 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 			goto restore_opts;
 		}
 
-		sb->s_flags &= ~MS_RDONLY;
+		sb->s_flags &= ~SB_RDONLY;
 		SSDFS_DBG("remount in RW mode\n");
 	}
 out:
@@ -1450,7 +1450,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto put_root_inode;
 	}
 
-	if (!(sb->s_flags & MS_RDONLY)) {
+	if (!(sb->s_flags & SB_RDONLY)) {
 		pagevec_init(&payload.maptbl_cache.pvec);
 
 		down_write(&fs_info->volume_sem);
@@ -1483,7 +1483,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		if (err) {
 			SSDFS_NOTICE("fail to commit superblock info: "
 				     "remount filesystem in RO mode\n");
-			sb->s_flags |= MS_RDONLY;
+			sb->s_flags |= SB_RDONLY;
 		}
 	}
 
@@ -1552,7 +1552,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	/* TODO: flush shared extents tree */
 	ssdfs_shextree_destroy(fsi);
 
-	if (!(sb->s_flags & MS_RDONLY)) {
+	if (!(sb->s_flags & SB_RDONLY)) {
 		down_write(&fsi->volume_sem);
 
 		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
@@ -1701,7 +1701,7 @@ static struct file_system_type ssdfs_fs_type = {
 };
 MODULE_ALIAS_FS(SSDFS_VERSION);
 
-static void __exit ssdfs_destroy_caches(void)
+static void ssdfs_destroy_caches(void)
 {
 	/*
 	 * Make sure all delayed rcu free inodes are flushed before we
@@ -1721,7 +1721,7 @@ static void __exit ssdfs_destroy_caches(void)
 	ssdfs_destroy_peb_mapping_info_cache();
 }
 
-static int __init ssdfs_init_caches(void)
+static int ssdfs_init_caches(void)
 {
 	int err;
 

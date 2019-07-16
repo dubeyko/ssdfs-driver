@@ -40,13 +40,13 @@ void ssdfs_init_free_ino_desc_once(void *obj)
 	memset(range_desc, 0, sizeof(struct ssdfs_inodes_btree_range));
 }
 
-void __exit ssdfs_destroy_free_ino_desc_cache(void)
+void ssdfs_destroy_free_ino_desc_cache(void)
 {
 	if (ssdfs_free_ino_desc_cachep)
 		kmem_cache_destroy(ssdfs_free_ino_desc_cachep);
 }
 
-int __init ssdfs_init_free_ino_desc_cache(void)
+int ssdfs_init_free_ino_desc_cache(void)
 {
 	ssdfs_free_ino_desc_cachep =
 			kmem_cache_create("ssdfs_free_ino_desc_cache",
@@ -2739,7 +2739,7 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	struct ssdfs_inodes_btree_node_header *hdr;
 	size_t inode_size = sizeof(struct ssdfs_inode);
 	struct ssdfs_state_bitmap *bmap;
-	struct timespec cur_time;
+	struct timespec64 cur_time;
 	u16 item_size;
 	u16 max_item_size;
 	u16 item_index;
@@ -2876,7 +2876,7 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 		inode = (struct ssdfs_inode *)(search->result.buf +
 						item_offset);
 
-		cur_time = current_kernel_time();
+		ktime_get_coarse_real_ts64(&cur_time);
 
 		inode->magic = cpu_to_le16(SSDFS_INODE_MAGIC);
 		inode->birthtime = cpu_to_le64(cur_time.tv_sec);

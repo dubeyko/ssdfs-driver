@@ -57,13 +57,13 @@ struct ssdfs_peb_container;
 struct ssdfs_segment_info;
 
 /* btree_node.c */
-int __init ssdfs_init_btree_node_obj_cache(void);
-void __exit ssdfs_destroy_btree_node_obj_cache(void);
-int __init ssdfs_init_btree_search_obj_cache(void);
-void __exit ssdfs_destroy_btree_search_obj_cache(void);
+int ssdfs_init_btree_node_obj_cache(void);
+void ssdfs_destroy_btree_node_obj_cache(void);
+int ssdfs_init_btree_search_obj_cache(void);
+void ssdfs_destroy_btree_search_obj_cache(void);
 
 /* compression.c */
-int __init ssdfs_compressors_init(void);
+int ssdfs_compressors_init(void);
 void ssdfs_compressors_exit(void);
 
 /* dir.c */
@@ -97,8 +97,8 @@ int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf);
 void ssdfs_set_inode_flags(struct inode *inode);
 
 /* inodes_tree.c */
-int __init ssdfs_init_free_ino_desc_cache(void);
-void __exit ssdfs_destroy_free_ino_desc_cache(void);
+int ssdfs_init_free_ino_desc_cache(void);
+void ssdfs_destroy_free_ino_desc_cache(void);
 
 /* ioctl.c */
 long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
@@ -161,13 +161,13 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi);
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent);
 
 /* segment.c */
-int __init ssdfs_init_seg_obj_cache(void);
-void __exit ssdfs_destroy_seg_obj_cache(void);
+int ssdfs_init_seg_obj_cache(void);
+void ssdfs_destroy_seg_obj_cache(void);
 int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si);
 
 /* sysfs.c */
-int __init ssdfs_sysfs_init(void);
-void __exit ssdfs_sysfs_exit(void);
+int ssdfs_sysfs_init(void);
+void ssdfs_sysfs_exit(void);
 int ssdfs_sysfs_create_device_group(struct super_block *sb);
 void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi);
 int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si);

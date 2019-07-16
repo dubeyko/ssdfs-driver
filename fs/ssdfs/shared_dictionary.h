@@ -141,8 +141,8 @@ int ssdfs_shared_dict_stop_thread(struct ssdfs_shared_dict_btree_info *tree);
 /*
  * Name info's API
  */
-int __init ssdfs_init_name_info_cache(void);
-void __exit ssdfs_destroy_name_info_cache(void);
+int ssdfs_init_name_info_cache(void);
+void ssdfs_destroy_name_info_cache(void);
 struct ssdfs_name_info *ssdfs_name_info_alloc(void);
 void ssdfs_name_info_free(struct ssdfs_name_info *ni);
 void ssdfs_name_info_init(int type, u64 hash,

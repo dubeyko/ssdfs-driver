@@ -116,7 +116,7 @@ failed_alloc_workspaces:
 	return ERR_PTR(-ENOMEM);
 }
 
-int __init ssdfs_zlib_init(void)
+int ssdfs_zlib_init(void)
 {
 	return ssdfs_register_compressor(&zlib_compr);
 }

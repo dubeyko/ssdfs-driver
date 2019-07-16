@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.2.00 [July 15, 2019]
+    (*) Release SSDFS file system driver v.2.0.
+
 v.1.37 [July 10, 2019]
     (*) Fix bugs in PEB's block bitmap implementation.
 

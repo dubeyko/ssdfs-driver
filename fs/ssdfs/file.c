@@ -1111,7 +1111,7 @@ int ssdfs_writepage_wrapper(struct page *page,
 		  ino, (u64)index,
 		  (u64)i_size, len);
 
-	if (inode->i_sb->s_flags & MS_RDONLY) {
+	if (inode->i_sb->s_flags & SB_RDONLY) {
 		/*
 		 * It means that filesystem was remounted in read-only
 		 * mode because of error or metadata corruption. But we
@@ -1413,7 +1413,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	SSDFS_DBG("ino %lu, pos %llu, len %u, flags %#x\n",
 		  inode->i_ino, pos, len, flags);
 
-	if (inode->i_sb->s_flags & MS_RDONLY)
+	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
 	page = grab_cache_page_write_begin(mapping, index, flags);

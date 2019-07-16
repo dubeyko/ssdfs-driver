@@ -27,13 +27,13 @@ void ssdfs_init_peb_mapping_info_once(void *obj)
 	memset(pmi_obj, 0, sizeof(struct ssdfs_peb_mapping_info));
 }
 
-void __exit ssdfs_destroy_peb_mapping_info_cache(void)
+void ssdfs_destroy_peb_mapping_info_cache(void)
 {
 	if (ssdfs_peb_mapping_info_cachep)
 		kmem_cache_destroy(ssdfs_peb_mapping_info_cachep);
 }
 
-int __init ssdfs_init_peb_mapping_info_cache(void)
+int ssdfs_init_peb_mapping_info_cache(void)
 {
 	ssdfs_peb_mapping_info_cachep =
 		kmem_cache_create("ssdfs_peb_mapping_info_cache",

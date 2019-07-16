@@ -774,7 +774,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	bool move = (new_dir != old_dir);
 	bool unlink = new_inode == NULL;
 	ino_t old_ino, old_parent_ino, new_ino;
-	struct timespec time;
+	struct timespec64 time;
 	u64 name_hash;
 	int err = -ENOENT;
 
@@ -995,7 +995,7 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	struct ssdfs_btree_search *search;
 	struct qstr dotdot = QSTR_INIT("..", 2);
 	ino_t old_ino, new_ino;
-	struct timespec time;
+	struct timespec64 time;
 	u64 name_hash;
 	int err = -ENOENT;
 

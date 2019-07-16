@@ -100,7 +100,7 @@ failed_alloc_workspaces:
 	return ERR_PTR(-ENOMEM);
 }
 
-int __init ssdfs_lzo_init(void)
+int ssdfs_lzo_init(void)
 {
 	return ssdfs_register_compressor(&lzo_compr);
 }

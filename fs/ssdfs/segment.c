@@ -45,13 +45,13 @@ static void ssdfs_init_seg_object_once(void *obj)
 	atomic_set(&seg_obj->refs_count, 0);
 }
 
-void __exit ssdfs_destroy_seg_obj_cache(void)
+void ssdfs_destroy_seg_obj_cache(void)
 {
 	if (ssdfs_seg_obj_cachep)
 		kmem_cache_destroy(ssdfs_seg_obj_cachep);
 }
 
-int __init ssdfs_init_seg_obj_cache(void)
+int ssdfs_init_seg_obj_cache(void)
 {
 	ssdfs_seg_obj_cachep = kmem_cache_create("ssdfs_seg_obj_cache",
 					sizeof(struct ssdfs_segment_info), 0,

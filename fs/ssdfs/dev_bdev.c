@@ -574,7 +574,7 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	SSDFS_DBG("sb %p, to_off %llu, page %p, from_off %u, len %zu\n",
 		  sb, to_off, page, from_off, len);
 
-	if (sb->s_flags & MS_RDONLY) {
+	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
 		return -EROFS;
 	}
@@ -648,7 +648,7 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 	SSDFS_DBG("sb %p, to_off %llu, pvec %p, from_off %u, len %zu\n",
 		  sb, to_off, pvec, from_off, len);
 
-	if (sb->s_flags & MS_RDONLY) {
+	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
 		return -EROFS;
 	}
@@ -853,7 +853,7 @@ static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
 	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (sb->s_flags & MS_RDONLY)
+	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
 	div_u64_rem((u64)len, (u64)erase_size, &remainder);
@@ -921,7 +921,7 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (sb->s_flags & MS_RDONLY)
+	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
 	div_u64_rem((u64)len, (u64)erase_size, &remainder);
@@ -948,7 +948,7 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 				   GFP_NOFS, 0);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to discard: "
-			  "start_sector %lu, sectors_count %lu, "
+			  "start_sector %llu, sectors_count %llu, "
 			  "err %d\n",
 			  start_sector, sectors_count, err);
 		return err;

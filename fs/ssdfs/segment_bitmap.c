@@ -932,9 +932,9 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 
 	desc = &segbmap->desc_array[sequence_id];
 
-	spin_lock_irq(&segbmap->pages.tree_lock);
-	err = radix_tree_insert(&segbmap->pages.page_tree,
-				sequence_id, page);
+	xa_lock_irq(&segbmap->pages.i_pages);
+	err = __xa_insert(&segbmap->pages.i_pages,
+			 sequence_id, page, GFP_NOFS);
 	if (unlikely(err < 0)) {
 		SSDFS_DBG("fail to add page %u into address space: err %d\n",
 			  sequence_id, err);
@@ -944,7 +944,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		page->mapping = &segbmap->pages;
 		segbmap->pages.nrpages++;
 	}
-	spin_unlock_irq(&segbmap->pages.tree_lock);
+	xa_unlock_irq(&segbmap->pages.i_pages);
 
 	if (unlikely(err))
 		goto unlock_search_lock;

@@ -299,8 +299,8 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 /*
  * Request's API
  */
-int __init ssdfs_init_seg_req_obj_cache(void);
-void __exit ssdfs_destroy_seg_req_obj_cache(void);
+int ssdfs_init_seg_req_obj_cache(void);
+void ssdfs_destroy_seg_req_obj_cache(void);
 
 struct ssdfs_segment_request *ssdfs_request_alloc(void);
 void ssdfs_request_free(struct ssdfs_segment_request *req);

@@ -11,6 +11,10 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/highmem.h>
+#include <linux/pagemap.h>
 #include <linux/rwsem.h>
 #include <linux/zlib.h>
 #include <linux/pagevec.h>
@@ -109,7 +113,7 @@ int ssdfs_unregister_compressor(struct ssdfs_compressor *compr)
 	return 0;
 }
 
-int __init ssdfs_compressors_init(void)
+int ssdfs_compressors_init(void)
 {
 	int i;
 	int err;

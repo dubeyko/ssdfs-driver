@@ -25,7 +25,7 @@
 #ifdef CONFIG_SSDFS_POSIX_ACL
 
 #define set_posix_acl_flag(sb) \
-	((sb)->s_flags |= MS_POSIXACL)
+	((sb)->s_flags |= SB_POSIXACL)
 
 /* acl.c */
 struct posix_acl *ssdfs_get_acl(struct inode *, int);
@@ -35,7 +35,7 @@ int ssdfs_init_acl(struct inode *, struct inode *);
 #else  /* CONFIG_SSDFS_POSIX_ACL */
 
 #define set_posix_acl_flag(sb) \
-	((sb)->s_flags &= ~MS_POSIXACL)
+	((sb)->s_flags &= ~SB_POSIXACL)
 
 #define ssdfs_get_acl NULL
 #define ssdfs_set_acl NULL

@@ -37,7 +37,7 @@ static struct kset *ssdfs_kset;
 	struct tm res; \
 	int count = 0; \
 	timespec_val = ns_to_timespec(ns); \
-	time_to_tm(timespec_val.tv_sec, 0, &res); \
+	time64_to_tm(timespec_val.tv_sec, 0, &res); \
 	res.tm_year += 1900; \
 	res.tm_mon += 1; \
 	count = scnprintf(buf, PAGE_SIZE, \
@@ -1901,7 +1901,7 @@ static const struct attribute_group ssdfs_feature_attr_group = {
 	.attrs = ssdfs_feature_attrs,
 };
 
-int __init ssdfs_sysfs_init(void)
+int ssdfs_sysfs_init(void)
 {
 	int err;
 
@@ -1929,7 +1929,7 @@ failed_sysfs_init:
 	return err;
 }
 
-void __exit ssdfs_sysfs_exit(void)
+void ssdfs_sysfs_exit(void)
 {
 	SSDFS_DBG("deinitialize sysfs entry\n");
 

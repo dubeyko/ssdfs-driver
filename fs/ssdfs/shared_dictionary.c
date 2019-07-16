@@ -44,13 +44,13 @@ void ssdfs_init_name_info_once(void *obj)
 	memset(ni_obj, 0, sizeof(struct ssdfs_name_info));
 }
 
-void __exit ssdfs_destroy_name_info_cache(void)
+void ssdfs_destroy_name_info_cache(void)
 {
 	if (ssdfs_name_info_cachep)
 		kmem_cache_destroy(ssdfs_name_info_cachep);
 }
 
-int __init ssdfs_init_name_info_cache(void)
+int ssdfs_init_name_info_cache(void)
 {
 	ssdfs_name_info_cachep = kmem_cache_create("ssdfs_name_info_cache",
 					sizeof(struct ssdfs_name_info), 0,

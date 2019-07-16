@@ -28,7 +28,7 @@ static void ssdfs_handle_error(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 
-	if (sb->s_flags & MS_RDONLY)
+	if (sb->s_flags & SB_RDONLY)
 		return;
 
 	spin_lock(&fsi->volume_state_lock);
@@ -45,7 +45,7 @@ static void ssdfs_handle_error(struct super_block *sb)
 		 * before ->s_flags update
 		 */
 		smp_wmb();
-		sb->s_flags |= MS_RDONLY;
+		sb->s_flags |= SB_RDONLY;
 	}
 }
 
@@ -82,15 +82,15 @@ int ssdfs_clear_dirty_page(struct page *page)
 	}
 
 	if (mapping) {
-		spin_lock_irq(&mapping->tree_lock);
+		xa_lock_irq(&mapping->i_pages);
 		if (test_bit(PG_dirty, &page->flags)) {
-			radix_tree_tag_clear(&mapping->page_tree,
-					     page_index(page),
-					     PAGECACHE_TAG_DIRTY);
-			spin_unlock_irq(&mapping->tree_lock);
+			__xa_clear_mark(&mapping->i_pages,
+					page_index(page),
+					PAGECACHE_TAG_DIRTY);
+			xa_unlock_irq(&mapping->i_pages);
 			return clear_page_dirty_for_io(page);
 		}
-		spin_unlock_irq(&mapping->tree_lock);
+		xa_unlock_irq(&mapping->i_pages);
 		return 0;
 	}
 
