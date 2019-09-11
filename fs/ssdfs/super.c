@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/super.c - module and superblock management.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -362,10 +362,43 @@ static const struct super_operations ssdfs_super_operations = {
 	.sync_fs	= ssdfs_sync_fs,
 };
 
+static inline
+u32 ssdfs_sb_payload_size(struct pagevec *pvec)
+{
+	struct ssdfs_maptbl_cache_header *hdr;
+	struct page *page;
+	void *kaddr;
+	u16 fragment_bytes_count;
+	u32 bytes_count = 0;
+	int i;
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		page = pvec->pages[i];
+
+		lock_page(page);
+		kaddr = kmap_atomic(page);
+		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
+		fragment_bytes_count = le16_to_cpu(hdr->bytes_count);
+		kunmap_atomic(kaddr);
+		unlock_page(page);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		WARN_ON(fragment_bytes_count > PAGE_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		bytes_count += fragment_bytes_count;
+	}
+
+	return bytes_count;
+}
+
 static u32 ssdfs_define_sb_log_size(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi;
+	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	u32 inline_capacity;
 	u32 log_size = 0;
+	u32 payload_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sb);
@@ -374,10 +407,17 @@ static u32 ssdfs_define_sb_log_size(struct super_block *sb)
 	SSDFS_DBG("sb %p\n", sb);
 
 	fsi = SSDFS_FS_I(sb);
+	payload_size = ssdfs_sb_payload_size(&fsi->maptbl_cache.pvec);
+	inline_capacity = PAGE_SIZE - hdr_size;
 
-	log_size += PAGE_SIZE;
-	log_size += atomic_read(&fsi->maptbl_cache.bytes_count);
-	log_size += PAGE_SIZE;
+	if (payload_size > inline_capacity) {
+		log_size += PAGE_SIZE;
+		log_size += atomic_read(&fsi->maptbl_cache.bytes_count);
+		log_size += PAGE_SIZE;
+	} else {
+		log_size += PAGE_SIZE;
+		log_size += PAGE_SIZE;
+	}
 
 	log_size = (log_size + fsi->pagesize - 1) >> fsi->log_pagesize;
 
@@ -958,7 +998,8 @@ int ssdfs_prepare_sb_log(struct super_block *sb,
 static void
 ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 				      u32 offset,
-				      struct ssdfs_payload_content *payload)
+				      struct ssdfs_payload_content *payload,
+				      u32 payload_size)
 {
 	unsigned i;
 	u32 csum = ~0;
@@ -971,13 +1012,13 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 		  desc, offset, payload);
 
 	desc->offset = cpu_to_le32(offset);
-	desc->size = cpu_to_le32(payload->bytes_count);
+	desc->size = cpu_to_le32(payload_size);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(payload->bytes_count >= U16_MAX);
+	BUG_ON(payload_size >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	desc->check.bytes = cpu_to_le16(payload->bytes_count);
+	desc->check.bytes = cpu_to_le16((u16)payload_size);
 	desc->check.flags = cpu_to_le16(SSDFS_CRC32);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1009,9 +1050,9 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 	desc->check.csum = cpu_to_le32(csum);
 }
 
-static int ssdfs_commit_sb_log(struct super_block *sb,
-				struct ssdfs_peb_extent *last_sb_log,
-				struct ssdfs_sb_log_payload *payload)
+static int __ssdfs_commit_sb_log(struct super_block *sb,
+				 struct ssdfs_peb_extent *last_sb_log,
+				 struct ssdfs_sb_log_payload *payload)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_metadata_descriptor hdr_desc[SSDFS_SEG_HDR_DESC_MAX];
@@ -1057,13 +1098,14 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 
 	cur_hdr_desc = &hdr_desc[SSDFS_MAPTBL_CACHE_INDEX];
 	ssdfs_prepare_maptbl_cache_descriptor(cur_hdr_desc, (u32)offset,
-					      &payload->maptbl_cache);
+					     &payload->maptbl_cache,
+					     payload->maptbl_cache.bytes_count);
 
 	offset += payload->maptbl_cache.bytes_count;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
 	cur_hdr_desc->offset = cpu_to_le32(offset);
-	cur_hdr_desc->size = cpu_to_le32(PAGE_SIZE);
+	cur_hdr_desc->size = cpu_to_le32(footer_size);
 
 	memcpy(hdr->desc_array, hdr_desc, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 
@@ -1106,7 +1148,7 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 	kunmap_atomic(kaddr);
 	SetPagePrivate(page);
 	SetPageUptodate(page);
-	__set_page_dirty_nobuffers(page);
+	SetPageDirty(page);
 	unlock_page(page);
 
 	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
@@ -1146,7 +1188,7 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 		lock_page(payload_page);
 		SetPagePrivate(payload_page);
 		SetPageUptodate(payload_page);
-		__set_page_dirty_nobuffers(payload_page);
+		SetPageDirty(payload_page);
 		unlock_page(payload_page);
 
 		err = fsi->devops->writepage(sb, offset, payload_page,
@@ -1174,11 +1216,12 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 	/* write log footer */
 	lock_page(page);
 	kaddr = kmap_atomic(page);
+	memset(kaddr, 0, PAGE_SIZE);
 	memcpy(kaddr, fsi->sbi.vs_buf, footer_size);
 	kunmap_atomic(kaddr);
 	SetPagePrivate(page);
 	SetPageUptodate(page);
-	__set_page_dirty_nobuffers(page);
+	SetPageDirty(page);
 	unlock_page(page);
 
 	err = fsi->devops->writepage(sb, offset, page, 0, footer_size);
@@ -1200,6 +1243,250 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 cleanup_after_failure:
 	put_page(page);
 	ssdfs_free_page(page);
+
+	return err;
+}
+
+static int
+__ssdfs_commit_sb_log_inline(struct super_block *sb,
+			     struct ssdfs_peb_extent *last_sb_log,
+			     struct ssdfs_sb_log_payload *payload,
+			     u32 payload_size)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_metadata_descriptor hdr_desc[SSDFS_SEG_HDR_DESC_MAX];
+	size_t desc_size = sizeof(struct ssdfs_metadata_descriptor);
+	struct ssdfs_metadata_descriptor *cur_hdr_desc;
+	struct page *page;
+	struct page *payload_page;
+	struct ssdfs_segment_header *hdr;
+	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	struct ssdfs_log_footer *footer;
+	size_t footer_size = sizeof(struct ssdfs_log_footer);
+	void *kaddr1 = NULL, *kaddr2 = NULL;
+	loff_t peb_offset, offset;
+	u32 inline_capacity;
+	void *payload_buf;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb || !last_sb_log);
+	BUG_ON(!SSDFS_FS_I(sb)->devops);
+	BUG_ON(!SSDFS_FS_I(sb)->devops->writepage);
+	BUG_ON((last_sb_log->page_offset + last_sb_log->pages_count) >
+		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
+	BUG_ON((last_sb_log->leb_id * SSDFS_FS_I(sb)->pebs_per_seg) >=
+		SSDFS_FS_I(sb)->nsegs);
+	BUG_ON(last_sb_log->peb_id >
+		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
+	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
+		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
+		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
+		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
+		  last_sb_log->page_offset, last_sb_log->pages_count);
+
+	fsi = SSDFS_FS_I(sb);
+	hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
+	footer = SSDFS_LF(fsi->sbi.vs_buf);
+
+	memset(hdr_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
+
+	offset = (loff_t)last_sb_log->page_offset << fsi->log_pagesize;
+	offset += hdr_size;
+
+	cur_hdr_desc = &hdr_desc[SSDFS_MAPTBL_CACHE_INDEX];
+	ssdfs_prepare_maptbl_cache_descriptor(cur_hdr_desc, (u32)offset,
+					      &payload->maptbl_cache,
+					      payload_size);
+
+	offset += payload_size;
+
+	offset += fsi->pagesize - 1;
+	offset = (offset >> fsi->log_pagesize) << fsi->log_pagesize;
+
+	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
+	cur_hdr_desc->offset = cpu_to_le32(offset);
+	cur_hdr_desc->size = cpu_to_le32(footer_size);
+
+	memcpy(hdr->desc_array, hdr_desc, desc_size * SSDFS_SEG_HDR_DESC_MAX);
+
+	hdr->peb_migration_id[SSDFS_PREV_MIGRATING_PEB] =
+					SSDFS_PEB_UNKNOWN_MIGRATION_ID;
+	hdr->peb_migration_id[SSDFS_CUR_MIGRATING_PEB] =
+					SSDFS_PEB_UNKNOWN_MIGRATION_ID;
+
+	err = ssdfs_prepare_segment_header_for_commit(fsi,
+						     last_sb_log->pages_count,
+						     SSDFS_SB_SEG_TYPE,
+						     SSDFS_LOG_HAS_FOOTER |
+						     SSDFS_LOG_HAS_MAPTBL_CACHE,
+						     hdr);
+	if (err) {
+		SSDFS_ERR("fail to prepare segment header: err %d\n", err);
+		return err;
+	}
+
+	err = ssdfs_prepare_log_footer_for_commit(fsi, last_sb_log->pages_count,
+						  0, footer);
+	if (err) {
+		SSDFS_ERR("fail to prepare log footer: err %d\n", err);
+		return err;
+	}
+
+	if (pagevec_count(&payload->maptbl_cache.pvec) != 1) {
+		SSDFS_WARN("payload contains several memory pages\n");
+		return -ERANGE;
+	}
+
+	inline_capacity = PAGE_SIZE - hdr_size;
+
+	if (payload_size > inline_capacity) {
+		SSDFS_ERR("payload_size %u > inline_capacity %u\n",
+			  payload_size, inline_capacity);
+		return -ERANGE;
+	}
+
+	payload_buf = kmalloc(inline_capacity, GFP_KERNEL);
+	if (!payload_buf) {
+		SSDFS_ERR("fail to allocate payload buffer\n");
+		return -ENOMEM;
+	}
+
+	page = alloc_page(GFP_NOFS | __GFP_ZERO);
+	if (unlikely(!page)) {
+		kfree(payload_buf);
+		SSDFS_ERR("unable to allocate memory page\n");
+		return -ENOMEM;;
+	}
+
+	/* ->writepage() calls put_page() */
+	get_page(page);
+
+	payload_page = payload->maptbl_cache.pvec.pages[0];
+	if (!payload_page) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid payload page\n");
+		goto free_payload_buffer;
+	}
+
+	lock_page(payload_page);
+	kaddr2 = kmap_atomic(payload_page);
+	memcpy(payload_buf, kaddr2, payload_size);
+	kunmap_atomic(kaddr2);
+	unlock_page(payload_page);
+
+	/* write segment header + payload */
+	lock_page(page);
+	kaddr1 = kmap_atomic(page);
+	memcpy(kaddr1, fsi->sbi.vh_buf, hdr_size);
+	memcpy((u8 *)kaddr1 + hdr_size, payload_buf, payload_size);
+	kunmap_atomic(kaddr1);
+	SetPagePrivate(page);
+	SetPageUptodate(page);
+	SetPageDirty(page);
+	unlock_page(page);
+
+free_payload_buffer:
+	kfree(payload_buf);
+
+	if (unlikely(err))
+		goto cleanup_after_failure;
+
+	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
+	peb_offset <<= fsi->log_pagesize;
+	offset = (loff_t)last_sb_log->page_offset << fsi->log_pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(peb_offset > (ULLONG_MAX - (offset + fsi->pagesize)));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset += peb_offset;
+	err = fsi->devops->writepage(sb, offset, page, 0,
+				     hdr_size + payload_size);
+	if (err) {
+		SSDFS_ERR("fail to write segment header: "
+			  "offset %llu, size %zu\n",
+			  (u64)offset, hdr_size + payload_size);
+		goto cleanup_after_failure;
+	}
+
+	lock_page(page);
+	ClearPageUptodate(page);
+	ClearPagePrivate(page);
+	unlock_page(page);
+
+	offset += PAGE_SIZE;
+
+	/* ->writepage() calls put_page() */
+	get_page(page);
+
+	/* write log footer */
+	lock_page(page);
+	kaddr1 = kmap_atomic(page);
+	memset(kaddr1, 0, PAGE_SIZE);
+	memcpy(kaddr1, fsi->sbi.vs_buf, footer_size);
+	kunmap_atomic(kaddr1);
+	SetPagePrivate(page);
+	SetPageUptodate(page);
+	SetPageDirty(page);
+	unlock_page(page);
+
+	err = fsi->devops->writepage(sb, offset, page, 0, footer_size);
+	if (err) {
+		SSDFS_ERR("fail to write log footer: "
+			  "offset %llu, size %zu\n",
+			  (u64)offset, footer_size);
+		goto cleanup_after_failure;
+	}
+
+	lock_page(page);
+	ClearPageUptodate(page);
+	ClearPagePrivate(page);
+	unlock_page(page);
+
+	ssdfs_free_page(page);
+	return 0;
+
+cleanup_after_failure:
+	put_page(page);
+	ssdfs_free_page(page);
+
+	return err;
+}
+
+static int ssdfs_commit_sb_log(struct super_block *sb,
+				struct ssdfs_peb_extent *last_sb_log,
+				struct ssdfs_sb_log_payload *payload)
+{
+	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	u32 inline_capacity;
+	u32 payload_size;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb || !last_sb_log || !payload);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
+		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
+		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
+		  last_sb_log->page_offset, last_sb_log->pages_count);
+
+	inline_capacity = PAGE_SIZE - hdr_size;
+	payload_size = ssdfs_sb_payload_size(&payload->maptbl_cache.pvec);
+
+	if (payload_size > inline_capacity)
+		err = __ssdfs_commit_sb_log(sb, last_sb_log, payload);
+	else {
+		err = __ssdfs_commit_sb_log_inline(sb, last_sb_log,
+						   payload, payload_size);
+	}
+
+	if (unlikely(err))
+		SSDFS_ERR("fail to commit sb log: err %d\n", err);
 
 	return err;
 }
@@ -1727,7 +2014,9 @@ static int ssdfs_init_caches(void)
 
 	ssdfs_inode_cachep = kmem_cache_create("ssdfs_inode_cache",
 					sizeof(struct ssdfs_inode_info), 0,
-					SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+					SLAB_RECLAIM_ACCOUNT |
+					SLAB_MEM_SPREAD |
+					SLAB_ACCOUNT,
 					ssdfs_init_inode_once);
 	if (!ssdfs_inode_cachep) {
 		SSDFS_ERR("unable to create inode cache\n");

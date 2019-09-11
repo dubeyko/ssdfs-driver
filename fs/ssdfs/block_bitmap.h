@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/block_bitmap.h - PEB's block bitmap declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -275,6 +275,8 @@ int ssdfs_get_range_state(struct ssdfs_block_bmap *blk_bmap,
 			  struct ssdfs_block_bmap_range *range);
 int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 					    u16 count);
+int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
+					 u16 count);
 int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap);

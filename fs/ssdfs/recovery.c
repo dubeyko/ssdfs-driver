@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/recovery.c - searching actual state and recovery on mount code.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -1265,6 +1265,9 @@ unlock_cur_page:
 		SSDFS_ERR("invalid checksum\n");
 		goto finish_read_maptbl_cache;
 	}
+
+	if (bytes_count < PAGE_SIZE)
+		bytes_count = PAGE_SIZE;
 
 	atomic_set(&fsi->maptbl_cache.bytes_count, (int)bytes_count);
 

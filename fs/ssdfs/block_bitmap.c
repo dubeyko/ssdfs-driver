@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/block_bitmap.c - PEB's block bitmap implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -187,7 +187,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 	atomic_set(&ptr->flags, 0);
 	pagevec_init(&ptr->pvec);
 	ptr->bytes_count = bmap_bytes;
-	ptr->items_count = fsi->pages_per_seg;
+	ptr->items_count = items_count;
 	ptr->metadata_items = 0;
 	ptr->invalid_blks = 0;
 
@@ -2682,6 +2682,53 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	blk_bmap->metadata_items += count;
+
+	return 0;
+}
+
+/*
+ * ssdfs_block_bmap_free_metadata_pages() - free metadata pages
+ * @blk_bmap: pointer on block bitmap
+ * @count: count of metadata pages for freeing
+ *
+ * This function tries to free @count of metadata pages in
+ * block bitmap's space.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ENOENT     - block bitmap doesn't initialized.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
+					 u16 count)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("blk_bmap %p, count %u\n", blk_bmap, count);
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
+	}
+
+	if (blk_bmap->metadata_items < count) {
+		SSDFS_ERR("fail to free metadata pages: "
+			  "metadata_items %u < count %u\n",
+			  blk_bmap->metadata_items, count);
+		return -ERANGE;
+	}
+
+	blk_bmap->metadata_items -= count;
 
 	return 0;
 }

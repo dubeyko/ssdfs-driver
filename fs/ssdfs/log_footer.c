@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/log_footer.c - operations with log footer.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -32,19 +32,25 @@
 #include <trace/events/ssdfs.h>
 
 /*
+ * __is_ssdfs_log_footer_magic_valid() - check log footer's magic
+ * @magic: pointer on magic value
+ */
+bool __is_ssdfs_log_footer_magic_valid(struct ssdfs_signature *magic)
+{
+	return le16_to_cpu(magic->key) == SSDFS_LOG_FOOTER_MAGIC;
+}
+
+/*
  * is_ssdfs_log_footer_magic_valid() - check log footer's magic
  * @footer: log footer
  */
 bool is_ssdfs_log_footer_magic_valid(struct ssdfs_log_footer *footer)
 {
-	u16 key;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!footer);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	key = le16_to_cpu(footer->volume_state.magic.key);
-	return key == SSDFS_LOG_FOOTER_MAGIC;
+	return __is_ssdfs_log_footer_magic_valid(&footer->volume_state.magic);
 }
 
 /*
@@ -63,7 +69,8 @@ bool is_ssdfs_log_footer_csum_valid(void *buf, size_t buf_size)
 
 /*
  * is_ssdfs_volume_state_info_consistent() - check volume state consistency
- * @vh: volume header
+ * @fsi: pointer on shared file system object
+ * @buf: log header
  * @footer: log footer
  * @dev_size: partition size in bytes
  *
@@ -71,14 +78,20 @@ bool is_ssdfs_log_footer_csum_valid(void *buf, size_t buf_size)
  * [true]  - volume state metadata is consistent.
  * [false] - volume state metadata is corrupted.
  */
-bool is_ssdfs_volume_state_info_consistent(struct ssdfs_volume_header *vh,
+bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
+					   void *buf,
 					   struct ssdfs_log_footer *footer,
 					   u64 dev_size)
 {
+	struct ssdfs_signature *magic;
 	u64 nsegs;
 	u64 free_pages;
-	u32 seg_size;
-	u32 page_size;
+	u8 log_segsize = U8_MAX;
+	u32 seg_size = U32_MAX;
+	u32 page_size = U32_MAX;
+	u64 cno = U64_MAX;
+	u16 log_pages = U16_MAX;
+	u32 log_bytes = U32_MAX;
 	u64 pages_count;
 	u32 pages_per_seg;
 	u32 remainder;
@@ -86,23 +99,55 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_volume_header *vh,
 	u16 fs_errors;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!vh || !footer);
+	BUG_ON(!buf || !footer);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("vh %p, footer %p, dev_size %llu\n",
-		  vh, footer, dev_size);
+	SSDFS_DBG("buf %p, footer %p, dev_size %llu\n",
+		  buf, footer, dev_size);
+
+	magic = (struct ssdfs_signature *)buf;
+
+	if (!is_ssdfs_magic_valid(magic)) {
+		SSDFS_DBG("valid magic is not detected\n");
+		return -ERANGE;
+	}
+
+	if (__is_ssdfs_segment_header_magic_valid(magic)) {
+		struct ssdfs_segment_header *hdr;
+		struct ssdfs_volume_header *vh;
+
+		hdr = SSDFS_SEG_HDR(buf);
+		vh = SSDFS_VH(buf);
+
+		log_segsize = vh->log_segsize;
+		seg_size = 1 << vh->log_segsize;
+		page_size = 1 << vh->log_pagesize;
+		cno = le64_to_cpu(hdr->cno);
+		log_pages = le16_to_cpu(hdr->log_pages);
+	} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
+		struct ssdfs_partial_log_header *pl_hdr;
+
+		pl_hdr = SSDFS_PLH(buf);
+
+		log_segsize = pl_hdr->log_segsize;
+		seg_size = 1 << pl_hdr->log_segsize;
+		page_size = 1 << pl_hdr->log_pagesize;
+		cno = le64_to_cpu(pl_hdr->cno);
+		log_pages = le16_to_cpu(pl_hdr->log_pages);
+	} else {
+		SSDFS_DBG("log header is corrupted\n");
+		return -EIO;
+	}
 
 	nsegs = le64_to_cpu(footer->volume_state.nsegs);
-	seg_size = 1 << vh->log_segsize;
 
-	if (nsegs == 0 || nsegs > (dev_size >> vh->log_segsize)) {
+	if (nsegs == 0 || nsegs > (dev_size >> log_segsize)) {
 		SSDFS_DBG("invalid nsegs %llu, dev_size %llu, seg_size) %u\n",
 			  nsegs, dev_size, seg_size);
 		return false;
 	}
 
 	free_pages = le64_to_cpu(footer->volume_state.free_pages);
-	page_size = 1 << vh->log_pagesize;
 
 	pages_count = div_u64_rem(dev_size, page_size, &remainder);
 	if (remainder) {
@@ -125,11 +170,18 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_volume_header *vh,
 		return false;
 	}
 
-	if (le64_to_cpu(vh->create_cno) > le64_to_cpu(footer->cno)) {
+	if (cno > le64_to_cpu(footer->cno)) {
 		SSDFS_DBG("create_cno %llu is greater than write_cno %llu\n",
-			  le64_to_cpu(vh->create_cno),
-			  le64_to_cpu(footer->cno));
+			  cno, le64_to_cpu(footer->cno));
 		return false;
+	}
+
+	log_bytes = (u32)log_pages * fsi->pagesize;
+	if (le32_to_cpu(footer->log_bytes) > log_bytes) {
+		SSDFS_DBG("hdr log_bytes %u > footer log_bytes %u\n",
+			  log_bytes,
+			  le32_to_cpu(footer->log_bytes));
+		return -EIO;
 	}
 
 	fs_state = le16_to_cpu(footer->volume_state.state);
@@ -152,7 +204,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_volume_header *vh,
 /*
  * ssdfs_check_log_footer() - check log footer consistency
  * @fsi: pointer on shared file system object
- * @seg_hdr: segment header
+ * @buf: log header
  * @footer: log footer
  * @silent: show error or not?
  *
@@ -167,26 +219,25 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_volume_header *vh,
  */
 static
 int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
-			   struct ssdfs_segment_header *seg_hdr,
+			   void *buf,
 			   struct ssdfs_log_footer *footer,
 			   bool silent)
 {
-	struct ssdfs_volume_header *vh;
+	struct ssdfs_volume_state *vs;
 	size_t footer_size = sizeof(struct ssdfs_log_footer);
 	u64 dev_size;
 	bool major_magic_valid, minor_magic_valid;
-	u32 log_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !seg_hdr || !footer);
+	BUG_ON(!fsi || !buf || !footer);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, seg_hdr %p, footer %p, silent %#x\n",
-		  fsi, seg_hdr, footer, silent);
+	SSDFS_DBG("fsi %p, buf %p, footer %p, silent %#x\n",
+		  fsi, buf, footer, silent);
 
-	vh = SSDFS_VH(seg_hdr);
+	vs = SSDFS_VS(footer);
 
-	major_magic_valid = is_ssdfs_magic_valid(&vh->magic);
+	major_magic_valid = is_ssdfs_magic_valid(&vs->magic);
 	minor_magic_valid = is_ssdfs_log_footer_magic_valid(footer);
 
 	if (!major_magic_valid && !minor_magic_valid) {
@@ -218,33 +269,12 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 	}
 
 	dev_size = fsi->devops->device_size(fsi->sb);
-	if (!is_ssdfs_volume_state_info_consistent(vh, footer, dev_size)) {
+	if (!is_ssdfs_volume_state_info_consistent(fsi, buf,
+						   footer, dev_size)) {
 		if (!silent)
 			SSDFS_ERR("log footer is corrupted\n");
 		else
 			SSDFS_DBG("log footer is corrupted\n");
-		return -EIO;
-	}
-
-	if (SSDFS_VH_CNO(seg_hdr) > SSDFS_VS_CNO(footer)) {
-		if (!silent)
-			SSDFS_ERR("invalid checkpoint/timestamp\n");
-		else
-			SSDFS_DBG("invalid checkpoint/timestamp\n");
-		return -EIO;
-	}
-
-	log_bytes = (u32)le16_to_cpu(seg_hdr->log_pages) * fsi->pagesize;
-	if (le32_to_cpu(footer->log_bytes) != log_bytes) {
-		if (!silent) {
-			SSDFS_ERR("hdr log_bytes %u != footer log_bytes %u\n",
-				  log_bytes,
-				  le32_to_cpu(footer->log_bytes));
-		} else {
-			SSDFS_DBG("hdr log_bytes %u != footer log_bytes %u\n",
-				  log_bytes,
-				  le32_to_cpu(footer->log_bytes));
-		}
 		return -EIO;
 	}
 
@@ -265,7 +295,7 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 /*
  * ssdfs_read_checked_log_footer() - read and check log footer
  * @fsi: pointer on shared file system object
- * @seg_hdr: segment header
+ * @log_hdr: log header
  * @peb_id: PEB identification number
  * @bytes_off: offset inside PEB in bytes
  * @buf: buffer for log footer
@@ -280,8 +310,7 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
  * %-ENODATA     - valid magic doesn't detected.
  * %-EIO         - log footer is corrupted.
  */
-int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi,
-				  struct ssdfs_segment_header *seg_hdr,
+int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  u64 peb_id, u32 bytes_off, void *buf,
 				  bool silent)
 {
@@ -291,7 +320,7 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->devops->read);
-	BUG_ON(!seg_hdr || !buf);
+	BUG_ON(!log_hdr || !buf);
 	BUG_ON(bytes_off >= (fsi->pages_per_peb * fsi->pagesize));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -315,7 +344,7 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi,
 
 	footer = SSDFS_LF(buf);
 
-	err = ssdfs_check_log_footer(fsi, seg_hdr, footer, false);
+	err = ssdfs_check_log_footer(fsi, log_hdr, footer, false);
 	if (err) {
 		if (!silent) {
 			SSDFS_ERR("log footer is corrupted: "

@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/inodes_tree.c - inodes btree implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -51,7 +51,9 @@ int ssdfs_init_free_ino_desc_cache(void)
 	ssdfs_free_ino_desc_cachep =
 			kmem_cache_create("ssdfs_free_ino_desc_cache",
 				sizeof(struct ssdfs_inodes_btree_range), 0,
-				SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+				SLAB_RECLAIM_ACCOUNT |
+				SLAB_MEM_SPREAD |
+				SLAB_ACCOUNT,
 				ssdfs_init_free_ino_desc_once);
 	if (!ssdfs_free_ino_desc_cachep) {
 		SSDFS_ERR("unable to create free inode descriptors cache\n");

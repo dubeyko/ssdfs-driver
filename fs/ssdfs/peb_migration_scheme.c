@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_migration_scheme.c - Implementation of PEBs' migration scheme.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -250,7 +250,7 @@ bool has_peb_migration_done(struct ssdfs_peb_container *pebc)
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap *blk_bmap;
-	u16 valid_blks;
+	u16 valid_blks = U16_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -291,7 +291,7 @@ bool has_peb_migration_done(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
-		return true;
+		return false;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -349,13 +349,14 @@ bool has_peb_migration_done(struct ssdfs_peb_container *pebc)
 		BUG_ON(err >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 		valid_blks = (u16)err;
+		err = 0;
 	}
 
 finish_define_bmap_state:
 	up_read(&peb_blkbmap->lock);
 
 	if (unlikely(err))
-		return true;
+		return false;
 
 	return valid_blks == 0 ? true : false;
 }

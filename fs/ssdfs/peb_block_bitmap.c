@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_block_bitmap.c - PEB's block bitmap implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -222,6 +222,7 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_block_bmap *blk_bmap = NULL;
@@ -247,6 +248,7 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(pagevec_count(source) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = bmap->parent->parent_si->fsi;
 	si = bmap->parent->parent_si;
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu\n",
@@ -391,7 +393,6 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 		goto fail_define_pages_count;
 	}
 
-get_block_bmap_pages_count:
 	err = ssdfs_block_bmap_get_free_pages(blk_bmap);
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
@@ -446,11 +447,32 @@ fail_define_pages_count:
 		  free_blks, used_blks, invalid_blks,
 		  atomic_read(&pebc->shared_free_dst_blks));
 
+	SSDFS_DBG("free_blks %d, valid_blks %d, invalid_blks %d\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks));
+
 	switch (type) {
 	case SSDFS_SRC_BLK_BMAP:
-		if (under_migration && has_relation) {
+		if (is_dst_peb_clean && !(flags & SSDFS_MIGRATING_BLK_BMAP)) {
+			atomic_set(&bmap->valid_logical_blks, used_blks);
+			atomic_set(&bmap->free_logical_blks, free_blks);
+
+			atomic_add(fsi->pages_per_peb - used_blks,
+					&bmap->free_logical_blks);
+			atomic_set(&pebc->shared_free_dst_blks,
+					fsi->pages_per_peb - used_blks);
+
+			atomic_add(atomic_read(&bmap->valid_logical_blks),
+				   &bmap->parent->valid_logical_blks);
+			atomic_add(atomic_read(&bmap->free_logical_blks),
+				   &bmap->parent->free_logical_blks);
+		} else if (under_migration && has_relation) {
 			atomic_add(used_blks, &bmap->valid_logical_blks);
+			atomic_sub(used_blks, &bmap->free_logical_blks);
 			atomic_sub(used_blks, &pebc->shared_free_dst_blks);
+			atomic_sub(used_blks,
+				   &bmap->parent->free_logical_blks);
 		} else if (under_migration && has_ext_ptr) {
 			atomic_add(used_blks, &bmap->valid_logical_blks);
 			atomic_add(invalid_blks, &bmap->invalid_logical_blks);
@@ -475,18 +497,16 @@ fail_define_pages_count:
 
 	case SSDFS_DST_BLK_BMAP:
 		if (under_migration) {
-			free_blks -= atomic_read(&bmap->valid_logical_blks);
-
 			atomic_add(used_blks, &bmap->valid_logical_blks);
 			atomic_add(invalid_blks, &bmap->invalid_logical_blks);
 			atomic_add(free_blks, &bmap->free_logical_blks);
 			atomic_add(free_blks, &pebc->shared_free_dst_blks);
 
-			atomic_add(atomic_read(&bmap->valid_logical_blks),
+			atomic_add(used_blks,
 				   &bmap->parent->valid_logical_blks);
-			atomic_add(atomic_read(&bmap->invalid_logical_blks),
+			atomic_add(invalid_blks,
 				   &bmap->parent->invalid_logical_blks);
-			atomic_add(atomic_read(&bmap->free_logical_blks),
+			atomic_add(free_blks,
 				   &bmap->parent->free_logical_blks);
 		} else {
 			err = -EIO;
@@ -522,19 +542,6 @@ fail_define_pages_count:
 		BUG();
 	}
 
-	if (type == SSDFS_SRC_BLK_BMAP && is_dst_peb_clean) {
-		type = SSDFS_DST_BLK_BMAP;
-		blk_bmap = bmap->dst;
-
-		err = ssdfs_block_bmap_lock(blk_bmap);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to lock bitmap: err %d\n", err);
-			goto fail_init_blk_bmap;
-		}
-
-		goto get_block_bmap_pages_count;
-	}
-
 	if (atomic_read(&pebc->shared_free_dst_blks) < 0) {
 		SSDFS_WARN("type %#x, under_migration %#x, has_relation %#x, "
 			   "last_free_blk %u, metadata_blks %u, "
@@ -545,6 +552,11 @@ fail_define_pages_count:
 			   free_blks, used_blks, invalid_blks,
 			   atomic_read(&pebc->shared_free_dst_blks));
 	}
+
+	SSDFS_DBG("free_blks %d, used_blks %d, invalid_blks %d\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks));
 
 	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
 	complete_all(&bmap->init_end);
@@ -835,6 +847,72 @@ init_failed:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return atomic_read(&bmap->invalid_logical_blks);
+}
+
+/*
+ * ssdfs_src_blk_bmap_get_free_pages() - determine free pages count
+ * @bmap: pointer on PEB's block bitmap object
+ *
+ * This function tries to detect the free pages count
+ * in the source bitmap.
+ *
+ * RETURN:
+ * [success] - count of free pages.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ERANGE     - invalid internal calculations.
+ */
+int ssdfs_src_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
+
+	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+init_failed:
+			SSDFS_ERR("PEB block bitmap init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
+			err = -ERANGE;
+			goto init_failed;
+		}
+	}
+
+	down_read(&bmap->lock);
+
+	if (bmap->src == NULL) {
+		err = -ERANGE;
+		SSDFS_WARN("bmap pointer is empty\n");
+		goto finish_get_src_free_pages;
+	}
+
+	err = ssdfs_block_bmap_lock(bmap->src);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_get_src_free_pages;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(bmap->src);
+	ssdfs_block_bmap_unlock(bmap->src);
+
+finish_get_src_free_pages:
+	up_read(&bmap->lock);
+
+	return err;
 }
 
 /*
@@ -1334,6 +1412,149 @@ init_failed:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_reserve_metapages:
+	up_read(&bmap->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_peb_blk_bmap_free_metapages() - free metadata pages
+ * @bmap: PEB's block bitmap object
+ * @bmap_index: source or destination block bitmap?
+ * @count: amount of metadata pages
+ *
+ * This function tries to free some amount of metadata pages.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
+				      int bmap_index,
+				      u16 count)
+{
+	struct ssdfs_block_bmap *cur_bmap = NULL;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("bmap %p, bmap_index %u, count %u, "
+		  "free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u\n",
+		  bmap, bmap_index, count,
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks));
+
+	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+init_failed:
+			SSDFS_ERR("PEB block bitmap init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
+			err = -ERANGE;
+			goto init_failed;
+		}
+	}
+
+	if (bmap_index < 0 || bmap_index >= SSDFS_PEB_BLK_BMAP_INDEX_MAX) {
+		SSDFS_WARN("invalid bmap_index %u\n",
+			   bmap_index);
+		return -ERANGE;
+	}
+
+	down_read(&bmap->lock);
+
+	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE)
+		cur_bmap = bmap->src;
+	else if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION)
+		cur_bmap = bmap->dst;
+	else
+		cur_bmap = NULL;
+
+	if (cur_bmap == NULL) {
+		err = -ERANGE;
+		SSDFS_WARN("bmap pointer is empty\n");
+		goto finish_free_metapages;
+	}
+
+	err = ssdfs_block_bmap_lock(cur_bmap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_free_metapages;
+	}
+
+	err = ssdfs_block_bmap_free_metadata_pages(cur_bmap, count);
+	ssdfs_block_bmap_unlock(cur_bmap);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to free metadata pages: "
+			  "count %u, err %d\n",
+			  count, err);
+		goto finish_free_metapages;
+	}
+
+	atomic_add(count, &bmap->free_logical_blks);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u, pages_per_peb %u\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks),
+		  bmap->pages_per_peb);
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	atomic_add(count, &bmap->parent->free_logical_blks);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("parent->free_logical_blks %u, "
+		  "parent->valid_logical_blks %u, "
+		  "parent->invalid_logical_blks %u, "
+		  "pages_per_peb %u\n",
+		  atomic_read(&bmap->parent->free_logical_blks),
+		  atomic_read(&bmap->parent->valid_logical_blks),
+		  atomic_read(&bmap->parent->invalid_logical_blks),
+		  bmap->parent->pages_per_peb);
+
+	if ((atomic_read(&bmap->free_logical_blks) +
+	     atomic_read(&bmap->valid_logical_blks) +
+	     atomic_read(&bmap->invalid_logical_blks)) >
+					bmap->pages_per_peb) {
+		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
+			   "invalid_logical_blks %u, pages_per_peb %u\n",
+			   atomic_read(&bmap->free_logical_blks),
+			   atomic_read(&bmap->valid_logical_blks),
+			   atomic_read(&bmap->invalid_logical_blks),
+			   bmap->pages_per_peb);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+finish_free_metapages:
 	up_read(&bmap->lock);
 
 	return err;
@@ -2285,10 +2506,9 @@ int ssdfs_peb_blk_bmap_start_migration(struct ssdfs_peb_blk_bmap *bmap)
 	struct ssdfs_peb_container *pebc;
 	int buffers_state, new_buffers_state;
 	int buffer_index;
+	int free_blks = 0;
 	int invalid_blks;
-#ifdef CONFIG_SSDFS_DEBUG
-	int free_blks, used_blks;
-#endif /* CONFIG_SSDFS_DEBUG */
+	int used_blks;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2317,6 +2537,12 @@ init_failed:
 			goto init_failed;
 		}
 	}
+
+	SSDFS_DBG("free_logical_blocks %d, valid_logical_block %d, "
+		  "invalid_logical_block %d\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks));
 
 	si = bmap->parent->parent_si;
 
@@ -2411,8 +2637,36 @@ init_failed:
 	atomic_set(&pebc->shared_free_dst_blks, invalid_blks);
 	atomic_add(invalid_blks, &bmap->parent->free_logical_blks);
 
+	used_blks = atomic_read(&bmap->valid_logical_blks);
+
+	err = ssdfs_block_bmap_get_free_pages(bmap->dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
+		goto finish_block_bitmap_preparation;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	if (free_blks < (invalid_blks + used_blks)) {
+		err = -ERANGE;
+		SSDFS_ERR("free_blks %d < (invalid_blks %d + used_blks %d)\n",
+			  free_blks, invalid_blks, used_blks);
+		goto finish_block_bitmap_preparation;
+	}
+
+	free_blks -= invalid_blks + used_blks;
+
+	atomic_add(free_blks, &bmap->free_logical_blks);
+	atomic_add(free_blks, &bmap->parent->free_logical_blks);
+
 finish_block_bitmap_preparation:
 	ssdfs_block_bmap_unlock(&bmap->buffer[buffer_index]);
+
+	if (unlikely(err))
+		goto finish_migration_start;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	err = ssdfs_block_bmap_lock(bmap->dst);
@@ -2514,6 +2768,12 @@ unlock_src_bmap:
 
 finish_migration_start:
 	up_write(&bmap->lock);
+
+	SSDFS_DBG("free_logical_blocks %d, valid_logical_block %d, "
+		  "invalid_logical_block %d\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks));
 
 	if (err == -ENOENT)
 		return 0;

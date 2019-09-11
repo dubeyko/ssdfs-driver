@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/btree_node.c - generalized btree node implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -60,7 +60,9 @@ int ssdfs_init_btree_node_obj_cache(void)
 	ssdfs_btree_node_obj_cachep =
 			kmem_cache_create("ssdfs_btree_node_obj_cache",
 					sizeof(struct ssdfs_btree_node), 0,
-					SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+					SLAB_RECLAIM_ACCOUNT |
+					SLAB_MEM_SPREAD |
+					SLAB_ACCOUNT,
 					ssdfs_init_btree_node_object_once);
 	if (!ssdfs_btree_node_obj_cachep) {
 		SSDFS_ERR("unable to create btree node objects cache\n");
@@ -877,7 +879,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		struct page *page = req->result.pvec.pages[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		WARN_ON(!test_bit(PG_locked, &page->flags));
+		WARN_ON(!PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		unlock_page(page);

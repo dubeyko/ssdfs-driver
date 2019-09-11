@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/request_queue.c - request queue implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -48,7 +48,9 @@ int ssdfs_init_seg_req_obj_cache(void)
 {
 	ssdfs_seg_req_obj_cachep = kmem_cache_create("ssdfs_seg_req_obj_cache",
 					sizeof(struct ssdfs_segment_request), 0,
-					SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+					SLAB_RECLAIM_ACCOUNT |
+					SLAB_MEM_SPREAD |
+					SLAB_ACCOUNT,
 					ssdfs_init_seg_req_object_once);
 	if (!ssdfs_seg_req_obj_cachep) {
 		SSDFS_ERR("unable to create segment request objects cache\n");
@@ -103,6 +105,11 @@ void ssdfs_requests_queue_add_head(struct ssdfs_requests_queue *rq,
 	BUG_ON(!rq || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("seg_id %llu, class %#x, cmd %#x\n",
+		  req->place.start.seg_id,
+		  req->private.class,
+		  req->private.cmd);
+
 	spin_lock(&rq->lock);
 	list_add(&req->list, &rq->list);
 	spin_unlock(&rq->lock);
@@ -119,6 +126,11 @@ void ssdfs_requests_queue_add_tail(struct ssdfs_requests_queue *rq,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rq || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, class %#x, cmd %#x\n",
+		  req->place.start.seg_id,
+		  req->private.class,
+		  req->private.cmd);
 
 	spin_lock(&rq->lock);
 	list_add_tail(&req->list, &rq->list);
@@ -212,8 +224,9 @@ int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
 
 	if (is_empty) {
 		SSDFS_WARN("requests queue is empty\n");
-		err = -ENODATA;
-	}
+		return -ENODATA;
+	} else if (err)
+		return err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!is_request_command_valid((*req)->private.class,
@@ -221,7 +234,12 @@ int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
 	BUG_ON((*req)->private.type >= SSDFS_REQ_TYPE_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return err;
+	SSDFS_DBG("seg_id %llu, class %#x, cmd %#x\n",
+		  (*req)->place.start.seg_id,
+		  (*req)->private.class,
+		  (*req)->private.cmd);
+
+	return 0;
 }
 
 /*
@@ -296,7 +314,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 				}
 
 #ifdef CONFIG_SSDFS_DEBUG
-				WARN_ON(!test_bit(PG_locked, &page->flags));
+				WARN_ON(!PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				ClearPageUptodate(page);
@@ -323,7 +341,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 				}
 
 #ifdef CONFIG_SSDFS_DEBUG
-				WARN_ON(!test_bit(PG_locked, &page->flags));
+				WARN_ON(!PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				ClearPageUptodate(page);

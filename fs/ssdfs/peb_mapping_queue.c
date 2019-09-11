@@ -38,7 +38,9 @@ int ssdfs_init_peb_mapping_info_cache(void)
 	ssdfs_peb_mapping_info_cachep =
 		kmem_cache_create("ssdfs_peb_mapping_info_cache",
 				  sizeof(struct ssdfs_peb_mapping_info), 0,
-				  SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+				  SLAB_RECLAIM_ACCOUNT |
+				  SLAB_MEM_SPREAD |
+				  SLAB_ACCOUNT,
 				  ssdfs_init_peb_mapping_info_once);
 	if (!ssdfs_peb_mapping_info_cachep) {
 		SSDFS_ERR("unable to create PEB mapping info objects cache\n");

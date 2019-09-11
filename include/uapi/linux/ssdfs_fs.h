@@ -4,11 +4,11 @@
  *
  * include/uapi/linux/ssdfs_fs.h - SSDFS common declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -27,6 +27,7 @@
 #define SSDFS_SUPER_MAGIC			0x53734466	/* SsDf */
 #define SSDFS_SEGMENT_HDR_MAGIC			0x5348		/* SH */
 #define SSDFS_LOG_FOOTER_MAGIC			0x4C46		/* LF */
+#define SSDFS_PARTIAL_LOG_HDR_MAGIC		0x5048		/* PH */
 #define SSDFS_BLK_BMAP_MAGIC			0x424D		/* BM */
 #define SSDFS_FRAGMENT_DESC_MAGIC		0x66		/* f */
 #define SSDFS_CHAIN_HDR_MAGIC			0x63		/* c */
@@ -53,7 +54,7 @@
 
 /* SSDFS revision */
 #define SSDFS_MAJOR_REVISION		1
-#define SSDFS_MINOR_REVISION		0
+#define SSDFS_MINOR_REVISION		1
 
 /* SSDFS constants */
 #define SSDFS_MAX_NAME_LEN		255

@@ -1,6 +1,6 @@
 //SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
- *  SSDFS -- SSD-oriented File System.
+ * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/ssdfs_inode_info.h - SSDFS in-core inode.
  *

@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/extents_queue.c - extents queue implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -54,7 +54,9 @@ int ssdfs_init_extent_info_cache(void)
 {
 	ssdfs_extent_info_cachep = kmem_cache_create("ssdfs_extent_info_cache",
 					sizeof(struct ssdfs_extent_info), 0,
-					SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+					SLAB_RECLAIM_ACCOUNT |
+					SLAB_MEM_SPREAD |
+					SLAB_ACCOUNT,
 					ssdfs_init_extent_info_once);
 	if (!ssdfs_extent_info_cachep) {
 		SSDFS_ERR("unable to create extent info objects cache\n");

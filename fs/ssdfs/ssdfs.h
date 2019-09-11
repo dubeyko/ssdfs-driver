@@ -104,13 +104,14 @@ void ssdfs_destroy_free_ino_desc_cache(void);
 long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 /* log_footer.c */
+bool __is_ssdfs_log_footer_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_log_footer_magic_valid(struct ssdfs_log_footer *footer);
 bool is_ssdfs_log_footer_csum_valid(void *buf, size_t buf_size);
-bool is_ssdfs_volume_state_info_consistent(struct ssdfs_volume_header *vh,
+bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
+					   void *buf,
 					   struct ssdfs_log_footer *footer,
 					   u64 dev_size);
-int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi,
-				  struct ssdfs_segment_header *seg_hdr,
+int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  u64 peb_id, u32 bytes_off, void *buf,
 				  bool silent);
 int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
@@ -176,13 +177,21 @@ int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc);
 void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc);
 
 /* volume_header.c */
+bool __is_ssdfs_segment_header_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr);
+bool is_ssdfs_partial_log_header_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_volume_header_csum_valid(void *vh_buf, size_t buf_size);
 bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 					u64 dev_size);
+int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
+				struct ssdfs_segment_header *hdr,
+				bool silent);
 int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 					u64 peb_id, u32 pages_off,
 					void *buf, bool silent);
+int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_partial_log_header *hdr,
+				   bool silent);
 void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 				struct ssdfs_volume_header *vh);
 int ssdfs_prepare_volume_header_for_commit(struct ssdfs_fs_info *fsi,
@@ -192,5 +201,11 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 					    u16 seg_type,
 					    u32 seg_flags,
 					    struct ssdfs_segment_header *hdr);
+int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
+					u8 sequence_id,
+					u32 log_pages,
+					u16 seg_type,
+					u32 flags,
+					struct ssdfs_partial_log_header *hdr);
 
 #endif /* _SSDFS_H */

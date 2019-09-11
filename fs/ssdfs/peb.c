@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb.c - Physical Erase Block (PEB) object's functionality.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -60,7 +60,7 @@ int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
 
-	ssdfs_peb_current_log_init(pebi, pebi->log_pages, 0);
+	ssdfs_peb_current_log_init(pebi, pebi->log_pages, 0, 0);
 
 	return 0;
 }
@@ -112,15 +112,19 @@ int ssdfs_create_using_peb_object(struct ssdfs_peb_info *pebi)
 static
 int ssdfs_create_used_peb_object(struct ssdfs_peb_info *pebi)
 {
+	struct ssdfs_fs_info *fsi;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(pebi->peb_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = pebi->pebc->parent_si->fsi;
+
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
 
-	/* Do nothing temporary */
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
 
 	return 0;
 }
@@ -154,7 +158,7 @@ int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
 
 	return 0;
 }
@@ -179,6 +183,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	fsi = pebi->pebc->parent_si->fsi;
 
 	mutex_init(&pebi->current_log.lock);
+	atomic_set(&pebi->current_log.sequence_id, 0);
 
 	pebi->current_log.start_page = U16_MAX;
 	pebi->current_log.reserved_pages = 0;

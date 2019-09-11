@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_gc_thread.c - GC thread functionality.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -64,7 +64,7 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_blk_state_offset *blk_state = NULL;
 	struct ssdfs_peb_info *pebi = NULL;
 	u8 peb_migration_id;
-	u16 log_index;
+	u16 log_start_page;
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
 	struct ssdfs_block_descriptor blk_desc = {0};
 	int area_index;
@@ -108,21 +108,22 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	}
 
 	blk_state = &desc_off->blk_state;
-	log_index = le16_to_cpu(blk_state->log_start_page) / pebi->log_pages;
+	log_start_page = le16_to_cpu(blk_state->log_start_page);
 
-	if (log_index >= (fsi->pages_per_peb / pebi->log_pages)) {
+	if (log_start_page >= fsi->pages_per_peb) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid log index %u\n", log_index);
+		SSDFS_ERR("invalid log start page %u\n", log_start_page);
 		goto finish_copy_page;
 	}
 
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi, log_index, desc_array,
+	err = ssdfs_peb_read_log_hdr_desc_array(pebi, log_start_page,
+						desc_array,
 						SSDFS_SEG_HDR_DESC_MAX);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read log's header desc array: "
-			  "seg %llu, peb %llu, log_index %u, err %d\n",
+			  "seg %llu, peb %llu, log_start_page %u, err %d\n",
 			  pebc->parent_si->seg_id, pebi->peb_id,
-			  log_index, err);
+			  log_start_page, err);
 		goto finish_copy_page;
 	}
 
@@ -137,16 +138,22 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	area_offset = le32_to_cpu(desc_array[area_index].offset);
 	blk_desc_off = le32_to_cpu(blk_state->byte_offset);
 
-	err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
-					  area_offset + blk_desc_off,
-					  &blk_desc, blk_desc_size);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read buffer: "
-			  "peb %llu, area_offset %u, byte_offset %u, "
-			  "buf_size %zu, err %d\n",
-			  pebi->peb_id, area_offset, blk_desc_off,
-			  blk_desc_size, err);
-		goto finish_copy_page;
+	err = ssdfs_unaligned_read_cache(pebi,
+					 area_offset + blk_desc_off,
+					 blk_desc_size,
+					 &blk_desc);
+	if (err) {
+		err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
+						  area_offset + blk_desc_off,
+						  &blk_desc, blk_desc_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read buffer: "
+				  "peb %llu, area_offset %u, byte_offset %u, "
+				  "buf_size %zu, err %d\n",
+				  pebi->peb_id, area_offset, blk_desc_off,
+				  blk_desc_size, err);
+			goto finish_copy_page;
+		}
 	}
 
 	if (req->extent.ino >= U64_MAX) {

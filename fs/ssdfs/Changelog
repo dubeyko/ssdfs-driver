@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.00 [September 11, 2019]
+    (*) Partial logs support has been implemented.
+
 v.2.00 [July 15, 2019]
     (*) Release SSDFS file system driver v.2.0.
 

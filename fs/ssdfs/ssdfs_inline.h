@@ -1,6 +1,6 @@
 //SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
- *  SSDFS -- SSD-oriented File System.
+ * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/ssdfs_inline.h - inline functions and macros.
  *
@@ -196,6 +196,8 @@ bool is_ssdfs_magic_valid(struct ssdfs_signature *magic)
 	((struct ssdfs_volume_header *)(ptr))
 #define SSDFS_VS(ptr) \
 	((struct ssdfs_volume_state *)(ptr))
+#define SSDFS_PLH(ptr) \
+	((struct ssdfs_partial_log_header *)(ptr))
 
 /*
  * Flags for mount options.

@@ -4,11 +4,11 @@
  *
  * include/linux/ssdfs_fs.h - SSDFS on-disk structures and common declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -1279,9 +1279,6 @@ struct ssdfs_segment_header {
 
 /* 0x0410 */
 	__le16 log_pages;
-
-/* TODO: add data_pages and metadata_pages (partial log) */
-
 	__le16 seg_type;
 	__le32 seg_flags;
 
@@ -1322,6 +1319,9 @@ struct ssdfs_segment_header {
 #define SSDFS_MAPTBL_CACHE_BIT			(6)
 #define SSDFS_FOOTER_BIT			(7)
 #define SSDFS_PARTIAL_LOG_BIT			(8)
+#define SSDFS_PARTIAL_LOG_HEADER_BIT		(9)
+#define SSDFS_PLH_INSTEAD_FOOTER_BIT		(10)
+
 
 /* Segment flags */
 #define SSDFS_SEG_HDR_HAS_BLK_BMAP		(1 << SSDFS_BLK_BMAP_BIT)
@@ -1333,7 +1333,9 @@ struct ssdfs_segment_header {
 #define SSDFS_LOG_HAS_MAPTBL_CACHE		(1 << SSDFS_MAPTBL_CACHE_BIT)
 #define SSDFS_LOG_HAS_FOOTER			(1 << SSDFS_FOOTER_BIT)
 #define SSDFS_LOG_IS_PARTIAL			(1 << SSDFS_PARTIAL_LOG_BIT)
-#define SSDFS_SEG_HDR_FLAG_MASK			0x1FF
+#define SSDFS_LOG_HAS_PARTIAL_HEADER		(1 << SSDFS_PARTIAL_LOG_HEADER_BIT)
+#define SSDFS_PARTIAL_HEADER_INSTEAD_FOOTER	(1 << SSDFS_PLH_INSTEAD_FOOTER_BIT)
+#define SSDFS_SEG_HDR_FLAG_MASK			0x7FF
 
 /* Segment flags manipulation functions */
 #define SSDFS_SEG_HDR_FNS(bit, name)					\
@@ -1419,6 +1421,20 @@ SSDFS_SEG_HDR_FNS(FOOTER_BIT, log_has_footer)
 SSDFS_SEG_HDR_FNS(PARTIAL_LOG_BIT, log_is_partial)
 
 /*
+ * ssdfs_set_log_has_partial_header()
+ * ssdfs_clear_log_has_partial_header()
+ * ssdfs_log_has_partial_header()
+ */
+SSDFS_SEG_HDR_FNS(PARTIAL_LOG_HEADER_BIT, log_has_partial_header)
+
+/*
+ * ssdfs_set_partial_header_instead_footer()
+ * ssdfs_clear_partial_header_instead_footer()
+ * ssdfs_partial_header_instead_footer()
+ */
+SSDFS_SEG_HDR_FNS(PLH_INSTEAD_FOOTER_BIT, partial_header_instead_footer)
+
+/*
  * struct ssdfs_log_footer - footer of partial log
  * @volume_state: changeable part of superblock
  * @timestamp: writing timestamp
@@ -1426,8 +1442,7 @@ SSDFS_SEG_HDR_FNS(PARTIAL_LOG_BIT, log_is_partial)
  * @log_bytes: payload size in bytes
  * @log_flags: flags of log
  * @reserved1: reserved field
- * @blk_bmap_desc: descriptor of block bitmap place
- * @offsets_table_desc: descriptor of segment's offset translation table
+ * @desc_array: array of footer's metadata descriptors
  * @payload: space for log footer's payload
  */
 struct ssdfs_log_footer {
@@ -1440,9 +1455,6 @@ struct ssdfs_log_footer {
 
 /* 0x0410 */
 	__le32 log_bytes;
-
-/* TODO: add data_bytes and metadata_bytes (partial log) */
-
 	__le32 log_flags;
 	__le64 reserved1;
 
@@ -1515,6 +1527,187 @@ SSDFS_LOG_FOOTER_FNS(PARTIAL_LOG_BIT, partial_log_footer)
  * ssdfs_ending_log_footer()
  */
 SSDFS_LOG_FOOTER_FNS(ENDING_LOG_BIT, ending_log_footer)
+
+/*
+ * struct ssdfs_partial_log_header - header of partial log
+ * @magic: magic signature + revision
+ * @check: metadata checksum
+ * @timestamp: writing timestamp
+ * @cno: writing checkpoint
+ * @log_pages: size of log in pages count
+ * @seg_type: type of segment
+ * @pl_flags: flags of log
+ * @log_bytes: payload size in bytes
+ * @flags: volume flags
+ * @desc_array: array of log's metadata descriptors
+ * @nsegs: segments count
+ * @free_pages: free pages count
+ * @root_folder: copy of root folder's inode
+ * @inodes_btree: inodes btree root
+ * @shared_extents_btree: shared extents btree root
+ * @shared_dict_btree: shared dictionary btree root
+ * @sequence_id: index of partial log in the sequence
+ * @log_pagesize: log2(page size)
+ * @log_erasesize: log2(erase block size)
+ * @log_segsize: log2(segment size)
+ * @log_pebs_per_seg: log2(erase blocks per segment)
+ *
+ * This header is used when the full log needs to be built from several
+ * partial logs. The header represents the combination of the most
+ * essential fields of segment header and log footer. The first partial
+ * log starts from the segment header and partial log header. The next
+ * every partial log starts from the partial log header. Only the latest
+ * log ends with the log footer.
+ */
+struct ssdfs_partial_log_header {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	struct ssdfs_metadata_check check;
+
+/* 0x0010 */
+	__le64 timestamp;
+	__le64 cno;
+
+/* 0x0020 */
+	__le16 log_pages;
+	__le16 seg_type;
+	__le32 pl_flags;
+
+/* 0x0028 */
+	__le32 log_bytes;
+	__le32 flags;
+
+/* 0x0030 */
+	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
+
+/* 0x00B0 */
+	__le64 nsegs;
+	__le64 free_pages;
+
+/* 0x00C0 */
+	struct ssdfs_inode root_folder;
+
+/* 0x01C0 */
+	struct ssdfs_inodes_btree inodes_btree;
+
+/* 0x0240 */
+	struct ssdfs_shared_extents_btree shared_extents_btree;
+
+/* 0x02C0 */
+	struct ssdfs_shared_dictionary_btree shared_dict_btree;
+
+/* 0x0340 */
+	__le8 sequence_id;
+	__le8 log_pagesize;
+	__le8 log_erasesize;
+	__le8 log_segsize;
+	__le8 log_pebs_per_seg;
+	__le8 reserved[0xB];
+
+/* 0x0350 */
+	__le8 payload[0xB0];
+
+/* 0x0400 */
+} __packed;
+
+/* Partial log flags manipulation functions */
+#define SSDFS_PL_HDR_FNS(bit, name)					 \
+static inline void ssdfs_set_##name(struct ssdfs_partial_log_header *hdr) \
+{									 \
+	unsigned long pl_flags = le32_to_cpu(hdr->pl_flags);		 \
+	set_bit(SSDFS_##bit, &pl_flags);				 \
+	hdr->pl_flags = cpu_to_le32((u32)pl_flags);			 \
+}									 \
+static inline void ssdfs_clear_##name(struct ssdfs_partial_log_header *hdr) \
+{									 \
+	unsigned long pl_flags = le32_to_cpu(hdr->pl_flags);		 \
+	clear_bit(SSDFS_##bit, &pl_flags);				 \
+	hdr->pl_flags = cpu_to_le32((u32)pl_flags);			 \
+}									 \
+static inline int ssdfs_##name(struct ssdfs_partial_log_header *hdr)	 \
+{									 \
+	unsigned long pl_flags = le32_to_cpu(hdr->pl_flags);		 \
+	return test_bit(SSDFS_##bit, &pl_flags);			 \
+}
+
+/*
+ * ssdfs_set_pl_hdr_has_blk_bmap()
+ * ssdfs_clear_pl_hdr_has_blk_bmap()
+ * ssdfs_pl_hdr_has_blk_bmap()
+ */
+SSDFS_PL_HDR_FNS(BLK_BMAP_BIT, pl_hdr_has_blk_bmap)
+
+/*
+ * ssdfs_set_pl_hdr_has_offset_table()
+ * ssdfs_clear_pl_hdr_has_offset_table()
+ * ssdfs_pl_hdr_has_offset_table()
+ */
+SSDFS_PL_HDR_FNS(OFFSET_TABLE_BIT, pl_hdr_has_offset_table)
+
+/*
+ * ssdfs_set_pl_has_cold_payload()
+ * ssdfs_clear_pl_has_cold_payload()
+ * ssdfs_pl_has_cold_payload()
+ */
+SSDFS_PL_HDR_FNS(COLD_PAYLOAD_BIT, pl_has_cold_payload)
+
+/*
+ * ssdfs_set_pl_has_warm_payload()
+ * ssdfs_clear_pl_has_warm_payload()
+ * ssdfs_pl_has_warm_payload()
+ */
+SSDFS_PL_HDR_FNS(WARM_PAYLOAD_BIT, pl_has_warm_payload)
+
+/*
+ * ssdfs_set_pl_has_hot_payload()
+ * ssdfs_clear_pl_has_hot_payload()
+ * ssdfs_pl_has_hot_payload()
+ */
+SSDFS_PL_HDR_FNS(HOT_PAYLOAD_BIT, pl_has_hot_payload)
+
+/*
+ * ssdfs_set_pl_has_blk_desc_chain()
+ * ssdfs_clear_pl_has_blk_desc_chain()
+ * ssdfs_pl_has_blk_desc_chain()
+ */
+SSDFS_PL_HDR_FNS(BLK_DESC_CHAIN_BIT, pl_has_blk_desc_chain)
+
+/*
+ * ssdfs_set_pl_has_maptbl_cache()
+ * ssdfs_clear_pl_has_maptbl_cache()
+ * ssdfs_pl_has_maptbl_cache()
+ */
+SSDFS_PL_HDR_FNS(MAPTBL_CACHE_BIT, pl_has_maptbl_cache)
+
+/*
+ * ssdfs_set_pl_has_footer()
+ * ssdfs_clear_pl_has_footer()
+ * ssdfs_pl_has_footer()
+ */
+SSDFS_PL_HDR_FNS(FOOTER_BIT, pl_has_footer)
+
+/*
+ * ssdfs_set_pl_is_partial()
+ * ssdfs_clear_pl_is_partial()
+ * ssdfs_pl_is_partial()
+ */
+SSDFS_PL_HDR_FNS(PARTIAL_LOG_BIT, pl_is_partial)
+
+/*
+ * ssdfs_set_pl_has_partial_header()
+ * ssdfs_clear_pl_has_partial_header()
+ * ssdfs_pl_has_partial_header()
+ */
+SSDFS_PL_HDR_FNS(PARTIAL_LOG_HEADER_BIT, pl_has_partial_header)
+
+/*
+ * ssdfs_set_pl_header_instead_footer()
+ * ssdfs_clear_pl_header_instead_footer()
+ * ssdfs_pl_header_instead_footer()
+ */
+SSDFS_PL_HDR_FNS(PLH_INSTEAD_FOOTER_BIT, pl_header_instead_footer)
 
 /*
  * struct ssdfs_fragments_chain_header - header of fragments' chain

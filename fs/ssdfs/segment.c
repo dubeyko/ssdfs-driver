@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/segment.c - segment concept related functionality.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -55,7 +55,9 @@ int ssdfs_init_seg_obj_cache(void)
 {
 	ssdfs_seg_obj_cachep = kmem_cache_create("ssdfs_seg_obj_cache",
 					sizeof(struct ssdfs_segment_info), 0,
-					SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+					SLAB_RECLAIM_ACCOUNT |
+					SLAB_MEM_SPREAD |
+					SLAB_ACCOUNT,
 					ssdfs_init_seg_object_once);
 	if (!ssdfs_seg_obj_cachep) {
 		SSDFS_ERR("unable to create segment objects cache\n");
@@ -200,12 +202,14 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		return ERR_PTR(-EINVAL);
 	}
 
-	ptr = kmem_cache_zalloc(ssdfs_seg_obj_cachep, GFP_NOFS);
+	ptr = kmem_cache_alloc(ssdfs_seg_obj_cachep, GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for segment %llu\n",
 			  seg);
 		return ERR_PTR(-ENOMEM);
 	}
+
+	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
 
 	ptr->seg_id = seg;
 	ptr->seg_type = seg_type;

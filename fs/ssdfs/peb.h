@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb.h - Physical Erase Block (PEB) object declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -103,16 +103,17 @@ enum {
  * struct ssdfs_peb_log - current log
  * @lock: exclusive lock of current log
  * @state: current log's state
+ * @sequence_id: index of partial log in the sequence
  * @start_page: current log's start page index
  * @pages_capacity: rest free pages in log
  * @write_offset: current offset in bytes for adding data in log
  * @seg_flags: segment header's flags for the log
  * @area: log's areas (main, diff updates, journal)
- * @pages: log's address space
  */
 struct ssdfs_peb_log {
 	struct mutex lock;
 	atomic_t state;
+	atomic_t sequence_id;
 	u16 start_page;
 	u16 reserved_pages; /* metadata pages in the log */
 	u16 free_data_pages; /* free data pages capacity */
@@ -345,11 +346,13 @@ void ssdfs_peb_set_current_log_state(struct ssdfs_peb_info *pebi,
  * @pebi: pointer on PEB object
  * @free_pages: free pages in the current log
  * @start_page: start page of the current log
+ * @sequence_id: index of partial log in the sequence
  */
 static inline
 void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 				u16 free_pages,
-				u16 start_page)
+				u16 start_page,
+				u8 sequence_id)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
@@ -358,6 +361,7 @@ void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 	ssdfs_peb_current_log_lock(pebi);
 	pebi->current_log.start_page = start_page;
 	pebi->current_log.free_data_pages = free_pages;
+	atomic_set(&pebi->current_log.sequence_id, sequence_id);
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_INITIALIZED);
 	ssdfs_peb_current_log_unlock(pebi);
 }
@@ -597,9 +601,15 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi);
 /*
  * PEB internal functions declaration
  */
+int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
+				u32 area_offset, u32 area_size,
+				void *buf);
 int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 				      u16 log_index,
 				      struct ssdfs_metadata_descriptor *array,
 				      size_t array_size);
+u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi);
+bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
+			    struct ssdfs_peb_info *pebi);
 
 #endif /* _SSDFS_PEB_H */

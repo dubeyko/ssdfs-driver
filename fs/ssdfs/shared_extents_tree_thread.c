@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/shared_extents_tree_thread.c - shared extents tree's thread impl.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -401,7 +401,12 @@ int ssdfs_shextree_stop_thread(struct ssdfs_shared_extents_tree *tree,
 		return 0;
 
 	err = kthread_stop(ptr->thread.task);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 * The wake_up_process() was never called.
+		 */
+	} else if (unlikely(err)) {
 		SSDFS_WARN("thread function had some issue: err %d\n",
 			    err);
 		return err;

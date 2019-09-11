@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/offset_translation_table.c - offset translation table functionality.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -337,6 +337,7 @@ free_bmap:
 void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 {
 	int state;
+	int migrating_blks = -1;
 	int i, j;
 
 	SSDFS_DBG("table %p\n", table);
@@ -365,7 +366,12 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (i = 0; i <= table->last_allocated_blk; i++) {
+	if (table->last_allocated_blk >= U16_MAX)
+		migrating_blks = 0;
+	else
+		migrating_blks = table->last_allocated_blk + 1;
+
+	for (i = 0; i < migrating_blks; i++) {
 		struct ssdfs_migrating_block *blk = &table->migrating_blks[i];
 
 		switch (blk->state) {
@@ -991,7 +997,7 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 
 	if (state >= SSDFS_BLK2OFF_FRAG_INITIALIZED &&
 	    state < SSDFS_BLK2OFF_FRAG_STATE_MAX) {
-		SSDFS_ERR("fragment has been initialized yet: "
+		SSDFS_ERR("fragment has been initialized already: "
 			  "state %#x\n",
 			  state);
 		return -EIO;

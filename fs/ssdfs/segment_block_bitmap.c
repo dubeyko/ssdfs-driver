@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/segment_block_bitmap.c - segment's block bitmap implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -276,7 +276,15 @@ try_define_bmap_index:
 
 		case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
 		case SSDFS_PEB2_SRC_PEB1_DST_CONTAINER:
-			*bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
+			switch (atomic_read(&pebc->migration_phase)) {
+			case SSDFS_SRC_PEB_NOT_EXHAUSTED:
+				*bmap_index = SSDFS_PEB_BLK_BMAP_SOURCE;
+				break;
+
+			default:
+				*bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
+				break;
+			}
 			break;
 
 		default:
@@ -389,6 +397,67 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 	return ssdfs_peb_blk_bmap_reserve_metapages(peb_blkbmap,
 						    bmap_index,
 						    count);
+}
+
+/*
+ * ssdfs_segment_blk_bmap_free_metapages() - free metapages
+ * @ptr: segment block bitmap object
+ * @pebc: pointer on PEB container
+ * @count: amount of metadata pages for freeing
+ *
+ * This method tries to free @count metadata pages into
+ * block bitmap.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
+					  struct ssdfs_peb_container *pebc,
+					  u16 count)
+{
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
+	u16 peb_index;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
+		  ptr->parent_si->seg_id,
+		  pebc->peb_index, count);
+
+	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&ptr->state));
+		return -ERANGE;
+	}
+
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define bmap_index: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  ptr->parent_si->seg_id,
+			  pebc->peb_index, err);
+		return err;
+	}
+
+	if (peb_index >= ptr->pebs_count) {
+		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
+			  peb_index, ptr->pebs_count);
+		return -ERANGE;
+	}
+
+	peb_blkbmap = &ptr->peb[peb_index];
+
+	return ssdfs_peb_blk_bmap_free_metapages(peb_blkbmap,
+						 bmap_index,
+						 count);
 }
 
 /*
@@ -542,7 +611,7 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	struct ssdfs_peb_blk_bmap *src_blkbmap, *dst_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
 	u16 peb_index;
-	int migration_state, items_state;
+	int migration_state, migration_phase, items_state;
 	bool need_migrate = false;
 	bool need_move = false;
 	int src_migration_id = -1, dst_migration_id = -1;
@@ -562,6 +631,7 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 
 try_define_bmap_index:
 	migration_state = atomic_read(&pebc->migration_state);
+	migration_phase = atomic_read(&pebc->migration_phase);
 	items_state = atomic_read(&pebc->items_state);
 	switch (migration_state) {
 	case SSDFS_PEB_NOT_MIGRATING:
@@ -741,10 +811,23 @@ try_define_bmap_index:
 			}
 
 			if (peb_migration_id == src_migration_id) {
-				need_migrate = true;
-				need_move = false;
-				bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
-				peb_index = pebc->src_peb->peb_index;
+				switch (migration_phase) {
+				case SSDFS_SRC_PEB_NOT_EXHAUSTED:
+					need_migrate = false;
+					need_move = false;
+					bmap_index =
+						SSDFS_PEB_BLK_BMAP_SOURCE;
+					peb_index = pebc->src_peb->peb_index;
+					break;
+
+				default:
+					need_migrate = true;
+					need_move = false;
+					bmap_index =
+						SSDFS_PEB_BLK_BMAP_INDEX_MAX;
+					peb_index = pebc->src_peb->peb_index;
+					break;
+				}
 			} else if (peb_migration_id == dst_migration_id) {
 				need_migrate = false;
 				need_move = false;
@@ -924,7 +1007,7 @@ finish_define_bmap_index:
 						      range_state,
 						      range);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to migrate: "
+			SSDFS_ERR("fail to update range: "
 				  "range (start %u, len %u), "
 				  "range_state %#x, "
 				  "err %d\n",

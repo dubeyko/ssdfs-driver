@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_container.h - PEB container declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -57,6 +57,16 @@ enum {
 };
 
 /*
+ * PEB migration phase
+ */
+enum {
+	SSDFS_PEB_MIGRATION_STATUS_UNKNOWN,
+	SSDFS_SRC_PEB_NOT_EXHAUSTED,
+	SSDFS_DST_PEB_RECEIVES_DATA,
+	SSDFS_PEB_MIGRATION_PHASE_MAX
+};
+
+/*
  * struct ssdfs_peb_container - PEB container
  * @peb_type: type of PEB
  * @peb_index: index of PEB in the array
@@ -68,6 +78,7 @@ enum {
  * @create_rq: pointer on shared new page requests queue
  * @parent_si: pointer on parent segment object
  * @migration_state: PEB migration state
+ * @migration_phase: PEB migration phase
  * @items_state: items array state
  * @shared_free_dst_blks: count of blocks that destination is able to share
  * @lock: container's internals lock
@@ -102,6 +113,7 @@ struct ssdfs_peb_container {
 
 	/* Migration info */
 	atomic_t migration_state;
+	atomic_t migration_phase;
 	atomic_t items_state;
 	atomic_t shared_free_dst_blks;
 

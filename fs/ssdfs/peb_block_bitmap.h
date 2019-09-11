@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_block_bitmap.h - PEB's block bitmap declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -116,6 +116,9 @@ int ssdfs_peb_define_reserved_pages_per_log(struct ssdfs_peb_blk_bmap *bmap);
 int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 					 int bmap_index,
 					 u16 count);
+int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
+				      int bmap_index,
+				      u16 count);
 int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				    int bmap_index,
 				    u32 *len,
@@ -144,6 +147,7 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap);
 /*
  * PEB block bitmap internal API
  */
+int ssdfs_src_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_src_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_src_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_dst_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *ptr);

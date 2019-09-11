@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_container.c - PEB container implementation.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -33,7 +33,8 @@
 
 enum {
 	SSDFS_SRC_PEB,
-	SSDFS_DST_PEB
+	SSDFS_DST_PEB,
+	SSDFS_SRC_AND_DST_PEB
 };
 
 static
@@ -79,7 +80,7 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 	mem_pages = (pagesize + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	page_index = ssdfs_phys_page_to_mem_page(pebc->parent_si->fsi,
 						 blk_index);
-	page_off = (blk_index * pagesize) % PAGE_SIZE;
+	page_off = (page_index * pagesize) % PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(mem_pages > 1 && page_off != 0);
@@ -97,13 +98,15 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 
 			page = req->result.pvec.pages[i];
 
-#ifdef CONFIG_SSDFS_DEBUG
-			WARN_ON(!test_bit(PG_locked, &page->flags));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			if (!PageError(page)) {
-				ClearPageDirty(page);
-				SetPageUptodate(page);
+			if (!PageLocked(page)) {
+				SSDFS_WARN("failed to mark block uptodate: "
+					   "page %d is not locked\n",
+					   i);
+			} else {
+				if (!PageError(page)) {
+					ClearPageDirty(page);
+					SetPageUptodate(page);
+				}
 			}
 		}
 	}
@@ -475,7 +478,8 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		atomic_set(&pebc->dst_peb->state,
 			   SSDFS_PEB_OBJECT_INITIALIZED);
 		complete_all(&pebc->dst_peb->init_end);
-	}
+	} else
+		BUG();
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (unlikely(err)) {
@@ -522,14 +526,15 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
-	struct ssdfs_segment_request *req1, *req2;
+	struct ssdfs_segment_request *req1, *req2, *req3, *req4;
 	int command;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
+	BUG_ON(selected_peb < SSDFS_SRC_PEB ||
+		selected_peb > SSDFS_SRC_AND_DST_PEB);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
@@ -538,9 +543,11 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		  selected_peb);
 
 	if (selected_peb == SSDFS_SRC_PEB)
-		command = SSDFS_READ_BLK_BMAP_SRC_USING_PEB;
+		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
 	else if (selected_peb == SSDFS_DST_PEB)
-		command = SSDFS_READ_BLK_BMAP_DST_USING_PEB;
+		command = SSDFS_READ_DST_ALL_LOG_HEADERS;
+	else if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_DST_ALL_LOG_HEADERS;
 	else
 		BUG();
 
@@ -562,9 +569,11 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
 	if (selected_peb == SSDFS_SRC_PEB)
-		command = SSDFS_READ_BLK2OFF_TABLE_SRC_PEB;
+		command = SSDFS_READ_BLK_BMAP_SRC_USING_PEB;
 	else if (selected_peb == SSDFS_DST_PEB)
-		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+		command = SSDFS_READ_BLK_BMAP_DST_USING_PEB;
+	else if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_BLK_BMAP_DST_USING_PEB;
 	else
 		BUG();
 
@@ -585,6 +594,56 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB) {
+		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
+
+		req3 = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req3)) {
+			err = (req3 == NULL ? -ENOMEM : PTR_ERR(req3));
+			req3 = NULL;
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			ssdfs_requests_queue_remove_all(&pebc->read_rq,
+							-ERANGE);
+			goto fail_create_using_peb_obj;
+		}
+
+		ssdfs_request_init(req3);
+		ssdfs_get_request(req3);
+		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+						    command,
+						    SSDFS_REQ_ASYNC,
+						    req3);
+		ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
+	}
+
+	if (selected_peb == SSDFS_SRC_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_SRC_PEB;
+	else if (selected_peb == SSDFS_DST_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+	else if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+	else
+		BUG();
+
+	req4 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req4)) {
+		err = (req4 == NULL ? -ENOMEM : PTR_ERR(req4));
+		req4 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_using_peb_obj;
+	}
+
+	ssdfs_request_init(req4);
+	ssdfs_get_request(req4);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req4);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (unlikely(err)) {
@@ -682,7 +741,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 				    int selected_peb)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
-	struct ssdfs_segment_request *req1, *req2;
+	struct ssdfs_segment_request *req1, *req2, *req3;
 	int command;
 	int err;
 
@@ -698,9 +757,9 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		  selected_peb);
 
 	if (selected_peb == SSDFS_SRC_PEB)
-		command = SSDFS_READ_BLK_BMAP_SRC_USED_PEB;
+		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
 	else if (selected_peb == SSDFS_DST_PEB)
-		command = SSDFS_READ_BLK_BMAP_DST_USED_PEB;
+		command = SSDFS_READ_DST_ALL_LOG_HEADERS;
 	else
 		BUG();
 
@@ -722,9 +781,9 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
 	if (selected_peb == SSDFS_SRC_PEB)
-		command = SSDFS_READ_BLK2OFF_TABLE_SRC_PEB;
+		command = SSDFS_READ_BLK_BMAP_SRC_USED_PEB;
 	else if (selected_peb == SSDFS_DST_PEB)
-		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+		command = SSDFS_READ_BLK_BMAP_DST_USED_PEB;
 	else
 		BUG();
 
@@ -745,6 +804,31 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
+
+	if (selected_peb == SSDFS_SRC_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_SRC_PEB;
+	else if (selected_peb == SSDFS_DST_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+	else
+		BUG();
+
+	req3 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req3)) {
+		err = (req3 == NULL ? -ENOMEM : PTR_ERR(req3));
+		req3 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_used_peb_obj;
+	}
+
+	ssdfs_request_init(req3);
+	ssdfs_get_request(req3);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req3);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (unlikely(err)) {
@@ -1045,8 +1129,9 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("peb_index %u, src_peb_state %#x, "
+	SSDFS_DBG("seg %llu, peb_index %u, src_peb_state %#x, "
 		  "dst_peb_state %#x, src_peb_flags %#x\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index, src_peb_state,
 		  dst_peb_state, src_peb_flags);
 
@@ -1186,7 +1271,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 								SSDFS_SRC_PEB);
 			} else {
 				err = ssdfs_create_using_peb_container(pebc,
-								SSDFS_DST_PEB);
+							SSDFS_SRC_AND_DST_PEB);
 			}
 
 			if (unlikely(err)) {
@@ -1228,7 +1313,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 								SSDFS_SRC_PEB);
 			} else {
 				err = ssdfs_create_using_peb_container(pebc,
-								SSDFS_DST_PEB);
+							SSDFS_SRC_AND_DST_PEB);
 			}
 
 			if (unlikely(err)) {
@@ -1391,6 +1476,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 
 	memset(pebc, 0, sizeof(struct ssdfs_peb_container));
 	atomic_set(&pebc->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
+	atomic_set(&pebc->migration_phase, SSDFS_PEB_MIGRATION_STATUS_UNKNOWN);
 	atomic_set(&pebc->items_state, SSDFS_PEB_CONTAINER_EMPTY);
 	atomic_set(&pebc->shared_free_dst_blks, 0);
 	init_rwsem(&pebc->lock);
@@ -3147,12 +3233,16 @@ finish_forget_relation:
 struct ssdfs_peb_info *
 ssdfs_get_current_peb_locked(struct ssdfs_peb_container *pebc)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi = NULL;
+	bool is_peb_exhausted;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebc->parent_si->fsi;
 
 try_get_current_peb:
 	switch (atomic_read(&pebc->migration_state)) {
@@ -3164,15 +3254,38 @@ try_get_current_peb:
 			SSDFS_WARN("source PEB is NULL\n");
 			goto fail_to_get_current_peb;
 		}
+
+		atomic_set(&pebc->migration_phase,
+				SSDFS_PEB_MIGRATION_STATUS_UNKNOWN);
 		break;
 
 	case SSDFS_PEB_UNDER_MIGRATION:
 		down_read(&pebc->lock);
-		pebi = pebc->dst_peb;
+
+		pebi = pebc->src_peb;
 		if (!pebi) {
 			err = -ERANGE;
-			SSDFS_WARN("destination PEB is NULL\n");
+			SSDFS_WARN("source PEB is NULL\n");
 			goto fail_to_get_current_peb;
+		}
+
+		ssdfs_peb_current_log_lock(pebi);
+		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+
+		if (is_peb_exhausted) {
+			pebi = pebc->dst_peb;
+			if (!pebi) {
+				err = -ERANGE;
+				SSDFS_WARN("destination PEB is NULL\n");
+				goto fail_to_get_current_peb;
+			}
+
+			atomic_set(&pebc->migration_phase,
+					SSDFS_DST_PEB_RECEIVES_DATA);
+		} else {
+			atomic_set(&pebc->migration_phase,
+					SSDFS_SRC_PEB_NOT_EXHAUSTED);
 		}
 		break;
 
@@ -3857,6 +3970,14 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return -ERANGE;
 		}
 
+		free_pages = ssdfs_src_blk_bmap_get_free_pages(peb_blkbmap);
+		if (free_pages < 0) {
+			err = free_pages;
+			SSDFS_ERR("fail to get free pages: err %d\n",
+				  err);
+			return err;
+		}
+
 		used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
 		if (used_pages < 0) {
 			err = used_pages;
@@ -3873,6 +3994,10 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				  err);
 			return err;
 		}
+
+		SSDFS_DBG("source PEB: free_pages %d, used_pages %d, "
+			  "invalid_pages %d\n",
+			  free_pages, used_pages, invalid_pages);
 
 		if (invalid_pages == 0) {
 			if (used_pages == 0) {
@@ -3952,6 +4077,10 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				  err);
 			return err;
 		}
+
+		SSDFS_DBG("destination PEB: free_pages %d, used_pages %d, "
+			  "invalid_pages %d\n",
+			  free_pages, used_pages, invalid_pages);
 
 		if (free_pages == 0) {
 			if (invalid_pages == 0) {

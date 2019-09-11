@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/request_queue.h - request queue declarations.
  *
- * Copyright (c) 2014-2018 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2009-2018, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -59,6 +59,8 @@ enum {
 	SSDFS_UNKNOWN_CMD,
 	SSDFS_READ_PAGE,
 	SSDFS_READ_PAGES_READAHEAD,
+	SSDFS_READ_SRC_ALL_LOG_HEADERS,
+	SSDFS_READ_DST_ALL_LOG_HEADERS,
 	SSDFS_READ_BLK_BMAP_SRC_USING_PEB,
 	SSDFS_READ_BLK_BMAP_DST_USING_PEB,
 	SSDFS_READ_BLK_BMAP_SRC_USED_PEB,
