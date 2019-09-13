@@ -397,6 +397,7 @@ int ssdfs_shared_dict_stop_thread(struct ssdfs_shared_dict_btree_info *tree)
 		 * Ignore this error.
 		 * The wake_up_process() was never called.
 		 */
+		return 0;
 	} else if (unlikely(err)) {
 		SSDFS_WARN("thread function had some issue: err %d\n",
 			    err);

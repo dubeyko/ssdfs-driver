@@ -1943,6 +1943,7 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 
 	items_count = le16_to_cpu(hdr->items_count);
+
 	if (item_index >= items_count) {
 		err = -ERANGE;
 		SSDFS_ERR("item_index %u >= items_count %u\n",

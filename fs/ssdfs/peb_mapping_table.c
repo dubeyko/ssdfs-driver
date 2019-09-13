@@ -5523,8 +5523,10 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	u16 item_index;
 	int err = 0;
 
-	SSDFS_DBG("tbl %p, fdesc %p, leb_id %llu, selected_index %u\n",
-		  tbl, fdesc, leb_id, selected_index);
+	SSDFS_DBG("tbl %p, fdesc %p, leb_id %llu, "
+		  "selected_index %u, peb_state %#x\n",
+		  tbl, fdesc, leb_id,
+		  selected_index, peb_state);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !fdesc);
@@ -5867,6 +5869,20 @@ finish_change_state:
 	} else if (err == -EEXIST) {
 		/* PEB has this state already */
 		err = 0;
+
+		if (should_cache_peb_info(peb_type)) {
+			consistency = SSDFS_PEB_STATE_CONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state(cache,
+								  leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  leb_id, peb_state, err);
+			}
+		}
 	}
 
 	SSDFS_DBG("finished\n");

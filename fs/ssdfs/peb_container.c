@@ -3778,6 +3778,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
+		SSDFS_DBG("free_pages %d, used_pages %d, invalid_pages %d\n",
+			  free_pages, used_pages, invalid_pages);
+
 		if (free_pages == 0) {
 			if (invalid_pages == 0) {
 				if (used_pages == 0) {
