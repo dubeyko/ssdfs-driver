@@ -792,7 +792,21 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 	err = ssdfs_segment_blk_bmap_reserve_metapages(&si->blk_bmap,
 							pebi->pebc,
 							log->reserved_pages);
-	if (unlikely(err)) {
+	if (err == -ENOSPC) {
+		/*
+		 * The goal of reservation is to decrease the number of
+		 * free logical blocks because some PEB's space is used
+		 * for the metadata. Such decreasing prevents from
+		 * allocation of logical blocks out of physically
+		 * available space in the PEB. However, if no space
+		 * for reservation but there are some physical pages
+		 * for logs creation then the operation of reservation
+		 * can be simply ignored. Because, current log's
+		 * metadata structure manages the real available
+		 * space in the PEB.
+		 */
+		err = 0;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve metadata pages: "
 			  "count %u, err %d\n",
 			  log->reserved_pages, err);
@@ -7095,6 +7109,14 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 							 end);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to clean dirty pages: "
+				  "start %lu, end %lu, err %d\n",
+				  index, end, err);
+		}
+
+		err = ssdfs_page_array_release_pages(&pebi->cache,
+						     &index, end);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release pages: "
 				  "start %lu, end %lu, err %d\n",
 				  index, end, err);
 		}

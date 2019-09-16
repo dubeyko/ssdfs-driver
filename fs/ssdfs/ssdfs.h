@@ -111,6 +111,14 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 					   void *buf,
 					   struct ssdfs_log_footer *footer,
 					   u64 dev_size);
+int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
+				    u64 peb_id, u32 bytes_off,
+				    void *buf, bool silent,
+				    u32 *log_pages);
+int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
+			   void *buf,
+			   struct ssdfs_log_footer *footer,
+			   bool silent);
 int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  u64 peb_id, u32 bytes_off, void *buf,
 				  bool silent);

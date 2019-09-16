@@ -1311,7 +1311,7 @@ init_failed:
 			  count,
 			  atomic_read(&bmap->free_logical_blks),
 			  atomic_read(&bmap->parent->free_logical_blks));
-		return -ENODATA;
+		return -ENOSPC;
 	}
 
 	down_read(&bmap->lock);

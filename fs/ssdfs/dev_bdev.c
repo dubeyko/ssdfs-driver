@@ -534,7 +534,7 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 		goto free_buf;
 
 	if (memchr_inv(buf, 0xff, fsi->pagesize)) {
-		SSDFS_ERR("area with offset %llu contains unmatching char\n",
+		SSDFS_DBG("area with offset %llu contains unmatching char\n",
 			  (unsigned long long)offset);
 		err = -EIO;
 	}

@@ -418,6 +418,88 @@ static int ssdfs_read_checked_sb_info(struct ssdfs_fs_info *fsi, u64 peb_id,
 	return 0;
 }
 
+static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
+					u32 pages_off, bool silent,
+					u32 *cur_off)
+{
+	u32 bytes_off;
+	u32 log_pages;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, peb_id %llu, pages_off %u, silent %#x\n",
+		  fsi, peb_id, pages_off, silent);
+
+	bytes_off = pages_off * fsi->pagesize;
+
+	err = ssdfs_read_unchecked_log_footer(fsi, peb_id, bytes_off,
+					      fsi->sbi.vs_buf, silent,
+					      &log_pages);
+	if (err) {
+		if (!silent) {
+			SSDFS_ERR("fail to read the log footer: "
+				  "peb_id %llu, offset %u, err %d\n",
+				  peb_id, bytes_off, err);
+		} else {
+			SSDFS_DBG("fail to read the log footer: "
+				  "peb_id %llu, offset %u, err %d\n",
+				  peb_id, bytes_off, err);
+		}
+		return err;
+	}
+
+	if (log_pages == 0 ||
+	    log_pages > fsi->pages_per_peb ||
+	    pages_off < log_pages) {
+		if (!silent) {
+			SSDFS_ERR("invalid log_pages %u\n", log_pages);
+		} else {
+			SSDFS_DBG("invalid log_pages %u\n", log_pages);
+		}
+		return -ERANGE;
+	}
+
+	pages_off -= log_pages - 1;
+	*cur_off -= log_pages - 1;
+
+	err = ssdfs_read_checked_segment_header(fsi, peb_id, pages_off,
+						fsi->sbi.vh_buf, silent);
+	if (err) {
+		if (!silent) {
+			SSDFS_ERR("volume header is corrupted: "
+				  "peb_id %llu, offset %d, err %d\n",
+				  peb_id, pages_off, err);
+		} else {
+			SSDFS_DBG("volume header is corrupted: "
+				  "peb_id %llu, offset %d, err %d\n",
+				  peb_id, pages_off, err);
+		}
+		return err;
+	}
+
+	err = ssdfs_check_log_footer(fsi,
+				     SSDFS_SEG_HDR(fsi->sbi.vh_buf),
+				     SSDFS_LF(fsi->sbi.vs_buf),
+				     silent);
+	if (err) {
+		if (!silent) {
+			SSDFS_ERR("log footer is corrupted: "
+				  "peb_id %llu, bytes_off %u, err %d\n",
+				  peb_id, bytes_off, err);
+		} else {
+			SSDFS_DBG("log footer is corrupted: "
+				  "peb_id %llu, bytes_off %u, err %d\n",
+				  peb_id, bytes_off, err);
+		}
+		return err;
+	}
+
+	return 0;
+}
+
 static int ssdfs_find_any_valid_sb_segment(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -903,6 +985,169 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	return err;
 }
 
+/*
+ * This method expects that first volume header and log footer
+ * are checked yet and they are valid.
+ */
+static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_segment_header *last_seg_hdr;
+	struct ssdfs_peb_extent checking_page;
+	u64 leb, peb;
+	u32 cur_off, low_off, high_off;
+	u32 log_pages;
+	u32 start_offset;
+	u32 found_log_off;
+	u64 cno1, cno2;
+	u64 copy_leb, copy_peb;
+	u32 peb_pages_off;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+	BUG_ON(!fsi->sbi.vh_buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p\n", fsi, fsi->sbi.vh_buf);
+
+	if (!fsi->devops->can_write_page) {
+		SSDFS_CRIT("fail to find latest valid sb info: "
+			   "can_write_page is not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	ssdfs_backup_sb_info(fsi);
+	last_seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
+	leb = fsi->sbi.last_log.leb_id;
+	peb = fsi->sbi.last_log.peb_id;
+
+	if (leb == U64_MAX || peb == U64_MAX) {
+		ssdfs_restore_sb_info(fsi);
+		SSDFS_ERR("invalid leb_id %llu or peb_id %llu\n",
+			  leb, peb);
+		return -ERANGE;
+	}
+
+	log_pages = SSDFS_LOG_PAGES(last_seg_hdr);
+	start_offset = fsi->sbi.last_log.page_offset + log_pages;
+	low_off = start_offset;
+	high_off = fsi->pages_per_peb;
+	cur_off = low_off;
+
+	checking_page.leb_id = leb;
+	checking_page.peb_id = peb;
+	checking_page.page_offset = cur_off;
+	checking_page.pages_count = 1;
+
+	err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+	if (err == -EIO) {
+		/* correct low bound */
+		err = 0;
+		low_off++;
+	} else if (err) {
+		SSDFS_ERR("fail to check for write PEB %llu\n",
+			  peb);
+		return err;
+	} else {
+		ssdfs_restore_sb_info(fsi);
+
+		/* previous read log was valid */
+		SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
+			  cur_off, low_off, high_off);
+		return 0;
+	}
+
+	cur_off = high_off - 1;
+
+	do {
+		u32 diff_pages;
+
+		checking_page.leb_id = leb;
+		checking_page.peb_id = peb;
+		checking_page.page_offset = cur_off;
+		checking_page.pages_count = 1;
+
+		err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+		if (err == -EIO) {
+			/* correct low bound */
+			err = 0;
+			low_off = cur_off;
+		} else if (err) {
+			SSDFS_ERR("fail to check for write PEB %llu\n",
+				  peb);
+			return err;
+		} else {
+			/* correct upper bound */
+			high_off = cur_off;
+		}
+
+		diff_pages = (high_off - low_off) / 2;
+		cur_off = low_off + diff_pages;
+	} while (cur_off > low_off && cur_off < high_off);
+
+	peb_pages_off = cur_off % fsi->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(peb_pages_off > U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	found_log_off = cur_off;
+	err = ssdfs_read_checked_sb_info2(fsi, peb, peb_pages_off, true,
+					  &found_log_off);
+	cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
+	cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
+
+	if (err == -EIO || cno1 >= cno2) {
+		void *buf = fsi->sbi_backup.vh_buf;
+
+		copy_peb = ssdfs_swap_current_sb_peb(buf, peb);
+		copy_leb = ssdfs_swap_current_sb_leb(buf, leb);
+		if (copy_leb == U64_MAX || copy_peb == U64_MAX) {
+			err = -ERANGE;
+			goto finish_find_latest_sb_info;
+		}
+
+		found_log_off = cur_off;
+		err = ssdfs_read_checked_sb_info2(fsi, copy_peb,
+						  peb_pages_off, true,
+						  &found_log_off);
+		cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
+		cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
+		if (!err) {
+			peb = copy_peb;
+			leb = copy_leb;
+			fsi->sbi.last_log.leb_id = leb;
+			fsi->sbi.last_log.peb_id = peb;
+			fsi->sbi.last_log.page_offset = found_log_off;
+			fsi->sbi.last_log.pages_count =
+				SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
+		}
+	} else {
+		fsi->sbi.last_log.leb_id = leb;
+		fsi->sbi.last_log.peb_id = peb;
+		fsi->sbi.last_log.page_offset = found_log_off;
+		fsi->sbi.last_log.pages_count =
+			SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
+	}
+
+finish_find_latest_sb_info:
+	if (err) {
+		if (err == -ENODATA || err == -EIO) {
+			/* previous read log was valid */
+			err = 0;
+			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
+				  cur_off, low_off, high_off);
+		} else {
+			SSDFS_ERR("fail to find valid volume header: err %d\n",
+				  err);
+		}
+
+		ssdfs_restore_sb_info(fsi);
+	}
+
+	return err;
+}
+
 static int ssdfs_check_fs_state(struct ssdfs_fs_info *fsi)
 {
 	if (fsi->sb->s_flags & SB_RDONLY)
@@ -1305,9 +1550,15 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	if (err)
 		goto forget_buf;
 
-	err = ssdfs_find_latest_valid_sb_info(fsi);
-	if (err)
-		goto forget_buf;
+	err = ssdfs_find_latest_valid_sb_info2(fsi);
+	if (err) {
+		SSDFS_ERR("unable to find latest valid sb info: "
+			  "trying old algorithm!!!\n");
+
+		err = ssdfs_find_latest_valid_sb_info(fsi);
+		if (err)
+			goto forget_buf;
+	}
 
 	err = ssdfs_initialize_fs_info(fsi);
 	if (err && err != -EROFS)

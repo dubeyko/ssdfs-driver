@@ -523,11 +523,10 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 
 	log_size = max_t(u32, log_size, fsi->sbi.last_log.pages_count);
 
-	if (offset > (fsi->pages_per_peb - log_size) ||
-	    offset > (UINT_MAX - log_size)) {
+	if (offset > fsi->pages_per_peb || offset > (UINT_MAX - log_size)) {
 		SSDFS_ERR("inconsistent metadata state: "
-			  "last_sb_log.page_offset %u > "
-			  "(pages_per_peb %u - log_size %u)\n",
+			  "last_sb_log.page_offset %u, "
+			  "pages_per_peb %u, log_size %u\n",
 			  offset, fsi->pages_per_peb, log_size);
 		return -EINVAL;
 	}
@@ -563,6 +562,9 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 			last_sb_log->pages_count = log_size;
 
 			err = 0;
+			break;
+		} else {
+			err = -ERANGE;
 			break;
 		}
 	}
@@ -603,6 +605,9 @@ static bool ssdfs_sb_seg_exhausted(u64 cur_leb, u64 next_leb,
 
 	cur_seg = div_u64(cur_leb, pebs_per_seg);
 	next_seg = div_u64(next_leb, pebs_per_seg);
+
+	SSDFS_DBG("cur_seg %llu, next_seg %llu\n",
+		  cur_seg, next_seg);
 
 	return cur_seg != next_seg;
 }

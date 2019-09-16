@@ -209,6 +209,131 @@ int ssdfs_read_blk2off_table_fragment(struct ssdfs_peb_info *pebi,
  ******************************************************************************/
 
 /*
+ * __ssdfs_peb_release_pages() - release memory pages
+ * @pebi: pointer on PEB object
+ *
+ * This method tries to release the used pages from the page
+ * array upon the init has been finished.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_peb_release_pages(struct ssdfs_peb_info *pebi)
+{
+	u16 last_log_start_page = U16_MAX;
+	u16 log_pages = 0;
+	pgoff_t start, end;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->pebc->peb_index,
+		  pebi->peb_id);
+
+	switch (atomic_read(&pebi->current_log.state)) {
+	case SSDFS_LOG_INITIALIZED:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid current log's state: "
+			  "%#x\n",
+			  atomic_read(&pebi->current_log.state));
+		return -ERANGE;
+	}
+
+	ssdfs_peb_current_log_lock(pebi);
+	last_log_start_page = pebi->current_log.start_page;
+	log_pages = pebi->log_pages;
+	ssdfs_peb_current_log_unlock(pebi);
+
+	if (last_log_start_page > 0 && last_log_start_page <= log_pages) {
+		start = 0;
+		end = last_log_start_page - 1;
+
+		err = ssdfs_page_array_release_pages(&pebi->cache,
+						     &start, end);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release pages: "
+				  "seg_id %llu, peb_id %llu, "
+				  "start %lu, end %lu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, start, end, err);
+		}
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_peb_release_pages_after_init() - release memory pages
+ * @pebc: pointer on PEB container
+ * @req: read request
+ *
+ * This method tries to release the used pages from the page
+ * array upon the init has been finished.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_release_pages(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_peb_info *pebi;
+	int err1 = 0, err2 = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+
+	down_read(&pebc->lock);
+
+	pebi = pebc->src_peb;
+	if (pebi) {
+		err1 = __ssdfs_peb_release_pages(pebi);
+		if (unlikely(err1)) {
+			SSDFS_ERR("fail to release source PEB pages: "
+				  "seg_id %llu, peb_index %u, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err1);
+		}
+	}
+
+	pebi = pebc->dst_peb;
+	if (pebi) {
+		err2 = __ssdfs_peb_release_pages(pebi);
+		if (unlikely(err1)) {
+			SSDFS_ERR("fail to release dest PEB pages: "
+				  "seg_id %llu, peb_index %u, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err2);
+		}
+	}
+
+	up_read(&pebc->lock);
+
+	if (err1 || err2)
+		return -ERANGE;
+
+	return 0;
+}
+
+/*
  * ssdfs_unaligned_read_cache() - unaligned read from PEB's cache
  * @pebi: pointer on PEB object
  * @area_offset: offset from the log's beginning
@@ -6487,6 +6612,14 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
+	{
+		int err1 = ssdfs_peb_release_pages(pebc);
+		if (unlikely(err1)) {
+			SSDFS_ERR("fail to release pages: err %d\n",
+				  err1);
+		}
+	}
+
 	return 0;
 }
 
@@ -6783,6 +6916,14 @@ end_init:
 	}
 
 	kfree(area.pages);
+
+	{
+		int err1 = ssdfs_peb_release_pages(pebc);
+		if (unlikely(err1)) {
+			SSDFS_ERR("fail to release pages: err %d\n",
+				  err1);
+		}
+	}
 
 	return err;
 }

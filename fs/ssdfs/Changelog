@@ -3,6 +3,12 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.02 [September 16, 2019]
+    (*) Add functionality of memory pages releasing.
+    (*) Implement new algorithm of searching actual superblock's state.
+    (*) Fix bug in functionality of the next superblock segment selection.
+    (*) Fix bug in functionality of metadata pages reservation in log.
+
 v.3.01 [September 13, 2019]
     (*) Fix bugs in partial logs support functionality.
 
