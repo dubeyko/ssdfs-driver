@@ -8259,6 +8259,7 @@ static
 int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			 __le64 *cur_segs, size_t cur_segs_size)
 {
+	struct ssdfs_blk2off_table *table;
 	int log_state;
 	int log_strategy;
 	int err = 0;
@@ -8351,7 +8352,20 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	return 0;
+	table = pebi->pebc->parent_si->blk2off_table;
+
+	err = ssdfs_blk2off_table_revert_migration_state(table,
+							 pebi->peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to revert migration state: "
+			  "seg %llu, peb %llu, peb_index %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  pebi->peb_index,
+			  err);
+	}
+
+	return err;
 }
 
 /*

@@ -1066,6 +1066,7 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!tbl || !ptr || !array || !array->ptr || !item_index);
 	BUG_ON(array->capacity == 0);
 	BUG_ON(array->capacity < array->size);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 	BUG_ON(!rwsem_is_locked(&ptr->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1699,6 +1700,7 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 		struct completion *end = &fdesc->init_end;
 		unsigned long res;
 
+		up_read(&tbl->tbl_lock);
 		res = wait_for_completion_timeout(end,
 					SSDFS_DEFAULT_TIMEOUT);
 		if (res == 0) {
@@ -1706,8 +1708,9 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_ERR("maptbl's fragment init failed: "
 				  "leb_id %llu, err %d\n",
 				  pmi->leb_id, err);
-			goto finish_resolving;
+			goto finish_resolving_no_lock;
 		}
+		down_read(&tbl->tbl_lock);
 	}
 
 	switch (consistency) {
@@ -1768,6 +1771,7 @@ finish_pre_deleted_case:
 finish_resolving:
 	up_read(&tbl->tbl_lock);
 
+finish_resolving_no_lock:
 	if (!err && need_make_consistent) {
 		u8 peb_state;
 

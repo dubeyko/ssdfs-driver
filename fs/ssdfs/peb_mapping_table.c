@@ -4560,7 +4560,7 @@ finish_inconsistent_case:
 			SSDFS_ERR("fail to get leb descriptor: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
-			goto finish_inconsistent_case;
+			goto finish_pre_deleted_case;
 		}
 
 		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
@@ -4568,7 +4568,7 @@ finish_inconsistent_case:
 			SSDFS_ERR("fail to get peb relation: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
-			goto finish_inconsistent_case;
+			goto finish_pre_deleted_case;
 		}
 
 		need_exclude_migration_peb = true;

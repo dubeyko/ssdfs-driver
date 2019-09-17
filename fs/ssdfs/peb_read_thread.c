@@ -2308,9 +2308,6 @@ int ssdfs_peb_read_src_all_log_headers(struct ssdfs_peb_container *pebc,
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("seg_id %llu, peb_index %u\n",
-		  pebc->parent_si->seg_id, pebc->peb_index);
-
 	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
@@ -2319,6 +2316,11 @@ int ssdfs_peb_read_src_all_log_headers(struct ssdfs_peb_container *pebc,
 		err = -ERANGE;
 		goto finish_read_src_all_log_headers;
 	}
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index,
+		  pebi->peb_id);
 
 	err = ssdfs_peb_read_all_log_headers(pebi, req);
 	if (unlikely(err)) {
@@ -2361,9 +2363,6 @@ int ssdfs_peb_read_dst_all_log_headers(struct ssdfs_peb_container *pebc,
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("seg_id %llu, peb_index %u\n",
-		  pebc->parent_si->seg_id, pebc->peb_index);
-
 	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
@@ -2372,6 +2371,11 @@ int ssdfs_peb_read_dst_all_log_headers(struct ssdfs_peb_container *pebc,
 		err = -ERANGE;
 		goto finish_read_dst_all_log_headers;
 	}
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index,
+		  pebi->peb_id);
 
 	err = ssdfs_peb_read_all_log_headers(pebi, req);
 	if (unlikely(err)) {

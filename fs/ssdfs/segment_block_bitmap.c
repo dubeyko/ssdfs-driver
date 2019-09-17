@@ -834,10 +834,23 @@ try_define_bmap_index:
 				bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
 				peb_index = pebc->dst_peb->peb_index;
 			} else if ((peb_migration_id + 1) == src_migration_id) {
-				need_migrate = false;
-				need_move = false;
-				bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
-				peb_index = pebc->dst_peb->peb_index;
+				switch (migration_phase) {
+				case SSDFS_SRC_PEB_NOT_EXHAUSTED:
+					need_migrate = false;
+					need_move = false;
+					bmap_index =
+						SSDFS_PEB_BLK_BMAP_SOURCE;
+					peb_index = pebc->src_peb->peb_index;
+					break;
+
+				default:
+					need_migrate = false;
+					need_move = false;
+					bmap_index =
+					    SSDFS_PEB_BLK_BMAP_DESTINATION;
+					peb_index = pebc->dst_peb->peb_index;
+					break;
+				}
 			} else {
 				err = -ERANGE;
 				SSDFS_ERR("fail to select PEB: "
