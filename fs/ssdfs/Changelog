@@ -3,6 +3,13 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.04 [September 19, 2019]
+    (*) Add functionality of removing the information about old
+        superblock segments from mapping table cache.
+    (*) Fix bug of synchronization threads' access to mapping
+        table during mapping table flush.
+    (*) Fix bug of reserving metadata block's functionality.
+
 v.3.03 [September 17, 2019]
     (*) Fix bug with reverting migration state in blk2off table.
     (*) Fix bug with update logical blocks' state in block bitmap.

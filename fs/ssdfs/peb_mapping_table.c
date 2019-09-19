@@ -3154,10 +3154,6 @@ finish_prepare_migration:
 	if (unlikely(err))
 		return err;
 
-	down_write(&tbl->tbl_lock);
-
-	ssdfs_sb_maptbl_header_correct_state(tbl);
-
 	/*
 	 * This flag should be not included into the header.
 	 * The flag is used only during flush operation.
@@ -3165,6 +3161,10 @@ finish_prepare_migration:
 	 * state means the volume corruption.
 	 */
 	atomic_or(SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+
+	down_write(&tbl->tbl_lock);
+
+	ssdfs_sb_maptbl_header_correct_state(tbl);
 
 	SSDFS_DBG("flush dirty fragments\n");
 
@@ -4403,7 +4403,8 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (rwsem_is_locked(&tbl->tbl_lock) &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
 								 pebr);
@@ -4417,6 +4418,8 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		}
 	}
 
+	down_read(&tbl->tbl_lock);
+
 	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_descriptor *peb_desc;
 
@@ -4426,7 +4429,7 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("fail to convert LEB to PEB: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
-			return err;
+			goto finish_conversion;
 		}
 
 		peb_desc = &cached_pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
@@ -4449,8 +4452,6 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
 		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 	}
-
-	down_read(&tbl->tbl_lock);
 
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
 	if (IS_ERR_OR_NULL(fdesc)) {
@@ -5734,6 +5735,25 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		}
 	}
 
+	if (rwsem_is_locked(&tbl->tbl_lock) &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		if (should_cache_peb_info(peb_type)) {
+			consistency = SSDFS_PEB_STATE_INCONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state(cache,
+								  leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  leb_id, peb_state, err);
+			}
+
+			return err;
+		}
+	}
+
 	down_read(&tbl->tbl_lock);
 
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
@@ -6569,6 +6589,23 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("fail to resolve inconsistency: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
+			return err;
+		}
+	}
+
+	if (rwsem_is_locked(&tbl->tbl_lock) &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		if (should_cache_peb_info(peb_type)) {
+			consistency = SSDFS_PEB_STATE_PRE_DELETED;
+			err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
+								leb_id,
+								consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to exclude migration PEB: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+			}
+
 			return err;
 		}
 	}

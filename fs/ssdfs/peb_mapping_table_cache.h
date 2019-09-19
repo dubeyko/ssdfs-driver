@@ -82,6 +82,9 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 				   u64 leb_id,
 				   struct ssdfs_maptbl_peb_relation *pebr,
 				   int consistency);
+int ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
+				      u64 leb_id,
+				      int consistency);
 int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 					u64 leb_id, int peb_state,
 					int consistency);

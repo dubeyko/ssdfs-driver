@@ -3090,13 +3090,12 @@ int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
 }
 
 /*
- * ssdfs_maptbl_cache_exclude_migration_peb() - exclude migration PEB
+ * __ssdfs_maptbl_cache_forget_leb2peb() - exclude LEB/PEB pair from cache
  * @cache: maptbl cache object
  * @leb_id: LEB ID number
  * @consistency: consistency of the item
  *
- * This method tries to exclude LEB/PEB pair after
- * finishing the migration.
+ * This method tries to exclude LEB/PEB pair from the cache.
  *
  * RETURN:
  * [success]
@@ -3105,9 +3104,10 @@ int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
-					     u64 leb_id,
-					     int consistency)
+static
+int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
+					u64 leb_id,
+					int consistency)
 {
 	struct ssdfs_maptbl_cache_search_result res;
 	struct ssdfs_maptbl_cache_header *hdr;
@@ -3331,4 +3331,49 @@ finish_exclude_migration_peb:
 	}
 
 	return err;
+}
+
+/*
+ * ssdfs_maptbl_cache_exclude_migration_peb() - exclude migration PEB
+ * @cache: maptbl cache object
+ * @leb_id: LEB ID number
+ * @consistency: consistency of the item
+ *
+ * This method tries to exclude LEB/PEB pair after
+ * finishing the migration.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
+					     u64 leb_id,
+					     int consistency)
+{
+	return __ssdfs_maptbl_cache_forget_leb2peb(cache, leb_id, consistency);
+}
+
+/*
+ * ssdfs_maptbl_cache_forget_leb2peb() - exclude LEB/PEB pair from cache
+ * @cache: maptbl cache object
+ * @leb_id: LEB ID number
+ * @consistency: consistency of the item
+ *
+ * This method tries to exclude LEB/PEB pair from the cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
+				      u64 leb_id,
+				      int consistency)
+{
+	return __ssdfs_maptbl_cache_forget_leb2peb(cache, leb_id, consistency);
 }

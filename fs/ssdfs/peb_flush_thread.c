@@ -789,6 +789,9 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 		goto finish_log_create;
 	}
 
+	SSDFS_DBG("log_strategy %#x, free_data_pages %u, reserved_pages %u\n",
+		  log_strategy, log->free_data_pages, log->reserved_pages);
+
 	err = ssdfs_segment_blk_bmap_reserve_metapages(&si->blk_bmap,
 							pebi->pebc,
 							log->reserved_pages);

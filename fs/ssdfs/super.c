@@ -728,6 +728,7 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct ssdfs_segment_bmap *segbmap = fsi->segbmap;
+	struct ssdfs_maptbl_cache *maptbl_cache = &fsi->maptbl_cache;
 	u64 prev_leb, cur_leb, next_leb, reserved_leb;
 	u64 prev_peb, cur_peb, next_peb, reserved_peb;
 	u64 new_leb = U64_MAX, new_peb = U64_MAX;
@@ -801,7 +802,10 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 		(*sb_lebs)[SSDFS_CUR_SB_SEG][sb_seg_type] = next_leb;
 		(*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type] = next_peb;
 
-		return 0;
+		if (prev_leb == U64_MAX)
+			goto finish_move_sb_seg;
+		else
+			goto delete_prev_leb_from_cache;
 	} else {
 		next_leb = (*sb_lebs)[SSDFS_NEXT_SB_SEG][sb_seg_type];
 		next_peb = (*sb_pebs)[SSDFS_NEXT_SB_SEG][sb_seg_type];
@@ -908,6 +912,18 @@ reserve_clean_segment:
 				  prev_seg, SSDFS_SEG_DIRTY, err);
 			return err;
 		}
+	}
+
+delete_prev_leb_from_cache:
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(prev_leb == U64_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_maptbl_cache_forget_leb2peb(maptbl_cache, prev_leb,
+						SSDFS_PEB_STATE_CONSISTENT);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to forget prev_leb %llu, err %d\n",
+			  prev_leb, err);
 	}
 
 finish_move_sb_seg:
