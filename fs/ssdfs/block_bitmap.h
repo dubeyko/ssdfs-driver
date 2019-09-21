@@ -132,10 +132,30 @@ int SSDFS_GET_CACHE_TYPE(int blk_state)
 #define SSDFS_BLK_BMAP_DIRTY		(1 << 1)
 
 /*
+ * struct ssdfs_block_bmap_storage - block bitmap's storage
+ * @state: storage state
+ * @pvec: vector of pages (14 pages maximum)
+ * @buf: pointer on memory buffer
+ */
+struct ssdfs_block_bmap_storage {
+	int state;
+	struct pagevec pvec;
+	void *buf;
+};
+
+/* Block bitmap's storage's states */
+enum {
+	SSDFS_BLOCK_BMAP_STORAGE_ABSENT,
+	SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC,
+	SSDFS_BLOCK_BMAP_STORAGE_BUFFER,
+	SSDFS_BLOCK_BMAP_STORAGE_STATE_MAX
+};
+
+/*
  * struct ssdfs_block_bmap - in-core segment's block bitmap
  * @lock: block bitmap lock
  * @flags: block bitmap state flags
- * @pvec: vector of pages (14 pages maximum)
+ * @storage: block bitmap's storage
  * @bytes_count: block bitmap size in bytes
  * @items_count: items count in bitmap
  * @metadata_items: count of metadata items
@@ -145,7 +165,7 @@ int SSDFS_GET_CACHE_TYPE(int blk_state)
 struct ssdfs_block_bmap {
 	struct mutex lock;
 	atomic_t flags;
-	struct pagevec pvec;
+	struct ssdfs_block_bmap_storage storage;
 	size_t bytes_count;
 	size_t items_count;
 	u16 metadata_items;

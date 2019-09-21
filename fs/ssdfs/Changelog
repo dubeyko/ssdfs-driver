@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.05 [September 21, 2019]
+    (*) Rework block bitmap's storage model in memory.
+
 v.3.04 [September 19, 2019]
     (*) Add functionality of removing the information about old
         superblock segments from mapping table cache.
