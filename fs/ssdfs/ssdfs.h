@@ -135,6 +135,11 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 					u32 log_flags,
 					struct ssdfs_log_footer *footer);
 
+
+/* offset_translation_table.c */
+int ssdfs_init_blk2off_frag_obj_cache(void);
+void ssdfs_destroy_blk2off_frag_obj_cache(void);
+
 /* options.c */
 int ssdfs_parse_options(struct ssdfs_fs_info *fs_info, char *data);
 void ssdfs_initialize_fs_errors_option(struct ssdfs_fs_info *fsi);

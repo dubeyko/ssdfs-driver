@@ -2027,6 +2027,7 @@ static void ssdfs_destroy_caches(void)
 	ssdfs_destroy_seg_obj_cache();
 	ssdfs_destroy_extent_info_cache();
 	ssdfs_destroy_peb_mapping_info_cache();
+	ssdfs_destroy_blk2off_frag_obj_cache();
 }
 
 static int ssdfs_init_caches(void)
@@ -2093,6 +2094,14 @@ static int ssdfs_init_caches(void)
 	err = ssdfs_init_peb_mapping_info_cache();
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to create PEB mapping descriptors cache: "
+			  "err %d\n",
+			  err);
+		goto destroy_caches;
+	}
+
+	err = ssdfs_init_blk2off_frag_obj_cache();
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to create blk2off fragments cache: "
 			  "err %d\n",
 			  err);
 		goto destroy_caches;

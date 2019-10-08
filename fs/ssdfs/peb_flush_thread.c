@@ -8695,14 +8695,20 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 			if (PageLocked(page))
 				unlock_page(page);
-			else
-				SSDFS_WARN("page %d is not locked\n", i);
+			else {
+				SSDFS_WARN("page %d is not locked: "
+					   "cmd %#x, type %#x\n",
+					   i, req->private.cmd,
+					   req->private.type);
+			}
 
 			if (PageWriteback(page))
 				end_page_writeback(page);
 			else {
-				SSDFS_WARN("page %d is not under writeback\n",
-					   i);
+				SSDFS_WARN("page %d is not under writeback: "
+					   "cmd %#x, type %#x\n",
+					   i, req->private.cmd,
+					   req->private.type);
 			}
 		}
 
@@ -8726,14 +8732,20 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 			if (PageLocked(page))
 				unlock_page(page);
-			else
-				SSDFS_WARN("page %d is not locked\n", i);
+			else {
+				SSDFS_WARN("page %d is not locked: "
+					   "cmd %#x, type %#x\n",
+					   i, req->private.cmd,
+					   req->private.type);
+			}
 
 			if (PageWriteback(page))
 				end_page_writeback(page);
 			else {
-				SSDFS_WARN("page %d is not under writeback\n",
-					   i);
+				SSDFS_WARN("page %d is not under writeback: "
+					   "cmd %#x, type %#x\n",
+					   i, req->private.cmd,
+					   req->private.type);
 			}
 		}
 		break;

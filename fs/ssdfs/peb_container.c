@@ -208,7 +208,13 @@ int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 		return 0;
 
 	err = kthread_stop(pebc->thread[type].task);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 * The wake_up_process() was never called.
+		 */
+		return 0;
+	} else if (unlikely(err)) {
 		SSDFS_WARN("thread function had some issue: err %d\n",
 			    err);
 		return err;

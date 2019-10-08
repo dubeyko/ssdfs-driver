@@ -13,7 +13,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o options.o \
 		volume_header.o log_footer.o \
 		block_bitmap.o block_bitmap_tables.o \
 		peb_block_bitmap.o segment_block_bitmap.o \
-		offset_translation_table.o \
+		sequence_array.o offset_translation_table.o \
 		request_queue.o readwrite.o  \
 		peb.o peb_gc_thread.o peb_read_thread.o peb_flush_thread.o \
 		peb_container.o \

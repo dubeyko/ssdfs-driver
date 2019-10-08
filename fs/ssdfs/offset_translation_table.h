@@ -23,6 +23,7 @@
 #include <linux/pagevec.h>
 
 #include "request_queue.h"
+#include "sequence_array.h"
 
 /*
  * struct ssdfs_phys_offset_table_fragment - fragment of phys offsets table
@@ -63,21 +64,19 @@ enum {
 	SSDFS_BLK2OFF_FRAG_STATE_MAX,
 };
 
-#define SSDFS_POFF_TBL_ARRAY_MAX	64
-#define SSDFS_INVALID_FRAG_ID		SSDFS_POFF_TBL_ARRAY_MAX
+#define SSDFS_INVALID_FRAG_ID			U16_MAX
+#define SSDFS_BLK2OFF_TBL_REVERT_THRESHOLD	(U16_MAX - 1)
 
 /*
  * struct ssdfs_phys_offset_table_array - array of log's fragments in PEB
  * @state: PEB's translation table state
  * @fragment_count: fragments count
- * @last_sequence_id: last allocated fragment sequence id
  * @array: array of fragments
  */
 struct ssdfs_phys_offset_table_array {
 	atomic_t state;
 	atomic_t fragment_count;
-	atomic_t last_sequence_id;
-	struct ssdfs_phys_offset_table_fragment array[SSDFS_POFF_TBL_ARRAY_MAX];
+	struct ssdfs_sequence_array *sequence;
 };
 
 enum {
@@ -96,14 +95,14 @@ enum {
  * @cno: checkpoint of change
  * @id: physical offset ID
  * @peb_index: PEB's index
- * @fragment_index: index of physical offset table's fragment
+ * @sequence_id: sequence ID of physical offset table's fragment
  * @offset_index: offset index inside of fragment
  */
 struct ssdfs_offset_position {
 	u64 cno;
 	u16 id;
 	u16 peb_index;
-	int fragment_index;
+	u16 sequence_id;
 	u16 offset_index;
 };
 
@@ -203,7 +202,7 @@ enum {
  * @free_logical_blks: count of free logical blocks
  * @last_allocated_blk: last allocated block (hint for allocation)
  * @peb_index: PEB index
- * @start_dirty_fragment: start dirty fragment index
+ * @start_sequence_id: sequence ID of the first dirty fragment
  * @dirty_fragments: count of dirty fragments
  *
  * The @bmap_copy and @tbl_copy are allocated during getting
@@ -222,7 +221,7 @@ struct ssdfs_blk2off_table_snapshot {
 	u16 last_allocated_blk;
 
 	u16 peb_index;
-	u16 start_dirty_fragment;
+	u16 start_sequence_id;
 	u16 dirty_fragments;
 };
 
@@ -258,11 +257,42 @@ size_t ssdfs_blk2off_table_bmap_bytes(size_t items_count)
 }
 
 static inline
+int ssdfs_show_fragment_details(void *ptr)
+{
+	struct ssdfs_phys_offset_table_fragment *fragment;
+
+	fragment = (struct ssdfs_phys_offset_table_fragment *)ptr;
+	if (!fragment) {
+		SSDFS_ERR("empty pointer on fragment\n");
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("fragment: "
+		  "start_id %u, sequence_id %u, "
+		  "id_count %d, state %#x, "
+		  "hdr %p, phys_offs %p, "
+		  "buf_size %zu\n",
+		  fragment->start_id,
+		  fragment->sequence_id,
+		  atomic_read(&fragment->id_count),
+		  atomic_read(&fragment->state),
+		  fragment->hdr,
+		  fragment->phys_offs,
+		  fragment->buf_size);
+
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				fragment->buf,
+				fragment->buf_size);
+
+	return 0;
+}
+
+static inline
 void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	size_t bytes;
-	int i, j;
+	int i;
 
 	BUG_ON(!tbl);
 
@@ -295,11 +325,11 @@ void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 	for (i = 0; i < tbl->lblk2off_capacity; i++) {
 		SSDFS_DBG("lbk2off: index %d, "
 			  "cno %llu, id %u, peb_index %u, "
-			  "fragment_index %d, offset_index %u\n",
+			  "sequence_id %u, offset_index %u\n",
 			  i, tbl->lblk2off[i].cno,
 			  tbl->lblk2off[i].id,
 			  tbl->lblk2off[i].peb_index,
-			  tbl->lblk2off[i].fragment_index,
+			  tbl->lblk2off[i].sequence_id,
 			  tbl->lblk2off[i].offset_index);
 	}
 
@@ -310,33 +340,13 @@ void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 		int fragments_count = atomic_read(&peb->fragment_count);
 
 		SSDFS_DBG("peb: index %d, state %#x, "
-			  "fragment_count %d, last_sequence_id %d\n",
+			  "fragment_count %d, last_sequence_id %lu\n",
 			  i, atomic_read(&peb->state),
 			  fragments_count,
-			  atomic_read(&peb->last_sequence_id));
+			  ssdfs_sequence_array_last_id(peb->sequence));
 
-		for (j = 0; j < fragments_count; j++) {
-			struct ssdfs_phys_offset_table_fragment *fragment;
-
-			fragment = &peb->array[j];
-
-			SSDFS_DBG("fragment: index %d, "
-				  "start_id %u, sequence_id %u, "
-				  "id_count %d, state %#x, "
-				  "hdr %p, phys_offs %p, "
-				  "buf_size %zu\n",
-				  j, fragment->start_id,
-				  fragment->sequence_id,
-				  atomic_read(&fragment->id_count),
-				  atomic_read(&fragment->state),
-				  fragment->hdr,
-				  fragment->phys_offs,
-				  fragment->buf_size);
-
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-						fragment->buf,
-						fragment->buf_size);
-		}
+		ssdfs_sequence_array_apply_for_all(peb->sequence,
+						ssdfs_show_fragment_details);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 }
@@ -363,7 +373,7 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 					u16 *extent_count);
 int
 ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
-				       u16 peb_index, int fragment_index,
+				       u16 peb_index, u16 sequence_id,
 				       struct ssdfs_blk2off_table_snapshot *sp);
 int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 					 struct ssdfs_blk2off_table_header *hdr,
@@ -377,7 +387,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 				      u32 *write_offset);
 int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 					   struct ssdfs_blk2off_table *table,
-					   u16 peb_index, int fragment_index,
+					   u16 peb_index, u16 sequence_id,
 					   pgoff_t *cur_page,
 					   u32 *write_offset);
 int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
