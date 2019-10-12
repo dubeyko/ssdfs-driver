@@ -116,13 +116,19 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 	    search->result.buf) {
 		/* free allocated memory */
 		kfree(search->result.buf);
+		search->result.buf = NULL;
 	}
+
+	search->result.buf_state = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 
 	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
 	    search->result.name) {
 		/* free allocated memory */
 		kfree(search->result.name);
+		search->result.name = NULL;
 	}
+
+	search->result.name = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 
 	kmem_cache_free(ssdfs_btree_search_obj_cachep, search);
 }

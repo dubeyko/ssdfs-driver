@@ -718,7 +718,6 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 					     search);
 
 		if (err == -ENODATA) {
-			err = -ENOENT;
 			SSDFS_DBG("inode %lu hasn't xattr %s\n",
 				  (unsigned long)inode->i_ino,
 				  name);
@@ -785,7 +784,7 @@ finish_search_xattr:
 		break;
 
 	default:
-		err = -ENOENT;
+		err = -ENODATA;
 		SSDFS_DBG("xattrs tree is absent: "
 			  "ino %lu\n",
 			  (unsigned long)inode->i_ino);

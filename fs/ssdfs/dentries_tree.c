@@ -391,8 +391,11 @@ fail_create_generic_tree:
 		atomic_set(&tree->type, SSDFS_INLINE_DENTRIES_ARRAY);
 		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_INITIALIZED);
 	} else if (flags & SSDFS_INODE_HAS_INLINE_DENTRIES) {
-		atomic64_set(&tree->dentries_count,
-			     le32_to_cpu(raw_inode.count_of.dentries));
+		u32 dentries_count = le32_to_cpu(raw_inode.count_of.dentries);
+		bool is_dirty = false;
+		u32 i;
+
+		atomic64_set(&tree->dentries_count, dentries_count);
 
 		if (!tree->inline_dentries) {
 			err = -ERANGE;
@@ -406,13 +409,53 @@ fail_create_generic_tree:
 				dentry_size * SSDFS_INLINE_DENTRIES_COUNT);
 		}
 
+		for (i = 0; i < dentries_count; i++) {
+			u64 hash;
+			struct ssdfs_dir_entry *dentry =
+					&tree->inline_dentries[i];
+
+			hash = le64_to_cpu(dentry->hash_code);
+
+			if (hash == 0) {
+				size_t len = dentry->name_len;
+				const char *name =
+					(const char *)dentry->inline_string;
+
+				if (len > SSDFS_DENTRY_INLINE_NAME_MAX_LEN) {
+					err = -ERANGE;
+					SSDFS_ERR("dentry hasn't hash code: "
+						  "len %zu\n", len);
+					goto finish_tree_init;
+				}
+
+				hash = __ssdfs_generate_name_hash(name, len);
+				if (hash == U64_MAX) {
+					err = -ERANGE;
+					SSDFS_ERR("fail to generate hash\n");
+					goto finish_tree_init;
+				}
+
+				dentry->hash_code = cpu_to_le64(hash);
+				is_dirty = true;
+			}
+		}
+
 		atomic_set(&tree->type, SSDFS_INLINE_DENTRIES_ARRAY);
-		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_INITIALIZED);
+
+		if (is_dirty) {
+			atomic_set(&tree->state,
+					SSDFS_DENTRIES_BTREE_DIRTY);
+		} else {
+			atomic_set(&tree->state,
+					SSDFS_DENTRIES_BTREE_INITIALIZED);
+		}
 	} else
 		BUG();
 
 finish_tree_init:
 	up_write(&tree->lock);
+
+	ssdfs_debug_dentries_btree_object(tree);
 
 	return err;
 }
@@ -981,13 +1024,13 @@ int ssdfs_check_dentry_for_request(struct ssdfs_fs_info *fsi,
 		return -EIO;
 	}
 
-	if (start_hash < hash_code) {
+	if (hash_code != 0 && start_hash < hash_code) {
 		err = -ENODATA;
 		search->result.err = -ENODATA;
 		search->result.state =
 			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
 		goto finish_check_dentry;
-	} else if (start_hash > hash_code) {
+	} else if (hash_code != 0 && start_hash > hash_code) {
 		/* continue the search */
 		err = -EAGAIN;
 		goto finish_check_dentry;
@@ -1251,6 +1294,7 @@ ssdfs_dentries_tree_find_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 
 	err = -ENODATA;
 	search->result.err = -ENODATA;
+	search->result.start_index = dentries_count;
 	search->result.state = SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
 
 finish_search_inline_dentry:
@@ -1336,6 +1380,8 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	ssdfs_debug_dentries_btree_object(tree);
 
 	return err;
 }
@@ -1448,6 +1494,22 @@ int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
 		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 		case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 		case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+			/* expected state */
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("unexpected result's state %#x\n",
+				  search->result.state);
+			goto finish_find_leaf_node;
+		}
+
+		switch (atomic_read(&tree->type)) {
+		case SSDFS_INLINE_DENTRIES_ARRAY:
+			/* do nothing */
+			break;
+
+		case SSDFS_PRIVATE_DENTRIES_BTREE:
 			switch (search->node.state) {
 			case SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC:
 				/* expected state */
@@ -1464,11 +1526,13 @@ int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
 
 		default:
 			err = -ERANGE;
-			SSDFS_ERR("unexpected result's state %#x\n",
-				  search->result.state);
+			SSDFS_ERR("invalid dentries tree type %#x\n",
+				  atomic_read(&tree->type));
+			break;
 		}
 	}
 
+finish_find_leaf_node:
 	return err;
 }
 
@@ -1535,13 +1599,31 @@ int ssdfs_prepare_dentry(const struct qstr *str,
 		return -ERANGE;
 	}
 
-	search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+	switch (search->result.buf_state) {
+	case SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE:
+		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(search->result.buf);
+		BUG_ON(search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
-	search->result.buf = &search->raw.dentry;
-	search->result.buf_size = sizeof(struct ssdfs_raw_dentry);
-	search->result.items_in_buffer = 1;
+		search->result.buf = &search->raw.dentry;
+		search->result.buf_size = sizeof(struct ssdfs_raw_dentry);
+		search->result.items_in_buffer = 1;
+		break;
+
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->result.buf);
+		BUG_ON(search->result.buf_size !=
+			sizeof(struct ssdfs_raw_dentry));
+		BUG_ON(search->result.items_in_buffer != 1);
+#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected buffer state %#x\n",
+			  search->result.buf_state);
+		return -ERANGE;
+	}
 
 	dentry = &search->raw.dentry;
 
@@ -1657,6 +1739,9 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("dentries_count %lld, dentries_capacity %lld\n",
+		  dentries_count, dentries_capacity);
+
 	if (dentries_count > dentries_capacity) {
 		SSDFS_WARN("dentries tree is corrupted: "
 			   "dentries_count %lld, dentries_capacity %lld\n",
@@ -1670,9 +1755,17 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ENOSPC;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
-		SSDFS_ERR("invalid search result's state %#x\n",
-			  search->result.state);
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid search result's state %#x, "
+			  "start_index %u\n",
+			  search->result.state,
+			  search->result.start_index);
 		return -ERANGE;
 	}
 
@@ -2134,6 +2227,8 @@ finish_add_generic_dentry:
 			  atomic_read(&tree->type));
 		return -ERANGE;
 	}
+
+	ssdfs_debug_dentries_btree_object(tree);
 
 	return err;
 }
@@ -2646,6 +2741,8 @@ finish_change_generic_dentry:
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	ssdfs_debug_dentries_btree_object(tree);
 
 	return err;
 }
@@ -3303,6 +3400,8 @@ finish_delete_generic_dentry:
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	ssdfs_debug_dentries_btree_object(tree);
 
 	return err;
 }

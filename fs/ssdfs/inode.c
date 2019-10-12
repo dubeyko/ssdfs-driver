@@ -512,8 +512,11 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 	ssdfs_init_inode(dir, inode, mode, ino, qstr);
 
 	err = ssdfs_inode_setops(inode);
-	if (unlikely(err))
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set inode's operations: "
+			  "err %d\n", err);
 		goto bad_inode;
+	}
 
 	if (insert_inode_locked(inode) < 0) {
 		err = -EIO;
@@ -524,12 +527,18 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 	}
 
 	err = ssdfs_init_acl(inode, dir);
-	if (err)
+	if (err) {
+		SSDFS_ERR("fail to init ACL: "
+			  "err %d\n", err);
 		goto fail_drop;
+	}
 
 	err = ssdfs_init_security(inode, dir, qstr);
-	if (err)
+	if (err) {
+		SSDFS_ERR("fail to init security xattr: "
+			  "err %d\n", err);
 		goto fail_drop;
+	}
 
 	mark_inode_dirty(inode);
 
@@ -600,7 +609,10 @@ static int ssdfs_truncate(struct inode *inode)
 /* TODO: inline file */
 
 	err = ssdfs_extents_tree_truncate(inode);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		err = 0;
+		SSDFS_DBG("extents tree is absent\n");
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to truncate extents tree: "
 			  "err %d\n",
 			  err);

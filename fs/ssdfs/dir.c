@@ -1182,6 +1182,7 @@ int ssdfs_dentries_tree_get_start_hash(struct ssdfs_dentries_btree_info *tree,
 					u64 *start_hash)
 {
 	struct ssdfs_btree_index *index;
+	struct ssdfs_dir_entry *cur_dentry;
 	u64 dentries_count;
 	int err = 0;
 
@@ -1217,19 +1218,45 @@ int ssdfs_dentries_tree_get_start_hash(struct ssdfs_dentries_btree_info *tree,
 	} else if (dentries_count == 2)
 		return -ENOENT;
 
-	down_read(&tree->lock);
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		down_read(&tree->lock);
 
-	if (!tree->root) {
-		err = -ERANGE;
-		SSDFS_ERR("root node pointer is NULL\n");
-		goto finish_get_start_hash;
-	}
+		if (!tree->inline_dentries) {
+			err = -ERANGE;
+			SSDFS_ERR("inline tree's pointer is empty\n");
+			goto finish_process_inline_tree;
+		}
 
-	index = &tree->root->indexes[SSDFS_ROOT_NODE_LEFT_LEAF_NODE];
-	*start_hash = le64_to_cpu(index->hash);
+		cur_dentry = &tree->inline_dentries[0];
+		*start_hash = le64_to_cpu(cur_dentry->hash_code);
+
+finish_process_inline_tree:
+		up_read(&tree->lock);
+		break;
+
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		down_read(&tree->lock);
+
+		if (!tree->root) {
+			err = -ERANGE;
+			SSDFS_ERR("root node pointer is NULL\n");
+			goto finish_get_start_hash;
+		}
+
+		index = &tree->root->indexes[SSDFS_ROOT_NODE_LEFT_LEAF_NODE];
+		*start_hash = le64_to_cpu(index->hash);
 
 finish_get_start_hash:
-	up_read(&tree->lock);
+		up_read(&tree->lock);
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid tree type %#x\n",
+			  atomic_read(&tree->type));
+		break;
+	}
 
 	return err;
 }
@@ -1404,6 +1431,14 @@ bool is_invalid_dentry(struct ssdfs_dir_entry *dentry)
 	BUG_ON(!dentry);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("dentry_type %#x, file_type %#x, "
+		  "flags %#x, name_len %u, "
+		  "hash_code %llu, ino %llu\n",
+		  dentry->dentry_type, dentry->file_type,
+		  dentry->flags, dentry->name_len,
+		  le64_to_cpu(dentry->hash_code),
+		  le64_to_cpu(dentry->ino));
+
 	switch (dentry->dentry_type) {
 	case SSDFS_INLINE_DENTRY:
 	case SSDFS_REGULAR_DENTRY:
@@ -1416,7 +1451,7 @@ bool is_invalid_dentry(struct ssdfs_dir_entry *dentry)
 		return true;
 	}
 
-	if (SSDFS_FT_UNKNOWN <= dentry->file_type ||
+	if (dentry->file_type <= SSDFS_FT_UNKNOWN ||
 	    dentry->file_type >= SSDFS_FT_MAX) {
 		SSDFS_ERR("invalid file type %#x\n",
 			  dentry->file_type);
@@ -1651,8 +1686,9 @@ finish_tree_processing:
 		items_count = search->result.count;
 
 		for (i = 0; i < items_count; i++) {
-			dentry =
-			    (struct ssdfs_dir_entry *)(search->result.buf +
+			u8 *start_ptr = (u8 *)search->result.buf;
+
+			dentry = (struct ssdfs_dir_entry *)(start_ptr +
 							(i * dentry_size));
 
 			if (is_invalid_dentry(dentry)) {

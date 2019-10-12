@@ -1200,7 +1200,7 @@ int ssdfs_extents_tree_truncate(struct inode *inode)
 	if (!tree) {
 		SSDFS_DBG("extents tree is absent: ino %lu\n",
 			  ii->vfs_inode.i_ino);
-		return -ERANGE;
+		return -ENOENT;
 	}
 
 	blk_offset = (u64)size + fsi->log_pagesize - 1;
