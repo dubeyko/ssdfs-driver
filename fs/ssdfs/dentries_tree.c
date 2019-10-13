@@ -392,7 +392,6 @@ fail_create_generic_tree:
 		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_INITIALIZED);
 	} else if (flags & SSDFS_INODE_HAS_INLINE_DENTRIES) {
 		u32 dentries_count = le32_to_cpu(raw_inode.count_of.dentries);
-		bool is_dirty = false;
 		u32 i;
 
 		atomic64_set(&tree->dentries_count, dentries_count);
@@ -436,19 +435,11 @@ fail_create_generic_tree:
 				}
 
 				dentry->hash_code = cpu_to_le64(hash);
-				is_dirty = true;
 			}
 		}
 
 		atomic_set(&tree->type, SSDFS_INLINE_DENTRIES_ARRAY);
-
-		if (is_dirty) {
-			atomic_set(&tree->state,
-					SSDFS_DENTRIES_BTREE_DIRTY);
-		} else {
-			atomic_set(&tree->state,
-					SSDFS_DENTRIES_BTREE_INITIALIZED);
-		}
+		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_INITIALIZED);
 	} else
 		BUG();
 
