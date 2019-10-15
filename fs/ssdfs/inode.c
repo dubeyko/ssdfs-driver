@@ -844,6 +844,8 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	ino_t ino;
 	int err = 0;
 
+	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
 	up_read(&fsi->volume_sem);

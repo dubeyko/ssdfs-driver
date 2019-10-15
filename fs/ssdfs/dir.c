@@ -635,7 +635,7 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 						 search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete the dentry: "
-				  "name_hash %llu, ino %lu, err %d\n",
+				  "name_hash %llx, ino %lu, err %d\n",
 				  name_hash, inode->i_ino, err);
 			goto dentry_is_not_available;
 		}
@@ -893,7 +893,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	if (unlikely(err)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 				"fail to delete the dentry: "
-				"name_hash %llu, ino %lu, err %d\n",
+				"name_hash %llx, ino %lu, err %d\n",
 				name_hash, old_inode->i_ino, err);
 		goto finish_target_rename;
 	}
@@ -1165,8 +1165,10 @@ static int ssdfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		  (unsigned long)old_dentry->d_inode->i_ino,
 		  (unsigned long)new_dir->i_ino);
 
-	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT))
+	if (flags & ~(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT)) {
+		SSDFS_ERR("invalid flags %#x\n", flags);
 		return -EINVAL;
+	}
 
 	if (flags & RENAME_EXCHANGE) {
 		return ssdfs_cross_rename(old_dir, old_dentry,
@@ -1354,6 +1356,9 @@ finish_process_inline_tree:
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("start_hash %llu, end_hash %llu\n",
+		  *start_hash, *end_hash);
+
 finish_extract_hash_range:
 	return err;
 }
@@ -1433,7 +1438,7 @@ bool is_invalid_dentry(struct ssdfs_dir_entry *dentry)
 
 	SSDFS_DBG("dentry_type %#x, file_type %#x, "
 		  "flags %#x, name_len %u, "
-		  "hash_code %llu, ino %llu\n",
+		  "hash_code %llx, ino %llu\n",
 		  dentry->dentry_type, dentry->file_type,
 		  dentry->flags, dentry->name_len,
 		  le64_to_cpu(dentry->hash_code),
@@ -1510,8 +1515,12 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 	int i;
 	int err = 0;
 
-	if (ctx->pos < 0)
-		return -EINVAL;
+	SSDFS_DBG("file %p, ctx %p\n", file, ctx);
+
+	if (ctx->pos < 0) {
+		SSDFS_DBG("ctx->pos %lld\n", ctx->pos);
+		return 0;
+	}
 
 	dict = fsi->shdictree;
 	if (!dict) {
@@ -1613,9 +1622,11 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		goto out;
 	}
 
-	ssdfs_btree_search_init(search);
-
 	do {
+		ssdfs_btree_search_init(search);
+
+		SSDFS_DBG("hash %llx\n", (u64)ctx->pos);
+
 		/* allow readdir() to be interrupted */
 		if (fatal_signal_pending(current)) {
 			err = -ERESTARTSYS;
@@ -1628,9 +1639,14 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		err = ssdfs_dentries_tree_find_leaf_node(ii->dentries_tree,
 							 ctx->pos,
 							 search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find a leaf node: "
+				  "hash %llx, err %d\n",
+				  (u64)ctx->pos, err);
+			goto finish_tree_processing;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a leaf node: "
-				  "hash %llu, err %d\n",
+				  "hash %llx, err %d\n",
 				  (u64)ctx->pos, err);
 			goto finish_tree_processing;
 		}
@@ -1670,7 +1686,7 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 finish_tree_processing:
 		up_read(&ii->lock);
 
-		if (err == -ENOENT) {
+		if (err == -ENODATA) {
 			err = 0;
 			goto out_free;
 		} else if (unlikely(err))
@@ -1709,7 +1725,7 @@ finish_tree_processing:
 								 &search->name);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to extract the name: "
-						  "hash %llu, err %d\n",
+						  "hash %llx, err %d\n",
 						  hash, err);
 					goto out_free;
 				}
@@ -1732,7 +1748,7 @@ finish_tree_processing:
 
 		if (ctx->pos <= end_hash) {
 			err = -ERANGE;
-			SSDFS_ERR("ctx->pos %llu <= end_hash %llu\n",
+			SSDFS_ERR("ctx->pos %llx <= end_hash %llx\n",
 				  (u64)ctx->pos,
 				  end_hash);
 			goto out_free;
@@ -1743,6 +1759,7 @@ out_free:
 	ssdfs_btree_search_free(search);
 
 out:
+	SSDFS_DBG("finished\n");
 	return err;
 }
 

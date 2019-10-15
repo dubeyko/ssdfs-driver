@@ -562,7 +562,7 @@ int ssdfs_xattrs_tree_flush(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("fail to flush xattrs btree: "
 				  "ino %lu, err %d\n",
 				  ii->vfs_inode.i_ino, err);
-			goto finish_generic_tree_flush;
+			goto finish_xattrs_tree_flush;
 		}
 
 		if (!tree->root) {
@@ -570,7 +570,7 @@ int ssdfs_xattrs_tree_flush(struct ssdfs_fs_info *fsi,
 			atomic_set(&tree->state,
 				   SSDFS_XATTR_BTREE_CORRUPTED);
 			SSDFS_WARN("undefined root node pointer\n");
-			goto finish_generic_tree_flush;
+			goto finish_xattrs_tree_flush;
 		}
 
 		memcpy(&ii->raw_inode.internal[0].area2.xattr_root,
@@ -579,8 +579,6 @@ int ssdfs_xattrs_tree_flush(struct ssdfs_fs_info *fsi,
 
 		atomic_or(SSDFS_INODE_HAS_XATTR_BTREE,
 			  &ii->private_flags);
-
-finish_generic_tree_flush:
 		break;
 
 	default:
@@ -589,6 +587,8 @@ finish_generic_tree_flush:
 			   atomic_read(&tree->type));
 		goto finish_xattrs_tree_flush;
 	}
+
+	atomic_set(&tree->state, SSDFS_XATTR_BTREE_INITIALIZED);
 
 finish_xattrs_tree_flush:
 	up_write(&tree->lock);

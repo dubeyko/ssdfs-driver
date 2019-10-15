@@ -681,8 +681,10 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 	int private_flags;
 	int err = 0;
 
-	if (name == NULL)
+	if (name == NULL) {
+		SSDFS_ERR("name pointer is NULL\n");
 		return -EINVAL;
+	}
 
 	SSDFS_DBG("name_index %d, name %s, value %p, size %zu\n",
 		  name_index, name, value, size);
@@ -815,8 +817,10 @@ int __ssdfs_setxattr(struct inode *inode, int name_index, const char *name,
 	u64 name_hash;
 	int err = 0;
 
-	if (name == NULL)
+	if (name == NULL) {
+		SSDFS_ERR("name pointer is NULL\n");
 		return -EINVAL;
+	}
 
 	SSDFS_DBG("name_index %d, name %s, value %p, size %zu\n",
 		  name_index, name, value, size);
