@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.10 [October 19, 2019]
+    (*) Fix bug in dentries tree functionality (step 4).
+
 v.3.09 [October 15, 2019]
     (*) Fix bug in dentries tree functionality (step 3).
 

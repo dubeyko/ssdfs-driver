@@ -200,6 +200,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct ssdfs_btree_search *search;
 	int private_flags;
+	bool is_locked_outside = false;
 	int err = 0;
 
 	SSDFS_DBG("Created ino %lu with mode %o, nlink %d, nrpages %ld\n",
@@ -207,10 +208,14 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 		  inode->i_nlink, inode->i_mapping->nrpages);
 
 	private_flags = atomic_read(&dir_ii->private_flags);
+	is_locked_outside = rwsem_is_locked(&dir_ii->lock);
 
 	if (private_flags & SSDFS_INODE_HAS_INLINE_DENTRIES ||
 	    private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
-		down_read(&dir_ii->lock);
+		if (!is_locked_outside) {
+			/* need to lock */
+			down_read(&dir_ii->lock);
+		}
 
 		if (!dir_ii->dentries_tree) {
 			err = -ERANGE;
@@ -218,7 +223,10 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 			goto finish_add_link;
 		}
 	} else {
-		down_write(&dir_ii->lock);
+		if (!is_locked_outside) {
+			/* need to lock */
+			down_write(&dir_ii->lock);
+		}
 
 		if (dir_ii->dentries_tree) {
 			err = -ERANGE;
@@ -238,7 +246,10 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 		}
 
 finish_create_dentries_tree:
-		downgrade_write(&dir_ii->lock);
+		if (!is_locked_outside) {
+			/* downgrade the lock */
+			downgrade_write(&dir_ii->lock);
+		}
 
 		if (unlikely(err))
 			goto finish_add_link;
@@ -268,7 +279,10 @@ finish_create_dentries_tree:
 	ssdfs_btree_search_free(search);
 
 finish_add_link:
-	up_read(&dir_ii->lock);
+	if (!is_locked_outside) {
+		/* need to unlock */
+		up_read(&dir_ii->lock);
+	}
 
 	return err;
 }
@@ -729,16 +743,32 @@ static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 	return err;
 }
 
+enum {
+	SSDFS_FIRST_INODE_LOCK = 0,
+	SSDFS_SECOND_INODE_LOCK,
+	SSDFS_THIRD_INODE_LOCK,
+	SSDFS_FOURTH_INODE_LOCK,
+};
+
 static void lock_4_inodes(struct inode *inode1, struct inode *inode2,
 			  struct inode *inode3, struct inode *inode4)
 {
-	down_write(&SSDFS_I(inode1)->lock);
-	if (inode2 != inode1)
-		down_write(&SSDFS_I(inode2)->lock);
-	if (inode3)
-		down_write(&SSDFS_I(inode3)->lock);
-	if (inode4)
-		down_write(&SSDFS_I(inode4)->lock);
+	down_write_nested(&SSDFS_I(inode1)->lock, SSDFS_FIRST_INODE_LOCK);
+
+	if (inode2 != inode1) {
+		down_write_nested(&SSDFS_I(inode2)->lock,
+					SSDFS_SECOND_INODE_LOCK);
+	}
+
+	if (inode3) {
+		down_write_nested(&SSDFS_I(inode3)->lock,
+					SSDFS_THIRD_INODE_LOCK);
+	}
+
+	if (inode4) {
+		down_write_nested(&SSDFS_I(inode4)->lock,
+					SSDFS_FOURTH_INODE_LOCK);
+	}
 }
 
 static void unlock_4_inodes(struct inode *inode1, struct inode *inode2,
@@ -772,16 +802,18 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	struct qstr dotdot = QSTR_INIT("..", 2);
 	bool is_dir = S_ISDIR(old_inode->i_mode);
 	bool move = (new_dir != old_dir);
-	bool unlink = new_inode == NULL;
+	bool unlink = new_inode != NULL;
 	ino_t old_ino, old_parent_ino, new_ino;
 	struct timespec64 time;
 	u64 name_hash;
 	int err = -ENOENT;
 
-	SSDFS_DBG("old_dir %lu, old_inode %lu, new_dir %lu\n",
+	SSDFS_DBG("old_dir %lu, old_inode %lu, "
+		  "new_dir %lu, new_inode %p\n",
 		  (unsigned long)old_dir->i_ino,
 		  (unsigned long)old_inode->i_ino,
-		  (unsigned long)new_dir->i_ino);
+		  (unsigned long)new_dir->i_ino,
+		  new_inode);
 
 	err = ssdfs_inode_by_name(old_dir, &old_dentry->d_name, &old_ino);
 	if (unlikely(err)) {
@@ -974,6 +1006,7 @@ finish_target_rename:
 	ssdfs_btree_search_free(search);
 
 out:
+	SSDFS_DBG("finished\n");
 	return err;
 }
 

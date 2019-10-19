@@ -146,6 +146,12 @@ int ssdfs_create_segment_tree_inode(struct ssdfs_fs_info *fsi)
  */
 int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 {
+	size_t dentries_desc_size =
+		sizeof(struct ssdfs_dentries_btree_descriptor);
+	size_t extents_desc_size =
+		sizeof(struct ssdfs_extents_btree_descriptor);
+	size_t xattr_desc_size =
+		sizeof(struct ssdfs_xattr_btree_descriptor);
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -155,19 +161,25 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
+	fsi->segs_tree = kzalloc(sizeof(struct ssdfs_segment_tree), GFP_KERNEL);
+	if (!fsi->segs_tree) {
+		SSDFS_ERR("fail to allocate segment tree's root object\n");
+		return -ENOMEM;
+	}
+
+	memcpy(&fsi->segs_tree->dentries_btree, &fsi->vh->dentries_btree,
+		dentries_desc_size);
+	memcpy(&fsi->segs_tree->extents_btree, &fsi->vh->extents_btree,
+		extents_desc_size);
+	memcpy(&fsi->segs_tree->xattr_btree, &fsi->vh->xattr_btree,
+		xattr_desc_size);
+
 	err = ssdfs_create_segment_tree_inode(fsi);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segment tree's inode: "
 			  "err %d\n",
 			  err);
-		return err;
-	}
-
-	fsi->segs_tree = kzalloc(sizeof(struct ssdfs_segment_tree), GFP_KERNEL);
-	if (!fsi->segs_tree) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate segment tree's root object\n");
-		goto put_inodes;
+		goto free_memory;
 	}
 
 	fsi->segs_tree->lnodes_seg_log_pages =
@@ -187,8 +199,9 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 
 	return 0;
 
-put_inodes:
-	iput(fsi->segs_tree_inode);
+free_memory:
+	kfree(fsi->segs_tree);
+	fsi->segs_tree = NULL;
 
 	return err;
 }

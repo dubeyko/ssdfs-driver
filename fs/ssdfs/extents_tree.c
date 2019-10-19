@@ -37,6 +37,7 @@
 #include "btree_node.h"
 #include "btree.h"
 #include "shared_extents_tree.h"
+#include "segment_tree.h"
 #include "extents_tree.h"
 
 #include <trace/events/ssdfs.h>
@@ -118,6 +119,8 @@ int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
 	memset(&ptr->root_buffer, 0xFF,
 		sizeof(struct ssdfs_btree_inline_root_node));
 	ptr->root = NULL;
+	memcpy(&ptr->desc, &fsi->segs_tree->extents_btree,
+		sizeof(struct ssdfs_extents_btree_descriptor));
 	ptr->owner = ii;
 	ptr->fsi = fsi;
 	atomic_set(&ptr->state, SSDFS_EXTENTS_BTREE_CREATED);
@@ -4872,6 +4875,7 @@ static
 int ssdfs_extents_btree_desc_init(struct ssdfs_fs_info *fsi,
 				  struct ssdfs_btree *tree)
 {
+	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_btree_descriptor *desc;
 	u32 erasesize;
 	u32 node_size;
@@ -4881,15 +4885,18 @@ int ssdfs_extents_btree_desc_init(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !tree);
-	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, tree %p\n",
 		  fsi, tree);
 
+	tree_info = container_of(tree,
+				 struct ssdfs_extents_btree_info,
+				 buffer.tree);
+
 	erasesize = fsi->erasesize;
 
-	desc = &fsi->vh->extents_btree.desc;
+	desc = &tree_info->desc.desc;
 
 	if (le32_to_cpu(desc->magic) != SSDFS_EXTENTS_BTREE_MAGIC) {
 		err = -EIO;
@@ -4952,6 +4959,7 @@ static
 int ssdfs_extents_btree_desc_flush(struct ssdfs_btree *tree)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_btree_descriptor desc;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	u32 erasesize;
@@ -4968,9 +4976,15 @@ int ssdfs_extents_btree_desc_flush(struct ssdfs_btree *tree)
 
 	fsi = tree->fsi;
 
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
+	if (tree->type != SSDFS_EXTENTS_BTREE) {
+		SSDFS_WARN("invalid tree type %#x\n",
+			   tree->type);
+		return -ERANGE;
+	} else {
+		tree_info = container_of(tree,
+					 struct ssdfs_extents_btree_info,
+					 buffer.tree);
+	}
 
 	memset(&desc, 0xFF, sizeof(struct ssdfs_btree_descriptor));
 
@@ -5007,7 +5021,7 @@ int ssdfs_extents_btree_desc_flush(struct ssdfs_btree *tree)
 		return -ERANGE;
 	}
 
-	memcpy(&fsi->vh->extents_btree.desc, &desc,
+	memcpy(&tree_info->desc.desc, &desc,
 		sizeof(struct ssdfs_btree_descriptor));
 
 	return 0;

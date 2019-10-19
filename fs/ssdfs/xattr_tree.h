@@ -33,6 +33,7 @@
  * @buffer.xattr: piece of memory for the inline xattr
  * @root: pointer on root node
  * @root_buffer: buffer for root node
+ * @desc: b-tree descriptor
  * @owner: pointer on owner inode object
  * @fsi: pointer on shared file system object
  */
@@ -53,6 +54,7 @@ struct ssdfs_xattrs_btree_info {
 	struct ssdfs_btree_inline_root_node *root;
 	struct ssdfs_btree_inline_root_node root_buffer;
 
+	struct ssdfs_xattr_btree_descriptor desc;
 	struct ssdfs_inode_info *owner;
 	struct ssdfs_fs_info *fsi;
 };

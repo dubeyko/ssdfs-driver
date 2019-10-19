@@ -386,13 +386,11 @@ bool RANGE_HAS_PARTIAL_INTERSECTION(u64 start1, u64 end1,
 	BUG_ON(start2 > end2);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (start1 <= start2) {
-		if ((start2 + end2) <= end1)
-			return false;
-	} else {
-		if ((start1 + end1) <= end2)
-			return false;
-	}
+	if (start1 > end2)
+		return false;
+
+	if (end1 < start2)
+		return false;
 
 	return true;
 }

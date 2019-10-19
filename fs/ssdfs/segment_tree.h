@@ -27,6 +27,9 @@
  * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
  * @user_data_log_pages: full log size in user data segment (pages count)
  * @default_log_pages: default full log size (pages count)
+ * @dentries_btree: dentries b-tree descriptor
+ * @extents_btree: extents b-tree descriptor
+ * @xattr_btree: xattrs b-tree descriptor
  * @pages: pages of segment tree
  */
 struct ssdfs_segment_tree {
@@ -35,6 +38,10 @@ struct ssdfs_segment_tree {
 	u16 inodes_seg_log_pages;
 	u16 user_data_log_pages;
 	u16 default_log_pages;
+
+	struct ssdfs_dentries_btree_descriptor dentries_btree;
+	struct ssdfs_extents_btree_descriptor extents_btree;
+	struct ssdfs_xattr_btree_descriptor xattr_btree;
 
 	struct address_space pages;
 };

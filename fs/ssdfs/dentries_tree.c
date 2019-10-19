@@ -29,6 +29,7 @@
 #include "btree_node.h"
 #include "btree.h"
 #include "shared_dictionary.h"
+#include "segment_tree.h"
 #include "dentries_tree.h"
 
 #define S_SHIFT 12
@@ -103,6 +104,8 @@ int ssdfs_dentries_tree_create(struct ssdfs_fs_info *fsi,
 	memset(&ptr->root_buffer, 0xFF,
 		sizeof(struct ssdfs_btree_inline_root_node));
 	ptr->root = NULL;
+	memcpy(&ptr->desc, &fsi->segs_tree->dentries_btree,
+		sizeof(struct ssdfs_dentries_btree_descriptor));
 	ptr->owner = ii;
 	ptr->fsi = fsi;
 	atomic_set(&ptr->state, SSDFS_DENTRIES_BTREE_CREATED);
@@ -468,6 +471,7 @@ finish_tree_init:
 static
 int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_dir_entry dentries[SSDFS_INLINE_DENTRIES_COUNT];
 	struct ssdfs_dir_entry *cur;
 	struct ssdfs_btree_search *search;
@@ -476,11 +480,13 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree);
+	BUG_ON(!tree || !tree->fsi);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+
+	fsi = tree->fsi;
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
@@ -545,9 +551,11 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		sizeof(struct ssdfs_dir_entry) * SSDFS_INLINE_DENTRIES_COUNT);
 	memcpy(dentries, tree->inline_dentries,
 		sizeof(struct ssdfs_dir_entry) * dentries_capacity);
+
+	tree->generic_tree = &tree->buffer.tree;
 	tree->inline_dentries = NULL;
 
-	err = ssdfs_btree_create(tree->fsi,
+	err = ssdfs_btree_create(fsi,
 				 tree->owner->vfs_inode.i_ino,
 				 &ssdfs_dentries_btree_desc_ops,
 				 &ssdfs_dentries_btree_ops,
@@ -600,7 +608,14 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		goto finish_add_range;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		/* expected state */
+		break;
+
+	default:
 		err = -ERANGE;
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
@@ -635,6 +650,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		memcpy(search->result.buf, dentries, search->result.buf_size);
 	}
 
+	search->request.type = SSDFS_BTREE_SEARCH_ADD_RANGE;
+
 	err = ssdfs_btree_add_range(&tree->buffer.tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add the range into tree: "
@@ -653,7 +670,6 @@ finish_add_range:
 
 	atomic_set(&tree->type, SSDFS_PRIVATE_DENTRIES_BTREE);
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_DIRTY);
-	tree->generic_tree = &tree->buffer.tree;
 
 	atomic_or(SSDFS_INODE_HAS_DENTRIES_BTREE,
 		  &tree->owner->private_flags);
@@ -668,6 +684,8 @@ recover_inline_tree:
 	memcpy(tree->buffer.dentries, dentries,
 		sizeof(struct ssdfs_dir_entry) * SSDFS_INLINE_DENTRIES_COUNT);
 	tree->inline_dentries = tree->buffer.dentries;
+	tree->generic_tree = NULL;
+
 	return err;
 }
 
@@ -3803,6 +3821,7 @@ static
 int ssdfs_dentries_btree_desc_init(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_btree *tree)
 {
+	struct ssdfs_dentries_btree_info *tree_info = NULL;
 	struct ssdfs_btree_descriptor *desc;
 	u32 erasesize;
 	u32 node_size;
@@ -3812,14 +3831,16 @@ int ssdfs_dentries_btree_desc_init(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !tree);
-	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, tree %p\n",
 		  fsi, tree);
 
+	tree_info = container_of(tree,
+				 struct ssdfs_dentries_btree_info,
+				 buffer.tree);
+	desc = &tree_info->desc.desc;
 	erasesize = fsi->erasesize;
-	desc = &fsi->vh->dentries_btree.desc;
 
 	if (le32_to_cpu(desc->magic) != SSDFS_DENTRIES_BTREE_MAGIC) {
 		err = -EIO;
@@ -3882,6 +3903,7 @@ static
 int ssdfs_dentries_btree_desc_flush(struct ssdfs_btree *tree)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_dentries_btree_info *tree_info = NULL;
 	struct ssdfs_btree_descriptor desc;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
 	u32 erasesize;
@@ -3898,9 +3920,15 @@ int ssdfs_dentries_btree_desc_flush(struct ssdfs_btree *tree)
 
 	fsi = tree->fsi;
 
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
+	if (tree->type != SSDFS_DENTRIES_BTREE) {
+		SSDFS_WARN("invalid tree type %#x\n",
+			   tree->type);
+		return -ERANGE;
+	} else {
+		tree_info = container_of(tree,
+					 struct ssdfs_dentries_btree_info,
+					 buffer.tree);
+	}
 
 	memset(&desc, 0xFF, sizeof(struct ssdfs_btree_descriptor));
 
@@ -3937,7 +3965,7 @@ int ssdfs_dentries_btree_desc_flush(struct ssdfs_btree *tree)
 		return -ERANGE;
 	}
 
-	memcpy(&fsi->vh->dentries_btree.desc, &desc,
+	memcpy(&tree_info->desc.desc, &desc,
 		sizeof(struct ssdfs_btree_descriptor));
 
 	return 0;
@@ -3997,6 +4025,11 @@ int ssdfs_dentries_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!rwsem_is_locked(&tree_info->owner->lock));
+	BUG_ON(!rwsem_is_locked(&tree_info->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	private_flags = atomic_read(&tree_info->owner->private_flags);
 
 	if (private_flags & SSDFS_INODE_HAS_DENTRIES_BTREE) {
@@ -4011,27 +4044,43 @@ int ssdfs_dentries_btree_create_root_node(struct ssdfs_fs_info *fsi,
 			return -ERANGE;
 		}
 
-		down_read(&tree_info->owner->lock);
 		raw_inode = &tree_info->owner->raw_inode;
 		memcpy(&tmp_buffer,
 			&raw_inode->internal[0].area1.dentries_root,
 			sizeof(struct ssdfs_btree_inline_root_node));
-		up_read(&tree_info->owner->lock);
-
-		down_write(&tree_info->lock);
-		memcpy(&tree_info->root_buffer, &tmp_buffer,
-			sizeof(struct ssdfs_btree_inline_root_node));
-		tree_info->root = &tree_info->root_buffer;
-		err = ssdfs_btree_create_root_node(node, tree_info->root);
-		up_write(&tree_info->lock);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to create root node: err %d\n",
-				  err);
-		}
 	} else {
-		err = -ERANGE;
-		SSDFS_ERR("dentries tree is inline dentries array\n");
+		switch (atomic_read(&tree_info->type)) {
+		case SSDFS_INLINE_DENTRIES_ARRAY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid tree type %#x\n",
+				  atomic_read(&tree_info->type));
+			return -ERANGE;
+		}
+
+		memset(&tmp_buffer, 0xFF,
+			sizeof(struct ssdfs_btree_inline_root_node));
+
+		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
+		tmp_buffer.header.items_count = 0;
+		tmp_buffer.header.flags = 0;
+		tmp_buffer.header.type = SSDFS_BTREE_ROOT_NODE;
+		tmp_buffer.header.upper_node_id =
+				cpu_to_le32(SSDFS_BTREE_ROOT_NODE_ID);
+		tmp_buffer.header.create_cno =
+				cpu_to_le64(ssdfs_current_cno(fsi->sb));
+	}
+
+	memcpy(&tree_info->root_buffer, &tmp_buffer,
+		sizeof(struct ssdfs_btree_inline_root_node));
+	tree_info->root = &tree_info->root_buffer;
+
+	err = ssdfs_btree_create_root_node(node, tree_info->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create root node: err %d\n",
+			  err);
 	}
 
 	return err;
@@ -4313,9 +4362,6 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 			goto finish_create_node;
 		}
 
-		node->items_area.end_hash = node->items_area.start_hash +
-					    node->items_area.items_capacity - 1;
-
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
 		node->bmap_array.item_start_bit =
@@ -4336,9 +4382,6 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.items_count = 0;
 		node->items_area.items_capacity = items_area_size / item_size;
 		items_capacity = node->items_area.items_capacity;
-
-		node->items_area.end_hash = node->items_area.start_hash +
-					    node->items_area.items_capacity - 1;
 
 		node->bmap_array.item_start_bit =
 				SSDFS_BTREE_NODE_HEADER_INDEX + 1;
@@ -4762,7 +4805,13 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 
-	if (atomic_read(&node->state) != SSDFS_BTREE_NODE_INITIALIZED) {
+	switch (atomic_read(&node->state)) {
+	case SSDFS_BTREE_NODE_CREATED:
+	case SSDFS_BTREE_NODE_INITIALIZED:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_WARN("invalid node: id %u, state %#x\n",
 			   node->node_id, atomic_read(&node->state));
 		return -ERANGE;
@@ -6877,7 +6926,13 @@ int ssdfs_dentries_btree_node_insert_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;
@@ -6949,7 +7004,13 @@ int ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;

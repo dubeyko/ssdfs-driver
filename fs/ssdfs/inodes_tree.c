@@ -542,7 +542,14 @@ free_search_object:
 						search);
 		ssdfs_btree_search_free(search);
 
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			err = 0;
+			/*
+			 * It doesn't need to find the inode.
+			 * The goal is to pass through the tree.
+			 * Simply ignores the no data error.
+			 */
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare free inodes queue: "
 				  "upper_allocated_ino %llu, err %d\n",
 				  ptr->upper_allocated_ino, err);

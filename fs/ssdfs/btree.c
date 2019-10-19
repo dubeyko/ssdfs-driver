@@ -201,6 +201,11 @@ int ssdfs_btree_desc_init(struct ssdfs_fs_info *fsi,
 	tree->max_item_size = max_item_size;
 	tree->index_area_min_size = le16_to_cpu(desc->index_area_min_size);
 
+	SSDFS_DBG("type %#x, node_size %u, "
+		  "index_size %u, item_size %u\n",
+		  tree->type, tree->node_size,
+		  tree->index_size, tree->item_size);
+
 	return 0;
 }
 
@@ -1044,7 +1049,7 @@ try_find_index:
 			goto try_find_index;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find index: "
-			  "start_hash %llu, err %d\n",
+			  "start_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  err);
 	} else
@@ -2046,7 +2051,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	BUG_ON(!tree || !tree->fsi || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, start_hash %llu\n",
+	SSDFS_DBG("tree %p, start_hash %llx\n",
 		  tree, search->request.start.hash);
 
 	switch (search->node.state) {
@@ -2318,7 +2323,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, start_hash %llu\n",
+	SSDFS_DBG("tree %p, start_hash %llx\n",
 		  tree, search->request.start.hash);
 
 	if (search->node.state == SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC) {
@@ -2331,7 +2336,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 	if (search->request.start.hash == U64_MAX ||
 	    search->request.end.hash == U64_MAX) {
 		SSDFS_ERR("invalid hash range in the request: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
 		return -ERANGE;
@@ -2429,7 +2434,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 			if (start_hash < U64_MAX && end_hash == U64_MAX) {
 				err = -ERANGE;
 				SSDFS_ERR("invalid items area's hash range: "
-					  "start_hash %llu, end_hash %llu\n",
+					  "start_hash %llx, end_hash %llx\n",
 					  start_hash, end_hash);
 				goto finish_search_leaf_node;
 			}
@@ -2473,7 +2478,7 @@ try_find_index:
 			goto try_find_index;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find index: "
-				  "start_hash %llu, err %d\n",
+				  "start_hash %llx, err %d\n",
 				  search->request.start.hash,
 				  err);
 			goto finish_search_leaf_node;
@@ -2530,7 +2535,7 @@ try_find_index:
 		if (start_hash == U64_MAX || end_hash == U64_MAX) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid items area's hash range: "
-				  "start_hash %llu, end_hash %llu\n",
+				  "start_hash %llx, end_hash %llx\n",
 				  start_hash, end_hash);
 			goto finish_search_leaf_node;
 		}
@@ -2578,7 +2583,7 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	BUG_ON(!tree || !tree->fsi || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, start_hash %llu\n",
+	SSDFS_DBG("tree %p, start_hash %llx\n",
 		  tree, search->request.start.hash);
 
 	switch (atomic_read(&tree->state)) {
@@ -2675,7 +2680,7 @@ int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
 	BUG_ON(!tree || !tree->fsi || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, start_hash %llu\n",
+	SSDFS_DBG("tree %p, start_hash %llx\n",
 		  tree, search->request.start.hash);
 
 	switch (atomic_read(&tree->state)) {
@@ -2803,7 +2808,7 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 	BUG_ON(!tree || !tree->fsi || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, start_hash %llu\n",
+	SSDFS_DBG("tree %p, start_hash %llx\n",
 		  tree, search->request.start.hash);
 
 	switch (atomic_read(&tree->state)) {
@@ -2955,7 +2960,7 @@ int ssdfs_btree_delete_node(struct ssdfs_btree *tree,
 	BUG_ON(!tree || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, start_hash %llu\n",
+	SSDFS_DBG("tree %p, start_hash %llx\n",
 		  tree, search->request.start.hash);
 
 	switch (atomic_read(&tree->state)) {
@@ -3111,7 +3116,7 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	SSDFS_DBG("tree %p, type %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "result->err %d, result->state %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type,
 		  search->request.type, search->request.flags,
 		  search->result.err,
@@ -3134,7 +3139,7 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	if (search->request.start.hash == U64_MAX ||
 	    search->request.end.hash == U64_MAX) {
 		SSDFS_ERR("invalid request: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
 		return -ERANGE;
@@ -3165,30 +3170,30 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 
 	if (start_hash == U64_MAX || end_hash == U64_MAX) {
 		SSDFS_ERR("corrupted items area: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  start_hash, end_hash);
 		return -ERANGE;
 	}
 
 	if (start_hash > end_hash) {
 		SSDFS_ERR("corrupted items area: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  start_hash, end_hash);
 		return -ERANGE;
 	}
 
 	if (search->request.start.hash < start_hash) {
 		if (search->request.end.hash < start_hash) {
-			SSDFS_DBG("request (start_hash %llu, end_hash %llu), "
-				  "area (start_hash %llu, end_hash %llu)\n",
+			SSDFS_DBG("request (start_hash %llx, end_hash %llx), "
+				  "area (start_hash %llx, end_hash %llx)\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
 				  start_hash, end_hash);
 			return -ENODATA;
 		} else {
 			SSDFS_ERR("invalid request: "
-				  "request (start_hash %llu, end_hash %llu), "
-				  "area (start_hash %llu, end_hash %llu)\n",
+				  "request (start_hash %llx, end_hash %llx), "
+				  "area (start_hash %llx, end_hash %llx)\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
 				  start_hash, end_hash);
@@ -3310,7 +3315,7 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3423,13 +3428,13 @@ try_find_item_again:
 		goto try_next_search;
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("unable to find item: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
 		goto finish_search_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find item: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -3467,7 +3472,7 @@ int ssdfs_btree_find_item(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3511,7 +3516,7 @@ int __ssdfs_btree_find_range(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3624,13 +3629,13 @@ try_find_range_again:
 		goto try_next_search;
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("unable to find range: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
 		goto finish_search_range;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find range: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -3667,7 +3672,7 @@ int ssdfs_btree_find_range(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3708,7 +3713,7 @@ int ssdfs_btree_allocate_item(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3779,7 +3784,7 @@ try_allocate_item:
 			goto try_allocate_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate item: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -3822,7 +3827,7 @@ int ssdfs_btree_allocate_range(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3893,7 +3898,7 @@ try_allocate_range:
 			goto try_allocate_range;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate range: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -3937,7 +3942,7 @@ int ssdfs_btree_add_item(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -3977,7 +3982,7 @@ try_find_item:
 	if (!err) {
 		err = -EEXIST;
 		SSDFS_ERR("item exists in the tree: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
 		goto finish_add_item;
@@ -3993,7 +3998,7 @@ try_find_item:
 		default:
 			err = -ERANGE;
 			SSDFS_ERR("invalid search result: "
-				  "start_hash %llu, end_hash %llu, "
+				  "start_hash %llx, end_hash %llx, "
 				  "state %#x\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
@@ -4002,7 +4007,7 @@ try_find_item:
 		};
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find item: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
@@ -4024,7 +4029,7 @@ try_find_item:
 		if (!err) {
 			err = -EEXIST;
 			SSDFS_ERR("item exists in the tree: "
-				  "start_hash %llu, end_hash %llu\n",
+				  "start_hash %llx, end_hash %llx\n",
 				  search->request.start.hash,
 				  search->request.end.hash);
 			goto finish_add_item;
@@ -4037,7 +4042,7 @@ try_find_item:
 			default:
 				err = -ERANGE;
 				SSDFS_ERR("invalid search result: "
-					  "start_hash %llu, end_hash %llu, "
+					  "start_hash %llx, end_hash %llx, "
 					  "state %#x\n",
 					  search->request.start.hash,
 					  search->request.end.hash,
@@ -4046,7 +4051,7 @@ try_find_item:
 			};
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find item: "
-				  "start_hash %llu, end_hash %llu, err %d\n",
+				  "start_hash %llx, end_hash %llx, err %d\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
 				  err);
@@ -4087,7 +4092,7 @@ try_insert_item:
 			goto try_find_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -4131,7 +4136,7 @@ int ssdfs_btree_add_range(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -4171,7 +4176,7 @@ try_find_range:
 	if (!err) {
 		err = -EEXIST;
 		SSDFS_ERR("range exists in the tree: "
-			  "start_hash %llu, end_hash %llu\n",
+			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
 		goto finish_add_range;
@@ -4187,7 +4192,7 @@ try_find_range:
 		default:
 			err = -ERANGE;
 			SSDFS_ERR("invalid search result: "
-				  "start_hash %llu, end_hash %llu, "
+				  "start_hash %llx, end_hash %llx, "
 				  "state %#x\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
@@ -4196,7 +4201,7 @@ try_find_range:
 		};
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find range: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
@@ -4218,7 +4223,7 @@ try_find_range:
 		if (!err) {
 			err = -EEXIST;
 			SSDFS_ERR("range exists in the tree: "
-				  "start_hash %llu, end_hash %llu\n",
+				  "start_hash %llx, end_hash %llx\n",
 				  search->request.start.hash,
 				  search->request.end.hash);
 			goto finish_add_range;
@@ -4226,12 +4231,13 @@ try_find_range:
 			err = 0;
 			switch (search->result.state) {
 			case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+			case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 				/* position in node was found */
 				break;
 			default:
 				err = -ERANGE;
 				SSDFS_ERR("invalid search result: "
-					  "start_hash %llu, end_hash %llu, "
+					  "start_hash %llx, end_hash %llx, "
 					  "state %#x\n",
 					  search->request.start.hash,
 					  search->request.end.hash,
@@ -4240,7 +4246,7 @@ try_find_range:
 			};
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find range: "
-				  "start_hash %llu, end_hash %llu, err %d\n",
+				  "start_hash %llx, end_hash %llx, err %d\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
 				  err);
@@ -4284,7 +4290,7 @@ try_insert_range:
 			goto try_find_range;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -4408,7 +4414,7 @@ int ssdfs_btree_change_item(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -4492,7 +4498,7 @@ try_change_item:
 			goto try_change_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to change item: "
-			  "start_hash %llu, end_hash %llu, "
+			  "start_hash %llx, end_hash %llx, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -4558,7 +4564,7 @@ int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -4596,7 +4602,7 @@ int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 	err = __ssdfs_btree_find_item(tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find item: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
@@ -4624,7 +4630,7 @@ try_delete_item:
 			goto try_delete_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to delete item: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
@@ -4681,7 +4687,7 @@ int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
-		  "start_hash %llu, end_hash %llu\n",
+		  "start_hash %llx, end_hash %llx\n",
 		  tree, tree->type, tree_state,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
@@ -4726,7 +4732,7 @@ try_delete_next_range:
 	err = __ssdfs_btree_find_range(tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find range: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
@@ -4764,7 +4770,7 @@ finish_delete_range:
 		need_continue_deletion = true;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to delete range: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);

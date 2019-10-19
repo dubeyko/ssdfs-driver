@@ -839,6 +839,18 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	struct ssdfs_inode *ri = &ii->raw_inode;
 	struct ssdfs_inodes_btree_info *itree;
 	struct ssdfs_btree_search *search;
+	struct ssdfs_dentries_btree_descriptor dentries_btree;
+	bool has_save_dentries_desc = true;
+	size_t dentries_desc_size =
+		sizeof(struct ssdfs_dentries_btree_descriptor);
+	struct ssdfs_extents_btree_descriptor extents_btree;
+	bool has_save_extents_desc = true;
+	size_t extents_desc_size =
+		sizeof(struct ssdfs_extents_btree_descriptor);
+	struct ssdfs_xattr_btree_descriptor xattr_btree;
+	bool has_save_xattrs_desc = true;
+	size_t xattr_desc_size =
+		sizeof(struct ssdfs_xattr_btree_descriptor);
 	int private_flags;
 	size_t raw_inode_size;
 	ino_t ino;
@@ -848,6 +860,9 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
+	memcpy(&dentries_btree, &fsi->vh->dentries_btree, dentries_desc_size);
+	memcpy(&extents_btree, &fsi->vh->extents_btree, extents_desc_size);
+	memcpy(&xattr_btree, &fsi->vh->xattr_btree, xattr_desc_size);
 	up_read(&fsi->volume_sem);
 
 	if (raw_inode_size != sizeof(struct ssdfs_inode)) {
@@ -888,6 +903,14 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 				  inode->i_ino, err);
 			goto finish_write_inode;
 		}
+
+		if (memcmp(&extents_btree, &ii->extents_tree->desc,
+						extents_desc_size) != 0) {
+			memcpy(&extents_btree, &ii->extents_tree->desc,
+				extents_desc_size);
+			has_save_extents_desc = true;
+		} else
+			has_save_extents_desc = false;
 	} else if (S_ISDIR(inode->i_mode) && ii->dentries_tree) {
 		err = ssdfs_dentries_tree_flush(fsi, ii);
 		if (unlikely(err)) {
@@ -896,6 +919,14 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 				  inode->i_ino, err);
 			goto finish_write_inode;
 		}
+
+		if (memcmp(&dentries_btree, &ii->dentries_tree->desc,
+						dentries_desc_size) != 0) {
+			memcpy(&dentries_btree, &ii->dentries_tree->desc,
+				dentries_desc_size);
+			has_save_dentries_desc = true;
+		} else
+			has_save_dentries_desc = false;
 	}
 
 	if (ii->xattrs_tree) {
@@ -906,6 +937,14 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 				  inode->i_ino, err);
 			goto finish_write_inode;
 		}
+
+		if (memcmp(&xattr_btree, &ii->xattrs_tree->desc,
+						xattr_desc_size) != 0) {
+			memcpy(&xattr_btree, &ii->xattrs_tree->desc,
+				xattr_desc_size);
+			has_save_xattrs_desc = true;
+		} else
+			has_save_xattrs_desc = false;
 	}
 
 	private_flags = atomic_read(&ii->private_flags);
@@ -960,6 +999,18 @@ finish_write_inode:
 
 	if (unlikely(err))
 		goto free_search_object;
+
+	if (has_save_dentries_desc || has_save_extents_desc ||
+						has_save_xattrs_desc) {
+		down_write(&fsi->volume_sem);
+		memcpy(&fsi->vh->dentries_btree, &dentries_btree,
+						dentries_desc_size);
+		memcpy(&fsi->vh->extents_btree, &extents_btree,
+						extents_desc_size);
+		memcpy(&fsi->vh->xattr_btree, &xattr_btree,
+						xattr_desc_size);
+		up_write(&fsi->volume_sem);
+	}
 
 	err = ssdfs_inodes_btree_change(itree, ino, search);
 	if (unlikely(err)) {
