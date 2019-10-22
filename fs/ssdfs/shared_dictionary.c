@@ -3273,7 +3273,9 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page_index = item_offset >> PAGE_SHIFT;
-	item_offset %= page_index * PAGE_SIZE;
+
+	if (page_index > 0)
+		item_offset %= page_index * PAGE_SIZE;
 
 	if (page_index >= pagevec_count(&node->content.pvec)) {
 		SSDFS_ERR("invalid page_index: "
@@ -3391,7 +3393,9 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page_index = item_offset >> PAGE_SHIFT;
-	item_offset %= page_index * PAGE_SIZE;
+
+	if (page_index > 0)
+		item_offset %= page_index * PAGE_SIZE;
 
 	if (page_index >= pagevec_count(&node->content.pvec)) {
 		SSDFS_ERR("invalid page_index: "
@@ -3472,7 +3476,9 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page_index = item_offset >> PAGE_SHIFT;
-	item_offset %= page_index * PAGE_SIZE;
+
+	if (page_index > 0)
+		item_offset %= page_index * PAGE_SIZE;
 
 	if (page_index >= pagevec_count(&node->content.pvec)) {
 		SSDFS_ERR("invalid page_index: "
@@ -3590,7 +3596,9 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page_index = item_offset >> PAGE_SHIFT;
-	item_offset %= page_index * PAGE_SIZE;
+
+	if (page_index > 0)
+		item_offset %= page_index * PAGE_SIZE;
 
 	if (page_index >= pagevec_count(&node->content.pvec)) {
 		SSDFS_ERR("invalid page_index: "
@@ -4303,7 +4311,9 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 		item_offset += copied_len;
 
 		page_index = item_offset >> PAGE_SHIFT;
-		item_offset %= page_index * PAGE_SIZE;
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
 
 		if (page_index >= pagevec_count(&node->content.pvec)) {
 			SSDFS_ERR("invalid page_index: "
@@ -5203,7 +5213,9 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 		item_offset += processed_len;
 
 		page_index = item_offset >> PAGE_SHIFT;
-		item_offset %= page_index * PAGE_SIZE;
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
 
 		if (page_index >= pagevec_count(&node->content.pvec)) {
 			SSDFS_ERR("invalid page_index: "
@@ -6134,7 +6146,9 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 		item_offset += copied_len;
 
 		page_index = item_offset >> PAGE_SHIFT;
-		item_offset %= page_index * PAGE_SIZE;
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
 
 		if (page_index >= pagevec_count(&node->content.pvec)) {
 			SSDFS_ERR("invalid page_index: "
@@ -10071,7 +10085,12 @@ int ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->result.err) {
+	if (search->result.err == -ENODATA) {
+		search->result.err = 0;
+		/*
+		 * Node doesn't contain an item.
+		 */
+	} else if (search->result.err) {
 		SSDFS_WARN("invalid search result: err %d\n",
 			   search->result.err);
 		return search->result.err;
@@ -10147,7 +10166,12 @@ int ssdfs_shared_dict_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->result.err) {
+	if (search->result.err == -ENODATA) {
+		search->result.err = 0;
+		/*
+		 * Node doesn't contain an item.
+		 */
+	} else if (search->result.err) {
 		SSDFS_WARN("invalid search result: err %d\n",
 			   search->result.err);
 		return search->result.err;

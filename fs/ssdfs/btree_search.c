@@ -425,6 +425,7 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 	struct ssdfs_btree_index_key *node_index;
 	struct ssdfs_shdict_ltbl2_item *ltbl2_item;
 	size_t item_size;
+	size_t count;
 	int i;
 
 	BUG_ON(!search);
@@ -501,8 +502,12 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 		  search->result.names_in_buffer);
 
 	if (search->result.name) {
-		item_size = search->result.name_string_size /
-				search->result.names_in_buffer;
+		count = search->result.names_in_buffer;
+
+		if (count > 0)
+			item_size = search->result.name_string_size / count;
+		else
+			item_size = 0;
 
 		for (i = 0; i < search->result.names_in_buffer; i++) {
 			struct ssdfs_name_string *name;
@@ -572,8 +577,12 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 		  search->result.items_in_buffer);
 
 	if (search->result.buf) {
-		item_size = search->result.buf_size /
-				search->result.items_in_buffer;
+		count = search->result.items_in_buffer;
+
+		if (count > 0)
+			item_size = search->result.buf_size / count;
+		else
+			item_size = 0;
 
 		for (i = 0; i < search->result.items_in_buffer; i++) {
 			void *item;

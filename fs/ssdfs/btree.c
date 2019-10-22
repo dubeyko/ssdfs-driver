@@ -3359,7 +3359,7 @@ try_next_search:
 	err = ssdfs_btree_find_leaf_node(tree, search);
 	if (err == -EEXIST) {
 		err = 0;
-		/* try the old search result */
+		/* try to find an item */
 	} else if (err == -ENOENT) {
 		err = -ENODATA;
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
@@ -3369,7 +3369,9 @@ try_next_search:
 		SSDFS_ERR("fail to find leaf node: err %d\n",
 			  err);
 		goto finish_search_item;
-	} else if (search->request.type == SSDFS_BTREE_SEARCH_ADD_ITEM) {
+	}
+
+	if (search->request.type == SSDFS_BTREE_SEARCH_ADD_ITEM) {
 try_another_node:
 		err = ssdfs_btree_node_find_item(search);
 		if (node_needs_in_additional_check(err, search)) {

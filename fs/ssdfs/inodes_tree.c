@@ -3013,7 +3013,12 @@ int ssdfs_inodes_btree_node_allocate_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->result.err) {
+	if (search->result.err == -ENODATA) {
+		search->result.err = 0;
+		/*
+		 * Node doesn't contain an item.
+		 */
+	} else if (search->result.err) {
 		SSDFS_WARN("invalid search result: err %d\n",
 			   search->result.err);
 		return search->result.err;
@@ -3118,7 +3123,12 @@ int ssdfs_inodes_btree_node_allocate_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->result.err) {
+	if (search->result.err == -ENODATA) {
+		search->result.err = 0;
+		/*
+		 * Node doesn't contain an item.
+		 */
+	} else if (search->result.err) {
 		SSDFS_WARN("invalid search result: err %d\n",
 			   search->result.err);
 		return search->result.err;

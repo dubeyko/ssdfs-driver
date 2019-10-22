@@ -4257,6 +4257,11 @@ int ssdfs_xattrs_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!rwsem_is_locked(&tree_info->owner->lock));
+	BUG_ON(!rwsem_is_locked(&tree_info->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	private_flags = atomic_read(&tree_info->owner->private_flags);
 
 	if (private_flags & SSDFS_INODE_HAS_XATTR_BTREE) {
@@ -4271,19 +4276,15 @@ int ssdfs_xattrs_btree_create_root_node(struct ssdfs_fs_info *fsi,
 			return -ERANGE;
 		}
 
-		down_read(&tree_info->owner->lock);
 		raw_inode = &tree_info->owner->raw_inode;
 		memcpy(&tmp_buffer,
 			&raw_inode->internal[0].area2.xattr_root,
 			sizeof(struct ssdfs_btree_inline_root_node));
-		up_read(&tree_info->owner->lock);
 
-		down_write(&tree_info->lock);
 		memcpy(&tree_info->root_buffer, &tmp_buffer,
 			sizeof(struct ssdfs_btree_inline_root_node));
 		tree_info->root = &tree_info->root_buffer;
 		err = ssdfs_btree_create_root_node(node, tree_info->root);
-		up_write(&tree_info->lock);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create root node: err %d\n",
@@ -4413,6 +4414,11 @@ int ssdfs_xattrs_btree_flush_root_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!rwsem_is_locked(&tree_info->owner->lock));
+	BUG_ON(!rwsem_is_locked(&tree_info->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	private_flags = atomic_read(&tree_info->owner->private_flags);
 
 	if (private_flags & SSDFS_INODE_HAS_XATTR_BTREE) {
@@ -4432,18 +4438,14 @@ int ssdfs_xattrs_btree_flush_root_node(struct ssdfs_btree_node *node)
 			return -ERANGE;
 		}
 
-		down_write(&tree_info->lock);
 		ssdfs_btree_flush_root_node(node, tree_info->root);
 		memcpy(&tmp_buffer, tree_info->root,
 			sizeof(struct ssdfs_btree_inline_root_node));
-		up_write(&tree_info->lock);
 
-		down_write(&tree_info->owner->lock);
 		raw_inode = &tree_info->owner->raw_inode;
 		memcpy(&raw_inode->internal[0].area2.xattr_root,
 			&tmp_buffer,
 			sizeof(struct ssdfs_btree_inline_root_node));
-		up_write(&tree_info->owner->lock);
 	} else {
 		err = -ERANGE;
 		SSDFS_ERR("xattrs tree is inline xattrs array\n");
@@ -6000,11 +6002,27 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 		search->result.count = search->request.count;
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
-		search->result.buf_state =
-			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-		search->result.buf = NULL;
-		search->result.buf_size = 0;
-		search->result.items_in_buffer = 0;
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
 		return -ENODATA;
 
 	case 1: /* range1 > range2 */
@@ -6021,11 +6039,27 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 		search->result.count = search->request.count;
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
-		search->result.buf_state =
-			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-		search->result.buf = NULL;
-		search->result.buf_size = 0;
-		search->result.items_in_buffer = 0;
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
 		return -ENODATA;
 
 	default:
@@ -6053,11 +6087,27 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 		search->result.count = search->request.count;
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
-		search->result.buf_state =
-			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-		search->result.buf = NULL;
-		search->result.buf_size = 0;
-		search->result.items_in_buffer = 0;
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
 		return -ENODATA;
 	}
 
@@ -6073,11 +6123,27 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 		search->result.count = search->request.count;
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
-		search->result.buf_state =
-			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-		search->result.buf = NULL;
-		search->result.buf_size = 0;
-		search->result.items_in_buffer = 0;
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
 		return -ENODATA;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the index: "
@@ -6232,7 +6298,9 @@ int __ssdfs_xattrs_btree_node_get_xattr(struct pagevec *pvec,
 	}
 
 	page_index = item_offset >> PAGE_SHIFT;
-	item_offset %= page_index * PAGE_SIZE;
+
+	if (page_index > 0)
+		item_offset %= page_index * PAGE_SIZE;
 
 	if (page_index >= pagevec_count(pvec)) {
 		SSDFS_ERR("invalid page_index: "
@@ -7101,7 +7169,12 @@ int ssdfs_xattrs_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->result.err) {
+	if (search->result.err == -ENODATA) {
+		search->result.err = 0;
+		/*
+		 * Node doesn't contain an item.
+		 */
+	} else if (search->result.err) {
 		SSDFS_WARN("invalid search result: err %d\n",
 			   search->result.err);
 		return search->result.err;
@@ -7173,7 +7246,12 @@ int ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->result.err) {
+	if (search->result.err == -ENODATA) {
+		search->result.err = 0;
+		/*
+		 * Node doesn't contain an item.
+		 */
+	} else if (search->result.err) {
 		SSDFS_WARN("invalid search result: err %d\n",
 			   search->result.err);
 		return search->result.err;

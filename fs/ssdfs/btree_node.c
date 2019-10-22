@@ -9405,7 +9405,9 @@ int ssdfs_copy_item_in_buffer(struct ssdfs_btree_node *node,
 	}
 
 	page_index = item_offset >> PAGE_SHIFT;
-	item_offset %= page_index * PAGE_SIZE;
+
+	if (page_index > 0)
+		item_offset %= page_index * PAGE_SIZE;
 
 try_copy_item:
 	down_read(&node->full_lock);
@@ -10325,7 +10327,9 @@ try_search_item:
 		}
 
 		page_index = item_offset >> PAGE_SHIFT;
-		item_offset %= page_index * PAGE_SIZE;
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
 
 		if (page_index >= pagevec_count(&node->content.pvec)) {
 			err = -ERANGE;
@@ -10406,7 +10410,9 @@ try_extract_range:
 		}
 
 		page_index = item_offset >> PAGE_SHIFT;
-		item_offset %= page_index * PAGE_SIZE;
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
 
 		if (page_index >= pagevec_count(&node->content.pvec)) {
 			err = -ERANGE;
@@ -10513,7 +10519,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 	struct page *page1, *page2;
 	u32 item_offset1, item_offset2;
 	void *kaddr1, *kaddr2;
-	u16 moved_items = 0;
+	u32 moved_items = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
@@ -10527,94 +10533,20 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		  item_size, start_index, range_len, shift);
 
 	src_index = start_index + range_len - 1;
+	dst_index = src_index + shift;
+
+	if ((dst_index * item_size) > area_size) {
+		SSDFS_ERR("shift is out of area: "
+			  "src_index %d, shift %u, "
+			  "item_size %zu, area_size %u\n",
+			  src_index, shift, item_size, area_size);
+		return -ERANGE;
+	}
 
 	do {
 		u32 offset_diff;
 		u32 index_diff;
-		u32 moving_items;
-		u32 upper_bound;
-
-		item_offset1 = (u32)src_index * item_size;
-		if (item_offset1 >= area_size) {
-			SSDFS_ERR("item_offset %u >= area_size %u\n",
-				  item_offset1, area_size);
-			return -ERANGE;
-		}
-
-		item_offset1 += area_offset;
-		if (item_offset1 >= node->node_size) {
-			SSDFS_ERR("item_offset %u >= node_size %u\n",
-				  item_offset1, node->node_size);
-			return -ERANGE;
-		}
-
-		page_index1 = item_offset1 >> PAGE_SHIFT;
-		if (page_index1 >= pagevec_count(&node->content.pvec)) {
-			SSDFS_ERR("invalid page_index: "
-				  "index %d, pvec_size %u\n",
-				  page_index1,
-				  pagevec_count(&node->content.pvec));
-			return -ERANGE;
-		}
-
-		offset_diff = item_offset1 - (page_index1 * PAGE_SIZE);
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(offset_diff % item_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		index_diff = offset_diff / item_size;
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(index_diff > src_index);
-		BUG_ON(index_diff >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		src_index -= (u16)index_diff;
-		src_index = max_t(int, src_index, (int)start_index);
-
-		item_offset1 = (u32)src_index * item_size;
-		if (item_offset1 >= area_size) {
-			SSDFS_ERR("item_offset %u >= area_size %u\n",
-				  item_offset1, area_size);
-			return -ERANGE;
-		}
-
-		item_offset1 %= page_index1 * PAGE_SIZE;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(start_index > src_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		moving_items = src_index - start_index;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(moving_items > range_len);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		moving_items = range_len - moving_items;
-
-		if (moving_items == 0) {
-			SSDFS_WARN("no items for moving\n");
-			return -ERANGE;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(moved_items > moving_items);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		moving_items -= moved_items;
-
-		if (moving_items == 0) {
-			SSDFS_WARN("no items for moving\n");
-			return -ERANGE;
-		}
-
-		upper_bound = src_index + moving_items + shift;
-		if ((upper_bound * item_size) > PAGE_SIZE) {
-			src_index += moving_items - shift;
-			moving_items = shift;
-		}
-
-		dst_index = src_index + shift;
+		int moving_items;
 
 		item_offset2 = (u32)dst_index * item_size;
 		if (item_offset2 >= area_size) {
@@ -10639,7 +10571,71 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		item_offset2 %= page_index2 * PAGE_SIZE;
+		if (page_index2 == 0)
+			offset_diff = item_offset2 - area_offset;
+		else
+			offset_diff = item_offset2 - (page_index2 * PAGE_SIZE);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(offset_diff % item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		index_diff = offset_diff / item_size;
+		index_diff++;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(index_diff >= U16_MAX);
+		BUG_ON(moved_items > range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		moving_items = range_len - moved_items;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(moving_items < 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		moving_items = min_t(int, moving_items, (int)index_diff);
+
+		if (moving_items == 0) {
+			SSDFS_WARN("no items for moving\n");
+			return -ERANGE;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(moving_items >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		src_index -= moving_items - 1;
+
+		SSDFS_DBG("moving_items %d, src_index %d, dst_index %d\n",
+			  moving_items, src_index, dst_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(start_index > src_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		item_offset1 = (u32)src_index * item_size;
+		if (item_offset1 >= area_size) {
+			SSDFS_ERR("item_offset %u >= area_size %u\n",
+				  item_offset1, area_size);
+			return -ERANGE;
+		}
+
+		item_offset1 += area_offset;
+		if (item_offset1 >= node->node_size) {
+			SSDFS_ERR("item_offset %u >= node_size %u\n",
+				  item_offset1, node->node_size);
+			return -ERANGE;
+		}
+
+		page_index1 = item_offset1 >> PAGE_SHIFT;
+		if (page_index1 >= pagevec_count(&node->content.pvec)) {
+			SSDFS_ERR("invalid page_index: "
+				  "index %d, pvec_size %u\n",
+				  page_index1,
+				  pagevec_count(&node->content.pvec));
+			return -ERANGE;
+		}
 
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
@@ -10660,31 +10656,18 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			kunmap_atomic(kaddr1);
 		}
 
-		src_index -= moving_items;
-		dst_index -= moving_items;
-
-		if (src_index < 0 || dst_index < 0) {
-			SSDFS_ERR("src_index %d, dst_index %d\n",
-				  src_index, dst_index);
-			return -ERANGE;
-		}
+		dst_index--;
+		src_index--;
+		moved_items += moving_items;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(moving_items >= U16_MAX);
+		BUG_ON(moved_items >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		moved_items += moving_items;
 	} while (src_index >= start_index);
 
 	if (moved_items != range_len) {
 		SSDFS_ERR("moved_items %u != range_len %u\n",
 			  moved_items, range_len);
-		return -ERANGE;
-	}
-
-	if (src_index != start_index) {
-		SSDFS_ERR("src_index %d != start_index %d\n",
-			  src_index, start_index);
 		return -ERANGE;
 	}
 
@@ -10889,7 +10872,8 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		item_offset1 %= page_index1 * PAGE_SIZE;
+		if (page_index1 > 0)
+			item_offset1 %= page_index1 * PAGE_SIZE;
 
 		item_offset2 = (u32)dst_index * item_size;
 		if (item_offset2 >= area_size) {
@@ -10914,7 +10898,8 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		item_offset2 %= page_index2 * PAGE_SIZE;
+		if (page_index2 > 0)
+			item_offset2 %= page_index2 * PAGE_SIZE;
 
 		range_len1 = (PAGE_SIZE - item_offset1) / item_size;
 		range_len2 = (PAGE_SIZE - item_offset2) / item_size;
@@ -11188,7 +11173,9 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 
 		moving_range = min_t(u32, cur_range, offset_diff);
 		range_offset1 -= moving_range;
-		range_offset1 %= page_index1 * PAGE_SIZE;
+
+		if (page_index1 > 0)
+			range_offset1 %= page_index1 * PAGE_SIZE;
 
 		if ((range_offset1 + moving_range + shift) > PAGE_SIZE) {
 			range_offset1 += moving_range - shift;
@@ -11219,7 +11206,8 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		range_offset2 %= page_index2 * PAGE_SIZE;
+		if (page_index2 > 0)
+			range_offset2 %= page_index2 * PAGE_SIZE;
 
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
@@ -11350,7 +11338,8 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		range_offset1 %= page_index1 * PAGE_SIZE;
+		if (page_index1 > 0)
+			range_offset1 %= page_index1 * PAGE_SIZE;
 
 		range_offset2 = dst_offset;
 		if (range_offset2 >= area->area_size) {
@@ -11375,7 +11364,8 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		range_offset2 %= page_index2 * PAGE_SIZE;
+		if (page_index2 > 0)
+			range_offset2 %= page_index2 * PAGE_SIZE;
 
 		range_len1 = PAGE_SIZE - range_offset1;
 		range_len2 = PAGE_SIZE - range_offset2;
@@ -11556,7 +11546,8 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		item_offset1 %= page_index * PAGE_SIZE;
+		if (page_index > 0)
+			item_offset1 %= page_index * PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(start_index > src_index);
@@ -11783,6 +11774,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height));
 
 	tree = node->tree;
+	search->result.count = 0;
 
 	switch (atomic_read(&node->items_area.state)) {
 	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
@@ -11929,7 +11921,9 @@ try_extract_range:
 		}
 
 		page_index = item_offset >> PAGE_SHIFT;
-		item_offset %= page_index * PAGE_SIZE;
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
 
 		if (page_index >= pagevec_count(&node->content.pvec)) {
 			err = -ERANGE;
