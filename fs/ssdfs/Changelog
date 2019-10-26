@@ -3,20 +3,23 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.12 [October 26, 2019]
+    (*) Fix bugs in dentries tree functionality (step 6).
+
 v.3.11 [October 22, 2019]
-    (*) Fix bug in dentries tree functionality (step 5).
+    (*) Fix bugs in dentries tree functionality (step 5).
 
 v.3.10 [October 19, 2019]
-    (*) Fix bug in dentries tree functionality (step 4).
+    (*) Fix bugs in dentries tree functionality (step 4).
 
 v.3.09 [October 15, 2019]
-    (*) Fix bug in dentries tree functionality (step 3).
+    (*) Fix bugs in dentries tree functionality (step 3).
 
 v.3.08 [October 13, 2019]
-    (*) Fix bug in dentries tree functionality (step 2).
+    (*) Fix bugs in dentries tree functionality (step 2).
 
 v.3.07 [October 12, 2019]
-    (*) Fix bug in dentries tree functionality (step 1).
+    (*) Fix bugs in dentries tree functionality (step 1).
 
 v.3.06 [October 08, 2019]
     (*) Fix bug with sequence_id allocation in blk2off table.

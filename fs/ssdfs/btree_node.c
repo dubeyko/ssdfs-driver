@@ -11500,6 +11500,9 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 	start_index = search->result.start_index;
 	range_len = search->request.count;
 
+	SSDFS_DBG("items %u, start_index %u, range_len %u\n",
+		  items, start_index, range_len);
+
 	if (range_len == 0) {
 		SSDFS_WARN("search->request.count == 0\n");
 		return -ERANGE;
@@ -11511,7 +11514,7 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			  start_index, area->items_count);
 		return -ERANGE;
 	} else if ((start_index + range_len) > area->items_capacity) {
-		SSDFS_ERR("range is out of existing items: "
+		SSDFS_ERR("range is out of capacity: "
 			  "start_index %u, range_len %u, items_capacity %u\n",
 			  start_index, range_len, area->items_capacity);
 		return -ERANGE;
@@ -11522,6 +11525,10 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 
 	do {
 		u32 copying_items;
+		u32 vacant_positions;
+
+		SSDFS_DBG("start_index %u, src_index %d, dst_index %d\n",
+			  start_index, src_index, dst_index);
 
 		item_offset1 = (u32)src_index * item_size;
 		if (item_offset1 >= area->area_size) {
@@ -11566,12 +11573,31 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
+		vacant_positions = PAGE_SIZE - item_offset1;
+		vacant_positions /= item_size;
+
+		if (vacant_positions == 0) {
+			SSDFS_WARN("invalid vacant_positions %u\n",
+				   vacant_positions);
+			return -ERANGE;
+		}
+
+		copying_items = min_t(u32, copying_items, vacant_positions);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(copying_items >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		item_offset2 = (u32)dst_index * item_size;
 		if (item_offset2 >= search->result.buf_size) {
 			SSDFS_ERR("item_offset %u >= buf_size %zu\n",
 				  item_offset2, search->result.buf_size);
 			return -ERANGE;
 		}
+
+		SSDFS_DBG("copying_items %u, item_offset1 %u, "
+			  "item_offset2 %u\n",
+			  copying_items, item_offset1, item_offset2);
 
 		page = node->content.pvec.pages[page_index];
 		kaddr = kmap_atomic(page);
@@ -11580,13 +11606,8 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			copying_items * item_size);
 		kunmap_atomic(kaddr);
 
-		src_index -= copying_items;
-		dst_index -= copying_items;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(copying_items >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
+		src_index += copying_items;
+		dst_index += copying_items;
 		copied_items += copying_items;
 	} while (copied_items < range_len);
 

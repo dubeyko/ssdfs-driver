@@ -5389,9 +5389,6 @@ int ssdfs_check_found_dentry(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	memcpy(&search->raw.dentry.header, dentry,
-		sizeof(struct ssdfs_dir_entry));
-
 	ssdfs_get_dentries_hash_range(kaddr, start_hash, end_hash);
 
 	err = ssdfs_check_dentry_for_request(fsi, dentry, search);
@@ -6879,6 +6876,8 @@ finish_detect_affected_items:
 		goto unlock_items_range;
 	}
 
+	ssdfs_debug_btree_node_object(node);
+
 	err = ssdfs_generic_insert_range(node, &items_area,
 					 item_size, search);
 	if (unlikely(err)) {
@@ -7001,6 +7000,8 @@ unlock_items_range:
 
 finish_insert_item:
 	up_read(&node->full_lock);
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
@@ -7553,6 +7554,8 @@ unlock_items_range:
 
 finish_change_item:
 	up_read(&node->full_lock);
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
@@ -8286,6 +8289,8 @@ finish_delete_range:
 			return -EAGAIN;
 		}
 	}
+
+	ssdfs_debug_btree_node_object(node);
 
 	return 0;
 }
