@@ -1268,6 +1268,11 @@ int ssdfs_dentries_tree_get_start_hash(struct ssdfs_dentries_btree_info *tree,
 
 finish_process_inline_tree:
 		up_read(&tree->lock);
+
+		if (*start_hash >= U64_MAX) {
+			/* warn about invalid hash code */
+			SSDFS_WARN("inline array: hash_code is invalid\n");
+		}
 		break;
 
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
@@ -1284,6 +1289,11 @@ finish_process_inline_tree:
 
 finish_get_start_hash:
 		up_read(&tree->lock);
+
+		if (*start_hash >= U64_MAX) {
+			/* warn about invalid hash code */
+			SSDFS_WARN("private dentry: hash_code is invalid\n");
+		}
 		break;
 
 	default:

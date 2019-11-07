@@ -7777,6 +7777,7 @@ int ssdfs_btree_node_check_result_for_search(struct ssdfs_btree_search *search)
 		return 0;
 
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 		if (search->result.search_cno < update_cno) {
 			search->result.state =
 				SSDFS_BTREE_SEARCH_OBSOLETE_RESULT;

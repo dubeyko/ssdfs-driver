@@ -675,6 +675,14 @@ finish_add_range:
 	if (unlikely(err))
 		goto destroy_generic_tree;
 
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		goto destroy_generic_tree;
+	}
+
 	atomic_set(&tree->type, SSDFS_PRIVATE_DENTRIES_BTREE);
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_DIRTY);
 
@@ -682,6 +690,7 @@ finish_add_range:
 		  &tree->owner->private_flags);
 	atomic_and(~SSDFS_INODE_HAS_INLINE_DENTRIES,
 		  &tree->owner->private_flags);
+
 	return 0;
 
 destroy_generic_tree:
@@ -1997,7 +2006,13 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;
@@ -2034,6 +2049,14 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 		SSDFS_WARN("dentries_count is too much\n");
 		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_CORRUPTED);
 		return -ERANGE;
+	}
+
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		return err;
 	}
 
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_DIRTY);
@@ -2604,6 +2627,14 @@ int ssdfs_dentries_tree_change_dentry(struct ssdfs_dentries_btree_info *tree,
 		return err;
 	}
 
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		return err;
+	}
+
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_DIRTY);
 	return 0;
 }
@@ -3072,6 +3103,14 @@ int ssdfs_dentries_tree_delete_dentry(struct ssdfs_dentries_btree_info *tree,
 			   dentries_count);
 		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_CORRUPTED);
 		return -ERANGE;
+	}
+
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		return err;
 	}
 
 	return 0;

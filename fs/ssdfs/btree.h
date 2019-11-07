@@ -193,6 +193,8 @@ int ssdfs_btree_destroy_node_range(struct ssdfs_btree *tree,
 int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
 				unsigned long node_id,
 				struct ssdfs_btree_node **node);
+int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
+				struct ssdfs_btree_inline_root_node *root);
 
 void ssdfs_debug_btree_object(struct ssdfs_btree *tree);
 

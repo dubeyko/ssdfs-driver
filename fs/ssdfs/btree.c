@@ -3994,6 +3994,7 @@ try_find_item:
 		err = 0;
 		switch (search->result.state) {
 		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+		case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 			/* position in node was found */
 			break;
 		case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
@@ -5200,6 +5201,82 @@ finish_check_tree:
 	up_read(&tree->lock);
 
 	return err ? false : true;
+}
+
+/*
+ * ssdfs_btree_synchronize_root_node() - synchronize root node state
+ * @tree: btree object
+ * @root: root node
+ */
+int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
+				struct ssdfs_btree_inline_root_node *root)
+{
+	int tree_state;
+	struct ssdfs_btree_node *node;
+	u16 items_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !root);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree_state = atomic_read(&tree->state);
+
+	SSDFS_DBG("tree %p, root %p, type %#x, state %#x\n",
+		  tree, root, tree->type, tree_state);
+
+	switch (tree_state) {
+	case SSDFS_BTREE_CREATED:
+	case SSDFS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#else
+		SSDFS_WARN("invalid tree state %#x\n",
+			   tree_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ERANGE;
+	}
+
+	down_read(&tree->lock);
+
+	err = ssdfs_btree_radix_tree_find(tree,
+					  SSDFS_BTREE_ROOT_NODE_ID,
+					  &node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find root node: err %d\n",
+			  err);
+		goto finish_synchronize_root;
+	} else if (!node) {
+		err = -ERANGE;
+		SSDFS_ERR("node is NULL\n");
+		goto finish_synchronize_root;
+	}
+
+	down_read(&node->header_lock);
+	items_count = node->index_area.index_count;
+	root->header.height = atomic_read(&node->tree->height);
+	root->header.items_count = cpu_to_le16(items_count);
+	root->header.flags = (u8)atomic_read(&node->flags);
+	root->header.type = (u8)atomic_read(&node->type);
+	root->header.create_cno = cpu_to_le64(node->create_cno);
+	memcpy(root->indexes, node->raw.root_node.indexes,
+		sizeof(struct ssdfs_btree_index) *
+		SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
+	up_read(&node->header_lock);
+
+	spin_lock(&node->tree->nodes_lock);
+	root->header.upper_node_id =
+		cpu_to_le32(node->tree->upper_node_id);
+	spin_unlock(&node->tree->nodes_lock);
+
+finish_synchronize_root:
+	up_read(&tree->lock);
+
+	return err;
 }
 
 void ssdfs_debug_btree_object(struct ssdfs_btree *tree)
