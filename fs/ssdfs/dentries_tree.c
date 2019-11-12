@@ -6545,7 +6545,7 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 		}
 	}
 
-	search->result.start_index = area->items_count - 1;
+	search->result.start_index = area->items_count;
 	return 0;
 }
 

@@ -10190,9 +10190,11 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 			err = 0;
 			*lookup_index = index;
 			goto finish_index_search;
-		} else if (lower_bound < hash && hash < upper_bound)
+		} else if (lower_bound < hash && hash < upper_bound) {
+			err = 0;
 			lower_index = index;
-		else if (hash == upper_bound) {
+			goto finish_index_search;
+		} else if (hash == upper_bound) {
 			err = -EEXIST;
 			*lookup_index = index;
 			SSDFS_DBG("hash %llu == upper_bound %llu\n",
@@ -10200,11 +10202,11 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 			goto finish_index_search;
 		} else if (hash > upper_bound)
 			lower_index = index;
-	} while (lower_index <= upper_index);
+	} while ((upper_index - lower_index) > 1);
 
-	if (lower_index != upper_index) {
+	if ((upper_index - lower_index) > 1) {
 		err = -ERANGE;
-		SSDFS_ERR("lower_index %d != upper_index %d\n",
+		SSDFS_ERR("lower_index %d, upper_index %d\n",
 			  lower_index, upper_index);
 		goto finish_index_search;
 	}
@@ -10607,6 +10609,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		src_index -= moving_items - 1;
+		dst_index = src_index + shift;
 
 		SSDFS_DBG("moving_items %d, src_index %d, dst_index %d\n",
 			  moving_items, src_index, dst_index);
@@ -10615,6 +10618,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		BUG_ON(start_index > src_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		/* Calculate item_offset1 */
 		item_offset1 = (u32)src_index * item_size;
 		if (item_offset1 >= area_size) {
 			SSDFS_ERR("item_offset %u >= area_size %u\n",
@@ -10634,6 +10638,30 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			SSDFS_ERR("invalid page_index: "
 				  "index %d, pvec_size %u\n",
 				  page_index1,
+				  pagevec_count(&node->content.pvec));
+			return -ERANGE;
+		}
+
+		item_offset2 = (u32)dst_index * item_size;
+		if (item_offset2 >= area_size) {
+			SSDFS_ERR("item_offset %u >= area_size %u\n",
+				  item_offset2, area_size);
+			return -ERANGE;
+		}
+
+		/* Calculate item_offset1 */
+		item_offset2 += area_offset;
+		if (item_offset2 >= node->node_size) {
+			SSDFS_ERR("item_offset %u >= node_size %u\n",
+				  item_offset2, node->node_size);
+			return -ERANGE;
+		}
+
+		page_index2 = item_offset2 >> PAGE_SHIFT;
+		if (page_index2 >= pagevec_count(&node->content.pvec)) {
+			SSDFS_ERR("invalid page_index: "
+				  "index %d, pvec_size %u\n",
+				  page_index2,
 				  pagevec_count(&node->content.pvec));
 			return -ERANGE;
 		}
