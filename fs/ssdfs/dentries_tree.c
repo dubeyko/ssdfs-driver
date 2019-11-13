@@ -309,6 +309,7 @@ int ssdfs_dentries_tree_init(struct ssdfs_fs_info *fsi,
 
 		tree->generic_tree = &tree->buffer.tree;
 		tree->inline_dentries = NULL;
+		atomic_set(&tree->type, SSDFS_PRIVATE_DENTRIES_BTREE);
 
 		err = ssdfs_btree_create(fsi,
 					 ii->vfs_inode.i_ino,

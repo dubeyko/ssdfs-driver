@@ -566,9 +566,14 @@ check_flush_result_state:
 				wq = &node->flush_req.private.wait_queue;
 
 				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable(*wq,
-						atomic_read(refs_count) == 0);
-					WARN_ON(err != 0);
+					err = wait_event_killable_timeout(*wq,
+						atomic_read(refs_count) == 0,
+						SSDFS_DEFAULT_TIMEOUT);
+					if (err < 0)
+						WARN_ON(err < 0);
+					else
+						err = 0;
+
 					goto check_flush_result_state;
 				} else {
 					ssdfs_btree_node_put(node);
@@ -719,9 +724,13 @@ check_commit_log_result_state:
 				wq = &node->flush_req.private.wait_queue;
 
 				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable(*wq,
-						atomic_read(refs_count) == 0);
-					WARN_ON(err != 0);
+					err = wait_event_killable_timeout(*wq,
+						atomic_read(refs_count) == 0,
+						SSDFS_DEFAULT_TIMEOUT);
+					if (err < 0)
+						WARN_ON(err < 0);
+					else
+						err = 0;
 					goto check_commit_log_result_state;
 				} else {
 					ssdfs_btree_node_put(node);

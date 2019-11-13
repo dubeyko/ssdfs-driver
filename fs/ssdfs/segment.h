@@ -76,6 +76,7 @@ struct ssdfs_segment_migration_info {
  * @pebs_count: count of items in PEBS array
  * @migration: migration info
  * @refs_count: counter of references on segment object
+ * @destruct_queue: wait queue for segment destruction
  * @seg_state: current state of segment
  * @create_rq: new page requests queue
  * @wait_queue: array of PEBs' wait queues
@@ -101,6 +102,7 @@ struct ssdfs_segment_info {
 
 	/* Reference counter */
 	atomic_t refs_count;
+	wait_queue_head_t destruct_queue;
 
 	/* Mutable data */
 	atomic_t seg_state;

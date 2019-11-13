@@ -1654,9 +1654,14 @@ check_req1_state:
 				wq = &req1->private.wait_queue;
 
 				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable(*wq,
-						atomic_read(refs_count) == 0);
-					WARN_ON(err != 0);
+					err = wait_event_killable_timeout(*wq,
+						atomic_read(refs_count) == 0,
+						SSDFS_DEFAULT_TIMEOUT);
+					if (err < 0)
+						WARN_ON(err < 0);
+					else
+						err = 0;
+
 					goto check_req1_state;
 				} else {
 					SSDFS_ERR("invalid refs_count %d\n",
@@ -1698,9 +1703,14 @@ check_req2_state:
 				wq = &req2->private.wait_queue;
 
 				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable(*wq,
-						atomic_read(refs_count) == 0);
-					WARN_ON(err != 0);
+					err = wait_event_killable_timeout(*wq,
+						atomic_read(refs_count) == 0,
+						SSDFS_DEFAULT_TIMEOUT);
+					if (err < 0)
+						WARN_ON(err < 0);
+					else
+						err = 0;
+
 					goto check_req2_state;
 				} else {
 					SSDFS_ERR("invalid refs_count %d\n",
@@ -1950,9 +1960,14 @@ check_req1_state:
 				wq = &req1->private.wait_queue;
 
 				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable(*wq,
-						atomic_read(refs_count) == 0);
-					WARN_ON(err != 0);
+					err = wait_event_killable_timeout(*wq,
+						atomic_read(refs_count) == 0,
+						SSDFS_DEFAULT_TIMEOUT);
+					if (err < 0)
+						WARN_ON(err < 0);
+					else
+						err = 0;
+
 					goto check_req1_state;
 				} else {
 					SSDFS_ERR("invalid refs_count %d\n",
@@ -1994,9 +2009,14 @@ check_req2_state:
 				wq = &req2->private.wait_queue;
 
 				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable(*wq,
-						atomic_read(refs_count) == 0);
-					WARN_ON(err != 0);
+					err = wait_event_killable_timeout(*wq,
+						atomic_read(refs_count) == 0,
+						SSDFS_DEFAULT_TIMEOUT);
+					if (err < 0)
+						WARN_ON(err < 0);
+					else
+						err = 0;
+
 					goto check_req2_state;
 				} else {
 					SSDFS_ERR("invalid refs_count %d\n",

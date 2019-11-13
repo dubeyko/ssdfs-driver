@@ -114,6 +114,8 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	struct inode *inode = container_of(head, struct inode, i_rcu);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 
+	SSDFS_DBG("ino %lu\n", inode->i_ino);
+
 	if (ii->extents_tree)
 		ssdfs_extents_tree_destroy(ii);
 

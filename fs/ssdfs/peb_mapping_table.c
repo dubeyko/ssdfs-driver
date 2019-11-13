@@ -2365,10 +2365,16 @@ check_req_state:
 
 		if (atomic_read(refs_count) != 0) {
 			up_write(&fdesc->lock);
-			err = wait_event_killable(*wq,
-					atomic_read(refs_count) == 0);
+			err = wait_event_killable_timeout(*wq,
+					atomic_read(refs_count) == 0,
+					SSDFS_DEFAULT_TIMEOUT);
 			down_write(&fdesc->lock);
-			WARN_ON(err != 0);
+
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+
 			goto check_req_state;
 		} else {
 			SSDFS_ERR("invalid refs_count %d\n",

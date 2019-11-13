@@ -208,10 +208,12 @@ free_memory:
 
 /*
  * ssdfs_segment_tree_destroy_objects_in_page() - destroy objects in page
+ * @fsi: pointer on shared file system object
  * @page: pointer on memory page
  */
 static
-void ssdfs_segment_tree_destroy_objects_in_page(struct page *page)
+void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
+						struct page *page)
 {
 	struct ssdfs_segment_info **kaddr;
 	size_t ptr_size = sizeof(struct ssdfs_segment_info *);
@@ -219,7 +221,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct page *page)
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!page || !fsi || !fsi->segs_tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("page %p\n", page);
@@ -232,10 +234,22 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct page *page)
 		struct ssdfs_segment_info *si = *(kaddr + i);
 
 		if (si) {
+			wait_queue_head_t *wq = &si->destruct_queue;
 			int err = 0;
 
-			if (atomic_read(&si->refs_count) > 0)
-				ssdfs_segment_put_object(si);
+			if (atomic_read(&si->refs_count) > 0) {
+				unlock_page(page);
+
+				err = wait_event_killable_timeout(*wq,
+					atomic_read(&si->refs_count) <= 0,
+					SSDFS_DEFAULT_TIMEOUT);
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
+
+				lock_page(page);
+			}
 
 			err = ssdfs_segment_destroy_object(si);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -259,18 +273,20 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct page *page)
 
 /*
  * ssdfs_segment_tree_destroy_objects_in_array() - destroy objects in array
+ * @fsi: pointer on shared file system object
  * @array: pointer on array of pages
  * @pages_count: count of pages in array
  */
 static
-void ssdfs_segment_tree_destroy_objects_in_array(struct page **array,
+void ssdfs_segment_tree_destroy_objects_in_array(struct ssdfs_fs_info *fsi,
+						 struct page **array,
 						 size_t pages_count)
 {
 	struct page *page;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!array);
+	BUG_ON(!array || !fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, pages_count %zu\n",
@@ -286,7 +302,7 @@ void ssdfs_segment_tree_destroy_objects_in_array(struct page **array,
 			continue;
 		}
 
-		ssdfs_segment_tree_destroy_objects_in_page(page);
+		ssdfs_segment_tree_destroy_objects_in_page(fsi, page);
 	}
 }
 
@@ -313,7 +329,8 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 					     SSDFS_MEM_PAGE_ARRAY_SIZE,
 					     &array[0]);
 		if (pages_count != 0) {
-			ssdfs_segment_tree_destroy_objects_in_array(&array[0],
+			ssdfs_segment_tree_destroy_objects_in_array(fsi,
+								&array[0],
 								pages_count);
 
 #ifdef CONFIG_SSDFS_DEBUG

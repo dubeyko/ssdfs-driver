@@ -10174,6 +10174,11 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		lower_bound = le64_to_cpu(lookup_table[index]);
 		upper_bound = le64_to_cpu(lookup_table[index + 1]);
 
+		SSDFS_DBG("index %d, lower_index %d, upper_index %d, "
+			  "lower_bound %llx, upper_bound %llx\n",
+			  index, lower_index, upper_index,
+			  lower_bound, upper_bound);
+
 		if (lower_bound >= U64_MAX)
 			upper_index = index;
 		else if (hash < lower_bound)
@@ -10665,6 +10670,9 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 				  pagevec_count(&node->content.pvec));
 			return -ERANGE;
 		}
+
+		SSDFS_DBG("items_offset1 %u, item_offset2 %u\n",
+			  item_offset1, item_offset2);
 
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];

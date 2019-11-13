@@ -218,6 +218,7 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	ptr->fsi = fsi;
 	atomic_set(&ptr->seg_state, seg_state);
 	atomic_set(&ptr->refs_count, 0);
+	init_waitqueue_head(&ptr->destruct_queue);
 	ssdfs_requests_queue_init(&ptr->create_rq);
 
 	err = ssdfs_sysfs_create_seg_group(ptr);
@@ -368,6 +369,9 @@ void ssdfs_segment_get_object(struct ssdfs_segment_info *si)
 	BUG_ON(!si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("seg_id %llu, refs_count %d\n",
+		  si->seg_id, atomic_read(&si->refs_count));
+
 	WARN_ON(atomic_inc_return(&si->refs_count) <= 0);
 }
 
@@ -380,7 +384,13 @@ void ssdfs_segment_put_object(struct ssdfs_segment_info *si)
 	if (!si)
 		return;
 
+	SSDFS_DBG("seg_id %llu, refs_count %d\n",
+		  si->seg_id, atomic_read(&si->refs_count));
+
 	WARN_ON(atomic_dec_return(&si->refs_count) < 0);
+
+	if (atomic_read(&si->refs_count) <= 0)
+		wake_up_all(&si->destruct_queue);
 }
 
 /*

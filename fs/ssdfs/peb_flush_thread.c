@@ -8683,9 +8683,13 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable(*wait,
-			    atomic_read(&req->private.refs_count) == 0);
-			WARN_ON(err != 0);
+			err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 		}
 
 		wake_up_all(&req->private.wait_queue);
@@ -8720,9 +8724,13 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable(*wait,
-			    atomic_read(&req->private.refs_count) == 0);
-			WARN_ON(err != 0);
+			err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 		}
 
 		wake_up_all(&req->private.wait_queue);

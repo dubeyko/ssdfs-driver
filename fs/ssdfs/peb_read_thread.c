@@ -681,7 +681,10 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
 	}
 
 	if (le64_to_cpu(blk_desc->ino) != req->extent.ino) {
-		SSDFS_ERR("blk_desc->ino %llu != req->extent.ino %llu\n",
+		SSDFS_ERR("seg %llu, peb %llu, "
+			  "blk_desc->ino %llu != req->extent.ino %llu\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
 			  le64_to_cpu(blk_desc->ino), req->extent.ino);
 		return -ERANGE;
 	}
@@ -7150,9 +7153,13 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 
 		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable(*wait,
-				atomic_read(&req->private.refs_count) == 0);
-			WARN_ON(err != 0);
+			err = wait_event_killable_timeout(*wait,
+				atomic_read(&req->private.refs_count) == 0,
+				SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 		}
 
 		wake_up_all(&req->private.wait_queue);
@@ -7176,9 +7183,13 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 
 		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable(*wait,
-				atomic_read(&req->private.refs_count) == 0);
-			WARN_ON(err != 0);
+			err = wait_event_killable_timeout(*wait,
+				atomic_read(&req->private.refs_count) == 0,
+				SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 		}
 
 		wake_up_all(&req->private.wait_queue);
