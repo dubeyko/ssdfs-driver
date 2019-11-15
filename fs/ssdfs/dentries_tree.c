@@ -4573,7 +4573,7 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 	u32 items_count;
 	u16 flags;
 	u8 index_size;
-	u32 index_area_size;
+	u32 index_area_size = 0;
 	u16 index_capacity = 0;
 	size_t bmap_bytes;
 	int i;
@@ -4655,6 +4655,8 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
+	flags = atomic_read(&node->flags);
+
 	start_hash = le64_to_cpu(hdr->node.start_hash);
 	end_hash = le64_to_cpu(hdr->node.end_hash);
 	node_size = 1 << hdr->node.log_node_size;
@@ -4721,9 +4723,13 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
-	index_area_size = 1 << hdr->node.log_index_area_size;
-	calculated_used_space = hdr_size + index_area_size;
+	calculated_used_space = hdr_size;
 	calculated_used_space += dentries_count * item_size;
+
+	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
+		index_area_size = 1 << hdr->node.log_index_area_size;
+		calculated_used_space += index_area_size;
+	}
 
 	if (free_space != (node_size - calculated_used_space)) {
 		err = -EIO;
@@ -4780,7 +4786,6 @@ finish_header_init:
 
 	down_write(&node->bmap_array.lock);
 
-	flags = atomic_read(&node->flags);
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
@@ -6709,7 +6714,8 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	dtree = (struct ssdfs_dentries_btree_info *)tree;
+	dtree = container_of(tree, struct ssdfs_dentries_btree_info,
+				buffer.tree);
 
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,
@@ -7926,7 +7932,8 @@ int __ssdfs_dentries_btree_node_delete_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	dtree = (struct ssdfs_dentries_btree_info *)tree;
+	dtree = container_of(tree, struct ssdfs_dentries_btree_info,
+				buffer.tree);
 
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,

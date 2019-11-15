@@ -7654,7 +7654,8 @@ int __ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	etree = (struct ssdfs_extents_btree_info *)tree;
+	etree = container_of(tree, struct ssdfs_extents_btree_info,
+			     buffer.tree);
 
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,
@@ -9500,7 +9501,8 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	etree = (struct ssdfs_extents_btree_info *)tree;
+	etree = container_of(tree, struct ssdfs_extents_btree_info,
+			     buffer.tree);
 
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,

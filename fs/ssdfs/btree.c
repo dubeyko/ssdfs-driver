@@ -5223,6 +5223,7 @@ int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
 	int tree_state;
 	struct ssdfs_btree_node *node;
 	u16 items_count;
+	int height;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5266,8 +5267,9 @@ int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
 	}
 
 	down_read(&node->header_lock);
+	height = atomic_read(&node->tree->height);
+	root->header.height = (u8)height;
 	items_count = node->index_area.index_count;
-	root->header.height = atomic_read(&node->tree->height);
 	root->header.items_count = cpu_to_le16(items_count);
 	root->header.flags = (u8)atomic_read(&node->flags);
 	root->header.type = (u8)atomic_read(&node->type);

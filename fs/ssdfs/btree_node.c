@@ -12632,10 +12632,12 @@ void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node)
 	BUG_ON(!node);
 
 	SSDFS_DBG("STATIC DATA: node_id %u, height %d, "
+		  "owner_ino %llu, "
 		  "node_size %u, pages_per_node %u, "
 		  "create_cno %llu, tree %p, "
 		  "parent_node %p, node_ops %p\n",
 		  node->node_id, atomic_read(&node->height),
+		  node->tree->owner_ino,
 		  node->node_size, node->pages_per_node,
 		  node->create_cno, node->tree,
 		  node->parent_node, node->node_ops);

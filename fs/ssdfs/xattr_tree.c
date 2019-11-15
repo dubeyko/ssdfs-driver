@@ -6818,7 +6818,8 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	xtree = (struct ssdfs_xattrs_btree_info *)tree;
+	xtree = container_of(tree, struct ssdfs_xattrs_btree_info,
+			     buffer.tree);
 
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,
@@ -7680,8 +7681,10 @@ int ssdfs_invalidate_blobs_range(struct ssdfs_btree_node *node,
 		SSDFS_ERR("invalid tree type %#x\n",
 			  tree->type);
 		return -ERANGE;
-	} else
-		xattrs_tree = (struct ssdfs_xattrs_btree_info *)tree;
+	}
+
+	xattrs_tree = container_of(tree, struct ssdfs_xattrs_btree_info,
+				   buffer.tree);
 
 	owner_ino = xattrs_tree->owner->vfs_inode.i_ino;
 
