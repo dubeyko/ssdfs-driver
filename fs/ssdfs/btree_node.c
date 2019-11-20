@@ -8435,6 +8435,8 @@ int ssdfs_btree_node_insert_item(struct ssdfs_btree_search *search)
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+
 	if (!is_btree_search_node_desc_consistent(search)) {
 		SSDFS_WARN("node descriptor is inconsistent\n");
 		return -ERANGE;
@@ -10364,7 +10366,7 @@ try_search_item:
 		kaddr = kmap_atomic(page);
 		err = check_item(fsi, search,
 				 (u8 *)kaddr + item_offset,
-				 start_index,
+				 index,
 				 &start_hash, &end_hash,
 				 &found_index);
 		kunmap_atomic(kaddr);
@@ -10469,7 +10471,7 @@ try_extract_range:
 			break;
 	}
 
-	if (search->request.end.hash >= end_hash)
+	if (search->request.end.hash > end_hash)
 		err = -EAGAIN;
 
 finish_extract_range:

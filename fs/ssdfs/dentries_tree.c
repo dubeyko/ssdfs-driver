@@ -4402,6 +4402,10 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.min_item_size = tree->min_item_size;
 		node->items_area.max_item_size = tree->max_item_size;
 
+		SSDFS_DBG("node_size %u, hdr_size %zu, free_space %u\n",
+			  node_size, hdr_size,
+			  node->items_area.free_space);
+
 		items_area_size = node->items_area.area_size;
 		item_size = node->items_area.item_size;
 
@@ -4429,6 +4433,10 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.item_size = tree->item_size;
 		node->items_area.min_item_size = tree->min_item_size;
 		node->items_area.max_item_size = tree->max_item_size;
+
+		SSDFS_DBG("node_size %u, hdr_size %zu, free_space %u\n",
+			  node_size, hdr_size,
+			  node->items_area.free_space);
 
 		items_area_size = node->items_area.area_size;
 		item_size = node->items_area.item_size;
@@ -4731,6 +4739,13 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 		calculated_used_space += index_area_size;
 	}
 
+
+	SSDFS_DBG("free_space %u, index_area_size %u, "
+		  "hdr_size %zu, dentries_count %u, "
+		  "item_size %u\n",
+		  free_space, index_area_size, hdr_size,
+		  dentries_count, item_size);
+
 	if (free_space != (node_size - calculated_used_space)) {
 		err = -EIO;
 		SSDFS_ERR("free_space %u, node_size %u, "
@@ -4740,6 +4755,7 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
+	node->items_area.free_space = free_space;
 	node->items_area.items_count = (u16)dentries_count;
 	node->items_area.items_capacity = items_capacity;
 
@@ -5097,6 +5113,12 @@ int ssdfs_dentries_btree_pre_flush_node(struct ssdfs_btree_node *node)
 			  used_space, items_area_size);
 		goto finish_dentries_header_preparation;
 	}
+
+	SSDFS_DBG("free_space %u, dentries_count %u, "
+		  "items_area_size %u, item_size %zu\n",
+		  free_space, dentries_count,
+		  items_area_size,
+		  sizeof(struct ssdfs_dir_entry));
 
 	if (free_space != (items_area_size - used_space)) {
 		err = -ERANGE;
@@ -6757,6 +6779,14 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
+	SSDFS_DBG("items_capacity %u, items_count %u\n",
+		  items_area.items_capacity,
+		  items_area.items_count);
+
+	SSDFS_DBG("area_size %u, free_space %u\n",
+		  items_area.area_size,
+		  items_area.free_space);
+
 	free_items = items_area.items_capacity - items_area.items_count;
 	if (unlikely(free_items < 0)) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -7088,6 +7118,8 @@ int ssdfs_dentries_btree_node_insert_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
+	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
@@ -7132,6 +7164,8 @@ int ssdfs_dentries_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+
 	return 0;
 }
 
@@ -7170,6 +7204,8 @@ int ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+
+	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
@@ -7213,6 +7249,8 @@ int ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 			  node->node_id, err);
 		return err;
 	}
+
+	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
 
 	return 0;
 }

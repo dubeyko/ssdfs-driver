@@ -3130,6 +3130,20 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 
 	desc->state[0].peb_migration_id = (u8)id;
 
+	SSDFS_DBG("seg_id %llu, peb_id %llu, ino %llu, "
+		  "logical_offset %u, peb_index %u, peb_page %u, "
+		  "log_start_page %u, log_area %#x, byte_offset %u, "
+		  "peb_migration_id %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  le64_to_cpu(desc->ino),
+		  le32_to_cpu(desc->logical_offset),
+		  le16_to_cpu(desc->peb_index),
+		  le16_to_cpu(desc->peb_page),
+		  le16_to_cpu(desc->state[0].log_start_page),
+		  desc->state[0].log_area,
+		  le32_to_cpu(desc->state[0].byte_offset),
+		  desc->state[0].peb_migration_id);
+
 	return 0;
 }
 

@@ -4820,6 +4820,8 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
+	flags = atomic_read(&node->flags);
+
 	start_hash = le64_to_cpu(hdr->node.start_hash);
 	end_hash = le64_to_cpu(hdr->node.end_hash);
 	node_size = 1 << hdr->node.log_node_size;
@@ -4878,9 +4880,13 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
-	index_area_size = 1 << hdr->node.log_index_area_size;
-	calculated_used_space = hdr_size + index_area_size;
+	calculated_used_space = hdr_size;
 	calculated_used_space += xattrs_count * item_size;
+
+	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
+		index_area_size = 1 << hdr->node.log_index_area_size;
+		calculated_used_space += index_area_size;
+	}
 
 	if (free_space != (node_size - calculated_used_space)) {
 		err = -EIO;
@@ -4891,6 +4897,7 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
+	node->items_area.free_space = free_space;
 	node->items_area.items_count = (u16)xattrs_count;
 	node->items_area.items_capacity = items_capacity;
 
@@ -4937,7 +4944,6 @@ finish_header_init:
 
 	down_write(&node->bmap_array.lock);
 
-	flags = atomic_read(&node->flags);
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
