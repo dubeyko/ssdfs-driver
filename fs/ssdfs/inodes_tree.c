@@ -301,6 +301,54 @@ finish_get_first:
 }
 
 /*
+ * ssdfs_free_inodes_queue_remove_first() - remove first free inodes range
+ * @q: free inodes queue
+ * @range: pointer on value that stores range pointer [out]
+ *
+ * This method tries to remove the first free inodes' range from
+ * queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - queue is empty.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_free_inodes_queue_remove_first(struct ssdfs_free_inode_range_queue *q,
+					struct ssdfs_inodes_btree_range **range)
+{
+	bool is_empty;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!q || !range);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&q->lock);
+	is_empty = list_empty_careful(&q->list);
+	if (!is_empty) {
+		*range = list_first_entry_or_null(&q->list,
+						struct ssdfs_inodes_btree_range,
+						list);
+		if (!*range) {
+			SSDFS_WARN("first entry is NULL\n");
+			err = -ENOENT;
+		} else
+			list_del(&(*range)->list);
+	}
+	spin_unlock(&q->lock);
+
+	if (is_empty) {
+		SSDFS_WARN("requests queue is empty\n");
+		return -ENODATA;
+	} else if (err)
+		return err;
+
+	return 0;
+}
+
+/*
  * ssdfs_free_inodes_queue_remove_all() - remove all ranges from the queue
  * @q: free inodes queue
  */
@@ -1815,6 +1863,8 @@ finish_init_operation:
 		BUG_ON(start >= U16_MAX);
 		BUG_ON((end - start) >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		start -= node->bmap_array.item_start_bit;
 		count = end - start;
 
 		range = ssdfs_free_inodes_range_alloc();
@@ -1860,7 +1910,7 @@ finish_init_operation:
 	}
 
 	while (!is_ssdfs_free_inodes_queue_empty(&q)) {
-		err = ssdfs_free_inodes_queue_get_first(&q, &range);
+		err = ssdfs_free_inodes_queue_remove_first(&q, &range);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get range: err %d\n", err);
 			goto finish_init_node;
@@ -2213,6 +2263,8 @@ int ssdfs_inodes_btree_flush_node(struct ssdfs_btree_node *node)
 		err = -EFAULT;
 		SSDFS_CRIT("inodes tree is absent\n");
 	}
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
