@@ -1640,8 +1640,8 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	size_t bmap_bytes;
 	u64 start_hash, end_hash;
 	unsigned long start, end;
-	unsigned long size;
-	unsigned long count;
+	unsigned long size, upper_bound;
+	signed long count;
 	unsigned long free_inodes;
 	int i;
 	int err = 0;
@@ -1848,24 +1848,31 @@ finish_init_operation:
 
 	ssdfs_free_inodes_queue_init(&q);
 	size = inodes_count;
+	upper_bound = node->bmap_array.item_start_bit + size;
 	free_inodes = 0;
 
 	do {
 		start = find_next_zero_bit((unsigned long *)hdr->bmap,
-					   size, start);
-		if (start >= size)
+					   upper_bound, start);
+		if (start >= upper_bound)
 			break;
 
 		end = find_next_bit((unsigned long *)hdr->bmap,
-				    size, start);
+				    upper_bound, start);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(start >= U16_MAX);
 		BUG_ON((end - start) >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		start -= node->bmap_array.item_start_bit;
 		count = end - start;
+		start -= node->bmap_array.item_start_bit;
+
+		if (count <= 0) {
+			err = -ERANGE;
+			SSDFS_WARN("invalid count %ld\n", count);
+			break;
+		}
 
 		range = ssdfs_free_inodes_range_alloc();
 		if (unlikely(!range)) {
@@ -2853,10 +2860,12 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	}
 
 	item_index = search->result.start_index;
-	if ((item_index + search->request.count) >= items_capacity) {
+	if ((item_index + search->request.count) > items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "item_index %u, count %u\n",
-			  item_index, search->request.count);
+			  "item_index %u, count %u, "
+			  "items_capacity %u\n",
+			  item_index, search->request.count,
+			  items_capacity);
 		return -ERANGE;
 	}
 
