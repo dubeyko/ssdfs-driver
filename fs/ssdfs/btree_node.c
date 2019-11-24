@@ -9650,9 +9650,10 @@ int ssdfs_allocate_items_range(struct ssdfs_btree_node *node,
 
 	spin_lock(&bmap->lock);
 
-	found = bitmap_find_next_zero_area(bmap->ptr, items_capacity,
-					    start_area + start_index,
-					    count, 0);
+	found = bitmap_find_next_zero_area(bmap->ptr,
+					   start_area + items_capacity,
+					   start_area + start_index,
+					   count, 0);
 	if (search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE &&
 	    found != (start_area + start_index)) {
 		/* area is allocated already */
