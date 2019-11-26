@@ -9914,7 +9914,8 @@ int ssdfs_set_dirty_items_range(struct ssdfs_btree_node *node,
 
 	spin_lock(&bmap->lock);
 
-	found = bitmap_find_next_zero_area(bmap->ptr, items_capacity,
+	found = bitmap_find_next_zero_area(bmap->ptr,
+					   start_area + items_capacity,
 					   start_area + start_index,
 					   count, 0);
 	if (found != (start_area + start_index)) {

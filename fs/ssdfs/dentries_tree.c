@@ -2103,7 +2103,7 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
 
 	name_hash = ssdfs_generate_name_hash(str);
 	if (name_hash == U64_MAX) {
@@ -2113,7 +2113,7 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 
 	if (need_initialize_dentries_btree_search(name_hash, search)) {
 		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
 		search->request.flags =
 			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT |
@@ -2186,7 +2186,7 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 					goto finish_add_inline_dentry;
 				} else {
 					search->request.type =
-						SSDFS_BTREE_SEARCH_FIND_ITEM;
+						SSDFS_BTREE_SEARCH_ADD_ITEM;
 					downgrade_write(&tree->lock);
 					goto try_to_add_into_generic_tree;
 				}

@@ -252,15 +252,11 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 			}
 
 			err = ssdfs_segment_destroy_object(si);
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(err < 0);
-#else
 			if (err) {
 				SSDFS_WARN("fail to destroy segment object: "
 					   "seg %llu, err %d\n",
 					   si->seg_id, err);
 			}
-#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 	}

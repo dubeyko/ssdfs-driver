@@ -9349,6 +9349,7 @@ int ssdfs_peb_flush_thread_func(void *data)
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_segment_request *req;
 	struct ssdfs_peb_info *pebi = NULL;
+	u64 peb_id = U64_MAX;
 	int state;
 	int thread_state = SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
@@ -9636,6 +9637,7 @@ finish_process_free_space_absence:
 		need_create_log = ssdfs_peb_has_dirty_pages(pebi) ||
 					have_flush_requests(pebc);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		peb_id = pebi->peb_id;
 		ssdfs_peb_current_log_unlock(pebi);
 
 		if (!need_create_log) {
@@ -9650,7 +9652,10 @@ finish_process_free_space_absence:
 			if (is_ssdfs_maptbl_under_flush(fsi)) {
 				if (have_flush_requests(pebc)) {
 					SSDFS_ERR("maptbl is flushing: "
-						  "unprocessed requests\n");
+						  "unprocessed requests: "
+						  "seg %llu, peb %llu\n",
+						  pebc->parent_si->seg_id,
+						  peb_id);
 					BUG();
 				} else {
 					SSDFS_ERR("maptbl is flushing\n");

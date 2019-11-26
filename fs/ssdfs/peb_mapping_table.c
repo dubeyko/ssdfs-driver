@@ -1488,6 +1488,7 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_sb_header *hdr;
 	size_t bytes_count;
+	u32 flags = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
@@ -1507,7 +1508,11 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 	hdr->pebs_count = cpu_to_le64(tbl->pebs_count);
 	hdr->fragments_per_seg = cpu_to_le16(tbl->fragments_per_seg);
 	hdr->fragments_per_peb = cpu_to_le16(tbl->fragments_per_peb);
-	hdr->flags = cpu_to_le16(atomic_read(&tbl->flags));
+
+	flags = atomic_read(&tbl->flags);
+	/* exclude run-time flags*/
+	flags &= ~SSDFS_MAPTBL_UNDER_FLUSH;
+	hdr->flags = cpu_to_le16(flags);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(atomic_read(&tbl->pre_erase_pebs) >= U16_MAX);
