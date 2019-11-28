@@ -4044,6 +4044,18 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
+
+	if (!err) {
+		SetPagePrivate(page);
+		SetPageUptodate(page);
+		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
+						      page_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
+				  page_index, err);
+		}
+	}
+
 	unlock_page(page);
 	put_page(page);
 
@@ -4129,6 +4141,18 @@ int ssdfs_maptbl_set_source_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
+
+	if (!err) {
+		SetPagePrivate(page);
+		SetPageUptodate(page);
+		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
+						      page_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
+				  page_index, err);
+		}
+	}
+
 	unlock_page(page);
 	put_page(page);
 
@@ -4204,6 +4228,18 @@ int __ssdfs_maptbl_exclude_migration_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
+
+	if (!err) {
+		SetPagePrivate(page);
+		SetPageUptodate(page);
+		err = ssdfs_page_array_set_page_dirty(&ptr->array,
+						      page_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
+				  page_index, err);
+		}
+	}
+
 	unlock_page(page);
 	put_page(page);
 
@@ -4320,12 +4356,14 @@ void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!tbl || !fdesc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("maptbl %p, leb_id %llu, fdesc %p\n",
-		  tbl, leb_id, fdesc);
-
 	atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 
 	fragment_index = FRAGMENT_INDEX(tbl, leb_id);
+
+	SSDFS_DBG("maptbl %p, leb_id %llu, "
+		  "fdesc %p, fragment_index %u\n",
+		  tbl, leb_id,
+		  fdesc, fragment_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(fragment_index == U32_MAX);

@@ -499,30 +499,6 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 		if (err == -ENOSPC) {
 			SSDFS_DBG("current segment is absent\n");
-
-			/* decrease reference count of rejected segment */
-			ssdfs_segment_put_object(si);
-
-			si = ssdfs_grab_segment(fsi, seg_type, U64_MAX);
-			if (IS_ERR_OR_NULL(si)) {
-				err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-				SSDFS_WARN("fail to create segment object: "
-					  "err %d\n", err);
-				continue;
-			}
-
-			ssdfs_current_segment_lock(object);
-			err = ssdfs_current_segment_add(object, si);
-			ssdfs_current_segment_unlock(object);
-
-			ssdfs_segment_put_object(si);
-
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to add segment %llu as current: "
-					  "err %d\n",
-					  si->seg_id, err);
-				goto destroy_cur_segs;
-			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to make segment %llu as current: "
 				  "err %d\n",

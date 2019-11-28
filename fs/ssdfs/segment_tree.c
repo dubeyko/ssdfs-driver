@@ -408,7 +408,6 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	}
 
 	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
-	ssdfs_segment_get_object(si);
 	*(kaddr + object_index) = si;
 	kunmap_atomic(kaddr);
 	unlock_page(page);
@@ -477,7 +476,6 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(object != si);
 #endif /* CONFIG_SSDFS_DEBUG */
-		ssdfs_segment_put_object(si);
 		object = NULL;
 	}
 	kunmap_atomic(kaddr);

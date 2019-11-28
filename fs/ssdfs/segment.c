@@ -571,6 +571,9 @@ fail_define_seg_state:
 
 			switch (seg_state) {
 			case SSDFS_SEG_DATA_USING:
+			case SSDFS_SEG_LEAF_NODE_USING:
+			case SSDFS_SEG_HYBRID_NODE_USING:
+			case SSDFS_SEG_INDEX_NODE_USING:
 			case SSDFS_SEG_USED:
 			case SSDFS_SEG_PRE_DIRTY:
 				/* expected state */
