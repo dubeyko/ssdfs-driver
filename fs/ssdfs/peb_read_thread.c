@@ -453,33 +453,37 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 	fsi = pebi->pebc->parent_si->fsi;
 	page_off = log_start_page;
 
-	page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
+	page = ssdfs_page_array_get_page_locked(&pebi->cache, page_off);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
-		SSDFS_ERR("fail to grab page: index %u\n",
-			  page_off);
-		return -ENOMEM;
-	}
+		SSDFS_WARN("unable to get page: index %u\n",
+			   page_off);
 
-	kaddr = kmap(page);
+		page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
+		if (unlikely(IS_ERR_OR_NULL(page))) {
+			SSDFS_ERR("fail to grab page: index %u\n",
+				  page_off);
+			return -ENOMEM;
+		}
 
-	if (PageUptodate(page) || PageDirty(page))
-		goto copy_desc_array;
+		kaddr = kmap(page);
 
-	err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
-					(page_off * PAGE_SIZE) + hdr_size,
-					(u8 *)kaddr + hdr_size,
-					PAGE_SIZE - hdr_size,
-					&read_bytes);
-	if (unlikely(err))
-		goto fail_copy_desc_array;
-	else if (unlikely(read_bytes != (PAGE_SIZE - hdr_size))) {
-		err = -ERANGE;
-		goto fail_copy_desc_array;
-	}
+		err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
+						(page_off * PAGE_SIZE) +
+						hdr_size,
+						(u8 *)kaddr + hdr_size,
+						PAGE_SIZE - hdr_size,
+						&read_bytes);
+		if (unlikely(err))
+			goto fail_copy_desc_array;
+		else if (unlikely(read_bytes != (PAGE_SIZE - hdr_size))) {
+			err = -ERANGE;
+			goto fail_copy_desc_array;
+		}
 
-	SetPageUptodate(page);
+		SetPageUptodate(page);
+	} else
+		kaddr = kmap(page);
 
-copy_desc_array:
 	magic = (struct ssdfs_signature *)kaddr;
 
 	if (!is_ssdfs_magic_valid(magic)) {

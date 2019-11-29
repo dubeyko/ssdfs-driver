@@ -2437,10 +2437,12 @@ int ssdfs_inodes_btree_node_find_range(struct ssdfs_btree_node *node,
 	BUG_ON(found_index >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if ((found_index + search->request.count) >= items_capacity) {
+	if ((found_index + search->request.count) > items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "found_index %llu, count %u\n",
-			  found_index, search->request.count);
+			  "found_index %llu, count %u, "
+			  "items_capacity %u\n",
+			  found_index, search->request.count,
+			  items_capacity);
 		return -ERANGE;
 	}
 
@@ -3337,10 +3339,12 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 	}
 
 	item_index = search->result.start_index;
-	if ((item_index + search->request.count) >= items_capacity) {
+	if ((item_index + search->request.count) > items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "item_index %u, count %u\n",
-			  item_index, search->request.count);
+			  "item_index %u, count %u, "
+			  "items_capacity %u\n",
+			  item_index, search->request.count,
+			  items_capacity);
 		return -ERANGE;
 	}
 
