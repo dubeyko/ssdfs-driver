@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.24 [December 01, 2019]
+    (*) Fix bugs in inodes tree functionality (step 5).
+
 v.3.23 [November 29, 2019]
     (*) Fix bugs in dentries tree functionality (step 14).
 

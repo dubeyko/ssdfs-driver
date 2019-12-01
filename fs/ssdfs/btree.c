@@ -2324,7 +2324,9 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 	struct ssdfs_btree_node *node;
 	u8 tree_height;
 	u8 prev_height;
-	u64 start_hash, end_hash;
+	u64 start_hash = U64_MAX, end_hash = U64_MAX;
+	u16 items_count, items_capacity;
+	bool is_found = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2419,8 +2421,6 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 
 		node_type = atomic_read(&node->type);
 		if (node_type == SSDFS_BTREE_HYBRID_NODE) {
-			bool is_found = false;
-
 			switch (atomic_read(&node->items_area.state)) {
 			case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
 				/* expected state */
@@ -2539,6 +2539,8 @@ try_find_index:
 		down_read(&node->header_lock);
 		start_hash = node->items_area.start_hash;
 		end_hash = node->items_area.end_hash;
+		items_count = node->items_area.items_count;
+		items_capacity = node->items_area.items_capacity;
 		up_read(&node->header_lock);
 
 		if (start_hash == U64_MAX || end_hash == U64_MAX) {
@@ -2546,6 +2548,20 @@ try_find_index:
 			SSDFS_ERR("invalid items area's hash range: "
 				  "start_hash %llx, end_hash %llx\n",
 				  start_hash, end_hash);
+			goto finish_search_leaf_node;
+		}
+
+		is_found = start_hash <= search->request.start.hash &&
+			   search->request.start.hash <= end_hash;
+
+		if (!is_found && items_count >= items_capacity) {
+			err = -ENOENT;
+			ssdfs_btree_search_define_child_node(search, NULL);
+			search->node.state =
+				SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC;
+			SSDFS_DBG("unable to find a leaf node: "
+				  "search_hash %llx\n",
+				  search->request.start.hash);
 			goto finish_search_leaf_node;
 		}
 	} else {

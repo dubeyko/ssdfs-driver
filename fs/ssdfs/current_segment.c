@@ -340,6 +340,7 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 		SSDFS_DBG("segment %llu can't be used as current: "
 			  "max_free_pages.value %d, "
 			  "max_free_pages.pos %d\n",
+			  si->seg_id,
 			  max_free_pages.value,
 			  max_free_pages.pos);
 		return -ENOSPC;
