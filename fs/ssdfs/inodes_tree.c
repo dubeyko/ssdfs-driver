@@ -284,7 +284,7 @@ finish_get_first:
 		ssdfs_free_inodes_range_free(tmp);
 		return err;
 	} else if (is_empty) {
-		SSDFS_WARN("free inodes queue is empty\n");
+		SSDFS_DBG("free inodes queue is empty\n");
 		return -ENODATA;
 	}
 
@@ -1997,6 +1997,34 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 	};
 
 	down_read(&node->header_lock);
+
+	/* correct end_hash */
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(node->items_area.start_hash >= U64_MAX);
+		BUG_ON(node->items_area.items_capacity == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		node->items_area.end_hash = node->items_area.start_hash +
+					    node->items_area.items_capacity - 1;
+		break;
+
+	case SSDFS_BTREE_LEAF_NODE:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(node->items_area.start_hash >= U64_MAX);
+		BUG_ON(node->items_area.items_capacity == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		node->items_area.end_hash = node->items_area.start_hash +
+					    node->items_area.items_capacity - 1;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
 	switch (atomic_read(&node->items_area.state)) {
 	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
 		items_capacity = node->items_area.items_capacity;
@@ -2006,6 +2034,7 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 		items_capacity = 0;
 		break;
 	};
+
 	up_read(&node->header_lock);
 
 	if (items_capacity == 0) {

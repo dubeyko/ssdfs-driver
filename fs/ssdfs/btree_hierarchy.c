@@ -1124,10 +1124,9 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree_level *parent,
 /*
  * need_update_parent_index_area() - does it need to update parent's index area
  * @start_hash: starting hash value
- * @end_hash: ending hash value
  * @parent: btree node object
  */
-bool need_update_parent_index_area(u64 start_hash, u64 end_hash,
+bool need_update_parent_index_area(u64 start_hash,
 				   struct ssdfs_btree_node *parent)
 {
 	int state;
@@ -1137,8 +1136,8 @@ bool need_update_parent_index_area(u64 start_hash, u64 end_hash,
 	BUG_ON(!parent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("start_hash %llu, end_hash %llu, node_id %u\n",
-		  start_hash, end_hash, parent->node_id);
+	SSDFS_DBG("start_hash %llx, node_id %u\n",
+		  start_hash, parent->node_id);
 
 	state = atomic_read(&parent->index_area.state);
 	if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
@@ -1147,17 +1146,8 @@ bool need_update_parent_index_area(u64 start_hash, u64 end_hash,
 		return -ERANGE;
 	}
 
-	if (start_hash > end_hash) {
-		SSDFS_ERR("invalid hash range: "
-			  "start_hash %llu, end_hash %llu\n",
-			  start_hash, end_hash);
-		return -ERANGE;
-	}
-
 	down_read(&parent->header_lock);
 	if (start_hash < parent->index_area.start_hash)
-		need_update = true;
-	if (end_hash > parent->index_area.end_hash)
 		need_update = true;
 	up_read(&parent->header_lock);
 
@@ -1559,8 +1549,7 @@ int ssdfs_btree_check_root_index_pair(struct ssdfs_btree *tree,
 			 */
 			return -ENOSPC;
 		}
-	} else if (need_update_parent_index_area(start_hash, end_hash,
-						 child_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -1730,7 +1719,7 @@ int ssdfs_btree_check_root_hybrid_pair(struct ssdfs_btree *tree,
 				 */
 				return -ENOSPC;
 			}
-		} else if (need_update_parent_index_area(start_hash, end_hash,
+		} else if (need_update_parent_index_area(start_hash,
 							 child_node)) {
 			err = ssdfs_btree_prepare_update_index(parent,
 								start_hash,
@@ -2001,8 +1990,7 @@ int ssdfs_btree_check_index_index_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, end_hash,
-						 child_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -2159,8 +2147,7 @@ int ssdfs_btree_check_index_hybrid_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, end_hash,
-						 child_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -2452,8 +2439,7 @@ int ssdfs_btree_check_hybrid_index_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, end_hash,
-						 child_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -2637,8 +2623,7 @@ int ssdfs_btree_check_hybrid_hybrid_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, end_hash,
-						 child_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -5026,13 +5011,14 @@ int ssdfs_btree_prepare_add_item(struct ssdfs_btree_level *parent,
 		}
 
 		start_hash = child->items_area.insert.hash.start;
+		end_hash = child->items_area.insert.hash.end;
 		count = child->items_area.insert.pos.count;
 
 		down_write(&left_node->header_lock);
 
 		if (left_node->items_area.items_count == 0) {
 			left_node->items_area.start_hash = start_hash;
-			left_node->items_area.end_hash = start_hash;
+			left_node->items_area.end_hash = end_hash;
 		} else {
 			if (!(left_node->items_area.end_hash < start_hash)) {
 				err = -ERANGE;
@@ -5108,7 +5094,7 @@ finish_intersection_check:
 
 		if (right_node->items_area.items_count == 0) {
 			right_node->items_area.start_hash = start_hash;
-			right_node->items_area.end_hash = start_hash;
+			right_node->items_area.end_hash = end_hash;
 		} else {
 			if (!(right_node->items_area.start_hash > end_hash)) {
 				err = -ERANGE;

@@ -144,6 +144,10 @@ int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
 	return 0;
 }
 
+static
+int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
+			    struct ssdfs_btree_search *search);
+
 /*
  * ssdfs_btree_desc_init() - init the btree's descriptor
  * @fsi: pointer on shared file system object
@@ -1021,6 +1025,7 @@ int ssdfs_check_leaf_node_absence(struct ssdfs_btree *tree,
 	switch (search->node.state) {
 	case SSDFS_BTREE_SEARCH_ROOT_NODE_DESC:
 	case SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC:
+	case SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC:
 		/* expected state */
 		break;
 
@@ -1036,26 +1041,23 @@ int ssdfs_check_leaf_node_absence(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-try_find_index:
-	err = ssdfs_btree_node_find_index(search);
+	err = __ssdfs_btree_find_item(tree, search);
 	if (err == -ENODATA) {
-		/*
-		 * node doesn't exist in the tree
-		 */
-		err = 0;
-	} else if (err == -EACCES) {
-		struct ssdfs_btree_node *node;
-		unsigned long res;
+		switch (search->result.state) {
+		case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+			/*
+			 * node doesn't exist in the tree
+			 */
+			err = 0;
+			break;
 
-		node = search->node.child;
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
-			SSDFS_ERR("node init failed: "
-				  "err %d\n", err);
-		} else
-			goto try_find_index;
+		default:
+			/*
+			 * existing node has free space
+			 */
+			err = -EEXIST;
+			break;
+		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find index: "
 			  "start_hash %llx, err %d\n",
@@ -2066,6 +2068,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	switch (search->node.state) {
 	case SSDFS_BTREE_SEARCH_ROOT_NODE_DESC:
 	case SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC:
+	case SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC:
 		/* expected state */
 		break;
 
@@ -2556,7 +2559,6 @@ try_find_index:
 
 		if (!is_found && items_count >= items_capacity) {
 			err = -ENOENT;
-			ssdfs_btree_search_define_child_node(search, NULL);
 			search->node.state =
 				SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC;
 			SSDFS_DBG("unable to find a leaf node: "
@@ -2649,7 +2651,7 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	up_read(&tree->lock);
 
 	if (!err) {
-		SSDFS_DBG("leaf node %u exists\n",
+		SSDFS_DBG("found leaf node %u\n",
 			  search->node.id);
 		return ssdfs_check_leaf_node_state(search);
 	} else if (err == -ENOENT) {
@@ -3369,7 +3371,10 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_FIND_ITEM:
+	case SSDFS_BTREE_SEARCH_ALLOCATE_ITEM:
+	case SSDFS_BTREE_SEARCH_ALLOCATE_RANGE:
 	case SSDFS_BTREE_SEARCH_ADD_ITEM:
+	case SSDFS_BTREE_SEARCH_ADD_RANGE:
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
 		/* expected state */
 		break;
@@ -4343,22 +4348,20 @@ static inline
 bool need_update_parent_node(struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree_node *parent;
-	u64 start_hash, end_hash;
+	u64 start_hash;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	start_hash = search->request.start.hash;
-	end_hash = search->request.end.hash;
 
 	parent = search->node.parent;
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return need_update_parent_index_area(start_hash, end_hash,
-					     parent);
+	return need_update_parent_index_area(start_hash, parent);
 }
 
 /*

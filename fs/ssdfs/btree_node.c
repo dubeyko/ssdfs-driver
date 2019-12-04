@@ -5103,8 +5103,10 @@ int ssdfs_find_index_by_hash(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !area || !found_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, hash %llu\n",
-		  node->node_id, hash);
+	SSDFS_DBG("node_id %u, hash %llu, "
+		  "area->start_hash %llx, area->end_hash %llx\n",
+		  node->node_id, hash,
+		  area->start_hash, area->end_hash);
 
 	*found_index = U16_MAX;
 
@@ -5393,7 +5395,9 @@ int ssdfs_btree_node_find_index(struct ssdfs_btree_search *search)
 	if (!is_ssdfs_btree_node_index_area_exist(node)) {
 		SSDFS_DBG("node %u hasn't index area\n",
 			  node->node_id);
-		return -ENOENT;
+		node = search->node.parent;
+		SSDFS_DBG("try parent node %u\n",
+			  node->node_id);
 	}
 
 	down_read(&node->full_lock);
@@ -5944,6 +5948,11 @@ int ssdfs_btree_node_add_index(struct ssdfs_btree_node *node,
 
 		err = ssdfs_find_index_by_hash(node, &node->index_area,
 						hash, &found);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(found >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (err == -ENODATA) {
 			/* node hasn't any index */
 			err = 0;
@@ -5952,11 +5961,13 @@ int ssdfs_btree_node_add_index(struct ssdfs_btree_node *node,
 				  "node_id %u, hash %llu, err %d\n",
 				  node->node_id, hash, err);
 			goto finish_change_root_node;
+		} else {
+			/*
+			 * Shift from existing index
+			 * to the vacant one.
+			 */
+			found++;
 		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(found == U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_btree_root_node_add_index(node, found,
 							index);
@@ -5980,6 +5991,11 @@ finish_change_root_node:
 
 		err = ssdfs_find_index_by_hash(node, &node->index_area,
 						hash, &found);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(found >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
 				  "node_id %u, hash %llu, err %d\n",
@@ -5987,11 +6003,13 @@ finish_change_root_node:
 			up_write(&node->header_lock);
 			up_write(&node->full_lock);
 			return err;
+		} else {
+			/*
+			 * Shift from existing index
+			 * to the vacant one.
+			 */
+			found++;
 		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(found == U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		count = (node->index_area.index_count + 1) - found;
 		err = ssdfs_lock_index_range(node, found, count);
