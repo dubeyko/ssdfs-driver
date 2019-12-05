@@ -7327,6 +7327,7 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	u16 pages_diff;
+	u16 rest_phys_free_pages = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
@@ -7347,6 +7348,9 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 	case SSDFS_START_PARTIAL_LOG:
 	case SSDFS_CONTINUE_PARTIAL_LOG:
 		pebi->current_log.start_page = *cur_page;
+		rest_phys_free_pages = pebi->log_pages -
+					(*cur_page % pebi->log_pages);
+		pebi->current_log.free_data_pages = rest_phys_free_pages;
 		atomic_inc(&pebi->current_log.sequence_id);
 		WARN_ON(pebi->current_log.free_data_pages == 0);
 		break;
