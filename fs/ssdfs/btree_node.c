@@ -10190,7 +10190,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	do {
 		int diff = upper_index - lower_index;
 
-		index = diff / 2;
+		index = lower_index + (diff / 2);
 
 		lower_bound = le64_to_cpu(lookup_table[index]);
 		upper_bound = le64_to_cpu(lookup_table[index + 1]);
