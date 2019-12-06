@@ -5597,7 +5597,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	down_read(&node->full_lock);
+	down_write(&node->full_lock);
 
 	if (pagevec_count(&node->content.pvec) == 0) {
 		err = -ERANGE;
@@ -5808,7 +5808,7 @@ finish_init_operation:
 	atomic64_add((u64)forks_count, &tree_info->forks_count);
 
 finish_init_node:
-	up_read(&node->full_lock);
+	up_write(&node->full_lock);
 
 	return err;
 }

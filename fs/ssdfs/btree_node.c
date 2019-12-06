@@ -5153,9 +5153,8 @@ int ssdfs_find_index_by_hash(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (hash < area->start_hash) {
-		SSDFS_DBG("hash %llu, area->start_hash %llx\n",
-			  hash, area->start_hash);
-		return -ENODATA;
+		*found_index = 0;
+		return 0;
 	}
 
 	if (area->end_hash == U64_MAX)
@@ -5421,12 +5420,12 @@ int ssdfs_btree_node_find_index(struct ssdfs_btree_search *search)
 					&found_index);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to find an index: "
-			  "node_id %u, hash %llu\n",
+			  "node_id %u, hash %llx\n",
 			  node->node_id, search->request.start.hash);
 		goto finish_index_search;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find an index: "
-			  "node_id %u, hash %llu, err %d\n",
+			  "node_id %u, hash %llx, err %d\n",
 			  node->node_id, search->request.start.hash,
 			  err);
 		goto finish_index_search;
@@ -10220,7 +10219,6 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		} else if (lower_bound < hash && hash < upper_bound) {
 			err = 0;
 			lower_index = index;
-			goto finish_index_search;
 		} else if (hash == upper_bound) {
 			err = -EEXIST;
 			*lookup_index = index;

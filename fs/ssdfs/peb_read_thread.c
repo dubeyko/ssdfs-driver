@@ -494,31 +494,9 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 
 	if (__is_ssdfs_segment_header_magic_valid(magic)) {
 		seg_hdr = SSDFS_SEG_HDR(kaddr);
-
-		err = ssdfs_check_segment_header(fsi, seg_hdr, false);
-		if (unlikely(err)) {
-			SSDFS_ERR("log header is corrupted: "
-				  "seg %llu, peb %llu, log_start_page %u\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id,
-				  log_start_page);
-			goto fail_copy_desc_array;
-		}
-
 		memcpy(array, seg_hdr->desc_array, array_size * desc_size);
 	} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 		plh_hdr = SSDFS_PLH(kaddr);
-
-		err = ssdfs_check_partial_log_header(fsi, plh_hdr, false);
-		if (unlikely(err)) {
-			SSDFS_ERR("partial log header is corrupted: "
-				  "seg %llu, peb %llu, log_start_page %u\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id,
-				  log_start_page);
-			goto fail_copy_desc_array;
-		}
-
 		memcpy(array, plh_hdr->desc_array, array_size * desc_size);
 	} else {
 		err = -EIO;
