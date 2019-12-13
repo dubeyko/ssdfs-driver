@@ -7337,10 +7337,12 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_page %lu, write_offset %u, "
+		  "current_log.free_data_pages %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  pebi->current_log.start_page,
-		  *cur_page, *write_offset);
+		  *cur_page, *write_offset,
+		  pebi->current_log.free_data_pages);
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -8323,7 +8325,8 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	switch (log_strategy) {
 	case SSDFS_START_FULL_LOG:
 		SSDFS_CRIT("log contains nothing: "
-			   "seg %llu, peb %llu, free_data_pages %u\n",
+			   "seg %llu, peb %llu, "
+			   "free_data_pages %u\n",
 			   pebi->pebc->parent_si->seg_id,
 			   pebi->peb_id,
 			   pebi->current_log.free_data_pages);

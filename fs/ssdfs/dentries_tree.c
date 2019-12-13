@@ -4116,7 +4116,7 @@ int ssdfs_dentries_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		memset(&tmp_buffer, 0xFF,
 			sizeof(struct ssdfs_btree_inline_root_node));
 
-		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
+		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT + 1;
 		tmp_buffer.header.items_count = 0;
 		tmp_buffer.header.flags = 0;
 		tmp_buffer.header.type = SSDFS_BTREE_ROOT_NODE;

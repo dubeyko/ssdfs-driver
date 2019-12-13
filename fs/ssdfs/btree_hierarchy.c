@@ -64,7 +64,7 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 	SSDFS_DBG("tree %p\n", tree);
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height < 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %d\n",
 			  tree_height);
 		return ERR_PTR(-ERANGE);
@@ -193,7 +193,7 @@ void ssdfs_btree_prepare_add_node(struct ssdfs_btree *tree,
 		  tree, level, node_type, start_hash, end_hash);
 
 	level->flags |= SSDFS_BTREE_LEVEL_ADD_NODE;
-	level->nodes.old_node.type = node_type;
+	level->nodes.new_node.type = node_type;
 	level->nodes.old_node.ptr = node;
 
 	level->index_area.area_size = tree->index_area_min_size;
@@ -1327,8 +1327,10 @@ int ssdfs_btree_check_nothing_root_pair(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	start_hash = search->request.start.hash;
-	end_hash = search->request.end.hash;
+	down_read(&child_node->header_lock);
+	start_hash = child_node->index_area.start_hash;
+	end_hash = U64_MAX;
+	up_read(&child_node->header_lock);
 
 	err = ssdfs_btree_prepare_add_index(parent,
 					    start_hash,
@@ -1339,13 +1341,6 @@ int ssdfs_btree_check_nothing_root_pair(struct ssdfs_btree *tree,
 			  "node_id %u, height %u\n",
 			  child_node->node_id,
 			  atomic_read(&child_node->height));
-		return err;
-	}
-
-	err = ssdfs_btree_define_moving_indexes(parent, child);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to define moving indexes: "
-			  "err %d\n", err);
 		return err;
 	}
 
@@ -1409,7 +1404,7 @@ int ssdfs_btree_check_root_nothing_pair(struct ssdfs_btree *tree,
 	}
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height > 0) {
+	if (tree_height <= 0 || tree_height > 1) {
 		SSDFS_WARN("unexpected tree_height %u\n",
 			  tree_height);
 		return -EINVAL;
@@ -1819,7 +1814,7 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 	}
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height > 1) {
+	if (tree_height > 2) {
 		SSDFS_WARN("unexpected tree_height %u\n",
 			  tree_height);
 		return -EINVAL;
@@ -1861,7 +1856,7 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 					     start_hash, end_hash,
 					     parent, parent_node);
 
-		err = ssdfs_btree_define_moving_items(parent, child);
+		err = ssdfs_btree_define_moving_indexes(parent, child);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define moving items: "
 				  "err %d\n", err);
@@ -2841,15 +2836,17 @@ int ssdfs_btree_check_level_for_add(struct ssdfs_btree *tree,
 	SSDFS_DBG("tree %p, search %p, parent %p, child %p\n",
 		  tree, search, parent, child);
 
-	if (!parent->nodes.old_node.ptr)
-		parent_type = SSDFS_BTREE_NODE_UNKNOWN_TYPE;
-	else
+	parent_type = parent->nodes.old_node.type;
+	if (parent_type != SSDFS_BTREE_NODE_UNKNOWN_TYPE) {
+		BUG_ON(!parent->nodes.old_node.ptr);
 		parent_type = atomic_read(&parent->nodes.old_node.ptr->type);
+	}
 
-	if (!child->nodes.old_node.ptr)
-		child_type = SSDFS_BTREE_NODE_UNKNOWN_TYPE;
-	else
+	child_type = child->nodes.old_node.type;
+	if (child_type != SSDFS_BTREE_NODE_UNKNOWN_TYPE) {
+		BUG_ON(!child->nodes.old_node.ptr);
 		child_type = atomic_read(&child->nodes.old_node.ptr->type);
+	}
 
 	switch (parent_type) {
 	case SSDFS_BTREE_NODE_UNKNOWN_TYPE:
@@ -3210,14 +3207,14 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 		  tree, search, hierarchy);
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height < 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %d\n",
 			  tree_height);
 		return -ERANGE;
 	}
 
 	if (search->node.id == SSDFS_BTREE_ROOT_NODE_ID) {
-		if (tree_height < 0 || tree_height > 1) {
+		if (tree_height <= 0 || tree_height > 1) {
 			SSDFS_ERR("invalid search object state: "
 				  "tree_height %u, node_id %u\n",
 				  tree_height,

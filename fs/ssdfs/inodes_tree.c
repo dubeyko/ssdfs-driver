@@ -3040,10 +3040,12 @@ finish_allocate_item:
 	if (itree->free_inodes < count)
 		err = -ERANGE;
 	else {
+		u64 upper_bound = start_hash + start + count - 1;
+
 		itree->allocated_inodes += count;
 		itree->free_inodes -= count;
-		if (itree->upper_allocated_ino < (start + count - 1))
-			itree->upper_allocated_ino = start + count - 1;
+		if (itree->upper_allocated_ino < upper_bound)
+			itree->upper_allocated_ino = upper_bound;
 	}
 	spin_unlock(&itree->lock);
 

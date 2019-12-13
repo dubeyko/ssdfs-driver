@@ -468,7 +468,7 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 	cur_height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
 	tree_height = atomic_read(&tree->height);
 
-	for (; cur_height <= tree_height; cur_height++) {
+	for (; cur_height < tree_height; cur_height++) {
 		rcu_read_lock();
 
 		spin_lock(&tree->nodes_lock);
@@ -532,7 +532,7 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 
 	cur_height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
 
-	for (; cur_height <= tree_height; cur_height++) {
+	for (; cur_height < tree_height; cur_height++) {
 		rcu_read_lock();
 
 		spin_lock(&tree->nodes_lock);
@@ -625,7 +625,7 @@ check_flush_result_state:
 
 	cur_height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
 
-	for (; cur_height <= tree_height; cur_height++) {
+	for (; cur_height < tree_height; cur_height++) {
 		rcu_read_lock();
 
 		spin_lock(&tree->nodes_lock);
@@ -682,7 +682,7 @@ check_flush_result_state:
 
 	cur_height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
 
-	for (; cur_height <= tree_height; cur_height++) {
+	for (; cur_height < tree_height; cur_height++) {
 		rcu_read_lock();
 
 		spin_lock(&tree->nodes_lock);
@@ -1382,7 +1382,7 @@ int ssdfs_prepare_empty_btree_for_add(struct ssdfs_btree *tree,
 		  tree, search, hierarchy);
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height == 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %u\n",
 			  tree_height);
 		return -ERANGE;
@@ -1934,12 +1934,6 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		SSDFS_ERR("cur_height %d > tree_height %d\n",
 			  cur_height, tree_height);
 		return -ERANGE;
-	} else if (cur_height == tree_height) {
-		if (tree_height != 0) {
-			SSDFS_ERR("cur_height %d > tree_height %d\n",
-				  cur_height, tree_height);
-			return -ERANGE;
-		}
 	}
 
 	level = &hierarchy->array[cur_height];
@@ -2084,7 +2078,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height < 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %d\n",
 			  tree_height);
 		return -ERANGE;
@@ -2325,7 +2319,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 				struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree_node *node;
-	u8 tree_height;
+	u8 upper_height;
 	u8 prev_height;
 	u64 start_hash = U64_MAX, end_hash = U64_MAX;
 	u16 items_count, items_capacity;
@@ -2356,9 +2350,16 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	tree_height = atomic_read(&tree->height);
+	upper_height = atomic_read(&tree->height);
+	if (upper_height <= 0) {
+		SSDFS_ERR("invalid tree height %u\n",
+			  upper_height);
+		return -ERANGE;
+	} else
+		upper_height--;
+
 	search->node.id = SSDFS_BTREE_ROOT_NODE_ID;
-	search->node.height = tree_height;
+	search->node.height = upper_height;
 	search->node.state = SSDFS_BTREE_SEARCH_ROOT_NODE_DESC;
 
 	do {
@@ -2411,7 +2412,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 		search->node.height = (u8)node_height;
 
 		if (node_height == SSDFS_BTREE_LEAF_NODE_HEIGHT) {
-			if (tree_height == SSDFS_BTREE_LEAF_NODE_HEIGHT) {
+			if (upper_height == SSDFS_BTREE_LEAF_NODE_HEIGHT) {
 				/* there is only root node */
 				search->node.state =
 				    SSDFS_BTREE_SEARCH_ROOT_NODE_DESC;
@@ -2468,7 +2469,7 @@ try_find_index:
 				  search->node.state,
 				  (u64)search->node.id,
 				  search->node.height);
-			if (tree_height == 0) {
+			if (upper_height == 0) {
 				search->node.state =
 					SSDFS_BTREE_SEARCH_ROOT_NODE_DESC;
 			} else {
@@ -2876,7 +2877,7 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 	}
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height == 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %u\n",
 			  tree_height);
 		return -ERANGE;
@@ -4396,7 +4397,7 @@ int ssdfs_btree_update_index_in_parent_node(struct ssdfs_btree *tree,
 		  tree, ptr);
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height == 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %u\n",
 			  tree_height);
 		return -ERANGE;
@@ -4481,7 +4482,7 @@ int ssdfs_btree_change_item(struct ssdfs_btree *tree,
 	}
 
 	tree_height = atomic_read(&tree->height);
-	if (tree_height == 0) {
+	if (tree_height <= 0) {
 		SSDFS_ERR("invalid tree_height %u\n",
 			  tree_height);
 		return -ERANGE;

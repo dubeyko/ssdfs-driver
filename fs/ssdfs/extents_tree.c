@@ -5104,18 +5104,38 @@ int ssdfs_extents_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		memcpy(&tmp_buffer,
 			&raw_inode->internal[0].area1.extents_root,
 			sizeof(struct ssdfs_btree_inline_root_node));
-
-		memcpy(&tree_info->root_buffer, &tmp_buffer,
-			sizeof(struct ssdfs_btree_inline_root_node));
-		tree_info->root = &tree_info->root_buffer;
-		err = ssdfs_btree_create_root_node(node, tree_info->root);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to create root node: err %d\n",
-				  err);
-		}
 	} else {
-		err = -ERANGE;
-		SSDFS_ERR("extents tree is inline forks array\n");
+		switch (atomic_read(&tree_info->type)) {
+		case SSDFS_INLINE_FORKS_ARRAY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid tree type %#x\n",
+				  atomic_read(&tree_info->type));
+			return -ERANGE;
+		}
+
+		memset(&tmp_buffer, 0xFF,
+			sizeof(struct ssdfs_btree_inline_root_node));
+
+		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT + 1;
+		tmp_buffer.header.items_count = 0;
+		tmp_buffer.header.flags = 0;
+		tmp_buffer.header.type = SSDFS_BTREE_ROOT_NODE;
+		tmp_buffer.header.upper_node_id =
+				cpu_to_le32(SSDFS_BTREE_ROOT_NODE_ID);
+		tmp_buffer.header.create_cno =
+				cpu_to_le64(ssdfs_current_cno(fsi->sb));
+	}
+
+	memcpy(&tree_info->root_buffer, &tmp_buffer,
+		sizeof(struct ssdfs_btree_inline_root_node));
+	tree_info->root = &tree_info->root_buffer;
+	err = ssdfs_btree_create_root_node(node, tree_info->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create root node: err %d\n",
+			  err);
 	}
 
 	return err;
