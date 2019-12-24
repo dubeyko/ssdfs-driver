@@ -842,7 +842,7 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 
 	if (range->area.start_hash >= ULONG_MAX) {
 		err = -EOPNOTSUPP;
-		SSDFS_WARN("start_hash %llu is too huge\n",
+		SSDFS_WARN("start_hash %llx is too huge\n",
 			   range->area.start_hash);
 		goto finish_inode_allocation;
 	}
@@ -1889,7 +1889,7 @@ finish_init_operation:
 
 		if (range->area.start_hash > end_hash) {
 			err = -EIO;
-			SSDFS_ERR("start_hash %llu > end_hash %llu\n",
+			SSDFS_ERR("start_hash %llx > end_hash %llx\n",
 				  range->area.start_hash, end_hash);
 			ssdfs_free_inodes_range_free(range);
 			break;
@@ -1959,9 +1959,11 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_inodes_btree_info *itree;
 	struct ssdfs_inodes_btree_range *range = NULL;
+	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
 	u64 start_hash = U64_MAX;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
@@ -1972,6 +1974,7 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
+	case SSDFS_BTREE_NODE_DIRTY:
 		/* expected states */
 		break;
 
@@ -2036,6 +2039,25 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 	};
 
 	up_read(&node->header_lock);
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
+		spin_lock(&node->descriptor_lock);
+		memcpy(&key, &node->node_index,
+			sizeof(struct ssdfs_btree_index_key));
+		spin_unlock(&node->descriptor_lock);
+
+		err = ssdfs_btree_node_add_index(node, &key);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add index: err %d\n", err);
+			return err;
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	if (items_capacity == 0) {
 		if (type == SSDFS_BTREE_LEAF_NODE ||
@@ -2347,7 +2369,7 @@ int ssdfs_inodes_btree_node_find_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -2436,8 +2458,8 @@ int ssdfs_inodes_btree_node_find_range(struct ssdfs_btree_node *node,
 					    search->request.end.hash,
 					    start_hash, end_hash)) {
 		SSDFS_ERR("invalid request: "
-			  "request (start_hash %llu, end_hash %llu), "
-			  "node (start_hash %llu, end_hash %llu)\n",
+			  "request (start_hash %llx, end_hash %llx), "
+			  "node (start_hash %llx, end_hash %llx)\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  start_hash, end_hash);
@@ -2601,7 +2623,7 @@ int ssdfs_inodes_btree_node_find_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -2613,7 +2635,7 @@ int ssdfs_inodes_btree_node_find_item(struct ssdfs_btree_node *node,
 	if (search->request.count != 1 ||
 	    search->request.start.hash != search->request.end.hash) {
 		SSDFS_ERR("invalid request state: "
-			  "count %d, start_hash %llu, end_hash %llu\n",
+			  "count %d, start_hash %llx, end_hash %llx\n",
 			  search->request.count,
 			  search->request.start.hash,
 			  search->request.end.hash);
@@ -2652,7 +2674,7 @@ int ssdfs_define_allocated_range(struct ssdfs_btree_search *search,
 	BUG_ON(!search || !start || !count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("start_hash %llu, end_hash %llu, flags %#x\n",
+	SSDFS_DBG("start_hash %llx, end_hash %llx, flags %#x\n",
 		  start_hash, end_hash, search->request.flags);
 
 	*start = ULONG_MAX;
@@ -2662,10 +2684,10 @@ int ssdfs_define_allocated_range(struct ssdfs_btree_search *search,
 		if (search->request.start.hash < start_hash ||
 		    search->request.start.hash > end_hash) {
 			SSDFS_ERR("invalid hash range: "
-				  "node (id %u, start_hash %llu, "
-				  "end_hash %llu), "
-				  "request (start_hash %llu, "
-				  "end_hash %llu)\n",
+				  "node (id %u, start_hash %llx, "
+				  "end_hash %llx), "
+				  "request (start_hash %llx, "
+				  "end_hash %llx)\n",
 				  search->node.id, start_hash, end_hash,
 				  search->request.start.hash,
 				  search->request.end.hash);
@@ -2901,8 +2923,8 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	}
 
 	if ((start_hash + item_index) != search->request.start.hash) {
-		SSDFS_WARN("node (start_hash %llu, index %u), "
-			   "request (start_hash %llu, end_hash %llu)\n",
+		SSDFS_WARN("node (start_hash %llx, index %u), "
+			   "request (start_hash %llx, end_hash %llx)\n",
 			   start_hash, item_index,
 			   search->request.start.hash,
 			   search->request.end.hash);
@@ -3040,10 +3062,12 @@ finish_allocate_item:
 	if (itree->free_inodes < count)
 		err = -ERANGE;
 	else {
+		u64 upper_bound = start_hash + start + count - 1;
+
 		itree->allocated_inodes += count;
 		itree->free_inodes -= count;
-		if (itree->upper_allocated_ino < (start + count - 1))
-			itree->upper_allocated_ino = start + count - 1;
+		if (itree->upper_allocated_ino < upper_bound)
+			itree->upper_allocated_ino = upper_bound;
 	}
 	spin_unlock(&itree->lock);
 
@@ -3088,7 +3112,7 @@ int ssdfs_inodes_btree_node_allocate_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -3200,7 +3224,7 @@ int ssdfs_inodes_btree_node_allocate_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -3316,7 +3340,7 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -3378,8 +3402,8 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 	}
 
 	if ((start_hash + item_index) != search->request.start.hash) {
-		SSDFS_WARN("node (start_hash %llu, index %u), "
-			   "request (start_hash %llu, end_hash %llu)\n",
+		SSDFS_WARN("node (start_hash %llx, index %u), "
+			   "request (start_hash %llx, end_hash %llx)\n",
 			   start_hash, item_index,
 			   search->request.start.hash,
 			   search->request.end.hash);
@@ -3477,7 +3501,7 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -3538,8 +3562,8 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 	}
 
 	if ((start_hash + item_index) != search->request.start.hash) {
-		SSDFS_WARN("node (start_hash %llu, index %u), "
-			   "request (start_hash %llu, end_hash %llu)\n",
+		SSDFS_WARN("node (start_hash %llx, index %u), "
+			   "request (start_hash %llx, end_hash %llx)\n",
 			   start_hash, item_index,
 			   search->request.start.hash,
 			   search->request.end.hash);
@@ -3672,7 +3696,7 @@ int ssdfs_inodes_btree_node_delete_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -3719,7 +3743,7 @@ int ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -3827,7 +3851,7 @@ void ssdfs_debug_inodes_btree_object(struct ssdfs_inodes_btree_info *tree)
 					   list);
 
 			if (range) {
-				SSDFS_DBG("[node_id %u, start_hash %llu, "
+				SSDFS_DBG("[node_id %u, start_hash %llx, "
 					  "start_index %u, count %u], ",
 					  range->node_id,
 					  range->area.start_hash,

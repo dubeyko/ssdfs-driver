@@ -415,13 +415,6 @@ ssdfs_btree_node_create(struct ssdfs_btree *tree,
 		SSDFS_WARN("height %u > tree->height %u\n",
 			   height, tree_height);
 		goto fail_create_node;
-	} else if (height == tree_height) {
-		if (tree_height != 0) {
-			err = -EINVAL;
-			SSDFS_WARN("height %u == tree->height %u\n",
-				   height, tree_height);
-			goto fail_create_node;
-		}
 	}
 
 	atomic_set(&ptr->height, height);
@@ -553,6 +546,7 @@ int ssdfs_btree_create_root_node(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_btree_root_node_header *hdr;
 	struct ssdfs_btree_index *index1, *index2;
+	u8 height;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree || !root_node);
@@ -575,11 +569,32 @@ int ssdfs_btree_create_root_node(struct ssdfs_btree_node *node,
 		return -EIO;
 	}
 
-	atomic_set(&node->tree->height, hdr->height);
-	atomic_set(&node->height, hdr->height);
+	height = hdr->height;
+
+	if (height >= U8_MAX) {
+		SSDFS_ERR("invalid height %u\n",
+			  height);
+		return -EIO;
+	}
+
+	if (le32_to_cpu(hdr->upper_node_id) == 0) {
+		height = 1;
+		atomic_set(&node->tree->height, height);
+		atomic_set(&node->height, height - 1);
+	} else {
+		if (height == 0) {
+			SSDFS_ERR("invalid height %u\n",
+				  height);
+			return -EIO;
+		}
+
+		atomic_set(&node->tree->height, height);
+		atomic_set(&node->height, height - 1);
+	}
+
 	node->node_size = sizeof(struct ssdfs_btree_inline_root_node);
 	node->pages_per_node = 0;
-	node->create_cno = le64_to_cpu(hdr->create_cno);
+	node->create_cno = le64_to_cpu(0);
 	node->tree->create_cno = node->create_cno;
 	node->node_id = SSDFS_BTREE_ROOT_NODE_ID;
 
@@ -1098,7 +1113,7 @@ int ssdfs_define_memory_page(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (area->index_count == 0 ||
+	if (area->index_capacity == 0 ||
 	    area->index_count > area->index_capacity) {
 		SSDFS_ERR("invalid area: "
 			  "index_count %u, index_capacity %u\n",
@@ -1820,20 +1835,20 @@ int ssdfs_btree_pre_flush_root_node(struct ssdfs_btree_node *node)
 	root_node = &node->raw.root_node;
 
 	height = atomic_read(&node->height);
-	if (height >= U8_MAX || height < 0) {
+	if (height >= U8_MAX || height <= 0) {
 		SSDFS_ERR("invalid height %d\n", height);
 		return -ERANGE;
 	}
 
 	tree_height = atomic_read(&node->tree->height);
-	if (height >= U8_MAX || height < 0) {
+	if (tree_height >= U8_MAX || tree_height <= 0) {
 		SSDFS_ERR("invalid tree's height %d\n",
 			  tree_height);
 		return -ERANGE;
 	}
 
-	if (tree_height != height) {
-		SSDFS_ERR("tree_height %d != root node's height %d\n",
+	if ((tree_height - 1) != height) {
+		SSDFS_ERR("tree_height %d, root node's height %d\n",
 			  tree_height, height);
 		return -ERANGE;
 	}
@@ -1909,8 +1924,6 @@ int ssdfs_btree_pre_flush_root_node(struct ssdfs_btree_node *node)
 
 	root_node->header.upper_node_id =
 		cpu_to_le32(node->tree->upper_node_id);
-	root_node->header.create_cno =
-		cpu_to_le64(node->create_cno);
 
 	return 0;
 }
@@ -2182,8 +2195,8 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 		} else
 			hdr->items_capacity = cpu_to_le16(items_capacity);
 
-		hdr->start_hash = cpu_to_le64(node->index_area.start_hash);
-		hdr->end_hash = cpu_to_le64(node->index_area.end_hash);
+		hdr->start_hash = cpu_to_le64(node->items_area.start_hash);
+		hdr->end_hash = cpu_to_le64(node->items_area.end_hash);
 		break;
 
 	case SSDFS_BTREE_INDEX_NODE:
@@ -2330,11 +2343,13 @@ void ssdfs_btree_flush_root_node(struct ssdfs_btree_node *node,
 
 	down_write(&node->header_lock);
 	items_count = node->index_area.index_count;
-	root_node->header.height = atomic_read(&node->tree->height);
+	root_node->header.height = (u8)atomic_read(&node->tree->height);
 	root_node->header.items_count = cpu_to_le16(items_count);
 	root_node->header.flags = (u8)atomic_read(&node->flags);
 	root_node->header.type = (u8)atomic_read(&node->type);
-	root_node->header.create_cno = cpu_to_le64(node->create_cno);
+	memcpy(root_node->header.node_ids,
+		node->raw.root_node.header.node_ids,
+		sizeof(__le32) * SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
 	memcpy(root_node->indexes, node->raw.root_node.indexes,
 		sizeof(struct ssdfs_btree_index) *
 		SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
@@ -2778,6 +2793,7 @@ void set_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 	switch (state) {
 	case SSDFS_BTREE_NODE_DIRTY:
 	case SSDFS_BTREE_NODE_INITIALIZED:
+	case SSDFS_BTREE_NODE_CREATED:
 		atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 		spin_lock(&node->tree->nodes_lock);
 		radix_tree_tag_set(&node->tree->nodes, node->node_id,
@@ -2850,9 +2866,9 @@ bool is_ssdfs_btree_node_index_area_exist(struct ssdfs_btree_node *node)
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
-		SSDFS_DBG("node %u is under initialization\n",
+		SSDFS_DBG("node %u is not initialized\n",
 			  node->node_id);
-		return false;
+		break;
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -2913,9 +2929,9 @@ bool is_ssdfs_btree_node_index_area_empty(struct ssdfs_btree_node *node)
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
-		SSDFS_DBG("node %u is under initialization\n",
+		SSDFS_DBG("node %u is not initialized\n",
 			  node->node_id);
-		return false;
+		break;
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -4160,7 +4176,7 @@ int ssdfs_btree_root_node_find_index(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !found_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, node_type %#x, search_hash %llu\n",
+	SSDFS_DBG("node_id %u, node_type %#x, search_hash %llx\n",
 		  node->node_id, atomic_read(&node->type),
 		  search_hash);
 
@@ -4242,6 +4258,7 @@ try_get_hash:
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to lock index %u, err %d\n",
 				  *hash_index, err);
+			break;
 		} else {
 			err = -EEXIST;
 			ptr = CUR_INDEX(kaddr, page_off, *hash_index);
@@ -4313,7 +4330,7 @@ int ssdfs_check_last_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p, page_off %u, "
-		  "index %u, search_hash %llu, "
+		  "index %u, search_hash %llx, "
 		  "range_start %u, range_end %u, "
 		  "prev_found %u\n",
 		  kaddr, page_off, index, search_hash,
@@ -4336,31 +4353,21 @@ int ssdfs_check_last_index(struct ssdfs_btree_node *node,
 	}
 
 	if (search_hash < hash) {
-		if (hash_index == range_start) {
-			err = -ENOENT;
-			SSDFS_DBG("unable to find index: "
-				  "index %u, search_hash %llu, "
-				  "hash %llu\n",
-				  hash_index, search_hash,
-				  hash);
-		} else {
+		err = -ENOENT;
+		SSDFS_DBG("unable to find index: "
+			  "index %u, search_hash %llx, "
+			  "hash %llx\n",
+			  hash_index, search_hash,
+			  hash);
+
+		if (prev_found < U16_MAX)
 			*found_index = prev_found;
-			if (prev_found != U16_MAX)
-				err = 0;
-			else
-				err = -ENOENT;
-		}
+		else
+			*found_index = hash_index;
 	} else if (search_hash == hash) {
 		err = 0;
-		*found_index = index;
+		*found_index = hash_index;
 	} else {
-		if (hash_index == range_end) {
-			SSDFS_DBG("unable to find index: "
-				  "index %u, search_hash %llu, "
-				  "hash %llu\n",
-				  hash_index, search_hash,
-				  hash);
-		}
 		err = -ENODATA;
 		*found_index = hash_index;
 	}
@@ -4411,7 +4418,7 @@ int ssdfs_check_last_index_pair(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("kaddr %p, page_off %u, "
 		  "lower_index %u, upper_index %u, "
-		  "search_hash %llu, range_start %u, prev_found %u\n",
+		  "search_hash %llx, range_start %u, prev_found %u\n",
 		  kaddr, page_off, lower_index, upper_index,
 		  search_hash, range_start, prev_found);
 
@@ -4427,48 +4434,48 @@ int ssdfs_check_last_index_pair(struct ssdfs_btree_node *node,
 
 	if (hash_index == lower_index) {
 		if (search_hash < hash) {
-			if (hash_index == range_start) {
-				err = -ENOENT;
-				SSDFS_DBG("unable to find index: "
-					  "index %u, search_hash %llu, "
-						  "hash %llu\n",
-					  hash_index, search_hash,
-					  hash);
-			} else {
+			err = -ENOENT;
+			SSDFS_DBG("unable to find index: "
+				  "index %u, search_hash %llx, "
+				  "hash %llx\n",
+				  hash_index, search_hash,
+				  hash);
+
+			if (prev_found < U16_MAX)
 				*found_index = prev_found;
-				if (prev_found != U16_MAX)
-					err = 0;
-				else
-					err = -ENOENT;
-			}
+			else
+				*found_index = hash_index;
 		} else if (search_hash == hash) {
 			err = 0;
-			*found_index = lower_index;
+			*found_index = hash_index;
 		} else {
+			prev_found = hash_index;
 			err = ssdfs_check_last_index(node, kaddr, page_off,
 						     upper_index, search_hash,
 						     range_start, range_end,
 						     prev_found, found_index);
+			if (err == -ENOENT) {
+				err = 0;
+				*found_index = prev_found;
+			}
 		}
 	} else if (hash_index == upper_index) {
 		if (search_hash > hash) {
-			if (hash_index == range_end) {
-				SSDFS_DBG("unable to find index: "
-					  "index %u, search_hash %llu, "
-					  "hash %llu\n",
-					  hash_index, search_hash,
-					  hash);
-			}
 			err = -ENODATA;
 			*found_index = upper_index;
 		} else if (search_hash == hash) {
 			err = 0;
 			*found_index = upper_index;
 		} else {
+			prev_found = hash_index;
 			err = ssdfs_check_last_index(node, kaddr, page_off,
 						     lower_index, search_hash,
 						     range_start, range_end,
 						     prev_found, found_index);
+			if (err == -ENOENT) {
+				err = 0;
+				*found_index = prev_found;
+			}
 		}
 	} else {
 		SSDFS_ERR("invalid index: hash_index %u, "
@@ -4517,6 +4524,7 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 	u32 range_start, range_end;
 	u32 prev_found;
 	u64 hash;
+	u32 processed_indexes = 0;
 	int err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4525,7 +4533,7 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
-		  "start_offset %u, search_hash %llu\n",
+		  "start_offset %u, search_hash %llx\n",
 		  node->node_id, atomic_read(&node->type),
 		  start_offset, search_hash);
 
@@ -4576,11 +4584,36 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 	}
 
 	search_bytes = PAGE_SIZE - page_off;
+	search_bytes = min_t(u32, search_bytes,
+			(area->offset + area->area_size) - start_offset);
+
 	index_count = search_bytes / area->index_size;
 	if (index_count == 0) {
-		SSDFS_ERR("invalid index_count\n");
+		SSDFS_ERR("invalid index_count %u\n",
+			  index_count);
 		return -ERANGE;
 	}
+
+	processed_indexes = (start_offset - area->offset);
+	processed_indexes /= area->index_size;
+
+	if (processed_indexes >= area->index_capacity) {
+		SSDFS_ERR("processed_indexes %u >= area->index_capacity %u\n",
+			  processed_indexes,
+			  area->index_capacity);
+		return -ERANGE;
+	} else if (processed_indexes >= area->index_count) {
+		err = -ENOENT;
+		*processed_bytes = search_bytes;
+		SSDFS_DBG("unable to find an index: "
+			  "processed_indexes %u, area->index_count %u\n",
+			  processed_indexes,
+			  area->index_count);
+		return -ENOENT;
+	}
+
+	index_count = min_t(u32, index_count,
+				area->index_count - processed_indexes);
 
 	cur_index = 0;
 	range_start = lower_index = 0;
@@ -4608,7 +4641,10 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 						     lower_index, search_hash,
 						     range_start, range_end,
 						     prev_found, found_index);
-			if (err == -ENOENT || err == -ENODATA) {
+			if (err == -ENOENT) {
+				if (prev_found < U16_MAX)
+					*found_index = prev_found;
+			} else if (err == -ENODATA) {
 				/*
 				 * Nothing was found
 				 */
@@ -4616,7 +4652,6 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 				SSDFS_ERR("fail to check the last index: "
 					  "index %u, err %d\n",
 					  lower_index, err);
-				goto finish_search;
 			}
 
 			*processed_bytes = search_bytes;
@@ -4631,7 +4666,10 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 							  range_end,
 							  prev_found,
 							  found_index);
-			if (err == -ENOENT || err == -ENODATA) {
+			if (err == -ENOENT) {
+				if (prev_found < U16_MAX)
+					*found_index = prev_found;
+			} else if (err == -ENODATA) {
 				/*
 				 * Nothing was found
 				 */
@@ -4640,7 +4678,6 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 					  "lower_index %u, upper_index %u, "
 					  "err %d\n",
 					  lower_index, upper_index, err);
-				goto finish_search;
 			}
 
 			*processed_bytes = search_bytes;
@@ -4663,14 +4700,14 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 				err = -ENOENT;
 				*found_index = hash_index;
 				SSDFS_DBG("unable to find index: "
-					  "index %u, search_hash %llu, "
-					  "hash %llu\n",
+					  "index %u, search_hash %llx, "
+					  "hash %llx\n",
 					  hash_index, search_hash,
 					  hash);
 				goto finish_search;
 			} else {
-				upper_index = cur_index;
 				prev_found = lower_index;
+				upper_index = cur_index;
 			}
 		} else if (search_hash == hash) {
 			err = 0;
@@ -4682,20 +4719,30 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 				err = -ENODATA;
 				*found_index = hash_index;
 				SSDFS_DBG("unable to find index: "
-					  "index %u, search_hash %llu, "
-					  "hash %llu\n",
+					  "index %u, search_hash %llx, "
+					  "hash %llx\n",
 					  hash_index, search_hash,
 					  hash);
 				goto finish_search;
 			} else {
-				lower_index = cur_index;
 				prev_found = lower_index;
+				lower_index = cur_index;
 			}
 		}
 	};
 
 finish_search:
 	kunmap(page);
+
+	if (!err && *found_index < area->index_capacity) {
+		*found_index += processed_indexes;
+		if (*found_index >= area->index_capacity) {
+			SSDFS_ERR("found_index %u >= area->index_capacity %u\n",
+				  *found_index,
+				  area->index_capacity);
+			return -ERANGE;
+		}
+	}
 
 	return err;
 }
@@ -4732,7 +4779,7 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, node_type %#x, search_hash %llu\n",
+	SSDFS_DBG("node_id %u, node_type %#x, search_hash %llx\n",
 		  node->node_id, atomic_read(&node->type),
 		  search_hash);
 
@@ -4786,15 +4833,16 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 		if (err == -ENODATA)
 			err = 0;
 		else if (err == -ENOENT) {
+			err = 0;
+
 			if (prev_found != U16_MAX) {
 				err = 0;
 				*found_index = prev_found;
-				SSDFS_DBG("node_id %u, search_hash %llu, "
+				SSDFS_DBG("node_id %u, search_hash %llx, "
 					  "found_index %u\n",
 					  node->node_id, search_hash,
 					  *found_index);
-			} else
-				err = -ENODATA;
+			}
 			break;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find index: err %d\n",
@@ -4827,6 +4875,9 @@ int __ssdfs_btree_root_node_extract_index(struct ssdfs_btree_node *node,
 					  u16 found_index,
 					  struct ssdfs_btree_index_key *ptr)
 {
+	__le32 node_id;
+	int node_height;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !ptr);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
@@ -4843,32 +4894,41 @@ int __ssdfs_btree_root_node_extract_index(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	switch (found_index) {
-	case SSDFS_ROOT_NODE_LEFT_LEAF_NODE:
-		ptr->node_id =
-			cpu_to_le32(SSDFS_BTREE_ROOT_NODE_LEFT_CHILD_ID);
-		break;
-
-	case SSDFS_ROOT_NODE_RIGHT_LEAF_NODE:
-		ptr->node_id =
-			cpu_to_le32(SSDFS_BTREE_ROOT_NODE_RIGHT_CHILD_ID);
-		break;
-
-	default:
-		BUG();
-	}
-
-	ptr->node_type = SSDFS_BTREE_HYBRID_NODE;
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(atomic_read(&node->tree->height) == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-	ptr->height = atomic_read(&node->tree->height) - 1;
-	ptr->flags = cpu_to_le16(SSDFS_BTREE_INDEX_HAS_VALID_EXTENT);
-
 	down_read(&node->header_lock);
+	node_id = node->raw.root_node.header.node_ids[found_index];
+	ptr->node_id = cpu_to_le32(node_id);
 	memcpy(&ptr->index, &node->raw.root_node.indexes[found_index],
 		sizeof(struct ssdfs_btree_index));
 	up_read(&node->header_lock);
+
+	node_height = atomic_read(&node->height);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(node_height < 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+	ptr->height = node_height - 1;
+
+	switch (node_height) {
+	case SSDFS_BTREE_LEAF_NODE_HEIGHT:
+	case SSDFS_BTREE_PARENT2LEAF_HEIGHT:
+		if (can_add_new_index(node))
+			ptr->node_type = SSDFS_BTREE_LEAF_NODE;
+		else
+			ptr->node_type = SSDFS_BTREE_HYBRID_NODE;
+		break;
+
+	case SSDFS_BTREE_PARENT2HYBRID_HEIGHT:
+		if (can_add_new_index(node))
+			ptr->node_type = SSDFS_BTREE_HYBRID_NODE;
+		else
+			ptr->node_type = SSDFS_BTREE_INDEX_NODE;
+		break;
+
+	default:
+		ptr->node_type = SSDFS_BTREE_INDEX_NODE;
+		break;
+	}
+
+	ptr->flags = cpu_to_le16(SSDFS_BTREE_INDEX_HAS_VALID_EXTENT);
 
 	return 0;
 }
@@ -5103,7 +5163,7 @@ int ssdfs_find_index_by_hash(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !area || !found_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, hash %llu, "
+	SSDFS_DBG("node_id %u, hash %llx, "
 		  "area->start_hash %llx, area->end_hash %llx\n",
 		  node->node_id, hash,
 		  area->start_hash, area->end_hash);
@@ -5237,7 +5297,7 @@ int ssdfs_btree_node_find_index_position(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, node_type %#x, hash %llu\n",
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx\n",
 		  node->node_id,
 		  atomic_read(&node->type),
 		  hash);
@@ -5287,12 +5347,12 @@ int ssdfs_btree_node_find_index_position(struct ssdfs_btree_node *node,
 					found_position);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to find an index: "
-			  "node_id %u, hash %llu\n",
+			  "node_id %u, hash %llx\n",
 			  node->node_id, hash);
 		goto finish_index_search;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find an index: "
-			  "node_id %u, hash %llu, err %d\n",
+			  "node_id %u, hash %llx, err %d\n",
 			  node->node_id, hash, err);
 		goto finish_index_search;
 	}
@@ -5355,7 +5415,7 @@ int ssdfs_btree_node_find_index(struct ssdfs_btree_search *search)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		tree_height = atomic_read(&node->tree->height);
-		if (tree_height == SSDFS_BTREE_LEAF_NODE_HEIGHT) {
+		if (tree_height <= (SSDFS_BTREE_LEAF_NODE_HEIGHT + 1)) {
 			/* tree has only root node */
 			return -ENODATA;
 		}
@@ -5371,8 +5431,6 @@ int ssdfs_btree_node_find_index(struct ssdfs_btree_search *search)
 	BUG_ON(!node->tree);
 	BUG_ON(!rwsem_is_locked(&node->tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	tree_height = atomic_read(&node->tree->height);
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
@@ -5566,10 +5624,10 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 	case SSDFS_ROOT_NODE_RIGHT_LEAF_NODE:
 		node->index_area.end_hash = le64_to_cpu(ptr->index.hash);
 		break;
-
-	default:
-		BUG();
 	}
+
+	memcpy(&node->raw.root_node.header.node_ids[position],
+		&ptr->node_id, sizeof(__le32));
 
 	node->index_area.index_count++;
 
@@ -5874,7 +5932,7 @@ int ssdfs_btree_node_add_index(struct ssdfs_btree_node *node,
 
 	hash = le64_to_cpu(index->index.hash);
 
-	SSDFS_DBG("node_id %u, hash %llu\n",
+	SSDFS_DBG("node_id %u, hash %llx\n",
 		  node->node_id, hash);
 
 	fsi = node->tree->fsi;
@@ -5904,7 +5962,7 @@ int ssdfs_btree_node_add_index(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (hash == U64_MAX) {
-		SSDFS_ERR("invalid hash %llu\n", hash);
+		SSDFS_ERR("invalid hash %llx\n", hash);
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -5957,7 +6015,7 @@ int ssdfs_btree_node_add_index(struct ssdfs_btree_node *node,
 			err = 0;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
-				  "node_id %u, hash %llu, err %d\n",
+				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, hash, err);
 			goto finish_change_root_node;
 		} else {
@@ -5997,7 +6055,7 @@ finish_change_root_node:
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
-				  "node_id %u, hash %llu, err %d\n",
+				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, hash, err);
 			up_write(&node->header_lock);
 			up_write(&node->full_lock);
@@ -6219,7 +6277,7 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 	old_hash = le64_to_cpu(old_index->index.hash);
 	new_hash = le64_to_cpu(new_index->index.hash);
 
-	SSDFS_DBG("node_id %u, old_hash %llu, new_hash %llu\n",
+	SSDFS_DBG("node_id %u, old_hash %llx, new_hash %llx\n",
 		  node->node_id, old_hash, new_hash);
 
 	switch (atomic_read(&node->state)) {
@@ -6247,7 +6305,7 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (old_hash == U64_MAX || new_hash == U64_MAX) {
-		SSDFS_ERR("invalid old_hash %llu or new_hash %llu\n",
+		SSDFS_ERR("invalid old_hash %llx or new_hash %llx\n",
 			  old_hash, new_hash);
 		return -ERANGE;
 	}
@@ -6269,12 +6327,12 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 						old_hash, &found);
 		if (err == -ENODATA) {
 			SSDFS_DBG("unable to find an index: "
-				  "node_id %u, hash %llu\n",
+				  "node_id %u, hash %llx\n",
 				  node->node_id, old_hash);
 			goto finish_change_root_node;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
-				  "node_id %u, hash %llu, err %d\n",
+				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, old_hash, err);
 			goto finish_change_root_node;
 		}
@@ -6311,7 +6369,7 @@ finish_change_root_node:
 						old_hash, &found);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
-				  "node_id %u, hash %llu, err %d\n",
+				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, old_hash, err);
 		}
 
@@ -6844,7 +6902,7 @@ int ssdfs_btree_node_delete_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, hash %llu\n",
+	SSDFS_DBG("node_id %u, hash %llx\n",
 		  node->node_id, hash);
 
 	fsi = node->tree->fsi;
@@ -6874,7 +6932,7 @@ int ssdfs_btree_node_delete_index(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (hash == U64_MAX) {
-		SSDFS_ERR("invalid hash %llu\n", hash);
+		SSDFS_ERR("invalid hash %llx\n", hash);
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -6895,7 +6953,7 @@ int ssdfs_btree_node_delete_index(struct ssdfs_btree_node *node,
 						hash, &found);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
-				  "node_id %u, hash %llu, err %d\n",
+				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, hash, err);
 			goto finish_change_root_node;
 		}
@@ -6927,7 +6985,7 @@ finish_change_root_node:
 						hash, &found);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
-				  "node_id %u, hash %llu, err %d\n",
+				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, hash, err);
 			up_write(&node->header_lock);
 			up_write(&node->full_lock);
@@ -7023,7 +7081,8 @@ int ssdfs_move_root2common_node_index_range(struct ssdfs_btree_node *src,
 					    u16 dst_start, u16 count)
 {
 	struct ssdfs_fs_info *fsi;
-	u16 i, j;
+	int i, j;
+	int upper_bound;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7075,7 +7134,8 @@ int ssdfs_move_root2common_node_index_range(struct ssdfs_btree_node *src,
 	count = min_t(u16, count,
 		      SSDFS_BTREE_ROOT_NODE_INDEX_COUNT - src_start);
 
-	for (i = src_start, j = dst_start; i < count; i++, j++) {
+	upper_bound = src_start + count;
+	for (i = src_start, j = dst_start; i < upper_bound; i++, j++) {
 		struct ssdfs_btree_index_key index;
 
 		down_write(&src->full_lock);
@@ -7086,19 +7146,10 @@ int ssdfs_move_root2common_node_index_range(struct ssdfs_btree_node *src,
 			SSDFS_ERR("fail extract index: "
 				  "index %u, err %d\n",
 				  i, err);
-			goto finish_extract_index;
 		}
 
 		/* TODO: correct node_id */
 
-		err = ssdfs_btree_root_node_delete_index(src, i);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to delete index: "
-				  "index %u, err %d\n",
-				  i, err);
-		}
-
-finish_extract_index:
 		up_write(&src->full_lock);
 
 		if (unlikely(err)) {
@@ -7109,7 +7160,10 @@ finish_extract_index:
 
 		down_write(&dst->full_lock);
 
+		down_write(&dst->header_lock);
 		err = ssdfs_btree_common_node_add_index(dst, j, &index);
+		up_write(&dst->header_lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to insert index: "
 				  "index %u, err %d\n",
@@ -7117,6 +7171,28 @@ finish_extract_index:
 		}
 
 		up_write(&dst->full_lock);
+
+		if (unlikely(err)) {
+			atomic_set(&src->state, SSDFS_BTREE_NODE_CORRUPTED);
+			atomic_set(&dst->state, SSDFS_BTREE_NODE_CORRUPTED);
+			return err;
+		}
+	}
+
+	for (i = 0; i < count; i++) {
+		down_write(&src->full_lock);
+
+		down_write(&src->header_lock);
+		err = ssdfs_btree_root_node_delete_index(src, src_start);
+		up_write(&src->header_lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to delete index: "
+				  "index %u, err %d\n",
+				  i, err);
+		}
+
+		up_write(&src->full_lock);
 
 		if (unlikely(err)) {
 			atomic_set(&src->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -7692,6 +7768,7 @@ int ssdfs_btree_node_move_index_range(struct ssdfs_btree_node *src,
 	}
 
 	switch (atomic_read(&dst->state)) {
+	case SSDFS_BTREE_NODE_CREATED:
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 		/* expected state */
@@ -10077,7 +10154,7 @@ bool is_last_leaf_node_found(struct ssdfs_btree_search *search)
 			up_read(&parent->header_lock);
 
 			if (index_end_hash >= U64_MAX) {
-				SSDFS_WARN("index area: end hash %llu\n",
+				SSDFS_WARN("index area: end hash %llx\n",
 					   index_end_hash);
 				return false;
 			}
@@ -10157,13 +10234,13 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	} else if (hash < lower_bound) {
 		err = -ENODATA;
 		*lookup_index = lower_index;
-		SSDFS_DBG("hash %llu < lower_bound %llu\n",
+		SSDFS_DBG("hash %llx < lower_bound %llu\n",
 			  hash, lower_bound);
 		goto finish_index_search;
 	} else if (hash == lower_bound) {
 		err = -EEXIST;
 		*lookup_index = lower_index;
-		SSDFS_DBG("hash %llu == lower_bound %llu\n",
+		SSDFS_DBG("hash %llx == lower_bound %llu\n",
 			  hash, lower_bound);
 		goto finish_index_search;
 	}
@@ -10178,7 +10255,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	} else if (hash == upper_bound) {
 		err = -EEXIST;
 		*lookup_index = upper_index;
-		SSDFS_DBG("hash %llu == upper_bound %llu\n",
+		SSDFS_DBG("hash %llx == upper_bound %llu\n",
 			  hash, upper_bound);
 		goto finish_index_search;
 	} else if (hash > upper_bound) {
@@ -10207,7 +10284,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		else if (hash == lower_bound) {
 			err = -EEXIST;
 			*lookup_index = index;
-			SSDFS_DBG("hash %llu == lower_bound %llu\n",
+			SSDFS_DBG("hash %llx == lower_bound %llu\n",
 				  hash, lower_bound);
 			goto finish_index_search;
 		}
@@ -10222,7 +10299,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		} else if (hash == upper_bound) {
 			err = -EEXIST;
 			*lookup_index = index;
-			SSDFS_DBG("hash %llu == upper_bound %llu\n",
+			SSDFS_DBG("hash %llx == upper_bound %llu\n",
 				  hash, upper_bound);
 			goto finish_index_search;
 		} else if (hash > upper_bound)
@@ -12755,7 +12832,7 @@ void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node)
 		  completion_done(&node->init_end));
 
 	SSDFS_DBG("NODE_INDEX: node_id %u, node_type %#x, "
-		  "height %u, flags %#x, hash %llu, "
+		  "height %u, flags %#x, hash %llx, "
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  le32_to_cpu(node->node_index.node_id),
 		  node->node_index.node_type,

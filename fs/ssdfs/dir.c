@@ -1399,7 +1399,7 @@ finish_process_inline_tree:
 		return -ERANGE;
 	}
 
-	SSDFS_DBG("start_hash %llu, end_hash %llu\n",
+	SSDFS_DBG("start_hash %llx, end_hash %llx\n",
 		  *start_hash, *end_hash);
 
 finish_extract_hash_range:

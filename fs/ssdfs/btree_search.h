@@ -250,6 +250,13 @@ struct ssdfs_btree_search {
 	struct ssdfs_name_string name;
 };
 
+/* Btree height's classification */
+enum {
+	SSDFS_BTREE_PARENT2LEAF_HEIGHT		= 1,
+	SSDFS_BTREE_PARENT2HYBRID_HEIGHT	= 2,
+	SSDFS_BTREE_PARENT2INDEX_HEIGHT		= 3,
+};
+
 /*
  * Btree search object API
  */

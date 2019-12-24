@@ -330,7 +330,7 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 						 &search->name);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to extract the name: "
-				  "hash %llu, err %d\n",
+				  "hash %llx, err %d\n",
 				  hash, err);
 			return err;
 		}
@@ -567,7 +567,7 @@ finish_get_start_hash:
 							search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to find a leaf node: "
-				  "hash %llu, err %d\n",
+				  "hash %llx, err %d\n",
 				  cur_hash, err);
 			goto finish_tree_processing;
 		}
@@ -652,7 +652,7 @@ finish_tree_processing:
 
 		if (cur_hash <= end_hash) {
 			err = -ERANGE;
-			SSDFS_ERR("cur_hash %llu <= end_hash %llu\n",
+			SSDFS_ERR("cur_hash %llx <= end_hash %llx\n",
 				  cur_hash, end_hash);
 			goto clean_up;
 		}

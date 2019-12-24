@@ -64,7 +64,8 @@ void ssdfs_init_inline_root_node(struct ssdfs_fs_info *fsi,
 	root->header.flags = 0;
 	root->header.type = 0;
 	root->header.upper_node_id = cpu_to_le32(SSDFS_BTREE_ROOT_NODE_ID);
-	root->header.create_cno = ssdfs_current_cno(fsi->sb);
+	memset(root->header.node_ids, 0xFF,
+		sizeof(__le32) * SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
 	memset(root->indexes, 0xFF,
 		index_size * SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
 }
@@ -569,7 +570,7 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 		err = 0;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find item: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  start_hash, end_hash, err);
 		goto finish_add_range;
 	}
@@ -614,7 +615,7 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 	err = ssdfs_btree_add_range(&tree->buffer.tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add the range into tree: "
-			   "start_hash %llu, end_hash %llu, err %d\n",
+			   "start_hash %llx, end_hash %llx, err %d\n",
 			   start_hash, end_hash, err);
 		goto finish_add_range;
 	}
@@ -2080,7 +2081,7 @@ int ssdfs_extents_tree_add_inline_fork(struct ssdfs_extents_btree_info *tree,
 	start_hash = search->request.start.hash;
 	if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
 		SSDFS_ERR("corrupted fork: "
-			  "start_hash %llu, "
+			  "start_hash %llx, "
 			  "fork (start %llu, blks_count %llu)\n",
 			  start_hash,
 			  le64_to_cpu(search->raw.fork.start_offset),
@@ -2247,7 +2248,7 @@ int ssdfs_extents_tree_add_fork(struct ssdfs_extents_btree_info *tree,
 	start_hash = search->request.start.hash;
 	if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
 		SSDFS_ERR("corrupted fork: "
-			  "start_hash %llu, "
+			  "start_hash %llx, "
 			  "fork (start %llu, blks_count %llu)\n",
 			  start_hash,
 			  le64_to_cpu(search->raw.fork.start_offset),
@@ -2367,7 +2368,7 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	start_hash = search->request.start.hash;
 	if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
 		SSDFS_ERR("corrupted fork: "
-			  "start_hash %llu, "
+			  "start_hash %llx, "
 			  "fork (start %llu, blks_count %llu)\n",
 			  start_hash,
 			  le64_to_cpu(search->raw.fork.start_offset),
@@ -2569,7 +2570,7 @@ int ssdfs_extents_tree_change_fork(struct ssdfs_extents_btree_info *tree,
 	start_hash = search->request.start.hash;
 	if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
 		SSDFS_ERR("corrupted fork: "
-			  "start_hash %llu, "
+			  "start_hash %llx, "
 			  "fork (start %llu, blks_count %llu)\n",
 			  start_hash,
 			  le64_to_cpu(search->raw.fork.start_offset),
@@ -3427,7 +3428,7 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
 		if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
 			SSDFS_ERR("corrupted fork: "
-				  "start_hash %llu, "
+				  "start_hash %llx, "
 				  "fork (start %llu, blks_count %llu)\n",
 				  start_hash,
 				  le64_to_cpu(search->raw.fork.start_offset),
@@ -3439,7 +3440,7 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 		if (start_hash >= le64_to_cpu(search->raw.fork.start_offset)) {
 			SSDFS_ERR("corrupted fork: "
-				  "start_hash %llu, "
+				  "start_hash %llx, "
 				  "fork (start %llu, blks_count %llu)\n",
 				  start_hash,
 				  le64_to_cpu(search->raw.fork.start_offset),
@@ -3655,7 +3656,7 @@ int ssdfs_extents_tree_delete_fork(struct ssdfs_extents_btree_info *tree,
 	start_hash = search->request.start.hash;
 	if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
 		SSDFS_ERR("corrupted fork: "
-			  "start_hash %llu, "
+			  "start_hash %llx, "
 			  "fork (start %llu, blks_count %llu)\n",
 			  start_hash,
 			  le64_to_cpu(search->raw.fork.start_offset),
@@ -4364,7 +4365,7 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 	err = ssdfs_btree_delete_range(&tree->buffer.tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete range: "
-			  "start_hash %llu, end_hash %llu, count %u, "
+			  "start_hash %llx, end_hash %llx, count %u, "
 			  "err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
@@ -5104,18 +5105,36 @@ int ssdfs_extents_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		memcpy(&tmp_buffer,
 			&raw_inode->internal[0].area1.extents_root,
 			sizeof(struct ssdfs_btree_inline_root_node));
-
-		memcpy(&tree_info->root_buffer, &tmp_buffer,
-			sizeof(struct ssdfs_btree_inline_root_node));
-		tree_info->root = &tree_info->root_buffer;
-		err = ssdfs_btree_create_root_node(node, tree_info->root);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to create root node: err %d\n",
-				  err);
-		}
 	} else {
-		err = -ERANGE;
-		SSDFS_ERR("extents tree is inline forks array\n");
+		switch (atomic_read(&tree_info->type)) {
+		case SSDFS_INLINE_FORKS_ARRAY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid tree type %#x\n",
+				  atomic_read(&tree_info->type));
+			return -ERANGE;
+		}
+
+		memset(&tmp_buffer, 0xFF,
+			sizeof(struct ssdfs_btree_inline_root_node));
+
+		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT + 1;
+		tmp_buffer.header.items_count = 0;
+		tmp_buffer.header.flags = 0;
+		tmp_buffer.header.type = SSDFS_BTREE_ROOT_NODE;
+		tmp_buffer.header.upper_node_id =
+				cpu_to_le32(SSDFS_BTREE_ROOT_NODE_ID);
+	}
+
+	memcpy(&tree_info->root_buffer, &tmp_buffer,
+		sizeof(struct ssdfs_btree_inline_root_node));
+	tree_info->root = &tree_info->root_buffer;
+	err = ssdfs_btree_create_root_node(node, tree_info->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create root node: err %d\n",
+			  err);
 	}
 
 	return err;
@@ -5834,6 +5853,7 @@ void ssdfs_extents_btree_destroy_node(struct ssdfs_btree_node *node)
 static
 int ssdfs_extents_btree_add_node(struct ssdfs_btree_node *node)
 {
+	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
 	int err = 0;
@@ -5845,7 +5865,13 @@ int ssdfs_extents_btree_add_node(struct ssdfs_btree_node *node)
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 
-	if (atomic_read(&node->state) != SSDFS_BTREE_NODE_INITIALIZED) {
+	switch (atomic_read(&node->state)) {
+	case SSDFS_BTREE_NODE_CREATED:
+	case SSDFS_BTREE_NODE_DIRTY:
+		/* expected states */
+		break;
+
+	default:
 		SSDFS_WARN("invalid node: id %u, state %#x\n",
 			   node->node_id, atomic_read(&node->state));
 		return -ERANGE;
@@ -5896,7 +5922,29 @@ int ssdfs_extents_btree_add_node(struct ssdfs_btree_node *node)
 finish_add_node:
 	up_write(&node->header_lock);
 
-	return err;
+	if (err)
+		return err;
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
+		spin_lock(&node->descriptor_lock);
+		memcpy(&key, &node->node_index,
+			sizeof(struct ssdfs_btree_index_key));
+		spin_unlock(&node->descriptor_lock);
+
+		err = ssdfs_btree_node_add_index(node, &key);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add index: err %d\n", err);
+			return err;
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return 0;
 }
 
 
@@ -6276,7 +6324,7 @@ int ssdfs_extents_btree_node_find_lookup_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -6422,7 +6470,7 @@ int ssdfs_prepare_forks_buffer(struct ssdfs_btree_search *search,
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("found_index %u, start_hash %llu, end_hash %llu, "
+	SSDFS_DBG("found_index %u, start_hash %llx, end_hash %llx, "
 		  "items_count %u, item_size %zu\n",
 		   found_index, start_hash, end_hash,
 		   items_count, item_size);
@@ -6591,7 +6639,7 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -6725,8 +6773,8 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 					    search->request.end.hash,
 					    start_hash, end_hash)) {
 		SSDFS_ERR("invalid request: "
-			  "request (start_hash %llu, end_hash %llu), "
-			  "node (start_hash %llu, end_hash %llu)\n",
+			  "request (start_hash %llx, end_hash %llx), "
+			  "node (start_hash %llx, end_hash %llx)\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  start_hash, end_hash);
@@ -6802,7 +6850,7 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 		return -ENODATA;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the index: "
-			  "start_hash %llu, end_hash %llu, err %d\n",
+			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
@@ -6819,16 +6867,16 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 
 	if (err == -EAGAIN) {
 		SSDFS_DBG("node contains not all requested blocks: "
-			  "node (start_hash %llu, end_hash %llu), "
-			  "request (start_hash %llu, end_hash %llu)\n",
+			  "node (start_hash %llx, end_hash %llx), "
+			  "request (start_hash %llx, end_hash %llx)\n",
 			  start_hash, end_hash,
 			  search->request.start.hash,
 			  search->request.end.hash);
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract range: "
-			  "node (start_hash %llu, end_hash %llu), "
-			  "request (start_hash %llu, end_hash %llu), "
+			  "node (start_hash %llx, end_hash %llx), "
+			  "request (start_hash %llx, end_hash %llx), "
 			  "err %d\n",
 			  start_hash, end_hash,
 			  search->request.start.hash,
@@ -6862,7 +6910,7 @@ int ssdfs_extents_btree_node_find_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -6874,7 +6922,7 @@ int ssdfs_extents_btree_node_find_item(struct ssdfs_btree_node *node,
 	if (search->request.count != 1 ||
 	    search->request.start.hash != search->request.end.hash) {
 		SSDFS_ERR("invalid request state: "
-			  "count %d, start_hash %llu, end_hash %llu\n",
+			  "count %d, start_hash %llx, end_hash %llx\n",
 			  search->request.count,
 			  search->request.start.hash,
 			  search->request.end.hash);
@@ -7622,7 +7670,7 @@ int __ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -7854,7 +7902,7 @@ finish_detect_affected_items:
 
 	if (start_hash >= U64_MAX || end_hash >= U64_MAX) {
 		err = -ERANGE;
-		SSDFS_ERR("start_hash %llu, end_hash %llu\n",
+		SSDFS_ERR("start_hash %llx, end_hash %llx\n",
 			  start_hash, end_hash);
 		goto finish_items_area_correction;
 	}
@@ -7952,7 +8000,7 @@ int ssdfs_extents_btree_node_insert_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -8029,7 +8077,7 @@ int ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -8116,7 +8164,7 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -8394,7 +8442,7 @@ int ssdfs_define_first_invalid_index(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !start_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, hash %llu\n",
+	SSDFS_DBG("node_id %u, hash %llx\n",
 		  node->node_id, hash);
 
 	if (!is_ssdfs_btree_node_index_area_exist(node)) {
@@ -8419,11 +8467,11 @@ int ssdfs_define_first_invalid_index(struct ssdfs_btree_node *node,
 	if (err == -ENODATA) {
 		err = -EAGAIN;
 		SSDFS_DBG("unable to find an index: "
-			  "node_id %u, hash %llu\n",
+			  "node_id %u, hash %llx\n",
 			  node->node_id, hash);
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find an index: "
-			  "node_id %u, hash %llu, err %d\n",
+			  "node_id %u, hash %llx, err %d\n",
 			  node->node_id, hash, err);
 	}
 
@@ -9003,7 +9051,7 @@ int ssdfs_change_item_and_invalidate_tail(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -9200,7 +9248,7 @@ int ssdfs_extents_btree_node_change_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -9451,7 +9499,7 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -9923,7 +9971,7 @@ int ssdfs_extents_btree_node_delete_item(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -9971,7 +10019,7 @@ int ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llu, end_hash %llu, "
+		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
@@ -10219,20 +10267,21 @@ void ssdfs_debug_extents_btree_object(struct ssdfs_extents_btree_info *tree)
 	if (tree->root) {
 		SSDFS_DBG("ROOT NODE HEADER: height %u, items_count %u, "
 			  "flags %#x, type %#x, upper_node_id %u, "
-			  "create_cno %llu\n",
+			  "node_ids (left %u, right %u)\n",
 			  tree->root->header.height,
 			  tree->root->header.items_count,
 			  tree->root->header.flags,
 			  tree->root->header.type,
 			  le32_to_cpu(tree->root->header.upper_node_id),
-			  le64_to_cpu(tree->root->header.create_cno));
+			  le32_to_cpu(tree->root->header.node_ids[0]),
+			  le32_to_cpu(tree->root->header.node_ids[1]));
 
 		for (i = 0; i < SSDFS_BTREE_ROOT_NODE_INDEX_COUNT; i++) {
 			struct ssdfs_btree_index *index;
 
 			index = &tree->root->indexes[i];
 
-			SSDFS_DBG("NODE_INDEX: index %d, hash %llu, "
+			SSDFS_DBG("NODE_INDEX: index %d, hash %llx, "
 				  "seg_id %llu, logical_blk %u, len %u\n",
 				  i,
 				  le64_to_cpu(index->hash),

@@ -305,7 +305,7 @@ int ssdfs_shextree_add_pre_invalid_index(struct ssdfs_shared_extents_tree *tree,
 
 	SSDFS_DBG("tree %p, owner_ino %llu, index_type %#x, "
 		  "node_id %u, node_type %#x, height %u, flags %#x, "
-		  "hash %llu, seg_id %llu, logical_blk %u, len %u\n",
+		  "hash %llx, seg_id %llu, logical_blk %u, len %u\n",
 		  tree, owner_ino, index_type,
 		  node_id, node_type, height, flags,
 		  hash, seg_id, logical_blk, len);

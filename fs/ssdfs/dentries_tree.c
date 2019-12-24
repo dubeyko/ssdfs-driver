@@ -4116,14 +4116,12 @@ int ssdfs_dentries_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		memset(&tmp_buffer, 0xFF,
 			sizeof(struct ssdfs_btree_inline_root_node));
 
-		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT;
+		tmp_buffer.header.height = SSDFS_BTREE_LEAF_NODE_HEIGHT + 1;
 		tmp_buffer.header.items_count = 0;
 		tmp_buffer.header.flags = 0;
 		tmp_buffer.header.type = SSDFS_BTREE_ROOT_NODE;
 		tmp_buffer.header.upper_node_id =
 				cpu_to_le32(SSDFS_BTREE_ROOT_NODE_ID);
-		tmp_buffer.header.create_cno =
-				cpu_to_le64(ssdfs_current_cno(fsi->sb));
 	}
 
 	memcpy(&tree_info->root_buffer, &tmp_buffer,
@@ -4869,6 +4867,7 @@ void ssdfs_dentries_btree_destroy_node(struct ssdfs_btree_node *node)
 static
 int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 {
+	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
 	int err = 0;
@@ -4883,6 +4882,7 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
 	case SSDFS_BTREE_NODE_INITIALIZED:
+	case SSDFS_BTREE_NODE_DIRTY:
 		/* expected state */
 		break;
 
@@ -4936,7 +4936,29 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 finish_add_node:
 	up_write(&node->header_lock);
 
-	return err;
+	if (err)
+		return err;
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
+		spin_lock(&node->descriptor_lock);
+		memcpy(&key, &node->node_index,
+			sizeof(struct ssdfs_btree_index_key));
+		spin_unlock(&node->descriptor_lock);
+
+		err = ssdfs_btree_node_add_index(node, &key);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add index: err %d\n", err);
+			return err;
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return 0;
 }
 
 
@@ -8700,13 +8722,14 @@ void ssdfs_debug_dentries_btree_object(struct ssdfs_dentries_btree_info *tree)
 	if (tree->root) {
 		SSDFS_DBG("ROOT NODE HEADER: height %u, items_count %u, "
 			  "flags %#x, type %#x, upper_node_id %u, "
-			  "create_cno %llu\n",
+			  "node_ids (left %u, right %u)\n",
 			  tree->root->header.height,
 			  tree->root->header.items_count,
 			  tree->root->header.flags,
 			  tree->root->header.type,
 			  le32_to_cpu(tree->root->header.upper_node_id),
-			  le64_to_cpu(tree->root->header.create_cno));
+			  le32_to_cpu(tree->root->header.node_ids[0]),
+			  le32_to_cpu(tree->root->header.node_ids[1]));
 
 		for (i = 0; i < SSDFS_BTREE_ROOT_NODE_INDEX_COUNT; i++) {
 			struct ssdfs_btree_index *index;

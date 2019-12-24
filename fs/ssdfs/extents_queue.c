@@ -455,7 +455,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 
 		if (le64_to_cpu(cur_index.index.hash) >= U64_MAX) {
 			SSDFS_ERR("corrupted index: "
-				  "invalid hash %llu\n",
+				  "invalid hash %llx\n",
 				  le64_to_cpu(cur_index.index.hash));
 			return -EIO;
 		}
@@ -1002,7 +1002,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 			    start_offset > end_hash) {
 				err = -EIO;
 				SSDFS_ERR("corrupted fork: "
-					  "start_hash %llu, end_hash %llu, "
+					  "start_hash %llx, end_hash %llx, "
 					  "start_offset %llu\n",
 					  start_hash, end_hash,
 					  start_offset);

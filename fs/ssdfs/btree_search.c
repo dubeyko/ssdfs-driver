@@ -287,7 +287,7 @@ bool is_btree_search_request_valid(struct ssdfs_btree_search *search)
 		return false;
 	} else if (search->request.start.hash > search->request.end.hash) {
 		SSDFS_WARN("invalid range: "
-			   "start_hash %llu, end_hash %llu\n",
+			   "start_hash %llx, end_hash %llx\n",
 			   search->request.start.hash,
 			   search->request.end.hash);
 		return false;
@@ -340,7 +340,7 @@ bool is_btree_leaf_node_found(struct ssdfs_btree_search *search)
 	if (search->node.state != SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC)
 		return false;
 
-	if (search->node.height != SSDFS_BTREE_LEAF_NODE_HEIGHT)
+	if (search->node.height >= SSDFS_BTREE_PARENT2HYBRID_HEIGHT)
 		return false;
 
 	if (search->node.id == SSDFS_BTREE_NODE_INVALID_ID)
@@ -431,8 +431,8 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 	BUG_ON(!search);
 
 	SSDFS_DBG("REQUEST: type %#x, flags %#x, count %u, "
-		  "START: name %p, name_len %zu, hash %llu, ino %llu, "
-		  "END: name %p, name_len %zu, hash %llu, ino %llu\n",
+		  "START: name %p, name_len %zu, hash %llx, ino %llu, "
+		  "END: name %p, name_len %zu, hash %llx, ino %llu\n",
 		  search->request.type,
 		  search->request.flags,
 		  search->request.count,
@@ -455,7 +455,7 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 
 	node_index = &search->node.found_index;
 	SSDFS_DBG("NODE_INDEX: node_id %u, node_type %#x, "
-		  "height %u, flags %#x, hash %llu, "
+		  "height %u, flags %#x, hash %llx, "
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  le32_to_cpu(node_index->node_id),
 		  node_index->node_type,
@@ -516,7 +516,7 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 			addr = (u8 *)search->result.name + (i * item_size);
 			name = (struct ssdfs_name_string *)addr;
 
-			SSDFS_DBG("NAME: index %d, hash %llu, str_len %zu\n",
+			SSDFS_DBG("NAME: index %d, hash %llx, str_len %zu\n",
 				  i, name->hash, name->len);
 
 			SSDFS_DBG("LOOKUP: index %u, hash_lo %u, "

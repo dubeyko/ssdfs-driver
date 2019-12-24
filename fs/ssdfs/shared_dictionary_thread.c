@@ -283,7 +283,7 @@ try_process_queue:
 				ssdfs_fs_error(tree->generic_tree.fsi->sb,
 						__FILE__, __func__, __LINE__,
 						"fail to add name: "
-						"hash %llu, name %s, len %zu, "
+						"hash %llx, name %s, len %zu, "
 						"err %d\n",
 						ni->desc.name.hash,
 						ni->desc.name.str_buf,
@@ -298,7 +298,7 @@ try_process_queue:
 		case SSDFS_NAME_CHANGE:
 		case SSDFS_NAME_DELETE:
 			SSDFS_ERR("unsupported operation: "
-				  "type %#x, hash %llu, len %zu\n",
+				  "type %#x, hash %llx, len %zu\n",
 				  ni->type,
 				  ni->desc.name.hash,
 				  ni->desc.name.len);
@@ -307,7 +307,7 @@ try_process_queue:
 
 		default:
 			SSDFS_ERR("invalid operation type: "
-				  "type %#x, hash %llu, len %zu\n",
+				  "type %#x, hash %llx, len %zu\n",
 				  ni->type,
 				  ni->desc.name.hash,
 				  ni->desc.name.len);

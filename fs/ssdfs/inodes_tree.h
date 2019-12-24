@@ -121,7 +121,7 @@ bool is_free_inodes_range_invalid(struct ssdfs_inodes_btree_range *range)
 		range->area.count == 0;
 
 	if (is_invalid) {
-		SSDFS_ERR("node_id %u, start_hash %llu, "
+		SSDFS_ERR("node_id %u, start_hash %llx, "
 			  "start_index %u, count %u\n",
 			  range->node_id,
 			  range->area.start_hash,
