@@ -2498,6 +2498,13 @@ finish_add_node:
 			sizeof(struct ssdfs_btree_index_key));
 		spin_unlock(&node->descriptor_lock);
 
+		SSDFS_DBG("node_id %u, node_type %#x, "
+			  "node_height %u, hash %llx\n",
+			  le32_to_cpu(key.node_id),
+			  key.node_type,
+			  key.height,
+			  le64_to_cpu(key.index.hash));
+
 		err = ssdfs_btree_node_add_index(node, &key);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add index: err %d\n", err);
@@ -13969,91 +13976,6 @@ finish_extract_range:
 }
 
 /*
- * ssdfs_shared_dict_btree_node_move_items_range() - move range between nodes
- * @src: source node
- * @dst: destination node
- * @start_item: starting index of the item
- * @count: count of items in the range
- *
- * This method tries to move a range of items from @src node into
- * @dst node.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-EFAULT     - node is corrupted.
- * %-ENOMEM     - fail to allocate memory.
- * %-ENODATA    - no such range in the node.
- */
-static
-int ssdfs_shared_dict_btree_node_move_items_range(struct ssdfs_btree_node *src,
-						  struct ssdfs_btree_node *dst,
-						  u16 start_item, u16 count)
-{
-	struct ssdfs_btree_search *search;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!src || !dst);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("src node_id %u, dst node_id %u, "
-		  "start_item %u, count %u\n",
-		  src->node_id, dst->node_id,
-		  start_item, count);
-
-	search = ssdfs_btree_search_alloc();
-	if (!search) {
-		SSDFS_ERR("fail to allocate btree search object\n");
-		return -ENOMEM;
-	}
-
-	ssdfs_btree_search_init(search);
-
-	err = ssdfs_shared_dict_btree_node_extract_range(src,
-							 start_item, count,
-							 search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to extract range: "
-			  "node_id %u, start_item %u, "
-			  "count %u, err %d\n",
-			  src->node_id, start_item, count, err);
-		goto finish_move_items_range;
-	}
-
-	err = ssdfs_shared_dict_btree_node_delete_range(src, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to delete range: "
-			  "node_id %u, start_item %u, "
-			  "count %u, err %d\n",
-			  src->node_id, start_item, count, err);
-		goto finish_move_items_range;
-	}
-
-	err = ssdfs_shared_dict_btree_node_find_range(dst, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to find range: "
-			  "node_id %u, err %d\n",
-			  dst->node_id, err);
-		goto finish_move_items_range;
-	}
-
-	err = ssdfs_shared_dict_btree_node_insert_range(dst, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to insert range: "
-			  "node_id %u, err %d\n",
-			  dst->node_id, err);
-		goto finish_move_items_range;
-	}
-
-finish_move_items_range:
-	ssdfs_btree_search_free(search);
-	return err;
-}
-
-/*
  * ssdfs_shared_dict_btree_resize_items_area() - resize items area of the node
  * @node: node object
  * @new_size: new size of the items area
@@ -14285,6 +14207,5 @@ const struct ssdfs_btree_node_operations ssdfs_shared_dict_btree_node_ops = {
 	.change_item		= ssdfs_shared_dict_btree_node_change_item,
 	.delete_item		= ssdfs_shared_dict_btree_node_delete_item,
 	.delete_range		= ssdfs_shared_dict_btree_node_delete_range,
-	.move_items_range	= ssdfs_shared_dict_btree_node_move_items_range,
 	.resize_items_area	= ssdfs_shared_dict_btree_resize_items_area,
 };

@@ -340,9 +340,6 @@ bool is_btree_leaf_node_found(struct ssdfs_btree_search *search)
 	if (search->node.state != SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC)
 		return false;
 
-	if (search->node.height >= SSDFS_BTREE_PARENT2HYBRID_HEIGHT)
-		return false;
-
 	if (search->node.id == SSDFS_BTREE_NODE_INVALID_ID)
 		return false;
 

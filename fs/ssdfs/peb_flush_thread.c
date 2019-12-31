@@ -8718,6 +8718,11 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 			struct page *page = req->result.pvec.pages[i];
 
+			if (!page) {
+				SSDFS_WARN("page %d is NULL\n", i);
+				continue;
+			}
+
 			if (PageLocked(page))
 				unlock_page(page);
 			else {
@@ -8758,6 +8763,11 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 		for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 			struct page *page = req->result.pvec.pages[i];
+
+			if (!page) {
+				SSDFS_WARN("page %d is NULL\n", i);
+				continue;
+			}
 
 			if (PageLocked(page))
 				unlock_page(page);

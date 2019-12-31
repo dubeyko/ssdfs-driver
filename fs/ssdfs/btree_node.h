@@ -667,6 +667,12 @@ int __ssdfs_btree_common_node_extract_index(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_node_index_area *area,
 				    u16 found_index,
 				    struct ssdfs_btree_index_key *ptr);
+int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
+				      u16 items_count,
+				      u16 items_capacity,
+				      u64 start_hash,
+				      u64 end_hash,
+				      struct ssdfs_btree_search *search);
 
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);
 

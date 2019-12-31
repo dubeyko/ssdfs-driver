@@ -2407,6 +2407,10 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 		int node_type;
 		prev_height = search->node.height;
 
+		SSDFS_DBG("node_id %u, hash %llx\n",
+			  search->node.id,
+			  search->request.start.hash);
+
 		ssdfs_btree_search_define_parent_node(search,
 							search->node.child);
 
@@ -2476,12 +2480,28 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 				goto finish_search_leaf_node;
 			}
 
+			switch (atomic_read(&node->index_area.state)) {
+			case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+				/* expected state */
+				break;
+
+			default:
+				err = -ERANGE;
+				SSDFS_WARN("corrupted node %u\n",
+					   node->node_id);
+				goto finish_search_leaf_node;
+			}
+
 			down_read(&node->header_lock);
 			start_hash = node->items_area.start_hash;
 			end_hash = node->items_area.end_hash;
 			is_found = start_hash <= search->request.start.hash &&
 				   search->request.start.hash <= end_hash;
 			up_read(&node->header_lock);
+
+			SSDFS_DBG("start_hash %llx, end_hash %llx, "
+				  "is_found %#x\n",
+				  start_hash, end_hash, is_found);
 
 			if (start_hash < U64_MAX && end_hash == U64_MAX) {
 				err = -ERANGE;
@@ -2494,7 +2514,16 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 			if (is_found) {
 				search->node.state =
 					SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC;
-				break;
+				goto check_found_node;
+			} else if (search->request.start.hash > end_hash) {
+				/*
+				 * Hybrid node is exausted already.
+				 * It needs to use this node as
+				 * starting point for adding a new node.
+				 */
+				search->node.state =
+					SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC;
+				goto check_found_node;
 			}
 		}
 
@@ -2559,6 +2588,7 @@ try_find_index:
 		}
 	} while (prev_height > SSDFS_BTREE_LEAF_NODE_HEIGHT);
 
+check_found_node:
 	if (search->node.state == SSDFS_BTREE_SEARCH_ROOT_NODE_DESC) {
 		err = -ENOENT;
 		ssdfs_btree_search_define_parent_node(search,

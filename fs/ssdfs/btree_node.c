@@ -2136,6 +2136,13 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 		} else
 			hdr->items_capacity = cpu_to_le16(items_capacity);
 
+		SSDFS_DBG("node_id %u, node_type %#x, "
+			  "start_hash %llx, end_hash %llx\n",
+			  node->node_id,
+			  atomic_read(&node->type),
+			  node->items_area.start_hash,
+			  node->items_area.end_hash);
+
 		hdr->start_hash = cpu_to_le64(node->items_area.start_hash);
 		hdr->end_hash = cpu_to_le64(node->items_area.end_hash);
 		break;
@@ -2195,6 +2202,13 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 		} else
 			hdr->items_capacity = cpu_to_le16(items_capacity);
 
+		SSDFS_DBG("node_id %u, node_type %#x, "
+			  "start_hash %llx, end_hash %llx\n",
+			  node->node_id,
+			  atomic_read(&node->type),
+			  node->items_area.start_hash,
+			  node->items_area.end_hash);
+
 		hdr->start_hash = cpu_to_le64(node->items_area.start_hash);
 		hdr->end_hash = cpu_to_le64(node->items_area.end_hash);
 		break;
@@ -2221,6 +2235,13 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		} else
 			hdr->items_capacity = cpu_to_le16(items_capacity);
+
+		SSDFS_DBG("node_id %u, node_type %#x, "
+			  "start_hash %llx, end_hash %llx\n",
+			  node->node_id,
+			  atomic_read(&node->type),
+			  node->index_area.start_hash,
+			  node->index_area.end_hash);
 
 		hdr->start_hash = cpu_to_le64(node->index_area.start_hash);
 		hdr->end_hash = cpu_to_le64(node->index_area.end_hash);
@@ -4287,6 +4308,9 @@ try_get_hash:
 		goto try_get_hash;
 	}
 
+	SSDFS_DBG("hash_index %u, hash %llx\n",
+		  *hash_index, *hash);
+
 	return err;
 }
 
@@ -4346,6 +4370,9 @@ int ssdfs_check_last_index(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	SSDFS_DBG("hash_index %u, hash %llx\n",
+		  hash_index, hash);
+
 	if (hash_index != index) {
 		SSDFS_ERR("hash_index %u != index %u\n",
 			  hash_index, index);
@@ -4371,6 +4398,9 @@ int ssdfs_check_last_index(struct ssdfs_btree_node *node,
 		err = -ENODATA;
 		*found_index = hash_index;
 	}
+
+	SSDFS_DBG("prev_found %u, found_index %u\n",
+		  prev_found, *found_index);
 
 	return err;
 }
@@ -4432,6 +4462,9 @@ int ssdfs_check_last_index_pair(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	SSDFS_DBG("hash_index %u, hash %llx\n",
+		  hash_index, hash);
+
 	if (hash_index == lower_index) {
 		if (search_hash < hash) {
 			err = -ENOENT;
@@ -4483,6 +4516,9 @@ int ssdfs_check_last_index_pair(struct ssdfs_btree_node *node,
 			  hash_index, lower_index, upper_index);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("prev_found %u, found_index %u, err %d\n",
+		  prev_found, *found_index, err);
 
 	return err;
 }
@@ -4594,6 +4630,9 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("search_bytes %u, offset %u, area_size %u\n",
+		  search_bytes, area->offset, area->area_size);
+
 	processed_indexes = (start_offset - area->offset);
 	processed_indexes /= area->index_size;
 
@@ -4612,8 +4651,15 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 		return -ENOENT;
 	}
 
+	SSDFS_DBG("area->index_count %u, area->index_capacity %u\n",
+		  area->index_count, area->index_capacity);
+
 	index_count = min_t(u32, index_count,
 				area->index_count - processed_indexes);
+
+	SSDFS_DBG("area->index_count %u, processed_indexes %u, "
+		  "index_count %u\n",
+		  area->index_count, processed_indexes, index_count);
 
 	cur_index = 0;
 	range_start = lower_index = 0;
@@ -4626,6 +4672,9 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 	while (lower_index <= upper_index) {
 		int diff = upper_index - lower_index;
 		u32 hash_index;
+
+		SSDFS_DBG("lower_index %u, upper_index %u, diff %d\n",
+			  lower_index, upper_index, diff);
 
 		if (diff < 0) {
 			err = -ERANGE;
@@ -4683,15 +4732,16 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 			*processed_bytes = search_bytes;
 			goto finish_search;
 		} else
-			cur_index = diff / 2;
+			cur_index = lower_index + (diff / 2);
+
 
 		err = ssdfs_get_index_key_hash(node, kaddr, page_off,
-						lower_index, upper_index,
+						cur_index, upper_index,
 						&hash_index, &hash);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get hash: "
-				  "lower_index %u, upper_index %u, err %d\n",
-				  lower_index, upper_index, err);
+				  "cur_index %u, upper_index %u, err %d\n",
+				  cur_index, upper_index, err);
 			goto finish_search;
 		}
 
@@ -4743,6 +4793,9 @@ finish_search:
 			return -ERANGE;
 		}
 	}
+
+	SSDFS_DBG("prev_found %u, found_index %u\n",
+		  prev_found, *found_index);
 
 	return err;
 }
@@ -4927,6 +4980,9 @@ int __ssdfs_btree_root_node_extract_index(struct ssdfs_btree_node *node,
 		ptr->node_type = SSDFS_BTREE_INDEX_NODE;
 		break;
 	}
+
+	SSDFS_DBG("node_height %u, node_type %#x\n",
+		  node_height, ptr->node_type);
 
 	ptr->flags = cpu_to_le16(SSDFS_BTREE_INDEX_HAS_VALID_EXTENT);
 
@@ -6501,6 +6557,9 @@ int ssdfs_btree_root_node_delete_index(struct ssdfs_btree_node *node,
 
 	node->index_area.index_count--;
 
+	SSDFS_DBG("node->index_area.index_count %u\n",
+		  node->index_area.index_count);
+
 	return 0;
 }
 
@@ -7899,6 +7958,186 @@ int ssdfs_btree_node_check_result_for_search(struct ssdfs_btree_search *search)
 	default:
 		SSDFS_WARN("invalid search result state\n");
 		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_btree_node_check_hash_range() - check necessity to do search
+ * @node: pointer on node object
+ * @items_count: items count in the node
+ * @items_capacity: node's capacity for items
+ * @start_hash: items' area starting hash
+ * @end_hash: items' area ending hash
+ * @search: pointer on search request object
+ *
+ * This method tries to check the necessity to do
+ * the real search in the node..
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - requested range is out of the node.
+ * %-ENOMEM     - unable to allocate memory.
+ */
+int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
+				      u16 items_count,
+				      u16 items_capacity,
+				      u64 start_hash,
+				      u64 end_hash,
+				      struct ssdfs_btree_search *search)
+{
+	u16 vacant_items;
+	bool have_enough_space;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("type %#x, flags %#x, "
+		  "start_hash %llx, end_hash %llx, "
+		  "state %#x, node_id %u, height %u, "
+		  "parent %p, child %p\n",
+		  search->request.type, search->request.flags,
+		  search->request.start.hash, search->request.end.hash,
+		  atomic_read(&node->state), node->node_id,
+		  atomic_read(&node->height), search->node.parent,
+		  search->node.child);
+
+	vacant_items = items_capacity - items_count;
+	have_enough_space = search->request.count <= vacant_items;
+
+	switch (RANGE_WITHOUT_INTERSECTION(search->request.start.hash,
+					   search->request.end.hash,
+					   start_hash, end_hash)) {
+	case 0:
+		/* ranges have intersection */
+		break;
+
+	case -1: /* range1 < range2 */
+		if (have_enough_space) {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		} else {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		}
+
+		search->result.err = -ENODATA;
+		search->result.start_index = 0;
+		search->result.count = search->request.count;
+		search->result.search_cno =
+			ssdfs_current_cno(node->tree->fsi->sb);
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
+		return -ENODATA;
+
+	case 1: /* range1 > range2 */
+		if (have_enough_space) {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+		} else {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		}
+
+		search->result.err = -ENODATA;
+		search->result.start_index = items_count;
+		search->result.count = search->request.count;
+		search->result.search_cno =
+			ssdfs_current_cno(node->tree->fsi->sb);
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
+		return -ENODATA;
+
+	default:
+		BUG();
+	}
+
+	if (!RANGE_HAS_PARTIAL_INTERSECTION(search->request.start.hash,
+					    search->request.end.hash,
+					    start_hash, end_hash)) {
+		SSDFS_ERR("invalid request: "
+			  "request (start_hash %llx, end_hash %llx), "
+			  "node (start_hash %llx, end_hash %llx)\n",
+			  search->request.start.hash,
+			  search->request.end.hash,
+			  start_hash, end_hash);
+		return -ERANGE;
+	}
+
+	if (items_count == 0) {
+		search->result.state =
+			SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+
+		search->result.err = -ENODATA;
+		search->result.start_index = 0;
+		search->result.count = search->request.count;
+		search->result.search_cno =
+			ssdfs_current_cno(node->tree->fsi->sb);
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
+		return -ENODATA;
 	}
 
 	return 0;
@@ -9324,6 +9563,139 @@ int ssdfs_btree_node_extract_range(u16 start_index, u16 count,
 }
 
 /*
+ * __ssdfs_btree_node_move_items_range() - move range between nodes
+ * @src: source node
+ * @dst: destination node
+ * @start_item: starting index of the item
+ * @count: count of items in the range
+ *
+ * This method tries to move a range of items from @src node into
+ * @dst node.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EFAULT     - node is corrupted.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no such range in the node.
+ */
+static
+int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
+					struct ssdfs_btree_node *dst,
+					u16 start_item, u16 count)
+{
+	struct ssdfs_btree_search *search;
+	struct ssdfs_inode *inode;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!src || !dst);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("src node_id %u, dst node_id %u, "
+		  "start_item %u, count %u\n",
+		  src->node_id, dst->node_id,
+		  start_item, count);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+
+	if (!src->node_ops) {
+		if (!src->node_ops->extract_range) {
+			SSDFS_WARN("unable to extract the items range\n");
+			return -EOPNOTSUPP;
+		}
+
+		if (!src->node_ops->delete_range) {
+			SSDFS_WARN("unable to delete the items range\n");
+			return -EOPNOTSUPP;
+		}
+	}
+
+	if (!dst->node_ops) {
+		if (!dst->node_ops->find_range) {
+			SSDFS_WARN("unable to find the items range\n");
+			return -EOPNOTSUPP;
+		}
+
+		if (!dst->node_ops->insert_range) {
+			SSDFS_WARN("unable to insert the items range\n");
+			return -EOPNOTSUPP;
+		}
+	}
+
+	err = src->node_ops->extract_range(src, start_item, count, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to extract range: "
+			  "node_id %u, start_item %u, "
+			  "count %u, err %d\n",
+			  src->node_id, start_item, count, err);
+		goto finish_move_items_range;
+	}
+
+	ssdfs_debug_btree_search_object(search);
+
+	if (count != search->result.count) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid count (request %u, result %u)\n",
+			  count, search->result.count);
+		goto finish_move_items_range;
+	}
+
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ALL;
+	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	inode = (struct ssdfs_inode *)search->result.buf;
+	search->request.start.hash = le64_to_cpu(inode->ino);
+	inode += search->result.count - 1;
+	search->request.end.hash = le64_to_cpu(inode->ino);
+	search->request.count = count;
+
+	err = src->node_ops->delete_range(src, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete range: "
+			  "node_id %u, start_item %u, "
+			  "count %u, err %d\n",
+			  src->node_id, start_item, count, err);
+		goto finish_move_items_range;
+	}
+
+	search->request.type = SSDFS_BTREE_SEARCH_ADD_RANGE;
+
+	err = dst->node_ops->find_range(dst, search);
+	if (err == -ENODATA) {
+		err = 0;
+		/*
+		 * Node is empty. We are ready to insert.
+		 */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find range: "
+			  "node_id %u, err %d\n",
+			  dst->node_id, err);
+		goto finish_move_items_range;
+	}
+
+	err = dst->node_ops->insert_range(dst, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert range: "
+			  "node_id %u, err %d\n",
+			  dst->node_id, err);
+		goto finish_move_items_range;
+	}
+
+finish_move_items_range:
+	ssdfs_btree_search_free(search);
+	return err;
+}
+
+/*
  * ssdfs_btree_node_move_items_range() - move items range
  * @src: source node
  * @dst: destination node
@@ -9374,6 +9746,7 @@ int ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 	}
 
 	switch (atomic_read(&dst->state)) {
+	case SSDFS_BTREE_NODE_CREATED:
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
 		/* expected state */
@@ -9417,12 +9790,17 @@ int ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 		return -ERANGE;
 	}
 
-	if (!src->node_ops || !src->node_ops->move_items_range) {
+	if (!src->node_ops) {
 		SSDFS_WARN("unable to move the items range\n");
 		return -EOPNOTSUPP;
+	} else if (!src->node_ops->move_items_range) {
+		err = __ssdfs_btree_node_move_items_range(src, dst,
+							  start_item, count);
+	} else {
+		err = src->node_ops->move_items_range(src, dst,
+							start_item, count);
 	}
 
-	err = src->node_ops->move_items_range(src, dst, start_item, count);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to move the items range: "
 			  "src node_id %u, dst node_id %u, "
@@ -9759,6 +10137,9 @@ int ssdfs_allocate_items_range(struct ssdfs_btree_node *node,
 
 	spin_unlock(&bmap->lock);
 
+	SSDFS_DBG("found %lu, start_area %lu, start_index %u\n",
+		  found, start_area, start_index);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("found %lu != start %lu\n",
 			  found, start_area + start_index);
@@ -9804,7 +10185,8 @@ bool is_ssdfs_node_items_range_allocated(struct ssdfs_btree_node *node,
 		BUG();
 
 	spin_lock(&bmap->lock);
-	found = bitmap_find_next_zero_area(bmap->ptr, items_capacity,
+	found = bitmap_find_next_zero_area(bmap->ptr,
+					   start_area + items_capacity,
 					   start_area + start_index, count, 0);
 	if (found != (start_area + start_index)) {
 		/* area is allocated already */
