@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/peb_mapping_queue.c - PEB mappings queue implementation.
  *
- * Copyright (c) 2019 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>

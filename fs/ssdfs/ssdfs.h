@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/ssdfs.h - in-core declarations.
  *
- * Copyright (c) 2019 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>

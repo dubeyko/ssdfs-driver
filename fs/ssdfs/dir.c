@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/dir.c - folder operations.
  *
- * Copyright (c) 2019 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
