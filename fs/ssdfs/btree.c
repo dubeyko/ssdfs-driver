@@ -1292,7 +1292,15 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	node->extent.seg_id = cpu_to_le64(seg_id);
 	node->extent.logical_blk = cpu_to_le32(req->place.start.blk_index);
 	node->extent.len = cpu_to_le32(req->place.len);
+	memcpy(&node->node_index.index.extent, &node->extent,
+		sizeof(struct ssdfs_raw_extent));
 	spin_unlock(&node->descriptor_lock);
+
+	SSDFS_DBG("tree_type %#x, node_id %u, node_type %#x, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  node->tree->type, node->node_id, node_type,
+		  seg_id, req->place.start.blk_index,
+		  req->place.len);
 
 	return 0;
 
@@ -1873,7 +1881,9 @@ finish_child_search:
  */
 u32 ssdfs_btree_generate_node_id(struct ssdfs_btree *tree)
 {
+	struct ssdfs_btree_node *node;
 	u32 node_id = U32_MAX;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
@@ -1889,8 +1899,24 @@ u32 ssdfs_btree_generate_node_id(struct ssdfs_btree *tree)
 	}
 	spin_unlock(&tree->nodes_lock);
 
-	if (node_id == U32_MAX)
+	if (node_id == U32_MAX) {
 		SSDFS_DBG("node IDs are completely used\n");
+		return node_id;
+	}
+
+	err = ssdfs_btree_radix_tree_find(tree,
+					  SSDFS_BTREE_ROOT_NODE_ID,
+					  &node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find root node in radix tree: "
+			  "err %d\n", err);
+		return U32_MAX;
+	} else if (!node) {
+		SSDFS_WARN("empty node pointer\n");
+		return U32_MAX;
+	}
+
+	set_ssdfs_btree_node_dirty(node);
 
 	return node_id;
 }

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.30 [January 02, 2020]
+    (*) Fix bugs in inodes tree functionality (step 10).
+
 v.3.29 [December 31, 2019]
     (*) Fix bugs in inodes tree functionality (step 9).
 

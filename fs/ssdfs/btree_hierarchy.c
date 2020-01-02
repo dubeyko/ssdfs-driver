@@ -5563,6 +5563,11 @@ int ssdfs_btree_add_index(struct ssdfs_btree_state_descriptor *desc,
 		  key.height,
 		  le64_to_cpu(key.index.hash));
 
+	SSDFS_DBG("seg_id %llu, logical_blk %u, len %u\n",
+		  le64_to_cpu(key.index.extent.seg_id),
+		  le32_to_cpu(key.index.extent.logical_blk),
+		  le32_to_cpu(key.index.extent.len));
+
 	err = ssdfs_btree_node_add_index(parent_node, &key);
 	if (unlikely(err))
 		SSDFS_ERR("fail to add index: err %d\n", err);
@@ -5628,6 +5633,9 @@ int ssdfs_btree_update_index(struct ssdfs_btree_state_descriptor *desc,
 	spin_lock(&child_node->descriptor_lock);
 	memcpy(&old_key, &child_node->node_index,
 		sizeof(struct ssdfs_btree_index_key));
+	memcpy(&child_node->node_index.index.extent,
+		&child_node->extent,
+		sizeof(struct ssdfs_raw_extent));
 	memcpy(&new_key, &child_node->node_index,
 		sizeof(struct ssdfs_btree_index_key));
 	if (type == SSDFS_BTREE_LEAF_NODE)

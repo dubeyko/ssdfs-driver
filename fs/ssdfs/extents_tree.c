@@ -626,6 +626,14 @@ finish_add_range:
 	if (unlikely(err))
 		goto destroy_generic_tree;
 
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		goto destroy_generic_tree;
+	}
+
 	atomic_set(&tree->type, SSDFS_PRIVATE_EXTENTS_BTREE);
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
 	tree->generic_tree = &tree->buffer.tree;
@@ -2268,6 +2276,14 @@ int ssdfs_extents_tree_add_fork(struct ssdfs_extents_btree_info *tree,
 		SSDFS_WARN("forks_count is too much\n");
 		atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_CORRUPTED);
 		return -ERANGE;
+	}
+
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		return err;
 	}
 
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);

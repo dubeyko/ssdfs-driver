@@ -4824,7 +4824,7 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 {
 	u32 start_offset, end_offset;
 	u32 processed_bytes = 0;
-	u16 prev_found;
+	u16 prev_found = U16_MAX;
 	int err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4907,6 +4907,9 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 		start_offset += processed_bytes;
 	}
 
+	SSDFS_DBG("prev_found %u, found_index %u\n",
+		  prev_found, *found_index);
+
 	return err;
 }
 
@@ -4963,17 +4966,11 @@ int __ssdfs_btree_root_node_extract_index(struct ssdfs_btree_node *node,
 	switch (node_height) {
 	case SSDFS_BTREE_LEAF_NODE_HEIGHT:
 	case SSDFS_BTREE_PARENT2LEAF_HEIGHT:
-		if (can_add_new_index(node))
-			ptr->node_type = SSDFS_BTREE_LEAF_NODE;
-		else
-			ptr->node_type = SSDFS_BTREE_HYBRID_NODE;
+		ptr->node_type = SSDFS_BTREE_LEAF_NODE;
 		break;
 
 	case SSDFS_BTREE_PARENT2HYBRID_HEIGHT:
-		if (can_add_new_index(node))
-			ptr->node_type = SSDFS_BTREE_HYBRID_NODE;
-		else
-			ptr->node_type = SSDFS_BTREE_INDEX_NODE;
+		ptr->node_type = SSDFS_BTREE_HYBRID_NODE;
 		break;
 
 	default:
@@ -5317,6 +5314,8 @@ int ssdfs_find_index_by_hash(struct ssdfs_btree_node *node,
 	}
 
 finish_hash_search:
+	SSDFS_DBG("hash %llx, found_index %u\n",
+		  hash, *found_index);
 	return err;
 }
 
@@ -5672,6 +5671,15 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 	memcpy(&node->raw.root_node.indexes[position], &ptr->index,
 		sizeof(struct ssdfs_btree_index));
 
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(ptr->node_id),
+		  ptr->node_type,
+		  le64_to_cpu(ptr->index.hash),
+		  le64_to_cpu(ptr->index.extent.seg_id),
+		  le32_to_cpu(ptr->index.extent.logical_blk),
+		  le32_to_cpu(ptr->index.extent.len));
+
 	switch (position) {
 	case SSDFS_ROOT_NODE_LEFT_LEAF_NODE:
 		node->index_area.start_hash = le64_to_cpu(ptr->index.hash);
@@ -5754,6 +5762,15 @@ int __ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 		sizeof(struct ssdfs_btree_index_key));
 	kunmap_atomic(kaddr);
 
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(ptr->node_id),
+		  ptr->node_type,
+		  le64_to_cpu(ptr->index.hash),
+		  le64_to_cpu(ptr->index.extent.seg_id),
+		  le32_to_cpu(ptr->index.extent.logical_blk),
+		  le32_to_cpu(ptr->index.extent.len));
+
 	return 0;
 }
 
@@ -5794,6 +5811,15 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u, position %u\n",
 		  node->node_id, position);
+
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(ptr->node_id),
+		  ptr->node_type,
+		  le64_to_cpu(ptr->index.hash),
+		  le64_to_cpu(ptr->index.extent.seg_id),
+		  le32_to_cpu(ptr->index.extent.logical_blk),
+		  le32_to_cpu(ptr->index.extent.len));
 
 	if (!(position < node->index_area.index_count)) {
 		SSDFS_ERR("cannot insert index: "
