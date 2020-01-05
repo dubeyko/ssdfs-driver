@@ -1558,6 +1558,18 @@ __ssdfs_btree_read_node(struct ssdfs_btree *tree,
 		}
 	}
 
+	SSDFS_DBG("NODE_INDEX: node_id %u, node_type %#x, "
+		  "height %u, flags %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(node_index->node_id),
+		  node_index->node_type,
+		  node_index->height,
+		  le16_to_cpu(node_index->flags),
+		  le64_to_cpu(node_index->index.hash),
+		  le64_to_cpu(node_index->index.extent.seg_id),
+		  le32_to_cpu(node_index->index.extent.logical_blk),
+		  le32_to_cpu(node_index->index.extent.len));
+
 	spin_lock(&ptr->descriptor_lock);
 	memcpy(&ptr->node_index, node_index,
 		sizeof(struct ssdfs_btree_index_key));
@@ -2249,6 +2261,8 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
+
 		if (tree->btree_ops && tree->btree_ops->add_node) {
 			err = tree->btree_ops->add_node(node);
 			if (unlikely(err)) {
@@ -2276,8 +2290,6 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 				goto finish_create_node;
 			}
 		}
-
-		atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 	}
 
 	if (hierarchy->desc.increment_height) {
@@ -2570,7 +2582,7 @@ try_find_index:
 				search->node.state =
 					SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC;
 			}
-			break;
+			goto check_found_node;
 		} else if (err == -EACCES) {
 			unsigned long res;
 

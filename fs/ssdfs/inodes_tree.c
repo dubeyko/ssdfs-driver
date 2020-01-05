@@ -1950,7 +1950,7 @@ void ssdfs_inodes_btree_destroy_node(struct ssdfs_btree_node *node)
  * ssdfs_inodes_btree_node_correct_hash_range() - correct node's hash range
  * @node: pointer on node object
  *
- * This method tries to correct node's hash range..
+ * This method tries to correct node's hash range.
  *
  * RETURN:
  * [success]
@@ -1977,7 +1977,7 @@ int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
 	BUG_ON(start_hash >= U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, state %#x, "
+	SSDFS_DBG("node_id %u, state %#x, "
 		  "node_type %#x, start_hash %llx\n",
 		  node->node_id, atomic_read(&node->state),
 		  atomic_read(&node->type), start_hash);

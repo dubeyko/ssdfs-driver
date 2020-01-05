@@ -334,6 +334,13 @@ finish_prepare_level:
 			  "start_hash %llx, err %d\n",
 			  start_hash, err);
 		return err;
+	} else {
+		/*
+		 * We've received teh position of available
+		 * index record. So, correct it for the real
+		 * insert operation.
+		 */
+		insert->pos.start++;
 	}
 
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
@@ -5516,6 +5523,7 @@ int ssdfs_btree_add_index(struct ssdfs_btree_state_descriptor *desc,
 	struct ssdfs_btree_index_key key;
 	struct ssdfs_btree_node *parent_node = NULL, *child_node = NULL;
 	int type;
+	u64 start_hash = U64_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5548,7 +5556,26 @@ int ssdfs_btree_add_index(struct ssdfs_btree_state_descriptor *desc,
 
 	type = atomic_read(&child_node->type);
 
+	switch (type) {
+	case SSDFS_BTREE_LEAF_NODE:
+		down_read(&child_node->header_lock);
+		start_hash = child_node->items_area.start_hash;
+		up_read(&child_node->header_lock);
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+	case SSDFS_BTREE_INDEX_NODE:
+		down_read(&child_node->header_lock);
+		start_hash = child_node->index_area.start_hash;
+		up_read(&child_node->header_lock);
+		break;
+	}
+
 	spin_lock(&child_node->descriptor_lock);
+	if (start_hash != U64_MAX) {
+		child_node->node_index.index.hash =
+				    cpu_to_le64(start_hash);
+	}
 	memcpy(&child_node->node_index.index.extent,
 		&child_node->extent,
 		sizeof(struct ssdfs_raw_extent));
@@ -5645,6 +5672,18 @@ int ssdfs_btree_update_index(struct ssdfs_btree_state_descriptor *desc,
 	memcpy(&child_node->node_index, &new_key,
 		sizeof(struct ssdfs_btree_index_key));
 	spin_unlock(&child_node->descriptor_lock);
+
+	SSDFS_DBG("node_id %u, node_type %#x, "
+		  "node_height %u, hash %llx\n",
+		  le32_to_cpu(new_key.node_id),
+		  new_key.node_type,
+		  new_key.height,
+		  le64_to_cpu(new_key.index.hash));
+
+	SSDFS_DBG("seg_id %llu, logical_blk %u, len %u\n",
+		  le64_to_cpu(new_key.index.extent.seg_id),
+		  le32_to_cpu(new_key.index.extent.logical_blk),
+		  le32_to_cpu(new_key.index.extent.len));
 
 	err = ssdfs_btree_node_change_index(parent_node, &old_key, &new_key);
 	if (unlikely(err))

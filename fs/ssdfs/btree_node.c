@@ -164,7 +164,7 @@ int ssdfs_btree_node_create_empty_index_area(struct ssdfs_btree *tree,
 		node->index_area.area_size *= node->index_area.index_capacity;
 		node->index_area.index_count = 0;
 		node->index_area.start_hash = start_hash;
-		node->index_area.end_hash = start_hash;
+		node->index_area.end_hash = U64_MAX;
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -182,7 +182,7 @@ int ssdfs_btree_node_create_empty_index_area(struct ssdfs_btree *tree,
 					sizeof(struct ssdfs_btree_index_key);
 		node->index_area.index_count = 0;
 		node->index_area.start_hash = start_hash;
-		node->index_area.end_hash = start_hash;
+		node->index_area.end_hash = U64_MAX;
 		break;
 
 	case SSDFS_BTREE_LEAF_NODE:
@@ -5974,6 +5974,10 @@ int ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 	else if (position == node->index_area.index_count)
 		node->index_area.end_hash = le64_to_cpu(ptr->index.hash);
 
+	SSDFS_DBG("start_hash %llx, end_hash %llx\n",
+		  node->index_area.start_hash,
+		  node->index_area.end_hash);
+
 	node->index_area.index_count++;
 
 	return 0;
@@ -6135,7 +6139,10 @@ finish_change_root_node:
 		BUG_ON(found >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			/* node hasn't any index */
+			err = 0;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find an index: "
 				  "node_id %u, hash %llx, err %d\n",
 				  node->node_id, hash, err);
@@ -6221,6 +6228,15 @@ int ssdfs_btree_root_node_change_index(struct ssdfs_btree_node *node,
 		  node->node_id, atomic_read(&node->type),
 		  found_index);
 
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(new_index->node_id),
+		  new_index->node_type,
+		  le64_to_cpu(new_index->index.hash),
+		  le64_to_cpu(new_index->index.extent.seg_id),
+		  le32_to_cpu(new_index->index.extent.logical_blk),
+		  le32_to_cpu(new_index->index.extent.len));
+
 	if (found_index >= SSDFS_BTREE_ROOT_NODE_INDEX_COUNT) {
 		SSDFS_ERR("invalid found_index %u\n",
 			  found_index);
@@ -6283,6 +6299,15 @@ int ssdfs_btree_common_node_change_index(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u, node_type %#x, found_index %u\n",
 		  node->node_id, atomic_read(&node->type),
 		  found_index);
+
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(new_index->node_id),
+		  new_index->node_type,
+		  le64_to_cpu(new_index->index.hash),
+		  le64_to_cpu(new_index->index.extent.seg_id),
+		  le32_to_cpu(new_index->index.extent.logical_blk),
+		  le32_to_cpu(new_index->index.extent.len));
 
 	if (found_index == area->index_count) {
 		SSDFS_ERR("found_index %u == index_count %u\n",
@@ -11002,6 +11027,70 @@ finish_extract_range:
 }
 
 /*
+ * ssdfs_calculate_item_offset() - calculate item's offset
+ * @node: pointer on node object
+ * @area_offset: area offset in bytes from the node's beginning
+ * @area_size: area size in bytes
+ * @index: item's index in the node
+ * @item_size: size of item in bytes
+ * @page_index: index of a page in the node [out]
+ * @item_offset: offset in bytes from a page's beginning
+ *
+ * This method tries to calculate item's offset in a page.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_calculate_item_offset(struct ssdfs_btree_node *node,
+				u32 area_offset, u32 area_size,
+				int index, size_t item_size,
+				int *page_index,
+				u32 *item_offset)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !page_index || !item_offset);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
+		  "item_size %zu, index %d\n",
+		  node->node_id, area_offset, area_size,
+		  item_size, index);
+
+	*item_offset = (u32)index * item_size;
+	if (*item_offset >= area_size) {
+		SSDFS_ERR("item_offset %u >= area_size %u\n",
+			  *item_offset, area_size);
+		return -ERANGE;
+	}
+
+	*item_offset += area_offset;
+	if (*item_offset >= node->node_size) {
+		SSDFS_ERR("item_offset %u >= node_size %u\n",
+			  *item_offset, node->node_size);
+		return -ERANGE;
+	}
+
+	*page_index = *item_offset >> PAGE_SHIFT;
+	if (*page_index >= pagevec_count(&node->content.pvec)) {
+		SSDFS_ERR("invalid page_index: "
+			  "index %d, pvec_size %u\n",
+			  *page_index,
+			  pagevec_count(&node->content.pvec));
+		return -ERANGE;
+	}
+
+	if (*page_index != 0)
+		*item_offset %= PAGE_SIZE;
+
+	return 0;
+}
+
+/*
  * __ssdfs_shift_range_right() - shift the items' range to the right
  * @node: pointer on node object
  * @area_offset: area offset in bytes from the node's beginning
@@ -11033,6 +11122,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 	u32 item_offset1, item_offset2;
 	void *kaddr1, *kaddr2;
 	u32 moved_items = 0;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
@@ -11098,6 +11188,32 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(index_diff >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (index_diff < shift) {
+			SSDFS_ERR("index_diff %u < shift %u\n",
+				  index_diff, shift);
+			return -ERANGE;
+		} else if (index_diff == shift) {
+			/*
+			 * It's the case when destination page
+			 * has no items at all. Otherwise,
+			 * it is the case of presence of free
+			 * space in the begin of the page is equal
+			 * to the @shift. This space was prepared
+			 * by previous move operation. Simply,
+			 * keep the index_diff the same.
+			 */
+		} else {
+			/*
+			 * It needs to know the number of items
+			 * from the page's beginning or area's beginning.
+			 * So, excluding the shift from the account.
+			 */
+			index_diff -= shift;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(moved_items > range_len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -11128,52 +11244,24 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		BUG_ON(start_index > src_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		/* Calculate item_offset1 */
-		item_offset1 = (u32)src_index * item_size;
-		if (item_offset1 >= area_size) {
-			SSDFS_ERR("item_offset %u >= area_size %u\n",
-				  item_offset1, area_size);
-			return -ERANGE;
+		err = ssdfs_calculate_item_offset(node, area_offset, area_size,
+						  src_index, item_size,
+						  &page_index1, &item_offset1);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to calculate item's offset: "
+				  "item_index %d, err %d\n",
+				  src_index, err);
+			return err;
 		}
 
-		item_offset1 += area_offset;
-		if (item_offset1 >= node->node_size) {
-			SSDFS_ERR("item_offset %u >= node_size %u\n",
-				  item_offset1, node->node_size);
-			return -ERANGE;
-		}
-
-		page_index1 = item_offset1 >> PAGE_SHIFT;
-		if (page_index1 >= pagevec_count(&node->content.pvec)) {
-			SSDFS_ERR("invalid page_index: "
-				  "index %d, pvec_size %u\n",
-				  page_index1,
-				  pagevec_count(&node->content.pvec));
-			return -ERANGE;
-		}
-
-		item_offset2 = (u32)dst_index * item_size;
-		if (item_offset2 >= area_size) {
-			SSDFS_ERR("item_offset %u >= area_size %u\n",
-				  item_offset2, area_size);
-			return -ERANGE;
-		}
-
-		/* Calculate item_offset1 */
-		item_offset2 += area_offset;
-		if (item_offset2 >= node->node_size) {
-			SSDFS_ERR("item_offset %u >= node_size %u\n",
-				  item_offset2, node->node_size);
-			return -ERANGE;
-		}
-
-		page_index2 = item_offset2 >> PAGE_SHIFT;
-		if (page_index2 >= pagevec_count(&node->content.pvec)) {
-			SSDFS_ERR("invalid page_index: "
-				  "index %d, pvec_size %u\n",
-				  page_index2,
-				  pagevec_count(&node->content.pvec));
-			return -ERANGE;
+		err = ssdfs_calculate_item_offset(node, area_offset, area_size,
+						  dst_index, item_size,
+						  &page_index2, &item_offset2);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to calculate item's offset: "
+				  "item_index %d, err %d\n",
+				  dst_index, err);
+			return err;
 		}
 
 		SSDFS_DBG("items_offset1 %u, item_offset2 %u\n",
@@ -11198,13 +11286,14 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			kunmap_atomic(kaddr1);
 		}
 
-		dst_index--;
-		src_index--;
-		moved_items += moving_items;
+		SSDFS_DBG("page_index1 %d, item_offset1 %u, "
+			  "page_index2 %d, item_offset2 %u\n",
+			  page_index1, item_offset1,
+			  page_index2, item_offset2);
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(moved_items >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
+		src_index--;
+		dst_index--;
+		moved_items += moving_items;
 	} while (src_index >= start_index);
 
 	if (moved_items != range_len) {
