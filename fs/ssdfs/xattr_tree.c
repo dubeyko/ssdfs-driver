@@ -1966,7 +1966,14 @@ int ssdfs_xattrs_tree_add_xattr(struct ssdfs_xattrs_btree_info *tree,
 		return -ERANGE;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;
@@ -2160,7 +2167,14 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_xattrs_btree_info *tree)
 		goto finish_add_range;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		/* expected state */
+		break;
+
+	default:
 		err = -ERANGE;
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);

@@ -1567,6 +1567,7 @@ int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
 		case SSDFS_PRIVATE_DENTRIES_BTREE:
 			switch (search->node.state) {
 			case SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC:
+			case SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC:
 				/* expected state */
 				err = 0;
 				break;
@@ -2010,6 +2011,7 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
 		/* expected state */
 		break;
 
@@ -4345,6 +4347,8 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 	down_write(&node->header_lock);
 	down_write(&node->bmap_array.lock);
 
+	memset(&node->raw.dentries_header, 0x0, hdr_size);
+
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_INDEX_NODE:
 		node->index_area.offset = (u32)hdr_size;
@@ -5316,8 +5320,14 @@ bool is_hash_for_lookup_table(u32 node_size, u16 item_index)
 	u16 lookup_index;
 	u16 calculated;
 
+	SSDFS_DBG("node_size %u, item_index %u\n",
+		  node_size, item_index);
+
 	lookup_index = ssdfs_convert_item2lookup_index(node_size, item_index);
 	calculated = ssdfs_convert_lookup2item_index(node_size, lookup_index);
+
+	SSDFS_DBG("lookup_index %u, calculated %u\n",
+		  lookup_index, calculated);
 
 	return calculated == item_index;
 }
@@ -6145,7 +6155,7 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 		  node->node_id, search->result.start_index);
 
 	item_index = search->result.start_index;
-	if ((item_index + search->request.count) >= area->items_capacity) {
+	if ((item_index + search->request.count) > area->items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "item_index %u, count %u\n",
 			  item_index, search->request.count);
@@ -6477,6 +6487,80 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 }
 
 /*
+ * ssdfs_clean_lookup_table() - clean unused space of lookup table
+ * @node: pointer on node object
+ * @area: items area descriptor
+ * @start_index: starting index
+ *
+ * This method tries to clean the unused space of lookup table.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_clean_lookup_table(struct ssdfs_btree_node *node,
+			     struct ssdfs_btree_node_items_area *area,
+			     u16 start_index)
+{
+	__le64 *lookup_table;
+	u16 lookup_index;
+	u16 item_index;
+	u16 items_count;
+	u16 items_capacity;
+	u16 cleaning_indexes;
+	u32 cleaning_bytes;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("node_id %u, start_index %u\n",
+		  node->node_id, start_index);
+
+	items_capacity = node->items_area.items_capacity;
+	if (start_index >= items_capacity) {
+		SSDFS_DBG("start_index %u >= items_capacity %u\n",
+			  start_index, items_capacity);
+		return 0;
+	}
+
+	lookup_table = node->raw.dentries_header.lookup_table;
+
+	lookup_index = ssdfs_convert_item2lookup_index(node->node_size,
+						       start_index);
+	if (unlikely(lookup_index >= SSDFS_DENTRIES_BTREE_LOOKUP_TABLE_SIZE)) {
+		SSDFS_ERR("invalid lookup_index %u\n",
+			  lookup_index);
+		return -ERANGE;
+	}
+
+	items_count = node->items_area.items_count;
+	item_index = ssdfs_convert_lookup2item_index(node->node_size,
+						     lookup_index);
+	if (unlikely(item_index >= items_count)) {
+		SSDFS_ERR("item_index %u >= items_count %u\n",
+			  item_index, items_count);
+		return -ERANGE;
+	}
+
+	if (item_index != start_index)
+		lookup_index++;
+
+	cleaning_indexes =
+		SSDFS_DENTRIES_BTREE_LOOKUP_TABLE_SIZE - lookup_index;
+	cleaning_bytes = cleaning_indexes * sizeof(__le64);
+
+	memset(&lookup_table[lookup_index], 0xFF, cleaning_bytes);
+
+	return 0;
+}
+
+/*
  * ssdfs_correct_lookup_table() - correct lookup table of the node
  * @node: pointer on node object
  * @area: items area descriptor
@@ -6507,11 +6591,12 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u\n", node->node_id);
+	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
+		  node->node_id, start_index, range_len);
 
 	if (range_len == 0) {
-		SSDFS_WARN("search->request.count == 0\n");
-		return -ERANGE;
+		SSDFS_DBG("range_len == 0\n");
+		return 0;
 	}
 
 	lookup_table = node->raw.dentries_header.lookup_table;
@@ -7129,9 +7214,8 @@ int ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(search->result.count <= 1);
+	BUG_ON(search->result.count < 1);
 	BUG_ON(!search->result.buf);
-	BUG_ON(search->result.buf_state != SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&node->items_area.state);
@@ -8178,13 +8262,23 @@ finish_detect_affected_items:
 	if (node->items_area.items_count == 0)
 		ssdfs_initialize_lookup_table(node);
 	else {
-		range_len = node->items_area.items_count - item_index;
+		range_len = items_area.items_count - item_index;
 		err = ssdfs_correct_lookup_table(node,
 						 &node->items_area,
 						 item_index, range_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to correct lookup table: "
 				  "err %d\n", err);
+			goto finish_items_area_correction;
+		}
+
+		err = ssdfs_clean_lookup_table(node,
+						&node->items_area,
+						node->items_area.items_count);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to clean the rest of lookup table: "
+				  "start_index %u, err %d\n",
+				  node->items_area.items_count, err);
 			goto finish_items_area_correction;
 		}
 	}
@@ -8394,6 +8488,9 @@ int ssdfs_dentries_btree_node_extract_range(struct ssdfs_btree_node *node,
 					    u16 start_index, u16 count,
 					    struct ssdfs_btree_search *search)
 {
+	struct ssdfs_dir_entry *dentry;
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -8408,9 +8505,26 @@ int ssdfs_dentries_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	return __ssdfs_btree_node_extract_range(node, start_index, count,
+	err = __ssdfs_btree_node_extract_range(node, start_index, count,
 						sizeof(struct ssdfs_dir_entry),
 						search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to extract a range: "
+			  "start %u, count %u, err %d\n",
+			  start_index, count, err);
+		return err;
+	}
+
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	dentry = (struct ssdfs_dir_entry *)search->result.buf;
+	search->request.start.hash = le64_to_cpu(dentry->hash_code);
+	dentry += search->result.count - 1;
+	search->request.end.hash = le64_to_cpu(dentry->hash_code);
+	search->request.count = count;
+
+	return 0;
 }
 
 /*

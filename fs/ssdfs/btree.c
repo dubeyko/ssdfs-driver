@@ -2501,7 +2501,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 				search->node.state =
 				    SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC;
 			}
-			break;
+			goto check_found_node;
 		}
 
 		node_type = atomic_read(&node->type);
@@ -2670,7 +2670,9 @@ check_found_node:
 			search->node.state =
 				SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC;
 			SSDFS_DBG("unable to find a leaf node: "
+				  "start_hash %llx, end_hash %llx, "
 				  "search_hash %llx\n",
+				  start_hash, end_hash,
 				  search->request.start.hash);
 			goto finish_search_leaf_node;
 		}
@@ -2919,7 +2921,7 @@ int ssdfs_segment_invalidate_node(struct ssdfs_btree_node *node)
  * @tree: btree object
  * @search: search object
  *
- * This method tries to delete teh index records in all parent nodes.
+ * This method tries to delete the index records in all parent nodes.
  *
  * RETURN:
  * [success]
@@ -3432,6 +3434,7 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  * %-ENODATA    - item hasn't been found
+ * %-ENOSPC     - node hasn't free space.
  */
 static
 int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
@@ -3571,6 +3574,11 @@ try_find_item_again:
 			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
+		goto finish_search_item;
+	} else if (err == -ENOSPC) {
+		err = -ENODATA;
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		SSDFS_DBG("index node was found\n");
 		goto finish_search_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find item: "
@@ -3774,6 +3782,11 @@ try_find_range_again:
 			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
+		goto finish_search_range;
+	} else if (err == -ENOSPC) {
+		err = -ENODATA;
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		SSDFS_DBG("index node was found\n");
 		goto finish_search_range;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find range: "

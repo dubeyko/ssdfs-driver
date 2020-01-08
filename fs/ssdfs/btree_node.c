@@ -8001,6 +8001,9 @@ int ssdfs_btree_node_check_result_for_search(struct ssdfs_btree_search *search)
 		break;
 
 	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		SSDFS_DBG("search result requests to add a node already\n");
+		break;
+
 	case SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE:
 		SSDFS_WARN("unexpected search result state\n");
 		search->result.state = SSDFS_BTREE_SEARCH_UNKNOWN_RESULT;
@@ -8208,6 +8211,7 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
  * %-ERANGE     - internal error.
  * %-ENODATA    - node doesn't contain item for the requested hash.
  * %-ENOENT     - node hasn't the items area.
+ * %-ENOSPC     - node hasn't free space.
  * %-EACCES     - node is under initialization yet.
  * %-EAGAIN     - search object contains obsolete result.
  * %-EOPNOTSUPP - specialized searching method doesn't been implemented
@@ -8291,6 +8295,9 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 
 	err = node->node_ops->find_item(node, search);
 	if (err == -ENODATA) {
+		u16 items_count;
+		u16 items_capacity;
+
 		SSDFS_DBG("node %u "
 			  "hasn't item for request "
 			  "(start_hash %llx, end_hash %llx)\n",
@@ -8298,7 +8305,29 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 			  search->request.start.hash,
 			  search->request.end.hash);
 
-		search->result.err = err;
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ALLOCATE_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+			down_read(&node->header_lock);
+			items_count = node->items_area.items_count;
+			items_capacity = node->items_area.items_capacity;
+			up_read(&node->header_lock);
+
+			if (items_count >= items_capacity) {
+				err = -ENOSPC;
+				SSDFS_DBG("node hasn't free space: "
+					  "items_count %u, "
+					  "items_capacity %u\n",
+					  items_count,
+					  items_capacity);
+				search->result.err = -ENODATA;
+			}
+			break;
+
+		default:
+			search->result.err = err;
+			break;
+		}
 	} else if (err == -ENOENT) {
 		SSDFS_DBG("node %u hasn't items area\n",
 			  node->node_id);
@@ -8336,6 +8365,7 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
  * %-ERANGE     - internal error.
  * %-ENODATA    - node doesn't contain items for the requested range.
  * %-ENOENT     - node hasn't the items area.
+ * %-ENOSPC     - node hasn't free space.
  * %-EACCES     - node is under initialization yet.
  * %-EAGAIN     - search object contains obsolete result.
  * %-EOPNOTSUPP - specialized searching method doesn't been implemented
@@ -8419,6 +8449,9 @@ int ssdfs_btree_node_find_range(struct ssdfs_btree_search *search)
 
 	err = node->node_ops->find_range(node, search);
 	if (err == -ENODATA) {
+		u16 items_count;
+		u16 items_capacity;
+
 		SSDFS_DBG("node %u "
 			  "hasn't item for request "
 			  "(start_hash %llx, end_hash %llx)\n",
@@ -8426,7 +8459,24 @@ int ssdfs_btree_node_find_range(struct ssdfs_btree_search *search)
 			  search->request.start.hash,
 			  search->request.end.hash);
 
-		search->result.err = err;
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ALLOCATE_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+			down_read(&node->header_lock);
+			items_count = node->items_area.items_count;
+			items_capacity = node->items_area.items_capacity;
+			up_read(&node->header_lock);
+
+			if (items_count >= items_capacity) {
+				err = -ENOSPC;
+				search->result.err = -ENODATA;
+			}
+			break;
+
+		default:
+			search->result.err = err;
+			break;
+		}
 	} else if (err == -ENOENT) {
 		SSDFS_DBG("node %u hasn't items area\n",
 			  node->node_id);
@@ -9638,7 +9688,6 @@ int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 					u16 start_item, u16 count)
 {
 	struct ssdfs_btree_search *search;
-	struct ssdfs_inode *inode;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -9700,14 +9749,7 @@ int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 		goto finish_move_items_range;
 	}
 
-	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ALL;
-	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
-				SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-	inode = (struct ssdfs_inode *)search->result.buf;
-	search->request.start.hash = le64_to_cpu(inode->ino);
-	inode += search->result.count - 1;
-	search->request.end.hash = le64_to_cpu(inode->ino);
-	search->request.count = count;
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_RANGE;
 
 	err = src->node_ops->delete_range(src, search);
 	if (unlikely(err)) {
@@ -12426,6 +12468,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height));
 
 	tree = node->tree;
+	search->result.start_index = U16_MAX;
 	search->result.count = 0;
 
 	switch (atomic_read(&node->items_area.state)) {
@@ -12647,7 +12690,8 @@ finish_extract_range:
 	} else if (unlikely(err)) {
 		search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
 		search->result.err = err;
-	}
+	} else
+		search->result.start_index = start_index;
 
 	return err;
 }
@@ -13184,6 +13228,7 @@ int ssdfs_btree_node_get_hash_range(struct ssdfs_btree_search *search,
 
 	switch (search->node.state) {
 	case SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC:
+	case SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC:
 		node = search->node.child;
 		if (!node) {
 			SSDFS_ERR("node pointer is NULL\n");

@@ -2241,7 +2241,14 @@ int ssdfs_extents_tree_add_fork(struct ssdfs_extents_btree_info *tree,
 		return -ERANGE;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;

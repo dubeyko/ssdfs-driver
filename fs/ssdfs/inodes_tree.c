@@ -4337,6 +4337,9 @@ int ssdfs_inodes_btree_node_extract_range(struct ssdfs_btree_node *node,
 					  u16 start_index, u16 count,
 					  struct ssdfs_btree_search *search)
 {
+	struct ssdfs_inode *inode;
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -4351,9 +4354,26 @@ int ssdfs_inodes_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	return __ssdfs_btree_node_extract_range(node, start_index, count,
+	err = __ssdfs_btree_node_extract_range(node, start_index, count,
 						sizeof(struct ssdfs_inode),
 						search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to extract a range: "
+			  "start %u, count %u, err %d\n",
+			  start_index, count, err);
+		return err;
+	}
+
+	search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	inode = (struct ssdfs_inode *)search->result.buf;
+	search->request.start.hash = le64_to_cpu(inode->ino);
+	inode += search->result.count - 1;
+	search->request.end.hash = le64_to_cpu(inode->ino);
+	search->request.count = count;
+
+	return 0;
 }
 
 static

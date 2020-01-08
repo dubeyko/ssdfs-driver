@@ -605,6 +605,7 @@ int ssdfs_btree_prepare_insert_item(struct ssdfs_btree_level *level,
 				    struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree_node_insert *insert;
+	struct ssdfs_btree_node_move *move;
 	int index_area_state;
 	int items_area_state;
 	u32 free_space;
@@ -732,30 +733,30 @@ finish_prepare_level:
 
 	insert_size = max_item_size * search->result.count;
 	if (level->items_area.free_space < insert_size) {
+		move = &level->items_area.move;
+
 		switch (insert->pos.state) {
 		case SSDFS_HASH_RANGE_LEFT_ADJACENT:
 			level->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
-			level->items_area.move.direction =
-						SSDFS_BTREE_MOVE_TO_LEFT;
-			level->items_area.move.pos.state =
-						SSDFS_HASH_RANGE_OUT_OF_NODE;
-			level->items_area.move.pos.start = U16_MAX;
-			level->items_area.move.pos.count = search->result.count;
+			move->direction = SSDFS_BTREE_MOVE_TO_LEFT;
+			move->pos.state = SSDFS_HASH_RANGE_OUT_OF_NODE;
+			move->pos.start = U16_MAX;
+			move->pos.count = search->result.count;
+			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 			break;
 
 		case SSDFS_HASH_RANGE_INTERSECTION:
 		case SSDFS_HASH_RANGE_RIGHT_ADJACENT:
 			level->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
-			level->items_area.move.direction =
-						SSDFS_BTREE_MOVE_TO_RIGHT;
-			level->items_area.move.pos.state =
-						SSDFS_HASH_RANGE_OUT_OF_NODE;
+			move->direction = SSDFS_BTREE_MOVE_TO_RIGHT;
+			move->pos.state = SSDFS_HASH_RANGE_OUT_OF_NODE;
 			if (items_count > search->result.count) {
-				level->items_area.move.pos.start =
+				move->pos.start =
 					items_count - search->result.count;
 			} else
-				level->items_area.move.pos.start = 0;
-			level->items_area.move.pos.count = search->result.count;
+				move->pos.start = 0;
+			move->pos.count = search->result.count;
+			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 			break;
 
 		default:
@@ -4256,6 +4257,7 @@ int ssdfs_btree_move_items_left(struct ssdfs_btree_state_descriptor *desc,
 
 	switch (child->items_area.move.pos.state) {
 	case SSDFS_HASH_RANGE_INTERSECTION:
+	case SSDFS_HASH_RANGE_OUT_OF_NODE:
 		if (child->items_area.move.pos.start != 0) {
 			SSDFS_ERR("invalid position's start %u\n",
 				  child->items_area.move.pos.start);
@@ -4388,6 +4390,7 @@ int ssdfs_btree_move_items_right(struct ssdfs_btree_state_descriptor *desc,
 
 	switch (child->items_area.move.pos.state) {
 	case SSDFS_HASH_RANGE_INTERSECTION:
+	case SSDFS_HASH_RANGE_OUT_OF_NODE:
 		if (child->items_area.move.pos.count == 0) {
 			SSDFS_ERR("invalid position's count %u\n",
 				  child->items_area.move.pos.count);

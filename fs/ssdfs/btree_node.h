@@ -396,6 +396,27 @@ bool RANGE_HAS_PARTIAL_INTERSECTION(u64 start1, u64 end1,
 }
 
 /*
+ * __ssdfs_items_per_lookup_index() - calculate items per lookup index
+ * @items_per_node: number of items per node
+ * @lookup_table_capacity: maximal number of items in lookup table
+ */
+static inline
+u16 __ssdfs_items_per_lookup_index(u32 items_per_node,
+				   int lookup_table_capacity)
+{
+	u32 items_per_lookup_index;
+
+	items_per_lookup_index = items_per_node / lookup_table_capacity;
+
+	if (items_per_node % lookup_table_capacity)
+		items_per_lookup_index++;
+
+	SSDFS_DBG("items_per_lookup_index %u\n", items_per_lookup_index);
+
+	return items_per_lookup_index;
+}
+
+/*
  * __ssdfs_convert_lookup2item_index() - convert lookup into item index
  * @lookup_index: lookup index
  * @node_size: size of the node in bytes
@@ -410,6 +431,7 @@ u16 __ssdfs_convert_lookup2item_index(u16 lookup_index,
 {
 	u32 items_per_node;
 	u32 items_per_lookup_index;
+	u32 item_index;
 
 	SSDFS_DBG("lookup_index %u, node_size %u, "
 		  "item_size %zu, table_capacity %d\n",
@@ -421,9 +443,19 @@ u16 __ssdfs_convert_lookup2item_index(u16 lookup_index,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	items_per_node = node_size / item_size;
-	items_per_lookup_index = items_per_node / lookup_table_capacity;
+	items_per_lookup_index = __ssdfs_items_per_lookup_index(items_per_node,
+							lookup_table_capacity);
 
-	return lookup_index * items_per_lookup_index;
+	item_index = (u32)lookup_index * items_per_lookup_index;
+
+	SSDFS_DBG("lookup_index %u, item_inxdex %u\n",
+		  lookup_index, item_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(item_index >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u16)item_index;
 }
 
 /*
@@ -449,8 +481,12 @@ u16 __ssdfs_convert_item2lookup_index(u16 item_index,
 		  item_size, lookup_table_capacity);
 
 	items_per_node = node_size / item_size;
-	items_per_lookup_index = items_per_node / lookup_table_capacity;
+	items_per_lookup_index = __ssdfs_items_per_lookup_index(items_per_node,
+							lookup_table_capacity);
 	lookup_index = item_index / items_per_lookup_index;
+
+	SSDFS_DBG("item_index %u, lookup_index %u, table_capacity %d\n",
+		  item_index, lookup_index, lookup_table_capacity);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(lookup_index >= lookup_table_capacity);
