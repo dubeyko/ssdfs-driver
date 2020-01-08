@@ -4347,8 +4347,6 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 	down_write(&node->header_lock);
 	down_write(&node->bmap_array.lock);
 
-	memset(&node->raw.dentries_header, 0x0, hdr_size);
-
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_INDEX_NODE:
 		node->index_area.offset = (u32)hdr_size;
