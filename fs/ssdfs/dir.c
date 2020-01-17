@@ -1307,6 +1307,151 @@ finish_get_start_hash:
 }
 
 static
+int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
+					struct ssdfs_btree_search *search,
+					u64 *next_hash)
+{
+	struct ssdfs_btree_node *parent;
+	struct ssdfs_btree_node_index_area area;
+	struct ssdfs_btree_index_key index_key;
+	u64 old_hash = U64_MAX;
+	int type;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search || !next_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_hash = le64_to_cpu(search->node.found_index.index.hash);
+
+	SSDFS_DBG("search %p, next_hash %p, old (node %u, hash %llx)\n",
+		  search, next_hash, search->node.id, old_hash);
+
+	*next_hash = U64_MAX;
+
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		SSDFS_DBG("inline dentries array is unsupported\n");
+		return -ENOENT;
+
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		/* expected tree type */
+		break;
+
+	default:
+		SSDFS_ERR("invalid tree type %#x\n",
+			  atomic_read(&tree->type));
+		return -ERANGE;
+	}
+
+	parent = search->node.parent;
+
+	if (!parent) {
+		SSDFS_ERR("node pointer is NULL\n");
+		return -ERANGE;
+	}
+
+	type = atomic_read(&parent->type);
+
+	down_read(&tree->lock);
+	down_read(&tree->generic_tree->lock);
+
+	do {
+		u16 found_pos;
+
+		err = -ENOENT;
+
+		down_read(&parent->full_lock);
+
+		down_read(&parent->header_lock);
+		memcpy(&area, &parent->index_area,
+			sizeof(struct ssdfs_btree_node_index_area));
+		up_read(&parent->header_lock);
+
+		err = ssdfs_find_index_by_hash(parent, &area,
+						old_hash,
+						&found_pos);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find the index position: "
+				  "old_hash %llx, err %d\n",
+				  old_hash, err);
+			goto finish_index_search;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(found_pos == U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		found_pos++;
+
+		if (found_pos >= area.index_count) {
+			err = -ENOENT;
+			SSDFS_DBG("index area is finished: "
+				  "found_pos %u, area.index_count %u\n",
+				  found_pos, area.index_count);
+			goto finish_index_search;
+		}
+
+		if (type == SSDFS_BTREE_ROOT_NODE) {
+			err = __ssdfs_btree_root_node_extract_index(parent,
+								    found_pos,
+								    &index_key);
+		} else {
+			err = __ssdfs_btree_common_node_extract_index(parent,
+								    &area,
+								    found_pos,
+								    &index_key);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to extract index key: "
+				  "index_position %u, err %d\n",
+				  found_pos, err);
+			goto finish_index_search;
+		}
+
+finish_index_search:
+		up_read(&parent->full_lock);
+
+		if (err == -ENOENT) {
+			if (type == SSDFS_BTREE_ROOT_NODE) {
+				SSDFS_DBG("no more next hashes\n");
+				goto finish_get_next_hash;
+			}
+
+			spin_lock(&parent->descriptor_lock);
+			old_hash = le64_to_cpu(parent->node_index.index.hash);
+			spin_unlock(&parent->descriptor_lock);
+
+			/* try next parent */
+			parent = parent->parent_node;
+
+			if (!parent) {
+				err = -ERANGE;
+				SSDFS_ERR("node pointer is NULL\n");
+				goto finish_get_next_hash;
+			}
+		} else if (unlikely(err)) {
+			/* process error */
+			goto finish_get_next_hash;
+		} else {
+			/* next hash has been found */
+			err = 0;
+			*next_hash = le64_to_cpu(index_key.index.hash);
+			goto finish_get_next_hash;
+		}
+
+		type = atomic_read(&parent->type);
+	} while (parent != NULL);
+
+finish_get_next_hash:
+	up_read(&tree->generic_tree->lock);
+	up_read(&tree->lock);
+
+	return err;
+}
+
+static
 int ssdfs_dentries_tree_node_hash_range(struct ssdfs_dentries_btree_info *tree,
 					struct ssdfs_btree_search *search,
 					u64 *start_hash, u64 *end_hash,
@@ -1322,7 +1467,7 @@ int ssdfs_dentries_tree_node_hash_range(struct ssdfs_dentries_btree_info *tree,
 
 	SSDFS_DBG("search %p, start_hash %p, "
 		  "end_hash %p, items_count %p\n",
-		  tree, start_hash, end_hash, items_count);
+		  search, start_hash, end_hash, items_count);
 
 	*start_hash = *end_hash = U64_MAX;
 	*items_count = 0;
@@ -1794,6 +1939,22 @@ finish_tree_processing:
 			SSDFS_ERR("ctx->pos %llx <= end_hash %llx\n",
 				  (u64)ctx->pos,
 				  end_hash);
+			goto out_free;
+		}
+
+		down_read(&ii->lock);
+		err = ssdfs_dentries_tree_get_next_hash(ii->dentries_tree,
+							search,
+							&ctx->pos);
+		up_read(&ii->lock);
+
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("no more items in the folder\n");
+			goto out_free;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to get next hash: err %d\n",
+				  err);
 			goto out_free;
 		}
 	} while (ctx->pos < U64_MAX);

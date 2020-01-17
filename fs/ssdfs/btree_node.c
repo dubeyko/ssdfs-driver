@@ -2363,6 +2363,7 @@ void ssdfs_btree_flush_root_node(struct ssdfs_btree_node *node,
 		  atomic_read(&node->type));
 
 	down_write(&node->header_lock);
+
 	items_count = node->index_area.index_count;
 	root_node->header.height = (u8)atomic_read(&node->tree->height);
 	root_node->header.items_count = cpu_to_le16(items_count);
@@ -2375,6 +2376,14 @@ void ssdfs_btree_flush_root_node(struct ssdfs_btree_node *node,
 		sizeof(struct ssdfs_btree_index) *
 		SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
 	clear_ssdfs_btree_node_dirty(node);
+
+	SSDFS_DBG("left index (node_id %u, hash %llx), "
+		  "right index (node_id %u, hash %llx)\n",
+		  le32_to_cpu(root_node->header.node_ids[0]),
+		  le64_to_cpu(root_node->indexes[0].hash),
+		  le32_to_cpu(root_node->header.node_ids[1]),
+		  le64_to_cpu(root_node->indexes[1].hash));
+
 	up_write(&node->header_lock);
 
 	spin_lock(&node->tree->nodes_lock);
@@ -2674,6 +2683,8 @@ int ssdfs_btree_node_flush(struct ssdfs_btree_node *node)
 			   atomic_read(&node->type));
 		break;
 	}
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
@@ -6261,6 +6272,9 @@ int ssdfs_btree_root_node_change_index(struct ssdfs_btree_node *node,
 		BUG();
 	}
 
+	memcpy(&node->raw.root_node.header.node_ids[found_index],
+		&new_index->node_id, sizeof(__le32));
+
 	return 0;
 }
 
@@ -6588,11 +6602,15 @@ int ssdfs_btree_root_node_delete_index(struct ssdfs_btree_node *node,
 				sizeof(struct ssdfs_btree_index));
 			memset(&node->raw.root_node.indexes[position + 1], 0xFF,
 				sizeof(struct ssdfs_btree_index));
+			node->raw.root_node.header.node_ids[position + 1] =
+							cpu_to_le32(U32_MAX);
 		} else {
 			node->index_area.start_hash = U64_MAX;
 			node->index_area.end_hash = U64_MAX;
 			memset(&node->raw.root_node.indexes[position], 0xFF,
 				sizeof(struct ssdfs_btree_index));
+			node->raw.root_node.header.node_ids[position] =
+							cpu_to_le32(U32_MAX);
 		}
 		break;
 
@@ -6600,6 +6618,8 @@ int ssdfs_btree_root_node_delete_index(struct ssdfs_btree_node *node,
 		node->index_area.end_hash = node->index_area.start_hash;
 		memset(&node->raw.root_node.indexes[position], 0xFF,
 			sizeof(struct ssdfs_btree_index));
+		node->raw.root_node.header.node_ids[position] =
+						cpu_to_le32(U32_MAX);
 		break;
 
 	default:
@@ -9540,6 +9560,156 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
 	spin_unlock(&node->descriptor_lock);
 
 	set_ssdfs_btree_node_dirty(node);
+	return 0;
+}
+
+/*
+ * ssdfs_btree_node_clear_range() - clear range of deleted items
+ * @node: pointer on node object
+ * @area: items area descriptor
+ * @item_size: size of item in bytes
+ * @search: search object
+ *
+ * This method tries to clear the range of deleted items.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
+				struct ssdfs_btree_node_items_area *area,
+				size_t item_size,
+				struct ssdfs_btree_search *search)
+{
+	int page_index;
+	int dst_index;
+	struct page *page;
+	u32 item_offset;
+	void *kaddr;
+	u16 cleared_items = 0;
+	u16 start_index;
+	unsigned int range_len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("node_id %u, item_size %zu\n",
+		  node->node_id, item_size);
+
+	start_index = search->result.start_index;
+	range_len = search->request.count;
+
+	SSDFS_DBG("start_index %u, range_len %u\n",
+		  start_index, range_len);
+
+	if (range_len == 0) {
+		SSDFS_WARN("search->request.count == 0\n");
+		return -ERANGE;
+	}
+
+	if (start_index > area->items_count) {
+		SSDFS_ERR("invalid request: "
+			  "start_index %u, items_count %u\n",
+			  start_index, area->items_count);
+		return -ERANGE;
+	} else if ((start_index + range_len) > area->items_capacity) {
+		SSDFS_ERR("range is out of capacity: "
+			  "start_index %u, range_len %u, items_capacity %u\n",
+			  start_index, range_len, area->items_capacity);
+		return -ERANGE;
+	}
+
+	dst_index = start_index;
+
+	do {
+		u32 clearing_items;
+		u32 vacant_positions;
+
+		SSDFS_DBG("start_index %u, dst_index %d\n",
+			  start_index, dst_index);
+
+		item_offset = (u32)dst_index * item_size;
+		if (item_offset >= area->area_size) {
+			SSDFS_ERR("item_offset %u >= area_size %u\n",
+				  item_offset, area->area_size);
+			return -ERANGE;
+		}
+
+		item_offset += area->offset;
+		if (item_offset >= node->node_size) {
+			SSDFS_ERR("item_offset %u >= node_size %u\n",
+				  item_offset, node->node_size);
+			return -ERANGE;
+		}
+
+		page_index = item_offset >> PAGE_SHIFT;
+		if (page_index >= pagevec_count(&node->content.pvec)) {
+			SSDFS_ERR("invalid page_index: "
+				  "index %d, pvec_size %u\n",
+				  page_index,
+				  pagevec_count(&node->content.pvec));
+			return -ERANGE;
+		}
+
+		if (page_index > 0)
+			item_offset %= page_index * PAGE_SIZE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(start_index > dst_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		clearing_items = dst_index - start_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(clearing_items > range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		clearing_items = range_len - clearing_items;
+
+		if (clearing_items == 0) {
+			SSDFS_WARN("no items for clearing\n");
+			return -ERANGE;
+		}
+
+		vacant_positions = PAGE_SIZE - item_offset;
+		vacant_positions /= item_size;
+
+		if (vacant_positions == 0) {
+			SSDFS_WARN("invalid vacant_positions %u\n",
+				   vacant_positions);
+			return -ERANGE;
+		}
+
+		clearing_items = min_t(u32, clearing_items, vacant_positions);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(clearing_items >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		SSDFS_DBG("clearing_items %u, item_offset %u\n",
+			  clearing_items, item_offset);
+
+		page = node->content.pvec.pages[page_index];
+		kaddr = kmap_atomic(page);
+		memset((u8 *)kaddr + item_offset,
+			0x0,
+			clearing_items * item_size);
+		kunmap_atomic(kaddr);
+
+		dst_index += clearing_items;
+		cleared_items += clearing_items;
+	} while (cleared_items < range_len);
+
+	if (cleared_items != range_len) {
+		SSDFS_ERR("cleared_items %u != range_len %u\n",
+			  cleared_items, range_len);
+		return -ERANGE;
+	}
+
 	return 0;
 }
 

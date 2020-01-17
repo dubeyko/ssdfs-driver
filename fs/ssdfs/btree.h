@@ -190,6 +190,11 @@ int ssdfs_btree_extract_range(struct ssdfs_btree *tree,
 				struct ssdfs_btree_search *search);
 int ssdfs_btree_destroy_node_range(struct ssdfs_btree *tree,
 				   u64 start_hash);
+struct ssdfs_btree_node *
+__ssdfs_btree_read_node(struct ssdfs_btree *tree,
+			struct ssdfs_btree_node *parent,
+			struct ssdfs_btree_index_key *node_index,
+			u8 node_type, u32 node_id);
 int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
 				unsigned long node_id,
 				struct ssdfs_btree_node **node);

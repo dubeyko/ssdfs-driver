@@ -42,4 +42,13 @@ ls -lah /mnt/ssdfs
 
 sudo umount /mnt/ssdfs
 
+mkdir $i"-MOUNT-DUMP"
+chown -hR slavad $i"-MOUNT-DUMP"
+
+cd $i"-MOUNT-DUMP"
+
+dump.ssdfs -p parse_all,raw_dump -o ./ ../$1
+
+cd ../
+
 done

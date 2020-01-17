@@ -358,6 +358,10 @@ void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("peb_id %llu, "
+		  "pebi->current_log.start_page %u\n",
+		  pebi->peb_id, start_page);
+
 	ssdfs_peb_current_log_lock(pebi);
 	pebi->current_log.start_page = start_page;
 	pebi->current_log.free_data_pages = free_pages;

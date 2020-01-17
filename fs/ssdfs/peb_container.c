@@ -3712,6 +3712,7 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	int used_pages, free_pages, invalid_pages;
 	int new_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 	u64 leb_id;
+	bool is_peb_exhausted = false;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3784,11 +3785,20 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
-		SSDFS_DBG("free_pages %d, used_pages %d, invalid_pages %d\n",
-			  free_pages, used_pages, invalid_pages);
+		ssdfs_peb_current_log_lock(pebi);
+		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+
+		SSDFS_DBG("free_pages %d, used_pages %d, "
+			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  free_pages, used_pages,
+			  invalid_pages, is_peb_exhausted);
 
 		if (free_pages == 0) {
-			if (invalid_pages == 0) {
+			if (!is_peb_exhausted) {
+				new_peb_state =
+					SSDFS_MAPTBL_USING_PEB_STATE;
+			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
 						  "free_pages %d, "
@@ -3895,8 +3905,20 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
+		ssdfs_peb_current_log_lock(pebi);
+		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+
+		SSDFS_DBG("free_pages %d, used_pages %d, "
+			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  free_pages, used_pages,
+			  invalid_pages, is_peb_exhausted);
+
 		if (free_pages == 0) {
-			if (invalid_pages == 0) {
+			if (!is_peb_exhausted) {
+				new_peb_state =
+					SSDFS_MAPTBL_USING_PEB_STATE;
+			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
 						  "free_pages %d, "
@@ -4087,12 +4109,20 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
+		ssdfs_peb_current_log_lock(pebi);
+		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+
 		SSDFS_DBG("destination PEB: free_pages %d, used_pages %d, "
-			  "invalid_pages %d\n",
-			  free_pages, used_pages, invalid_pages);
+			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  free_pages, used_pages,
+			  invalid_pages, is_peb_exhausted);
 
 		if (free_pages == 0) {
-			if (invalid_pages == 0) {
+			if (!is_peb_exhausted) {
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_DST_USING_STATE;
+			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
 						  "free_pages %d, "

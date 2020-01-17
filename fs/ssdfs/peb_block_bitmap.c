@@ -667,8 +667,10 @@ init_failed:
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+	SSDFS_DBG("seg_id %llu, free_logical_blks %u, "
+		  "valid_logical_blks %u, "
 		  "invalid_logical_blks %u, pages_per_peb %u\n",
+		  bmap->parent->parent_si->seg_id,
 		  atomic_read(&bmap->free_logical_blks),
 		  atomic_read(&bmap->valid_logical_blks),
 		  atomic_read(&bmap->invalid_logical_blks),
@@ -718,6 +720,8 @@ init_failed:
 		if (free_pages < 0)
 			free_pages = 0;
 	}
+
+	SSDFS_DBG("free_pages %d\n", free_pages);
 
 	return free_pages;
 }

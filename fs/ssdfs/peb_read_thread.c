@@ -4450,6 +4450,8 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 
 	BUG_ON(sequence_id >= U8_MAX);
 
+	SSDFS_DBG("new_log_start_page %u\n", new_log_start_page);
+
 	if (new_log_start_page < fsi->pages_per_peb) {
 		u16 free_pages;
 		u16 min_log_pages;
@@ -4467,6 +4469,11 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 			free_pages = pebi->log_pages;
 			sequence_id = 0;
 		}
+
+		SSDFS_DBG("free_pages %u, min_log_pages %u, "
+			  "new_log_start_page %u\n",
+			  free_pages, min_log_pages,
+			  new_log_start_page);
 
 		ssdfs_peb_current_log_init(pebi, free_pages,
 					   new_log_start_page,

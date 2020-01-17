@@ -709,6 +709,10 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 				      u64 start_hash,
 				      u64 end_hash,
 				      struct ssdfs_btree_search *search);
+int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
+				struct ssdfs_btree_node_items_area *area,
+				size_t item_size,
+				struct ssdfs_btree_search *search);
 
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);
 

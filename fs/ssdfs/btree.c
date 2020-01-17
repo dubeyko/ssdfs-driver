@@ -1120,7 +1120,6 @@ int ssdfs_btree_define_new_node_type(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-
 	parent_type = atomic_read(&parent->type);
 	switch (parent_type) {
 	case SSDFS_BTREE_ROOT_NODE:
@@ -1501,7 +1500,6 @@ int ssdfs_prepare_empty_btree_for_add(struct ssdfs_btree *tree,
  * %-ERANGE     - internal error.
  * %-EEXIST     - node exists already.
  */
-static
 struct ssdfs_btree_node *
 __ssdfs_btree_read_node(struct ssdfs_btree *tree,
 			struct ssdfs_btree_node *parent,
@@ -4069,6 +4067,83 @@ finish_allocate_range:
 }
 
 /*
+ * need_update_parent_node() - check necessity to update index in parent node
+ * @search: search object
+ */
+static inline
+bool need_update_parent_node(struct ssdfs_btree_search *search)
+{
+	struct ssdfs_btree_node *parent;
+	u64 start_hash;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	start_hash = search->request.start.hash;
+
+	parent = search->node.parent;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!parent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return need_update_parent_index_area(start_hash, parent);
+}
+
+/*
+ * ssdfs_btree_update_index_in_parent_node() - update index in parent node
+ * @tree: btree object
+ * @search: search object [in|out]
+ * @ptr: hierarchy object
+ *
+ * This method tries to update an index in parent nodes.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_btree_update_index_in_parent_node(struct ssdfs_btree *tree,
+					    struct ssdfs_btree_search *search,
+					    struct ssdfs_btree_hierarchy *ptr)
+{
+	int cur_height, tree_height;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !ptr);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, hierarchy %p\n",
+		  tree, ptr);
+
+	tree_height = atomic_read(&tree->height);
+	if (tree_height <= 0) {
+		SSDFS_ERR("invalid tree_height %u\n",
+			  tree_height);
+		return -ERANGE;
+	}
+
+	for (cur_height = 0; cur_height < tree_height; cur_height++) {
+		err = ssdfs_btree_process_level_for_update(ptr,
+							   cur_height,
+							   search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to process the tree's level: "
+				  "cur_height %u, err %d\n",
+				  cur_height, err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_btree_add_item() - add item into btree
  * @tree: btree object
  * @search: search object [in|out]
@@ -4086,6 +4161,7 @@ finish_allocate_range:
 int ssdfs_btree_add_item(struct ssdfs_btree *tree,
 			 struct ssdfs_btree_search *search)
 {
+	struct ssdfs_btree_hierarchy *hierarchy = NULL;
 	int tree_state;
 	int err = 0;
 
@@ -4256,6 +4332,41 @@ try_insert_item:
 		goto finish_add_item;
 	}
 
+	if (need_update_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto finish_add_item;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
+								hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+		err = ssdfs_btree_update_index_in_parent_node(tree, search,
+							      hierarchy);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to update index records: "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+finish_update_parent:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto finish_add_item;
+	}
+
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
 
 finish_add_item:
@@ -4281,6 +4392,7 @@ finish_add_item:
 int ssdfs_btree_add_range(struct ssdfs_btree *tree,
 			  struct ssdfs_btree_search *search)
 {
+	struct ssdfs_btree_hierarchy *hierarchy = NULL;
 	int tree_state;
 	int err = 0;
 
@@ -4454,88 +4566,46 @@ try_insert_range:
 		goto finish_add_range;
 	}
 
+	if (need_update_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto finish_add_range;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
+								hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+		err = ssdfs_btree_update_index_in_parent_node(tree, search,
+							      hierarchy);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to update index records: "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+finish_update_parent:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto finish_add_range;
+	}
+
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
 
 finish_add_range:
 	up_read(&tree->lock);
 	return err;
-}
-
-/*
- * need_update_parent_node() - check necessity to update index in parent node
- * @search: search object
- */
-static inline
-bool need_update_parent_node(struct ssdfs_btree_search *search)
-{
-	struct ssdfs_btree_node *parent;
-	u64 start_hash;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	start_hash = search->request.start.hash;
-
-	parent = search->node.parent;
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!parent);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return need_update_parent_index_area(start_hash, parent);
-}
-
-/*
- * ssdfs_btree_update_index_in_parent_node() - update index in parent node
- * @tree: btree object
- * @search: search object [in|out]
- * @ptr: hierarchy object
- *
- * This method tries to update an index in parent nodes.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- */
-static
-int ssdfs_btree_update_index_in_parent_node(struct ssdfs_btree *tree,
-					    struct ssdfs_btree_search *search,
-					    struct ssdfs_btree_hierarchy *ptr)
-{
-	int cur_height, tree_height;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !ptr);
-	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("tree %p, hierarchy %p\n",
-		  tree, ptr);
-
-	tree_height = atomic_read(&tree->height);
-	if (tree_height <= 0) {
-		SSDFS_ERR("invalid tree_height %u\n",
-			  tree_height);
-		return -ERANGE;
-	}
-
-	for (cur_height = 0; cur_height < tree_height; cur_height++) {
-		err = ssdfs_btree_process_level_for_update(ptr,
-							   cur_height,
-							   search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to process the tree's level: "
-				  "cur_height %u, err %d\n",
-				  cur_height, err);
-			return err;
-		}
-	}
-
-	return 0;
 }
 
 /*
@@ -4608,12 +4678,6 @@ int ssdfs_btree_change_item(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	hierarchy = ssdfs_btree_hierarchy_allocate(tree);
-	if (!hierarchy) {
-		SSDFS_ERR("fail to allocate tree levels' array\n");
-		return -ENOMEM;
-	}
-
 	down_read(&tree->lock);
 
 try_next_search:
@@ -4661,6 +4725,13 @@ try_change_item:
 	}
 
 	if (need_update_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto finish_change_item;
+		}
+
 		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
 								hierarchy);
 		if (unlikely(err)) {
@@ -4669,7 +4740,7 @@ try_change_item:
 			SSDFS_ERR("fail to prepare hierarchy information : "
 				  "err %d\n",
 				  err);
-			goto finish_change_item;
+			goto finish_update_parent;
 		}
 
 		err = ssdfs_btree_update_index_in_parent_node(tree, search,
@@ -4678,15 +4749,20 @@ try_change_item:
 			SSDFS_ERR("fail to update index records: "
 				  "err %d\n",
 				  err);
-			goto finish_change_item;
+			goto finish_update_parent;
 		}
+
+finish_update_parent:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto finish_change_item;
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
 
 finish_change_item:
 	up_read(&tree->lock);
-	ssdfs_btree_hierarchy_free(hierarchy);
 	return err;
 }
 
@@ -4707,6 +4783,7 @@ finish_change_item:
 int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 			    struct ssdfs_btree_search *search)
 {
+	struct ssdfs_btree_hierarchy *hierarchy = NULL;
 	int tree_state;
 	int err = 0;
 
@@ -4805,10 +4882,41 @@ finish_delete_item:
 				  (u64)search->node.id, err);
 			return err;
 		}
+	} else if (need_update_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			return -ENOMEM;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
+								hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+		err = ssdfs_btree_update_index_in_parent_node(tree, search,
+							      hierarchy);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to update index records: "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+finish_update_parent:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			return err;
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
-
 	return 0;
 }
 
@@ -4829,6 +4937,7 @@ finish_delete_item:
 int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 			     struct ssdfs_btree_search *search)
 {
+	struct ssdfs_btree_hierarchy *hierarchy = NULL;
 	int tree_state;
 	bool need_continue_deletion = false;
 	int err = 0;
@@ -4939,6 +5048,38 @@ finish_delete_range:
 				  (u64)search->node.id, err);
 			return err;
 		}
+	} else if (need_update_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			return -ENOMEM;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
+								hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+		err = ssdfs_btree_update_index_in_parent_node(tree, search,
+							      hierarchy);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to update index records: "
+				  "err %d\n",
+				  err);
+			goto finish_update_parent;
+		}
+
+finish_update_parent:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			return err;
 	}
 
 	if (need_continue_deletion) {
@@ -4947,7 +5088,6 @@ finish_delete_range:
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
-
 	return 0;
 }
 
