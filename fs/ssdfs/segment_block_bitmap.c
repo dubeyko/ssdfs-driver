@@ -945,6 +945,8 @@ finish_define_bmap_index:
 			return err;
 		}
 	} else if (need_move) {
+		u32 len;
+
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc->src_peb || !pebc->dst_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -980,16 +982,17 @@ finish_define_bmap_index:
 		}
 
 		dst_blkbmap = &bmap->peb[peb_index];
+		len = range->len;
 
 		if (range_state == SSDFS_BLK_PRE_ALLOCATED) {
 			err = ssdfs_peb_blk_bmap_pre_allocate(dst_blkbmap,
 							      bmap_index,
-							      NULL,
+							      &len,
 							      range);
 		} else {
 			err = ssdfs_peb_blk_bmap_allocate(dst_blkbmap,
 							  bmap_index,
-							  NULL,
+							  &len,
 							  range);
 		}
 

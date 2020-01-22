@@ -2830,6 +2830,7 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	int free_blks, used_blks, invalid_blks;
 #endif /* CONFIG_SSDFS_DEBUG */
+	u32 len;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2862,6 +2863,8 @@ init_failed:
 			goto init_failed;
 		}
 	}
+
+	len = range->len;
 
 	down_read(&bmap->lock);
 
@@ -2949,9 +2952,9 @@ finish_process_source_bmap:
 	}
 
 	if (new_range_state == SSDFS_BLK_PRE_ALLOCATED)
-		err = ssdfs_block_bmap_pre_allocate(dst, NULL, range);
+		err = ssdfs_block_bmap_pre_allocate(dst, &len, range);
 	else
-		err = ssdfs_block_bmap_allocate(dst, NULL, range);
+		err = ssdfs_block_bmap_allocate(dst, &len, range);
 
 	ssdfs_block_bmap_unlock(dst);
 
