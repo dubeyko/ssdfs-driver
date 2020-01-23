@@ -7303,7 +7303,7 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 					     cur_page, write_offset);
 	if (err == -ENODATA) {
 		err = 0;
-		SSDFS_WARN("block descriptor area is absent: "
+		SSDFS_DBG("block descriptor area is absent: "
 			   "seg %llu, peb %llu, "
 			   "cur_page %lu, write_offset %u\n",
 			   pebi->pebc->parent_si->seg_id,
@@ -8118,10 +8118,11 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+	SSDFS_DBG("log_has_data %#x\n", log_has_data);
+
 	if (!log_has_data) {
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
-		goto define_next_log_start;
 	}
 
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
@@ -8129,7 +8130,7 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 
 	cur_page_offset = cur_page % pebi->log_pages;
 
-	if ((pebi->log_pages - cur_page_offset) <= 0) {
+	if (cur_page_offset == 0) {
 		/*
 		 * There is no space for log footer.
 		 * So, full log will be without footer.
@@ -8207,7 +8208,6 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("0006: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
 
-define_next_log_start:
 	ssdfs_peb_define_next_log_start(pebi, log_strategy,
 					&cur_page, &write_offset);
 
