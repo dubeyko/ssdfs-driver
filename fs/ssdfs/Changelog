@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.36 [January 26, 2020]
+    (*) Fix bugs in dentries tree functionality (step 20).
+
 v.3.35 [January 23, 2020]
     (*) Fix bugs in dentries tree functionality (step 19).
 

@@ -441,20 +441,18 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 		return 0;
 	}
 
-	logical_blk = range->start;
-
 	req->extent.ino = U64_MAX;
 	req->extent.logical_offset = U64_MAX;
 	req->extent.data_bytes = 0;
 
 	req->place.start.seg_id = pebc->parent_si->seg_id;
-	req->place.start.blk_index = logical_blk;
+	req->place.start.blk_index = range->start;
 	req->place.len = 0;
 
 	req->result.processed_blks = 0;
 
 	for (i = 0; i < range->len; i++) {
-		logical_blk += i;
+		logical_blk = range->start + i;
 
 		err = ssdfs_peb_copy_page(pebc, logical_blk, req);
 		if (unlikely(err)) {
