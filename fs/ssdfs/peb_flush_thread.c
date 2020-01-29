@@ -1098,6 +1098,13 @@ int ssdfs_peb_store_fragment(struct ssdfs_fragment_source *from,
 	to->desc->type = from->fragment_type;
 	to->desc->flags = from->fragment_flags;
 
+	SSDFS_DBG("offset %u, compr_size %u, "
+		  "uncompr_size %u, checksum %#x\n",
+		  to->desc->offset,
+		  to->desc->compr_size,
+		  to->desc->uncompr_size,
+		  le32_to_cpu(to->desc->checksum));
+
 	return 0;
 }
 
@@ -1864,12 +1871,14 @@ bool has_current_page_free_space(struct ssdfs_peb_info *pebi,
 				 int area_type,
 				 u32 fragment_size)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_page_array *area_pages;
 	bool is_space_enough, is_page_available;
 	u32 write_offset;
-	u32 free_space;
 	pgoff_t page_index;
+	unsigned long pages_count;
 	struct page *page;
+	u32 free_space = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
@@ -1882,8 +1891,16 @@ bool has_current_page_free_space(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("area_type %#x, fragment_size %u\n",
 		  area_type, fragment_size);
 
+	fsi = pebi->pebc->parent_si->fsi;
 	write_offset = pebi->current_log.area[area_type].write_offset;
-	free_space = ssdfs_area_free_space(pebi, area_type);
+	page_index = write_offset / PAGE_SIZE;
+
+	down_read(&pebi->current_log.area[area_type].array.lock);
+	pages_count = pebi->current_log.area[area_type].array.pages_count;
+	up_read(&pebi->current_log.area[area_type].array.lock);
+
+	if (page_index < pages_count)
+		free_space += PAGE_SIZE - (write_offset % PAGE_SIZE);
 
 	SSDFS_DBG("write_offset %u, free_space %u\n",
 		  write_offset, free_space);
@@ -6197,8 +6214,11 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 			pgoff_t src_index = page1->index;
 			u32 src_len, dst_len, copy_len;
 			u32 src_off, dst_off;
+			u32 rest_len = PAGE_SIZE;
 
-			if (read_bytes >= area_size) {
+			if (read_bytes == area_size)
+				goto finish_pagevec_copy;
+			else if (read_bytes > area_size) {
 				err = -E2BIG;
 				SSDFS_ERR("too many pages: "
 					  "pages_count %u, area_size %u\n",
@@ -6218,7 +6238,7 @@ try_copy_area_data:
 			else
 				dst_off = *write_offset;
 
-			src_len = min_t(u32, PAGE_SIZE, area_size - read_bytes);
+			src_len = min_t(u32, area_size - read_bytes, rest_len);
 			dst_len = min_t(u32, PAGE_SIZE, PAGE_SIZE - dst_off);
 			copy_len = min_t(u32, src_len, dst_len);
 
@@ -6278,12 +6298,24 @@ finish_current_copy:
 
 			read_bytes += copy_len;
 			*write_offset += copy_len;
+			rest_len -= copy_len;
 
 			if ((dst_off + copy_len) >= PAGE_SIZE)
 				++(*cur_page);
 
-			if (copy_len < src_len) {
-				src_off = copy_len;
+			if (read_bytes == area_size) {
+				err = ssdfs_page_array_clear_dirty_page(smap,
+								page_index + i);
+				if (unlikely(err)) {
+					pagevec_release(&pvec);
+					SSDFS_ERR("fail to mark page clean: "
+						  "page_index %lu\n",
+						  page_index + i);
+					return err;
+				} else
+					goto finish_pagevec_copy;
+			} else if ((src_off + copy_len) < PAGE_SIZE) {
+				src_off += copy_len;
 				goto try_copy_area_data;
 			} else {
 				err = ssdfs_page_array_clear_dirty_page(smap,
@@ -6298,6 +6330,7 @@ finish_current_copy:
 			}
 		}
 
+finish_pagevec_copy:
 		page_index += PAGEVEC_SIZE;
 
 		pagevec_reinit(&pvec);
