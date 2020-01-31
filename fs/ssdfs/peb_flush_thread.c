@@ -10221,7 +10221,14 @@ finish_create_request_processing:
 			thread_state = SSDFS_FLUSH_THREAD_START_MIGRATION_NOW;
 			goto finish_update_request_processing;
 		} else if (req->private.cmd == SSDFS_COMMIT_LOG_NOW) {
-			if (ssdfs_peb_has_dirty_pages(pebi)) {
+			if (have_flush_requests(pebc)) {
+				req->result.processed_blks = 0;
+				ssdfs_requests_queue_add_tail(&pebc->update_rq,
+								req);
+				req = NULL;
+				thread_state =
+					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+			} else if (ssdfs_peb_has_dirty_pages(pebi)) {
 				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 				goto finish_update_request_processing;
 			} else {
