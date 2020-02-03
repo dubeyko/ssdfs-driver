@@ -732,8 +732,8 @@ try_define_bmap_index:
 			if (peb_migration_id == src_migration_id) {
 				int state;
 
-				need_migrate = false;
-				need_move = true;
+				need_migrate = true;
+				need_move = false;
 
 				dst_pebc = pebc->dst_peb->pebc;
 				state = atomic_read(&dst_pebc->items_state);
@@ -845,7 +845,7 @@ try_define_bmap_index:
 
 				default:
 					need_migrate = false;
-					need_move = false;
+					need_move = true;
 					bmap_index =
 					    SSDFS_PEB_BLK_BMAP_DESTINATION;
 					peb_index = pebc->dst_peb->peb_index;
@@ -913,9 +913,10 @@ finish_define_bmap_index:
 
 	SSDFS_DBG("seg_id %llu, migration_state %#x, items_state %#x, "
 		  "peb_migration_id %u, src_migration_id %d, "
-		  "dst_migration_id %d\n",
+		  "dst_migration_id %d, migration_phase %#x\n",
 		  si->seg_id, migration_state, items_state,
-		  peb_migration_id, src_migration_id, dst_migration_id);
+		  peb_migration_id, src_migration_id,
+		  dst_migration_id, migration_phase);
 	SSDFS_DBG("seg_id %llu, need_migrate %#x, need_move %#x\n",
 		  si->seg_id, need_migrate, need_move);
 
@@ -948,30 +949,8 @@ finish_define_bmap_index:
 		u32 len;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!pebc->src_peb || !pebc->dst_peb);
+		BUG_ON(!pebc->dst_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		peb_index = pebc->src_peb->peb_index;
-
-		if (peb_index >= bmap->pebs_count) {
-			SSDFS_ERR("peb_index %u >= pebs_count %u\n",
-				  peb_index, bmap->pebs_count);
-			return -ERANGE;
-		}
-
-		src_blkbmap = &bmap->peb[peb_index];
-
-		err = ssdfs_peb_blk_bmap_invalidate(src_blkbmap,
-						    SSDFS_PEB_BLK_BMAP_SOURCE,
-						    range);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to invalidate: "
-				  "range (start %u, len %u), "
-				  "err %d\n",
-				  range->start, range->len,
-				  err);
-			return err;
-		}
 
 		peb_index = pebc->dst_peb->peb_index;
 
