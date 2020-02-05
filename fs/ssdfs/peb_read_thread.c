@@ -3673,16 +3673,6 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		goto fail_read_blk_bmap;
 	}
 
-	if (le16_to_cpu(frag_hdr->invalid_blks) >
-	    le16_to_cpu(frag_hdr->last_free_blk)) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"block bitmap is corrupted: "
-				"invalid_blks %u is invalid\n",
-				le16_to_cpu(frag_hdr->invalid_blks));
-		err = -EIO;
-		goto fail_read_blk_bmap;
-	}
-
 	if (desc_size != le16_to_cpu(frag_hdr->chain_hdr.desc_size)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 				"block bitmap is corrupted: "

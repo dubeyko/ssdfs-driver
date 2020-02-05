@@ -316,6 +316,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 	ptr->bytes_count = bmap_bytes;
 	ptr->items_count = items_count;
 	ptr->metadata_items = 0;
+	ptr->used_blks = 0;
 	ptr->invalid_blks = 0;
 
 	err = ssdfs_block_bmap_create_empty_storage(&ptr->storage, bmap_bytes);
@@ -498,6 +499,12 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 	return 0;
 }
 
+static
+int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
+				u32 start, u32 len, u32 max_blk,
+				int blk_state,
+				struct ssdfs_block_bmap_range *range);
+
 /*
  * ssdfs_block_bmap_init() - initialize block bitmap pagevec
  * @blk_bmap: pointer on block bitmap
@@ -521,6 +528,9 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  u16 metadata_blks,
 			  u16 invalid_blks)
 {
+	struct ssdfs_block_bmap_range found;
+	u16 start_item = 0;
+	int blk_state = SSDFS_BLK_VALID;
 	int free_pages;
 	int i;
 	int err;
@@ -588,8 +598,7 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 
 	blk_bmap->metadata_items = metadata_blks;
 
-	if (invalid_blks > blk_bmap->items_count ||
-	    invalid_blks > last_free_blk) {
+	if (invalid_blks > blk_bmap->items_count) {
 		SSDFS_ERR("invalid values: "
 			  "invalid_blks %u, last_free_blk %u, "
 			  "items_count %zu\n",
@@ -616,6 +625,29 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
+	blk_bmap->used_blks = 0;
+
+	do {
+		err = ssdfs_block_bmap_find_range(blk_bmap,
+					start_item,
+					blk_bmap->items_count - start_item,
+					blk_bmap->items_count,
+					blk_state, &found);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find more valid blocks: "
+				  "start_item %u\n",
+				  start_item);
+			goto finish_block_bmap_init;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find range: err %d\n", err);
+			return err;
+		}
+
+		blk_bmap->used_blks += found.len;
+		start_item = found.start + found.len;
+	} while (start_item < blk_bmap->items_count);
+
+finish_block_bmap_init:
 	set_block_bmap_initialized(blk_bmap);
 
 	return 0;
@@ -3639,6 +3671,8 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 {
 	u32 found_blk;
+	u32 used_blks;
+	u32 metadata_items;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3672,6 +3706,9 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 		return err;
 	}
 
+	used_blks = blk_bmap->used_blks;
+	metadata_items = blk_bmap->metadata_items;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	if (unlikely(found_blk > blk_bmap->items_count)) {
 		SSDFS_ERR("found_blk %u > items_count %zu\n",
@@ -3680,9 +3717,17 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	}
 
 	WARN_ON(INT_MAX < (blk_bmap->items_count - found_blk));
+
+	if (unlikely((used_blks + metadata_items) > blk_bmap->items_count)) {
+		SSDFS_ERR("used_blks %u, metadata_items %u, "
+			  "items_count %zu\n",
+			  used_blks, metadata_items,
+			  blk_bmap->items_count);
+		return -ERANGE;
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return blk_bmap->items_count - found_blk - blk_bmap->metadata_items;
+	return blk_bmap->items_count - used_blks - metadata_items;
 }
 
 /*
@@ -3735,14 +3780,15 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 		return -ERANGE;
 	}
 
-	if (unlikely(blk_bmap->invalid_blks > found_blk)) {
-		SSDFS_ERR("invalid_blks %u > found_blk %u\n",
-			  blk_bmap->invalid_blks, found_blk);
+	if (unlikely(blk_bmap->used_blks > blk_bmap->items_count)) {
+		SSDFS_ERR("used_blks %u > items_count %zu\n",
+			  blk_bmap->used_blks,
+			  blk_bmap->items_count);
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return found_blk - blk_bmap->invalid_blks;
+	return blk_bmap->used_blks;
 }
 
 /*
@@ -3783,6 +3829,7 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
 /*
  * ssdfs_block_bmap_pre_allocate() - pre-allocate segment's range of blocks
  * @blk_bmap: pointer on block bitmap
+ * @start: starting block for search
  * @len: pointer on variable with requested length of range
  * @range: pointer on blocks' range [in | out]
  *
@@ -3805,7 +3852,8 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
  * %-ENOENT     - block bitmap doesn't initialized.
  * %-ENOSPC     - block bitmap hasn't free blocks.
  */
-int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
+int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
+				  u32 start, u32 *len,
 				  struct ssdfs_block_bmap_range *range)
 {
 	int err;
@@ -3818,9 +3866,10 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (len)
-		SSDFS_DBG("blk_bmap %p, len %u\n", blk_bmap, *len);
-	else {
+	if (len) {
+		SSDFS_DBG("blk_bmap %p, start %u, len %u\n",
+			  blk_bmap, start, *len);
+	} else {
 		SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
 			  blk_bmap, range->start, range->len);
 
@@ -3851,6 +3900,8 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 				return err;
 			}
 		}
+
+		start_blk = max_t(u32, start_blk, start);
 
 		err = ssdfs_block_bmap_find_range(blk_bmap, start_blk, *len,
 						  max_blk,
@@ -3880,6 +3931,15 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 		return err;
 	}
 
+	if (((u32)blk_bmap->used_blks + 1) > blk_bmap->items_count) {
+		SSDFS_ERR("invalid used blocks count: "
+			  "used_blks %u, items_count %zu\n",
+			  blk_bmap->used_blks,
+			  blk_bmap->items_count);
+		return -ERANGE;
+	} else
+		blk_bmap->used_blks++;
+
 	set_block_bmap_dirty(blk_bmap);
 
 	SSDFS_DBG("range (start %u, len %u) has been pre-allocated\n",
@@ -3891,6 +3951,7 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 /*
  * ssdfs_block_bmap_allocate() - allocate segment's range of blocks
  * @blk_bmap: pointer on block bitmap
+ * @start: starting block for search
  * @len: pointer on variable with requested length of range
  * @range: pointer on blocks' range [in | out]
  *
@@ -3914,7 +3975,8 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
  * %-ENOENT     - block bitmap doesn't initialized.
  * %-ENOSPC     - block bitmap hasn't free blocks.
  */
-int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
+int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
+				u32 start, u32 *len,
 				struct ssdfs_block_bmap_range *range)
 {
 	int state = SSDFS_BLK_FREE;
@@ -3928,9 +3990,10 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (len)
-		SSDFS_DBG("blk_bmap %p, len %u\n", blk_bmap, *len);
-	else {
+	if (len) {
+		SSDFS_DBG("blk_bmap %p, start %u, len %u\n",
+			  blk_bmap, start, *len);
+	} else {
 		SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
 			  blk_bmap, range->start, range->len);
 
@@ -3961,6 +4024,8 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 				return err;
 			}
 		}
+
+		start_blk = max_t(u32, start_blk, start);
 
 		err = ssdfs_block_bmap_find_range(blk_bmap, start_blk, *len,
 						  max_blk, SSDFS_BLK_FREE,
@@ -4000,6 +4065,15 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
 			  range->start, range->len, err);
 		return err;
 	}
+
+	if (((u32)blk_bmap->used_blks + 1) > blk_bmap->items_count) {
+		SSDFS_ERR("invalid used blocks count: "
+			  "used_blks %u, items_count %zu\n",
+			  blk_bmap->used_blks,
+			  blk_bmap->items_count);
+		return -ERANGE;
+	} else
+		blk_bmap->used_blks++;
 
 	set_block_bmap_dirty(blk_bmap);
 
@@ -4069,6 +4143,16 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	blk_bmap->invalid_blks += range->len;
+
+	if (range->len > blk_bmap->used_blks) {
+		SSDFS_ERR("invalid range len: "
+			  "range_len %u, used_blks %u, items_count %zu\n",
+			  range->len,
+			  blk_bmap->used_blks,
+			  blk_bmap->items_count);
+		return -ERANGE;
+	} else
+		blk_bmap->used_blks -= range->len;
 
 	set_block_bmap_dirty(blk_bmap);
 
@@ -4193,6 +4277,7 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 	}
 
 	blk_bmap->metadata_items = 0;
+	blk_bmap->used_blks = 0;
 	blk_bmap->invalid_blks = 0;
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {

@@ -1605,14 +1605,17 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_block_bmap *cur_bmap = NULL;
+	bool is_migrating = false;
+	int src_used_blks = 0;
+	int src_invalid_blks = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!bmap || !len || !range || !bmap->src);
+	BUG_ON(!bmap || !range || !bmap->src);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("bmap %p, bmap_index %u, len %u\n",
-		  bmap, bmap_index, *len);
+	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
+		  bmap, bmap_index, len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -1658,6 +1661,7 @@ init_failed:
 	case SSDFS_PEB_BMAP1_SRC_PEB_BMAP2_DST:
 	case SSDFS_PEB_BMAP2_SRC_PEB_BMAP1_DST:
 		/* valid state */
+		is_migrating = true;
 		break;
 
 	default:
@@ -1668,11 +1672,49 @@ init_failed:
 
 	down_read(&bmap->lock);
 
-	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE)
+	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE) {
 		cur_bmap = bmap->src;
-	else if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION)
+		is_migrating = false;
+	} else if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION) {
+		cur_bmap = bmap->src;
+
+		if (cur_bmap == NULL) {
+			err = -ERANGE;
+			SSDFS_WARN("bmap pointer is empty\n");
+			goto finish_pre_allocate;
+		}
+
+		err = ssdfs_block_bmap_lock(cur_bmap);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to lock block bitmap: err %d\n",
+				  err);
+			goto finish_pre_allocate;
+		}
+
+		src_used_blks = ssdfs_block_bmap_get_used_pages(cur_bmap);
+		if (src_used_blks < 0) {
+			err = src_used_blks;
+			SSDFS_ERR("fail to get SRC used blocks: err %d\n",
+				  err);
+			goto finish_check_src_bmap;
+		}
+
+		src_invalid_blks = ssdfs_block_bmap_get_invalid_pages(cur_bmap);
+		if (src_invalid_blks < 0) {
+			err = src_invalid_blks;
+			SSDFS_ERR("fail to get SRC invalid blocks: err %d\n",
+				  err);
+			goto finish_check_src_bmap;
+		}
+
+finish_check_src_bmap:
+		ssdfs_block_bmap_unlock(cur_bmap);
+
+		if (unlikely(err))
+			goto finish_pre_allocate;
+
 		cur_bmap = bmap->dst;
-	else
+	} else
 		cur_bmap = NULL;
 
 	if (cur_bmap == NULL) {
@@ -1687,7 +1729,13 @@ init_failed:
 		goto finish_pre_allocate;
 	}
 
-	err = ssdfs_block_bmap_pre_allocate(cur_bmap, len, range);
+	if (is_migrating) {
+		int start_blk = src_used_blks + src_invalid_blks;
+
+		err = ssdfs_block_bmap_pre_allocate(cur_bmap, start_blk,
+						    len, range);
+	} else
+		err = ssdfs_block_bmap_pre_allocate(cur_bmap, 0, len, range);
 
 	ssdfs_block_bmap_unlock(cur_bmap);
 
@@ -1815,14 +1863,17 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_block_bmap *cur_bmap = NULL;
+	bool is_migrating = false;
+	int src_used_blks = 0;
+	int src_invalid_blks = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!bmap || !len || !range || !bmap->src);
+	BUG_ON(!bmap || !range || !bmap->src);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("bmap %p, bmap_index %u, len %u\n",
-		  bmap, bmap_index, *len);
+	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
+		  bmap, bmap_index, len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -1868,6 +1919,7 @@ init_failed:
 	case SSDFS_PEB_BMAP1_SRC_PEB_BMAP2_DST:
 	case SSDFS_PEB_BMAP2_SRC_PEB_BMAP1_DST:
 		/* valid state */
+		is_migrating = true;
 		break;
 
 	default:
@@ -1878,11 +1930,49 @@ init_failed:
 
 	down_read(&bmap->lock);
 
-	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE)
+	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE) {
 		cur_bmap = bmap->src;
-	else if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION)
+		is_migrating = false;
+	} else if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION) {
+		cur_bmap = bmap->src;
+
+		if (cur_bmap == NULL) {
+			err = -ERANGE;
+			SSDFS_WARN("bmap pointer is empty\n");
+			goto finish_allocate;
+		}
+
+		err = ssdfs_block_bmap_lock(cur_bmap);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to lock block bitmap: err %d\n",
+				  err);
+			goto finish_allocate;
+		}
+
+		src_used_blks = ssdfs_block_bmap_get_used_pages(cur_bmap);
+		if (src_used_blks < 0) {
+			err = src_used_blks;
+			SSDFS_ERR("fail to get SRC used blocks: err %d\n",
+				  err);
+			goto finish_check_src_bmap;
+		}
+
+		src_invalid_blks = ssdfs_block_bmap_get_invalid_pages(cur_bmap);
+		if (src_invalid_blks < 0) {
+			err = src_invalid_blks;
+			SSDFS_ERR("fail to get SRC invalid blocks: err %d\n",
+				  err);
+			goto finish_check_src_bmap;
+		}
+
+finish_check_src_bmap:
+		ssdfs_block_bmap_unlock(cur_bmap);
+
+		if (unlikely(err))
+			goto finish_allocate;
+
 		cur_bmap = bmap->dst;
-	else
+	} else
 		cur_bmap = NULL;
 
 	if (cur_bmap == NULL) {
@@ -1897,7 +1987,13 @@ init_failed:
 		goto finish_allocate;
 	}
 
-	err = ssdfs_block_bmap_allocate(cur_bmap, len, range);
+	if (is_migrating) {
+		int start_blk = src_used_blks + src_invalid_blks;
+
+		err = ssdfs_block_bmap_allocate(cur_bmap, start_blk,
+						    len, range);
+	} else
+		err = ssdfs_block_bmap_allocate(cur_bmap, 0, len, range);
 
 	ssdfs_block_bmap_unlock(cur_bmap);
 
@@ -2330,9 +2426,9 @@ init_failed:
 	};
 
 	if (new_range_state == SSDFS_BLK_PRE_ALLOCATED)
-		err = ssdfs_block_bmap_pre_allocate(cur_bmap, NULL, range);
+		err = ssdfs_block_bmap_pre_allocate(cur_bmap, 0, NULL, range);
 	else
-		err = ssdfs_block_bmap_allocate(cur_bmap, NULL, range);
+		err = ssdfs_block_bmap_allocate(cur_bmap, 0, NULL, range);
 
 finish_process_bmap:
 	ssdfs_block_bmap_unlock(cur_bmap);
@@ -2830,7 +2926,6 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	int free_blks, used_blks, invalid_blks;
 #endif /* CONFIG_SSDFS_DEBUG */
-	u32 len;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2863,8 +2958,6 @@ init_failed:
 			goto init_failed;
 		}
 	}
-
-	len = range->len;
 
 	down_read(&bmap->lock);
 
@@ -2952,9 +3045,9 @@ finish_process_source_bmap:
 	}
 
 	if (new_range_state == SSDFS_BLK_PRE_ALLOCATED)
-		err = ssdfs_block_bmap_pre_allocate(dst, &len, range);
+		err = ssdfs_block_bmap_pre_allocate(dst, 0, NULL, range);
 	else
-		err = ssdfs_block_bmap_allocate(dst, &len, range);
+		err = ssdfs_block_bmap_allocate(dst, 0, NULL, range);
 
 	ssdfs_block_bmap_unlock(dst);
 

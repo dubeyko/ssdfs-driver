@@ -159,6 +159,7 @@ enum {
  * @bytes_count: block bitmap size in bytes
  * @items_count: items count in bitmap
  * @metadata_items: count of metadata items
+ * @used_blks: count of valid blocks
  * @invalid_blks: count of invalid blocks
  * @last_search: last search/access cache array
  */
@@ -169,6 +170,7 @@ struct ssdfs_block_bmap {
 	size_t bytes_count;
 	size_t items_count;
 	u16 metadata_items;
+	u16 used_blks;
 	u16 invalid_blks;
 	struct ssdfs_last_bmap_search last_search[SSDFS_SEARCH_TYPE_MAX];
 };
@@ -300,9 +302,11 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap);
-int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
+int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
+				  u32 start, u32 *len,
 				  struct ssdfs_block_bmap_range *range);
-int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap, u32 *len,
+int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
+				u32 start, u32 *len,
 				struct ssdfs_block_bmap_range *range);
 int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 				struct ssdfs_block_bmap_range *range);

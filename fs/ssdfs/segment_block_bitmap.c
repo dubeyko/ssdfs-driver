@@ -608,7 +608,7 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 {
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *dst_pebc;
-	struct ssdfs_peb_blk_bmap *src_blkbmap, *dst_blkbmap;
+	struct ssdfs_peb_blk_bmap *dst_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
 	u16 peb_index;
 	int migration_state, migration_phase, items_state;
@@ -623,9 +623,10 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("seg_id %llu, peb_index %u, peb_migration_id %u\n",
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_migration_id %u, "
+		  "range (start %u, len %u)\n",
 		  bmap->parent_si->seg_id, pebc->peb_index,
-		  peb_migration_id);
+		  peb_migration_id, range->start, range->len);
 
 	si = pebc->parent_si;
 
@@ -946,8 +947,6 @@ finish_define_bmap_index:
 			return err;
 		}
 	} else if (need_move) {
-		u32 len;
-
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc->dst_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -961,17 +960,16 @@ finish_define_bmap_index:
 		}
 
 		dst_blkbmap = &bmap->peb[peb_index];
-		len = range->len;
 
 		if (range_state == SSDFS_BLK_PRE_ALLOCATED) {
 			err = ssdfs_peb_blk_bmap_pre_allocate(dst_blkbmap,
 							      bmap_index,
-							      &len,
+							      NULL,
 							      range);
 		} else {
 			err = ssdfs_peb_blk_bmap_allocate(dst_blkbmap,
 							  bmap_index,
-							  &len,
+							  NULL,
 							  range);
 		}
 
