@@ -254,7 +254,7 @@ int ssdfs_btree_prepare_add_index(struct ssdfs_btree_level *level,
 		level->flags |= SSDFS_BTREE_LEVEL_ADD_INDEX;
 		level->nodes.old_node.type = atomic_read(&node->type);
 		level->nodes.old_node.ptr = node;
-	} else if (atomic_read(&node->height) == SSDFS_BTREE_ROOT_NODE) {
+	} else if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE) {
 		level->flags |= SSDFS_BTREE_LEVEL_ADD_INDEX;
 		level->nodes.new_node.type = atomic_read(&node->type);
 		level->nodes.new_node.ptr = node;
@@ -1110,6 +1110,13 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 			parent->index_area.move.pos.start = 0;
 			parent->index_area.move.pos.count = index_count;
 			parent->index_area.move.op_state =
+					SSDFS_BTREE_AREA_OP_REQUESTED;
+
+			child->index_area.insert.pos.state =
+					SSDFS_HASH_RANGE_LEFT_ADJACENT;
+			child->index_area.insert.pos.start = 0;
+			child->index_area.insert.pos.count = index_count;
+			child->index_area.insert.op_state =
 					SSDFS_BTREE_AREA_OP_REQUESTED;
 			break;
 
@@ -2099,7 +2106,7 @@ int ssdfs_btree_check_root_hybrid_pair(struct ssdfs_btree *tree,
 			}
 		} else {
 			ssdfs_btree_prepare_add_node(tree,
-						SSDFS_BTREE_HYBRID_NODE,
+						SSDFS_BTREE_INDEX_NODE,
 						start_hash, end_hash,
 						parent, parent_node);
 
@@ -4044,6 +4051,7 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 						      parent, child);
 		if (err == -ENOSPC) {
 			if ((cur_height + 1) != (tree_height - 1)) {
+				ssdfs_debug_btree_hierarchy_object(hierarchy);
 				SSDFS_ERR("invalid current height: "
 					  "cur_height %u, tree_height %u\n",
 					  cur_height, tree_height);
@@ -4053,6 +4061,7 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 				continue;
 			}
 		} else if (unlikely(err)) {
+			ssdfs_debug_btree_hierarchy_object(hierarchy);
 			SSDFS_ERR("fail to check btree's level: "
 				  "cur_height %u, tree_height %u, "
 				  "err %d\n",
@@ -5503,13 +5512,6 @@ int ssdfs_btree_move_indexes(struct ssdfs_btree_state_descriptor *desc,
 		  desc, parent, child);
 
 	if (child->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
-		if (parent->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
-			SSDFS_ERR("invalid set of flags: "
-				  "child %#x, parent %#x\n",
-				  child->flags, parent->flags);
-			return -ERANGE;
-		}
-
 		switch (child->index_area.move.direction) {
 		case SSDFS_BTREE_MOVE_TO_PARENT:
 			err = ssdfs_btree_move_indexes_to_parent(desc,
@@ -5539,13 +5541,6 @@ int ssdfs_btree_move_indexes(struct ssdfs_btree_state_descriptor *desc,
 	}
 
 	if (parent->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
-		if (child->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
-			SSDFS_ERR("invalid set of flags: "
-				  "child %#x, parent %#x\n",
-				  child->flags, parent->flags);
-			return -ERANGE;
-		}
-
 		switch (parent->index_area.move.direction) {
 		case SSDFS_BTREE_MOVE_TO_PARENT:
 			/* do nothing */

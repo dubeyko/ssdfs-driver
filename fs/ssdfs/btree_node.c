@@ -1128,7 +1128,7 @@ int ssdfs_define_memory_page(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if ((area->offset + area->area_size) >= node->node_size) {
+	if ((area->offset + area->area_size) > node->node_size) {
 		SSDFS_ERR("invalid area: "
 			  "offset %u, area_size %u, node_size %u\n",
 			  area->offset,

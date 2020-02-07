@@ -1397,17 +1397,6 @@ int ssdfs_inodes_btree_create_node(struct ssdfs_btree_node *node)
 
 	node->node_ops = &ssdfs_inodes_btree_node_ops;
 
-	switch (atomic_read(&node->items_area.state)) {
-	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid items area's state %#x\n",
-			  atomic_read(&node->items_area.state));
-		return -ERANGE;
-	}
-
 	down_write(&node->header_lock);
 	down_write(&node->bmap_array.lock);
 
