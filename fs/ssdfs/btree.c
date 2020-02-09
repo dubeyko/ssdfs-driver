@@ -2015,10 +2015,17 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 	}
 
 	level = &hierarchy->array[cur_height + 1];
-	if (level->nodes.old_node.ptr)
-		parent = level->nodes.old_node.ptr;
-	else
+	if (level->flags & SSDFS_BTREE_LEVEL_ADD_NODE)
 		parent = level->nodes.new_node.ptr;
+	else if (level->nodes.new_node.type == SSDFS_BTREE_ROOT_NODE)
+		parent = level->nodes.new_node.ptr;
+	else
+		parent = level->nodes.old_node.ptr;
+
+	if (!parent) {
+		SSDFS_ERR("parent is NULL\n");
+		return -ERANGE;
+	}
 
 	node_type = ssdfs_btree_define_new_node_type(tree, parent);
 	switch (node_type) {
@@ -2037,11 +2044,6 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 				  node_type);
 		}
 		return node_type < 0 ? node_type : -ERANGE;
-	}
-
-	if (!parent) {
-		SSDFS_ERR("parent is NULL\n");
-		return -ERANGE;
 	}
 
 	level = &hierarchy->array[cur_height];
@@ -2233,6 +2235,8 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 
 			goto finish_create_node;
 		}
+
+		set_ssdfs_btree_node_dirty(node);
 	}
 
 	cur_height = 0;
@@ -2258,8 +2262,6 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 		if (tree->btree_ops && tree->btree_ops->add_node) {
 			err = tree->btree_ops->add_node(node);

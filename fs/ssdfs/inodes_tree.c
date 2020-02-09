@@ -3662,13 +3662,6 @@ int ssdfs_inodes_btree_node_insert_range(struct ssdfs_btree_node *node,
 	BUG_ON(search->result.buf_state != SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	state = atomic_read(&node->state);
-	if (state != SSDFS_BTREE_NODE_CREATED) {
-		SSDFS_ERR("invalid node's state %#x\n",
-			  state);
-		return -ERANGE;
-	}
-
 	state = atomic_read(&node->items_area.state);
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
 		SSDFS_ERR("invalid area state %#x\n",

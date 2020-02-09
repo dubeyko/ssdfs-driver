@@ -239,6 +239,20 @@ int ssdfs_btree_prepare_add_index(struct ssdfs_btree_level *level,
 		  "start_hash %llx, end_hash %llx\n",
 		  level, node, start_hash, end_hash);
 
+	if (level->flags & SSDFS_BTREE_LEVEL_ADD_NODE) {
+		level->flags |= SSDFS_BTREE_LEVEL_ADD_INDEX;
+
+		insert = &level->index_area.insert;
+		insert->hash.start = start_hash;
+		insert->hash.end = end_hash;
+		insert->pos.start = 0;
+		insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
+		insert->pos.count = 1;
+		insert->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+
+		return 0;
+	}
+
 	index_area_state = atomic_read(&node->index_area.state);
 	items_area_state = atomic_read(&node->items_area.state);
 
@@ -334,7 +348,7 @@ finish_prepare_level:
 			  "start_hash %llx, err %d\n",
 			  start_hash, err);
 		return err;
-	} else {
+	} else if (level->index_area.hash.start != start_hash) {
 		/*
 		 * We've received the position of available
 		 * index record. So, correct it for the real
@@ -1937,7 +1951,7 @@ int ssdfs_btree_check_root_index_pair(struct ssdfs_btree *tree,
 			}
 		} else {
 			ssdfs_btree_prepare_add_node(tree,
-						     SSDFS_BTREE_HYBRID_NODE,
+						     SSDFS_BTREE_INDEX_NODE,
 						     start_hash, end_hash,
 						     parent, parent_node);
 
@@ -2110,10 +2124,14 @@ int ssdfs_btree_check_root_hybrid_pair(struct ssdfs_btree *tree,
 						start_hash, end_hash,
 						parent, parent_node);
 
-			err = ssdfs_btree_define_moving_indexes(parent, child);
+			err = ssdfs_btree_prepare_add_index(parent,
+							start_hash,
+							end_hash,
+							parent_node);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to define moving indexes: "
-					  "err %d\n", err);
+				SSDFS_ERR("fail to prepare level: "
+					  "node_id %u\n",
+					  parent_node->node_id);
 				return err;
 			}
 
@@ -2318,13 +2336,6 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 						     start_hash, end_hash,
 						     parent, parent_node);
 
-			err = ssdfs_btree_define_moving_indexes(parent, child);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to define moving indexes: "
-					  "err %d\n", err);
-				return err;
-			}
-
 			/* it needs to prepare increasing the tree's height */
 			return -ENOSPC;
 		} else {
@@ -2442,7 +2453,7 @@ int ssdfs_btree_check_index_index_pair(struct ssdfs_btree *tree,
 			}
 		} else {
 			ssdfs_btree_prepare_add_node(tree,
-						     SSDFS_BTREE_HYBRID_NODE,
+						     SSDFS_BTREE_INDEX_NODE,
 						     start_hash, end_hash,
 						     parent, parent_node);
 
@@ -2599,7 +2610,7 @@ int ssdfs_btree_check_index_hybrid_pair(struct ssdfs_btree *tree,
 			}
 		} else {
 			ssdfs_btree_prepare_add_node(tree,
-						     SSDFS_BTREE_HYBRID_NODE,
+						     SSDFS_BTREE_INDEX_NODE,
 						     start_hash, end_hash,
 						     parent, parent_node);
 
@@ -6104,8 +6115,10 @@ int ssdfs_btree_update_index(struct ssdfs_btree_state_descriptor *desc,
 
 	if (parent->flags & SSDFS_BTREE_LEVEL_ADD_NODE)
 		parent_node = parent->nodes.new_node.ptr;
-	else
+	else if (parent->nodes.old_node.ptr)
 		parent_node = parent->nodes.old_node.ptr;
+	else
+		parent_node = parent->nodes.new_node.ptr;
 
 	if (child->flags & SSDFS_BTREE_LEVEL_ADD_NODE)
 		child_node = child->nodes.new_node.ptr;

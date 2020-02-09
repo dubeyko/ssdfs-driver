@@ -1379,6 +1379,17 @@ int ssdfs_btree_init_node_index_area(struct ssdfs_btree_node *node,
 
 		switch (hdr->type) {
 		case SSDFS_BTREE_INDEX_NODE:
+			if (index_area_size != node->node_size) {
+				SSDFS_ERR("invalid index area's size: "
+					  "index_area_size %u, node_size %u\n",
+					  index_area_size,
+					  node->node_size);
+				return -EIO;
+			}
+
+			index_area_size -= hdr_size;
+			break;
+
 		case SSDFS_BTREE_HYBRID_NODE:
 			/* expected state */
 			break;
@@ -2009,14 +2020,41 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 
 	switch (atomic_read(&node->index_area.state)) {
 	case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
-		area_size = node->index_area.area_size;
-		if ((1 << ilog2(area_size)) != area_size) {
-			SSDFS_ERR("corrupted index area size %u\n",
-				  area_size);
-			return -ERANGE;
-		}
+		switch (atomic_read(&node->type)) {
+		case SSDFS_BTREE_INDEX_NODE:
+			/*
+			 * Initialization code expect the node size.
+			 * As a result, the index area's size is calculated
+			 * by means of subtraction the header size
+			 * from the node size.
+			 */
+			area_size = node->node_size;
+			if ((1 << ilog2(area_size)) != area_size) {
+				SSDFS_ERR("corrupted index area size %u\n",
+					  area_size);
+				return -ERANGE;
+			}
 
-		hdr->log_index_area_size = (u8)ilog2(area_size);
+			hdr->log_index_area_size = (u8)ilog2(area_size);
+
+			/*
+			 * Real area size is used for checking
+			 * the rest of fields.
+			 */
+			area_size = node->index_area.area_size;
+			break;
+
+		default:
+			area_size = node->index_area.area_size;
+			if ((1 << ilog2(area_size)) != area_size) {
+				SSDFS_ERR("corrupted index area size %u\n",
+					  area_size);
+				return -ERANGE;
+			}
+
+			hdr->log_index_area_size = (u8)ilog2(area_size);
+			break;
+		}
 
 		area_offset = node->index_area.offset;
 		if (area_offset <= sizeof(struct ssdfs_btree_node_header) ||
@@ -4869,7 +4907,7 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if ((area->offset + area->area_size) >= node->node_size) {
+	if ((area->offset + area->area_size) > node->node_size) {
 		SSDFS_ERR("invalid area: "
 			  "offset %u, area_size %u, node_size %u\n",
 			  area->offset,
