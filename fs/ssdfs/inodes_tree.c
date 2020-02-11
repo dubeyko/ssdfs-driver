@@ -1619,7 +1619,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	u32 node_size;
 	u16 flags;
 	u16 item_size;
-	u32 items_count;
+	u32 items_count = 0;
 	u8 index_size;
 	u16 items_capacity;
 	u32 index_area_size;
@@ -1728,49 +1728,94 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
-	if (items_capacity == 0 ||
-	    items_capacity > (node_size / item_size)) {
-		err = -EIO;
-		SSDFS_ERR("invalid items_capacity %u\n",
-			  items_capacity);
-		goto finish_header_init;
-	}
+	switch (hdr->node.type) {
+	case SSDFS_BTREE_LEAF_NODE:
+		if (items_capacity == 0 ||
+		    items_capacity > (node_size / item_size)) {
+			err = -EIO;
+			SSDFS_ERR("invalid items_capacity %u\n",
+				  items_capacity);
+			goto finish_header_init;
+		}
 
-	if (items_capacity != inodes_count) {
-		err = -EIO;
-		SSDFS_ERR("items_capacity %u != inodes_count %u\n",
-			  items_capacity,
-			  inodes_count);
-		goto finish_header_init;
-	}
+		if (items_capacity != inodes_count) {
+			err = -EIO;
+			SSDFS_ERR("items_capacity %u != inodes_count %u\n",
+				  items_capacity,
+				  inodes_count);
+			goto finish_header_init;
+		}
 
-	if (valid_inodes > inodes_count) {
-		err = -EIO;
-		SSDFS_ERR("valid_inodes %u > inodes_count %u\n",
-			  valid_inodes, inodes_count);
-		goto finish_header_init;
-	}
+		if (valid_inodes > inodes_count) {
+			err = -EIO;
+			SSDFS_ERR("valid_inodes %u > inodes_count %u\n",
+				  valid_inodes, inodes_count);
+			goto finish_header_init;
+		}
 
-	node->items_area.items_count = valid_inodes;
-	node->items_area.items_capacity = inodes_count;
+		node->items_area.items_count = valid_inodes;
+		node->items_area.items_capacity = inodes_count;
+
+		items_count = node_size / item_size;
+		items_capacity = node_size / item_size;
+
+		index_capacity = 0;
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		if (items_capacity == 0 ||
+		    items_capacity > (node_size / item_size)) {
+			err = -EIO;
+			SSDFS_ERR("invalid items_capacity %u\n",
+				  items_capacity);
+			goto finish_header_init;
+		}
+
+		if (items_capacity != inodes_count) {
+			err = -EIO;
+			SSDFS_ERR("items_capacity %u != inodes_count %u\n",
+				  items_capacity,
+				  inodes_count);
+			goto finish_header_init;
+		}
+
+		if (valid_inodes > inodes_count) {
+			err = -EIO;
+			SSDFS_ERR("valid_inodes %u > inodes_count %u\n",
+				  valid_inodes, inodes_count);
+			goto finish_header_init;
+		}
+
+		node->items_area.items_count = valid_inodes;
+		node->items_area.items_capacity = inodes_count;
+
+		items_count = node_size / item_size;
+		items_capacity = node_size / item_size;
+
+		index_capacity = node_size / index_size;
+		break;
+
+	case SSDFS_BTREE_INDEX_NODE:
+		node->items_area.items_count = 0;
+		node->items_area.items_capacity = 0;
+
+		items_count = 0;
+		items_capacity = 0;
+
+		index_capacity = node_size / index_size;
+		break;
+
+	default:
+		SSDFS_ERR("unexpected node type %#x\n",
+			  hdr->node.type);
+		return -ERANGE;
+	}
 
 finish_header_init:
 	up_write(&node->header_lock);
 
 	if (unlikely(err))
 		goto finish_init_operation;
-
-	items_count = node_size / item_size;
-
-	if (item_size > 0)
-		items_capacity = node_size / item_size;
-	else
-		items_capacity = 0;
-
-	if (index_size > 0)
-		index_capacity = node_size / index_size;
-	else
-		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
 	bmap_bytes += BITS_PER_LONG;
@@ -1833,6 +1878,9 @@ finish_init_operation:
 	kunmap(page);
 
 	if (unlikely(err))
+		goto finish_init_node;
+
+	if (hdr->node.type == SSDFS_BTREE_INDEX_NODE)
 		goto finish_init_node;
 
 	ssdfs_free_inodes_queue_init(&q);

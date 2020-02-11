@@ -1363,13 +1363,11 @@ int ssdfs_btree_init_node_index_area(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height));
 
 	flags = le16_to_cpu(hdr->flags);
-
-	if (hdr->log_index_area_size > 0)
-		index_area_size = 1 << hdr->log_index_area_size;
-	else
-		index_area_size = 0;
+	index_area_size = 0;
 
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
+		index_area_size = 1 << hdr->log_index_area_size;
+
 		if (index_area_size == 0 ||
 		    index_area_size > node->node_size) {
 			SSDFS_ERR("invalid index area size %u\n",
@@ -1544,9 +1542,32 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 
 	flags = le16_to_cpu(hdr->flags);
 
-	if (hdr->log_index_area_size > 0)
+	if (hdr->log_index_area_size > 0) {
 		index_area_size = 1 << hdr->log_index_area_size;
-	else
+
+		switch (hdr->type) {
+		case SSDFS_BTREE_INDEX_NODE:
+			if (index_area_size != node->node_size) {
+				SSDFS_ERR("invalid index area's size: "
+					  "index_area_size %u, node_size %u\n",
+					  index_area_size,
+					  node->node_size);
+				return -EIO;
+			}
+
+			index_area_size -= hdr_size;
+			break;
+
+		case SSDFS_BTREE_HYBRID_NODE:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid node type %#x\n",
+				  hdr->type);
+			return -EIO;
+		}
+	} else
 		index_area_size = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1596,10 +1617,15 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 
 	offset = hdr_size + index_area_size;
 
-	if (offset != le32_to_cpu(hdr->item_area_offset)) {
-		SSDFS_ERR("invalid item_area_offset %u\n",
-			  le32_to_cpu(hdr->item_area_offset));
-		return -EIO;
+	switch (hdr->type) {
+	case SSDFS_BTREE_HYBRID_NODE:
+	case SSDFS_BTREE_LEAF_NODE:
+		if (offset != le32_to_cpu(hdr->item_area_offset)) {
+			SSDFS_ERR("invalid item_area_offset %u\n",
+				  le32_to_cpu(hdr->item_area_offset));
+			return -EIO;
+		}
+		break;
 	}
 
 	if ((offset + items_area_size) > node->node_size) {
@@ -1652,12 +1678,8 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 		node->items_area.max_item_size = max_item_size;
 		node->items_area.items_count = 0;
 		node->items_area.items_capacity = 0;
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(start_hash != U64_MAX);
-		BUG_ON(end_hash != U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-		node->items_area.start_hash = start_hash;
-		node->items_area.end_hash = end_hash;
+		node->items_area.start_hash = U64_MAX;
+		node->items_area.end_hash = U64_MAX;
 	}
 
 	return 0;
@@ -2183,6 +2205,16 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 
 		hdr->start_hash = cpu_to_le64(node->items_area.start_hash);
 		hdr->end_hash = cpu_to_le64(node->items_area.end_hash);
+
+		area_offset = node->items_area.offset;
+		area_size = node->items_area.area_size;
+		if ((area_offset + area_size) > node->node_size) {
+			SSDFS_ERR("corrupted items area offset %u\n",
+				  area_offset);
+			return -ERANGE;
+		}
+
+		hdr->item_area_offset = cpu_to_le32(area_offset);
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -2249,6 +2281,30 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 
 		hdr->start_hash = cpu_to_le64(node->items_area.start_hash);
 		hdr->end_hash = cpu_to_le64(node->items_area.end_hash);
+
+		area_offset = node->items_area.offset;
+		area_size = node->items_area.area_size;
+		if ((area_offset + area_size) > node->node_size) {
+			SSDFS_ERR("corrupted items area offset %u\n",
+				  area_offset);
+			return -ERANGE;
+		}
+
+		hdr->item_area_offset = cpu_to_le32(area_offset);
+
+		area_offset = node->index_area.offset;
+		area_size = node->index_area.area_size;
+		if ((area_offset + area_size) > node->node_size) {
+			SSDFS_ERR("corrupted index area offset %u\n",
+				  area_offset);
+			return -ERANGE;
+		} else if ((area_offset + area_size) > node->items_area.offset) {
+			SSDFS_ERR("corrupted index area offset %u\n",
+				  area_offset);
+			return -ERANGE;
+		}
+
+		hdr->index_area_offset = cpu_to_le32(area_offset);
 		break;
 
 	case SSDFS_BTREE_INDEX_NODE:
@@ -2283,6 +2339,16 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 
 		hdr->start_hash = cpu_to_le64(node->index_area.start_hash);
 		hdr->end_hash = cpu_to_le64(node->index_area.end_hash);
+
+		area_offset = node->index_area.offset;
+		area_size = node->index_area.area_size;
+		if ((area_offset + area_size) > node->node_size) {
+			SSDFS_ERR("corrupted index area offset %u\n",
+				  area_offset);
+			return -ERANGE;
+		}
+
+		hdr->index_area_offset = cpu_to_le32(area_offset);
 		break;
 
 	default:
@@ -2292,15 +2358,6 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 
 	hdr->create_cno = cpu_to_le64(node->create_cno);
 	hdr->node_id = cpu_to_le32(node->node_id);
-
-	area_offset = node->items_area.offset;
-	if ((area_offset + area_size) > node->node_size) {
-		SSDFS_ERR("corrupted items area offset %u\n",
-			  area_offset);
-		return -ERANGE;
-	}
-
-	hdr->item_area_offset = cpu_to_le32(area_offset);
 
 	return 0;
 }
@@ -5966,6 +6023,7 @@ int ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 				      u16 position,
 				      struct ssdfs_btree_index_key *ptr)
 {
+	struct ssdfs_btree_index_key tmp_key;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5974,8 +6032,9 @@ int ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, position %u\n",
-		  node->node_id, position);
+	SSDFS_DBG("node_id %u, position %u, index_count %u\n",
+		  node->node_id, position,
+		  node->index_area.index_count);
 
 	if (node->index_area.index_count > node->index_area.index_capacity) {
 		SSDFS_ERR("index_count %u > index_capacity %u\n",
@@ -6018,16 +6077,33 @@ int ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 		}
 	}
 
-	if (position == 0)
-		node->index_area.start_hash = le64_to_cpu(ptr->index.hash);
-	else if (position == node->index_area.index_count)
-		node->index_area.end_hash = le64_to_cpu(ptr->index.hash);
+	node->index_area.index_count++;
+
+	err = __ssdfs_btree_common_node_extract_index(node,
+						      &node->index_area,
+						      0,
+						      &tmp_key);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to extract the index: err %d\n", err);
+		return err;
+	}
+
+	node->index_area.start_hash = le64_to_cpu(tmp_key.index.hash);
+
+	err = __ssdfs_btree_common_node_extract_index(node,
+					&node->index_area,
+					node->index_area.index_count - 1,
+					&tmp_key);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to extract the index: err %d\n", err);
+		return err;
+	}
+
+	node->index_area.end_hash = le64_to_cpu(tmp_key.index.hash);
 
 	SSDFS_DBG("start_hash %llx, end_hash %llx\n",
 		  node->index_area.start_hash,
 		  node->index_area.end_hash);
-
-	node->index_area.index_count++;
 
 	return 0;
 }
