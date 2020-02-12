@@ -1270,6 +1270,7 @@ finish_get_dst_invalid_pages:
  * [success]
  * [failure] - error code:
  *
+ * %-ENOSPC     - unable to reserve metapages.
  * %-ERANGE     - internal error.
  */
 int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
@@ -1319,6 +1320,8 @@ init_failed:
 
 	reserving_blks = min_t(int, (int)count,
 				atomic_read(&bmap->free_logical_blks));
+	reserving_blks = min_t(int, reserving_blks,
+				atomic_read(&bmap->parent->free_logical_blks));
 
 	if (count > atomic_read(&bmap->free_logical_blks) ||
 	    count > atomic_read(&bmap->parent->free_logical_blks)) {
@@ -1329,9 +1332,12 @@ init_failed:
 			  count,
 			  atomic_read(&bmap->free_logical_blks),
 			  atomic_read(&bmap->parent->free_logical_blks));
-		SSDFS_DBG("try to reserve: "
-			  "reserving_blks %d\n",
-			  reserving_blks);
+		if (reserving_blks > 0) {
+			SSDFS_DBG("try to reserve: "
+				  "reserving_blks %d\n",
+				  reserving_blks);
+		} else
+			return err;
 	}
 
 	down_read(&bmap->lock);

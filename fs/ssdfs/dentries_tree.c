@@ -4556,6 +4556,8 @@ finish_create_node:
 finish_init_pvec:
 	up_write(&node->full_lock);
 
+	ssdfs_debug_btree_node_object(node);
+
 	return err;
 }
 
@@ -4865,6 +4867,8 @@ finish_init_operation:
 finish_init_node:
 	up_read(&node->full_lock);
 
+	ssdfs_debug_btree_node_object(node);
+
 	return err;
 }
 
@@ -4988,6 +4992,8 @@ finish_add_node:
 		/* do nothing */
 		break;
 	}
+
+	ssdfs_debug_btree_node_object(node);
 
 	return 0;
 }
@@ -5289,6 +5295,8 @@ int ssdfs_dentries_btree_flush_node(struct ssdfs_btree_node *node)
 		err = -ERANGE;
 		SSDFS_ERR("dentries tree is inline dentries array\n");
 	}
+
+	ssdfs_debug_btree_node_object(node);
 
 	return err;
 }
