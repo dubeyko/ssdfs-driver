@@ -2317,6 +2317,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	ssdfs_btree_hierarchy_free(hierarchy);
 
 	search->result.err = 0;
+	search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
 	search->result.state = SSDFS_BTREE_SEARCH_UNKNOWN_RESULT;
 	return 0;
 

@@ -2954,6 +2954,7 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	u64 start_hash;
 	u64 end_hash;
 	u32 bmap_bytes;
+	u64 free_inodes;
 	int i;
 	int err = 0;
 
@@ -3143,7 +3144,8 @@ finish_allocate_item:
 	itree = (struct ssdfs_inodes_btree_info *)node->tree;
 
 	spin_lock(&itree->lock);
-	if (itree->free_inodes < count)
+	free_inodes = itree->free_inodes;
+	if (free_inodes < count)
 		err = -ERANGE;
 	else {
 		u64 upper_bound = start_hash + start + count - 1;
@@ -3157,8 +3159,8 @@ finish_allocate_item:
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct free_inodes count: "
-			  "err %d\n",
-			  err);
+			  "free_inodes %llu, count %u, err %d\n",
+			  free_inodes, count, err);
 		return err;
 	}
 

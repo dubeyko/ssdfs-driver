@@ -1365,9 +1365,14 @@ init_failed:
 							reserving_blks);
 	ssdfs_block_bmap_unlock(cur_bmap);
 
-	if (unlikely(err)) {
+	if (err == -ENOSPC) {
+		SSDFS_DBG("unable to reserve metadata pages: "
+			  "reserving_blks %d\n",
+			  reserving_blks);
+		goto finish_reserve_metapages;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve metadata pages: "
-			  "reserving_blks %u, err %d\n",
+			  "reserving_blks %d, err %d\n",
 			  reserving_blks, err);
 		goto finish_reserve_metapages;
 	}
@@ -1622,6 +1627,12 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 
 	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
 		  bmap, bmap_index, len);
+	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u, pages_per_peb %u\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks),
+		  bmap->pages_per_peb);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -1767,6 +1778,7 @@ finish_check_src_bmap:
 
 	atomic_sub(range->len, &bmap->free_logical_blks);
 	atomic_add(range->len, &bmap->valid_logical_blks);
+	atomic_add(range->len, &bmap->parent->valid_logical_blks);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
@@ -1880,6 +1892,12 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 
 	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
 		  bmap, bmap_index, len);
+	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u, pages_per_peb %u\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks),
+		  bmap->pages_per_peb);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -2025,6 +2043,7 @@ finish_check_src_bmap:
 
 	atomic_sub(range->len, &bmap->free_logical_blks);
 	atomic_add(range->len, &bmap->valid_logical_blks);
+	atomic_add(range->len, &bmap->parent->valid_logical_blks);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
@@ -2218,6 +2237,9 @@ init_failed:
 
 	atomic_sub(range->len, &bmap->valid_logical_blks);
 	atomic_add(range->len, &bmap->invalid_logical_blks);
+
+	atomic_sub(range->len, &bmap->parent->valid_logical_blks);
+	atomic_add(range->len, &bmap->parent->invalid_logical_blks);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "

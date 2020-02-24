@@ -755,7 +755,7 @@ finish_prepare_level:
 		case SSDFS_HASH_RANGE_LEFT_ADJACENT:
 			level->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
 			move->direction = SSDFS_BTREE_MOVE_TO_LEFT;
-			move->pos.state = SSDFS_HASH_RANGE_OUT_OF_NODE;
+			move->pos.state = SSDFS_HASH_RANGE_INTERSECTION;
 			move->pos.start = 0;
 			move->pos.count = moving_items;
 			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
@@ -765,7 +765,7 @@ finish_prepare_level:
 		case SSDFS_HASH_RANGE_RIGHT_ADJACENT:
 			level->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
 			move->direction = SSDFS_BTREE_MOVE_TO_RIGHT;
-			move->pos.state = SSDFS_HASH_RANGE_OUT_OF_NODE;
+			move->pos.state = SSDFS_HASH_RANGE_INTERSECTION;
 			move->pos.start = items_count - moving_items;
 			move->pos.count = moving_items;
 			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
@@ -781,12 +781,35 @@ finish_prepare_level:
 	return 0;
 }
 
+static inline
+void ssdfs_btree_cancel_insert_item(struct ssdfs_btree_level *level)
+{
+	struct ssdfs_btree_node_insert *insert;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!level);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("level %p\n", level);
+
+	level->flags &= ~SSDFS_BTREE_LEVEL_ADD_ITEM;
+
+	insert = &level->items_area.insert;
+
+	insert->op_state = SSDFS_BTREE_AREA_OP_UNKNOWN;
+	insert->hash.start = U64_MAX;
+	insert->hash.end = U64_MAX;
+	insert->pos.state = SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
+	insert->pos.start = U16_MAX;
+	insert->pos.count = 0;
+}
+
 /*
  * ssdfs_need_move_items_to_sibling() - does it need to move items?
  * @level: level object
  *
- * This method tries to check that items need to move
- * to the sibling node.
+ * This method tries to check that the tree needs
+ * to be rebalanced.
  */
 static inline
 bool ssdfs_need_move_items_to_sibling(struct ssdfs_btree_level *level)
@@ -813,11 +836,11 @@ bool ssdfs_need_move_items_to_sibling(struct ssdfs_btree_level *level)
 }
 
 /*
- * ssdfs_check_capability_move_to_sibling() - check free space of sibling node
+ * ssdfs_check_capability_move_to_sibling() - check capability to rebalance tree
  * @level: level object
  *
  * This method tries to define the presence of free space in
- * sibling node.
+ * sibling node with the goal to rebalance the tree.
  *
  * RETURN:
  * [success]
@@ -830,16 +853,21 @@ static
 int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 {
 	struct ssdfs_btree *tree;
-	struct ssdfs_btree_node *node;
+	struct ssdfs_btree_node *node, *parent_node;
 	struct ssdfs_btree_node_move *move;
 	struct ssdfs_btree_node_index_area area;
 	struct ssdfs_btree_index_key index_key;
 	u64 hash = U64_MAX;
-	int area_state;
+	int items_area_state;
+	int index_area_state;
 	u16 index_count = 0;
+	u16 index_capacity = 0;
+	u16 vacant_indexes = 0;
 	u16 index_position;
 	u16 items_count;
 	u16 items_capacity;
+	u16 parent_items_count = 0;
+	u16 parent_items_capacity = 0;
 	u16 moving_items;
 	int node_type;
 	u32 node_id;
@@ -881,19 +909,44 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	hash = le64_to_cpu(node->node_index.index.hash);
 	spin_unlock(&node->descriptor_lock);
 
+	items_area_state = atomic_read(&node->items_area.state);
+
+	down_read(&node->header_lock);
+	if (items_area_state == SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
+		items_count = node->items_area.items_count;
+		items_capacity = node->items_area.items_capacity;
+	} else
+		err = -ERANGE;
+	up_read(&node->header_lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("items area is absent\n");
+		return -ERANGE;
+	}
+
 	node = level->nodes.old_node.ptr->parent_node;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	area_state = atomic_read(&node->index_area.state);
+	items_area_state = atomic_read(&node->items_area.state);
+	index_area_state = atomic_read(&node->index_area.state);
 
 	down_read(&node->header_lock);
-	if (area_state == SSDFS_BTREE_NODE_INDEX_AREA_EXIST)
+
+	if (items_area_state == SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
+		parent_items_count = node->items_area.items_count;
+		parent_items_capacity = node->items_area.items_capacity;
+	}
+
+	if (index_area_state == SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
 		index_count = node->index_area.index_count;
-	else
+		index_capacity = node->index_area.index_capacity;
+		vacant_indexes = index_capacity - index_count;
+	} else
 		err = -ERANGE;
+
 	up_read(&node->header_lock);
 
 	if (unlikely(err)) {
@@ -920,6 +973,17 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	case SSDFS_BTREE_MOVE_TO_LEFT:
 		if (index_position == 0) {
 			SSDFS_DBG("no siblings on the left\n");
+
+			if (vacant_indexes == 0) {
+				/*
+				 * Try to move to parent node
+				 */
+				move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
+				moving_items = items_capacity / 4;
+				move->pos.start = 0;
+				move->pos.count = moving_items;
+			}
+
 			return -ENOSPC;
 		}
 
@@ -929,6 +993,17 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	case SSDFS_BTREE_MOVE_TO_RIGHT:
 		if ((index_position + 1) == index_count) {
 			SSDFS_DBG("no siblings on the right\n");
+
+			if (vacant_indexes == 0) {
+				/*
+				 * Try to move to parent node
+				 */
+				move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
+				moving_items = items_capacity / 4;
+				move->pos.start = items_capacity - moving_items;
+				move->pos.count = moving_items;
+			}
+
 			return -ENOSPC;
 		}
 
@@ -940,6 +1015,8 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	}
 
 	node_type = atomic_read(&node->type);
+
+	down_read(&node->full_lock);
 
 	if (node_type == SSDFS_BTREE_ROOT_NODE) {
 		err = __ssdfs_btree_root_node_extract_index(node,
@@ -956,6 +1033,8 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 							      &index_key);
 	}
 
+	up_read(&node->full_lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to extract index key: "
 			  "index_position %u, err %d\n",
@@ -963,11 +1042,13 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		return err;
 	}
 
+	parent_node = node;
 	node_id = le32_to_cpu(index_key.node_id);
 
 	err = ssdfs_btree_radix_tree_find(tree, node_id, &node);
 	if (err == -ENOENT) {
-		node = __ssdfs_btree_read_node(tree, node,
+		err = 0;
+		node = __ssdfs_btree_read_node(tree, parent_node,
 						&index_key,
 						index_key.node_type,
 						node_id);
@@ -988,10 +1069,10 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		return -ERANGE;
 	}
 
-	area_state = atomic_read(&node->items_area.state);
+	items_area_state = atomic_read(&node->items_area.state);
 
 	down_read(&node->header_lock);
-	if (area_state == SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
+	if (items_area_state == SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
 		items_count = node->items_area.items_count;
 		items_capacity = node->items_area.items_capacity;
 	} else
@@ -1005,6 +1086,18 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		SSDFS_DBG("items area hasn't free space: "
 			  "items_count %u, items_capacity %u\n",
 			  items_count, items_capacity);
+
+		if (vacant_indexes == 0) {
+			/*
+			 * Try to move to parent node
+			 */
+			move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
+			moving_items = items_capacity / 4;
+
+			move->pos.start = items_capacity - moving_items;
+			move->pos.count = moving_items;
+		}
+
 		return -ENOSPC;
 	}
 
@@ -1036,6 +1129,164 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 }
 
 /*
+ * ssdfs_need_move_items_to_parent() - does it need to move items?
+ * @level: level object
+ *
+ * This method tries to check that items need to move
+ * to the parent node.
+ */
+static inline
+bool ssdfs_need_move_items_to_parent(struct ssdfs_btree_level *level)
+{
+	struct ssdfs_btree_node_move *move;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!level);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("level %p\n", level);
+
+	move = &level->items_area.move;
+
+	if (level->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE) {
+		switch (move->direction) {
+		case SSDFS_BTREE_MOVE_TO_PARENT:
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static inline
+void ssdfs_btree_cancel_move_items_to_parent(struct ssdfs_btree_level *level)
+{
+	struct ssdfs_btree_node_move *move;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!level);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("level %p\n", level);
+
+	move = &level->items_area.move;
+
+	level->flags &= ~SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
+
+	move->direction = SSDFS_BTREE_MOVE_NOWHERE;
+	move->pos.state = SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
+	move->pos.start = U16_MAX;
+	move->pos.count = 0;
+	move->op_state = SSDFS_BTREE_AREA_OP_UNKNOWN;
+}
+
+/*
+ * ssdfs_prepare_move_items_to_parent() - prepare tree rebalance
+ * @search: search object
+ * @parent: parent level object
+ * @child: child level object
+ *
+ * This method tries to prepare the moving items from child
+ * to parent with the goal to rebalance the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_prepare_move_items_to_parent(struct ssdfs_btree_search *search,
+					struct ssdfs_btree_level *parent,
+					struct ssdfs_btree_level *child)
+{
+	struct ssdfs_btree_node *node;
+	struct ssdfs_btree_node_insert *insert;
+	struct ssdfs_btree_node_move *move;
+	int items_area_state;
+	u64 start_hash, end_hash;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search || !parent || !child);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("search %p, parent %p, child %p\n",
+		  search, parent, child);
+
+	if (!(child->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE)) {
+		SSDFS_DBG("no items should be moved\n");
+		return 0;
+	}
+
+	move = &child->items_area.move;
+
+	switch (move->direction) {
+	case SSDFS_BTREE_MOVE_TO_PARENT:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_DBG("nothing should be done\n");
+		return 0;
+	}
+
+	if (!(parent->flags & SSDFS_BTREE_LEVEL_ADD_NODE)) {
+		SSDFS_DBG("items can be copied only into a new node\n");
+		ssdfs_btree_cancel_move_items_to_parent(child);
+		return 0;
+	}
+
+	node = child->nodes.old_node.ptr;
+
+	if (!node) {
+		SSDFS_WARN("node pointer is empty\n");
+		return -ERANGE;
+	}
+
+	items_area_state = atomic_read(&node->items_area.state);
+
+	down_read(&node->header_lock);
+	if (items_area_state == SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
+		start_hash = node->items_area.start_hash;
+		end_hash = node->items_area.end_hash;
+	} else
+		err = -ERANGE;
+	up_read(&node->header_lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("items area is absent\n");
+		return -ERANGE;
+	}
+
+	if (search->request.start.hash > end_hash ||
+	    search->request.end.hash < start_hash) {
+		ssdfs_btree_cancel_move_items_to_parent(child);
+		return 0;
+	}
+
+	insert = &parent->items_area.insert;
+
+	insert->hash.start = search->request.start.hash;
+	insert->hash.end = child->items_area.hash.end;
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "child->items_area.hash.start %llx, "
+		  "child->items_area.hash.end %llx\n",
+		  insert->hash.start,
+		  insert->hash.end,
+		  child->items_area.hash.start,
+		  child->items_area.hash.end);
+
+	insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
+	insert->pos.start = 0;
+	insert->pos.count = move->pos.count;
+	insert->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+
+	return 0;
+}
+
+/*
  * ssdfs_btree_define_moving_indexes() - define moving index range
  * @parent: parent level object [in|out]
  * @child: child level object [in|out]
@@ -1060,6 +1311,7 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 	struct ssdfs_btree_node *child_node;
 	u8 index_size;
 	u16 index_count, index_capacity;
+	u64 start_hash, end_hash;
 	u32 moving_size;
 	int err = 0;
 
@@ -1101,6 +1353,8 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 			index_count = parent_node->index_area.index_count;
 			index_capacity =
 				parent_node->index_area.index_capacity;
+			start_hash = parent_node->index_area.start_hash;
+			end_hash = parent_node->index_area.end_hash;
 			up_read(&parent_node->header_lock);
 
 			if (index_count != index_capacity) {
@@ -1128,6 +1382,8 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 
 			child->index_area.insert.pos.state =
 					SSDFS_HASH_RANGE_LEFT_ADJACENT;
+			child->index_area.insert.hash.start = start_hash;
+			child->index_area.insert.hash.end = end_hash;
 			child->index_area.insert.pos.start = 0;
 			child->index_area.insert.pos.count = index_count;
 			child->index_area.insert.op_state =
@@ -1180,6 +1436,8 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 			index_size = child_node->index_area.index_size;
 			index_count = child_node->index_area.index_count;
 			index_capacity = child_node->index_area.index_capacity;
+			start_hash = child_node->index_area.start_hash;
+			end_hash = child_node->index_area.end_hash;
 			up_read(&child_node->header_lock);
 
 			if (index_count != index_capacity) {
@@ -1204,6 +1462,15 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 			child->index_area.move.pos.start = 0;
 			child->index_area.move.pos.count = index_count;
 			child->index_area.move.op_state =
+					SSDFS_BTREE_AREA_OP_REQUESTED;
+
+			parent->index_area.insert.pos.state =
+					SSDFS_HASH_RANGE_LEFT_ADJACENT;
+			parent->index_area.insert.hash.start = start_hash;
+			parent->index_area.insert.hash.end = end_hash;
+			parent->index_area.insert.pos.start = 0;
+			parent->index_area.insert.pos.count = index_count;
+			parent->index_area.insert.op_state =
 					SSDFS_BTREE_AREA_OP_REQUESTED;
 			break;
 
@@ -1274,6 +1541,8 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 			index_size = child_node->index_area.index_size;
 			index_count = child_node->index_area.index_count;
 			index_capacity = child_node->index_area.index_capacity;
+			start_hash = child_node->index_area.start_hash;
+			end_hash = child_node->index_area.end_hash;
 			up_read(&child_node->header_lock);
 
 			if (index_count != index_capacity) {
@@ -1305,6 +1574,8 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 
 			child->index_area.insert.pos.state =
 					SSDFS_HASH_RANGE_LEFT_ADJACENT;
+			child->index_area.insert.hash.start = start_hash;
+			child->index_area.insert.hash.end = end_hash;
 			child->index_area.insert.pos.start = 0;
 			child->index_area.insert.pos.count = index_count;
 			child->index_area.insert.op_state =
@@ -1955,6 +2226,18 @@ int ssdfs_btree_check_root_index_pair(struct ssdfs_btree *tree,
 						     start_hash, end_hash,
 						     parent, parent_node);
 
+			err = ssdfs_btree_prepare_add_index(parent,
+							    start_hash,
+							    end_hash,
+							    parent_node);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare level: "
+					  "node_id %u, height %u\n",
+					  parent_node->node_id,
+					  atomic_read(&parent_node->height));
+				return err;
+			}
+
 			/*
 			 * it needs to prepare increasing
 			 * the tree's height
@@ -2305,6 +2588,49 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 			}
 		}
 	} else {
+		err = ssdfs_btree_prepare_insert_item(child,
+						      search,
+						      child_node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare the insert: "
+				  "node_id %u, height %u\n",
+				  child_node->node_id,
+				  atomic_read(&child_node->height));
+			return err;
+		}
+
+		if (ssdfs_need_move_items_to_sibling(child)) {
+			err = ssdfs_check_capability_move_to_sibling(child);
+			if (err == -ENOSPC) {
+				/*
+				 * It needs to add a node.
+				 */
+				ssdfs_btree_cancel_insert_item(child);
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to check moving to sibling: "
+					  "err %d\n", err);
+				return err;
+			} else {
+				err = ssdfs_btree_prepare_update_index(parent,
+								start_hash,
+								end_hash,
+								parent_node);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to prepare update: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				return 0;
+			}
+		} else
+			ssdfs_btree_cancel_insert_item(child);
+
+		ssdfs_btree_prepare_add_node(tree,
+					     SSDFS_BTREE_HYBRID_NODE,
+					     start_hash, end_hash,
+					     parent, parent_node);
+
 		err = ssdfs_btree_prepare_insert_item(parent,
 						      search,
 						      parent_node);
@@ -2316,39 +2642,19 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 			return err;
 		}
 
-		if (ssdfs_need_move_items_to_sibling(child)) {
-			err = ssdfs_check_capability_move_to_sibling(child);
-			if (err == -ENOSPC) {
-				/*
-				 * It needs to add a node.
-				 */
-			} else if (unlikely(err)) {
+		if (ssdfs_need_move_items_to_parent(child)) {
+			err = ssdfs_prepare_move_items_to_parent(search,
+								 parent,
+								 child);
+			if (unlikely(err)) {
 				SSDFS_ERR("fail to check moving to sibling: "
 					  "err %d\n", err);
 				return err;
 			}
-		} else
-			err = -ENOSPC;
-
-		if (err == -ENOSPC) {
-			ssdfs_btree_prepare_add_node(tree,
-						     SSDFS_BTREE_HYBRID_NODE,
-						     start_hash, end_hash,
-						     parent, parent_node);
-
-			/* it needs to prepare increasing the tree's height */
-			return -ENOSPC;
-		} else {
-			err = ssdfs_btree_prepare_update_index(parent,
-								start_hash,
-								end_hash,
-								parent_node);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare update index: "
-					  "err %d\n", err);
-				return err;
-			}
 		}
+
+		/* it needs to prepare increasing the tree's height */
+		return -ENOSPC;
 	}
 
 	return 0;
@@ -3389,85 +3695,101 @@ int ssdfs_btree_check_hybrid_leaf_pair(struct ssdfs_btree *tree,
 			/*
 			 * It needs to add a node.
 			 */
+			goto try_add_node;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to check moving to sibling: "
 				  "err %d\n", err);
 			return err;
 		}
-	} else
-		err = -ENOSPC;
 
-	if (err == -ENOSPC) {
-		ssdfs_btree_prepare_add_node(tree,
-					     SSDFS_BTREE_LEAF_NODE,
-					     start_hash, end_hash,
-					     child, child_node);
-
-		err = ssdfs_btree_define_moving_items(parent, child);
+		err = ssdfs_btree_prepare_update_index(parent,
+						start_hash,
+						end_hash,
+						parent_node);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to define moving items: "
+			SSDFS_ERR("fail to prepare update: "
 				  "err %d\n", err);
 			return err;
 		}
 
-		if (can_add_new_index(parent_node)) {
-			err = ssdfs_btree_prepare_add_index(parent,
-							    start_hash,
-							    end_hash,
-							    parent_node);
+		return 0;
+	}
+
+try_add_node:
+	ssdfs_btree_prepare_add_node(tree,
+				     SSDFS_BTREE_LEAF_NODE,
+				     start_hash, end_hash,
+				     child, child_node);
+
+	err = ssdfs_btree_define_moving_items(parent, child);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define moving items: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	if (can_add_new_index(parent_node)) {
+		//ssdfs_btree_cancel_move_items_to_parent(child);
+
+		err = ssdfs_btree_prepare_add_index(parent,
+						    start_hash,
+						    end_hash,
+						    parent_node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare level: "
+				  "node_id %u, height %u\n",
+				  parent_node->node_id,
+				  atomic_read(&parent_node->height));
+			return err;
+		}
+	} else if (is_index_area_resizable(parent_node)) {
+		//ssdfs_btree_cancel_move_items_to_parent(child);
+
+		err = ssdfs_btree_prepare_index_area_resize(parent,
+							parent_node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare resize: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_btree_prepare_add_index(parent,
+						    start_hash,
+						    end_hash,
+						    parent_node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare level: "
+				  "node_id %u, height %u\n",
+				  parent_node->node_id,
+				  atomic_read(&parent_node->height));
+			return err;
+		}
+	} else {
+		ssdfs_btree_prepare_add_node(tree,
+					     SSDFS_BTREE_HYBRID_NODE,
+					     start_hash, end_hash,
+					     parent, parent_node);
+
+		if (ssdfs_need_move_items_to_parent(child)) {
+			err = ssdfs_prepare_move_items_to_parent(search,
+								 parent,
+								 child);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare level: "
-					  "node_id %u, height %u\n",
-					  parent_node->node_id,
-					  atomic_read(&parent_node->height));
-				return err;
-			}
-		} else if (is_index_area_resizable(parent_node)) {
-			err = ssdfs_btree_prepare_index_area_resize(parent,
-								parent_node);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare resize: "
+				SSDFS_ERR("fail to check moving to parent: "
 					  "err %d\n", err);
 				return err;
 			}
-
-			err = ssdfs_btree_prepare_add_index(parent,
-							    start_hash,
-							    end_hash,
-							    parent_node);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare level: "
-					  "node_id %u, height %u\n",
-					  parent_node->node_id,
-					  atomic_read(&parent_node->height));
-				return err;
-			}
-		} else {
-			ssdfs_btree_prepare_add_node(tree,
-						     SSDFS_BTREE_HYBRID_NODE,
-						     start_hash, end_hash,
-						     parent, parent_node);
-
-			err = ssdfs_btree_prepare_add_index(parent,
-							    start_hash,
-							    end_hash,
-							    parent_node);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare level: "
-					  "node_id %u, height %u\n",
-					  parent_node->node_id,
-					  atomic_read(&parent_node->height));
-				return err;
-			}
 		}
-	} else {
-		err = ssdfs_btree_prepare_update_index(parent,
-							start_hash,
-							end_hash,
-							parent_node);
+
+		err = ssdfs_btree_prepare_add_index(parent,
+						    start_hash,
+						    end_hash,
+						    parent_node);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to prepare update index: "
-				  "err %d\n", err);
+			SSDFS_ERR("fail to prepare level: "
+				  "node_id %u, height %u\n",
+				  parent_node->node_id,
+				  atomic_read(&parent_node->height));
 			return err;
 		}
 	}
@@ -5004,6 +5326,154 @@ ssdfs_btree_move_items_parent2child(struct ssdfs_btree_state_descriptor *desc,
 }
 
 /*
+ * ssdfs_btree_move_items_child2parent() - move items from child to parent node
+ * @desc: btree state descriptor
+ * @parent: parent level descriptor
+ * @child: child level descriptor
+ *
+ * This method tries to move items from the child node into
+ * parent one.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static int
+ssdfs_btree_move_items_child2parent(struct ssdfs_btree_state_descriptor *desc,
+				    struct ssdfs_btree_level *parent,
+				    struct ssdfs_btree_level *child)
+{
+	struct ssdfs_btree_node *parent_node;
+	struct ssdfs_btree_node *child_node;
+	int type;
+	u32 calculated;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc || !parent || !child);
+
+	if (!(child->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE &&
+	      child->items_area.move.direction == SSDFS_BTREE_MOVE_TO_PARENT)) {
+		SSDFS_WARN("invalid move request: "
+			   "flags %#x, direction %#x\n",
+			   parent->flags,
+			   parent->items_area.move.direction);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("desc %p, parent %p, child %p\n",
+		  desc, parent, child);
+
+	if (child->items_area.move.op_state != SSDFS_BTREE_AREA_OP_REQUESTED) {
+		SSDFS_ERR("invalid operation state %#x\n",
+			  parent->items_area.move.op_state);
+		return -ERANGE;
+	} else
+		child->items_area.move.op_state = SSDFS_BTREE_AREA_OP_FAILED;
+
+	if (parent->flags & SSDFS_BTREE_LEVEL_ADD_NODE)
+		parent_node = parent->nodes.new_node.ptr;
+	else
+		parent_node = parent->nodes.old_node.ptr;
+
+	child_node = child->nodes.old_node.ptr;
+
+	if (!parent_node || !child_node) {
+		SSDFS_ERR("fail to move items: "
+			  "parent_node %p, child_node %p\n",
+			  parent_node, child_node);
+		return -ERANGE;
+	}
+
+	type = atomic_read(&parent_node->type);
+	if (type != SSDFS_BTREE_HYBRID_NODE) {
+		SSDFS_ERR("parent node has improper type: "
+			  "node_id %u, type %#x\n",
+			  parent_node->node_id, type);
+		return -ERANGE;
+	}
+
+	type = atomic_read(&child_node->type);
+	switch (type) {
+	case SSDFS_BTREE_LEAF_NODE:
+	case SSDFS_BTREE_HYBRID_NODE:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("child node has improper type: "
+			  "node_id %u, type %#x\n",
+			  child_node->node_id, type);
+		return -ERANGE;
+	}
+
+	switch (child->items_area.move.pos.state) {
+	case SSDFS_HASH_RANGE_INTERSECTION:
+		if (child->items_area.move.pos.count == 0) {
+			SSDFS_ERR("invalid position's count %u\n",
+				  child->items_area.move.pos.count);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("invalid position's state %#x\n",
+			  child->items_area.move.pos.state);
+		return -ERANGE;
+	}
+
+	calculated = child->items_area.move.pos.count * desc->min_item_size;
+
+	if (calculated >= desc->node_size) {
+		SSDFS_ERR("invalid position: "
+			  "count %u, min_item_size %u, node_size %u\n",
+			  child->items_area.move.pos.count,
+			  desc->min_item_size,
+			  desc->node_size);
+		return -ERANGE;
+	}
+
+	if (!(parent->flags & SSDFS_BTREE_LEVEL_ADD_NODE) &&
+	    calculated > parent->items_area.free_space) {
+		SSDFS_ERR("child has not enough free space: "
+			  "calculated %u, free_space %u\n",
+			  calculated,
+			  parent->items_area.free_space);
+		return -ERANGE;
+	}
+
+	err = ssdfs_btree_node_move_items_range(child_node, parent_node,
+					child->items_area.move.pos.start,
+					child->items_area.move.pos.count);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move items range: "
+			  "src_node %u, dst_node %u, "
+			  "start_item %u, count %u, "
+			  "err %d\n",
+			  child_node->node_id,
+			  parent_node->node_id,
+			  child->items_area.move.pos.start,
+			  child->items_area.move.pos.count,
+			  err);
+		return err;
+	}
+
+	down_read(&child_node->header_lock);
+	parent->index_area.hash.start = child_node->index_area.start_hash;
+	parent->index_area.hash.end = child_node->index_area.end_hash;
+	parent->items_area.hash.start = child_node->items_area.start_hash;
+	parent->items_area.hash.end = child_node->items_area.end_hash;
+	up_read(&child_node->header_lock);
+
+	child->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
+
+	return 0;
+}
+
+/*
  * ssdfs_btree_move_items() - move items between nodes
  * @desc: btree state descriptor
  * @parent: parent level descriptor
@@ -5040,6 +5510,17 @@ int ssdfs_btree_move_items(struct ssdfs_btree_state_descriptor *desc,
 				SSDFS_ERR("invalid op_state %#x\n",
 					  op_state);
 				return -ERANGE;
+			}
+			break;
+
+		case SSDFS_BTREE_MOVE_TO_PARENT:
+			err = ssdfs_btree_move_items_child2parent(desc,
+								  parent,
+								  child);
+			if (unlikely(err)) {
+				SSDFS_ERR("failed to move items: err %d\n",
+					  err);
+				return err;
 			}
 			break;
 
@@ -6212,13 +6693,17 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 
 	desc = &hierarchy->desc;
 	cur_level = &hierarchy->array[cur_height];
-	parent = &hierarchy->array[cur_height + 1];
 
 	if (!cur_level->flags) {
 		SSDFS_DBG("nothing to do: cur_height %d\n",
 			  cur_height);
 		return 0;
 	}
+
+	if (cur_height == (hierarchy->desc.height - 1))
+		goto check_necessity_increase_tree_height;
+
+	parent = &hierarchy->array[cur_height + 1];
 
 	if (cur_level->flags & ~SSDFS_BTREE_ADD_NODE_MASK ||
 	    parent->flags & ~SSDFS_BTREE_ADD_NODE_MASK) {
@@ -6322,6 +6807,7 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 	}
 
 	if (cur_height == (hierarchy->desc.height - 1)) {
+check_necessity_increase_tree_height:
 		if (cur_level->nodes.old_node.ptr)
 			node = cur_level->nodes.old_node.ptr;
 		else if (cur_level->nodes.new_node.ptr)

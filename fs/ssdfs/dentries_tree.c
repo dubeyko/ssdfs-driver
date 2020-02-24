@@ -4896,6 +4896,7 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
+	u64 start_hash = U64_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4932,11 +4933,12 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	};
 
-	down_write(&node->header_lock);
+	down_read(&node->header_lock);
 
 	switch (atomic_read(&node->items_area.state)) {
 	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
 		items_capacity = node->items_area.items_capacity;
+		start_hash = node->items_area.start_hash;
 		break;
 	default:
 		items_capacity = 0;
@@ -4962,7 +4964,7 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 		  le16_to_cpu(node->raw.dentries_header.free_space));
 
 finish_add_node:
-	up_write(&node->header_lock);
+	up_read(&node->header_lock);
 
 	if (err)
 		return err;
@@ -4973,6 +4975,8 @@ finish_add_node:
 		memcpy(&key, &node->node_index,
 			sizeof(struct ssdfs_btree_index_key));
 		spin_unlock(&node->descriptor_lock);
+
+		key.index.hash = cpu_to_le64(start_hash);
 
 		SSDFS_DBG("node_id %u, node_type %#x, "
 			  "node_height %u, hash %llx\n",
@@ -8330,6 +8334,8 @@ finish_detect_affected_items:
 	}
 
 	hdr = &node->raw.dentries_header;
+
+	hdr->free_space = cpu_to_le16(node->items_area.free_space);
 	old_dentries_count = le16_to_cpu(hdr->dentries_count);
 
 	if (node->items_area.items_count == 0) {
