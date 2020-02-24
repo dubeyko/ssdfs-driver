@@ -2859,7 +2859,7 @@ int ssdfs_btree_check_index_hybrid_pair(struct ssdfs_btree *tree,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
 
-	if (parent_type != SSDFS_BTREE_HYBRID_NODE) {
+	if (parent_type != SSDFS_BTREE_INDEX_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
 			   parent_type);
 		return -ERANGE;
