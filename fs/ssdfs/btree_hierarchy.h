@@ -131,10 +131,14 @@ enum {
 /*
  * struct ssdfs_btree_level_node - node descriptor
  * @type: node's type
+ * @index_hash: old index area's hash pair
+ * @items_hash: old items area's hash pair
  * @ptr: pointer on node's object
  */
 struct ssdfs_btree_level_node {
 	int type;
+	struct ssdfs_hash_range index_hash;
+	struct ssdfs_hash_range items_hash;
 	struct ssdfs_btree_node *ptr;
 };
 

@@ -146,9 +146,17 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 
 		ptr->array[i].nodes.old_node.type =
 				SSDFS_BTREE_NODE_UNKNOWN_TYPE;
+		ptr->array[i].nodes.old_node.index_hash.start = U64_MAX;
+		ptr->array[i].nodes.old_node.index_hash.end = U64_MAX;
+		ptr->array[i].nodes.old_node.items_hash.start = U64_MAX;
+		ptr->array[i].nodes.old_node.items_hash.end = U64_MAX;
 		ptr->array[i].nodes.old_node.ptr = NULL;
 		ptr->array[i].nodes.new_node.type =
 				SSDFS_BTREE_NODE_UNKNOWN_TYPE;
+		ptr->array[i].nodes.new_node.index_hash.start = U64_MAX;
+		ptr->array[i].nodes.new_node.index_hash.end = U64_MAX;
+		ptr->array[i].nodes.new_node.items_hash.start = U64_MAX;
+		ptr->array[i].nodes.new_node.items_hash.end = U64_MAX;
 		ptr->array[i].nodes.new_node.ptr = NULL;
 	}
 
@@ -4193,6 +4201,53 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 	return node;
 }
 
+static
+void ssdfs_btree_hierarchy_init_hash_range(struct ssdfs_btree_level *level,
+					   struct ssdfs_btree_node *node)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!level);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!node)
+		return;
+
+	down_read(&node->header_lock);
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_ROOT_NODE:
+	case SSDFS_BTREE_INDEX_NODE:
+		level->nodes.old_node.index_hash.start =
+					node->index_area.start_hash;
+		level->nodes.old_node.index_hash.end =
+					node->index_area.end_hash;
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		level->nodes.old_node.index_hash.start =
+					node->index_area.start_hash;
+		level->nodes.old_node.index_hash.end =
+					node->index_area.end_hash;
+		level->nodes.old_node.items_hash.start =
+					node->items_area.start_hash;
+		level->nodes.old_node.items_hash.end =
+					node->items_area.end_hash;
+		break;
+
+	case SSDFS_BTREE_LEAF_NODE:
+		level->nodes.old_node.items_hash.start =
+					node->items_area.start_hash;
+		level->nodes.old_node.items_hash.end =
+					node->items_area.end_hash;
+		break;
+
+	default:
+		SSDFS_WARN("unexpected node type %#x\n",
+			   atomic_read(&node->type));
+		break;
+	}
+	up_read(&node->header_lock);
+}
+
 /*
  * ssdfs_btree_check_hierarchy_for_add() - check the btree for add node
  * @tree: btree object
@@ -4342,11 +4397,13 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 	level = &hierarchy->array[cur_height];
 	level->nodes.old_node.type = child_node_type;
 	level->nodes.old_node.ptr = child_node;
+	ssdfs_btree_hierarchy_init_hash_range(level, child_node);
 
 	cur_height++;
 	level = &hierarchy->array[cur_height];
 	level->nodes.old_node.type = parent_node_type;
 	level->nodes.old_node.ptr = parent_node;
+	ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
 
 	cur_height++;
 	parent_node = parent_node->parent_node;
@@ -4360,6 +4417,8 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 		level = &hierarchy->array[cur_height];
 		level->nodes.old_node.type = parent_node_type;
 		level->nodes.old_node.ptr = parent_node;
+		ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
+
 		parent_node = parent_node->parent_node;
 	}
 
@@ -4630,12 +4689,14 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 	level = &hierarchy->array[cur_height];
 	level->nodes.old_node.type = child_node_type;
 	level->nodes.old_node.ptr = child_node;
+	ssdfs_btree_hierarchy_init_hash_range(level, child_node);
 	level->flags |= SSDFS_BTREE_LEVEL_DELETE_NODE;
 
 	cur_height++;
 	level = &hierarchy->array[cur_height];
 	level->nodes.old_node.type = parent_node_type;
 	level->nodes.old_node.ptr = parent_node;
+	ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
 
 	cur_height++;
 	parent_node = parent_node->parent_node;
@@ -4649,6 +4710,8 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 		level = &hierarchy->array[cur_height];
 		level->nodes.old_node.type = parent_node_type;
 		level->nodes.old_node.ptr = parent_node;
+		ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
+
 		parent_node = parent_node->parent_node;
 	}
 
@@ -4873,11 +4936,13 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 	level = &hierarchy->array[cur_height];
 	level->nodes.old_node.type = child_node_type;
 	level->nodes.old_node.ptr = child_node;
+	ssdfs_btree_hierarchy_init_hash_range(level, child_node);
 
 	cur_height++;
 	level = &hierarchy->array[cur_height];
 	level->nodes.old_node.type = parent_node_type;
 	level->nodes.old_node.ptr = parent_node;
+	ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
 	level->flags |= SSDFS_BTREE_LEVEL_UPDATE_INDEX;
 
 	cur_height++;
@@ -4892,6 +4957,8 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 		level = &hierarchy->array[cur_height];
 		level->nodes.old_node.type = parent_node_type;
 		level->nodes.old_node.ptr = parent_node;
+		ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
+
 		parent_node = parent_node->parent_node;
 	}
 
@@ -4975,7 +5042,13 @@ int ssdfs_btree_move_items_left(struct ssdfs_btree_state_descriptor *desc,
 	}
 
 	type = atomic_read(&old_node->type);
-	if (type != SSDFS_BTREE_LEAF_NODE) {
+	switch (type) {
+	case SSDFS_BTREE_LEAF_NODE:
+	case SSDFS_BTREE_HYBRID_NODE:
+		/* expected type */
+		break;
+
+	default:
 		SSDFS_ERR("old node is not leaf node: "
 			  "node_id %u, type %#x\n",
 			  old_node->node_id, type);
@@ -4983,7 +5056,13 @@ int ssdfs_btree_move_items_left(struct ssdfs_btree_state_descriptor *desc,
 	}
 
 	type = atomic_read(&new_node->type);
-	if (type != SSDFS_BTREE_LEAF_NODE) {
+	switch (type) {
+	case SSDFS_BTREE_LEAF_NODE:
+	case SSDFS_BTREE_HYBRID_NODE:
+		/* expected type */
+		break;
+
+	default:
 		SSDFS_ERR("new node is not leaf node: "
 			  "node_id %u, type %#x\n",
 			  new_node->node_id, type);
@@ -5108,7 +5187,13 @@ int ssdfs_btree_move_items_right(struct ssdfs_btree_state_descriptor *desc,
 	}
 
 	type = atomic_read(&old_node->type);
-	if (type != SSDFS_BTREE_LEAF_NODE) {
+	switch (type) {
+	case SSDFS_BTREE_LEAF_NODE:
+	case SSDFS_BTREE_HYBRID_NODE:
+		/* expected type */
+		break;
+
+	default:
 		SSDFS_ERR("old node is not leaf node: "
 			  "node_id %u, type %#x\n",
 			  old_node->node_id, type);
@@ -5116,7 +5201,13 @@ int ssdfs_btree_move_items_right(struct ssdfs_btree_state_descriptor *desc,
 	}
 
 	type = atomic_read(&new_node->type);
-	if (type != SSDFS_BTREE_LEAF_NODE) {
+	switch (type) {
+	case SSDFS_BTREE_LEAF_NODE:
+	case SSDFS_BTREE_HYBRID_NODE:
+		/* expected type */
+		break;
+
+	default:
 		SSDFS_ERR("new node is not leaf node: "
 			  "node_id %u, type %#x\n",
 			  new_node->node_id, type);
@@ -6487,8 +6578,10 @@ int ssdfs_btree_add_index(struct ssdfs_btree_state_descriptor *desc,
 
 /*
  * __ssdfs_btree_update_index() - update index in the parent node
- * @parent: parent node
- * @child: child node
+ * @parent: parent level descriptor
+ * @child: child level descriptor
+ * @parent_node: parent node
+ * @child_node: child node
  *
  * This method tries to update an index into the parent node.
  *
@@ -6499,45 +6592,141 @@ int ssdfs_btree_add_index(struct ssdfs_btree_state_descriptor *desc,
  * %-ERANGE     - internal error.
  */
 static
-int __ssdfs_btree_update_index(struct ssdfs_btree_node *parent,
-				struct ssdfs_btree_node *child)
+int __ssdfs_btree_update_index(struct ssdfs_btree_level *parent,
+				struct ssdfs_btree_level *child,
+				struct ssdfs_btree_node *parent_node,
+				struct ssdfs_btree_node *child_node)
 {
 	struct ssdfs_btree_index_key old_key, new_key;
-	int type;
+	int parent_type, child_type;
 	u64 start_hash = U64_MAX;
-	int err;
+	u64 old_hash = U64_MAX;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!parent || !child);
+	BUG_ON(!parent || !child || !parent_node || !child_node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("parent %p, child %p\n",
-		  parent, child);
+	SSDFS_DBG("parent %p, child %p, parent_node %p, child_node %p\n",
+		  parent, child, parent_node, child_node);
 
-	type = atomic_read(&child->type);
+	parent_type = atomic_read(&parent_node->type);
+	child_type = atomic_read(&child_node->type);
 
-	down_read(&child->header_lock);
-	if (type == SSDFS_BTREE_LEAF_NODE)
-		start_hash = child->items_area.start_hash;
-	else
-		start_hash = child->index_area.start_hash;
-	up_read(&child->header_lock);
+	switch (parent_type) {
+	case SSDFS_BTREE_ROOT_NODE:
+		switch (child_type) {
+		case SSDFS_BTREE_LEAF_NODE:
+			down_read(&child_node->header_lock);
+			start_hash = child_node->items_area.start_hash;
+			up_read(&child_node->header_lock);
+			break;
 
-	spin_lock(&child->descriptor_lock);
-	memcpy(&old_key, &child->node_index,
+		case SSDFS_BTREE_HYBRID_NODE:
+		case SSDFS_BTREE_INDEX_NODE:
+			down_read(&child_node->header_lock);
+			start_hash = child_node->index_area.start_hash;
+			up_read(&child_node->header_lock);
+			break;
+
+		default:
+			SSDFS_ERR("unexpected child type %#x\n",
+				  child_type);
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		switch (child_type) {
+		case SSDFS_BTREE_LEAF_NODE:
+			down_read(&child_node->header_lock);
+			start_hash = child_node->items_area.start_hash;
+			up_read(&child_node->header_lock);
+			break;
+
+		case SSDFS_BTREE_HYBRID_NODE:
+			if (parent_node == child_node) {
+				down_read(&child_node->header_lock);
+				start_hash = child_node->items_area.start_hash;
+				up_read(&child_node->header_lock);
+			} else {
+				down_read(&child_node->header_lock);
+				start_hash = child_node->index_area.start_hash;
+				up_read(&child_node->header_lock);
+			}
+			break;
+
+		case SSDFS_BTREE_INDEX_NODE:
+			down_read(&child_node->header_lock);
+			start_hash = child_node->index_area.start_hash;
+			up_read(&child_node->header_lock);
+			break;
+
+		default:
+			SSDFS_ERR("unexpected child type %#x\n",
+				  child_type);
+			return -ERANGE;
+		}
+
+		break;
+
+	case SSDFS_BTREE_INDEX_NODE:
+		switch (child_type) {
+		case SSDFS_BTREE_LEAF_NODE:
+			down_read(&child_node->header_lock);
+			start_hash = child_node->items_area.start_hash;
+			up_read(&child_node->header_lock);
+			break;
+
+		case SSDFS_BTREE_HYBRID_NODE:
+		case SSDFS_BTREE_INDEX_NODE:
+			down_read(&child_node->header_lock);
+			start_hash = child_node->index_area.start_hash;
+			up_read(&child_node->header_lock);
+			break;
+
+		default:
+			SSDFS_ERR("unexpected child type %#x\n",
+				  child_type);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected parent type %#x\n",
+			  parent_type);
+		return -ERANGE;
+	}
+
+	spin_lock(&child_node->descriptor_lock);
+
+	memcpy(&old_key, &child_node->node_index,
 		sizeof(struct ssdfs_btree_index_key));
-	memcpy(&child->node_index.index.extent,
-		&child->extent,
+
+	if (parent_type == SSDFS_BTREE_HYBRID_NODE &&
+	    child_type == SSDFS_BTREE_HYBRID_NODE &&
+	    parent_node == child_node) {
+		old_hash = parent->nodes.old_node.items_hash.start;
+		if (old_hash == U64_MAX) {
+			err = -ERANGE;
+			SSDFS_WARN("invalid old hash\n");
+			goto finish_update_index;
+		}
+
+		old_key.index.hash = cpu_to_le64(old_hash);
+	}
+
+	memcpy(&child_node->node_index.index.extent,
+		&child_node->extent,
 		sizeof(struct ssdfs_raw_extent));
-	memcpy(&new_key, &child->node_index,
+	memcpy(&new_key, &child_node->node_index,
 		sizeof(struct ssdfs_btree_index_key));
-	if (type == SSDFS_BTREE_LEAF_NODE)
-		new_key.index.hash = cpu_to_le64(start_hash);
-	else
-		new_key.index.hash = cpu_to_le64(start_hash);
-	memcpy(&child->node_index, &new_key,
+	new_key.index.hash = cpu_to_le64(start_hash);
+	memcpy(&child_node->node_index, &new_key,
 		sizeof(struct ssdfs_btree_index_key));
-	spin_unlock(&child->descriptor_lock);
+
+finish_update_index:
+	spin_unlock(&child_node->descriptor_lock);
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "node_height %u, hash %llx\n",
@@ -6551,7 +6740,10 @@ int __ssdfs_btree_update_index(struct ssdfs_btree_node *parent,
 		  le32_to_cpu(new_key.index.extent.logical_blk),
 		  le32_to_cpu(new_key.index.extent.len));
 
-	err = ssdfs_btree_node_change_index(parent, &old_key, &new_key);
+	if (unlikely(err))
+		return err;
+
+	err = ssdfs_btree_node_change_index(parent_node, &old_key, &new_key);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to update index: err %d\n", err);
 		return err;
@@ -6613,7 +6805,8 @@ int ssdfs_btree_update_index(struct ssdfs_btree_state_descriptor *desc,
 		return -ERANGE;
 	}
 
-	err = __ssdfs_btree_update_index(parent_node, child_node);
+	err = __ssdfs_btree_update_index(parent, child,
+					 parent_node, child_node);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to update index: err %d\n", err);
 		return err;
@@ -6640,7 +6833,8 @@ int ssdfs_btree_update_index(struct ssdfs_btree_state_descriptor *desc,
 			return -ERANGE;
 		}
 
-		err = __ssdfs_btree_update_index(parent_node, child_node);
+		err = __ssdfs_btree_update_index(parent, child,
+						 parent_node, child_node);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to update index: err %d\n", err);
 			return err;
@@ -7068,12 +7262,24 @@ void ssdfs_debug_btree_hierarchy_object(struct ssdfs_btree_hierarchy *ptr)
 
 		SSDFS_DBG("LEVEL: height %d, flags %#x, "
 			  "OLD_NODE: type %#x, ptr %p, "
-			  "NEW_NODE: type %#x, ptr %p\n",
+			  "index_area (start %llx, end %llx), "
+			  "items_area (start %llx, end %llx), "
+			  "NEW_NODE: type %#x, ptr %p, "
+			  "index_area (start %llx, end %llx), "
+			  "items_area (start %llx, end %llx)\n",
 			  i, level->flags,
 			  level->nodes.old_node.type,
 			  level->nodes.old_node.ptr,
+			  level->nodes.old_node.index_hash.start,
+			  level->nodes.old_node.index_hash.end,
+			  level->nodes.old_node.items_hash.start,
+			  level->nodes.old_node.items_hash.end,
 			  level->nodes.new_node.type,
-			  level->nodes.new_node.ptr);
+			  level->nodes.new_node.ptr,
+			  level->nodes.new_node.index_hash.start,
+			  level->nodes.new_node.index_hash.end,
+			  level->nodes.new_node.items_hash.start,
+			  level->nodes.new_node.items_hash.end);
 
 		SSDFS_DBG("INDEX_AREA: area_size %u, free_space %u, "
 			  "start_hash %llx, end_hash %llx\n",

@@ -448,7 +448,7 @@ u16 __ssdfs_convert_lookup2item_index(u16 lookup_index,
 
 	item_index = (u32)lookup_index * items_per_lookup_index;
 
-	SSDFS_DBG("lookup_index %u, item_inxdex %u\n",
+	SSDFS_DBG("lookup_index %u, item_index %u\n",
 		  lookup_index, item_index);
 
 #ifdef CONFIG_SSDFS_DEBUG

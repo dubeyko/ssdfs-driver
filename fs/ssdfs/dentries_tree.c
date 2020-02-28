@@ -6574,9 +6574,9 @@ int ssdfs_clean_lookup_table(struct ssdfs_btree_node *node,
 	items_count = node->items_area.items_count;
 	item_index = ssdfs_convert_lookup2item_index(node->node_size,
 						     lookup_index);
-	if (unlikely(item_index >= items_count)) {
-		SSDFS_ERR("item_index %u >= items_count %u\n",
-			  item_index, items_count);
+	if (unlikely(item_index >= items_capacity)) {
+		SSDFS_ERR("item_index %u >= items_capacity %u\n",
+			  item_index, items_capacity);
 		return -ERANGE;
 	}
 

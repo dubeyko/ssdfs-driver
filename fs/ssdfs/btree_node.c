@@ -11517,9 +11517,14 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (index_diff < shift) {
-			SSDFS_ERR("index_diff %u < shift %u\n",
+			/*
+			 * The shift moves data out of the node.
+			 * This is the reason that index_diff is
+			 * lesser than shift. Keep the index_diff
+			 * the same.
+			 */
+			SSDFS_DBG("index_diff %u, shift %u\n",
 				  index_diff, shift);
-			return -ERANGE;
 		} else if (index_diff == shift) {
 			/*
 			 * It's the case when destination page
@@ -11530,6 +11535,8 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			 * by previous move operation. Simply,
 			 * keep the index_diff the same.
 			 */
+			SSDFS_DBG("index_diff %u, shift %u\n",
+				  index_diff, shift);
 		} else {
 			/*
 			 * It needs to know the number of items
