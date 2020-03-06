@@ -1755,6 +1755,16 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 
 		node->items_area.items_count = valid_inodes;
 		node->items_area.items_capacity = inodes_count;
+		free_inodes = inodes_count - valid_inodes;
+
+		node->items_area.free_space = (u32)free_inodes * item_size;
+		if (node->items_area.free_space > node->items_area.area_size) {
+			err = -EIO;
+			SSDFS_ERR("free_space %u > area_size %u\n",
+				  node->items_area.free_space,
+				  node->items_area.area_size);
+			goto finish_header_init;
+		}
 
 		items_count = node_size / item_size;
 		items_capacity = node_size / item_size;
@@ -1788,6 +1798,16 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 
 		node->items_area.items_count = valid_inodes;
 		node->items_area.items_capacity = inodes_count;
+		free_inodes = inodes_count - valid_inodes;
+
+		node->items_area.free_space = (u32)free_inodes * item_size;
+		if (node->items_area.free_space > node->items_area.area_size) {
+			err = -EIO;
+			SSDFS_ERR("free_space %u > area_size %u\n",
+				  node->items_area.free_space,
+				  node->items_area.area_size);
+			goto finish_header_init;
+		}
 
 		items_count = node_size / item_size;
 		items_capacity = node_size / item_size;
@@ -1798,6 +1818,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	case SSDFS_BTREE_INDEX_NODE:
 		node->items_area.items_count = 0;
 		node->items_area.items_capacity = 0;
+		node->items_area.free_space = 0;
 
 		items_count = 0;
 		items_capacity = 0;
@@ -1810,6 +1831,11 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 			  hdr->node.type);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("items_count %u, area_size %u, free_space %u\n",
+		  node->items_area.items_count,
+		  node->items_area.area_size,
+		  node->items_area.free_space);
 
 finish_header_init:
 	up_write(&node->header_lock);
@@ -2005,7 +2031,8 @@ int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
 	u16 items_capacity;
 	u16 free_items;
 	struct ssdfs_inodes_btree_range *range = NULL;
-	struct ssdfs_btree_index_key key;
+	struct ssdfs_btree_index_key old_key, new_key;
+	u64 old_hash;
 	int type;
 	int err;
 
@@ -2035,6 +2062,7 @@ int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
 
 	down_write(&node->header_lock);
 
+	old_hash = node->items_area.start_hash;
 	items_count = node->items_area.items_count;
 	items_capacity = node->items_area.items_capacity;
 
@@ -2057,17 +2085,24 @@ int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
-		spin_lock(&node->descriptor_lock);
-		memcpy(&key, &node->node_index,
-			sizeof(struct ssdfs_btree_index_key));
-		spin_unlock(&node->descriptor_lock);
+		if (old_hash != start_hash) {
+			spin_lock(&node->descriptor_lock);
+			memcpy(&old_key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			memcpy(&new_key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			spin_unlock(&node->descriptor_lock);
 
-		key.index.hash = cpu_to_le64(start_hash);
+			old_key.index.hash = cpu_to_le64(old_hash);
+			new_key.index.hash = cpu_to_le64(start_hash);
 
-		err = ssdfs_btree_node_add_index(node, &key);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add index: err %d\n", err);
-			return err;
+			err = ssdfs_btree_node_change_index(node,
+							&old_key, &new_key);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change index: err %d\n",
+					  err);
+				return err;
+			}
 		}
 		break;
 
@@ -2132,7 +2167,6 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 	struct ssdfs_btree_node *parent_node;
 	int type;
 	u64 start_hash = U64_MAX;
-	u64 end_hash = U64_MAX;
 	u16 items_capacity;
 	int err;
 
@@ -2160,7 +2194,6 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 
 	down_read(&node->header_lock);
 	start_hash = node->items_area.start_hash;
-	end_hash = node->items_area.end_hash;
 	items_capacity = node->items_area.items_capacity;
 	up_read(&node->header_lock);
 
@@ -2190,12 +2223,8 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 			return err;
 		}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(end_hash >= U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		parent_node = node->parent_node;
-		start_hash = end_hash + 1;
+		start_hash += items_capacity;
 
 		err = ssdfs_inodes_btree_node_correct_hash_range(parent_node,
 								 start_hash);
@@ -2955,6 +2984,7 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	u64 end_hash;
 	u32 bmap_bytes;
 	u64 free_inodes;
+	u32 used_space;
 	int i;
 	int err = 0;
 
@@ -3116,7 +3146,26 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	spin_unlock(&bmap->lock);
 	up_read(&node->bmap_array.lock);
 	node->items_area.items_count += count;
+	used_space = (u32)node->items_area.item_size * count;
+	if (used_space > node->items_area.free_space) {
+		err = -ERANGE;
+		SSDFS_ERR("used_space %u > free_space %u\n",
+			  used_space,
+			  node->items_area.free_space);
+		goto finish_change_node_header;
+	} else
+		node->items_area.free_space -= used_space;
+
+	SSDFS_DBG("items_count %u, area_size %u, free_space %u\n",
+		  node->items_area.items_count,
+		  node->items_area.area_size,
+		  node->items_area.free_space);
+
 	up_write(&node->header_lock);
+
+finish_change_node_header:
+	if (unlikely(err))
+		goto finish_allocate_item;
 
 	err = ssdfs_set_node_header_dirty(node, items_capacity);
 	if (unlikely(err)) {
@@ -3917,6 +3966,8 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 	u16 valid_inodes;
 	u64 free_inodes;
 	u64 inodes_capacity;
+	u32 area_size;
+	u32 freed_space;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4060,7 +4111,28 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 	spin_unlock(&bmap->lock);
 	up_read(&node->bmap_array.lock);
 	node->items_area.items_count -= search->result.count;
+	area_size = node->items_area.area_size;
+	freed_space = (u32)node->items_area.item_size * search->result.count;
+	if ((node->items_area.free_space + freed_space) > area_size) {
+		err = -ERANGE;
+		SSDFS_ERR("freed_space %u, free_space %u, area_size %u\n",
+			  freed_space,
+			  node->items_area.free_space,
+			  area_size);
+		goto finish_change_node_header;
+	} else
+		node->items_area.free_space += freed_space;
+
+	SSDFS_DBG("items_count %u, area_size %u, free_space %u\n",
+		  node->items_area.items_count,
+		  node->items_area.area_size,
+		  node->items_area.free_space);
+
 	up_write(&node->header_lock);
+
+finish_change_node_header:
+	if (unlikely(err))
+		goto finish_delete_range;
 
 	err = ssdfs_set_node_header_dirty(node, items_capacity);
 	if (unlikely(err)) {

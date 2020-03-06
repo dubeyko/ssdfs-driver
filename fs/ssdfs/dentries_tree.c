@@ -4501,6 +4501,18 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		  le16_to_cpu(node->raw.dentries_header.dentries_count),
 		  le16_to_cpu(node->raw.dentries_header.inline_names),
 		  le16_to_cpu(node->raw.dentries_header.free_space));
+	SSDFS_DBG("items_count %u, items_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->items_area.items_count,
+		  node->items_area.items_capacity,
+		  node->items_area.start_hash,
+		  node->items_area.end_hash);
+	SSDFS_DBG("index_count %u, index_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->index_area.index_count,
+		  node->index_area.index_capacity,
+		  node->index_area.start_hash,
+		  node->index_area.end_hash);
 
 finish_create_node:
 	up_write(&node->bmap_array.lock);
@@ -4781,6 +4793,19 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 	node->items_area.items_count = (u16)dentries_count;
 	node->items_area.items_capacity = items_capacity;
 
+	SSDFS_DBG("items_count %u, items_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->items_area.items_count,
+		  node->items_area.items_capacity,
+		  node->items_area.start_hash,
+		  node->items_area.end_hash);
+	SSDFS_DBG("index_count %u, index_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->index_area.index_count,
+		  node->index_area.index_capacity,
+		  node->index_area.start_hash,
+		  node->index_area.end_hash);
+
 finish_header_init:
 	up_write(&node->header_lock);
 
@@ -4893,6 +4918,7 @@ void ssdfs_dentries_btree_destroy_node(struct ssdfs_btree_node *node)
 static
 int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 {
+	struct ssdfs_btree_node *parent_node;
 	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
@@ -4962,42 +4988,26 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 		  le16_to_cpu(node->raw.dentries_header.dentries_count),
 		  le16_to_cpu(node->raw.dentries_header.inline_names),
 		  le16_to_cpu(node->raw.dentries_header.free_space));
+	SSDFS_DBG("items_count %u, items_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->items_area.items_count,
+		  node->items_area.items_capacity,
+		  node->items_area.start_hash,
+		  node->items_area.end_hash);
+	SSDFS_DBG("index_count %u, index_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->index_area.index_count,
+		  node->index_area.index_capacity,
+		  node->index_area.start_hash,
+		  node->index_area.end_hash);
 
 finish_add_node:
 	up_read(&node->header_lock);
 
+	ssdfs_debug_btree_node_object(node);
+
 	if (err)
 		return err;
-
-	switch (atomic_read(&node->type)) {
-	case SSDFS_BTREE_HYBRID_NODE:
-		spin_lock(&node->descriptor_lock);
-		memcpy(&key, &node->node_index,
-			sizeof(struct ssdfs_btree_index_key));
-		spin_unlock(&node->descriptor_lock);
-
-		key.index.hash = cpu_to_le64(start_hash);
-
-		SSDFS_DBG("node_id %u, node_type %#x, "
-			  "node_height %u, hash %llx\n",
-			  le32_to_cpu(key.node_id),
-			  key.node_type,
-			  key.height,
-			  le64_to_cpu(key.index.hash));
-
-		err = ssdfs_btree_node_add_index(node, &key);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add index: err %d\n", err);
-			return err;
-		}
-		break;
-
-	default:
-		/* do nothing */
-		break;
-	}
-
-	ssdfs_debug_btree_node_object(node);
 
 	return 0;
 }
@@ -5637,6 +5647,13 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 			sizeof(struct ssdfs_name_string);
 		search->result.names_in_buffer = 0;
 	} else {
+		if (search->result.buf) {
+			SSDFS_WARN("search->result.buf %p, "
+				   "search->result.buf_state %#x\n",
+				   search->result.buf,
+				   search->result.buf_state);
+		}
+
 		search->result.buf_state =
 			SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
 		search->result.buf_size = buf_size;
