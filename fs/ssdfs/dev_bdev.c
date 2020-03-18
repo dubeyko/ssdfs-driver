@@ -534,9 +534,11 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 		goto free_buf;
 
 	if (memchr_inv(buf, 0xff, fsi->pagesize)) {
-		SSDFS_DBG("area with offset %llu contains unmatching char\n",
-			  (unsigned long long)offset);
-		err = -EIO;
+		if (memchr_inv(buf, 0x00, fsi->pagesize)) {
+			SSDFS_DBG("area with offset %llu contains data\n",
+				  (unsigned long long)offset);
+			err = -EIO;
+		}
 	}
 
 free_buf:
@@ -847,9 +849,9 @@ static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
 		  sb, (unsigned long long)offset, len);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	div_u64_rem((u64)len, (u64)ssdfs_bdev_device_size(sb), &remainder);
+	div_u64_rem((u64)len, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
-	div_u64_rem((u64)offset, (u64)ssdfs_bdev_device_size(sb), &remainder);
+	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -915,9 +917,9 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 		  sb, (unsigned long long)offset, len);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	div_u64_rem((u64)len, (u64)ssdfs_bdev_device_size(sb), &remainder);
+	div_u64_rem((u64)len, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
-	div_u64_rem((u64)offset, (u64)ssdfs_bdev_device_size(sb), &remainder);
+	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 

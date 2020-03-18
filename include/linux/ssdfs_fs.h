@@ -2340,7 +2340,7 @@ enum {
  * @checksum: checksum of PEB table's fragment
  * @start_peb: starting PEB number
  * @pebs_count: count of PEB's descriptors in table's fragment
- * @unused_pebs: count of unused PEBs in table's fragment
+ * @last_selected_peb: index of last selected unused PEB
  * @reserved_pebs: count of reserved PEBs in table's fragment
  * @stripe_id: stripe identification number
  * @portion_id: sequential ID of mapping table fragment
@@ -2361,7 +2361,7 @@ struct ssdfs_peb_table_fragment_header {
 
 /* 0x0010 */
 	__le16 pebs_count;
-	__le16 unused_pebs;
+	__le16 last_selected_peb;
 	__le16 reserved_pebs;
 	__le16 stripe_id;
 

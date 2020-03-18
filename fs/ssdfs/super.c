@@ -1859,6 +1859,12 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	pagevec_init(&payload.maptbl_cache.pvec);
 
+	err = ssdfs_maptbl_stop_thread(fsi->maptbl);
+	if (unlikely(err)) {
+		SSDFS_WARN("maptbl thread stopping issue: err %d\n",
+			   err);
+	}
+
 	/* TODO: flush shared extents tree */
 	ssdfs_shextree_destroy(fsi);
 
