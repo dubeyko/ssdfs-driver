@@ -4918,8 +4918,6 @@ void ssdfs_dentries_btree_destroy_node(struct ssdfs_btree_node *node)
 static
 int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 {
-	struct ssdfs_btree_node *parent_node;
-	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
 	u64 start_hash = U64_MAX;
@@ -6730,7 +6728,10 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	u16 dentries_count = 0;
 	int direction;
 	u32 used_space;
-	u64 start_hash, end_hash, cur_hash;
+	u64 start_hash = U64_MAX;
+	u64 end_hash = U64_MAX;
+	u64 cur_hash;
+	u64 old_hash;
 	u16 inline_names = 0;
 	int i;
 	int err = 0;
@@ -6778,6 +6779,7 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,
 		sizeof(struct ssdfs_btree_node_items_area));
+	old_hash = node->items_area.start_hash;
 	up_read(&node->header_lock);
 
 	if (items_area.items_capacity == 0 ||
@@ -7112,6 +7114,58 @@ unlock_items_range:
 
 finish_insert_item:
 	up_read(&node->full_lock);
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
+		if (items_area.items_count == 0) {
+			struct ssdfs_btree_index_key key;
+
+			spin_lock(&node->descriptor_lock);
+			memcpy(&key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			spin_unlock(&node->descriptor_lock);
+
+			key.index.hash = cpu_to_le64(start_hash);
+
+			SSDFS_DBG("node_id %u, node_type %#x, "
+				  "node_height %u, hash %llx\n",
+				  le32_to_cpu(key.node_id),
+				  key.node_type,
+				  key.height,
+				  le64_to_cpu(key.index.hash));
+
+			err = ssdfs_btree_node_add_index(node, &key);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add index: err %d\n", err);
+				return err;
+			}
+		} else if (old_hash != start_hash) {
+			struct ssdfs_btree_index_key old_key, new_key;
+
+			spin_lock(&node->descriptor_lock);
+			memcpy(&old_key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			memcpy(&new_key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			spin_unlock(&node->descriptor_lock);
+
+			old_key.index.hash = cpu_to_le64(old_hash);
+			new_key.index.hash = cpu_to_le64(start_hash);
+
+			err = ssdfs_btree_node_change_index(node,
+							&old_key, &new_key);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change index: err %d\n",
+					  err);
+				return err;
+			}
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	ssdfs_debug_btree_node_object(node);
 
@@ -7944,7 +7998,9 @@ int __ssdfs_dentries_btree_node_delete_range(struct ssdfs_btree_node *node,
 	u16 shift_range_len = 0;
 	u16 locked_len = 0;
 	u32 deleted_space, free_space;
-	u64 start_hash, end_hash;
+	u64 start_hash = U64_MAX;
+	u64 end_hash = U64_MAX;
+	u64 old_hash;
 	u32 old_dentries_count = 0, dentries_count = 0;
 	u32 dentries_diff;
 	u16 deleted_inline_names = 0, inline_names = 0;
@@ -8012,6 +8068,7 @@ int __ssdfs_dentries_btree_node_delete_range(struct ssdfs_btree_node *node,
 	down_read(&node->header_lock);
 	memcpy(&items_area, &node->items_area,
 		sizeof(struct ssdfs_btree_node_items_area));
+	old_hash = node->items_area.start_hash;
 	up_read(&node->header_lock);
 
 	if (items_area.items_capacity == 0 ||
@@ -8276,6 +8333,19 @@ finish_detect_affected_items:
 				  err);
 			goto finish_delete_range;
 		}
+
+		err = __ssdfs_btree_node_clear_range(node,
+						     &items_area, item_size,
+						     item_index + range_len,
+						     shift_range_len);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to clear range: "
+				  "start %u, count %u, err %d\n",
+				  item_index + range_len,
+				  shift_range_len,
+				  err);
+			goto finish_delete_range;
+		}
 	}
 
 	down_write(&node->header_lock);
@@ -8338,9 +8408,19 @@ finish_detect_affected_items:
 		}
 
 		if (shift_range_len != 0) {
+			int start_index =
+				node->items_area.items_count - shift_range_len;
+
+			if (start_index < 0) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid start_index %d\n",
+					  start_index);
+				goto finish_items_area_correction;
+			}
+
 			err = ssdfs_correct_lookup_table(node,
 						&node->items_area,
-						node->items_area.items_count,
+						start_index,
 						shift_range_len);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to correct lookup table: "
@@ -8423,6 +8503,44 @@ finish_delete_range:
 
 	if (unlikely(err))
 		return err;
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
+		if (dentries_count == 0) {
+			err = ssdfs_btree_node_delete_index(node, old_hash);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to delete index: "
+					  "old_hash %llx, err %d\n",
+					  old_hash, err);
+				return err;
+			}
+		} else if (old_hash != start_hash) {
+			struct ssdfs_btree_index_key old_key, new_key;
+
+			spin_lock(&node->descriptor_lock);
+			memcpy(&old_key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			memcpy(&new_key, &node->node_index,
+				sizeof(struct ssdfs_btree_index_key));
+			spin_unlock(&node->descriptor_lock);
+
+			old_key.index.hash = cpu_to_le64(old_hash);
+			new_key.index.hash = cpu_to_le64(start_hash);
+
+			err = ssdfs_btree_node_change_index(node,
+							&old_key, &new_key);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change index: err %d\n",
+					  err);
+				return err;
+			}
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	if (dentries_count == 0)
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;

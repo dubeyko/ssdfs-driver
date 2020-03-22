@@ -2400,7 +2400,6 @@ void ssdfs_shared_dict_btree_destroy_node(struct ssdfs_btree_node *node)
 static
 int ssdfs_shared_dict_btree_add_node(struct ssdfs_btree_node *node)
 {
-	struct ssdfs_btree_index_key key;
 	int type;
 	u16 items_capacity = 0;
 	int err = 0;
@@ -2488,36 +2487,7 @@ int ssdfs_shared_dict_btree_add_node(struct ssdfs_btree_node *node)
 finish_add_node:
 	up_write(&node->header_lock);
 
-	if (err)
-		return err;
-
-	switch (atomic_read(&node->type)) {
-	case SSDFS_BTREE_HYBRID_NODE:
-		spin_lock(&node->descriptor_lock);
-		memcpy(&key, &node->node_index,
-			sizeof(struct ssdfs_btree_index_key));
-		spin_unlock(&node->descriptor_lock);
-
-		SSDFS_DBG("node_id %u, node_type %#x, "
-			  "node_height %u, hash %llx\n",
-			  le32_to_cpu(key.node_id),
-			  key.node_type,
-			  key.height,
-			  le64_to_cpu(key.index.hash));
-
-		err = ssdfs_btree_node_add_index(node, &key);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add index: err %d\n", err);
-			return err;
-		}
-		break;
-
-	default:
-		/* do nothing */
-		break;
-	}
-
-	return 0;
+	return err;
 }
 
 

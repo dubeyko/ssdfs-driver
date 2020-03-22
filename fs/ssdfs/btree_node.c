@@ -7070,6 +7070,7 @@ bool need_shrink_index_area(struct ssdfs_btree_node *node, u32 *new_size)
 	u16 index_area_min_size;
 	u16 count, capacity;
 	u8 index_size;
+	bool need_check_size = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7085,6 +7086,8 @@ bool need_shrink_index_area(struct ssdfs_btree_node *node, u32 *new_size)
 	count = node->index_area.index_count;
 	capacity = node->index_area.index_capacity;
 	index_size = node->index_area.index_size;
+	if (capacity == 0)
+		err = -ERANGE;
 	if (count > capacity)
 		err = -ERANGE;
 	up_read(&node->header_lock);
@@ -7102,7 +7105,12 @@ bool need_shrink_index_area(struct ssdfs_btree_node *node, u32 *new_size)
 		return false;
 	}
 
-	if ((capacity / count) >= 2) {
+	if (count == 0)
+		need_check_size = true;
+	else
+		need_check_size = ((capacity / count) >= 2);
+
+	if (need_check_size) {
 		*new_size = (capacity / 2) * index_size;
 		if (*new_size >= index_area_min_size)
 			return true;
@@ -9692,10 +9700,11 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
  *
  * %-ERANGE     - internal error.
  */
-int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
-				struct ssdfs_btree_node_items_area *area,
-				size_t item_size,
-				struct ssdfs_btree_search *search)
+int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_node_items_area *area,
+				   size_t item_size,
+				   u16 start_index,
+				   unsigned int range_len)
 {
 	int page_index;
 	int dst_index;
@@ -9703,25 +9712,19 @@ int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 	u32 item_offset;
 	void *kaddr;
 	u16 cleared_items = 0;
-	u16 start_index;
-	unsigned int range_len;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node || !area || !search);
+	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu\n",
 		  node->node_id, item_size);
-
-	start_index = search->result.start_index;
-	range_len = search->request.count;
-
 	SSDFS_DBG("start_index %u, range_len %u\n",
 		  start_index, range_len);
 
 	if (range_len == 0) {
-		SSDFS_WARN("search->request.count == 0\n");
+		SSDFS_WARN("range_len == 0\n");
 		return -ERANGE;
 	}
 
@@ -9825,6 +9828,44 @@ int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 	}
 
 	return 0;
+}
+
+/*
+ * ssdfs_btree_node_clear_range() - clear range of deleted items
+ * @node: pointer on node object
+ * @area: items area descriptor
+ * @item_size: size of item in bytes
+ * @search: search object
+ *
+ * This method tries to clear the range of deleted items.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
+				struct ssdfs_btree_node_items_area *area,
+				size_t item_size,
+				struct ssdfs_btree_search *search)
+{
+	u16 start_index;
+	unsigned int range_len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("node_id %u, item_size %zu\n",
+		  node->node_id, item_size);
+
+	start_index = search->result.start_index;
+	range_len = search->request.count;
+
+	return __ssdfs_btree_node_clear_range(node, area, item_size,
+						start_index, range_len);
 }
 
 /*
@@ -10993,13 +11034,13 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	} else if (hash < lower_bound) {
 		err = -ENODATA;
 		*lookup_index = lower_index;
-		SSDFS_DBG("hash %llx < lower_bound %llu\n",
+		SSDFS_DBG("hash %llx < lower_bound %llx\n",
 			  hash, lower_bound);
 		goto finish_index_search;
 	} else if (hash == lower_bound) {
 		err = -EEXIST;
 		*lookup_index = lower_index;
-		SSDFS_DBG("hash %llx == lower_bound %llu\n",
+		SSDFS_DBG("hash %llx == lower_bound %llx\n",
 			  hash, lower_bound);
 		goto finish_index_search;
 	}
@@ -11014,7 +11055,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	} else if (hash == upper_bound) {
 		err = -EEXIST;
 		*lookup_index = upper_index;
-		SSDFS_DBG("hash %llx == upper_bound %llu\n",
+		SSDFS_DBG("hash %llx == upper_bound %llx\n",
 			  hash, upper_bound);
 		goto finish_index_search;
 	} else if (hash > upper_bound) {
@@ -11043,7 +11084,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		else if (hash == lower_bound) {
 			err = -EEXIST;
 			*lookup_index = index;
-			SSDFS_DBG("hash %llx == lower_bound %llu\n",
+			SSDFS_DBG("hash %llx == lower_bound %llx\n",
 				  hash, lower_bound);
 			goto finish_index_search;
 		}
@@ -11058,7 +11099,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		} else if (hash == upper_bound) {
 			err = -EEXIST;
 			*lookup_index = index;
-			SSDFS_DBG("hash %llx == upper_bound %llu\n",
+			SSDFS_DBG("hash %llx == upper_bound %llx\n",
 				  hash, upper_bound);
 			goto finish_index_search;
 		} else if (hash > upper_bound)

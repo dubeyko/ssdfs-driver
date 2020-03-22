@@ -713,6 +713,11 @@ int ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 				struct ssdfs_btree_node_items_area *area,
 				size_t item_size,
 				struct ssdfs_btree_search *search);
+int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_node_items_area *area,
+				   size_t item_size,
+				   u16 start_index,
+				   unsigned int range_len);
 
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);
 

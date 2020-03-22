@@ -158,12 +158,14 @@ struct ssdfs_btree_level_node_desc {
  * @index_area.area_size: size of the index area
  * @index_area.free_space: free space in index area
  * @index_area.hash: hash range of index area
+ * @items_area.add: adding index descriptor
  * @index_area.insert: insert position descriptor
  * @index_area.move: move range descriptor
  * @index_area.delete: delete index descriptor
  * @items_area.area_size: size of the items area
  * @items_area.free_space: free space in items area
  * @items_area.hash: hash range of items area
+ * @items_area.add: adding item descriptor
  * @items_area.insert: insert position descriptor
  * @items_area.move: move range descriptor
  * @nodes: descriptor of level's nodes
@@ -175,6 +177,7 @@ struct ssdfs_btree_level {
 		u32 area_size;
 		u32 free_space;
 		struct ssdfs_hash_range hash;
+		struct ssdfs_btree_node_insert add;
 		struct ssdfs_btree_node_insert insert;
 		struct ssdfs_btree_node_move move;
 		struct ssdfs_btree_node_delete delete;
@@ -184,6 +187,7 @@ struct ssdfs_btree_level {
 		u32 area_size;
 		u32 free_space;
 		struct ssdfs_hash_range hash;
+		struct ssdfs_btree_node_insert add;
 		struct ssdfs_btree_node_insert insert;
 		struct ssdfs_btree_node_move move;
 	} items_area;
