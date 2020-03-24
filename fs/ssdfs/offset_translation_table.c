@@ -1313,6 +1313,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	u32 logical_blk;
 	u16 offset_id;
 	u16 len;
+	int phys_off_index;
 	int i;
 	int err;
 
@@ -1392,6 +1393,14 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		return -EIO;
 	}
 
+	phys_off_index = offset_id - start_id;
+
+	if ((phys_off_index + len) > id_count) {
+		SSDFS_ERR("phys_off_index %d, len %u, id_count %u\n",
+			  phys_off_index, len, id_count);
+		return -EIO;
+	}
+
 	bitmap_clear(portion->bmap, 0, portion->capacity);
 
 	down_read(&frag->lock);
@@ -1401,7 +1410,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		u16 id = offset_id + i;
 		u16 cur_blk;
 
-		phys_off = &frag->phys_offs[i];
+		phys_off = &frag->phys_offs[phys_off_index + i];
 
 		cur_blk = le16_to_cpu(phys_off->page_desc.logical_blk);
 
@@ -1434,7 +1443,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		pos->id = id;
 		pos->peb_index = peb_index;
 		pos->sequence_id = sequence_id;
-		pos->offset_index = (offset_id - start_id) + i;
+		pos->offset_index = phys_off_index + i;
 
 		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
 			   cur_blk, 1);
@@ -2568,12 +2577,18 @@ int ssdfs_find_changed_area(struct ssdfs_blk2off_table_snapshot *sp,
 			    unsigned long start,
 			    struct ssdfs_blk2off_range *found)
 {
+	unsigned long modified_bits;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sp || !found);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	modified_bits = bitmap_weight(sp->bmap_copy, sp->capacity);
+
 	SSDFS_DBG("snapshot %p, peb_index %u, start %lu, found %p\n",
 		  sp, sp->peb_index, start, found);
+	SSDFS_DBG("modified_bits %lu, capacity %u\n",
+		  modified_bits, sp->capacity);
 
 	start = find_next_bit(sp->bmap_copy, sp->capacity, start);
 	if (start >= sp->capacity) {
@@ -2762,19 +2777,19 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 						      state,
 						      extent);
 
+			start = found.start_lblk + found.len;
+
 			found.start_lblk = U16_MAX;
 			found.len = 0;
 			state = SSDFS_LOGICAL_BLK_UNKNOWN_STATE;
 			(*extent_count)++;
-
-			start = found.start_lblk + found.len;
 		} else
 			start = changed_area.start_lblk + changed_area.len;
 	} while (start < sp->capacity);
 
+finish_extract_extents:
 	SSDFS_DBG("extents_count %u\n", *extent_count);
 
-finish_extract_extents:
 	if (*extent_count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid state of change bitmap\n");

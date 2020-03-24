@@ -1627,8 +1627,6 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		goto free_array;
 	}
 
-	stream->write_offset = area->write_offset;
-
 	err = ssdfs_peb_define_metadata_space(pebi, area_type,
 						stream->start_offset,
 						stream->data_bytes,
@@ -1640,7 +1638,7 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		goto free_array;
 	}
 
-	area->write_offset = metadata_offset;
+	stream->write_offset = area->write_offset = metadata_offset;
 	area->write_offset += metadata_space;
 
 	SSDFS_DBG("write_offset %u\n", area->write_offset);
@@ -2658,14 +2656,14 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 		SSDFS_DBG("unable to add byte stream: "
 			  "start_offset %u, data_bytes %u, area_type %#x, "
 			  "cno %llu, parent_snapshot %llu\n",
-			  start_offset, data_bytes, area_type,
+			  byte_stream.start_offset, data_bytes, area_type,
 			  req->extent.cno, req->extent.parent_snapshot);
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add byte stream: "
 			  "start_offset %u, data_bytes %u, area_type %#x, "
 			  "cno %llu, parent_snapshot %llu\n",
-			  start_offset, data_bytes, area_type,
+			  byte_stream.start_offset, data_bytes, area_type,
 			  req->extent.cno, req->extent.parent_snapshot);
 		return err;
 	}
