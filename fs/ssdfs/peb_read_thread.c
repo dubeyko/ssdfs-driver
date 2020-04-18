@@ -850,10 +850,13 @@ int ssdfs_peb_get_fragment_desc_array(struct ssdfs_peb_info *pebi,
 					size_t array_size)
 {
 	struct ssdfs_fs_info *fsi;
-	u32 page_off;
+	u32 page_index, page_off;
 	struct page *page;
 	void *kaddr, *cur_item;
 	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
+	size_t size = frag_desc_size * array_size;
+	size_t read_size = 0;
+	u32 buf_off = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -867,23 +870,34 @@ int ssdfs_peb_get_fragment_desc_array(struct ssdfs_peb_info *pebi,
 		  array_offset, array_size);
 
 	fsi = pebi->pebc->parent_si->fsi;
-	page_off = array_offset >> PAGE_SHIFT;
 
-	page = ssdfs_peb_read_page_locked(pebi, page_off);
+read_next_page:
+	page_off = array_offset % PAGE_SIZE;
+	read_size = min_t(size_t, size, PAGE_SIZE - page_off);
+
+	page_index = array_offset >> PAGE_SHIFT;
+	page = ssdfs_peb_read_page_locked(pebi, page_index);
 	if (IS_ERR_OR_NULL(page)) {
 		SSDFS_ERR("fail to read locked page: index %u\n",
-			  page_off);
+			  page_index);
 		return -ERANGE;
 	}
 
 	kaddr = kmap_atomic(page);
 
-	cur_item = (u8 *)kaddr + (array_offset % PAGE_SIZE);
-	memcpy(array, cur_item, array_size * frag_desc_size);
+	cur_item = (u8 *)kaddr + page_off;
+	memcpy((u8 *)array + buf_off, cur_item, read_size);
 
 	kunmap_atomic(kaddr);
 	unlock_page(page);
 	put_page(page);
+
+	size -= read_size;
+	buf_off += read_size;
+	array_offset += read_size;
+
+	if (size != 0)
+		goto read_next_page;
 
 	return 0;
 }
@@ -1356,6 +1370,12 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	frag_desc_offset += state_desc_size;
 	full_offset = area_offset + frag_desc_offset;
 
+	SSDFS_DBG("area_offset %u, blk_state_off->byte_offset %u, "
+		  "state_desc_size %zu, frag_desc_offset %u, "
+		  "full_offset %u\n",
+		  area_offset, le32_to_cpu(blk_state_off->byte_offset),
+		  state_desc_size, frag_desc_offset, full_offset);
+
 	err = ssdfs_peb_get_fragment_desc_array(pebi, full_offset,
 						frag_descs, fragments);
 	if (unlikely(err)) {
@@ -1391,6 +1411,14 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		}
 
 		cur_desc = &frag_descs[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("FRAGMENT DESC DUMP: index %d\n", i);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     cur_desc,
+				     sizeof(struct ssdfs_fragment_desc));
+		SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (cur_desc->magic != SSDFS_FRAGMENT_DESC_MAGIC) {
 			err = -EIO;
@@ -7190,12 +7218,6 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 	};
 }
 
-#define PEBI_PTR(pebi) \
-	((struct ssdfs_peb_info *)(pebi))
-#define PEBC_PTR(pebc) \
-	((struct ssdfs_peb_container *)(pebc))
-#define READ_RQ_PTR(pebc) \
-	(&PEBC_PTR(pebc)->read_rq)
 #define READ_THREAD_WAKE_CONDITION(pebc) \
 	(kthread_should_stop() || \
 	 !is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc)))

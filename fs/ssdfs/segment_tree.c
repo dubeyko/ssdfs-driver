@@ -397,7 +397,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
-	inode_lock_shared(fsi->segs_tree_inode);
+	inode_lock(fsi->segs_tree_inode);
 
 	page = grab_cache_page(&fsi->segs_tree->pages, page_index);
 	if (!page) {
@@ -414,7 +414,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	put_page(page);
 
 finish_add_segment:
-	inode_unlock_shared(fsi->segs_tree_inode);
+	inode_unlock(fsi->segs_tree_inode);
 
 	SSDFS_DBG("finished\n");
 
@@ -454,7 +454,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
-	inode_lock_shared(fsi->segs_tree_inode);
+	inode_lock(fsi->segs_tree_inode);
 
 	page = find_lock_page(&fsi->segs_tree->pages, page_index);
 	if (!page) {
@@ -476,14 +476,20 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(object != si);
 #endif /* CONFIG_SSDFS_DEBUG */
-		object = NULL;
+		*(kaddr + object_index) = NULL;
 	}
 	kunmap_atomic(kaddr);
 	unlock_page(page);
 	put_page(page);
 
+	/*
+	 * Prevent from error of creation
+	 * the same segment in another thread.
+	 */
+	ssdfs_sysfs_delete_seg_group(si);
+
 finish_remove_segment:
-	inode_unlock_shared(fsi->segs_tree_inode);
+	inode_unlock(fsi->segs_tree_inode);
 
 	SSDFS_DBG("finished\n");
 

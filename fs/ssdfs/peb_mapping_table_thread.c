@@ -457,6 +457,8 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		bitmap_clear(used_bmap, res->peb_index, 1);
 		le16_add_cpu(&hdr->reserved_pebs, 1);
 #ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("hdr->reserved_pebs %u\n",
+			  le16_to_cpu(hdr->reserved_pebs));
 		BUG_ON(fdesc->pre_erase_pebs == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 		fdesc->pre_erase_pebs--;
@@ -1171,6 +1173,9 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 			ptr->recovering_pebs--;
 
 			recovered_pebs++;
+
+			SSDFS_DBG("hdr->reserved_pebs %u\n",
+				  le16_to_cpu(hdr->reserved_pebs));
 		}
 
 		++*item_index;

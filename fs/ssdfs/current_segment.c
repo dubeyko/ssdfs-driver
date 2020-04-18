@@ -66,9 +66,6 @@ void ssdfs_current_segment_init(struct ssdfs_fs_info *fsi,
 static
 void ssdfs_current_segment_destroy(struct ssdfs_current_segment *cur_seg)
 {
-	struct ssdfs_segment_info *si = NULL;
-	int err;
-
 	if (!cur_seg)
 		return;
 
@@ -78,18 +75,8 @@ void ssdfs_current_segment_destroy(struct ssdfs_current_segment *cur_seg)
 
 	if (!is_ssdfs_current_segment_empty(cur_seg)) {
 		ssdfs_current_segment_lock(cur_seg);
-		si = cur_seg->real_seg;
 		ssdfs_current_segment_remove(cur_seg);
 		ssdfs_current_segment_unlock(cur_seg);
-	}
-
-	if (si) {
-		err = ssdfs_segment_tree_remove(si->fsi, si);
-		if (unlikely(err)) {
-			SSDFS_WARN("fail to remove segment from tree: "
-				   "seg %llu, err %d\n",
-				   si->seg_id, err);
-		}
 	}
 }
 
@@ -517,18 +504,8 @@ destroy_cur_segs:
 		si = NULL;
 
 		ssdfs_current_segment_lock(fsi->cur_segs->objects[i]);
-		if (fsi->cur_segs->objects[i])
-			si = fsi->cur_segs->objects[i]->real_seg;
 		ssdfs_current_segment_remove(fsi->cur_segs->objects[i]);
 		ssdfs_current_segment_unlock(fsi->cur_segs->objects[i]);
-
-		if (si) {
-			int err1;
-			err1 = ssdfs_segment_tree_remove(si->fsi, si);
-			SSDFS_WARN("fail to remove segment from tree: "
-				   "seg %llu, err %d\n",
-				   si->seg_id, err1);
-		}
 	}
 
 	kfree(fsi->cur_segs);

@@ -129,6 +129,13 @@ struct ssdfs_peb_container {
 	struct completion peb_kobj_unregister;
 };
 
+#define PEBI_PTR(pebi) \
+	((struct ssdfs_peb_info *)(pebi))
+#define PEBC_PTR(pebc) \
+	((struct ssdfs_peb_container *)(pebc))
+#define READ_RQ_PTR(pebc) \
+	(&PEBC_PTR(pebc)->read_rq)
+
 /*
  * Inline functions
  */
@@ -140,6 +147,41 @@ bool is_peb_container_empty(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return atomic_read(&pebc->items_state) == SSDFS_PEB_CONTAINER_EMPTY;
+}
+
+/*
+ * is_create_requests_queue_empty() - check that create queue has requests
+ * @pebc: pointer on PEB container
+ */
+static inline
+bool is_create_requests_queue_empty(struct ssdfs_peb_container *pebc)
+{
+	bool is_create_rq_empty = true;
+
+	spin_lock(&pebc->crq_ptr_lock);
+	if (pebc->create_rq) {
+		is_create_rq_empty =
+			is_ssdfs_requests_queue_empty(pebc->create_rq);
+	}
+	spin_unlock(&pebc->crq_ptr_lock);
+
+	return is_create_rq_empty;
+}
+
+/*
+ * have_flush_requests() - check that create or update queue have requests
+ * @pebc: pointer on PEB container
+ */
+static inline
+bool have_flush_requests(struct ssdfs_peb_container *pebc)
+{
+	bool is_create_rq_empty = true;
+	bool is_update_rq_empty = true;
+
+	is_create_rq_empty = is_create_requests_queue_empty(pebc);
+	is_update_rq_empty = is_ssdfs_requests_queue_empty(&pebc->update_rq);
+
+	return !is_create_rq_empty || !is_update_rq_empty;
 }
 
 /*
@@ -207,5 +249,6 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
 				size_t array_size,
 				struct ssdfs_block_descriptor *blk_desc,
 				int blk_state_index);
+bool ssdfs_peb_has_dirty_pages(struct ssdfs_peb_info *pebi);
 
 #endif /* _SSDFS_PEB_CONTAINER_H */

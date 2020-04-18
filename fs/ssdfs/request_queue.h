@@ -291,8 +291,14 @@ void ssdfs_requests_queue_init(struct ssdfs_requests_queue *rq);
 bool is_ssdfs_requests_queue_empty(struct ssdfs_requests_queue *rq);
 void ssdfs_requests_queue_add_tail(struct ssdfs_requests_queue *rq,
 				   struct ssdfs_segment_request *req);
+void ssdfs_requests_queue_add_tail_inc(struct ssdfs_fs_info *fsi,
+					struct ssdfs_requests_queue *rq,
+					struct ssdfs_segment_request *req);
 void ssdfs_requests_queue_add_head(struct ssdfs_requests_queue *rq,
 				   struct ssdfs_segment_request *req);
+void ssdfs_requests_queue_add_head_inc(struct ssdfs_fs_info *fsi,
+					struct ssdfs_requests_queue *rq,
+					struct ssdfs_segment_request *req);
 int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
 				      struct ssdfs_segment_request **req);
 void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,

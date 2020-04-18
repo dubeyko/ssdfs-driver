@@ -263,6 +263,47 @@ bool ssdfs_segbmap_fragment_has_content(struct page *page)
 }
 
 static inline
+bool IS_STATE_GOOD_FOR_MASK(int mask, int state)
+{
+	switch (state) {
+	case SSDFS_SEG_CLEAN:
+		return mask & SSDFS_SEG_CLEAN_STATE_FLAG;
+
+	case SSDFS_SEG_DATA_USING:
+		return mask & SSDFS_SEG_DATA_USING_STATE_FLAG;
+
+	case SSDFS_SEG_LEAF_NODE_USING:
+		return mask & SSDFS_SEG_LEAF_NODE_USING_STATE_FLAG;
+
+	case SSDFS_SEG_HYBRID_NODE_USING:
+		return mask & SSDFS_SEG_HYBRID_NODE_USING_STATE_FLAG;
+
+	case SSDFS_SEG_INDEX_NODE_USING:
+		return mask & SSDFS_SEG_INDEX_NODE_USING_STATE_FLAG;
+
+	case SSDFS_SEG_USED:
+		return mask & SSDFS_SEG_USED_STATE_FLAG;
+
+	case SSDFS_SEG_PRE_DIRTY:
+		return mask & SSDFS_SEG_PRE_DIRTY_STATE_FLAG;
+
+	case SSDFS_SEG_DIRTY:
+		return mask & SSDFS_SEG_DIRTY_STATE_FLAG;
+
+	case SSDFS_SEG_BAD:
+		return mask & SSDFS_SEG_BAD_STATE_FLAG;
+
+	case SSDFS_SEG_RESERVED:
+		return mask & SSDFS_SEG_RESERVED_STATE_FLAG;
+
+	default:
+		BUG();
+	}
+
+	return false;
+}
+
+static inline
 void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 {
 #ifdef CONFIG_SSDFS_DEBUG

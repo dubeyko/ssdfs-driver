@@ -87,8 +87,9 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 				req->place.start.seg_id);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
-			  "seg %llu, err %d\n",
-			  req->place.start.seg_id, err);
+			  "seg %llu, err %ld\n",
+			  req->place.start.seg_id,
+			  PTR_ERR(si));
 		return PTR_ERR(si);
 	}
 

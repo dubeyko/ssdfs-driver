@@ -40,11 +40,11 @@ enum {
 static
 struct ssdfs_thread_descriptor thread_desc[SSDFS_PEB_THREAD_TYPE_MAX] = {
 	{.threadfn = ssdfs_peb_read_thread_func,
-	 .fmt = "ssdfs-read-%llu-%u",},
+	 .fmt = "ssdfs-r%llu-%u",},
 	{.threadfn = ssdfs_peb_flush_thread_func,
-	 .fmt = "ssdfs-flush-%llu-%u",},
+	 .fmt = "ssdfs-f%llu-%u",},
 	{.threadfn = ssdfs_peb_gc_thread_func,
-	 .fmt = "ssdfs-gc-%llu-%u",},
+	 .fmt = "ssdfs-gc%llu-%u",},
 };
 
 /*
@@ -668,14 +668,6 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_GC_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start GC thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		goto stop_flush_thread;
-	}
-
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -687,7 +679,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 			err = -ERANGE;
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
-			goto stop_gc_thread;
+			goto stop_flush_thread;
 		}
 
 		/*
@@ -711,9 +703,6 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
-
-stop_gc_thread:
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_GC_THREAD);
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -853,14 +842,6 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_GC_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start GC thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		goto stop_flush_thread;
-	}
-
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -872,7 +853,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 			err = -ERANGE;
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
-			goto stop_gc_thread;
+			goto stop_flush_thread;
 		}
 
 		/*
@@ -896,9 +877,6 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
-
-stop_gc_thread:
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_GC_THREAD);
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -963,8 +941,6 @@ static
 int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
-	int err;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
@@ -975,14 +951,6 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 		  "selected_peb %u\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
-
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_GC_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start GC thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		return err;
-	}
 
 	return 0;
 }

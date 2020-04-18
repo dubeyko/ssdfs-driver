@@ -122,14 +122,14 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	}
 
 	ssdfs_segment_blk_bmap_destroy(&si->blk_bmap);
-	ssdfs_blk2off_table_destroy(si->blk2off_table);
+
+	if (si->blk2off_table)
+		ssdfs_blk2off_table_destroy(si->blk2off_table);
 
 	if (!is_ssdfs_requests_queue_empty(&si->create_rq)) {
 		SSDFS_WARN("create queue is not empty\n");
 		ssdfs_requests_queue_remove_all(&si->create_rq, -ENOSPC);
 	}
-
-	ssdfs_sysfs_delete_seg_group(si);
 
 	kmem_cache_free(ssdfs_seg_obj_cachep, si);
 	return err;
@@ -226,7 +226,8 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("fail to create segment's sysfs group: "
 			  "seg %llu, err %d\n",
 			  seg, err);
-		goto destroy_seg_obj;
+		kmem_cache_free(ssdfs_seg_obj_cachep, ptr);
+		return ERR_PTR(err);
 	}
 
 	ptr->pebs_count = fsi->pebs_per_seg;
@@ -403,19 +404,19 @@ int SEG_TYPE2MASK(int seg_type)
 
 	switch (seg_type) {
 	case SSDFS_USER_DATA_SEG_TYPE:
-		mask = SSDFS_SEG_DATA_USING;
+		mask = SSDFS_SEG_DATA_USING_STATE_FLAG;
 		break;
 
 	case SSDFS_LEAF_NODE_SEG_TYPE:
-		mask = SSDFS_SEG_LEAF_NODE_USING;
+		mask = SSDFS_SEG_LEAF_NODE_USING_STATE_FLAG;
 		break;
 
 	case SSDFS_HYBRID_NODE_SEG_TYPE:
-		mask = SSDFS_SEG_HYBRID_NODE_USING;
+		mask = SSDFS_SEG_HYBRID_NODE_USING_STATE_FLAG;
 		break;
 
 	case SSDFS_INDEX_NODE_SEG_TYPE:
-		mask = SSDFS_SEG_INDEX_NODE_USING;
+		mask = SSDFS_SEG_INDEX_NODE_USING_STATE_FLAG;
 		break;
 
 	default:
@@ -1154,6 +1155,14 @@ add_new_current_segment:
 			SSDFS_DBG("segment %llu hasn't free pages\n",
 				  cur_seg->real_seg->seg_id);
 
+			err = ssdfs_current_segment_change_state(cur_seg);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change segment state: "
+					  "seg %llu, err %d\n",
+					  cur_seg->real_seg->seg_id, err);
+				goto finish_add_block;
+			}
+
 			ssdfs_current_segment_remove(cur_seg);
 			goto add_new_current_segment;
 		} else {
@@ -1208,7 +1217,8 @@ add_new_current_segment:
 			}
 
 			create_rq = &si->create_rq;
-			ssdfs_requests_queue_add_tail(create_rq, req);
+			ssdfs_requests_queue_add_tail_inc(si->fsi,
+							create_rq, req);
 
 			wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 			wake_up_all(wait);
@@ -1310,6 +1320,16 @@ add_new_current_segment:
 				  atomic_read(&blk_bmap->free_logical_blks),
 				  blks_count);
 
+			atomic_set(&blk_bmap->free_logical_blks, 0);
+
+			err = ssdfs_current_segment_change_state(cur_seg);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change segment state: "
+					  "seg %llu, err %d\n",
+					  cur_seg->real_seg->seg_id, err);
+				goto finish_add_extent;
+			}
+
 			ssdfs_current_segment_remove(cur_seg);
 			goto add_new_current_segment;
 		} else {
@@ -1372,7 +1392,8 @@ add_new_current_segment:
 			}
 
 			create_rq = &si->create_rq;
-			ssdfs_requests_queue_add_tail(create_rq, req);
+			ssdfs_requests_queue_add_tail_inc(si->fsi,
+							create_rq, req);
 			wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
 		}
 	}
@@ -2363,9 +2384,18 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	}
 
 	pebc = &si->peb_array[peb_index];
-
 	rq = &pebc->update_rq;
-	ssdfs_requests_queue_add_tail(rq, req);
+
+	switch (req->private.class) {
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
+		break;
+
+	default:
+		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
+		break;
+	}
+
 	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
 
@@ -2552,9 +2582,18 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	}
 
 	pebc = &si->peb_array[peb_index];
-
 	rq = &pebc->update_rq;
-	ssdfs_requests_queue_add_tail(rq, req);
+
+	switch (req->private.class) {
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
+		break;
+
+	default:
+		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
+		break;
+	}
+
 	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
 

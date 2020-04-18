@@ -2195,11 +2195,15 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 				  "err %d\n",
 				  err);
 
-			for (; cur_height < tree_height; cur_height++) {
+			for (cur_height++; cur_height <= tree_height; cur_height++) {
 				if (!need_add_node(level))
 					continue;
 
 				node = level->nodes.new_node.ptr;
+
+				if (!node)
+					continue;
+
 				node_id = node->node_id;
 				ssdfs_btree_radix_tree_delete(tree, node_id);
 				ssdfs_btree_destroy_empty_node(tree, node);

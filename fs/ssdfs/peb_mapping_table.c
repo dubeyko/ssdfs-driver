@@ -1172,6 +1172,8 @@ int ssdfs_maptbl_check_pebtbl_page(struct page *page,
 	pebs_count = le16_to_cpu(hdr->pebs_count);
 	reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
 
+	SSDFS_DBG("hdr->reserved_pebs %u\n", reserved_pebs);
+
 	if (pebs_count > fdesc->pebs_per_page) {
 		err = -EIO;
 		SSDFS_ERR("pebs_count %u > fdesc->pebs_per_page %u\n",
@@ -2006,6 +2008,9 @@ define_update_area:
 		else
 			area_size++;
 	}
+
+	SSDFS_DBG("fragment_index %u, area_start %lu, area_size %u\n",
+		  fragment_index, area_start, area_size);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(area_size == 0);
@@ -4031,7 +4036,6 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	ptr->state = SSDFS_MAPTBL_PRE_ERASE_STATE;
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
-	le16_add_cpu(&hdr->reserved_pebs, 1);
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
 	bitmap_set(bmap, index, 1);
 
@@ -4410,8 +4414,9 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !pebr || !end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, leb_id %llu, pebr %p, init_end %p\n",
-		  fsi, leb_id, pebr, end);
+	SSDFS_DBG("fsi %p, leb_id %llu, peb_type %#x, "
+		  "pebr %p, init_end %p\n",
+		  fsi, leb_id, peb_type, pebr, end);
 
 	*end = NULL;
 	memset(pebr, 0xFF, peb_relation_size);
@@ -4462,6 +4467,14 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 
 	down_read(&tbl->tbl_lock);
 
+	if (peb_type == SSDFS_MAPTBL_UNKNOWN_PEB_TYPE) {
+		/*
+		 * GC thread requested the conversion
+		 * without the knowledge of PEB's type.
+		 */
+		goto start_convert_leb2peb;
+	}
+
 	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_descriptor *peb_desc;
 
@@ -4495,6 +4508,7 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		    cached_pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 	}
 
+start_convert_leb2peb:
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
 	if (IS_ERR_OR_NULL(fdesc)) {
 		err = IS_ERR(fdesc) ? PTR_ERR(fdesc) : -ERANGE;
@@ -4633,7 +4647,27 @@ finish_pre_deleted_case:
 finish_conversion:
 	up_read(&tbl->tbl_lock);
 
-	if (err == -EAGAIN && should_cache_peb_info(peb_type)) {
+	if (!err && peb_type == SSDFS_MAPTBL_UNKNOWN_PEB_TYPE) {
+		peb_type = pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type;
+
+		if (should_cache_peb_info(peb_type)) {
+			err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
+								 &cached_pebr);
+			if (err == -ENODATA) {
+				err = 0;
+				SSDFS_DBG("cache has nothing for leb_id %llu\n",
+					  leb_id);
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+				return err;
+			} else {
+				/* use the cached value */
+				memcpy(pebr, &cached_pebr, peb_relation_size);
+			}
+		}
+	} else if (err == -EAGAIN && should_cache_peb_info(peb_type)) {
 		err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
 							 pebr);
 		if (unlikely(err)) {
@@ -4897,6 +4931,9 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_maptbl_fragment_desc *desc,
 	}
 
 	le16_add_cpu(&hdr->reserved_pebs, 0 - unused_pebs_diff);
+
+	SSDFS_DBG("hdr->reserved_pebs %u\n",
+		  le16_to_cpu(hdr->reserved_pebs));
 
 	return 0;
 }
@@ -5269,13 +5306,17 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 	case SSDFS_MAPTBL_MIGRATING_PEB:
 		le16_add_cpu(&hdr->reserved_pebs, -1);
+
+		SSDFS_DBG("hdr->reserved_pebs %u\n",
+			  le16_to_cpu(hdr->reserved_pebs));
 		break;
 
 	default:
 		BUG();
 	};
 
-	SSDFS_DBG("found %lu, erase_cycles %u\n", found, erase_cycles);
+	SSDFS_DBG("found %lu, erase_cycles %u\n",
+		  found, erase_cycles);
 
 	return (u16)found;
 }
@@ -6104,6 +6145,283 @@ finish_change_state:
 }
 
 /*
+ * __ssdfs_maptbl_unmap_dirty_peb() - unmap dirty PEB
+ * @ptr: fragment descriptor
+ * @leb_id: LEB ID number
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_maptbl_unmap_dirty_peb(struct ssdfs_maptbl_fragment_desc *ptr,
+				   u64 leb_id)
+{
+	struct ssdfs_leb_table_fragment_header *hdr;
+	struct ssdfs_leb_descriptor *leb_desc;
+	pgoff_t page_index;
+	struct page *page;
+	void *kaddr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fdesc %p, leb_id %llu\n",
+		  ptr, leb_id);
+
+	page_index = LEBTBL_PAGE_INDEX(ptr, leb_id);
+	if (page_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define page_index: "
+			  "leb_id %llu\n",
+			  leb_id);
+		return -ERANGE;
+	}
+
+	page = ssdfs_page_array_get_page_locked(&ptr->array, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
+		SSDFS_ERR("fail to find page: page_index %lu\n",
+			  page_index);
+		return err;
+	}
+
+	kaddr = kmap_atomic(page);
+
+	leb_desc = GET_LEB_DESCRIPTOR(kaddr, leb_id);
+	if (IS_ERR_OR_NULL(leb_desc)) {
+		err = IS_ERR(leb_desc) ? PTR_ERR(leb_desc) : -ERANGE;
+		SSDFS_ERR("fail to get leb_descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_page_processing;
+	}
+
+	leb_desc->physical_index = cpu_to_le16(U16_MAX);
+	leb_desc->relation_index = cpu_to_le16(U16_MAX);
+
+	hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(le16_to_cpu(hdr->mapped_lebs) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	le16_add_cpu(&hdr->mapped_lebs, -1);
+
+finish_page_processing:
+	kunmap_atomic(kaddr);
+
+	if (!err) {
+		SetPagePrivate(page);
+		SetPageUptodate(page);
+		err = ssdfs_page_array_set_page_dirty(&ptr->array,
+						      page_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
+				  page_index, err);
+		}
+	}
+
+	unlock_page(page);
+	put_page(page);
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_prepare_pre_erase_state() - convert dirty PEB into pre-erased
+ * @fsi: file system info object
+ * @leb_id: LEB ID number
+ * @peb_type: type of the PEB
+ * @end: pointer on completion for waiting init ending [out]
+ *
+ * This method tries to convert dirty PEB into pre-erase state
+ * in the mapping table.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EFAULT     - maptbl has inconsistent state.
+ * %-EAGAIN     - fragment is under initialization yet.
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EACCES     - PEB stripe is under recovering.
+ * %-ENODATA    - uninitialized LEB descriptor.
+ * %-EBUSY      - maptbl is under flush operation.
+ */
+int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
+					 u64 leb_id, u8 peb_type,
+					 struct completion **end)
+{
+	struct ssdfs_peb_mapping_table *tbl;
+	struct ssdfs_maptbl_cache *cache;
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	struct ssdfs_leb_descriptor leb_desc;
+	int state;
+	u16 physical_index, relation_index;
+	int err = 0;
+
+	SSDFS_DBG("fsi %p, leb_id %llu, peb_type %#x, "
+		  "init_end %p\n",
+		  fsi, leb_id, peb_type, end);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !end);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tbl = fsi->maptbl;
+	cache = &tbl->fsi->maptbl_cache;
+	*end = NULL;
+
+	if (!tbl) {
+		SSDFS_WARN("operation is not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
+		ssdfs_fs_error(tbl->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"maptbl has corrupted state\n");
+		return -EFAULT;
+	}
+
+	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		SSDFS_DBG("maptbl is under flush\n");
+		return -EBUSY;
+	}
+
+	if (should_cache_peb_info(peb_type)) {
+		err = ssdfs_maptbl_cache_forget_leb2peb(cache, leb_id,
+						SSDFS_PEB_STATE_CONSISTENT);
+		if (err == -ENODATA || err == -EFAULT) {
+			err = 0;
+			SSDFS_DBG("leb_id %llu is not in cache already\n",
+				  leb_id);
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to forget leb_id %llu, err %d\n",
+				  leb_id, err);
+			return err;
+		}
+	}
+
+	if (rwsem_is_locked(&tbl->tbl_lock) &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		SSDFS_DBG("maptbl is under flush\n");
+		return -EBUSY;
+	}
+
+	down_read(&tbl->tbl_lock);
+
+	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
+	if (IS_ERR_OR_NULL(fdesc)) {
+		err = IS_ERR(fdesc) ? PTR_ERR(fdesc) : -ERANGE;
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_change_state;
+	}
+
+	*end = &fdesc->init_end;
+
+	state = atomic_read(&fdesc->state);
+	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
+		err = -EFAULT;
+		SSDFS_ERR("fragment is corrupted: leb_id %llu\n",
+			  leb_id);
+		goto finish_change_state;
+	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+		err = -EAGAIN;
+		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
+			  leb_id);
+		goto finish_change_state;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (rwsem_is_locked(&fdesc->lock)) {
+		SSDFS_DBG("fragment is locked -> lock fragment: "
+			  "leb_id %llu\n", leb_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&fdesc->lock);
+
+	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get leb descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_fragment_change;
+	}
+
+	if (!__is_mapped_leb2peb(&leb_desc)) {
+		err = -ERANGE;
+		SSDFS_ERR("leb %llu doesn't be mapped yet\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	if (is_leb_migrating(&leb_desc)) {
+		err = -ERANGE;
+		SSDFS_ERR("leb %llu is under migration\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	physical_index = le16_to_cpu(leb_desc.physical_index);
+	relation_index = le16_to_cpu(leb_desc.relation_index);
+
+	if (relation_index != U16_MAX) {
+		err = -EFAULT;
+		SSDFS_ERR("fragment is corrupted: leb_id %llu\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	err = ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move PEB into pre-erase state: "
+			  "index %u, err %d\n",
+			  physical_index, err);
+		goto finish_fragment_change;
+	}
+
+	err = __ssdfs_maptbl_unmap_dirty_peb(fdesc, leb_id);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change leb descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_fragment_change;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(fdesc->mapped_lebs == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fdesc->mapped_lebs--;
+	fdesc->pre_erase_pebs++;
+	atomic_inc(&tbl->pre_erase_pebs);
+
+	wake_up(&tbl->wait_queue);
+
+finish_fragment_change:
+	up_write(&fdesc->lock);
+
+	if (!err)
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+
+finish_change_state:
+	up_read(&tbl->tbl_lock);
+
+	SSDFS_DBG("finished\n");
+
+	return err;
+}
+
+/*
  * has_fragment_reserved_pebs() - check that fragment has reserved PEBs
  * @hdr: PEB table fragment's header
  */
@@ -6230,6 +6548,13 @@ try_next_page:
 	unlock_page(page);
 	put_page(page);
 
+	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
+		  "reserved_pebs %u, is_recovering %#x, "
+		  "has_reserved_pebs %#x\n",
+		  pebs_count, used_pebs, unused_pebs,
+		  reserved_pebs, is_recovering,
+		  has_reserved_pebs);
+
 	if (is_recovering || !has_reserved_pebs) {
 		page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
 							   page_index,
@@ -6265,6 +6590,7 @@ use_first_valid_page:
 	page_index = first_valid_page;
 
 finish_select_pebtbl_page:
+	SSDFS_DBG("page_index %lu\n", page_index);
 	return page_index;
 }
 

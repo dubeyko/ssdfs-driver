@@ -374,6 +374,43 @@ int SEG2PEB_TYPE(int seg_type)
 	return SSDFS_MAPTBL_PEB_TYPE_MAX;
 }
 
+/*
+ * PEB2SEG_TYPE() - convert PEB into segment type
+ */
+static inline
+int PEB2SEG_TYPE(int peb_type)
+{
+	SSDFS_DBG("peb_type %d\n", peb_type);
+
+	switch (peb_type) {
+	case SSDFS_MAPTBL_DATA_PEB_TYPE:
+		return SSDFS_USER_DATA_SEG_TYPE;
+
+	case SSDFS_MAPTBL_LNODE_PEB_TYPE:
+		return SSDFS_LEAF_NODE_SEG_TYPE;
+
+	case SSDFS_MAPTBL_HNODE_PEB_TYPE:
+		return SSDFS_HYBRID_NODE_SEG_TYPE;
+
+	case SSDFS_MAPTBL_IDXNODE_PEB_TYPE:
+		return SSDFS_INDEX_NODE_SEG_TYPE;
+
+	case SSDFS_MAPTBL_INIT_SNAP_PEB_TYPE:
+		return SSDFS_INITIAL_SNAPSHOT_SEG_TYPE;
+
+	case SSDFS_MAPTBL_SBSEG_PEB_TYPE:
+		return SSDFS_SB_SEG_TYPE;
+
+	case SSDFS_MAPTBL_SEGBMAP_PEB_TYPE:
+		return SSDFS_SEGBMAP_SEG_TYPE;
+
+	case SSDFS_MAPTBL_MAPTBL_PEB_TYPE:
+		return SSDFS_MAPTBL_SEG_TYPE;
+	}
+
+	return SSDFS_UNKNOWN_SEG_TYPE;
+}
+
 static inline
 bool is_ssdfs_maptbl_under_flush(struct ssdfs_fs_info *fsi)
 {
@@ -518,6 +555,9 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 				  u64 leb_id, u8 peb_type,
 				  int peb_state,
 				  struct completion **end);
+int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
+					 u64 leb_id, u8 peb_type,
+					 struct completion **end);
 int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 				   u64 leb_id, u8 peb_type,
 				   struct ssdfs_maptbl_peb_relation *pebr,
@@ -535,11 +575,11 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 					 struct completion **end);
 
 /*
- * TODO: It makes sense to have special thread for the whole mapping table.
- *       The goal of the thread will be clearing of dirty PEBs,
- *       tracking P/E cycles, excluding bad PEBs and recovering PEBs
- *       in the background. Knowledge about PEBs will be hidden by
- *       mapping table. All other subsystems will operate by LEBs.
+ * It makes sense to have special thread for the whole mapping table.
+ * The goal of the thread will be clearing of dirty PEBs,
+ * tracking P/E cycles, excluding bad PEBs and recovering PEBs
+ * in the background. Knowledge about PEBs will be hidden by
+ * mapping table. All other subsystems will operate by LEBs.
  */
 
 /*

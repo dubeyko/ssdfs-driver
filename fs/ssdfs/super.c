@@ -635,12 +635,8 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 
 	switch (sb_seg_type) {
 	case SSDFS_MAIN_SB_SEG:
-		start = 0;
-		max = fsi->nsegs / 2;
-		break;
-
 	case SSDFS_COPY_SB_SEG:
-		start = fsi->nsegs / 2;
+		start = 0;
 		max = fsi->nsegs;
 		break;
 
@@ -763,6 +759,32 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	cur_peb = (*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type];
 	next_peb = U64_MAX;
 	reserved_peb = (*sb_pebs)[SSDFS_RESERVED_SB_SEG][sb_seg_type];
+
+	err = ssdfs_maptbl_change_peb_state(fsi, cur_leb, peb_type,
+					    SSDFS_MAPTBL_USED_PEB_STATE,
+					    &end);
+	if (err == -EAGAIN) {
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_maptbl_change_peb_state(fsi,
+					cur_leb, peb_type,
+					SSDFS_MAPTBL_USED_PEB_STATE,
+					&end);
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change the PEB state: "
+			  "leb_id %llu, new_state %#x, err %d\n",
+			  cur_leb, SSDFS_MAPTBL_USED_PEB_STATE, err);
+		return err;
+	}
 
 	if (!ssdfs_sb_seg_exhausted(cur_leb, next_leb, fsi->pebs_per_seg)) {
 		err = ssdfs_maptbl_convert_leb2peb(fsi, next_leb,
@@ -901,7 +923,7 @@ reserve_clean_segment:
 				err = -ERANGE;
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
-				goto finish_move_sb_seg;
+				return err;
 			}
 
 			err = ssdfs_segbmap_change_state(segbmap, prev_seg,
@@ -920,6 +942,32 @@ delete_prev_leb_from_cache:
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(prev_leb == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_maptbl_change_peb_state(fsi, prev_leb, peb_type,
+					    SSDFS_MAPTBL_DIRTY_PEB_STATE,
+					    &end);
+	if (err == -EAGAIN) {
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_maptbl_change_peb_state(fsi,
+						prev_leb, peb_type,
+						SSDFS_MAPTBL_DIRTY_PEB_STATE,
+						&end);
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change the PEB state: "
+			  "leb_id %llu, new_state %#x, err %d\n",
+			  prev_leb, SSDFS_MAPTBL_DIRTY_PEB_STATE, err);
+		return err;
+	}
 
 	err = ssdfs_maptbl_cache_forget_leb2peb(maptbl_cache, prev_leb,
 						SSDFS_PEB_STATE_CONSISTENT);
@@ -1594,6 +1642,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct ssdfs_sb_log_payload payload;
 	struct inode *root_i;
 	u64 fs_feature_compat;
+	int i;
 	int err = 0;
 
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
@@ -1743,7 +1792,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_shdictree;
 	}
 
-	SSDFS_DBG("getting root inode\n");
+	SSDFS_DBG("getting root inode...\n");
 
 	root_i = ssdfs_iget(sb, SSDFS_ROOT_INO);
 	if (IS_ERR(root_i)) {
@@ -1758,6 +1807,43 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!sb->s_root) {
 		err = -ENOMEM;
 		goto put_root_inode;
+	}
+
+	SSDFS_DBG("starting GC threads...\n");
+
+	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
+		init_waitqueue_head(&fs_info->gc_wait_queue[i]);
+		atomic_set(&fs_info->gc_should_act[i], 1);
+	}
+
+	atomic64_set(&fs_info->flush_reqs, 0);
+
+	err = ssdfs_start_gc_thread(fs_info, SSDFS_SEG_USING_GC_THREAD);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to start GC-using-seg thread: "
+			  "err %d\n", err);
+		goto put_root_inode;
+	}
+
+	err = ssdfs_start_gc_thread(fs_info, SSDFS_SEG_USED_GC_THREAD);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to start GC-used-seg thread: "
+			  "err %d\n", err);
+		goto stop_gc_using_seg_thread;
+	}
+
+	err = ssdfs_start_gc_thread(fs_info, SSDFS_SEG_PRE_DIRTY_GC_THREAD);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to start GC-pre-dirty-seg thread: "
+			  "err %d\n", err);
+		goto stop_gc_used_seg_thread;
+	}
+
+	err = ssdfs_start_gc_thread(fs_info, SSDFS_SEG_DIRTY_GC_THREAD);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to start GC-dirty-seg thread: "
+			  "err %d\n", err);
+		goto stop_gc_pre_dirty_seg_thread;
 	}
 
 	if (!(sb->s_flags & SB_RDONLY)) {
@@ -1801,6 +1887,15 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		   SSDFS_VERSION, fs_info->devops->device_name(sb));
 
 	return 0;
+
+stop_gc_pre_dirty_seg_thread:
+	ssdfs_stop_gc_thread(fs_info, SSDFS_SEG_PRE_DIRTY_GC_THREAD);
+
+stop_gc_used_seg_thread:
+	ssdfs_stop_gc_thread(fs_info, SSDFS_SEG_USED_GC_THREAD);
+
+stop_gc_using_seg_thread:
+	ssdfs_stop_gc_thread(fs_info, SSDFS_SEG_USING_GC_THREAD);
 
 put_root_inode:
 	iput(root_i);
@@ -1852,18 +1947,42 @@ static void ssdfs_put_super(struct super_block *sb)
 	bool can_commit_super = true;
 	int err;
 
-	spin_lock(&fsi->volume_state_lock);
-	fs_feature_compat = fsi->fs_feature_compat;
-	fs_state = fsi->fs_state;
-	spin_unlock(&fsi->volume_state_lock);
+	err = ssdfs_stop_gc_thread(fsi, SSDFS_SEG_USING_GC_THREAD);
+	if (err) {
+		SSDFS_ERR("fail to stop GC using seg thread: "
+			  "err %d\n", err);
+	}
 
-	pagevec_init(&payload.maptbl_cache.pvec);
+	err = ssdfs_stop_gc_thread(fsi, SSDFS_SEG_USED_GC_THREAD);
+	if (err) {
+		SSDFS_ERR("fail to stop GC used seg thread: "
+			  "err %d\n", err);
+	}
+
+	err = ssdfs_stop_gc_thread(fsi, SSDFS_SEG_PRE_DIRTY_GC_THREAD);
+	if (err) {
+		SSDFS_ERR("fail to stop GC pre-dirty seg thread: "
+			  "err %d\n", err);
+	}
+
+	err = ssdfs_stop_gc_thread(fsi, SSDFS_SEG_DIRTY_GC_THREAD);
+	if (err) {
+		SSDFS_ERR("fail to stop GC dirty seg thread: "
+			  "err %d\n", err);
+	}
 
 	err = ssdfs_maptbl_stop_thread(fsi->maptbl);
 	if (unlikely(err)) {
 		SSDFS_WARN("maptbl thread stopping issue: err %d\n",
 			   err);
 	}
+
+	spin_lock(&fsi->volume_state_lock);
+	fs_feature_compat = fsi->fs_feature_compat;
+	fs_state = fsi->fs_state;
+	spin_unlock(&fsi->volume_state_lock);
+
+	pagevec_init(&payload.maptbl_cache.pvec);
 
 	/* TODO: flush shared extents tree */
 	ssdfs_shextree_destroy(fsi);

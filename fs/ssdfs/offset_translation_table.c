@@ -5153,6 +5153,15 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		kunmap_atomic(kaddr2);
 		kunmap_atomic(kaddr1);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr1 = kmap_atomic(blk_state->pages[i]);
+		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr1, PAGE_SIZE);
+		SSDFS_DBG("\n");
+		kunmap_atomic(kaddr1);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		pagevec_add(&blk->pvec, page);
 	}
 
@@ -5194,6 +5203,8 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 	struct ssdfs_migrating_block *blk = NULL;
 	u32 read_bytes;
 	int start_page;
+	u32 data_bytes = 0;
+	int processed_blks;
 	int i;
 	int err = 0;
 
@@ -5261,9 +5272,12 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 			goto finish_get_block_state;
 		}
 
-		page = req->result.pvec.pages[page_index];
+		SSDFS_DBG("index %d, read_bytes %u, "
+			  "start_page %u, page_index %d\n",
+			  i, read_bytes, start_page, page_index);
 
-		lock_page(page);
+		page = req->result.pvec.pages[page_index];
+		lock_page(blk->pvec.pages[i]);
 
 		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
 		kaddr2 = kmap_atomic(page);
@@ -5271,12 +5285,29 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		kunmap_atomic(kaddr2);
 		kunmap_atomic(kaddr1);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
+		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr1, PAGE_SIZE);
+		SSDFS_DBG("\n");
+		kunmap_atomic(kaddr1);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		unlock_page(blk->pvec.pages[i]);
 		SetPageUptodate(page);
-		unlock_page(page);
+
+		data_bytes += PAGE_SIZE;
 	}
 
 finish_get_block_state:
 	up_read(&table->translation_lock);
+
+	if (!err) {
+		processed_blks =
+			(data_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
+		req->result.processed_blks += processed_blks;
+	}
 
 	return err;
 }

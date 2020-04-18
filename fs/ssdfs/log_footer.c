@@ -536,6 +536,8 @@ int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
 			real_seg = fsi->cur_segs->objects[i]->real_seg;
 			if (real_seg) {
 				seg = real_seg->seg_id;
+				SSDFS_DBG("index %d, seg_id %llu\n",
+					  i, seg);
 				array[i] = cpu_to_le64(seg);
 			} else
 				array[i] = cpu_to_le64(U64_MAX);

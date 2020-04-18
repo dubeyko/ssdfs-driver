@@ -730,8 +730,13 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 	start_diff = leb_id - start_leb;
 	end_diff = end_leb - leb_id;
 
+	SSDFS_DBG("start_diff %llu, end_diff %llu\n",
+		  start_diff, end_diff);
+
 	if (start_diff <= end_diff) {
 		/* straight search */
+		SSDFS_DBG("straight search\n");
+
 		i = 0;
 		cur_index = 0;
 		step = 1;
@@ -745,6 +750,10 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 				cur_pair = start_pair + cur_index;
 				cur_leb_id = le64_to_cpu(cur_pair->leb_id);
 			}
+
+			SSDFS_DBG("cur_index %d, step %d, "
+				  "cur_leb_id %llu, leb_id %llu\n",
+				  cur_index, step, cur_leb_id, leb_id);
 
 			if (leb_id > cur_leb_id)
 				goto continue_straight_search;
@@ -782,6 +791,8 @@ continue_straight_search:
 		}
 	} else {
 		/* reverse search */
+		SSDFS_DBG("reverse search\n");
+
 		i = items_count - 1;
 		cur_index = i;
 		step = 1;
@@ -795,6 +806,10 @@ continue_straight_search:
 				cur_pair = start_pair + cur_index;
 				cur_leb_id = le64_to_cpu(cur_pair->leb_id);
 			}
+
+			SSDFS_DBG("cur_index %d, step %d, "
+				  "cur_leb_id %llu, leb_id %llu\n",
+				  cur_index, step, cur_leb_id, leb_id);
 
 			if (leb_id < cur_leb_id)
 				goto continue_reverse_search;
@@ -810,6 +825,8 @@ continue_straight_search:
 				cur_item->state =
 					SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
 				cur_item->page_index = sequence_id;
+				cur_index++;
+				cur_pair = start_pair + cur_index;
 				cur_item->item_index = cur_index;
 				memcpy(&cur_item->found, cur_pair, pair_size);
 				return -EFAULT;
@@ -916,13 +933,20 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 	SSDFS_DBG("kaddr %p, item_index %u, ptr %p\n",
 		  kaddr, item_index, ptr);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("PAGE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr, PAGE_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 	items_count = le16_to_cpu(hdr->items_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("CACHE HEADER\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				kaddr, 32);
+			     kaddr, 32);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (item_index >= items_count) {
@@ -936,7 +960,7 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("PEB STATE START\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				start, 32);
+			     start, 32);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (IS_ERR_OR_NULL(start)) {
@@ -952,7 +976,7 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("MODIFIED ITEM\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				*ptr, 32);
+			     *ptr, 32);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -1023,6 +1047,9 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 		kunmap(page);
 		unlock_page(page);
 
+		SSDFS_DBG("leb_id %llu, page_index %u, err %d\n",
+			  leb_id, i, err);
+
 		if (err == -ENODATA || err == -E2BIG)
 			continue;
 		else if (err == -EAGAIN)
@@ -1039,6 +1066,12 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 				  leb_id, err);
 			goto finish_leb_id_search;
 		}
+	}
+
+	if (err == -ENODATA || err == -E2BIG) {
+		SSDFS_DBG("unable to find: leb_id %llu\n", leb_id);
+		err = -ENODATA;
+		goto finish_leb_id_search;
 	}
 
 	for (i = SSDFS_MAPTBL_MAIN_INDEX; i < SSDFS_MAPTBL_RELATION_MAX; i++) {
@@ -1105,7 +1138,9 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 
 		default:
 			err = -ERANGE;
-			SSDFS_ERR("search failure: leb_id %llu\n", leb_id);
+			SSDFS_ERR("search failure: "
+				  "leb_id %llu, index %u, state %#x\n",
+				  leb_id, i, res->pebs[i].state);
 			goto finish_leb_id_search;
 		}
 	}
@@ -1154,7 +1189,11 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 	err = ssdfs_maptbl_cache_find_leb(cache, leb_id, &res, pebr);
 	up_read(&cache->lock);
 
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to convert leb %llu to peb\n",
+			  leb_id);
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to convert leb %llu to peb: "
 			  "err %d\n",
 			  leb_id, err);

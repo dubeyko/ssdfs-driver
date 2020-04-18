@@ -956,6 +956,13 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		hdr = SSDFS_SBMP_FRAG_HDR(kmap_atomic(page));
 		desc->total_segs = le16_to_cpu(hdr->total_segs);
 
+		SSDFS_DBG("total_segs %u, clean_or_using_segs %u, "
+			  "used_or_dirty_segs %u, bad_segs %u\n",
+			 le16_to_cpu(hdr->total_segs),
+			  le16_to_cpu(hdr->clean_or_using_segs),
+			  le16_to_cpu(hdr->used_or_dirty_segs),
+			  le16_to_cpu(hdr->bad_segs));
+
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
 		desc->clean_or_using_segs =
 			le16_to_cpu(hdr->clean_or_using_segs);
@@ -3357,8 +3364,9 @@ int FIND_FIRST_ITEM_IN_FRAGMENT(struct ssdfs_segbmap_fragment_header *hdr,
 					      BYTE_CONTAINS_MASK,
 					      FIRST_MASK_IN_BYTE,
 					      &found_offset);
+
 		if (!err && found_offset != U64_MAX) {
-			err = -ENODATA;
+			err = -ENOENT;
 
 			*found_for_mask = fragment_start_item;
 			*found_for_mask += byte_index * items_per_byte;
@@ -3377,6 +3385,14 @@ int FIND_FIRST_ITEM_IN_FRAGMENT(struct ssdfs_segbmap_fragment_header *hdr,
 				  "found_state_for_mask %#x\n",
 				  *found_for_mask,
 				  *found_state_for_mask);
+
+			if (IS_STATE_GOOD_FOR_MASK(mask, *found_state_for_mask))
+				break;
+			else {
+				err = -ENODATA;
+				*found_for_mask = U64_MAX;
+				*found_state_for_mask = SSDFS_SEG_STATE_MAX;
+			}
 		}
 
 ignore_search_for_mask:
@@ -3406,13 +3422,16 @@ ignore_search_for_mask:
 	else if (*found_seg == U64_MAX && *found_for_mask != U64_MAX)
 		err = -ENOENT;
 
-	if (!err) {
+	if (!err || err == -ENOENT) {
 		SSDFS_DBG("found_seg %llu, found_for_mask %llu\n",
 			  *found_seg, *found_for_mask);
 	} else
 		SSDFS_DBG("nothing was found: err %d\n", err);
 
 end_search:
+	SSDFS_DBG("found_seg %llu, "
+		  "found_for_mask %llu, err %d\n",
+		  *found_seg, *found_for_mask, err);
 	return err;
 }
 
@@ -3514,9 +3533,13 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 	fragment = &segbmap->desc_array[fragment_index];
 
 	items_count = ssdfs_segbmap_define_items_count(fragment, state, mask);
-	if (items_count == U16_MAX || items_count == 0) {
+	if (items_count == U16_MAX) {
 		SSDFS_ERR("segbmap has inconsistent state\n");
 		return -ERANGE;
+	} else if (items_count == 0) {
+		SSDFS_DBG("fragment %u hasn't items for search\n",
+			  fragment_index);
+		return -ENOENT;
 	}
 
 	items_count = fragment->total_segs;
@@ -3683,13 +3706,11 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 						     &found, &found_for_iter,
 						     &found_state_for_iter);
 		if (err == -ENODATA) {
-			err = -EFAULT;
-			ssdfs_fs_error(segbmap->fsi->sb,
-					__FILE__, __func__, __LINE__,
-					"segbmap inconsistent state: "
-					"found_fragment %d, start %llu, "
-					"max %llu\n",
-					found_fragment, start, max);
+			SSDFS_DBG("unable to find segment: "
+				  "state %#x, mask %#x, "
+				  "start %llu, max %llu\n",
+				  state, mask,
+				  start, max);
 			goto finish_seg_search;
 		} else if (err == -ENOENT) {
 			SSDFS_DBG("mask %#x, found_for_mask %llu, "
@@ -3697,10 +3718,10 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 				  "found_state %#x\n",
 				  mask, found_for_mask, found_for_iter,
 				  found_state_for_iter);
-			if (found_for_mask == U64_MAX) {
-				found_for_mask = found_for_iter;
-				found_state_for_mask = found_state_for_iter;
-			}
+			err = 0;
+			found_for_mask = found_for_iter;
+			found_state_for_mask = found_state_for_iter;
+			goto check_search_result;
 		} else if (err == -EFAULT) {
 			/* Just try another iteration */
 			SSDFS_DBG("fragment %d is inconsistent\n",
@@ -3728,6 +3749,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 		start_fragment = found_fragment + 1;
 	} while (start_fragment <= max_fragment);
 
+check_search_result:
 	if (unlikely(err < 0)) {
 		/* we have some error */
 		goto finish_seg_search;
@@ -3944,6 +3966,7 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 
 	down_write(&segbmap->search_lock);
 
+try_to_find_seg_id:
 	res = __ssdfs_segbmap_find(segbmap, start, max,
 				   state, mask,
 				   fragment_size, seg, end);
@@ -3962,8 +3985,18 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 		goto finish_find_set;
 	}
 
-	if (res == new_state)
+	if (res == new_state) {
+		/* everything is done */
 		goto finish_find_set;
+	} else if (res == SSDFS_SEG_CLEAN) {
+		/*
+		 * we can change clean state on any other
+		 */
+	} else {
+		start = *seg + 1;
+		*seg = U64_MAX;
+		goto try_to_find_seg_id;
+	}
 
 	if (*seg >= items_count) {
 		err = -ERANGE;

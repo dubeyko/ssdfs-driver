@@ -136,8 +136,13 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->parent_si);
+	BUG_ON(!ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!ptr->parent_si) {
+		/* object is not created yet */
+		return;
+	}
 
 	SSDFS_DBG("seg_id %llu, state %#x\n",
 		  ptr->parent_si->seg_id,
@@ -671,9 +676,9 @@ try_define_bmap_index:
 			goto finish_define_bmap_index;
 		}
 
-		if (peb_migration_id != src_migration_id) {
+		if (peb_migration_id > src_migration_id) {
 			err = -ERANGE;
-			SSDFS_ERR("migration_id %u != src_migration_id %u\n",
+			SSDFS_ERR("migration_id %u > src_migration_id %u\n",
 				  peb_migration_id,
 				  src_migration_id);
 			goto finish_define_bmap_index;

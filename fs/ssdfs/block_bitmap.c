@@ -90,6 +90,11 @@ bool ssdfs_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap)
 	return is_block_bmap_initialized(blk_bmap);
 }
 
+void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap)
+{
+	clear_block_bmap_dirty(blk_bmap);
+}
+
 static
 int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 				struct ssdfs_block_bmap_range *range,
@@ -3706,6 +3711,8 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	u32 found_blk;
 	u32 used_blks;
 	u32 metadata_items;
+	u32 invalid_blks;
+	int free_blks;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3741,12 +3748,17 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	used_blks = blk_bmap->used_blks;
 	metadata_items = blk_bmap->metadata_items;
+	invalid_blks = blk_bmap->invalid_blks;
+
+	free_blks = blk_bmap->items_count;
+	free_blks -= used_blks + metadata_items + invalid_blks;
 
 	SSDFS_DBG("items_count %zu, used_blks %u, "
-		  "metadata_items %u, free_blks %zu\n",
+		  "invalid_blks %u, "
+		  "metadata_items %u, free_blks %d\n",
 		  blk_bmap->items_count,
-		  used_blks, metadata_items,
-		  blk_bmap->items_count - used_blks - metadata_items);
+		  used_blks, invalid_blks, metadata_items,
+		  free_blks);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (unlikely(found_blk > blk_bmap->items_count)) {
@@ -3766,7 +3778,12 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return blk_bmap->items_count - used_blks - metadata_items;
+	if (free_blks < 0) {
+		SSDFS_ERR("free_blks %d\n", free_blks);
+		return -ERANGE;
+	}
+
+	return free_blks;
 }
 
 /*
@@ -4161,9 +4178,9 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 		if (state != SSDFS_BLK_FREE &&
 		    state != SSDFS_BLK_PRE_ALLOCATED) {
-			SSDFS_ERR("range (start %u, len %u) "
+			SSDFS_ERR("range (start %u, len %u), state %#x, "
 				  "can't be allocated\n",
-				  range->start, range->len);
+				  range->start, range->len, state);
 			return -EINVAL;
 		}
 	}

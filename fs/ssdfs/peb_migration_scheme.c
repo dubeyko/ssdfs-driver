@@ -39,7 +39,9 @@
  */
 int ssdfs_peb_start_migration(struct ssdfs_peb_container *pebc)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -53,6 +55,7 @@ int ssdfs_peb_start_migration(struct ssdfs_peb_container *pebc)
 		  atomic_read(&pebc->migration_state),
 		  atomic_read(&pebc->items_state));
 
+	fsi = pebc->parent_si->fsi;
 	si = pebc->parent_si;
 
 check_migration_state:
@@ -94,6 +97,11 @@ check_migration_state:
 			  pebc->peb_index,
 			  err);
 		return err;
+	}
+
+	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
+		atomic_inc(&fsi->gc_should_act[i]);
+		wake_up_all(&fsi->gc_wait_queue[i]);
 	}
 
 	SSDFS_DBG("finished\n");
@@ -623,6 +631,208 @@ fail_process_pre_alloc_blocks:
 
 finish_pre_alloc_blocks_processing:
 	return err;
+}
+
+/*
+ * has_ssdfs_source_peb_valid_blocks() - check that source PEB has valid blocks
+ * @pebc: pointer on PEB container
+ */
+bool has_ssdfs_source_peb_valid_blocks(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	int used_pages;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
+		  "migration_state %#x, items_state %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->items_state));
+
+	si = pebc->parent_si;
+	seg_blkbmap = &si->blk_bmap;
+	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+
+	used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
+	if (used_pages < 0) {
+		err = used_pages;
+		SSDFS_ERR("fail to get used pages: err %d\n",
+			  err);
+		return false;
+	}
+
+	if (used_pages > 0)
+		return true;
+
+	return false;
+}
+
+/*
+ * ssdfs_peb_prepare_range_migration() - prepare blocks' range migration
+ * @pebc: pointer on PEB container
+ * @range_len: required range length
+ * @blk_type: type of migrating block
+ *
+ * This method tries to prepare range of blocks for migration.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL    - invalid input.
+ * %-ERANGE    - internal error.
+ * %-ENODATA   - no blocks for migration has been found.
+ */
+int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
+				      u32 range_len, int blk_type)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_block_bmap_range range = {0, 0};
+	int used_pages;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
+		  "migration_state %#x, migration_phase %#x, "
+		  "items_state %#x, range_len %u, blk_type %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->migration_phase),
+		  atomic_read(&pebc->items_state),
+		  range_len, blk_type);
+
+	if (range_len == 0) {
+		SSDFS_ERR("invalid range_len %u\n", range_len);
+		return -EINVAL;
+	}
+
+	switch (blk_type) {
+	case SSDFS_BLK_VALID:
+	case SSDFS_BLK_PRE_ALLOCATED:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected blk_type %#x\n",
+			  blk_type);
+		return -EINVAL;
+	}
+
+	si = pebc->parent_si;
+	seg_blkbmap = &si->blk_bmap;
+	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_UNDER_MIGRATION:
+		/* valid state */
+		break;
+
+	default:
+		SSDFS_WARN("invalid migration_state %#x\n",
+			   atomic_read(&pebc->migration_state));
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ERANGE;
+	}
+
+	switch (atomic_read(&pebc->migration_phase)) {
+	case SSDFS_SRC_PEB_NOT_EXHAUSTED:
+		SSDFS_DBG("SRC PEB is not exausted\n");
+		return -ENODATA;
+
+	case SSDFS_DST_PEB_RECEIVES_DATA:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected migration phase %#x\n",
+			  atomic_read(&pebc->migration_phase));
+		return -ERANGE;
+	}
+
+	used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
+	if (used_pages < 0) {
+		err = used_pages;
+		SSDFS_ERR("fail to get used pages: err %d\n",
+			  err);
+		return err;
+	}
+
+	SSDFS_DBG("used_pages %d\n", used_pages);
+
+	if (used_pages > 0) {
+		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
+							 0, range_len,
+							 blk_type,
+							 &range);
+
+		SSDFS_DBG("range.start %u, range.len %u, err %d\n",
+			  range.start, range.len, err);
+
+		if (err == -ENODATA) {
+			/* no valid blocks */
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to collect garbage: "
+				  "seg_id %llu, err %d\n",
+				  si->seg_id, err);
+			return err;
+		} else if (range.len == 0) {
+			SSDFS_ERR("invalid found range "
+				  "(start %u, len %u)\n",
+				  range.start, range.len);
+			return -ERANGE;
+		}
+
+		switch (blk_type) {
+		case SSDFS_BLK_VALID:
+			err = ssdfs_peb_migrate_valid_blocks_range(si, pebc,
+								   peb_blkbmap,
+								   &range);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to migrate valid blocks: "
+					  "range (start %u, len %u), err %d\n",
+					  range.start, range.len, err);
+				return err;
+			}
+			break;
+
+		case SSDFS_BLK_PRE_ALLOCATED:
+			err = ssdfs_peb_migrate_pre_alloc_blocks_range(si,
+								    pebc,
+								    peb_blkbmap,
+								    &range);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to migrate pre-alloc blocks: "
+					  "range (start %u, len %u), err %d\n",
+					  range.start, range.len, err);
+				return err;
+			}
+			break;
+
+		default:
+			BUG();
+		}
+	} else {
+		SSDFS_DBG("unable to find blocks for migration\n");
+		return -ENODATA;
+	}
+
+	return 0;
 }
 
 /*

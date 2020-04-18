@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.51 [April 18, 2020]
+    (*) Enhance the GC logic.
+
 v.3.50 [March 24, 2020]
     (*) Fix bugs in offsets translation table.
 

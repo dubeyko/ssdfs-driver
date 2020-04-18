@@ -58,6 +58,13 @@ bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 		return false;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("RAW INODE DUMP:\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     buf, size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	raw_inode = (struct ssdfs_inode *)buf;
 
 	old_checksum = raw_inode->checksum;

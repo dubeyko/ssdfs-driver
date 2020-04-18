@@ -3034,6 +3034,7 @@ init_failed:
 	switch (range_state) {
 	case SSDFS_BLK_PRE_ALLOCATED:
 		/* valid block state */
+		err = ssdfs_block_bmap_invalidate(src, range);
 		break;
 
 	case SSDFS_BLK_VALID:
@@ -3045,6 +3046,12 @@ init_failed:
 				   range_state, new_range_state);
 			goto finish_process_source_bmap;
 		}
+
+		err = ssdfs_block_bmap_invalidate(src, range);
+		break;
+
+	case SSDFS_BLK_INVALID:
+		/* range was invalidated already */
 		break;
 
 	default:
@@ -3053,8 +3060,6 @@ init_failed:
 			  range_state);
 		goto finish_process_source_bmap;
 	};
-
-	err = ssdfs_block_bmap_invalidate(src, range);
 
 finish_process_source_bmap:
 	ssdfs_block_bmap_unlock(src);
@@ -3402,6 +3407,8 @@ unlock_src_bmap:
 		SSDFS_WARN("invalid shared_free_dst_blks %d\n",
 			   shared_free_dst_blks);
 	}
+
+	ssdfs_block_bmap_clear_dirty_state(bmap->src);
 
 	bmap->src = &bmap->buffer[buffer_index];
 	bmap->dst = NULL;

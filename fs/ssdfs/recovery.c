@@ -145,7 +145,7 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 		sizeof(struct ssdfs_peb_extent));
 }
 
-#define SSDFS_SEARCH_REPEAT_RATE	4
+#define SSDFS_SEARCH_REPEAT_RATE	5
 
 enum {
 	SSDFS_USE_PEB_ISBAD_OP,
@@ -160,10 +160,10 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 {
 	struct super_block *sb = fsi->sb;
 	u64 dev_size = fsi->devops->device_size(sb);
-	size_t step = seg_size;
 	loff_t off;
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
-	int try;
+	struct ssdfs_volume_header *vh;
+	bool magic_valid = false;
 	int err;
 
 	SSDFS_DBG("fsi %p, seg_size %zu, start_offset %llu, "
@@ -195,60 +195,53 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 	else
 		off = *offset;
 
-	for (; step < UINT_MAX; step <<= 1) {
+	while (off < dev_size) {
+		SSDFS_DBG("off %llu\n", (u64)off);
 
-		if (dev_size <= step) {
-			SSDFS_ERR("device size is too small for search\n");
-			err = -ERANGE;
-			goto fail_find;
-		}
+		switch (op_type) {
+		case SSDFS_USE_PEB_ISBAD_OP:
+			err = fsi->devops->peb_isbad(sb, off);
+			magic_valid = true;
+			break;
 
-		for (try = 0; try < SSDFS_SEARCH_REPEAT_RATE; try++) {
-			switch (op_type) {
-			case SSDFS_USE_PEB_ISBAD_OP:
-				err = fsi->devops->peb_isbad(sb, off);
-				break;
+		case SSDFS_USE_READ_OP:
+			err = fsi->devops->read(sb, off, hdr_size,
+						fsi->sbi.vh_buf);
+			vh = SSDFS_VH(fsi->sbi.vh_buf);
+			magic_valid = is_ssdfs_magic_valid(&vh->magic);
+			break;
 
-			case SSDFS_USE_READ_OP:
-				err = fsi->devops->read(sb, off, hdr_size,
-							fsi->sbi.vh_buf);
-				break;
+		default:
+			BUG();
+		};
 
-			default:
-				BUG();
-			};
-
-			if (!err) {
+		if (!err) {
+			if (magic_valid) {
 				*offset = off;
 				return 0;
-			} else if (!silent) {
-				SSDFS_NOTICE("offset %llu is in bad PEB\n",
-						(unsigned long long)off);
-			} else {
-				SSDFS_DBG("offset %llu is in bad PEB\n",
-					  (unsigned long long)off);
 			}
-
-			if (off >= (dev_size - step)) {
-				SSDFS_ERR("unable to find valid PEB\n");
-				err = -ENODATA;
-				goto fail_find;
-			}
-
-			off += step;
+		} else if (!silent) {
+			SSDFS_NOTICE("offset %llu is in bad PEB\n",
+					(unsigned long long)off);
+		} else {
+			SSDFS_DBG("offset %llu is in bad PEB\n",
+				  (unsigned long long)off);
 		}
+
+		off += 2 * seg_size;
 	}
 
-fail_find:
-	return err;
+	SSDFS_DBG("unable to find valid PEB\n");
+
+	return -ENODATA;
 }
 
 static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
+						loff_t offset,
 						int silent)
 {
 	struct super_block *sb;
-	loff_t offset = SSDFS_RESERVED_VBR_SIZE;
-	size_t seg_size = SSDFS_DEFAULT_SEG_SIZE;
+	size_t seg_size = SSDFS_128KB;
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	u64 dev_size;
 	struct ssdfs_volume_header *vh;
@@ -277,7 +270,7 @@ static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 				SSDFS_DBG("offset %llu is in bad PEB\n",
 					  (unsigned long long)offset);
 			}
-			offset = seg_size;
+			offset += seg_size;
 			err = find_seg_with_valid_start_peb(fsi, seg_size,
 							&offset, silent,
 							SSDFS_USE_PEB_ISBAD_OP);
@@ -500,6 +493,8 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 	return 0;
 }
 
+#define SSDFS_RESERVED_SB_SEGS		(6)
+
 static int ssdfs_find_any_valid_sb_segment(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -508,9 +503,13 @@ static int ssdfs_find_any_valid_sb_segment(struct ssdfs_fs_info *fsi)
 	size_t vh_size = sizeof(struct ssdfs_volume_header);
 	struct ssdfs_volume_header *vh;
 	struct ssdfs_segment_header *seg_hdr;
+	u64 dev_size;
+	loff_t offset = 0;
+	loff_t step = SSDFS_RESERVED_SB_SEGS * SSDFS_128KB;
 	u64 last_cno, cno;
 	__le64 peb1, peb2;
 	__le64 leb1, leb2;
+	u64 checked_pebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
 	int i, j;
 	int err = 0;
 
@@ -525,27 +524,46 @@ static int ssdfs_find_any_valid_sb_segment(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p\n", fsi, fsi->sbi.vh_buf);
 
 	i = SSDFS_SB_CHAIN_MAX;
+	dev_size = fsi->devops->device_size(fsi->sb);
+	memset(checked_pebs, 0xFF,
+		(SSDFS_SB_CHAIN_MAX * sizeof(u64)) +
+		(SSDFS_SB_SEG_COPY_MAX * sizeof(u64)));
 
-try_again:
+try_next_volume_portion:
 	memcpy(&fsi->last_vh, fsi->sbi.vh_buf, vh_size);
 	last_cno = le64_to_cpu(SSDFS_SEG_HDR(fsi->sbi.vh_buf)->cno);
 
+try_again:
 	switch (i) {
 	case SSDFS_SB_CHAIN_MAX:
 		i = SSDFS_CUR_SB_SEG;
 		break;
 
 	case SSDFS_CUR_SB_SEG:
-		i = SSDFS_PREV_SB_SEG;
-		break;
-
-	case SSDFS_PREV_SB_SEG:
 		i = SSDFS_NEXT_SB_SEG;
 		break;
 
+	case SSDFS_NEXT_SB_SEG:
+		i = SSDFS_RESERVED_SB_SEG;
+		break;
+
 	default:
-		BUG();
+		offset += step;
+
+		if (offset >= dev_size)
+			goto fail_find_sb_seg;
+
+		err =  ssdfs_find_any_valid_volume_header(fsi, offset, true);
+		if (err)
+			goto fail_find_sb_seg;
+		else {
+			i = SSDFS_SB_CHAIN_MAX;
+			goto try_next_volume_portion;
+		}
+		break;
 	}
+
+	err = -ENODATA;
 
 	for (j = SSDFS_MAIN_SB_SEG; j < SSDFS_SB_SEG_COPY_MAX; j++) {
 		u64 leb_id = le64_to_cpu(fsi->last_vh.sb_pebs[i][j].leb_id);
@@ -558,6 +576,14 @@ try_again:
 				  leb_id, peb_id);
 			goto fail_find_sb_seg;
 		}
+
+		if (checked_pebs[i][j] == peb_id)
+			continue;
+		else
+			checked_pebs[i][j] = peb_id;
+
+		if ((peb_id * fsi->erasesize) < dev_size)
+			offset = peb_id * fsi->erasesize;
 
 		err = ssdfs_read_checked_sb_info(fsi, peb_id,
 						 0, true);
@@ -588,8 +614,10 @@ try_again:
 			goto compare_vh_info;
 	}
 
-	if (err)
-		goto fail_find_sb_seg;
+	if (err) {
+		memcpy(fsi->sbi.vh_buf, &fsi->last_vh, vh_size);
+		goto try_again;
+	}
 
 compare_vh_info:
 	vh = SSDFS_VH(fsi->sbi.vh_buf);
@@ -1538,7 +1566,9 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		goto free_buf;
 	}
 
-	err = ssdfs_find_any_valid_volume_header(fsi, silent);
+	err = ssdfs_find_any_valid_volume_header(fsi,
+						 SSDFS_RESERVED_VBR_SIZE,
+						 silent);
 	if (err)
 		goto forget_buf;
 

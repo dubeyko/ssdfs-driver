@@ -152,6 +152,9 @@ bool is_pebs_relation_alive(struct ssdfs_peb_container *pebc);
 bool has_peb_migration_done(struct ssdfs_peb_container *pebc);
 bool should_migration_be_finished(struct ssdfs_peb_container *pebc);
 int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc);
+bool has_ssdfs_source_peb_valid_blocks(struct ssdfs_peb_container *pebc);
+int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
+				      u32 range_len, int blk_type);
 
 /* readwrite.c */
 int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,

@@ -116,6 +116,29 @@ void ssdfs_requests_queue_add_head(struct ssdfs_requests_queue *rq,
 }
 
 /*
+ * ssdfs_requests_queue_add_head_inc() - add request at the head of queue
+ * @fsi: pointer on shared file system object
+ * @rq: requests queue
+ * @req: request
+ */
+void ssdfs_requests_queue_add_head_inc(struct ssdfs_fs_info *fsi,
+					struct ssdfs_requests_queue *rq,
+					struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !rq || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, class %#x, cmd %#x\n",
+		  req->place.start.seg_id,
+		  req->private.class,
+		  req->private.cmd);
+
+	ssdfs_requests_queue_add_head(rq, req);
+	atomic64_inc(&fsi->flush_reqs);
+}
+
+/*
  * ssdfs_requests_queue_add_tail() - add request at the tail of queue
  * @rq: requests queue
  * @req: request
@@ -135,6 +158,29 @@ void ssdfs_requests_queue_add_tail(struct ssdfs_requests_queue *rq,
 	spin_lock(&rq->lock);
 	list_add_tail(&req->list, &rq->list);
 	spin_unlock(&rq->lock);
+}
+
+/*
+ * ssdfs_requests_queue_add_tail_inc() - add request at the tail of queue
+ * @fsi: pointer on shared file system object
+ * @rq: requests queue
+ * @req: request
+ */
+void ssdfs_requests_queue_add_tail_inc(struct ssdfs_fs_info *fsi,
+					struct ssdfs_requests_queue *rq,
+					struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !rq || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg_id %llu, class %#x, cmd %#x\n",
+		  req->place.start.seg_id,
+		  req->private.class,
+		  req->private.cmd);
+
+	ssdfs_requests_queue_add_tail(rq, req);
+	atomic64_inc(&fsi->flush_reqs);
 }
 
 /*
