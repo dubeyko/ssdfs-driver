@@ -42,11 +42,13 @@
  * ssdfs_current_segment_init() - init current segment container
  * @fsi: pointer on shared file system object
  * @type: current segment type
+ * @seg_id: segment ID
  * @cur_seg: pointer on current segment container [out]
  */
 static
 void ssdfs_current_segment_init(struct ssdfs_fs_info *fsi,
 				int type,
+				u64 seg_id,
 				struct ssdfs_current_segment *cur_seg)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -55,6 +57,7 @@ void ssdfs_current_segment_init(struct ssdfs_fs_info *fsi,
 
 	mutex_init(&cur_seg->lock);
 	cur_seg->type = type;
+	cur_seg->seg_id = seg_id;
 	cur_seg->real_seg = NULL;
 	cur_seg->fsi = fsi;
 }
@@ -349,6 +352,7 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 
 	ssdfs_segment_get_object(si);
 	cur_seg->real_seg = si;
+	cur_seg->seg_id = si->seg_id;
 
 	return 0;
 }
@@ -422,9 +426,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 		object = (struct ssdfs_current_segment *)(start_ptr + offset);
 		fsi->cur_segs->objects[i] = object;
-		ssdfs_current_segment_init(fsi, i, object);
-
 		seg = le64_to_cpu(fsi->vs->cur_segs[i]);
+
+		ssdfs_current_segment_init(fsi, i, seg, object);
 
 		if (seg == U64_MAX)
 			continue;

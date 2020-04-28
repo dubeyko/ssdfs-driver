@@ -3,6 +3,12 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.52 [April 28, 2020]
+    (*) Fix bugs in GC logic.
+    (*) Fix bugs in readdir() logic.
+    (*) Fix bugs in PEB mapping table cache.
+    (*) Fix bugs in clean segment searching logic.
+
 v.3.51 [April 18, 2020]
     (*) Enhance the GC logic.
 

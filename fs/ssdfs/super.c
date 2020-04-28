@@ -506,14 +506,19 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 	BUG_ON(!sb || !last_sb_log);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = SSDFS_FS_I(sb);
+
 	SSDFS_DBG("sb %p, last_sb_log %p\n",
 		  sb, last_sb_log);
-	SSDFS_DBG("last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
-		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
-		  last_sb_log->leb_id, last_sb_log->peb_id,
-		  last_sb_log->page_offset, last_sb_log->pages_count);
+	SSDFS_DBG("fsi->sbi.last_log.leb_id %llu, "
+		  "fsi->sbi.last_log.peb_id %llu, "
+		  "fsi->sbi.last_log.page_offset %u, "
+		  "fsi->sbi.last_log.pages_count %u\n",
+		  fsi->sbi.last_log.leb_id,
+		  fsi->sbi.last_log.peb_id,
+		  fsi->sbi.last_log.page_offset,
+		  fsi->sbi.last_log.pages_count);
 
-	fsi = SSDFS_FS_I(sb);
 	offset = fsi->sbi.last_log.page_offset;
 
 	log_size = ssdfs_define_sb_log_size(sb);
@@ -537,6 +542,10 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		cur_peb = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
 		prev_peb = fsi->sb_pebs[SSDFS_PREV_SB_SEG][i];
 		cur_leb = fsi->sb_lebs[SSDFS_CUR_SB_SEG][i];
+
+		SSDFS_DBG("cur_peb %llu, prev_peb %llu, "
+			  "last_sb_log.peb_id %llu, err %d\n",
+			  cur_peb, prev_peb, fsi->sbi.last_log.peb_id, err);
 
 		if (fsi->sbi.last_log.peb_id == cur_peb) {
 			if ((offset + (2 * log_size)) > fsi->pages_per_peb) {
@@ -566,8 +575,8 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 			err = 0;
 			break;
 		} else {
+			/* continue to check */
 			err = -ERANGE;
-			break;
 		}
 	}
 
@@ -615,7 +624,8 @@ static bool ssdfs_sb_seg_exhausted(u64 cur_leb, u64 next_leb,
 }
 
 static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
-					int sb_seg_type)
+					int sb_seg_type,
+					u64 start_leb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct ssdfs_segment_bmap *segbmap = fsi->segbmap;
@@ -631,12 +641,15 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 	BUG_ON(sb_seg_type >= SSDFS_SB_SEG_COPY_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("sb %p, sb_seg_type %#x\n", sb, sb_seg_type);
+	SSDFS_DBG("sb %p, sb_seg_type %#x, start_leb %llu\n",
+		  sb, sb_seg_type, start_leb);
 
 	switch (sb_seg_type) {
 	case SSDFS_MAIN_SB_SEG:
 	case SSDFS_COPY_SB_SEG:
-		start = 0;
+		start = start_leb * fsi->pebs_per_seg;
+		if (start >= fsi->nsegs)
+			start = 0;
 		max = fsi->nsegs;
 		break;
 
@@ -656,6 +669,14 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 			return err;
 		}
 
+		err = ssdfs_segbmap_reserve_clean_segment(segbmap,
+							  start, max,
+							  &reserved_seg,
+							  &end);
+	}
+
+	if (err == -ENODATA && start != 0) {
+		start = 0;
 		err = ssdfs_segbmap_reserve_clean_segment(segbmap,
 							  start, max,
 							  &reserved_seg,
@@ -836,7 +857,7 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	}
 
 reserve_clean_segment:
-	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type);
+	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type, next_leb);
 
 	if (reserved_seg == U64_MAX) {
 		/*
@@ -1671,6 +1692,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	fs_info->sb = sb;
 	sb->s_fs_info = fs_info;
+	atomic64_set(&fs_info->flush_reqs, 0);
 
 	SSDFS_DBG("parse options started...\n");
 
@@ -1815,8 +1837,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		init_waitqueue_head(&fs_info->gc_wait_queue[i]);
 		atomic_set(&fs_info->gc_should_act[i], 1);
 	}
-
-	atomic64_set(&fs_info->flush_reqs, 0);
 
 	err = ssdfs_start_gc_thread(fs_info, SSDFS_SEG_USING_GC_THREAD);
 	if (unlikely(err)) {

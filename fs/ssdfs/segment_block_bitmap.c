@@ -307,6 +307,7 @@ try_define_bmap_index:
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
 #ifdef CONFIG_SSDFS_DEBUG
 		/* unexpected situation */
 		SSDFS_WARN("unexpected situation\n");
@@ -898,6 +899,7 @@ try_define_bmap_index:
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
 #ifdef CONFIG_SSDFS_DEBUG
 		/* unexpected situation */
 		SSDFS_WARN("unexpected situation\n");

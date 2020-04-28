@@ -779,7 +779,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*si = ssdfs_grab_segment(fsi, NODE2SEG_TYPE(node_type),
-				seg_id);
+				seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(*si))) {
 		err = !*si ? -ENOMEM : PTR_ERR(*si);
 		SSDFS_ERR("fail to grab segment object: "

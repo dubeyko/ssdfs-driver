@@ -572,6 +572,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    command,
 					    SSDFS_REQ_ASYNC,
 					    req1);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -599,6 +600,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    command,
 					    SSDFS_REQ_ASYNC,
 					    req2);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
 	if (selected_peb == SSDFS_SRC_AND_DST_PEB) {
@@ -621,6 +623,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 						    command,
 						    SSDFS_REQ_ASYNC,
 						    req3);
+		ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 	}
 
@@ -649,6 +652,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    command,
 					    SSDFS_REQ_ASYNC,
 					    req4);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
@@ -773,6 +777,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    command,
 					    SSDFS_REQ_ASYNC,
 					    req1);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -798,6 +803,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    command,
 					    SSDFS_REQ_ASYNC,
 					    req2);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -823,6 +829,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    command,
 					    SSDFS_REQ_ASYNC,
 					    req3);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
@@ -1449,6 +1456,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	pebc = &si->peb_array[peb_index];
 
 	memset(pebc, 0, sizeof(struct ssdfs_peb_container));
+	mutex_init(&pebc->migration_lock);
 	atomic_set(&pebc->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
 	atomic_set(&pebc->migration_phase, SSDFS_PEB_MIGRATION_STATUS_UNKNOWN);
 	atomic_set(&pebc->items_state, SSDFS_PEB_CONTAINER_EMPTY);
@@ -2851,7 +2859,7 @@ try_forget_source:
 	down_write(&ptr->lock);
 
 	migration_state = atomic_read(&ptr->migration_state);
-	if (migration_state != SSDFS_PEB_UNDER_MIGRATION) {
+	if (migration_state != SSDFS_PEB_FINISHING_MIGRATION) {
 		err = -ERANGE;
 		SSDFS_WARN("invalid migration_state %#x\n",
 			   migration_state);
@@ -3138,7 +3146,7 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 	down_write(&ptr->lock);
 
 	migration_state = atomic_read(&ptr->migration_state);
-	if (migration_state != SSDFS_PEB_UNDER_MIGRATION) {
+	if (migration_state != SSDFS_PEB_FINISHING_MIGRATION) {
 		err = -ERANGE;
 		SSDFS_WARN("invalid migration_state %#x\n",
 			   migration_state);
@@ -3264,7 +3272,8 @@ try_get_current_peb:
 		break;
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
-	case SSDFS_PEB_RELATION_PREPARATION: {
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION: {
 			DEFINE_WAIT(wait);
 
 			prepare_to_wait(&pebc->parent_si->migration.wait,

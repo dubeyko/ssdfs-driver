@@ -5264,17 +5264,17 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		struct page *page;
 		void *kaddr1, *kaddr2;
 
+		SSDFS_DBG("index %d, read_bytes %u, "
+			  "start_page %u, page_index %d\n",
+			  i, read_bytes, start_page, page_index);
+
 		if (page_index >= pagevec_count(&req->result.pvec)) {
 			err = -ERANGE;
-			SSDFS_ERR("index %d > count %d\n",
+			SSDFS_ERR("page_index %d >= count %d\n",
 				  page_index,
 				  pagevec_count(&req->result.pvec));
 			goto finish_get_block_state;
 		}
-
-		SSDFS_DBG("index %d, read_bytes %u, "
-			  "start_page %u, page_index %d\n",
-			  i, read_bytes, start_page, page_index);
 
 		page = req->result.pvec.pages[page_index];
 		lock_page(blk->pvec.pages[i]);

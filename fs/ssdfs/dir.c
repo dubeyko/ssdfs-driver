@@ -1368,6 +1368,8 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 			sizeof(struct ssdfs_btree_node_index_area));
 		up_read(&parent->header_lock);
 
+		SSDFS_DBG("old_hash %llx\n", old_hash);
+
 		err = ssdfs_find_index_by_hash(parent, &area,
 						old_hash,
 						&found_pos);
@@ -1438,6 +1440,7 @@ finish_index_search:
 			/* next hash has been found */
 			err = 0;
 			*next_hash = le64_to_cpu(index_key.index.hash);
+			SSDFS_DBG("next_hash %llx\n", *next_hash);
 			goto finish_get_next_hash;
 		}
 
@@ -1544,8 +1547,8 @@ finish_process_inline_tree:
 		return -ERANGE;
 	}
 
-	SSDFS_DBG("start_hash %llx, end_hash %llx\n",
-		  *start_hash, *end_hash);
+	SSDFS_DBG("start_hash %llx, end_hash %llx, items_count %u\n",
+		  *start_hash, *end_hash, *items_count);
 
 finish_extract_hash_range:
 	return err;
@@ -1697,7 +1700,10 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 	struct ssdfs_dir_entry *dentry;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
 	int private_flags;
-	u64 start_hash, end_hash, hash;
+	u64 start_hash = U64_MAX;
+	u64 end_hash = U64_MAX;
+	u64 hash = U64_MAX;
+	u64 start_pos;
 	u16 items_count;
 	ino_t ino;
 	int i;
@@ -1749,6 +1755,8 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		}
 	}
 
+	start_pos = ctx->pos;
+
 	if (ctx->pos == 0) {
 		err = ssdfs_inode_by_name(inode, &dot, &ino);
 		if (unlikely(err)) {
@@ -1781,7 +1789,7 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		ctx->pos = 2;
 	}
 
-	if (ctx->pos == 2) {
+	if (ctx->pos >= 2) {
 		down_read(&ii->lock);
 		err = ssdfs_dentries_tree_get_start_hash(ii->dentries_tree,
 							 &start_hash);
@@ -1800,7 +1808,7 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 			goto out;
 		}
 
-		ctx->pos = start_hash;
+		ctx->pos = 2;
 	}
 
 	search = ssdfs_btree_search_alloc();
@@ -1813,7 +1821,8 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 	do {
 		ssdfs_btree_search_init(search);
 
-		SSDFS_DBG("hash %llx\n", (u64)ctx->pos);
+		SSDFS_DBG("ctx->pos %llu, start_hash %llx\n",
+			  (u64)ctx->pos, start_hash);
 
 		/* allow readdir() to be interrupted */
 		if (fatal_signal_pending(current)) {
@@ -1825,17 +1834,17 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		down_read(&ii->lock);
 
 		err = ssdfs_dentries_tree_find_leaf_node(ii->dentries_tree,
-							 ctx->pos,
+							 start_hash,
 							 search);
 		if (err == -ENODATA) {
 			SSDFS_DBG("unable to find a leaf node: "
 				  "hash %llx, err %d\n",
-				  (u64)ctx->pos, err);
+				  start_hash, err);
 			goto finish_tree_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a leaf node: "
 				  "hash %llx, err %d\n",
-				  (u64)ctx->pos, err);
+				  start_hash, err);
 			goto finish_tree_processing;
 		}
 
@@ -1856,7 +1865,7 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 			goto finish_tree_processing;
 		}
 
-		if (ctx->pos >= end_hash) {
+		if (start_hash > end_hash) {
 			err = -ENOENT;
 			goto finish_tree_processing;
 		}
@@ -1892,16 +1901,28 @@ finish_tree_processing:
 		for (i = 0; i < items_count; i++) {
 			u8 *start_ptr = (u8 *)search->result.buf;
 
+			SSDFS_DBG("start_pos %llu, ctx->pos %llu\n",
+				  start_pos, ctx->pos);
+
 			dentry = (struct ssdfs_dir_entry *)(start_ptr +
 							(i * dentry_size));
+			hash = le64_to_cpu(dentry->hash_code);
+
+			if (ctx->pos < start_pos) {
+				if (dot_hash == hash || dotdot_hash == hash) {
+					/* skip counting */
+					continue;
+				} else {
+					ctx->pos++;
+					continue;
+				}
+			}
 
 			if (is_invalid_dentry(dentry)) {
 				err = -EIO;
 				SSDFS_ERR("found corrupted dentry\n");
 				goto out_free;
 			}
-
-			hash = le64_to_cpu(dentry->hash_code);
 
 			if (dot_hash == hash || dotdot_hash == hash) {
 				/*
@@ -1918,38 +1939,66 @@ finish_tree_processing:
 					goto out_free;
 				}
 
-				dir_emit(ctx,
+				SSDFS_DBG("ctx->pos %llu, name %s, "
+					  "name_len %zu, "
+					  "ino %llu, hash %llx\n",
+					  ctx->pos,
+					  search->name.str,
+					  search->name.len,
+					  le64_to_cpu(dentry->ino),
+					  hash);
+
+				if (!dir_emit(ctx,
 				    search->name.str,
 				    search->name.len,
 				    (ino_t)le64_to_cpu(dentry->ino),
-				    ssdfs_filetype_table[dentry->file_type]);
+				    ssdfs_filetype_table[dentry->file_type])) {
+					/* stopped by some reason */
+					err = 1;
+					goto out_free;
+				} else
+					ctx->pos++;
 			} else {
-				dir_emit(ctx,
+				SSDFS_DBG("ctx->pos %llu, name %s, "
+					  "name_len %u, "
+					  "ino %llu, hash %llx\n",
+					  ctx->pos,
+					  dentry->inline_string,
+					  dentry->name_len,
+					  le64_to_cpu(dentry->ino),
+					  hash);
+
+				if (!dir_emit(ctx,
 				    dentry->inline_string,
 				    dentry->name_len,
 				    (ino_t)le64_to_cpu(dentry->ino),
-				    ssdfs_filetype_table[dentry->file_type]);
+				    ssdfs_filetype_table[dentry->file_type])) {
+					/* stopped by some reason */
+					err = 1;
+					goto out_free;
+				} else
+					ctx->pos++;
 			}
-
-			ctx->pos = hash + 1;
 		}
 
-		if (ctx->pos <= end_hash) {
+		if (hash != end_hash) {
 			err = -ERANGE;
-			SSDFS_ERR("ctx->pos %llx <= end_hash %llx\n",
-				  (u64)ctx->pos,
-				  end_hash);
+			SSDFS_ERR("hash %llx < end_hash %llx\n",
+				  hash, end_hash);
 			goto out_free;
 		}
+
+		start_hash = end_hash + 1;
 
 		down_read(&ii->lock);
 		err = ssdfs_dentries_tree_get_next_hash(ii->dentries_tree,
 							search,
-							&ctx->pos);
+							&start_hash);
 		up_read(&ii->lock);
 
 		if (err == -ENOENT) {
 			err = 0;
+			ctx->pos = U64_MAX;
 			SSDFS_DBG("no more items in the folder\n");
 			goto out_free;
 		} else if (unlikely(err)) {
@@ -1957,7 +2006,7 @@ finish_tree_processing:
 				  err);
 			goto out_free;
 		}
-	} while (ctx->pos < U64_MAX);
+	} while (start_hash < U64_MAX);
 
 out_free:
 	ssdfs_btree_search_free(search);
@@ -1985,7 +2034,7 @@ const struct inode_operations ssdfs_dir_inode_operations = {
 
 const struct file_operations ssdfs_dir_operations = {
 	.read		= generic_read_dir,
-	.iterate	= ssdfs_readdir,
+	.iterate_shared	= ssdfs_readdir,
 	.unlocked_ioctl	= ssdfs_ioctl,
 	.fsync		= ssdfs_fsync,
 	.llseek		= generic_file_llseek,

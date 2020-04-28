@@ -24,12 +24,14 @@
  * struct ssdfs_current_segment - current segment container
  * @lock: exclusive lock of current segment object
  * @type: current segment type
+ * @seg_id: last known segment ID
  * @real_seg: concrete current segment
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_current_segment {
 	struct mutex lock;
 	int type;
+	u64 seg_id;
 	struct ssdfs_segment_info *real_seg;
 	struct ssdfs_fs_info *fsi;
 };

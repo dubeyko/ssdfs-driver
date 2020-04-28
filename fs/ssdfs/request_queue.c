@@ -136,6 +136,9 @@ void ssdfs_requests_queue_add_head_inc(struct ssdfs_fs_info *fsi,
 
 	ssdfs_requests_queue_add_head(rq, req);
 	atomic64_inc(&fsi->flush_reqs);
+
+	SSDFS_DBG("flush_reqs %lld\n",
+		  atomic64_read(&fsi->flush_reqs));
 }
 
 /*
@@ -181,6 +184,9 @@ void ssdfs_requests_queue_add_tail_inc(struct ssdfs_fs_info *fsi,
 
 	ssdfs_requests_queue_add_tail(rq, req);
 	atomic64_inc(&fsi->flush_reqs);
+
+	SSDFS_DBG("flush_reqs %lld\n",
+		  atomic64_read(&fsi->flush_reqs));
 }
 
 /*

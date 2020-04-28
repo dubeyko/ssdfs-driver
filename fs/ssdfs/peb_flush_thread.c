@@ -9090,6 +9090,9 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 		BUG();
 	};
 
+	SSDFS_DBG("flush_reqs %lld\n",
+		  atomic64_read(&pebc->parent_si->fsi->flush_reqs));
+
 	WARN_ON(atomic64_dec_return(&pebc->parent_si->fsi->flush_reqs) < 0);
 }
 
@@ -9252,6 +9255,7 @@ try_get_current_state:
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
 		err = -EAGAIN;
 		break;
 
@@ -9718,8 +9722,11 @@ finish_process_free_space_absence:
 			if (fsi->fs_state == SSDFS_ERROR_FS)
 				ssdfs_peb_clear_current_log_pages(pebi);
 			else {
+				mutex_lock(&pebc->migration_lock);
 				err = ssdfs_peb_commit_log(pebi,
 							   cur_segs, size);
+				mutex_unlock(&pebc->migration_lock);
+
 				if (unlikely(err)) {
 					SSDFS_CRIT("fail to commit log: "
 						   "seg %llu, peb_index %u, "
@@ -9932,7 +9939,9 @@ finish_process_free_space_absence:
 			}
 		}
 
+		mutex_lock(&pebc->migration_lock);
 		err = ssdfs_peb_create_log(pebi);
+		mutex_unlock(&pebc->migration_lock);
 		ssdfs_unlock_current_peb(pebc);
 
 		if (err == -EAGAIN) {
@@ -10010,9 +10019,11 @@ fail_create_log:
 			}
 
 			ssdfs_peb_current_log_lock(pebi);
+			mutex_lock(&pebc->migration_lock);
 			err = ssdfs_peb_commit_log_on_thread_stop(pebi,
 								  cur_segs,
 								  size);
+			mutex_unlock(&pebc->migration_lock);
 			ssdfs_peb_current_log_unlock(pebi);
 
 			if (unlikely(err)) {
@@ -10156,7 +10167,10 @@ process_flush_requests:
 
 		ssdfs_peb_current_log_lock(pebi);
 
+		mutex_lock(&pebc->migration_lock);
 		err = ssdfs_process_create_request(pebi, req);
+		mutex_unlock(&pebc->migration_lock);
+
 		if (err == -ENOSPC) {
 			SSDFS_DBG("unable to process create request: "
 				  "seg %llu, peb_index %u\n",
@@ -10236,7 +10250,10 @@ finish_create_request_processing:
 
 		ssdfs_peb_current_log_lock(pebi);
 
+		mutex_lock(&pebc->migration_lock);
 		err = ssdfs_process_update_request(pebi, req);
+		mutex_unlock(&pebc->migration_lock);
+
 		if (err == -EAGAIN) {
 			err = 0;
 			SSDFS_DBG("unable to process update request : "
@@ -10490,7 +10507,10 @@ make_log_commit:
 		}
 
 		ssdfs_peb_current_log_lock(pebi);
+		mutex_lock(&pebc->migration_lock);
 		err = ssdfs_peb_commit_log(pebi, cur_segs, size);
+		mutex_unlock(&pebc->migration_lock);
+
 		if (err) {
 			ssdfs_peb_clear_current_log_pages(pebi);
 			ssdfs_peb_clear_cache_dirty_pages(pebi);
@@ -10591,6 +10611,8 @@ make_log_commit:
 				goto finish_check_migration_need;
 			}
 
+			mutex_lock(&pebc->migration_lock);
+
 			if (free_space1 >= (PAGE_SIZE / 2)) {
 				err = ssdfs_peb_prepare_range_migration(pebc, 1,
 						    SSDFS_BLK_PRE_ALLOCATED);
@@ -10598,33 +10620,32 @@ make_log_commit:
 					err = 0;
 					SSDFS_DBG("unable to migrate: "
 						  "no pre-allocated blocks\n");
-				} else if (unlikely(err)) {
-					SSDFS_ERR("fail to prepare range migration: "
-						  "err %d\n", err);
-					thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
-					goto next_partial_step;
 				} else
-					goto start_migration_processing;
+					goto stimulate_migration_done;
 			}
 
 			if (free_space2 >= (PAGE_SIZE / 2)) {
 				err = ssdfs_peb_prepare_range_migration(pebc, 1,
 						    SSDFS_BLK_VALID);
 				if (err == -ENODATA) {
-					err = 0;
 					SSDFS_DBG("unable to migrate: "
 						  "no valid blocks\n");
-					goto finish_check_migration_need;
-				} else if (unlikely(err)) {
-					SSDFS_ERR("fail to prepare range migration: "
-						  "err %d\n", err);
-					thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
-					goto next_partial_step;
-				} else
-					goto start_migration_processing;
+				}
 			}
 
-start_migration_processing:
+stimulate_migration_done:
+			mutex_unlock(&pebc->migration_lock);
+
+			if (err == -ENODATA) {
+				err = 0;
+				goto finish_check_migration_need;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare range migration: "
+					  "err %d\n", err);
+				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+				goto next_partial_step;
+			}
+
 			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 			goto next_partial_step;
 		} else {

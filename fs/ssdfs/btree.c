@@ -1277,7 +1277,7 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 
 	seg_type = SEG_TYPE(req->private.class);
 
-	si = ssdfs_grab_segment(fsi, seg_type, seg_id);
+	si = ssdfs_grab_segment(fsi, seg_type, seg_id, U64_MAX);
 	if (IS_ERR_OR_NULL(si)) {
 		err = (si == NULL ? -ERANGE : PTR_ERR(si));
 		SSDFS_ERR("fail to grab segment object: "

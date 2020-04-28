@@ -1156,6 +1156,13 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  si->seg_id, pebc->peb_index);
 
+	if (have_flush_requests(pebc)) {
+		SSDFS_DBG("Do nothing: request queue is not empty: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, pebc->peb_index);
+		return 0;
+	}
+
 	if (is_seg2req_pair_array_exhausted(array)) {
 		SSDFS_ERR("seg2req pair array is exhausted\n");
 		return -ERANGE;
@@ -1169,6 +1176,8 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 			  index);
 		return -ERANGE;
 	}
+
+	mutex_lock(&pebc->migration_lock);
 
 	for (count = 0; count < 2; count++) {
 		int err1, err2;
@@ -1196,13 +1205,17 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare range migration: "
 			  "err %d\n", err);
-		return err;
 	} else if (count == 0) {
+		err = -ERANGE;
 		SSDFS_ERR("no data for migration: "
 			  "seg %llu, peb_index %u\n",
 			  si->seg_id, pebc->peb_index);
-		return -ERANGE;
 	}
+
+	mutex_unlock(&pebc->migration_lock);
+
+	if (unlikely(err))
+		return err;
 
 	pair->req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(pair->req)) {
@@ -1268,6 +1281,13 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  si->seg_id, pebc->peb_index);
+
+	if (have_flush_requests(pebc)) {
+		SSDFS_DBG("Do nothing: request queue is not empty: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, pebc->peb_index);
+		return 0;
+	}
 
 	if (is_seg2req_pair_array_exhausted(array)) {
 		SSDFS_ERR("seg2req pair array is exhausted\n");
@@ -1565,7 +1585,7 @@ try_to_find_seg_object:
 			goto check_next_segment;
 
 try_create_seg_object:
-		si = ssdfs_grab_segment(fsi, seg_type, seg_id);
+		si = ssdfs_grab_segment(fsi, seg_type, seg_id, U64_MAX);
 		if (unlikely(IS_ERR_OR_NULL(si))) {
 			err = PTR_ERR(si);
 			SSDFS_ERR("fail to grab segment object: "
@@ -1669,6 +1689,9 @@ collect_garbage_now:
 			seg_blkbmap = &si->blk_bmap;
 			peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
 
+			if (is_seg2req_pair_array_exhausted(&reqs_array))
+				ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
+
 			used_pages =
 				ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
 			if (used_pages < 0) {
@@ -1679,15 +1702,12 @@ collect_garbage_now:
 				goto sleep_failed_gc_thread;
 			}
 
-			if (is_seg2req_pair_array_exhausted(&reqs_array))
-				ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
-
 			if (used_pages == 0) {
 				SSDFS_WARN("needs to finish migration: "
 					   "seg %llu, leb_id %llu, "
 					   "used_pages %d\n",
 					   seg_id, cur_leb_id, used_pages);
-			} else if (used_pages <= 4) {
+			} else if (used_pages <= SSDFS_GC_FINISH_MIGRATION) {
 				ssdfs_segment_get_object(si);
 
 				err = ssdfs_gc_finish_migration(si, pebc,

@@ -42,7 +42,7 @@ int ssdfs_peb_start_migration(struct ssdfs_peb_container *pebc)
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
 	int i;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
@@ -58,6 +58,8 @@ int ssdfs_peb_start_migration(struct ssdfs_peb_container *pebc)
 	fsi = pebc->parent_si->fsi;
 	si = pebc->parent_si;
 
+	mutex_lock(&pebc->migration_lock);
+
 check_migration_state:
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_NOT_MIGRATING:
@@ -65,28 +67,33 @@ check_migration_state:
 		break;
 
 	case SSDFS_PEB_UNDER_MIGRATION:
-		SSDFS_DBG("PEB is under migration already\n");
-		return 0;
+		err = 0;
+		SSDFS_DBG("PEB is under migration already: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+		goto start_migration_done;
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
-	case SSDFS_PEB_RELATION_PREPARATION: {
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION: {
 			DEFINE_WAIT(wait);
 
+			mutex_unlock(&pebc->migration_lock);
 			prepare_to_wait(&si->migration.wait, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
 			finish_wait(&si->migration.wait, &wait);
+			mutex_lock(&pebc->migration_lock);
 			goto check_migration_state;
 		}
 		break;
 
 	default:
+		err = -ERANGE;
 		SSDFS_WARN("invalid migration_state %#x\n",
 			   atomic_read(&pebc->migration_state));
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ERANGE;
+		goto start_migration_done;
 	}
 
 	err = ssdfs_peb_container_create_destination(pebc);
@@ -96,7 +103,7 @@ check_migration_state:
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
 			  err);
-		return err;
+		goto start_migration_done;
 	}
 
 	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
@@ -104,9 +111,12 @@ check_migration_state:
 		wake_up_all(&fsi->gc_wait_queue[i]);
 	}
 
+start_migration_done:
+	mutex_unlock(&pebc->migration_lock);
+
 	SSDFS_DBG("finished\n");
 
-	return 0;
+	return err;
 }
 
 /*
@@ -132,6 +142,7 @@ bool is_peb_under_migration(struct ssdfs_peb_container *pebc)
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
 	case SSDFS_PEB_UNDER_MIGRATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
 		return true;
 
 	default:
@@ -270,6 +281,7 @@ bool has_peb_migration_done(struct ssdfs_peb_container *pebc)
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_NOT_MIGRATING:
+	case SSDFS_PEB_FINISHING_MIGRATION:
 		return true;
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
@@ -702,6 +714,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
@@ -843,10 +856,12 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_peb_info *pebi;
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int used_pages;
 	u32 pages_per_peb;
+	bool is_peb_exhausted = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -866,27 +881,81 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
 
-	switch (atomic_read(&pebc->migration_state)) {
-	case SSDFS_PEB_UNDER_MIGRATION:
-		/* valid state */
-		break;
+	mutex_lock(&pebc->migration_lock);
 
-	default:
-		SSDFS_WARN("invalid migration_state %#x\n",
-			   atomic_read(&pebc->migration_state));
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ERANGE;
-	}
-
+check_migration_state:
 	used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
 	if (used_pages < 0) {
 		err = used_pages;
 		SSDFS_ERR("fail to get used pages: err %d\n",
 			  err);
-		return err;
+		goto finish_migration_done;
 	}
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_NOT_MIGRATING:
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+		err = 0;
+		SSDFS_DBG("PEB is not migrating: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+		goto finish_migration_done;
+
+	case SSDFS_PEB_UNDER_MIGRATION:
+		pebi = pebc->dst_peb;
+		if (!pebi) {
+			err = -ERANGE;
+			SSDFS_ERR("PEB pointer is NULL: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+			goto finish_migration_done;
+		}
+
+		ssdfs_peb_current_log_lock(pebi);
+		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+
+		if (is_peb_exhausted)
+			goto try_finish_migration_now;
+		else if (has_peb_migration_done(pebc))
+			goto try_finish_migration_now;
+		else if (used_pages <= SSDFS_GC_FINISH_MIGRATION)
+			goto try_finish_migration_now;
+		else {
+			err = 0;
+			SSDFS_DBG("Don't finish migration: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+			goto finish_migration_done;
+		}
+		break;
+
+	case SSDFS_PEB_FINISHING_MIGRATION: {
+			DEFINE_WAIT(wait);
+
+			mutex_unlock(&pebc->migration_lock);
+			prepare_to_wait(&si->migration.wait, &wait,
+					TASK_UNINTERRUPTIBLE);
+			schedule();
+			finish_wait(&si->migration.wait, &wait);
+			mutex_lock(&pebc->migration_lock);
+			goto check_migration_state;
+		}
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_WARN("invalid migration_state %#x\n",
+			   atomic_read(&pebc->migration_state));
+		goto finish_migration_done;
+	}
+
+try_finish_migration_now:
+	atomic_set(&pebc->migration_state, SSDFS_PEB_FINISHING_MIGRATION);
 
 	while (used_pages > 0) {
 		struct ssdfs_block_bmap_range range1 = {0, 0};
@@ -907,7 +976,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			SSDFS_ERR("fail to collect garbage: "
 				  "seg_id %llu, err %d\n",
 				  si->seg_id, err);
-			return err;
+			goto finish_migration_done;
 		}
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
@@ -925,13 +994,13 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			SSDFS_ERR("fail to collect garbage: "
 				  "seg_id %llu, err %d\n",
 				  si->seg_id, err);
-			return err;
+			goto finish_migration_done;
 		}
 
 		if (range1.len == 0 && range2.len == 0) {
 			err = -ERANGE;
 			SSDFS_ERR("no valid blocks were found\n");
-			return err;
+			goto finish_migration_done;
 		}
 
 		if (range1.len > 0) {
@@ -942,7 +1011,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 				SSDFS_ERR("fail to migrate valid blocks: "
 					  "range (start %u, len %u), err %d\n",
 					  range1.start, range1.len, err);
-				return err;
+				goto finish_migration_done;
 			}
 		}
 
@@ -955,7 +1024,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 				SSDFS_ERR("fail to migrate pre-alloc blocks: "
 					  "range (start %u, len %u), err %d\n",
 					  range2.start, range2.len, err);
-				return err;
+				goto finish_migration_done;
 			}
 		}
 
@@ -966,16 +1035,17 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			err = -ERANGE;
 			SSDFS_ERR("invalid used_pages %d\n",
 				  used_pages);
-			return err;
+			goto finish_migration_done;
 		}
 	}
 
 	used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
 	if (used_pages != 0) {
+		err = -ERANGE;
 		SSDFS_ERR("source PEB has valid blocks: "
 			  "used_pages %d\n",
 			  used_pages);
-		return -ERANGE;
+		goto finish_migration_done;
 	}
 
 	switch (atomic_read(&pebc->items_state)) {
@@ -992,12 +1062,10 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 		break;
 
 	default:
+		err = -ERANGE;
 		SSDFS_WARN("invalid items_state %#x\n",
 			   atomic_read(&pebc->items_state));
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ERANGE;
+		goto finish_migration_done;
 	}
 
 	if (unlikely(err)) {
@@ -1005,10 +1073,13 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  "seg %llu, peb_index %u, err %d\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index, err);
-		return err;
+		goto finish_migration_done;
 	}
+
+finish_migration_done:
+	mutex_unlock(&pebc->migration_lock);
 
 	SSDFS_DBG("finished\n");
 
-	return 0;
+	return err;
 }

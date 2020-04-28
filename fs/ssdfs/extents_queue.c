@@ -1389,7 +1389,7 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("seg_id %llu, start_blk %u, len %u\n",
 		  seg_id, start_blk, len);
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE, seg_id);
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE, seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",

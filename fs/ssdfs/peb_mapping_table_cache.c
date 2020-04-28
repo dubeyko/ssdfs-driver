@@ -3191,6 +3191,7 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
 		struct ssdfs_maptbl_cache_header *hdr;
+		int search_state;
 
 		page = cache->pvec.pages[i];
 
@@ -3207,17 +3208,49 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, &res);
 		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
 		found_pair = &res.pebs[SSDFS_MAPTBL_MAIN_INDEX].found;
+		search_state = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
+
+		SSDFS_DBG("MAIN_INDEX: state %#x, "
+			  "page_index %u, item_index %u; "
+			  "RELATION_INDEX: state %#x, "
+			  "page_index %u, item_index %u\n",
+			  res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+			  res.pebs[SSDFS_MAPTBL_MAIN_INDEX].page_index,
+			  res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index,
+			  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+			  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].page_index,
+			  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].item_index);
 
 		if (err == -EEXIST || err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(le64_to_cpu(found_pair->leb_id) != leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			if ((item_index + 1) >= items_count) {
-				err = -ERANGE;
-				SSDFS_ERR("invalid position found: "
-					  "item_index %u, items_count %u\n",
-					  item_index, items_count);
+			switch (search_state) {
+			case SSDFS_MAPTBL_CACHE_ITEM_FOUND:
+				if ((item_index + 1) >= items_count) {
+					err = -ERANGE;
+					SSDFS_ERR("invalid position found: "
+						  "item_index %u, "
+						  "items_count %u\n",
+						  item_index, items_count);
+				}
+				break;
+
+			case SSDFS_MAPTBL_CACHE_ITEM_ABSENT:
+				if ((item_index + 1) > items_count) {
+					err = -ERANGE;
+					SSDFS_ERR("invalid position found: "
+						  "item_index %u, "
+						  "items_count %u\n",
+						  item_index, items_count);
+				}
+				break;
+
+			default:
+				SSDFS_ERR("unexpected state %#x\n",
+					  search_state);
+				break;
 			}
 
 			err = ssdfs_maptbl_cache_get_peb_state(kaddr,

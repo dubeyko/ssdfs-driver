@@ -241,7 +241,8 @@ void ssdfs_segment_get_object(struct ssdfs_segment_info *si);
 void ssdfs_segment_put_object(struct ssdfs_segment_info *si);
 
 struct ssdfs_segment_info *
-ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id);
+ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
+		   u64 start_search_id);
 
 int ssdfs_segment_read_block_sync(struct ssdfs_segment_info *si,
 				  struct ssdfs_segment_request *req);

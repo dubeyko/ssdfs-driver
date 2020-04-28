@@ -84,7 +84,7 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 	req->place.len = 1;
 
 	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id);
+				req->place.start.seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %ld\n",
@@ -151,7 +151,7 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	req->place.len = 1;
 
 	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id);
+				req->place.start.seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
@@ -429,7 +429,7 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 	req->place.len = 1;
 
 	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id);
+				req->place.start.seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
@@ -495,7 +495,7 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 	}
 
 	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id);
+				req->place.start.seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",

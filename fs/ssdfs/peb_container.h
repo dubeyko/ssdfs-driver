@@ -53,6 +53,7 @@ enum {
 	SSDFS_PEB_MIGRATION_PREPARATION,
 	SSDFS_PEB_RELATION_PREPARATION,
 	SSDFS_PEB_UNDER_MIGRATION,
+	SSDFS_PEB_FINISHING_MIGRATION,
 	SSDFS_PEB_MIGRATION_STATE_MAX
 };
 
@@ -77,6 +78,7 @@ enum {
  * @crq_ptr_lock: lock of pointer on create requests queue
  * @create_rq: pointer on shared new page requests queue
  * @parent_si: pointer on parent segment object
+ * @migration_lock: migration lock
  * @migration_state: PEB migration state
  * @migration_phase: PEB migration phase
  * @items_state: items array state
@@ -112,6 +114,7 @@ struct ssdfs_peb_container {
 	struct ssdfs_segment_info *parent_si;
 
 	/* Migration info */
+	struct mutex migration_lock;
 	atomic_t migration_state;
 	atomic_t migration_phase;
 	atomic_t items_state;
@@ -135,6 +138,8 @@ struct ssdfs_peb_container {
 	((struct ssdfs_peb_container *)(pebc))
 #define READ_RQ_PTR(pebc) \
 	(&PEBC_PTR(pebc)->read_rq)
+
+#define SSDFS_GC_FINISH_MIGRATION	(4)
 
 /*
  * Inline functions

@@ -539,8 +539,14 @@ int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
 				SSDFS_DBG("index %d, seg_id %llu\n",
 					  i, seg);
 				array[i] = cpu_to_le64(seg);
-			} else
-				array[i] = cpu_to_le64(U64_MAX);
+			} else {
+				seg = fsi->cur_segs->objects[i]->seg_id;
+
+				SSDFS_DBG("index %d, seg_id %llu\n",
+					  i, seg);
+
+				array[i] = cpu_to_le64(seg);
+			}
 
 			ssdfs_current_segment_unlock(fsi->cur_segs->objects[i]);
 		}

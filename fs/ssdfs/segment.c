@@ -431,13 +431,16 @@ int SEG_TYPE2MASK(int seg_type)
  * @fsi: pointer on shared file system object
  * @seg_type: type of segment
  * @seg_id: segment number
+ * @start_search_id: starting ID for segment search
  *
  * This method tries to get or to create segment object of
  * @seg_type. If @seg_id is U64_MAX then it needs to find
- * segment that will be in "clean" or "using" state. The found
- * segment number should be used for segment object creation
- * and adding into the segment tree. Otherwise, if @seg_id
- * contains valid segment number, the method should try
+ * segment that will be in "clean" or "using" state.
+ * The @start_search_id is defining the range for search.
+ * If this value is equal to U64_MAX then it is ignored.
+ * The found segment number should be used for segment object
+ * creation and adding into the segment tree. Otherwise,
+ * if @seg_id contains valid segment number, the method should try
  * to find segment object in the segments tree. If the segment
  * object is not found then segment state will be detected via
  * segment bitmap, segment object will be created and to be added
@@ -451,12 +454,14 @@ int SEG_TYPE2MASK(int seg_type)
  * %-ERANGE     - internal error.
  */
 struct ssdfs_segment_info *
-ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id)
+ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
+		   u64 start_search_id)
 {
 	struct ssdfs_segment_info *si;
 	int seg_state = SSDFS_SEG_STATE_MAX;
 	struct completion *init_end;
 	unsigned long rest;
+	u64 start = U64_MAX;
 	int err, res;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -467,8 +472,9 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id)
 		seg_type != SSDFS_USER_DATA_SEG_TYPE);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, seg_type %#x, seg_id %llu\n",
-		  fsi, seg_type, seg_id);
+	SSDFS_DBG("fsi %p, seg_type %#x, "
+		  "seg_id %llu, start_search_id %llu\n",
+		  fsi, seg_type, seg_id, start_search_id);
 
 	if (seg_id == U64_MAX) {
 		int new_state;
@@ -494,8 +500,13 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id)
 			BUG();
 		};
 
+		if (start_search_id >= fsi->nsegs)
+			start = 0;
+		else
+			start = start_search_id;
+
 		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
-						 0, fsi->nsegs,
+						 start, fsi->nsegs,
 						 SSDFS_SEG_CLEAN,
 						 SEG_TYPE2MASK(seg_type),
 						 new_state,
@@ -514,7 +525,7 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id)
 			}
 
 			res = ssdfs_segbmap_find_and_set(fsi->segbmap,
-							0, fsi->nsegs,
+							start, fsi->nsegs,
 							SSDFS_SEG_CLEAN,
 							SEG_TYPE2MASK(seg_type),
 							new_state,
@@ -522,6 +533,18 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id)
 			if (res >= 0) {
 				/* Define segment state */
 				seg_state = res;
+			} else if (start != 0) {
+				res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+							0, fsi->nsegs,
+							SSDFS_SEG_CLEAN,
+							SEG_TYPE2MASK(seg_type),
+							new_state,
+							&seg_id, &init_end);
+				if (res >= 0) {
+					/* Define segment state */
+					seg_state = res;
+				} else
+					goto fail_find_segment;
 			} else
 				goto fail_find_segment;
 		} else {
@@ -1110,6 +1133,7 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 {
 	struct ssdfs_segment_info *si;
 	int seg_type;
+	u64 start = U64_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1129,7 +1153,12 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
 add_new_current_segment:
-		si = ssdfs_grab_segment(cur_seg->fsi, seg_type, U64_MAX);
+		start = cur_seg->seg_id;
+		if (start != U64_MAX)
+			start++;
+
+		si = ssdfs_grab_segment(cur_seg->fsi, seg_type,
+					U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 			SSDFS_ERR("fail to create segment object: "
@@ -1259,6 +1288,7 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
 	int seg_type;
+	u64 start = U64_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1280,7 +1310,11 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
 add_new_current_segment:
-		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX);
+		start = cur_seg->seg_id;
+		if (start != U64_MAX)
+			start++;
+
+		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 			SSDFS_ERR("fail to create segment object: "
