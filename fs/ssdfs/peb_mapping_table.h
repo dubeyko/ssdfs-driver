@@ -40,7 +40,8 @@
  * @init_end: wait of init ending
  * @flush_req1: main flush requests array
  * @flush_req2: backup flush requests array
- * @flush_seq_size: flush requests' array size
+ * @flush_req_count: number of flush requests in the array
+ * @flush_seq_size: flush requests' array capacity
  */
 struct ssdfs_maptbl_fragment_desc {
 	struct rw_semaphore lock;
@@ -68,6 +69,7 @@ struct ssdfs_maptbl_fragment_desc {
 
 	struct ssdfs_segment_request *flush_req1;
 	struct ssdfs_segment_request *flush_req2;
+	u32 flush_req_count;
 	u32 flush_seq_size;
 };
 

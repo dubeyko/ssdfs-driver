@@ -4159,5 +4159,7 @@ finish_segment_check:
 	up_read(&segbmap->resize_lock);
 	inode_unlock_shared(segbmap->fsi->segbmap_inode);
 
+	SSDFS_DBG("seg %llu, err %d\n", *seg, err);
+
 	return err;
 }

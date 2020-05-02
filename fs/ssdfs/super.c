@@ -857,7 +857,15 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	}
 
 reserve_clean_segment:
-	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type, next_leb);
+	SSDFS_DBG("cur_peb %llu, next_peb %llu, next_leb %llu\n",
+		  cur_peb, next_peb, next_leb);
+
+	if (next_peb >= U64_MAX)
+		new_leb = max_t(u64, cur_peb, next_leb);
+	else
+		new_leb = max_t(u64, next_peb, next_leb);
+
+	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type, new_leb);
 
 	if (reserved_seg == U64_MAX) {
 		/*

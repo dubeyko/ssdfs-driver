@@ -2776,6 +2776,10 @@ init_failed:
 	bmap->dst = &bmap->buffer[buffer_index];
 	atomic_set(&bmap->buffers_state, new_buffers_state);
 
+	free_blks = atomic_read(&bmap->free_logical_blks);
+	atomic_sub(free_blks, &bmap->free_logical_blks);
+	atomic_sub(free_blks, &bmap->parent->free_logical_blks);
+
 	invalid_blks = atomic_xchg(&bmap->invalid_logical_blks, 0);
 	atomic_sub(invalid_blks, &bmap->parent->invalid_logical_blks);
 	atomic_add(invalid_blks, &bmap->free_logical_blks);

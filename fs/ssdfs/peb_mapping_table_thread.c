@@ -74,6 +74,8 @@ struct ssdfs_erase_result_array {
 	u32 size;
 };
 
+#define SSDFS_ERASE_RESULT_ARRAY_CAPACITY	(100)
+
 /*
  * ssdfs_maptbl_collect_stripe_dirty_pebs() - collect dirty PEBs in stripe
  * @fdesc: fragment descriptor
@@ -146,9 +148,20 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		    (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
 		pebs_count = le16_to_cpu(hdr->pebs_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fragment_index %u, stripe_index %d, "
+			  "stripe_page %d, dirty_bits %d\n",
+			  fragment_index, stripe_index, i,
+			  bitmap_weight(dirty_bmap, pebs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		while (found_pebs < erases_per_stripe) {
 			found_item = find_next_bit(dirty_bmap, pebs_count,
-						   found_item + 1);
+						   found_item);
+
+			SSDFS_DBG("found_item %lu, pebs_count %u\n",
+				  found_item, pebs_count);
+
 			if (found_item >= pebs_count) {
 				/* all dirty PEBs were found */
 				goto finish_page_processing;
@@ -170,6 +183,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 			array->size++;
 			found_pebs++;
+			found_item++;
 		};
 
 finish_page_processing:
@@ -377,6 +391,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	struct ssdfs_peb_table_fragment_header *hdr;
 	struct ssdfs_peb_descriptor *ptr;
 	pgoff_t page_index;
+	u16 item_index;
 	struct page *page;
 	void *kaddr;
 	unsigned long *dirty_bmap, *used_bmap, *recover_bmap, *bad_bmap;
@@ -399,6 +414,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 	page_index = PEBTBL_PAGE_INDEX(fdesc, res->peb_index);
 	page_index += (pgoff_t)fdesc->fragment_id * fdesc->fragment_pages;
+	item_index = res->peb_index % fdesc->pebs_per_page;
 
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
 	if (IS_ERR_OR_NULL(page)) {
@@ -417,7 +433,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		(unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_RECOVER_BMAP][0];
 	bad_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_BADBLK_BMAP][0];
 
-	ptr = GET_PEB_DESCRIPTOR(hdr, res->peb_index);
+	ptr = GET_PEB_DESCRIPTOR(hdr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
@@ -453,8 +469,8 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	switch (res->state) {
 	case SSDFS_ERASE_DONE:
 		ptr->state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
-		bitmap_clear(dirty_bmap, res->peb_index, 1);
-		bitmap_clear(used_bmap, res->peb_index, 1);
+		bitmap_clear(dirty_bmap, item_index, 1);
+		bitmap_clear(used_bmap, item_index, 1);
 		le16_add_cpu(&hdr->reserved_pebs, 1);
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("hdr->reserved_pebs %u\n",
@@ -462,12 +478,15 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		BUG_ON(fdesc->pre_erase_pebs == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 		fdesc->pre_erase_pebs--;
+
+		SSDFS_DBG("fdesc->pre_erase_pebs %u\n",
+			  fdesc->pre_erase_pebs);
 		break;
 
 	case SSDFS_ERASE_FAILURE:
 		ptr->state = SSDFS_MAPTBL_RECOVERING_STATE;
-		bitmap_clear(dirty_bmap, res->peb_index, 1);
-		bitmap_set(recover_bmap, res->peb_index, 1);
+		bitmap_clear(dirty_bmap, item_index, 1);
+		bitmap_set(recover_bmap, item_index, 1);
 		fdesc->recovering_pebs++;
 		if (!(hdr->flags & SSDFS_PEBTBL_UNDER_RECOVERING)) {
 			hdr->flags |= SSDFS_PEBTBL_UNDER_RECOVERING;
@@ -593,6 +612,9 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			   erased_pebs,
 			   atomic_read(&tbl->pre_erase_pebs));
 	}
+
+	SSDFS_DBG("tbl->pre_erase_pebs %d\n",
+		  atomic_read(&tbl->pre_erase_pebs));
 
 finish_fragment_correction:
 	up_write(&fdesc->lock);
@@ -1089,6 +1111,7 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	void *kaddr;
 	unsigned long *dirty_bmap, *used_bmap, *recover_bmap, *bad_bmap;
 	u32 recovered_pebs = 0, failed_pebs = 0, bad_pebs = 0;
+	u16 peb_index_offset;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1137,8 +1160,9 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	do {
 		res = &array->ptr[*item_index];
+		peb_index_offset = res->peb_index % ptr->pebs_per_page;
 
-		peb_desc = GET_PEB_DESCRIPTOR(hdr, res->peb_index);
+		peb_desc = GET_PEB_DESCRIPTOR(hdr, peb_index_offset);
 		if (IS_ERR_OR_NULL(peb_desc)) {
 			err = IS_ERR(peb_desc) ? PTR_ERR(peb_desc) : -ERANGE;
 			SSDFS_ERR("fail to get peb_descriptor: "
@@ -1157,8 +1181,8 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 		if (res->state == SSDFS_BAD_BLOCK_DETECTED) {
 			peb_desc->state = SSDFS_MAPTBL_BAD_PEB_STATE;
-			bitmap_clear(dirty_bmap, res->peb_index, 1);
-			bitmap_set(bad_bmap, res->peb_index, 1);
+			bitmap_clear(dirty_bmap, peb_index_offset, 1);
+			bitmap_set(bad_bmap, peb_index_offset, 1);
 			ptr->recovering_pebs--;
 
 			bad_pebs++;
@@ -1167,8 +1191,8 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 			failed_pebs++;
 		} else {
 			peb_desc->state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
-			bitmap_clear(recover_bmap, res->peb_index, 1);
-			bitmap_clear(used_bmap, res->peb_index, 1);
+			bitmap_clear(recover_bmap, peb_index_offset, 1);
+			bitmap_clear(used_bmap, peb_index_offset, 1);
 			le16_add_cpu(&hdr->reserved_pebs, 1);
 			ptr->recovering_pebs--;
 
@@ -1407,6 +1431,8 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	max_erase_ops = atomic_read(&tbl->max_erase_ops);
 	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
 
+	SSDFS_DBG("max_erase_ops %d\n", max_erase_ops);
+
 	if (max_erase_ops == 0) {
 		SSDFS_WARN("max_erase_ops == 0\n");
 		return 0;
@@ -1424,6 +1450,8 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	erases_per_fragment = max_erase_ops / fragments_count;
 	if (erases_per_fragment == 0)
 		erases_per_fragment = 1;
+
+	SSDFS_DBG("erases_per_fragment %d\n", erases_per_fragment);
 
 	for (i = 0; i < fragments_count; i++) {
 		err = ssdfs_maptbl_collect_dirty_pebs(tbl, i,
@@ -1443,6 +1471,11 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_dirty_pebs_processing;
 		}
 
+		if (kthread_should_stop()) {
+			err = -EAGAIN;
+			goto finish_dirty_pebs_processing;
+		}
+
 		err = ssdfs_maptbl_erase_pebs_array(tbl->fsi, array);
 		if (err == -EROFS) {
 			err = 0;
@@ -1459,6 +1492,11 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to correct erased PEBs state: err %d\n",
 				  err);
+			goto finish_collect_dirty_pebs;
+		}
+
+		if (kthread_should_stop()) {
+			err = -EAGAIN;
 			goto finish_collect_dirty_pebs;
 		}
 	}
@@ -1547,6 +1585,11 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 				  i, err);
 			goto finish_collect_recovering_pebs;
 		}
+
+		if (kthread_should_stop()) {
+			err = -EAGAIN;
+			goto finish_collect_recovering_pebs;
+		}
 	}
 
 finish_collect_recovering_pebs:
@@ -1558,6 +1601,11 @@ finish_collect_recovering_pebs:
 	if (is_ssdfs_maptbl_under_flush(fsi)) {
 		err = -EBUSY;
 		SSDFS_DBG("mapping table is under flush\n");
+		goto finish_pebs_recovering;
+	}
+
+	if (kthread_should_stop()) {
+		err = -EAGAIN;
 		goto finish_pebs_recovering;
 	}
 
@@ -1952,6 +2000,7 @@ int ssdfs_maptbl_thread_func(void *data)
 	struct ssdfs_peb_mapping_info *pmi;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_erase_result_array array = {NULL, 0, 0};
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1967,7 +2016,7 @@ int ssdfs_maptbl_thread_func(void *data)
 	cache = &fsi->maptbl_cache;
 	wait_queue = &tbl->wait_queue;
 
-	array.capacity = tbl->pebs_per_fragment;
+	array.capacity = SSDFS_ERASE_RESULT_ARRAY_CAPACITY;
 	array.size = 0;
 	array.ptr = kcalloc(array.capacity,
 			    sizeof(struct ssdfs_erase_result),
@@ -1977,6 +2026,20 @@ int ssdfs_maptbl_thread_func(void *data)
 		SSDFS_ERR("fail to allocate erase_results array\n");
 		goto sleep_maptbl_thread;
 	}
+
+	down_read(&tbl->tbl_lock);
+	for (i = 0; i < tbl->fragments_count; i++) {
+		struct completion *init_end = &tbl->desc_array[i].init_end;
+
+		up_read(&tbl->tbl_lock);
+
+		wait_for_completion_timeout(init_end, HZ);
+		if (kthread_should_stop())
+			goto repeat;
+
+		down_read(&tbl->tbl_lock);
+	}
+	up_read(&tbl->tbl_lock);
 
 repeat:
 	if (kthread_should_stop()) {
@@ -2041,17 +2104,23 @@ repeat:
 		}
 
 		ssdfs_peb_mapping_info_free(pmi);
+
+		if (kthread_should_stop())
+			goto repeat;
 	}
 
 	if (has_maptbl_pre_erase_pebs(tbl)) {
 		err = ssdfs_maptbl_process_dirty_pebs(tbl, &array);
-		if (err == -EBUSY) {
+		if (err == -EBUSY || err == -EAGAIN) {
 			err = 0;
 			goto sleep_maptbl_thread;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to process dirty PEBs: err %d\n",
 				  err);
 		}
+
+		wait_event_interruptible_timeout(*wait_queue,
+					kthread_should_stop(), HZ);
 	}
 
 check_next_step:
@@ -2061,21 +2130,24 @@ check_next_step:
 	if (unlikely(err))
 		goto sleep_failed_maptbl_thread;
 
-	if (!is_time_to_recover_pebs(tbl))
-		goto sleep_maptbl_thread;
+	if (is_time_to_recover_pebs(tbl)) {
+		err = ssdfs_maptbl_check_pebs_recoverability(tbl, &array);
+		if (err == -EBUSY) {
+			err = 0;
+			goto sleep_maptbl_thread;
+		} else if (err && err != -EAGAIN) {
+			SSDFS_ERR("fail to check PEBs recoverability: "
+				  "err %d\n",
+				  err);
+			goto sleep_failed_maptbl_thread;
+		}
 
-	err = ssdfs_maptbl_check_pebs_recoverability(tbl, &array);
-	if (err == -EBUSY) {
-		err = 0;
-		goto sleep_maptbl_thread;
-	} else if (err && err != -EAGAIN) {
-		SSDFS_ERR("fail to check PEBs recoverability: "
-			  "err %d\n",
-			  err);
-		goto sleep_failed_maptbl_thread;
-	}
+		set_last_recovering_cno(tbl);
 
-	set_last_recovering_cno(tbl);
+		wait_event_interruptible_timeout(*wait_queue,
+					kthread_should_stop(), HZ);
+	} else
+		goto sleep_maptbl_thread;
 
 	if (kthread_should_stop())
 		goto repeat;
@@ -2092,6 +2164,9 @@ check_next_step:
 		}
 
 		set_last_recovering_cno(tbl);
+
+		wait_event_interruptible_timeout(*wait_queue,
+					kthread_should_stop(), HZ);
 
 		if (kthread_should_stop())
 			goto repeat;

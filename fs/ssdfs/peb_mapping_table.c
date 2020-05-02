@@ -180,7 +180,6 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	ptr = &fsi->maptbl->desc_array[index];
 
 	init_rwsem(&ptr->lock);
-	atomic_set(&ptr->state, SSDFS_MAPTBL_FRAG_CREATED);
 	ptr->fragment_id = index;
 	ptr->fragment_pages = fsi->maptbl->fragment_pages;
 	ptr->start_leb = U64_MAX;
@@ -206,10 +205,9 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 
 	ptr->flush_req1 = NULL;
 	ptr->flush_req2 = NULL;
+	ptr->flush_req_count = 0;
 
-	ptr->flush_seq_size = ptr->fragment_pages + PAGEVEC_SIZE - 1;
-	ptr->flush_seq_size /= PAGEVEC_SIZE;
-
+	ptr->flush_seq_size = min_t(u32, ptr->fragment_pages, PAGEVEC_SIZE);
 	ptr->flush_req1 = kcalloc(ptr->flush_seq_size,
 				  sizeof(struct ssdfs_segment_request),
 				  GFP_KERNEL);
@@ -233,6 +231,8 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 			  ptr->flush_seq_size);
 		return -ENODATA;
 	}
+
+	atomic_set(&ptr->state, SSDFS_MAPTBL_FRAG_CREATED);
 
 	return 0;
 }
@@ -1195,6 +1195,9 @@ int ssdfs_maptbl_check_pebtbl_page(struct page *page,
 	pre_erase_pebs = bitmap_weight(bmap, pebs_count);
 	fdesc->pre_erase_pebs += pre_erase_pebs;
 
+	SSDFS_DBG("fragment_id %u, stripe_id %u, pre_erase_pebs %u\n",
+		  fragment_id, stripe_id, fdesc->pre_erase_pebs);
+
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_RECOVER_BMAP][0];
 	recovering_pebs = bitmap_weight(bmap, pebs_count);
 	fdesc->recovering_pebs += recovering_pebs;
@@ -1889,6 +1892,58 @@ int ssdfs_maptbl_set_fragment_checksum(struct pagevec *pvec)
 }
 
 /*
+ * ssdfs_realloc_flush_reqs_array() - check necessity to realloc reqs array
+ * @fdesc: pointer on fragment descriptor
+ *
+ * This method checks the necessity to realloc the flush
+ * requests array. Finally, it tries to realloc the memory
+ * for the flush requests array.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static inline
+int ssdfs_realloc_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fdesc);
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fdesc->flush_req_count > fdesc->flush_seq_size) {
+		SSDFS_ERR("request_index %u > flush_seq_size %u\n",
+			  fdesc->flush_req_count, fdesc->flush_seq_size);
+		return -ERANGE;
+	} else if (fdesc->flush_req_count == fdesc->flush_seq_size) {
+		size_t seg_req_size = sizeof(struct ssdfs_segment_request);
+
+		fdesc->flush_seq_size *= 2;
+
+		fdesc->flush_req1 = krealloc(fdesc->flush_req1,
+					fdesc->flush_seq_size * seg_req_size,
+					GFP_KERNEL | __GFP_ZERO);
+		if (!fdesc->flush_req1) {
+			SSDFS_ERR("fail to reallocate buffer\n");
+			return -ENOMEM;
+		}
+
+		fdesc->flush_req2 = krealloc(fdesc->flush_req2,
+					fdesc->flush_seq_size * seg_req_size,
+					GFP_KERNEL | __GFP_ZERO);
+		if (!fdesc->flush_req2) {
+			SSDFS_ERR("fail to reallocate buffer\n");
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_maptbl_update_fragment() - update dirty fragment
  * @tbl: mapping table object
  * @fragment_index: index of fragment in the array
@@ -1920,7 +1975,6 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 	u64 offset;
 	u32 size;
 	u16 seg_index;
-	u32 request_index = 0;
 	void *kaddr;
 	int err = 0;
 
@@ -1950,6 +2004,8 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 	end = page_index + range_len - 1;
 
 	down_write(&fdesc->lock);
+
+	fdesc->flush_req_count = 0;
 
 retrive_dirty_pages:
 	pagevec_init(&pvec);
@@ -2003,7 +2059,7 @@ define_update_area:
 	area_start = pvec.pages[i]->index;
 	area_size = 0;
 	for (; i < pagevec_count(&pvec); i++) {
-		if ((area_start + i) != pvec.pages[i]->index)
+		if ((area_start + area_size) != pvec.pages[i]->index)
 			break;
 		else
 			area_size++;
@@ -2016,9 +2072,15 @@ define_update_area:
 	BUG_ON(area_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	req1 = &fdesc->flush_req1[request_index];
-	req2 = &fdesc->flush_req2[request_index];
-	request_index++;
+	err = ssdfs_realloc_flush_reqs_array(fdesc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to realloc the reqs array\n");
+		goto finish_fragment_update;
+	}
+
+	req1 = &fdesc->flush_req1[fdesc->flush_req_count];
+	req2 = &fdesc->flush_req2[fdesc->flush_req_count];
+	fdesc->flush_req_count++;
 
 	ssdfs_request_init(req1);
 	ssdfs_get_request(req1);
@@ -2458,7 +2520,7 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 			goto finish_fragment_processing;
 
 		case SSDFS_MAPTBL_FRAG_TOWRITE:
-			for (j = 0; j < fdesc->flush_seq_size; j++) {
+			for (j = 0; j < fdesc->flush_req_count; j++) {
 				req1 = &fdesc->flush_req1[j];
 				req2 = &fdesc->flush_req2[j];
 
@@ -2522,7 +2584,6 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 	bool has_backup;
 	pgoff_t area_start;
 	pgoff_t area_size, processed_pages;
-	u32 request_index = 0;
 	u64 offset;
 	u16 seg_index;
 	struct page *page;
@@ -2553,14 +2614,22 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 			  (pgoff_t)tbl->fragment_pages);
 	processed_pages = 0;
 
+	fdesc->flush_req_count = 0;
+
 	do {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(area_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		req1 = &fdesc->flush_req1[request_index];
-		req2 = &fdesc->flush_req2[request_index];
-		request_index++;
+		err = ssdfs_realloc_flush_reqs_array(fdesc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc the reqs array\n");
+			goto finish_issue_commit_request;
+		}
+
+		req1 = &fdesc->flush_req1[fdesc->flush_req_count];
+		req2 = &fdesc->flush_req2[fdesc->flush_req_count];
+		fdesc->flush_req_count++;
 
 		ssdfs_request_init(req1);
 		ssdfs_get_request(req1);
@@ -2769,7 +2838,7 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 			goto finish_fragment_processing;
 
 		case SSDFS_MAPTBL_FRAG_TOWRITE:
-			for (j = 0; j < fdesc->flush_seq_size; j++) {
+			for (j = 0; j < fdesc->flush_req_count; j++) {
 				req1 = &fdesc->flush_req1[j];
 				req2 = &fdesc->flush_req2[j];
 
@@ -2842,7 +2911,6 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 	bool has_backup;
 	pgoff_t area_start;
 	pgoff_t area_size, processed_pages;
-	u32 request_index = 0;
 	u64 offset;
 	u16 seg_index;
 	struct page *page;
@@ -2866,14 +2934,22 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 			  (pgoff_t)tbl->fragment_pages);
 	processed_pages = 0;
 
+	fdesc->flush_req_count = 0;
+
 	do {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(area_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		req1 = &fdesc->flush_req1[request_index];
-		req2 = &fdesc->flush_req2[request_index];
-		request_index++;
+		err = ssdfs_realloc_flush_reqs_array(fdesc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc the reqs array\n");
+			goto finish_issue_prepare_migration_request;
+		}
+
+		req1 = &fdesc->flush_req1[fdesc->flush_req_count];
+		req2 = &fdesc->flush_req2[fdesc->flush_req_count];
+		fdesc->flush_req_count++;
 
 		ssdfs_request_init(req1);
 		ssdfs_get_request(req1);
@@ -3064,7 +3140,7 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 
 		down_write(&fdesc->lock);
 
-		for (j = 0; j < fdesc->flush_seq_size; j++) {
+		for (j = 0; j < fdesc->flush_req_count; j++) {
 			req1 = &fdesc->flush_req1[j];
 			req2 = &fdesc->flush_req2[j];
 
@@ -4037,7 +4113,7 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
-	bitmap_set(bmap, index, 1);
+	bitmap_set(bmap, item_index, 1);
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
@@ -4332,6 +4408,10 @@ ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 	fdesc->pre_erase_pebs++;
 	atomic_inc(&tbl->pre_erase_pebs);
 
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+		  fdesc->pre_erase_pebs,
+		  atomic_read(&tbl->pre_erase_pebs));
+
 	wake_up(&tbl->wait_queue);
 
 	return 0;
@@ -4553,7 +4633,12 @@ start_convert_leb2peb:
 		}
 
 		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to get peb relation: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_consistent_case;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to get peb relation: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
@@ -4585,7 +4670,12 @@ finish_consistent_case:
 		}
 
 		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to get peb relation: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_inconsistent_case;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to get peb relation: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
@@ -4621,7 +4711,12 @@ finish_inconsistent_case:
 		}
 
 		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to get peb relation: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_pre_deleted_case;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to get peb relation: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
@@ -6405,6 +6500,10 @@ int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
 	fdesc->pre_erase_pebs++;
 	atomic_inc(&tbl->pre_erase_pebs);
 
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+		  fdesc->pre_erase_pebs,
+		  atomic_read(&tbl->pre_erase_pebs));
+
 	wake_up(&tbl->wait_queue);
 
 finish_fragment_change:
@@ -7224,6 +7323,10 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 	fdesc->migrating_lebs--;
 	fdesc->pre_erase_pebs++;
 	atomic_inc(&tbl->pre_erase_pebs);
+
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+		  fdesc->pre_erase_pebs,
+		  atomic_read(&tbl->pre_erase_pebs));
 
 	wake_up(&tbl->wait_queue);
 
@@ -8213,6 +8316,10 @@ int __ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 
 		fdesc->pre_erase_pebs++;
 		atomic_inc(&tbl->pre_erase_pebs);
+
+		SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+			  fdesc->pre_erase_pebs,
+			  atomic_read(&tbl->pre_erase_pebs));
 
 		wake_up(&tbl->wait_queue);
 	}

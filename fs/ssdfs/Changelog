@@ -3,6 +3,13 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.53 [May 02, 2020]
+    (*) Fix bugs in PEB block bitmap.
+    (*) Fix bugs in PEB flush thread's logic.
+    (*) Fix bugs in PEB mapping table.
+    (*) Fix bugs in PEB mapping table thread's logic.
+    (*) Correct logic of searching the clean segments.
+
 v.3.52 [April 28, 2020]
     (*) Fix bugs in GC logic.
     (*) Fix bugs in readdir() logic.

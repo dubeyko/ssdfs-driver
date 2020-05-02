@@ -427,6 +427,98 @@ int SEG_TYPE2MASK(int seg_type)
 }
 
 /*
+ * ssdfs_segment_correct_start_search_id() - correct start search ID
+ * @fsi: pointer on shared file system object
+ * @seg_type: type of segment
+ * @start_search_id: starting ID for segment search
+ *
+ * This method tries to correct starting search ID.
+ */
+static
+u64 ssdfs_segment_correct_start_search_id(struct ssdfs_fs_info *fsi,
+					  int seg_type,
+					  u64 start_search_id)
+{
+	struct completion *init_end;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *ptr;
+	u8 peb_type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
+	u64 leb_id;
+	u64 peb_id1, peb_id2;
+	u64 found_peb_id;
+	u64 calculated_seg_id = start_search_id;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg_type %#x, start_search_id %llu\n",
+		  fsi, seg_type, start_search_id);
+
+	if (start_search_id >= fsi->nsegs)
+		return 0;
+
+	leb_id = start_search_id * fsi->pebs_per_seg;
+	found_peb_id = leb_id;
+	peb_type = SEG2PEB_TYPE(seg_type);
+
+	err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
+					   peb_type, &pebr,
+					   &init_end);
+	if (err == -EAGAIN) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			goto finish_seg_id_correction;
+		}
+
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
+						   peb_type, &pebr,
+						   &init_end);
+	}
+
+	if (err == -ENODATA) {
+		SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
+			  leb_id);
+		goto finish_seg_id_correction;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to convert LEB to PEB: "
+			  "leb_id %llu, peb_type %#x, err %d\n",
+			  leb_id, peb_type, err);
+		goto finish_seg_id_correction;
+	}
+
+	ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+	peb_id1 = ptr->peb_id;
+	ptr = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
+	peb_id2 = ptr->peb_id;
+
+	if (peb_id1 < U64_MAX)
+		found_peb_id = max_t(u64, peb_id1, found_peb_id);
+
+	if (peb_id2 < U64_MAX)
+		found_peb_id = max_t(u64, peb_id2, found_peb_id);
+
+	calculated_seg_id = found_peb_id / fsi->pebs_per_seg;
+	calculated_seg_id = max_t(u64, start_search_id, calculated_seg_id);
+
+finish_seg_id_correction:
+	if (calculated_seg_id < U64_MAX)
+		calculated_seg_id++;
+
+	SSDFS_DBG("start_search_id %llu, calculated_seg_id %llu\n",
+		  start_search_id, calculated_seg_id);
+
+	return calculated_seg_id;
+}
+
+/*
  * ssdfs_grab_segment() - get or create segment object
  * @fsi: pointer on shared file system object
  * @seg_type: type of segment
@@ -500,10 +592,8 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 			BUG();
 		};
 
-		if (start_search_id >= fsi->nsegs)
-			start = 0;
-		else
-			start = start_search_id;
+		start = ssdfs_segment_correct_start_search_id(fsi, seg_type,
+							      start_search_id);
 
 		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
 						 start, fsi->nsegs,
@@ -1154,9 +1244,6 @@ try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
 add_new_current_segment:
 		start = cur_seg->seg_id;
-		if (start != U64_MAX)
-			start++;
-
 		si = ssdfs_grab_segment(cur_seg->fsi, seg_type,
 					U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
@@ -1311,9 +1398,6 @@ try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
 add_new_current_segment:
 		start = cur_seg->seg_id;
-		if (start != U64_MAX)
-			start++;
-
 		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));

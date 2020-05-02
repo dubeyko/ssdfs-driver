@@ -10280,7 +10280,16 @@ finish_create_request_processing:
 			thread_state = SSDFS_FLUSH_THREAD_START_MIGRATION_NOW;
 			goto finish_update_request_processing;
 		} else if (req->private.cmd == SSDFS_COMMIT_LOG_NOW) {
-			if (have_flush_requests(pebc)) {
+			if (has_commit_log_now_requested(pebc)) {
+				SSDFS_DBG("Ignore current COMMIT_LOG_NOW: "
+					  "seg %llu, peb_index %u\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index);
+				ssdfs_finish_flush_request(pebc, req,
+							   wait_queue, err);
+				thread_state =
+					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+			} else if (have_flush_requests(pebc)) {
 				req->result.processed_blks = 0;
 				ssdfs_requests_queue_add_tail(&pebc->update_rq,
 								req);
