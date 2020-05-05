@@ -316,6 +316,8 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 	int i;
 
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		if (!pebc->thread[i].task)
+			continue;
 		pid = task_pid_nr(pebc->thread[i].task);
 		state = get_task_state(pebc->thread[i].task);
 		type = thread_type_array[i];
@@ -671,15 +673,20 @@ cleanup_seg_kobject:
 
 free_seg_subgroups:
 	kfree(si->seg_subgroups);
+	si->seg_subgroups = NULL;
 
 	return err;
 }
 
 void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si)
 {
+	if (!si || !si->seg_subgroups)
+		return;
+
 	ssdfs_sysfs_delete_pebs_group(si);
 	kobject_del(&si->seg_kobj);
 	kfree(si->seg_subgroups);
+	si->seg_subgroups = NULL;
 }
 
 /************************************************************************
@@ -743,6 +750,7 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 					  PAGE_SIZE - count,
 					  "%s: <empty>\n",
 					  type);
+			ssdfs_current_segment_unlock(cur_seg);
 			continue;
 		}
 

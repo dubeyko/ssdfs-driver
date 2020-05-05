@@ -74,7 +74,7 @@ struct ssdfs_erase_result_array {
 	u32 size;
 };
 
-#define SSDFS_ERASE_RESULT_ARRAY_CAPACITY	(100)
+#define SSDFS_ERASE_RESULTS_PER_FRAGMENT	(10)
 
 /*
  * ssdfs_maptbl_collect_stripe_dirty_pebs() - collect dirty PEBs in stripe
@@ -1402,6 +1402,45 @@ int ssdfs_maptbl_correct_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	return !err ? err2 : err;
 }
 
+#define SSDFS_MAPTBL_IO_RANGE		(10)
+
+/*
+ * ssdfs_maptbl_correct_max_erase_ops() - correct max erase operations
+ * @fsi: file system info object
+ * @max_erase_ops: max number of erase operations
+ */
+static
+int ssdfs_maptbl_correct_max_erase_ops(struct ssdfs_fs_info *fsi,
+					int max_erase_ops)
+{
+	s64 reqs_count;
+	s64 factor;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, max_erase_ops %d\n",
+		  fsi, max_erase_ops);
+
+	if (max_erase_ops <= 0)
+		return 0;
+
+	reqs_count = atomic64_read(&fsi->flush_reqs);
+	reqs_count += atomic_read(&fsi->pending_bios);
+
+	if (reqs_count <= SSDFS_MAPTBL_IO_RANGE)
+		return max_erase_ops;
+
+	factor = reqs_count / SSDFS_MAPTBL_IO_RANGE;
+	max_erase_ops /= factor;
+
+	if (max_erase_ops == 0)
+		max_erase_ops = 1;
+
+	return max_erase_ops;
+}
+
 /*
  * ssdfs_maptbl_process_dirty_pebs() - process dirty PEBs
  * @tbl: mapping table object
@@ -1430,6 +1469,7 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	max_erase_ops = atomic_read(&tbl->max_erase_ops);
 	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
+	max_erase_ops = ssdfs_maptbl_correct_max_erase_ops(fsi, max_erase_ops);
 
 	SSDFS_DBG("max_erase_ops %d\n", max_erase_ops);
 
@@ -1555,6 +1595,7 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	max_erase_ops = atomic_read(&tbl->max_erase_ops);
 	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
+	max_erase_ops = ssdfs_maptbl_correct_max_erase_ops(fsi, max_erase_ops);
 
 	if (max_erase_ops == 0) {
 		SSDFS_WARN("max_erase_ops == 0\n");
@@ -2016,7 +2057,11 @@ int ssdfs_maptbl_thread_func(void *data)
 	cache = &fsi->maptbl_cache;
 	wait_queue = &tbl->wait_queue;
 
-	array.capacity = SSDFS_ERASE_RESULT_ARRAY_CAPACITY;
+	down_read(&tbl->tbl_lock);
+	array.capacity = (u32)tbl->fragments_count *
+				SSDFS_ERASE_RESULTS_PER_FRAGMENT;
+	up_read(&tbl->tbl_lock);
+
 	array.size = 0;
 	array.ptr = kcalloc(array.capacity,
 			    sizeof(struct ssdfs_erase_result),

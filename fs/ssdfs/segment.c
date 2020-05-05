@@ -109,6 +109,8 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 		return -EBUSY;
 	}
 
+	ssdfs_sysfs_delete_seg_group(si);
+
 	if (si->peb_array) {
 		struct ssdfs_peb_container *pebc;
 		int i;
