@@ -38,6 +38,12 @@ void ssdfs_init_seg_req_object_once(void *obj)
 	memset(req_obj, 0, sizeof(struct ssdfs_segment_request));
 }
 
+void ssdfs_shrink_seg_req_obj_cache(void)
+{
+	if (ssdfs_seg_req_obj_cachep)
+		kmem_cache_shrink(ssdfs_seg_req_obj_cachep);
+}
+
 void ssdfs_destroy_seg_req_obj_cache(void)
 {
 	if (ssdfs_seg_req_obj_cachep)
@@ -429,6 +435,8 @@ struct ssdfs_segment_request *ssdfs_request_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -444,6 +452,7 @@ void ssdfs_request_free(struct ssdfs_segment_request *req)
 	if (!req)
 		return;
 
+	ssdfs_memory_leaks_decrement(req);
 	kmem_cache_free(ssdfs_seg_req_obj_cachep, req);
 }
 
@@ -523,6 +532,7 @@ struct page *
 ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req)
 {
 	struct page *page;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
@@ -536,10 +546,11 @@ ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req)
 		return ERR_PTR(-E2BIG);
 	}
 
-	page = alloc_page(GFP_KERNEL | GFP_NOFS | __GFP_ZERO);
-	if (unlikely(!page)) {
+	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(err);
 	}
 
 	pagevec_add(&req->result.pvec, page);
@@ -567,7 +578,6 @@ int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req)
 		return err;
 	}
 
-	get_page(page);
 	lock_page(page);
 	return 0;
 }
@@ -587,10 +597,19 @@ void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req)
 
 	count = pagevec_count(&req->result.pvec);
 
-	for (i = 0; i < count; i++)
-		unlock_page(req->result.pvec.pages[i]);
+	for (i = 0; i < count; i++) {
+		struct page *page = req->result.pvec.pages[i];
 
-	pagevec_release(&req->result.pvec);
+		if (!page) {
+			SSDFS_DBG("page %d is NULL\n", i);
+			continue;
+		}
+
+		unlock_page(page);
+	}
+
+	ssdfs_pagevec_release(&req->result.pvec);
+	pagevec_reinit(&req->result.pvec);
 }
 
 /*

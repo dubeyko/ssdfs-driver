@@ -41,6 +41,12 @@ static void ssdfs_init_btree_search_object_once(void *obj)
 	memset(search_obj, 0, sizeof(struct ssdfs_btree_search));
 }
 
+void ssdfs_shrink_btree_search_obj_cache(void)
+{
+	if (ssdfs_btree_search_obj_cachep)
+		kmem_cache_shrink(ssdfs_btree_search_obj_cachep);
+}
+
 void ssdfs_destroy_btree_search_obj_cache(void)
 {
 	if (ssdfs_btree_search_obj_cachep)
@@ -85,6 +91,8 @@ struct ssdfs_btree_search *ssdfs_btree_search_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -115,7 +123,7 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
 	    search->result.buf) {
 		/* free allocated memory */
-		kfree(search->result.buf);
+		ssdfs_kfree(search->result.buf);
 		search->result.buf = NULL;
 	}
 
@@ -124,12 +132,13 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
 	    search->result.name) {
 		/* free allocated memory */
-		kfree(search->result.name);
+		ssdfs_kfree(search->result.name);
 		search->result.name = NULL;
 	}
 
 	search->result.name = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 
+	ssdfs_memory_leaks_decrement(search);
 	kmem_cache_free(ssdfs_btree_search_obj_cachep, search);
 }
 
@@ -145,7 +154,7 @@ void ssdfs_btree_search_init(struct ssdfs_btree_search *search)
 
 	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
 		if (search->result.buf)
-			kfree(search->result.buf);
+			ssdfs_kfree(search->result.buf);
 	}
 
 	memset(search, 0, sizeof(struct ssdfs_btree_search));

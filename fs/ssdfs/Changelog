@@ -3,6 +3,12 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.55 [May 16, 2020]
+    (*) Fix bugs with memory leaks.
+    (*) Fix bug with btree's index size definition.
+    (*) Fix bugs in dentries btree functionality.
+    (*) Rework sysfs code.
+
 v.3.54 [May 05, 2020]
     (*) Fix bugs in logic with sysfs interaction.
     (*) Correct logic of PEB mapping table thread (max erase operations).

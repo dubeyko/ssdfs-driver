@@ -548,8 +548,11 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 	memset(kaddr, 0, PAGE_SIZE);
 	kunmap_atomic(kaddr);
 	SetPagePrivate(page);
-	put_page(page);
+	ssdfs_put_page(page);
 	unlock_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	metadata->area.blk_desc.items_count = 0;
 	metadata->area.blk_desc.capacity = count;
@@ -1156,7 +1159,7 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 	to.area_offset = 0;
 	to.write_offset = write_offset;
 
-	to.store = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	to.store = ssdfs_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!to.store) {
 		SSDFS_ERR("fail to allocate buffer for fragment\n");
 		return -ENOMEM;
@@ -1218,7 +1221,10 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 		}
 
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		if (err)
 			goto free_compr_buffer;
@@ -1227,7 +1233,7 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 	} while (written_bytes < to.compr_size);
 
 free_compr_buffer:
-	kfree(to.store);
+	ssdfs_kfree(to.store);
 
 	return err;
 }
@@ -1316,7 +1322,10 @@ int ssdfs_peb_store_block_state_desc(struct ssdfs_peb_info *pebi,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -1570,8 +1579,9 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		SSDFS_ERR("invalid fragments count %u\n", fragments);
 		return -ERANGE;
 	} else if (fragments > 1) {
-		array = kcalloc(fragments, sizeof(struct ssdfs_fragment_desc),
-				GFP_KERNEL);
+		array = ssdfs_kcalloc(fragments,
+				      sizeof(struct ssdfs_fragment_desc),
+				      GFP_KERNEL);
 		if (!array) {
 			SSDFS_ERR("fail to allocate fragment desc array: "
 				  "fragments %u\n",
@@ -1718,7 +1728,7 @@ try_get_next_page:
 
 free_array:
 	if (array)
-		kfree(array);
+		ssdfs_kfree(array);
 
 	if (err)
 		area->write_offset = metadata_offset;
@@ -1877,7 +1887,10 @@ bool has_current_page_free_space(struct ssdfs_peb_info *pebi,
 		is_page_available = false;
 	else {
 		is_page_available = true;
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 	}
 
 	return is_space_enough && is_page_available;
@@ -1962,7 +1975,10 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			break;
 		else {
 			index_start++;
-			put_page(page);
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
 		}
 	} while (index_start < index_end);
 
@@ -2002,8 +2018,11 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		memset(kaddr, 0, PAGE_SIZE);
 		kunmap_atomic(kaddr);
 		SetPagePrivate(page);
-		put_page(page);
+		ssdfs_put_page(page);
 		unlock_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 	}
 
 	pebi->current_log.free_data_pages -= phys_pages;
@@ -2270,7 +2289,10 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -2586,7 +2608,7 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 	if (!can_area_add_fragment(pebi, area_type, check_bytes)) {
 		pebi->current_log.free_data_pages = 0;
 		SSDFS_DBG("log is full\n");
-		return -ENOSPC;
+		return -EAGAIN;
 	}
 
 	if (!has_current_page_free_space(pebi, area_type, check_bytes)) {
@@ -2790,7 +2812,7 @@ int ssdfs_peb_store_in_main_area(struct ssdfs_peb_info *pebi,
 	if (!can_area_add_fragment(pebi, area_type, data_bytes)) {
 		pebi->current_log.free_data_pages = 0;
 		SSDFS_DBG("log is full\n");
-		return -ENOSPC;
+		return -EAGAIN;
 	}
 
 	if (!has_current_page_free_space(pebi, area_type, data_bytes)) {
@@ -3004,6 +3026,11 @@ int ssdfs_peb_add_block_into_data_area(struct ssdfs_peb_info *pebi,
 				  "index %d, portion_size %u\n",
 				  page_index, portion_size);
 			return err;
+		} else if (err == -ENOSPC) {
+			SSDFS_DBG("unable to add page into current log: "
+				  "index %d, portion_size %u\n",
+				  page_index, portion_size);
+			return -EAGAIN;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add page: "
 				  "index %d, portion_size %u, err %d\n",
@@ -3294,7 +3321,10 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (unlikely(err))
 		return err;
@@ -4823,7 +4853,10 @@ int ssdfs_reserve_segment_header(struct ssdfs_peb_info *pebi,
 	kunmap_atomic(kaddr);
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	*write_offset = offsetof(struct ssdfs_segment_header, payload);
 
@@ -4892,7 +4925,10 @@ int ssdfs_reserve_partial_log_header(struct ssdfs_peb_info *pebi,
 	kunmap_atomic(kaddr);
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	*write_offset = offsetof(struct ssdfs_partial_log_header, payload);
 
@@ -5011,7 +5047,10 @@ try_get_next_page:
 		}
 
 		unlock_page(dst_page);
-		put_page(dst_page);
+		ssdfs_put_page(dst_page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  dst_page, page_ref_count(dst_page));
 
 		if (err == -EAGAIN) {
 			SSDFS_DBG("try to get next page: "
@@ -5090,7 +5129,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	allocation_size = frag_hdr_size;
 	allocation_size += pagevec_count(&desc->snapshot) * frag_desc_size;
 
-	frag_hdr = kzalloc(allocation_size, GFP_KERNEL);
+	frag_hdr = ssdfs_kzalloc(allocation_size, GFP_KERNEL);
 	if (!frag_hdr) {
 		SSDFS_ERR("unable to allocate block bmap header\n");
 		return -ENOMEM;
@@ -5211,11 +5250,14 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 fail_store_bmap_fragment:
-	pagevec_release(&desc->snapshot);
-	kfree(frag_hdr);
+	ssdfs_pagevec_release(&desc->snapshot);
+	ssdfs_kfree(frag_hdr);
 	return err;
 }
 
@@ -5756,7 +5798,7 @@ finish_store_dependent_blk_bmap:
 			return err;
 		}
 
-		pagevec_release(&desc.snapshot);
+		ssdfs_pagevec_release(&desc.snapshot);
 	}
 
 	return 0;
@@ -6012,7 +6054,10 @@ finish_bmap_hdr_preparation:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_store_block_bitmap:
 	return err;
@@ -6082,6 +6127,7 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 	void *kaddr1, *kaddr2;
 	u16 log_start_page;
 	u32 read_bytes = 0;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6135,7 +6181,10 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 		err = ssdfs_calculate_csum(&desc->check, kaddr, blk_table_size);
 		kunmap_atomic(kaddr);
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n",
@@ -6196,8 +6245,10 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 			src_off = 0;
 
 try_copy_area_data:
-			get_page(page1);
 			lock_page(page1);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page1, page_ref_count(page1));
 
 			if (*write_offset >= PAGE_SIZE)
 				dst_off = *write_offset % PAGE_SIZE;
@@ -6247,19 +6298,23 @@ try_copy_area_data:
 
 unlock_page2:
 			unlock_page(page2);
-			put_page(page2);
+			ssdfs_put_page(page2);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page2, page_ref_count(page2));
 
 unlock_page1:
 			unlock_page(page1);
-			put_page(page1);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page1, page_ref_count(page1));
 
 finish_current_copy:
 			if (unlikely(err)) {
-				pagevec_release(&pvec);
 				SSDFS_ERR("fail to copy page: "
 					  " from %lu to %lu, err %d\n",
 					  src_index, *cur_page, err);
-				return err;
+				goto fail_copy_area_pages;
 			}
 
 			read_bytes += copy_len;
@@ -6273,11 +6328,10 @@ finish_current_copy:
 				err = ssdfs_page_array_clear_dirty_page(smap,
 								page_index + i);
 				if (unlikely(err)) {
-					pagevec_release(&pvec);
 					SSDFS_ERR("fail to mark page clean: "
 						  "page_index %lu\n",
 						  page_index + i);
-					return err;
+					goto fail_copy_area_pages;
 				} else
 					goto finish_pagevec_copy;
 			} else if ((src_off + copy_len) < PAGE_SIZE) {
@@ -6287,17 +6341,21 @@ finish_current_copy:
 				err = ssdfs_page_array_clear_dirty_page(smap,
 								page_index + i);
 				if (unlikely(err)) {
-					pagevec_release(&pvec);
 					SSDFS_ERR("fail to mark page clean: "
 						  "page_index %lu\n",
 						  page_index + i);
-					return err;
+					goto fail_copy_area_pages;
 				}
 			}
 		}
 
 finish_pagevec_copy:
 		page_index += PAGEVEC_SIZE;
+
+		for (i = 0; i < pagevec_count(&pvec); i++) {
+			page = pvec.pages[i];
+			ssdfs_put_page(page);
+		}
 
 		pagevec_reinit(&pvec);
 		cond_resched();
@@ -6306,6 +6364,15 @@ finish_pagevec_copy:
 	pebi->current_log.seg_flags |= SSDFS_AREA_TYPE2FLAG(area_type);
 
 	return 0;
+
+fail_copy_area_pages:
+	for (i = 0; i < pagevec_count(&pvec); i++) {
+		page = pvec.pages[i];
+		ssdfs_put_page(page);
+	}
+
+	pagevec_reinit(&pvec);
+	return err;
 }
 
 /*
@@ -6392,7 +6459,10 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 		err = ssdfs_calculate_csum(&desc->check, kaddr, blk_table_size);
 		kunmap_atomic(kaddr);
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n",
@@ -6436,8 +6506,10 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 			struct page *page = pvec.pages[i], *page2;
 			pgoff_t src_off = page->index;
 
-			get_page(page);
 			lock_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
 
 			page2 = ssdfs_page_array_delete_page(smap, src_off);
 			if (IS_ERR_OR_NULL(page2)) {
@@ -6477,10 +6549,18 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 
 finish_current_move:
 			unlock_page(page);
-			put_page(page);
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
 
 			if (unlikely(err)) {
-				pagevec_release(&pvec);
+				for (i = 0; i < pagevec_count(&pvec); i++) {
+					page = pvec.pages[i];
+					ssdfs_put_page(page);
+				}
+
+				pagevec_reinit(&pvec);
 				SSDFS_ERR("fail to move page: "
 					  " from %lu to %lu, err %d\n",
 					  src_off, *cur_page, err);
@@ -6696,7 +6776,10 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store log footer: "
@@ -7037,7 +7120,10 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 finish_segment_header_preparation:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store segment header: "
@@ -7584,7 +7670,10 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store partial log header: "
@@ -7699,7 +7788,10 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 finish_pl_header_preparation:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store partial log header: "
@@ -8788,21 +8880,12 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 
 	req->result.err = err;
 
-	if (err) {
-		SSDFS_DBG("failure: req %p, err %d\n", req, err);
-		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
-	} else
-		atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
-
 	switch (req->private.type) {
 	case SSDFS_REQ_SYNC:
-		complete(&req->result.wait);
-		wake_up_all(&req->private.wait_queue);
+		/* do nothing */
 		break;
 
 	case SSDFS_REQ_ASYNC:
-		complete(&req->result.wait);
-
 		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
 			err = wait_event_killable_timeout(*wait,
@@ -8813,8 +8896,6 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 			else
 				err = 0;
 		}
-
-		wake_up_all(&req->private.wait_queue);
 
 		for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 			struct page *page = req->result.pvec.pages[i];
@@ -8841,14 +8922,16 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 					   i, req->private.cmd,
 					   req->private.type);
 			}
+
+			req->result.pvec.pages[i] = NULL;
+			ssdfs_free_page(page);
 		}
 
+		pagevec_reinit(&req->result.pvec);
 		ssdfs_request_free(req);
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
-		complete(&req->result.wait);
-
 		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
 			err = wait_event_killable_timeout(*wait,
@@ -8859,8 +8942,6 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 			else
 				err = 0;
 		}
-
-		wake_up_all(&req->private.wait_queue);
 
 		for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 			struct page *page = req->result.pvec.pages[i];
@@ -8887,12 +8968,26 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 					   i, req->private.cmd,
 					   req->private.type);
 			}
+
+			req->result.pvec.pages[i] = NULL;
+			ssdfs_free_page(page);
 		}
+
+		pagevec_reinit(&req->result.pvec);
 		break;
 
 	default:
 		BUG();
 	};
+
+	if (req->result.err) {
+		SSDFS_DBG("failure: req %p, err %d\n", req, err);
+		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+	} else
+		atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
+	complete(&req->result.wait);
+	wake_up_all(&req->private.wait_queue);
 }
 
 /*
@@ -8923,7 +9018,7 @@ void ssdfs_finish_pre_allocate_request(struct ssdfs_peb_container *pebc,
 
 	if (!err) {
 		WARN_ON(pagevec_count(&req->result.pvec) != 0);
-		pagevec_release(&req->result.pvec);
+		ssdfs_pagevec_release(&req->result.pvec);
 	}
 
 	if (err == -EAGAIN) {

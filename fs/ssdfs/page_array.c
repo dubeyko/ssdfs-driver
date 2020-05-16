@@ -67,8 +67,8 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array)
 	atomic_set(&array->pages_capacity, capacity);
 	array->pages_count = 0;
 
-	array->pages = kcalloc(capacity, sizeof(struct page *),
-				GFP_KERNEL);
+	array->pages = ssdfs_kcalloc(capacity, sizeof(struct page *),
+				     GFP_KERNEL);
 	if (!array->pages) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate memory: capacity %d\n",
@@ -86,14 +86,14 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array)
 	}
 
 	for (i = 0; i < SSDFS_PAGE_ARRAY_BMAP_COUNT; i++) {
-		addr[i] = kmalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kmalloc(bmap_bytes, GFP_KERNEL);
 
 		if (!addr[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			goto free_page_array;
 		}
 
@@ -114,7 +114,7 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array)
 	return 0;
 
 free_page_array:
-	kfree(array->pages);
+	ssdfs_kfree(array->pages);
 	array->pages = NULL;
 
 finish_create_page_array:
@@ -164,7 +164,7 @@ void ssdfs_destroy_page_array(struct ssdfs_page_array *array)
 	array->pages_count = 0;
 
 	if (array->pages)
-		kfree(array->pages);
+		ssdfs_kfree(array->pages);
 	array->pages = NULL;
 
 	array->bmap_bytes = 0;
@@ -172,7 +172,7 @@ void ssdfs_destroy_page_array(struct ssdfs_page_array *array)
 	for (i = 0; i < SSDFS_PAGE_ARRAY_BMAP_COUNT; i++) {
 		spin_lock(&array->bmap[i].lock);
 		if (array->bmap[i].ptr)
-			kfree(array->bmap[i].ptr);
+			ssdfs_kfree(array->bmap[i].ptr);
 		array->bmap[i].ptr = NULL;
 		spin_unlock(&array->bmap[i].lock);
 	}
@@ -243,8 +243,8 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 
 	atomic_set(&array->pages_capacity, capacity);
 
-	pages = kcalloc(capacity, sizeof(struct page *),
-			GFP_KERNEL);
+	pages = ssdfs_kcalloc(capacity, sizeof(struct page *),
+			      GFP_KERNEL);
 	if (!pages) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate memory: capacity %d\n",
@@ -256,15 +256,15 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 	bmap_bytes /= BITS_PER_BYTE;
 
 	for (i = 0; i < SSDFS_PAGE_ARRAY_BMAP_COUNT; i++) {
-		addr[i] = kmalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kmalloc(bmap_bytes, GFP_KERNEL);
 
 		if (!addr[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
-			kfree(pages);
+				ssdfs_kfree(addr[i]);
+			ssdfs_kfree(pages);
 			goto finish_reinit;
 		}
 
@@ -273,13 +273,13 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 
 	memcpy(pages, array->pages,
 		sizeof(struct page *) * old_capacity);
-	kfree(array->pages);
+	ssdfs_kfree(array->pages);
 	array->pages = pages;
 
 	for (i = 0; i < SSDFS_PAGE_ARRAY_BMAP_COUNT; i++) {
 		spin_lock(&array->bmap[i].lock);
 		memcpy(addr[i], array->bmap[i].ptr, array->bmap_bytes);
-		kfree(array->bmap[i].ptr);
+		ssdfs_kfree(array->bmap[i].ptr);
 		array->bmap[i].ptr = addr[i];
 		addr[i] = NULL;
 		spin_unlock(&array->bmap[i].lock);
@@ -399,7 +399,11 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 			   page_index);
 		goto finish_add_page;
 	} else {
-		get_page(page);
+		ssdfs_get_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
+
 		array->pages[page_index] = page;
 		page->index = page_index;
 	}
@@ -456,10 +460,11 @@ ssdfs_page_array_allocate_page_locked(struct ssdfs_page_array *array,
 		return ERR_PTR(-ERANGE);
 	}
 
-	page = alloc_page(GFP_KERNEL | GFP_NOFS | __GFP_ZERO);
-	if (unlikely(!page)) {
+	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(err);
 	}
 
 	err = ssdfs_page_array_add_page(array, page, page_index);
@@ -566,7 +571,11 @@ finish_get_page:
 	if (unlikely(err))
 		return ERR_PTR(err);
 
-	get_page(page);
+	ssdfs_get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	return page;
 }
 
@@ -654,9 +663,12 @@ struct page *ssdfs_page_array_grab_page(struct ssdfs_page_array *array,
 			SSDFS_ERR("fail to allocate the page: "
 				  "page_index %lu, err %d\n",
 				  page_index, (int)PTR_ERR(page));
-		} else
-			get_page(page);
+		} else {
+			ssdfs_get_page(page);
 
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
+		}
 	} else if (IS_ERR_OR_NULL(page)) {
 		if (!page)
 			page = ERR_PTR(-ENOMEM);
@@ -1133,6 +1145,11 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 				SSDFS_ERR("page %lu is not dirty\n",
 					  page_index(page));
 			}
+			ssdfs_get_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
+
 			pagevec_add(pvec, page);
 			count++;
 		}
@@ -1271,7 +1288,11 @@ finish_delete_page:
 	if (unlikely(err))
 		return ERR_PTR(err);
 
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	return page;
 }
 
@@ -1382,6 +1403,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		page = array->pages[found];
 
 		if (page) {
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
+
 			ssdfs_free_page(page);
 			array->pages[found] = NULL;
 		}

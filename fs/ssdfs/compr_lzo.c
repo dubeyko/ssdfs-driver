@@ -72,7 +72,7 @@ static void ssdfs_lzo_free_workspace(struct list_head *ptr)
 
 	vfree(workspace->cbuf);
 	vfree(workspace->mem);
-	kfree(workspace);
+	ssdfs_kfree(workspace);
 }
 
 static struct list_head *ssdfs_lzo_alloc_workspace(void)
@@ -81,7 +81,7 @@ static struct list_head *ssdfs_lzo_alloc_workspace(void)
 
 	SSDFS_DBG("try to allocate workspace\n");
 
-	workspace = kzalloc(sizeof(*workspace), GFP_NOFS);
+	workspace = ssdfs_kzalloc(sizeof(*workspace), GFP_KERNEL);
 	if (unlikely(!workspace))
 		goto failed_alloc_workspaces;
 

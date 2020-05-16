@@ -509,7 +509,7 @@ repeat_valid_blocks_processing:
 	return 0;
 
 fail_process_valid_blocks:
-	pagevec_release(&req->result.pvec);
+	ssdfs_pagevec_release(&req->result.pvec);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 
@@ -637,7 +637,7 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 	return 0;
 
 fail_process_pre_alloc_blocks:
-	pagevec_release(&req->result.pvec);
+	ssdfs_pagevec_release(&req->result.pvec);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 

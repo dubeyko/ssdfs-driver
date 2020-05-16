@@ -165,7 +165,12 @@ struct ssdfs_device_ops {
  * @erase_page: page with content for erase operation (dev_bdev.c ONLY)
  * @dev_kobj: /sys/fs/ssdfs/<device> kernel object
  * @dev_kobj_unregister: completion state for <device> kernel object
- * @dev_subgroups: <device> subgroups pointer
+ * @maptbl_kobj: /sys/fs/<ssdfs>/<device>/maptbl kernel object
+ * @maptbl_kobj_unregister: completion state for maptbl kernel object
+ * @segbmap_kobj: /sys/fs/<ssdfs>/<device>/segbmap kernel object
+ * @segbmap_kobj_unregister: completion state for segbmap kernel object
+ * @segments_kobj: /sys/fs/<ssdfs>/<device>/segments kernel object
+ * @segments_kobj_unregister: completion state for segments kernel object
  */
 struct ssdfs_fs_info {
 	u8 log_pagesize;
@@ -250,7 +255,18 @@ struct ssdfs_fs_info {
 	/* /sys/fs/ssdfs/<device> */
 	struct kobject dev_kobj;
 	struct completion dev_kobj_unregister;
-	struct ssdfs_sysfs_dev_subgroups *dev_subgroups;
+
+	/* /sys/fs/<ssdfs>/<device>/maptbl */
+	struct kobject maptbl_kobj;
+	struct completion maptbl_kobj_unregister;
+
+	/* /sys/fs/<ssdfs>/<device>/segbmap */
+	struct kobject segbmap_kobj;
+	struct completion segbmap_kobj_unregister;
+
+	/* /sys/fs/<ssdfs>/<device>/segments */
+	struct kobject segments_kobj;
+	struct completion segments_kobj_unregister;
 };
 
 #define SSDFS_FS_I(sb) \

@@ -22,40 +22,6 @@
 
 #include <linux/sysfs.h>
 
-/*
- * struct ssdfs_sysfs_dev_subgroups - device subgroup kernel objects
- * @sg_segments_kobj: /sys/fs/<ssdfs>/<device>/segments
- * @sg_segments_kobj_unregister: completion state
- * @sg_segbmap_kobj: /sys/fs/<ssdfs>/<device>/segbmap
- * @sg_segbmap_kobj_unregister: completion state
- * @sg_maptbl_kobj: /sys/fs/<ssdfs>/<device>/maptbl
- * @sg_maptbl_kobj_unregister: completion state
- */
-struct ssdfs_sysfs_dev_subgroups {
-	/* /sys/fs/<ssdfs>/<device>/segments */
-	struct kobject sg_segments_kobj;
-	struct completion sg_segments_kobj_unregister;
-
-	/* /sys/fs/<ssdfs>/<device>/segbmap */
-	struct kobject sg_segbmap_kobj;
-	struct completion sg_segbmap_kobj_unregister;
-
-	/* /sys/fs/<ssdfs>/<device>/maptbl */
-	struct kobject sg_maptbl_kobj;
-	struct completion sg_maptbl_kobj_unregister;
-};
-
-/*
- * struct ssdfs_sysfs_seg_subgroups - segment subgroup kernel objects
- * @sg_pebs_kobj: /sys/fs/<ssdfs>/<device>/<segN>/pebs
- * @sg_pebs_kobj_unregister: completion state
- */
-struct ssdfs_sysfs_seg_subgroups {
-	/* /sys/fs/<ssdfs>/<device>/<segN>/pebs */
-	struct kobject sg_pebs_kobj;
-	struct completion sg_pebs_kobj_unregister;
-};
-
 struct ssdfs_feature_attr {
 	struct attribute attr;
 	ssize_t (*show)(struct kobject *, struct attribute *,

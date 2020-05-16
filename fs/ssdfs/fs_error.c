@@ -127,7 +127,7 @@ void ssdfs_clear_dirty_pages(struct address_space *mapping)
 					  (u64)page_index(page));
 			}
 		}
-		pagevec_release(&pvec);
+		ssdfs_pagevec_release(&pvec);
 		cond_resched();
 	}
 }

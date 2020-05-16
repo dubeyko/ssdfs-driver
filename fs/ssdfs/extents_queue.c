@@ -44,6 +44,12 @@ void ssdfs_init_extent_info_once(void *obj)
 	memset(ei_obj, 0, sizeof(struct ssdfs_extent_info));
 }
 
+void ssdfs_shrink_extent_info_cache(void)
+{
+	if (ssdfs_extent_info_cachep)
+		kmem_cache_shrink(ssdfs_extent_info_cachep);
+}
+
 void ssdfs_destroy_extent_info_cache(void)
 {
 	if (ssdfs_extent_info_cachep)
@@ -262,6 +268,8 @@ struct ssdfs_extent_info *ssdfs_extent_info_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -277,6 +285,7 @@ void ssdfs_extent_info_free(struct ssdfs_extent_info *ei)
 	if (!ei)
 		return;
 
+	ssdfs_memory_leaks_decrement(ei);
 	kmem_cache_free(ssdfs_extent_info_cachep, ei);
 }
 
@@ -660,7 +669,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 finish_invalidate_index:
-	pagevec_release(&pvec);
+	ssdfs_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
 	return err;
 }
@@ -1047,7 +1056,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 finish_invalidate_index:
-	pagevec_release(&pvec);
+	ssdfs_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
 	return err;
 }
@@ -1345,7 +1354,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 finish_invalidate_index:
-	pagevec_release(&pvec);
+	ssdfs_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
 	return err;
 }

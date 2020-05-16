@@ -86,8 +86,8 @@ int ssdfs_dentries_tree_create(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	ptr = kzalloc(sizeof(struct ssdfs_dentries_btree_info),
-			GFP_KERNEL);
+	ptr = ssdfs_kzalloc(sizeof(struct ssdfs_dentries_btree_info),
+			    GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate dentries tree\n");
 		return -ENOMEM;
@@ -216,7 +216,7 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 	atomic_set(&tree->type, SSDFS_DENTRIES_BTREE_UNKNOWN_TYPE);
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_UNKNOWN_STATE);
 
-	kfree(ii->dentries_tree);
+	ssdfs_kfree(ii->dentries_tree);
 	ii->dentries_tree = NULL;
 }
 
@@ -648,8 +648,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		search->result.buf_size =
 			dentries_count * sizeof(struct ssdfs_dir_entry);
 		search->result.items_in_buffer = (u16)dentries_count;
-		search->result.buf = kmalloc(search->result.buf_size,
-					     GFP_KERNEL);
+		search->result.buf = ssdfs_kmalloc(search->result.buf_size,
+						   GFP_KERNEL);
 		if (!search->result.buf) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate memory for buffer\n");
@@ -3725,7 +3725,8 @@ ssdfs_dentries_tree_extract_inline_range(struct ssdfs_dentries_btree_info *tree,
 			search->result.buf_size = buf_size;
 			search->result.items_in_buffer = 0;
 		} else {
-			search->result.buf = kzalloc(buf_size, GFP_KERNEL);
+			search->result.buf = ssdfs_kzalloc(buf_size,
+							   GFP_KERNEL);
 			if (!search->result.buf) {
 				SSDFS_ERR("fail to allocate buffer\n");
 				return -ENOMEM;
@@ -3740,7 +3741,7 @@ ssdfs_dentries_tree_extract_inline_range(struct ssdfs_dentries_btree_info *tree,
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
 			if (search->result.buf)
-				kfree(search->result.buf);
+				ssdfs_kfree(search->result.buf);
 
 			search->result.buf = &search->raw.dentry;
 			search->result.buf_state =
@@ -4522,12 +4523,12 @@ finish_create_node:
 		return err;
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			return -ENOMEM;
 		}
 	}
@@ -4553,14 +4554,15 @@ finish_create_node:
 
 	pagevec_init(&node->content.pvec);
 	for (i = 0; i < pages_count; i++) {
-		page = alloc_page(GFP_KERNEL | GFP_NOFS | __GFP_ZERO);
-		if (unlikely(!page)) {
-			err = -ENOMEM;
+		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
 			goto finish_init_pvec;
 		}
 
-		get_page(page);
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		pagevec_add(&node->content.pvec, page);
 	}
@@ -4836,13 +4838,13 @@ finish_header_init:
 	}
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			goto finish_init_operation;
 		}
 	}
@@ -5556,7 +5558,7 @@ int ssdfs_check_found_dentry(struct ssdfs_fs_info *fsi,
 			if (search->result.buf) {
 				switch (search->result.buf_state) {
 				case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
-					kfree(search->result.buf);
+					ssdfs_kfree(search->result.buf);
 					break;
 
 				default:
@@ -5656,8 +5658,8 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 			SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
 		search->result.buf_size = buf_size;
 		search->result.buf_size *= found_dentries;
-		search->result.buf = kzalloc(search->result.buf_size,
-					     GFP_KERNEL);
+		search->result.buf = ssdfs_kzalloc(search->result.buf_size,
+						   GFP_KERNEL);
 		if (!search->result.buf) {
 			SSDFS_ERR("fail to allocate buffer: "
 				  "size %zu\n",
@@ -5671,13 +5673,14 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 		search->result.name_string_size =
 			sizeof(struct ssdfs_name_string);
 		search->result.name_string_size *= found_dentries;
-		search->result.name = kzalloc(search->result.name_string_size,
+		search->result.name =
+				ssdfs_kzalloc(search->result.name_string_size,
 					      GFP_KERNEL);
 		if (!search->result.buf) {
 			SSDFS_ERR("fail to allocate buffer: "
 				  "size %zu\n",
 				  search->result.name_string_size);
-			kfree(search->result.buf);
+			ssdfs_kfree(search->result.buf);
 			search->result.buf = NULL;
 			return -ENOMEM;
 		}
@@ -8740,11 +8743,15 @@ int ssdfs_dentries_btree_resize_items_area(struct ssdfs_btree_node *node,
 					   u32 new_size)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_dentries_btree_node_header *dentries_header;
 	size_t item_size = sizeof(struct ssdfs_dir_entry);
 	size_t index_size;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree || !node->tree->fsi);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, new_size %u\n",
@@ -8753,10 +8760,22 @@ int ssdfs_dentries_btree_resize_items_area(struct ssdfs_btree_node *node,
 	fsi = node->tree->fsi;
 	index_size = le16_to_cpu(fsi->vh->dentries_btree.desc.index_size);
 
-	return __ssdfs_btree_node_resize_items_area(node,
-						    item_size,
-						    index_size,
-						    new_size);
+	err = __ssdfs_btree_node_resize_items_area(node,
+						   item_size,
+						   index_size,
+						   new_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to resize items area: "
+			  "node_id %u, new_size %u, err %d\n",
+			  node->node_id, new_size, err);
+		return err;
+	}
+
+	dentries_header = &node->raw.dentries_header;
+	dentries_header->free_space =
+		cpu_to_le16((u16)node->items_area.free_space);
+
+	return 0;
 }
 
 void ssdfs_debug_dentries_btree_object(struct ssdfs_dentries_btree_info *tree)

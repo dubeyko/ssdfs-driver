@@ -96,6 +96,9 @@ static int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
 	BUG_ON(!bio || !page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	res = bio_add_page(bio, page, len, offset);
 	if (res != len) {
 		SSDFS_ERR("res %d != len %u\n",
@@ -127,7 +130,7 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOFS, 1);
+	bio = ssdfs_bdev_bio_alloc(GFP_NOIO, 1);
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -138,6 +141,9 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 	bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
 	bio_set_dev(bio, sb->s_bdev);
 	bio_set_op_attrs(bio, op, op_flags);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	err = ssdfs_bdev_bio_add_page(bio, page, PAGE_SIZE, 0);
 	if (unlikely(err)) {
@@ -191,7 +197,7 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 		return 0;
 	}
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOFS, pagevec_count(pvec));
+	bio = ssdfs_bdev_bio_alloc(GFP_NOIO, pagevec_count(pvec));
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -209,6 +215,9 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 		err = ssdfs_bdev_bio_add_page(bio, page,
 					      PAGE_SIZE,
@@ -367,17 +376,19 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 	pagevec_init(&pvec);
 
 	for (i = 0; i < pages_count; i++) {
-		page = alloc_page(GFP_NOFS | __GFP_ZERO);
-		if (unlikely(!page)) {
-			err = -ENOMEM;
+		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
 			goto finish_bdev_read_pvec;
 		}
 
-		get_page(page);
+		ssdfs_get_page(page);
 		lock_page(page);
-
 		pagevec_add(&pvec, page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 	}
 
 	err = ssdfs_bdev_sync_pvec_request(sb, &pvec, offset,
@@ -421,7 +432,11 @@ finish_bdev_read_pvec:
 
 		if (page) {
 			unlock_page(page);
-			put_page(page);
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
+
 			ssdfs_free_page(page);
 			pvec.pages[i] = NULL;
 		}
@@ -523,7 +538,7 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 	if (!need_check)
 		return 0;
 
-	buf = kzalloc(fsi->pagesize, GFP_KERNEL);
+	buf = ssdfs_kzalloc(fsi->pagesize, GFP_KERNEL);
 	if (!buf) {
 		SSDFS_ERR("unable to allocate %d bytes\n", fsi->pagesize);
 		return -ENOMEM;
@@ -542,7 +557,7 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 	}
 
 free_buf:
-	kfree(buf);
+	ssdfs_kfree(buf);
 	return err;
 }
 
@@ -609,7 +624,10 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
 		wake_up_all(&wq);
@@ -702,7 +720,10 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 		}
 
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 	}
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
@@ -763,7 +784,7 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 
 	max_pages = min_t(unsigned int, nr_iovecs, BIO_MAX_PAGES);
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOFS, max_pages);
+	bio = ssdfs_bdev_bio_alloc(GFP_NOIO, max_pages);
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -785,7 +806,7 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 			nr_iovecs -= i;
 			i = 0;
 
-			bio = ssdfs_bdev_bio_alloc(GFP_NOFS, max_pages);
+			bio = ssdfs_bdev_bio_alloc(GFP_NOIO, max_pages);
 			if (IS_ERR_OR_NULL(bio)) {
 				err = !bio ? -ERANGE : PTR_ERR(bio);
 				SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -947,7 +968,7 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	sectors_count = pages_count << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
 
 	err = blkdev_issue_discard(sb->s_bdev, start_sector, sectors_count,
-				   GFP_NOFS, 0);
+				   GFP_NOIO, 0);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to discard: "
 			  "start_sector %llu, sectors_count %llu, "

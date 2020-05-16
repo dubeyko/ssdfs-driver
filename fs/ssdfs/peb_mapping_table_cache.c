@@ -58,7 +58,7 @@ void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 
 	SSDFS_DBG("cache %p\n", cache);
 
-	pagevec_release(&cache->pvec);
+	ssdfs_pagevec_release(&cache->pvec);
 	ssdfs_peb_mapping_queue_remove_all(&cache->pm_queue);
 }
 
@@ -3383,7 +3383,11 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 		if (items_count == 0) {
 			cache->pvec.pages[i] = NULL;
 			cache->pvec.nr--;
-			put_page(page);
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
+
 			ssdfs_free_page(page);
 			atomic_sub(PAGE_SIZE, &cache->bytes_count);
 		}

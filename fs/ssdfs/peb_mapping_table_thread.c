@@ -129,9 +129,6 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		u16 peb_index;
 		u16 pebs_count;
 
-		page_index += (pgoff_t)fdesc->fragment_id *
-					fdesc->fragment_pages;
-
 		page = ssdfs_page_array_get_page_locked(&fdesc->array,
 							page_index);
 		if (IS_ERR_OR_NULL(page)) {
@@ -189,7 +186,10 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 		kunmap(page);
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		if (unlikely(err))
 			return err;
@@ -413,7 +413,6 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 	page_index = PEBTBL_PAGE_INDEX(fdesc, res->peb_index);
-	page_index += (pgoff_t)fdesc->fragment_id * fdesc->fragment_pages;
 	item_index = res->peb_index % fdesc->pebs_per_page;
 
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
@@ -511,7 +510,10 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -772,8 +774,6 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, fragment_index, page_index,
 		  max_erases, stage);
 
-	page_index += (pgoff_t)fdesc->fragment_id * fdesc->fragment_pages;
-
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
 	if (IS_ERR_OR_NULL(page)) {
 		err = page == NULL ? -ERANGE : PTR_ERR(page);
@@ -873,7 +873,10 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	if (array->size >= array->capacity) {
 		err = -ENOSPC;
@@ -1133,7 +1136,6 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	res = &array->ptr[*item_index];
 	page_index = PEBTBL_PAGE_INDEX(ptr, res->peb_index);
-	page_index += (pgoff_t)ptr->fragment_id * ptr->fragment_pages;
 
 	page = ssdfs_page_array_get_page_locked(&ptr->array, page_index);
 	if (IS_ERR_OR_NULL(page)) {
@@ -1241,7 +1243,10 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 finish_page_processing:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -2063,9 +2068,9 @@ int ssdfs_maptbl_thread_func(void *data)
 	up_read(&tbl->tbl_lock);
 
 	array.size = 0;
-	array.ptr = kcalloc(array.capacity,
-			    sizeof(struct ssdfs_erase_result),
-			    GFP_KERNEL);
+	array.ptr = ssdfs_kcalloc(array.capacity,
+				  sizeof(struct ssdfs_erase_result),
+				  GFP_KERNEL);
 	if (!array.ptr) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate erase_results array\n");
@@ -2090,7 +2095,7 @@ repeat:
 	if (kthread_should_stop()) {
 		complete_all(&tbl->thread.full_stop);
 		if (array.ptr)
-			kfree(array.ptr);
+			ssdfs_kfree(array.ptr);
 		return err;
 	}
 

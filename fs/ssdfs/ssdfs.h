@@ -58,8 +58,12 @@ struct ssdfs_segment_info;
 
 /* btree_node.c */
 int ssdfs_init_btree_node_obj_cache(void);
+void ssdfs_shrink_btree_node_obj_cache(void);
 void ssdfs_destroy_btree_node_obj_cache(void);
+
+/* btree_search.c */
 int ssdfs_init_btree_search_obj_cache(void);
+void ssdfs_shrink_btree_search_obj_cache(void);
 void ssdfs_destroy_btree_search_obj_cache(void);
 
 /* compression.c */
@@ -98,6 +102,7 @@ void ssdfs_set_inode_flags(struct inode *inode);
 
 /* inodes_tree.c */
 int ssdfs_init_free_ino_desc_cache(void);
+void ssdfs_shrink_free_ino_desc_cache(void);
 void ssdfs_destroy_free_ino_desc_cache(void);
 
 /* ioctl.c */
@@ -138,6 +143,7 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 
 /* offset_translation_table.c */
 int ssdfs_init_blk2off_frag_obj_cache(void);
+void ssdfs_shrink_blk2off_frag_obj_cache(void);
 void ssdfs_destroy_blk2off_frag_obj_cache(void);
 
 /* options.c */
@@ -179,6 +185,7 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent);
 
 /* segment.c */
 int ssdfs_init_seg_obj_cache(void);
+void ssdfs_shrink_seg_obj_cache(void);
 void ssdfs_destroy_seg_obj_cache(void);
 int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si);
 

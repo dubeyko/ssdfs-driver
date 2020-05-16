@@ -81,7 +81,7 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 	alloc_size = sizeof(struct ssdfs_btree_state_descriptor);
 	alloc_size += tree_height * sizeof(struct ssdfs_btree_level);
 
-	ptr = kzalloc(alloc_size, GFP_KERNEL);
+	ptr = ssdfs_kzalloc(alloc_size, GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate tree levels' array\n");
 		return ERR_PTR(-ENOMEM);
@@ -190,7 +190,7 @@ void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy)
 	if (!hierarchy)
 		return;
 
-	kfree(hierarchy);
+	ssdfs_kfree(hierarchy);
 }
 
 /*
@@ -293,6 +293,10 @@ int ssdfs_btree_prepare_add_index(struct ssdfs_btree_level *level,
 		level->nodes.old_node.type = atomic_read(&node->type);
 		level->nodes.old_node.ptr = node;
 	} else if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE) {
+		level->flags |= SSDFS_BTREE_LEVEL_ADD_INDEX;
+		level->nodes.new_node.type = atomic_read(&node->type);
+		level->nodes.new_node.ptr = node;
+	} else if (level->flags & SSDFS_BTREE_TRY_RESIZE_INDEX_AREA) {
 		level->flags |= SSDFS_BTREE_LEVEL_ADD_INDEX;
 		level->nodes.new_node.type = atomic_read(&node->type);
 		level->nodes.new_node.ptr = node;
@@ -809,6 +813,8 @@ finish_prepare_level:
 			move->pos.start = 0;
 			move->pos.count = moving_items;
 			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+			SSDFS_DBG("MOVE_TO_LEFT: start %u, count %u\n",
+				  move->pos.start, move->pos.count);
 			break;
 
 		case SSDFS_HASH_RANGE_INTERSECTION:
@@ -819,6 +825,8 @@ finish_prepare_level:
 			move->pos.start = items_count - moving_items;
 			move->pos.count = moving_items;
 			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+			SSDFS_DBG("MOVE_TO_RIGHT: start %u, count %u\n",
+				  move->pos.start, move->pos.count);
 			break;
 
 		default:
@@ -886,6 +894,50 @@ bool ssdfs_need_move_items_to_sibling(struct ssdfs_btree_level *level)
 }
 
 /*
+ * can_index_area_being_increased() - does items area has enough free space?
+ * @node: node object
+ */
+static inline
+bool can_index_area_being_increased(struct ssdfs_btree_node *node)
+{
+	int flags;
+	int items_area_state;
+	int index_area_state;
+	u32 items_area_free_space;
+	u32 index_area_min_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	flags = atomic_read(&node->tree->flags);
+
+	if (!(flags & SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE)) {
+		SSDFS_DBG("index area cannot be resized: "
+			  "node %u\n",
+			  node->node_id);
+		return false;
+	}
+
+	items_area_state = atomic_read(&node->items_area.state);
+	index_area_state = atomic_read(&node->index_area.state);
+
+	if (index_area_state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST)
+		return false;
+
+	if (items_area_state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST)
+		return false;
+
+	index_area_min_size = node->tree->index_area_min_size;
+
+	down_read(&node->header_lock);
+	items_area_free_space = node->items_area.free_space;
+	up_read(&node->header_lock);
+
+	return items_area_free_space >= index_area_min_size;
+}
+
+/*
  * ssdfs_check_capability_move_to_sibling() - check capability to rebalance tree
  * @level: level object
  *
@@ -921,6 +973,7 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	u16 moving_items;
 	int node_type;
 	u32 node_id;
+	bool is_resize_possible = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -980,6 +1033,8 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	is_resize_possible = can_index_area_being_increased(node);
+
 	items_area_state = atomic_read(&node->items_area.state);
 	index_area_state = atomic_read(&node->index_area.state);
 
@@ -1024,10 +1079,12 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		if (index_position == 0) {
 			SSDFS_DBG("no siblings on the left\n");
 
-			if (vacant_indexes == 0) {
+			if (vacant_indexes == 0 && !is_resize_possible) {
 				/*
 				 * Try to move to parent node
 				 */
+				SSDFS_DBG("MOVE_TO_PARENT: start %u, count %u\n",
+					  move->pos.start, move->pos.count);
 				move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
 				moving_items = items_capacity / 4;
 				move->pos.start = 0;
@@ -1044,10 +1101,12 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		if ((index_position + 1) == index_count) {
 			SSDFS_DBG("no siblings on the right\n");
 
-			if (vacant_indexes == 0) {
+			if (vacant_indexes == 0 && !is_resize_possible) {
 				/*
 				 * Try to move to parent node
 				 */
+				SSDFS_DBG("MOVE_TO_PARENT: start %u, count %u\n",
+					  move->pos.start, move->pos.count);
 				move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
 				moving_items = items_capacity / 4;
 				move->pos.start = items_capacity - moving_items;
@@ -1137,13 +1196,14 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 			  "items_count %u, items_capacity %u\n",
 			  items_count, items_capacity);
 
-		if (vacant_indexes == 0) {
+		if (vacant_indexes == 0 && !is_resize_possible) {
 			/*
 			 * Try to move to parent node
 			 */
+			SSDFS_DBG("MOVE_TO_PARENT: start %u, count %u\n",
+				  move->pos.start, move->pos.count);
 			move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
 			moving_items = items_capacity / 4;
-
 			move->pos.start = items_capacity - moving_items;
 			move->pos.count = moving_items;
 		}
@@ -1667,6 +1727,8 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 				    struct ssdfs_btree_level *child)
 {
 	struct ssdfs_btree_node *parent_node, *child_node = NULL;
+	struct ssdfs_btree_node_move *move;
+	struct ssdfs_btree_node_insert *insert;
 	int state;
 	u32 free_space;
 	u16 item_size;
@@ -1801,6 +1863,9 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 								start_hash2,
 								end_hash2);
 
+			move = &parent->items_area.move;
+			insert = &child->items_area.insert;
+
 			switch (tree->type) {
 			case SSDFS_INODES_BTREE:
 			case SSDFS_EXTENTS_BTREE:
@@ -1820,6 +1885,13 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 
 				if (!has_intersection) {
 					SSDFS_DBG("no need to move items\n");
+
+					move->op_state =
+						SSDFS_BTREE_AREA_OP_UNKNOWN;
+					move->direction =
+						SSDFS_BTREE_MOVE_NOWHERE;
+					move->pos.start = U16_MAX;
+					move->pos.count = 0;
 					return 0;
 				} else
 					items_count /= 2;
@@ -1830,23 +1902,18 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 			}
 
 			parent->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
-			parent->items_area.move.direction =
-						SSDFS_BTREE_MOVE_TO_CHILD;
-			parent->items_area.move.pos.state =
-						SSDFS_HASH_RANGE_INTERSECTION;
-			parent->items_area.move.pos.start = 0;
-			parent->items_area.move.pos.count = items_count;
-			parent->items_area.move.op_state =
-					SSDFS_BTREE_AREA_OP_REQUESTED;
+			move->direction = SSDFS_BTREE_MOVE_TO_CHILD;
+			move->pos.state = SSDFS_HASH_RANGE_INTERSECTION;
+			move->pos.start = 0;
+			move->pos.count = items_count;
+			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 
-			child->items_area.insert.pos.state =
-					SSDFS_HASH_RANGE_LEFT_ADJACENT;
-			child->items_area.insert.hash.start = start_hash1;
-			child->items_area.insert.hash.end = end_hash1;
-			child->items_area.insert.pos.start = 0;
-			child->items_area.insert.pos.count = items_count;
-			child->items_area.insert.op_state =
-					SSDFS_BTREE_AREA_OP_REQUESTED;
+			insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
+			insert->hash.start = start_hash1;
+			insert->hash.end = end_hash1;
+			insert->pos.start = 0;
+			insert->pos.count = items_count;
+			insert->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 
 			child->flags |= SSDFS_BTREE_LEVEL_ADD_NODE;
 			break;
@@ -1901,6 +1968,9 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 								start_hash2,
 								end_hash2);
 
+			move = &parent->items_area.move;
+			insert = &child->items_area.insert;
+
 			switch (tree->type) {
 			case SSDFS_INODES_BTREE:
 			case SSDFS_EXTENTS_BTREE:
@@ -1920,6 +1990,13 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 
 				if (!has_intersection) {
 					SSDFS_DBG("no need to move items\n");
+
+					move->op_state =
+						SSDFS_BTREE_AREA_OP_UNKNOWN;
+					move->direction =
+						SSDFS_BTREE_MOVE_NOWHERE;
+					move->pos.start = U16_MAX;
+					move->pos.count = 0;
 					return 0;
 				} else
 					items_count /= 2;
@@ -1930,23 +2007,18 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 			}
 
 			parent->flags |= SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
-			parent->items_area.move.direction =
-						SSDFS_BTREE_MOVE_TO_CHILD;
-			parent->items_area.move.pos.state =
-						SSDFS_HASH_RANGE_INTERSECTION;
-			parent->items_area.move.pos.start = 0;
-			parent->items_area.move.pos.count = items_count;
-			parent->items_area.move.op_state =
-					SSDFS_BTREE_AREA_OP_REQUESTED;
+			move->direction = SSDFS_BTREE_MOVE_TO_CHILD;
+			move->pos.state = SSDFS_HASH_RANGE_INTERSECTION;
+			move->pos.start = 0;
+			move->pos.count = items_count;
+			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 
-			child->items_area.insert.pos.state =
-					SSDFS_HASH_RANGE_LEFT_ADJACENT;
-			child->items_area.insert.hash.start = start_hash1;
-			child->items_area.insert.hash.end = end_hash1;
-			child->items_area.insert.pos.start = 0;
-			child->items_area.insert.pos.count = items_count;
-			child->items_area.insert.op_state =
-					SSDFS_BTREE_AREA_OP_REQUESTED;
+			insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
+			insert->hash.start = start_hash1;
+			insert->hash.end = end_hash1;
+			insert->pos.start = 0;
+			insert->pos.count = items_count;
+			insert->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
 
 			child->flags |= SSDFS_BTREE_LEVEL_ADD_NODE;
 			break;
@@ -2013,6 +2085,7 @@ bool is_index_area_resizable(struct ssdfs_btree_node *node)
 	int state;
 	u32 node_size;
 	u32 index_area_size, items_area_size;
+	size_t hdr_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree);
@@ -2030,6 +2103,7 @@ bool is_index_area_resizable(struct ssdfs_btree_node *node)
 	}
 
 	node_size = node->node_size;
+	hdr_size = sizeof(node->raw);
 
 	down_read(&node->header_lock);
 	index_area_size = node->index_area.area_size;
@@ -2045,11 +2119,18 @@ bool is_index_area_resizable(struct ssdfs_btree_node *node)
 		items_area_size = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(node_size != (index_area_size + items_area_size));
+	SSDFS_DBG("node_id %u, node_size %u, hdr_size %zu, "
+		  "index_area_size %u, items_area_size %u\n",
+		  node->node_id, node_size, hdr_size,
+		  index_area_size, items_area_size);
+
+	BUG_ON(node_size < (hdr_size + index_area_size + items_area_size));
 #else
-	if (node_size != (index_area_size + items_area_size)) {
-		SSDFS_WARN("node_size %u != (index_area %u + items_area %u)\n",
-			   node_size, index_area_size, items_area_size);
+	if (node_size < (hdr_size + index_area_size + items_area_size)) {
+		SSDFS_WARN("node_size %u < "
+			   "(hdr_size %zu +index_area %u + items_area %u)\n",
+			   node_size, hdr_size,
+			   index_area_size, items_area_size);
 		return false;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2077,6 +2158,8 @@ int ssdfs_btree_prepare_index_area_resize(struct ssdfs_btree_level *level,
 	int state;
 	u16 items_count;
 	u16 items_capacity;
+	u32 index_area_size, items_area_size;
+	u32 index_area_min_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
@@ -2089,15 +2172,22 @@ int ssdfs_btree_prepare_index_area_resize(struct ssdfs_btree_level *level,
 	BUG_ON(!is_index_area_resizable(node));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	level->flags |= SSDFS_BTREE_TRY_RESIZE_INDEX_AREA |
-			SSDFS_BTREE_ITEMS_AREA_NEED_MOVE;
-
-	level->items_area.move.direction = SSDFS_BTREE_MOVE_TO_CHILD;
+	level->flags |= SSDFS_BTREE_TRY_RESIZE_INDEX_AREA;
 
 	down_read(&node->header_lock);
+	index_area_size = node->index_area.area_size;
+	items_area_size = node->items_area.area_size;
 	items_count = node->items_area.items_count;
 	items_capacity = node->items_area.items_capacity;
 	up_read(&node->header_lock);
+
+	index_area_min_size = node->tree->index_area_min_size;
+
+	SSDFS_DBG("index_area_size %u, index_area_min_size %u, "
+		  "items_area_size %u, items_count %u, "
+		  "items_capacity %u\n",
+		  index_area_size, index_area_min_size,
+		  items_area_size, items_count, items_capacity);
 
 	state = atomic_read(&node->items_area.state);
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
@@ -2113,11 +2203,6 @@ int ssdfs_btree_prepare_index_area_resize(struct ssdfs_btree_level *level,
 			  items_count, items_capacity);
 		return -ERANGE;
 	}
-
-	level->items_area.move.pos.state =
-			SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-	level->items_area.move.pos.start = 0;
-	level->items_area.move.pos.count = items_count;
 
 	return 0;
 }
@@ -3911,12 +3996,14 @@ try_add_node:
 				     start_hash, end_hash,
 				     child, child_node);
 
-	err = ssdfs_btree_define_moving_items(tree, search,
-						parent, child);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to define moving items: "
-			  "err %d\n", err);
-		return err;
+	if (!ssdfs_need_move_items_to_sibling(child)) {
+		err = ssdfs_btree_define_moving_items(tree, search,
+							parent, child);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to define moving items: "
+				  "err %d\n", err);
+			return err;
+		}
 	}
 
 	if (can_add_new_index(parent_node)) {
@@ -6448,41 +6535,35 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 		return -ERANGE;
 	}
 
-	if (child->items_area.free_space > (desc->node_size / 2)) {
-		index_area_size = child->index_area.area_size;
-		index_area_size += desc->index_area_min_size;
-		index_free_area = child->index_area.free_space;
-		index_free_area += desc->index_area_min_size;
+	SSDFS_DBG("INITIAL_STATE: "
+		  "items_area: area_size %u, free_space %u; "
+		  "index_area: area_size %u, free_space %u\n",
+		  child->items_area.area_size,
+		  child->items_area.free_space,
+		  child->index_area.area_size,
+		  child->index_area.free_space);
 
-		if (desc->index_area_min_size > child->items_area.free_space) {
-			SSDFS_ERR("invalid resize request: "
-				  "items_free_area %u, "
-				  "index_area_min_size %u\n",
-				  child->items_area.free_space,
-				  desc->index_area_min_size);
-			return -ERANGE;
-		}
+	index_area_size = child->index_area.area_size << 1;
+	index_free_area = index_area_size - child->index_area.area_size;
 
-		items_area_size = child->items_area.area_size;
-		items_area_size -= desc->index_area_min_size;
-		items_free_area = child->items_area.free_space;
-		items_free_area -= desc->index_area_min_size;
-	} else {
-		u32 free_space;
-
-		free_space = child->items_area.free_space;
-		free_space /= desc->index_area_min_size;
-		free_space *= desc->index_area_min_size;
-
-		index_area_size = child->index_area.area_size;
-		index_area_size += child->items_area.free_space;
-		index_free_area = child->index_area.free_space;
-		index_free_area += free_space;
-
-		items_area_size = child->items_area.area_size;
-		items_area_size -= free_space;
-		items_free_area = 0;
+	if (child->items_area.free_space < index_free_area) {
+		SSDFS_DBG("unable to resize the index area: "
+			  "free_space %u, requested_size %u\n",
+			  child->items_area.free_space,
+			  index_free_area);
+		return -ENOSPC;
 	}
+
+	items_area_size = child->items_area.area_size;
+	items_area_size -= index_free_area;
+	items_free_area = child->items_area.free_space;
+	items_free_area -= index_free_area;
+
+	SSDFS_DBG("NEW_STATE: "
+		  "items_area: area_size %u, free_space %u; "
+		  "index_area: area_size %u, free_space %u\n",
+		  items_area_size, items_free_area,
+		  index_area_size, index_free_area);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(index_area_size == 0);
@@ -7105,7 +7186,6 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 	struct ssdfs_btree_level *cur_level;
 	struct ssdfs_btree_level *parent;
 	struct ssdfs_btree_node *node;
-	bool has_current_node_resized = false;
 	u8 node_height;
 	int err;
 
@@ -7179,33 +7259,21 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 		}
 	}
 
-	if (cur_level->flags & SSDFS_BTREE_TRY_RESIZE_INDEX_AREA) {
-		err = ssdfs_btree_resize_index_area(desc, cur_level);
-		if (err == -ENOSPC) {
-			has_current_node_resized = false;
-			SSDFS_DBG("try to repeat node resize\n");
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to resize index area: err %d\n",
-				  err);
-			return err;
-		} else
-			has_current_node_resized = true;
-	}
-
 	if (parent->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
 		err = ssdfs_btree_move_indexes(desc, parent, cur_level);
+		if (err == -ENOSPC) {
+			err = ssdfs_btree_resize_index_area(desc, cur_level);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to resize index area: err %d\n",
+					  err);
+				return err;
+			}
+
+			err = ssdfs_btree_move_indexes(desc, parent, cur_level);
+		}
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move indexes: err %d\n",
-				  err);
-			return err;
-		}
-	}
-
-	if (cur_level->flags & SSDFS_BTREE_TRY_RESIZE_INDEX_AREA &&
-	    !has_current_node_resized) {
-		err = ssdfs_btree_resize_index_area(desc, cur_level);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to resize index area: err %d\n",
 				  err);
 			return err;
 		}

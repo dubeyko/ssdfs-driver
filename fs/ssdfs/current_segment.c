@@ -406,8 +406,8 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
-	fsi->cur_segs = kzalloc(sizeof(struct ssdfs_current_segs_array),
-				GFP_KERNEL);
+	fsi->cur_segs = ssdfs_kzalloc(sizeof(struct ssdfs_current_segs_array),
+				      GFP_KERNEL);
 	if (!fsi->cur_segs) {
 		SSDFS_ERR("fail to allocate current segments array\n");
 		return -ENOMEM;
@@ -512,7 +512,7 @@ destroy_cur_segs:
 		ssdfs_current_segment_unlock(fsi->cur_segs->objects[i]);
 	}
 
-	kfree(fsi->cur_segs);
+	ssdfs_kfree(fsi->cur_segs);
 	fsi->cur_segs = NULL;
 
 	return err;
@@ -564,6 +564,6 @@ void ssdfs_current_segment_array_destroy(struct ssdfs_fs_info *fsi)
 	BUG_ON(rwsem_is_locked(&fsi->cur_segs->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kfree(fsi->cur_segs);
+	ssdfs_kfree(fsi->cur_segs);
 	fsi->cur_segs = NULL;
 }

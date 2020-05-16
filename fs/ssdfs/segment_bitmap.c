@@ -81,7 +81,7 @@ void ssdfs_segbmap_mapping_init(struct address_space *mapping,
 	mapping->host = inode;
 	mapping->flags = 0;
 	atomic_set(&mapping->i_mmap_writable, 0);
-	mapping_set_gfp_mask(mapping, GFP_NOFS);
+	mapping_set_gfp_mask(mapping, GFP_KERNEL);
 	mapping->private_data = NULL;
 	mapping->writeback_index = 0;
 	inode->i_mapping = mapping;
@@ -120,7 +120,7 @@ int ssdfs_segbmap_get_inode(struct ssdfs_fs_info *fsi)
 	BUG_ON(!(inode->i_state & I_NEW));
 
 	inode->i_mode = S_IFREG;
-	mapping_set_gfp_mask(inode->i_mapping, GFP_NOFS);
+	mapping_set_gfp_mask(inode->i_mapping, GFP_KERNEL);
 
 	inode->i_op = &def_segbmap_ino_iops;
 	inode->i_fop = &def_segbmap_ino_fops;
@@ -415,7 +415,7 @@ int ssdfs_segbmap_create_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 
 		BUG_ON(*ptr);
 
-		*ptr = kzalloc(bmap_bytes, GFP_KERNEL);
+		*ptr = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!*ptr) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate fbmap: "
@@ -428,7 +428,7 @@ int ssdfs_segbmap_create_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 
 free_fbmaps:
 	for (; i >= 0; i--)
-		kfree(segbmap->fbmap[i]);
+		ssdfs_kfree(segbmap->fbmap[i]);
 
 	return err;
 }
@@ -449,7 +449,7 @@ void ssdfs_segbmap_destroy_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 	SSDFS_DBG("segbmap %p\n", segbmap);
 
 	for (i = 0; i < SSDFS_SEGBMAP_FBMAP_TYPE_MAX; i++)
-		kfree(segbmap->fbmap[i]);
+		ssdfs_kfree(segbmap->fbmap[i]);
 }
 
 /*
@@ -485,7 +485,7 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
 
-	kaddr = kzalloc(segbmap_obj_size, GFP_KERNEL);
+	kaddr = ssdfs_kzalloc(segbmap_obj_size, GFP_KERNEL);
 	if (!kaddr) {
 		SSDFS_ERR("fail to allocate segment bitmap object\n");
 		return -ENOMEM;
@@ -573,7 +573,7 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_segbmap_object;
 	}
 
-	kaddr = kcalloc(ptr->fragments_count, frag_desc_size, GFP_KERNEL);
+	kaddr = ssdfs_kcalloc(ptr->fragments_count, frag_desc_size, GFP_KERNEL);
 	if (!kaddr) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate fragment descriptors array\n");
@@ -690,13 +690,13 @@ forget_inode:
 	iput(fsi->segbmap_inode);
 
 free_desc_array:
-	kfree(fsi->segbmap->desc_array);
+	ssdfs_kfree(fsi->segbmap->desc_array);
 
 free_fragment_bmaps:
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
 
 free_segbmap_object:
-	kfree(fsi->segbmap);
+	ssdfs_kfree(fsi->segbmap);
 
 	fsi->segbmap = NULL;
 
@@ -715,6 +715,8 @@ free_segbmap_object:
  */
 void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 {
+	int i;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -735,18 +737,39 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 				"segment bitmap is dirty on destruction\n");
 	}
 
+	for (i = 0; i < fsi->segbmap->fragments_count; i++) {
+		struct page *page;
+
+		xa_lock_irq(&fsi->segbmap->pages.i_pages);
+		page = __xa_erase(&fsi->segbmap->pages.i_pages, i);
+		xa_unlock_irq(&fsi->segbmap->pages.i_pages);
+
+		if (!page) {
+			SSDFS_DBG("page %d is NULL\n", i);
+			continue;
+		}
+
+		page->mapping = NULL;
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
+
+		ssdfs_put_page(page);
+		ssdfs_free_page(page);
+	}
+
 	if (fsi->segbmap->pages.nrpages != 0)
 		truncate_inode_pages(&fsi->segbmap->pages, 0);
 
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
-	kfree(fsi->segbmap->desc_array);
+	ssdfs_kfree(fsi->segbmap->desc_array);
 
 	up_write(&fsi->segbmap->resize_lock);
 	up_write(&fsi->segbmap->search_lock);
 	inode_unlock(fsi->segbmap_inode);
 
 	iput(fsi->segbmap_inode);
-	kfree(fsi->segbmap);
+	ssdfs_kfree(fsi->segbmap);
 	fsi->segbmap = NULL;
 }
 
@@ -925,8 +948,11 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 
 	inode_lock_shared(pebc->parent_si->fsi->segbmap_inode);
 
-	get_page(page);
+	ssdfs_get_page(page);
 	page->index = sequence_id;
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	down_write(&segbmap->search_lock);
 
@@ -939,7 +965,10 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		SSDFS_DBG("fail to add page %u into address space: err %d\n",
 			  sequence_id, err);
 		page->mapping = NULL;
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 	} else {
 		page->mapping = &segbmap->pages;
 		segbmap->pages.nrpages++;
@@ -1193,7 +1222,10 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 fail_copy_fragment:
 	kunmap(spage);
 	unlock_page(spage);
-	put_page(spage);
+	ssdfs_put_page(spage);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  spage, page_ref_count(spage));
 
 	return err;
 }
@@ -1849,7 +1881,10 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 
 			kunmap(page);
 			unlock_page(page);
-			put_page(page);
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
 
 			if (unlikely(err))
 				goto fail_issue_commit_logs;
@@ -2405,7 +2440,10 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 
 free_page:
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_get_state:
 	up_read(&segbmap->search_lock);
@@ -2745,7 +2783,10 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 
 free_page:
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_set_state:
 	return err;
@@ -3566,7 +3607,11 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	return err;
 }
 

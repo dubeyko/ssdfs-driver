@@ -162,6 +162,7 @@ int ssdfs_btree_desc_init(struct ssdfs_fs_info *fsi,
 			  u8 min_item_size,
 			  u16 max_item_size)
 {
+	size_t index_size = sizeof(struct ssdfs_btree_index_key);
 	u32 pagesize;
 	u32 node_size;
 
@@ -182,13 +183,13 @@ int ssdfs_btree_desc_init(struct ssdfs_fs_info *fsi,
 		return -EIO;
 	}
 
-	if (desc->node_ptr_size != sizeof(struct ssdfs_btree_index_key)) {
+	if (desc->node_ptr_size != index_size) {
 		SSDFS_ERR("invalid node_ptr_size %u\n",
 			  desc->node_ptr_size);
 		return -EIO;
 	}
 
-	if (le16_to_cpu(desc->index_size) != sizeof(struct ssdfs_btree_index)) {
+	if (le16_to_cpu(desc->index_size) != index_size) {
 		SSDFS_ERR("invalid index_size %u\n",
 			  le16_to_cpu(desc->index_size));
 		return -EIO;
@@ -419,7 +420,7 @@ int ssdfs_btree_desc_flush(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	if (tree->index_size != sizeof(struct ssdfs_btree_index)) {
+	if (tree->index_size != sizeof(struct ssdfs_btree_index_key)) {
 		SSDFS_ERR("invalid index_size %u\n",
 			  tree->index_size);
 		return -ERANGE;

@@ -220,7 +220,7 @@ static int ssdfs_mtd_can_write_page(struct super_block *sb, loff_t offset,
 	if (!need_check)
 		return 0;
 
-	buf = kzalloc(fsi->pagesize, GFP_KERNEL);
+	buf = ssdfs_kzalloc(fsi->pagesize, GFP_KERNEL);
 	if (!buf) {
 		SSDFS_ERR("unable to allocate %d bytes\n", fsi->pagesize);
 		return -ENOMEM;
@@ -237,7 +237,7 @@ static int ssdfs_mtd_can_write_page(struct super_block *sb, loff_t offset,
 	}
 
 free_buf:
-	kfree(buf);
+	ssdfs_kfree(buf);
 	return err;
 }
 
@@ -309,7 +309,11 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	return err;
 }
 

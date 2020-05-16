@@ -47,7 +47,7 @@ ssdfs_create_sequence_array(unsigned long revert_threshold)
 		return ERR_PTR(-EINVAL);
 	}
 
-	ptr = kmalloc(sizeof(struct ssdfs_sequence_array), GFP_KERNEL);
+	ptr = ssdfs_kmalloc(sizeof(struct ssdfs_sequence_array), GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory\n");
 		return ERR_PTR(-ENOMEM);
@@ -100,7 +100,7 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 	array->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 	spin_unlock(&array->lock);
 
-	kfree(array);
+	ssdfs_kfree(array);
 }
 
 /*

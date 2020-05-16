@@ -83,8 +83,10 @@ struct ssdfs_segment_migration_info {
  * @blk_bmap: segment's block bitmap
  * @blk2off_table: offset translation table
  * @fsi: pointer on shared file system object
- * @seg_kobj: /sys/fs/ssdfs/<device>/<segN> kernel object
+ * @seg_kobj: /sys/fs/ssdfs/<device>/segments/<segN> kernel object
  * @seg_kobj_unregister: completion state for <segN> kernel object
+ * @pebs_kobj: /sys/fs/<ssdfs>/<device>/segments/<segN>/pebs kernel object
+ * @pebs_kobj_unregister: completion state for pebs kernel object
  */
 struct ssdfs_segment_info {
 	/* Static data */
@@ -120,10 +122,14 @@ struct ssdfs_segment_info {
 	struct ssdfs_blk2off_table *blk2off_table;
 	struct ssdfs_fs_info *fsi;
 
-	/* /sys/fs/ssdfs/<device>/<segN> */
-	struct kobject seg_kobj;
+	/* /sys/fs/ssdfs/<device>/segments/<segN> */
+	struct kobject *seg_kobj;
+	struct kobject seg_kobj_buf;
 	struct completion seg_kobj_unregister;
-	struct ssdfs_sysfs_seg_subgroups *seg_subgroups;
+
+	/* /sys/fs/<ssdfs>/<device>/segments/<segN>/pebs */
+	struct kobject pebs_kobj;
+	struct completion pebs_kobj_unregister;
 };
 
 /*

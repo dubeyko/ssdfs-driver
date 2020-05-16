@@ -324,8 +324,8 @@ bool ssdfs_can_compress_data(struct page *page,
 		return false;
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	counts = kzalloc(sizeof(unsigned) * SSDFS_DICT_SIZE,
-			 GFP_KERNEL);
+	counts = ssdfs_kzalloc(sizeof(unsigned) * SSDFS_DICT_SIZE,
+			       GFP_KERNEL);
 	if (!counts) {
 		SSDFS_WARN("fail to alloc array\n");
 		return true;
@@ -347,7 +347,7 @@ bool ssdfs_can_compress_data(struct page *page,
 	}
 	kunmap_atomic(kaddr);
 
-	kfree(counts);
+	ssdfs_kfree(counts);
 
 	SSDFS_DBG("data_size %u, found_symbols %u, min %u, max %u\n",
 		  data_size, found_symbols, min, max);

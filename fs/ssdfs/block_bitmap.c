@@ -117,12 +117,12 @@ void ssdfs_block_bmap_storage_destroy(struct ssdfs_block_bmap_storage *storage)
 
 	switch (storage->state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-		pagevec_release(&storage->pvec);
+		ssdfs_pagevec_release(&storage->pvec);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
 		if (storage->buf)
-			kfree(storage->buf);
+			ssdfs_kfree(storage->buf);
 		break;
 
 	default:
@@ -187,7 +187,7 @@ int ssdfs_block_bmap_create_empty_storage(struct ssdfs_block_bmap_storage *ptr,
 		pagevec_init(&ptr->pvec);
 		ptr->state = SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC;
 	} else {
-		ptr->buf = kmalloc(bmap_bytes, GFP_KERNEL);
+		ptr->buf = ssdfs_kmalloc(bmap_bytes, GFP_KERNEL);
 		if (!ptr->buf) {
 			SSDFS_ERR("fail to allocate memory: "
 				  "bmap_bytes %zu\n",
@@ -222,6 +222,7 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 {
 	struct page *page;
 	int i;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr);
@@ -240,13 +241,15 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 				return -ENOMEM;
 			}
 
-			page = alloc_page(GFP_KERNEL | __GFP_ZERO);
-			if (unlikely(!page)) {
+			page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 				SSDFS_ERR("unable to allocate #%d page\n", i);
-				return -ENOMEM;
+				return err;
 			}
 
-			get_page(page);
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
 
 			pagevec_add(&ptr->storage.pvec, page);
 		}
@@ -418,7 +421,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 	if (blk_bmap->storage.state != SSDFS_BLOCK_BMAP_STORAGE_ABSENT) {
 		switch (blk_bmap->storage.state) {
 		case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-			pagevec_release(&blk_bmap->storage.pvec);
+			ssdfs_pagevec_release(&blk_bmap->storage.pvec);
 			pagevec_reinit(&blk_bmap->storage.pvec);
 			break;
 
@@ -447,8 +450,6 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 				return -ERANGE;
 			}
 
-			get_page(source->pages[i]);
-
 #ifdef CONFIG_SSDFS_DEBUG
 			kaddr = kmap(source->pages[i]);
 			SSDFS_DBG("BMAP INIT\n");
@@ -461,6 +462,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			unlock_page(source->pages[i]);
 			source->pages[i] = NULL;
 		}
+
+		pagevec_reinit(source);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -477,8 +480,6 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			return -ERANGE;
 		}
 
-		get_page(page);
-
 		kaddr = kmap_atomic(page);
 		memcpy(blk_bmap->storage.buf, kaddr, blk_bmap->bytes_count);
 		kunmap_atomic(kaddr);
@@ -492,7 +493,6 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		unlock_page(page);
-		put_page(page);
 		break;
 
 	default:
@@ -621,8 +621,6 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
-	pagevec_reinit(source);
-
 	err = ssdfs_cache_block_state(blk_bmap, last_free_blk, SSDFS_BLK_FREE);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to cache last free page %u, err %d\n",
@@ -729,6 +727,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 	struct page *page;
 	void *kaddr1, *kaddr2;
 	int i;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap || !snapshot);
@@ -746,13 +745,12 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 	switch (blk_bmap->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
 		for (i = 0; i < pagevec_count(&blk_bmap->storage.pvec); i++) {
-			page = alloc_page(GFP_KERNEL);
-			if (unlikely(!page)) {
+			page = ssdfs_alloc_page(GFP_KERNEL);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 				SSDFS_ERR("unable to allocate #%d page\n", i);
-				return -ENOMEM;
+				return err;
 			}
-
-			get_page(page);
 
 			kaddr1 = kmap_atomic(blk_bmap->storage.pvec.pages[i]);
 			kaddr2 = kmap_atomic(page);
@@ -773,13 +771,12 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		page = alloc_page(GFP_KERNEL);
-		if (unlikely(!page)) {
-			SSDFS_ERR("unable to allocate page\n");
-			return -ENOMEM;
+		page = ssdfs_alloc_page(GFP_KERNEL);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+			SSDFS_ERR("unable to allocate memory page\n");
+			return err;
 		}
-
-		get_page(page);
 
 		kaddr1 = blk_bmap->storage.buf;
 		kaddr2 = kmap_atomic(page);
@@ -902,7 +899,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 	return 0;
 
 cleanup_snapshot_pagevec:
-	pagevec_release(snapshot);
+	ssdfs_pagevec_release(snapshot);
 	return err;
 }
 

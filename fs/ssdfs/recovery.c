@@ -45,8 +45,8 @@ int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 	BUG_ON(!sbi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	vh_buf = kzalloc(hdr_size, GFP_KERNEL);
-	vs_buf = kzalloc(footer_size, GFP_KERNEL);
+	vh_buf = ssdfs_kzalloc(hdr_size, GFP_KERNEL);
+	vs_buf = ssdfs_kzalloc(footer_size, GFP_KERNEL);
 	if (unlikely(!vh_buf || !vs_buf)) {
 		SSDFS_ERR("unable to allocate superblock buffers\n");
 		err = -ENOMEM;
@@ -59,8 +59,8 @@ int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 	return 0;
 
 free_buf:
-	kfree(vh_buf);
-	kfree(vs_buf);
+	ssdfs_kfree(vh_buf);
+	ssdfs_kfree(vs_buf);
 	return err;
 }
 
@@ -78,8 +78,8 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 		  sbi->last_log.peb_id, sbi->last_log.page_offset,
 		  sbi->last_log.pages_count);
 
-	kfree(sbi->vh_buf);
-	kfree(sbi->vs_buf);
+	ssdfs_kfree(sbi->vh_buf);
+	ssdfs_kfree(sbi->vs_buf);
 	sbi->vh_buf = NULL;
 	sbi->vs_buf = NULL;
 	memset(&sbi->last_log, 0, sizeof(struct ssdfs_peb_extent));

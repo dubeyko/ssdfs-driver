@@ -73,7 +73,7 @@ static void ssdfs_zlib_free_workspace(struct list_head *ptr)
 
 	vfree(workspace->deflate_stream.workspace);
 	vfree(workspace->inflate_stream.workspace);
-	kfree(workspace);
+	ssdfs_kfree(workspace);
 }
 
 static struct list_head *ssdfs_zlib_alloc_workspace(void)
@@ -83,7 +83,7 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 
 	SSDFS_DBG("try to allocate workspace\n");
 
-	workspace = kzalloc(sizeof(*workspace), GFP_NOFS);
+	workspace = ssdfs_kzalloc(sizeof(*workspace), GFP_KERNEL);
 	if (unlikely(!workspace)) {
 		SSDFS_ERR("unable to allocate memory for workspace\n");
 		return ERR_PTR(-ENOMEM);

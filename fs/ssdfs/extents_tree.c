@@ -103,8 +103,8 @@ int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
 	} else
 		ii->extents_tree = NULL;
 
-	ptr = kzalloc(sizeof(struct ssdfs_extents_btree_info),
-			GFP_KERNEL);
+	ptr = ssdfs_kzalloc(sizeof(struct ssdfs_extents_btree_info),
+			    GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate extents tree\n");
 		return -ENOMEM;
@@ -232,7 +232,7 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 	atomic_set(&tree->type, SSDFS_EXTENTS_BTREE_UNKNOWN_TYPE);
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_UNKNOWN_STATE);
 
-	kfree(ii->extents_tree);
+	ssdfs_kfree(ii->extents_tree);
 	ii->extents_tree = NULL;
 }
 
@@ -601,8 +601,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 		search->result.buf_size =
 			forks_count * sizeof(struct ssdfs_raw_fork);
 		search->result.items_in_buffer = forks_count;
-		search->result.buf = kmalloc(search->result.buf_size,
-					     GFP_KERNEL);
+		search->result.buf = ssdfs_kmalloc(search->result.buf_size,
+						   GFP_KERNEL);
 		if (!search->result.buf) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate memory for buffer\n");
@@ -5511,12 +5511,12 @@ finish_create_node:
 		return err;
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			return -ENOMEM;
 		}
 	}
@@ -5542,14 +5542,15 @@ finish_create_node:
 
 	pagevec_init(&node->content.pvec);
 	for (i = 0; i < pages_count; i++) {
-		page = alloc_page(GFP_KERNEL | GFP_NOFS | __GFP_ZERO);
-		if (unlikely(!page)) {
-			err = -ENOMEM;
+		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
 			goto finish_init_pvec;
 		}
 
-		get_page(page);
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		pagevec_add(&node->content.pvec, page);
 	}
@@ -5795,13 +5796,13 @@ finish_header_init:
 	}
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			goto finish_init_operation;
 		}
 	}
@@ -6500,8 +6501,8 @@ int ssdfs_prepare_forks_buffer(struct ssdfs_btree_search *search,
 			SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
 		search->result.buf_size = item_size;
 		search->result.buf_size *= found_forks;
-		search->result.buf = kzalloc(search->result.buf_size,
-					     GFP_KERNEL);
+		search->result.buf = ssdfs_kzalloc(search->result.buf_size,
+						   GFP_KERNEL);
 		if (!search->result.buf) {
 			SSDFS_ERR("fail to allocate buffer: "
 				  "size %zu\n",

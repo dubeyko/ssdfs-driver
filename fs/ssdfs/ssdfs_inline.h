@@ -13,6 +13,8 @@
 #ifndef _SSDFS_INLINE_H
 #define _SSDFS_INLINE_H
 
+#include <linux/slab.h>
+
 #define SSDFS_CRIT(fmt, ...) \
 	pr_crit("pid %d:%s:%d %s(): " fmt, \
 		 current->pid, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
@@ -48,6 +50,135 @@
 
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_DEBUG
+extern atomic64_t ssdfs_allocated_pages;
+extern atomic64_t ssdfs_memory_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+static inline
+void ssdfs_memory_leaks_increment(void *kaddr)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_inc(&ssdfs_memory_leaks);
+
+	SSDFS_DBG("memory %px, allocation count %lld\n",
+		  kaddr,
+		  atomic64_read(&ssdfs_memory_leaks));
+
+
+
+if (atomic64_read(&ssdfs_memory_leaks) > 440 &&
+    atomic64_read(&ssdfs_memory_leaks) < 445) {
+	SSDFS_WARN("memory %px, allocation count %lld\n",
+		  kaddr,
+		  atomic64_read(&ssdfs_memory_leaks));
+}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+void ssdfs_memory_leaks_decrement(void *kaddr)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_dec(&ssdfs_memory_leaks);
+
+	SSDFS_DBG("memory %px, allocation count %lld\n",
+		  kaddr,
+		  atomic64_read(&ssdfs_memory_leaks));
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+void *ssdfs_kmalloc(size_t size, gfp_t flags)
+{
+	void *kaddr = kmalloc(size, flags);
+
+	if (kaddr)
+		ssdfs_memory_leaks_increment(kaddr);
+
+	return kaddr;
+}
+
+static inline
+void *ssdfs_kzalloc(size_t size, gfp_t flags)
+{
+	void *kaddr = kzalloc(size, flags);
+
+	if (kaddr)
+		ssdfs_memory_leaks_increment(kaddr);
+
+	return kaddr;
+}
+
+static inline
+void *ssdfs_kcalloc(size_t n, size_t size, gfp_t flags)
+{
+	void *kaddr = kcalloc(n, size, flags);
+
+	if (kaddr)
+		ssdfs_memory_leaks_increment(kaddr);
+
+	return kaddr;
+}
+
+static inline
+void ssdfs_kfree(void *kaddr)
+{
+	if (kaddr) {
+		ssdfs_memory_leaks_decrement(kaddr);
+		kfree(kaddr);
+	}
+}
+
+static inline
+void ssdfs_get_page(struct page *page)
+{
+	get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+}
+
+static inline
+void ssdfs_put_page(struct page *page)
+{
+	put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
+	if (page_ref_count(page) < 1) {
+		SSDFS_WARN("page %px, count %d\n",
+			  page, page_ref_count(page));
+	}
+}
+
+static inline
+struct page *ssdfs_alloc_page(gfp_t gfp_mask)
+{
+	struct page *page;
+
+	page = alloc_page(gfp_mask);
+	if (unlikely(!page)) {
+		SSDFS_ERR("unable to allocate memory page\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	ssdfs_get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_inc(&ssdfs_allocated_pages);
+
+	SSDFS_DBG("page %px, allocated_pages %lld\n",
+		  page, atomic64_read(&ssdfs_allocated_pages));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return page;
+}
+
 /*
  * ssdfs_add_pagevec_page() - add page into pagevec
  * @pvec: pagevec
@@ -65,27 +196,31 @@ static inline
 struct page *ssdfs_add_pagevec_page(struct pagevec *pvec)
 {
 	struct page *page;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("pagevec count %d\n", pagevec_count(pvec));
 
 	if (pagevec_space(pvec) == 0) {
 		SSDFS_ERR("pagevec hasn't space\n");
 		return ERR_PTR(-E2BIG);
 	}
 
-	page = alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (unlikely(!page)) {
+	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
-		return ERR_PTR(-ENOMEM);
+		return ERR_PTR(err);
 	}
 
-	get_page(page);
-
 	pagevec_add(pvec, page);
+
+	SSDFS_DBG("pvec %p, pagevec count %u\n",
+		  pvec, pagevec_count(pvec));
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	return page;
 }
 
@@ -95,12 +230,65 @@ void ssdfs_free_page(struct page *page)
 	if (!page)
 		return;
 
-	if (page_ref_count(page) <= 0) {
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
+	if (page_ref_count(page) <= 0 ||
+	    page_ref_count(page) > 1) {
 		SSDFS_WARN("page %px, count %d\n",
 			  page, page_ref_count(page));
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_dec(&ssdfs_allocated_pages);
+
+	SSDFS_DBG("page %px, allocated_pages %lld\n",
+		  page, atomic64_read(&ssdfs_allocated_pages));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	__free_pages(page, 0);
+}
+
+static inline
+void ssdfs_pagevec_release(struct pagevec *pvec)
+{
+	int i;
+
+	SSDFS_DBG("pvec %p\n", pvec);
+
+	if (!pvec)
+		return;
+
+	SSDFS_DBG("pvec count %u\n", pagevec_count(pvec));
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		struct page *page = pvec->pages[i];
+
+		if (!page)
+			continue;
+
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
+
+		if (page_ref_count(page) <= 0 ||
+		    page_ref_count(page) > 1) {
+			SSDFS_WARN("page %px, count %d\n",
+				  page, page_ref_count(page));
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		atomic64_dec(&ssdfs_allocated_pages);
+
+		SSDFS_DBG("page %px, allocated_pages %lld\n",
+			  page, atomic64_read(&ssdfs_allocated_pages));
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	pagevec_release(pvec);
 }
 
 static inline

@@ -49,6 +49,12 @@ static void ssdfs_init_btree_node_object_once(void *obj)
 	memset(node_obj, 0, sizeof(struct ssdfs_btree_node));
 }
 
+void ssdfs_shrink_btree_node_obj_cache(void)
+{
+	if (ssdfs_btree_node_obj_cachep)
+		kmem_cache_shrink(ssdfs_btree_node_obj_cachep);
+}
+
 void ssdfs_destroy_btree_node_obj_cache(void)
 {
 	if (ssdfs_btree_node_obj_cachep)
@@ -90,6 +96,8 @@ struct ssdfs_btree_node *ssdfs_btree_node_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -106,6 +114,7 @@ void ssdfs_btree_node_free(struct ssdfs_btree_node *ptr)
 	if (!ptr)
 		return;
 
+	ssdfs_memory_leaks_decrement(ptr);
 	kmem_cache_free(ssdfs_btree_node_obj_cachep, ptr);
 }
 
@@ -677,7 +686,7 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 		node->bmap_array.item_start_bit = ULONG_MAX;
 		for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
 			spin_lock(&node->bmap_array.bmap[i].lock);
-			kfree(node->bmap_array.bmap[i].ptr);
+			ssdfs_kfree(node->bmap_array.bmap[i].ptr);
 			node->bmap_array.bmap[i].ptr = NULL;
 			spin_unlock(&node->bmap_array.bmap[i].lock);
 		}
@@ -688,7 +697,7 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 		}
 
 		if (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE)
-			pagevec_release(&node->content.pvec);
+			ssdfs_pagevec_release(&node->content.pvec);
 		break;
 
 	default:
@@ -3433,22 +3442,34 @@ int ssdfs_btree_node_grow_index_area(struct ssdfs_btree_node *node,
 	down_read(&node->bmap_array.lock);
 	offset1 = node->bmap_array.item_start_bit;
 	offset2 = node->bmap_array.index_start_bit;
-	if ((offset1 - offset2) != new_size)
+	if ((offset1 - offset2) < (new_size / index_size))
 		err = -ERANGE;
 	up_read(&node->bmap_array.lock);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to resize the index area: "
 			  "items_start_bit %lu, index_start_bit %lu, "
-			  "new_size %u\n",
+			  "new_index_capacity %u\n",
 			  node->bmap_array.item_start_bit,
 			  node->bmap_array.index_start_bit,
-			  new_size);
+			  new_size / index_size);
 		return -ERANGE;
 	}
 
 	node->index_area.area_size = new_size;
 	node->index_area.index_capacity = new_size / index_size;
+
+	SSDFS_DBG("items_area: offset %u, area_size %u, "
+		  "free_space %u, capacity %u; "
+		  "index_area: offset %u, area_size %u, "
+		  "capacity %u\n",
+		  node->items_area.offset,
+		  node->items_area.area_size,
+		  node->items_area.free_space,
+		  node->items_area.items_capacity,
+		  node->index_area.offset,
+		  node->index_area.area_size,
+		  node->index_area.index_capacity);
 
 	return 0;
 }
@@ -3564,11 +3585,11 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 	bits_count = node->bmap_array.bits_count;
 	index_start_bit = node->bmap_array.index_start_bit;
 	item_start_bit = node->bmap_array.item_start_bit;
-	if ((index_capacity + items_capacity + 1) != bits_count)
+	if ((index_capacity + items_capacity + 1) > bits_count)
 		err = -ERANGE;
-	if ((item_start_bit - index_start_bit) != index_capacity)
+	if ((item_start_bit - index_start_bit) < index_capacity)
 		err = -ERANGE;
-	if ((bits_count - item_start_bit) != items_capacity)
+	if ((bits_count - item_start_bit) < items_capacity)
 		err = -ERANGE;
 	up_read(&node->bmap_array.lock);
 
@@ -7770,7 +7791,7 @@ int ssdfs_move_common2common_node_index_range(struct ssdfs_btree_node *src,
 		return -ERANGE;
 	}
 
-	buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	buf = ssdfs_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!buf) {
 		SSDFS_ERR("fail to allocate buffer\n");
 		return -ERANGE;
@@ -7972,7 +7993,7 @@ finish_index_moving:
 		set_ssdfs_btree_node_dirty(dst);
 	}
 
-	kfree(buf);
+	ssdfs_kfree(buf);
 	return err;
 }
 
@@ -12881,7 +12902,8 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 			search->result.buf_size = buf_size;
 			search->result.items_in_buffer = 0;
 		} else {
-			search->result.buf = kzalloc(buf_size, GFP_KERNEL);
+			search->result.buf = ssdfs_kzalloc(buf_size,
+							   GFP_KERNEL);
 			if (!search->result.buf) {
 				SSDFS_ERR("fail to allocate buffer\n");
 				return -ENOMEM;
@@ -12896,7 +12918,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
 			if (search->result.buf)
-				kfree(search->result.buf);
+				ssdfs_kfree(search->result.buf);
 
 			switch (tree->type) {
 			case SSDFS_EXTENTS_BTREE:
@@ -13083,6 +13105,8 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu, new_size %u\n",
@@ -13107,8 +13131,6 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	down_write(&node->full_lock);
-	down_write(&node->header_lock);
 	down_write(&node->bmap_array.lock);
 
 	switch (atomic_read(&node->index_area.state)) {
@@ -13537,12 +13559,22 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 	else
 		BUG();
 
+	SSDFS_DBG("items_area: offset %u, area_size %u, "
+		  "free_space %u, capacity %u; "
+		  "index_area: offset %u, area_size %u, "
+		  "capacity %u\n",
+		  node->items_area.offset,
+		  node->items_area.area_size,
+		  node->items_area.free_space,
+		  node->items_area.items_capacity,
+		  node->index_area.offset,
+		  node->index_area.area_size,
+		  node->index_area.index_capacity);
+
 	atomic_set(&node->state, SSDFS_BTREE_NODE_DIRTY);
 
 finish_area_resize:
 	up_write(&node->bmap_array.lock);
-	up_write(&node->header_lock);
-	up_write(&node->full_lock);
 
 	return err;
 }

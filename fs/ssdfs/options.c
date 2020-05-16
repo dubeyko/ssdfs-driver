@@ -94,10 +94,10 @@ int ssdfs_parse_options(struct ssdfs_fs_info *fs_info, char *data)
 #endif
 			else {
 				SSDFS_ERR("unknown compressor %s\n", name);
-				kfree(name);
+				ssdfs_kfree(name);
 				return -EINVAL;
 			}
-			kfree(name);
+			ssdfs_kfree(name);
 			break;
 
 		case Opt_fs_err_panic:

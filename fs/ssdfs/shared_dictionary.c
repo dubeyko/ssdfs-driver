@@ -370,8 +370,8 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 
 	fsi->shdictree = NULL;
 
-	ptr = kzalloc(sizeof(struct ssdfs_shared_dict_btree_info),
-			GFP_KERNEL);
+	ptr = ssdfs_kzalloc(sizeof(struct ssdfs_shared_dict_btree_info),
+			    GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate shared dictionary tree\n");
 		return -ENOMEM;
@@ -416,7 +416,7 @@ destroy_shared_dict_object:
 	ssdfs_btree_destroy(&ptr->generic_tree);
 
 fail_create_shared_dict_tree:
-	kfree(ptr);
+	ssdfs_kfree(ptr);
 	return err;
 }
 
@@ -450,7 +450,7 @@ void ssdfs_shared_dict_btree_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_names_queue_remove_all(&fsi->shdictree->requests.queue);
 
 	ssdfs_btree_destroy(&fsi->shdictree->generic_tree);
-	kfree(fsi->shdictree);
+	ssdfs_kfree(fsi->shdictree);
 	fsi->shdictree = NULL;
 }
 
@@ -1562,12 +1562,12 @@ finish_create_node:
 		return err;
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			return -ENOMEM;
 		}
 	}
@@ -1593,14 +1593,15 @@ finish_create_node:
 
 	pagevec_init(&node->content.pvec);
 	for (i = 0; i < pages_count; i++) {
-		page = alloc_page(GFP_KERNEL | GFP_NOFS | __GFP_ZERO);
-		if (unlikely(!page)) {
-			err = -ENOMEM;
+		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
 			goto finish_init_pvec;
 		}
 
-		get_page(page);
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		pagevec_add(&node->content.pvec, page);
 	}
@@ -2321,13 +2322,13 @@ finish_header_init:
 	}
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			goto finish_init_operation;
 		}
 	}
@@ -3972,8 +3973,8 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 				(size_t)found_items *
 				sizeof(struct ssdfs_name_string);
 			search->result.name =
-				kzalloc(search->result.name_string_size,
-					GFP_KERNEL);
+				ssdfs_kzalloc(search->result.name_string_size,
+					      GFP_KERNEL);
 			if (!search->result.buf) {
 				err = -ENOMEM;
 				SSDFS_ERR("fail to allocate buffer: "
@@ -13775,7 +13776,8 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 			search->result.name_string_size = buf_size;
 			search->result.names_in_buffer = 0;
 		} else {
-			search->result.name = kzalloc(buf_size, GFP_KERNEL);
+			search->result.name = ssdfs_kzalloc(buf_size,
+							    GFP_KERNEL);
 			if (!search->result.name) {
 				SSDFS_ERR("fail to allocate buffer\n");
 				return -ENOMEM;
@@ -13790,7 +13792,7 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
 			if (search->result.name)
-				kfree(search->result.name);
+				ssdfs_kfree(search->result.name);
 
 			search->result.name = &search->name;
 			search->result.name_state =

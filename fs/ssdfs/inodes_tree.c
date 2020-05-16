@@ -40,6 +40,12 @@ void ssdfs_init_free_ino_desc_once(void *obj)
 	memset(range_desc, 0, sizeof(struct ssdfs_inodes_btree_range));
 }
 
+void ssdfs_shrink_free_ino_desc_cache(void)
+{
+	if (ssdfs_free_ino_desc_cachep)
+		kmem_cache_shrink(ssdfs_free_ino_desc_cachep);
+}
+
 void ssdfs_destroy_free_ino_desc_cache(void)
 {
 	if (ssdfs_free_ino_desc_cachep)
@@ -84,6 +90,8 @@ struct ssdfs_inodes_btree_range *ssdfs_free_inodes_range_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -99,6 +107,7 @@ void ssdfs_free_inodes_range_free(struct ssdfs_inodes_btree_range *range)
 	if (!range)
 		return;
 
+	ssdfs_memory_leaks_decrement(range);
 	kmem_cache_free(ssdfs_free_ino_desc_cachep, range);
 }
 
@@ -420,8 +429,8 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
-	ptr = kzalloc(sizeof(struct ssdfs_inodes_btree_info),
-			GFP_KERNEL);
+	ptr = ssdfs_kzalloc(sizeof(struct ssdfs_inodes_btree_info),
+			    GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate inodes tree\n");
 		return -ENOMEM;
@@ -611,7 +620,7 @@ free_search_object:
 
 fail_create_inodes_tree:
 	fsi->inodes_tree = NULL;
-	kfree(ptr);
+	ssdfs_kfree(ptr);
 	return err;
 }
 
@@ -1540,12 +1549,12 @@ finish_create_node:
 		return err;
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			return -ENOMEM;
 		}
 	}
@@ -1571,14 +1580,15 @@ finish_create_node:
 
 	pagevec_init(&node->content.pvec);
 	for (i = 0; i < pages_count; i++) {
-		page = alloc_page(GFP_KERNEL | GFP_NOFS | __GFP_ZERO);
-		if (unlikely(!page)) {
-			err = -ENOMEM;
+		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
 			goto finish_init_pvec;
 		}
 
-		get_page(page);
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		pagevec_add(&node->content.pvec, page);
 	}
@@ -1855,13 +1865,13 @@ finish_header_init:
 	}
 
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = kzalloc(bmap_bytes, GFP_KERNEL);
+		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!addr[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
 			for (; i >= 0; i--)
-				kfree(addr[i]);
+				ssdfs_kfree(addr[i]);
 			goto finish_init_operation;
 		}
 	}
@@ -2627,8 +2637,9 @@ finish_bmap_operation:
 			search->result.buf_size = item_size;
 			search->result.buf_size *= search->request.count;
 
-			search->result.buf = kzalloc(search->result.buf_size,
-						     GFP_KERNEL);
+			search->result.buf =
+					ssdfs_kzalloc(search->result.buf_size,
+						      GFP_KERNEL);
 			if (!search->result.buf) {
 				SSDFS_ERR("fail to allocate buffer: "
 					  "size %zu\n",
@@ -3081,8 +3092,8 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 		search->result.buf_size = item_size;
 		search->result.buf_size *= count;
 
-		search->result.buf = kzalloc(search->result.buf_size,
-					     GFP_KERNEL);
+		search->result.buf = ssdfs_kzalloc(search->result.buf_size,
+						   GFP_KERNEL);
 		if (!search->result.buf) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate buffer: "

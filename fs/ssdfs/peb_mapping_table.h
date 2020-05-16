@@ -528,7 +528,10 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 			kunmap_atomic(kaddr);
 
 			unlock_page(page);
-			put_page(page);
+			ssdfs_put_page(page);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  page, page_ref_count(page));
 		}
 	}
 #endif /* CONFIG_SSDFS_DEBUG */

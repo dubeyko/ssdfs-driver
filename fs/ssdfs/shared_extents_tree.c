@@ -44,7 +44,7 @@ int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
-	kaddr = kzalloc(shextree_obj_size, GFP_KERNEL);
+	kaddr = ssdfs_kzalloc(shextree_obj_size, GFP_KERNEL);
 	if (!kaddr) {
 		SSDFS_ERR("fail to allocate shared extents tree's object\n");
 		return -ENOMEM;
@@ -75,7 +75,7 @@ destroy_shextree_object:
 	for (; i >= 0; i--)
 		ssdfs_shextree_stop_thread(ptr, i);
 
-	kfree(fsi->shextree);
+	ssdfs_kfree(fsi->shextree);
 	fsi->shextree = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -117,7 +117,7 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
 		ssdfs_extents_queue_remove_all(&fsi->shextree->array[i].queue);
 	}
 
-	kfree(fsi->shextree);
+	ssdfs_kfree(fsi->shextree);
 	fsi->shextree = NULL;
 }
 

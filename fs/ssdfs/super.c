@@ -54,6 +54,11 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_allocated_pages;
+atomic64_t ssdfs_memory_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
 struct ssdfs_payload_content {
 	struct pagevec pvec;
 	u32 bytes_count;
@@ -89,9 +94,11 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 {
 	struct ssdfs_inode_info *ii;
 
-	ii = kmem_cache_alloc(ssdfs_inode_cachep, GFP_NOFS);
+	ii = kmem_cache_alloc(ssdfs_inode_cachep, GFP_KERNEL);
 	if (!ii)
 		return NULL;
+
+	ssdfs_memory_leaks_increment(ii);
 
 	init_once((void *)ii);
 
@@ -125,6 +132,7 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	if (ii->xattrs_tree)
 		ssdfs_xattrs_tree_destroy(ii);
 
+	ssdfs_memory_leaks_decrement(ii);
 	kmem_cache_free(ssdfs_inode_cachep, ii);
 }
 
@@ -234,13 +242,13 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		SSDFS_DBG("remount in RW mode\n");
 	}
 out:
-	pagevec_release(&payload.maptbl_cache.pvec);
+	ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
 	return 0;
 
 restore_opts:
 	sb->s_flags = old_sb_flags;
 	fsi->mount_opts = old_mount_opts;
-	pagevec_release(&payload.maptbl_cache.pvec);
+	ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
 	return err;
 }
 
@@ -486,7 +494,7 @@ finish_maptbl_snapshot:
 	up_read(&fsi->maptbl_cache.lock);
 
 	if (unlikely(err))
-		pagevec_release(&payload->maptbl_cache.pvec);
+		ssdfs_pagevec_release(&payload->maptbl_cache.pvec);
 
 	return err;
 }
@@ -623,6 +631,98 @@ static bool ssdfs_sb_seg_exhausted(u64 cur_leb, u64 next_leb,
 	return cur_seg != next_seg;
 }
 
+static u64 ssdfs_correct_start_leb_id(struct ssdfs_fs_info *fsi,
+				      int seg_type, u64 leb_id)
+{
+	struct completion *init_end;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *ptr;
+	u8 peb_type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
+	u32 pebs_per_seg;
+	u64 peb_id1, peb_id2;
+	u64 found_peb_id;
+	u64 peb_id_off;
+	u16 pebs_per_stripe;
+	u64 calculated_leb_id = leb_id;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+SSDFS_ERR("fsi %p, seg_type %#x, leb_id %llu\n",
+		  fsi, seg_type, leb_id);
+
+	found_peb_id = leb_id;
+	peb_type = SEG2PEB_TYPE(seg_type);
+	pebs_per_seg = fsi->pebs_per_seg;
+
+	down_read(&fsi->maptbl->tbl_lock);
+	pebs_per_stripe = fsi->maptbl->pebs_per_stripe;
+	up_read(&fsi->maptbl->tbl_lock);
+
+	for (i = 0; i < pebs_per_seg; i++) {
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id + i,
+						   peb_type, &pebr,
+						   &init_end);
+		if (err == -EAGAIN) {
+			unsigned long res;
+
+			res = wait_for_completion_timeout(init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("maptbl init failed: "
+					  "err %d\n", err);
+				goto finish_leb_id_correction;
+			}
+
+			err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
+							   peb_type, &pebr,
+							   &init_end);
+		}
+
+		if (err == -ENODATA) {
+			SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
+				  leb_id);
+			goto finish_leb_id_correction;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to convert LEB to PEB: "
+				  "leb_id %llu, peb_type %#x, err %d\n",
+				  leb_id, peb_type, err);
+			goto finish_leb_id_correction;
+		}
+
+		ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+		peb_id1 = ptr->peb_id;
+		ptr = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
+		peb_id2 = ptr->peb_id;
+
+		if (peb_id1 < U64_MAX)
+			found_peb_id = max_t(u64, peb_id1, found_peb_id);
+
+		if (peb_id2 < U64_MAX)
+			found_peb_id = max_t(u64, peb_id2, found_peb_id);
+
+		peb_id_off = found_peb_id % pebs_per_stripe;
+		if (peb_id_off >= (pebs_per_stripe / 2)) {
+			calculated_leb_id = found_peb_id / pebs_per_stripe;
+			calculated_leb_id++;
+			calculated_leb_id *= pebs_per_stripe;
+		} else {
+			calculated_leb_id = found_peb_id;
+			calculated_leb_id++;
+		}
+	}
+
+finish_leb_id_correction:
+SSDFS_ERR("leb_id %llu, calculated_leb_id %llu\n",
+		  leb_id, calculated_leb_id);
+
+	return calculated_leb_id;
+}
+
 static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 					int sb_seg_type,
 					u64 start_leb)
@@ -647,6 +747,9 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 	switch (sb_seg_type) {
 	case SSDFS_MAIN_SB_SEG:
 	case SSDFS_COPY_SB_SEG:
+		start_leb = ssdfs_correct_start_leb_id(fsi,
+						SSDFS_SB_SEG_TYPE,
+						start_leb);
 		start = start_leb * fsi->pebs_per_seg;
 		if (start >= fsi->nsegs)
 			start = 0;
@@ -860,12 +963,7 @@ reserve_clean_segment:
 	SSDFS_DBG("cur_peb %llu, next_peb %llu, next_leb %llu\n",
 		  cur_peb, next_peb, next_leb);
 
-	if (next_peb >= U64_MAX)
-		new_leb = max_t(u64, cur_peb, next_leb);
-	else
-		new_leb = max_t(u64, next_peb, next_leb);
-
-	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type, new_leb);
+	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type, cur_leb);
 
 	if (reserved_seg == U64_MAX) {
 		/*
@@ -1232,14 +1330,18 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		return err;
 	}
 
-	page = alloc_page(GFP_NOFS | __GFP_ZERO);
-	if (unlikely(!page)) {
+	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
-		return -ENOMEM;
+		return err;
 	}
 
 	/* ->writepage() calls put_page() */
-	get_page(page);
+	ssdfs_get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	/* write segment header */
 	lock_page(page);
@@ -1283,7 +1385,11 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		/* ->writepage() calls put_page() */
-		get_page(payload_page);
+		ssdfs_get_page(payload_page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  payload_page,
+			  page_ref_count(payload_page));
 
 		lock_page(payload_page);
 		SetPagePrivate(payload_page);
@@ -1311,7 +1417,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	/* TODO: write metadata payload */
 
 	/* ->writepage() calls put_page() */
-	get_page(page);
+	ssdfs_get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	/* write log footer */
 	lock_page(page);
@@ -1341,7 +1450,11 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	return 0;
 
 cleanup_after_failure:
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	ssdfs_free_page(page);
 
 	return err;
@@ -1449,21 +1562,25 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		return -ERANGE;
 	}
 
-	payload_buf = kmalloc(inline_capacity, GFP_KERNEL);
+	payload_buf = ssdfs_kmalloc(inline_capacity, GFP_KERNEL);
 	if (!payload_buf) {
 		SSDFS_ERR("fail to allocate payload buffer\n");
 		return -ENOMEM;
 	}
 
-	page = alloc_page(GFP_NOFS | __GFP_ZERO);
-	if (unlikely(!page)) {
-		kfree(payload_buf);
+	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
-		return -ENOMEM;;
+		ssdfs_kfree(payload_buf);
+		return err;
 	}
 
 	/* ->writepage() calls put_page() */
-	get_page(page);
+	ssdfs_get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	payload_page = payload->maptbl_cache.pvec.pages[0];
 	if (!payload_page) {
@@ -1490,7 +1607,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	unlock_page(page);
 
 free_payload_buffer:
-	kfree(payload_buf);
+	ssdfs_kfree(payload_buf);
 
 	if (unlikely(err))
 		goto cleanup_after_failure;
@@ -1521,7 +1638,10 @@ free_payload_buffer:
 	offset += PAGE_SIZE;
 
 	/* ->writepage() calls put_page() */
-	get_page(page);
+	ssdfs_get_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	/* write log footer */
 	lock_page(page);
@@ -1551,7 +1671,11 @@ free_payload_buffer:
 	return 0;
 
 cleanup_after_failure:
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	ssdfs_free_page(page);
 
 	return err;
@@ -1676,7 +1800,12 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
 
-	fs_info = kzalloc(sizeof(*fs_info), GFP_NOFS);
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_allocated_pages, 0);
+	atomic64_set(&ssdfs_memory_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fs_info = ssdfs_kzalloc(sizeof(*fs_info), GFP_KERNEL);
 	if (!fs_info)
 		return -ENOMEM;
 
@@ -1688,9 +1817,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_info->devops = &ssdfs_bdev_devops;
 	sb->s_bdi = bdi_get(sb->s_bdev->bd_bdi);
 	atomic_set(&fs_info->pending_bios, 0);
-	fs_info->erase_page = alloc_pages(GFP_KERNEL, 0);
-	if (!fs_info->erase_page) {
-		err = -ENOMEM;
+	fs_info->erase_page = ssdfs_alloc_page(GFP_KERNEL);
+	if (IS_ERR_OR_NULL(fs_info->erase_page)) {
+		err = (fs_info->erase_page == NULL ?
+				-ENOMEM : PTR_ERR(fs_info->erase_page));
+		SSDFS_ERR("unable to allocate memory page\n");
 		goto free_erase_page;
 	}
 	memset(page_address(fs_info->erase_page), 0xFF, PAGE_SIZE);
@@ -1902,7 +2033,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 		up_write(&fs_info->volume_sem);
 
-		pagevec_release(&payload.maptbl_cache.pvec);
+		ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
 
 		if (err) {
 			SSDFS_NOTICE("fail to commit superblock info: "
@@ -1960,7 +2091,19 @@ free_erase_page:
 	if (fs_info->erase_page)
 		ssdfs_free_page(fs_info->erase_page);
 
-	kfree(fs_info);
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
+		SSDFS_WARN("Memory leaks include %lld pages\n",
+			   atomic64_read(&ssdfs_allocated_pages));
+	}
+
+	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
+		SSDFS_WARN("Memory allocator suffers from %lld leaks\n",
+			   atomic64_read(&ssdfs_memory_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_kfree(fs_info);
 
 	return err;
 }
@@ -2109,7 +2252,7 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
-	pagevec_release(&payload.maptbl_cache.pvec);
+	ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
@@ -2125,10 +2268,37 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	if (fsi->erase_page)
 		ssdfs_free_page(fsi->erase_page);
+
 	ssdfs_maptbl_cache_destroy(&fsi->maptbl_cache);
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
-	kfree(fsi);
+
+	ssdfs_kfree(fsi);
+
+	rcu_barrier();
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
+		SSDFS_WARN("Memory leaks include %lld pages\n",
+			   atomic64_read(&ssdfs_allocated_pages));
+	}
+
+	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
+		SSDFS_WARN("Memory allocator suffers from %lld leaks\n",
+			   atomic64_read(&ssdfs_memory_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (ssdfs_inode_cachep)
+		kmem_cache_shrink(ssdfs_inode_cachep);
+	ssdfs_shrink_seg_req_obj_cache();
+	ssdfs_shrink_btree_search_obj_cache();
+	ssdfs_shrink_free_ino_desc_cache();
+	ssdfs_shrink_btree_node_obj_cache();
+	ssdfs_shrink_seg_obj_cache();
+	ssdfs_shrink_extent_info_cache();
+	ssdfs_shrink_peb_mapping_info_cache();
+	ssdfs_shrink_blk2off_frag_obj_cache();
 }
 
 static struct dentry *ssdfs_mount(struct file_system_type *fs_type,

@@ -55,7 +55,7 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 	size = __ssdfs_getxattr(inode, name_index, xattr_name, NULL, 0);
 
 	if (size > 0) {
-		value = kzalloc(size, GFP_KERNEL);
+		value = ssdfs_kzalloc(size, GFP_KERNEL);
 		if (unlikely(!value)) {
 			SSDFS_ERR("unable to allocate memory\n");
 			return ERR_PTR(-ENOMEM);
@@ -71,7 +71,7 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 	else
 		acl = ERR_PTR(size);
 
-	kfree(value);
+	ssdfs_kfree(value);
 	return acl;
 }
 
@@ -115,7 +115,7 @@ int ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 
 	if (acl) {
 		size = posix_acl_xattr_size(acl->a_count);
-		value = kzalloc(size, GFP_KERNEL);
+		value = ssdfs_kzalloc(size, GFP_KERNEL);
 		if (!value) {
 			SSDFS_ERR("unable to allocate memory\n");
 			return -ENOMEM;
@@ -130,7 +130,7 @@ int ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	err = __ssdfs_setxattr(inode, name_index, xattr_name, value, size, 0);
 
 end_set_acl:
-	kfree(value);
+	ssdfs_kfree(value);
 
 	if (!err)
 		set_cached_acl(inode, type, acl);

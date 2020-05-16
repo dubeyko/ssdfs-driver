@@ -27,6 +27,12 @@ void ssdfs_init_peb_mapping_info_once(void *obj)
 	memset(pmi_obj, 0, sizeof(struct ssdfs_peb_mapping_info));
 }
 
+void ssdfs_shrink_peb_mapping_info_cache(void)
+{
+	if (ssdfs_peb_mapping_info_cachep)
+		kmem_cache_shrink(ssdfs_peb_mapping_info_cachep);
+}
+
 void ssdfs_destroy_peb_mapping_info_cache(void)
 {
 	if (ssdfs_peb_mapping_info_cachep)
@@ -220,6 +226,8 @@ struct ssdfs_peb_mapping_info *ssdfs_peb_mapping_info_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	return ptr;
 }
 
@@ -235,6 +243,7 @@ void ssdfs_peb_mapping_info_free(struct ssdfs_peb_mapping_info *pmi)
 	if (!pmi)
 		return;
 
+	ssdfs_memory_leaks_decrement(pmi);
 	kmem_cache_free(ssdfs_peb_mapping_info_cachep, pmi);
 }
 

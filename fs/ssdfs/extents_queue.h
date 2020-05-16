@@ -76,6 +76,7 @@ void ssdfs_extents_queue_remove_all(struct ssdfs_extents_queue *eq);
  * Extent info's API
  */
 int ssdfs_init_extent_info_cache(void);
+void ssdfs_shrink_extent_info_cache(void);
 void ssdfs_destroy_extent_info_cache(void);
 
 struct ssdfs_extent_info *ssdfs_extent_info_alloc(void);

@@ -100,9 +100,9 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 
 	bmap->pebs_count = si->pebs_count;
 
-	bmap->peb = kcalloc(bmap->pebs_count,
-			    sizeof(struct ssdfs_peb_blk_bmap),
-			    GFP_KERNEL);
+	bmap->peb = ssdfs_kcalloc(bmap->pebs_count,
+				  sizeof(struct ssdfs_peb_blk_bmap),
+				  GFP_KERNEL);
 	if (!bmap->peb) {
 		SSDFS_ERR("fail to allocate PEBs' block bitmaps\n");
 		return -ENOMEM;
@@ -155,7 +155,7 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 	for (i = 0; i < ptr->pebs_count; i++)
 		ssdfs_peb_blk_bmap_destroy(&ptr->peb[i]);
 
-	kfree(ptr->peb);
+	ssdfs_kfree(ptr->peb);
 	ptr->peb = NULL;
 
 	atomic_set(&ptr->state, SSDFS_SEG_BLK_BMAP_STATE_UNKNOWN);

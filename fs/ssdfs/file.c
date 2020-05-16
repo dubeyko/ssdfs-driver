@@ -1365,7 +1365,7 @@ continue_unlock:
 			}
 		}
 
-		pagevec_release(&pvec);
+		ssdfs_pagevec_release(&pvec);
 		cond_resched();
 	};
 
@@ -1447,8 +1447,10 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 				spin_unlock(&fsi->volume_state_lock);
 
 				unlock_page(page);
-				put_page(page);
+				ssdfs_put_page(page);
 
+				SSDFS_DBG("page %px, count %d\n",
+					  page, page_ref_count(page));
 				SSDFS_DBG("volume hasn't free space\n");
 				return err;
 			}
@@ -1523,7 +1525,11 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 
 out:
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
 	return err ? err : copied;
 }
 

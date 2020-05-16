@@ -208,9 +208,9 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	ptr->flush_req_count = 0;
 
 	ptr->flush_seq_size = min_t(u32, ptr->fragment_pages, PAGEVEC_SIZE);
-	ptr->flush_req1 = kcalloc(ptr->flush_seq_size,
-				  sizeof(struct ssdfs_segment_request),
-				  GFP_KERNEL);
+	ptr->flush_req1 = ssdfs_kcalloc(ptr->flush_seq_size,
+					sizeof(struct ssdfs_segment_request),
+					GFP_KERNEL);
 	if (!ptr->flush_req1) {
 		ssdfs_destroy_page_array(&ptr->array);
 		SSDFS_ERR("fail to allocate flush requests array: "
@@ -219,12 +219,12 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		return -ENODATA;
 	}
 
-	ptr->flush_req2 = kcalloc(ptr->flush_seq_size,
-				  sizeof(struct ssdfs_segment_request),
-				  GFP_KERNEL);
+	ptr->flush_req2 = ssdfs_kcalloc(ptr->flush_seq_size,
+					sizeof(struct ssdfs_segment_request),
+					GFP_KERNEL);
 	if (!ptr->flush_req2) {
 		ssdfs_destroy_page_array(&ptr->array);
-		kfree(ptr->flush_req1);
+		ssdfs_kfree(ptr->flush_req1);
 		ptr->flush_req1 = NULL;
 		SSDFS_ERR("fail to allocate flush requests array: "
 			  "array_size %u\n",
@@ -396,7 +396,7 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 	/* TODO: make final desicion later */
 	create_threads = SSDFS_CREATE_THREADS_DEFAULT;
 
-	tbl->segs[array_type] = kcalloc(tbl->segs_count,
+	tbl->segs[array_type] = ssdfs_kcalloc(tbl->segs_count,
 					sizeof(struct ssdfs_segment_info *),
 					GFP_KERNEL);
 	if (!tbl->segs[array_type]) {
@@ -500,7 +500,7 @@ void ssdfs_maptbl_destroy_segments(struct ssdfs_peb_mapping_table *tbl)
 	}
 
 	for (i = 0; i < SSDFS_MAPTBL_SEG_COPY_MAX; i++) {
-		kfree(tbl->segs[i]);
+		ssdfs_kfree(tbl->segs[i]);
 		tbl->segs[i] = NULL;
 	}
 }
@@ -540,12 +540,12 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		BUG();
 
 	if (ptr->flush_req1) {
-		kfree(ptr->flush_req1);
+		ssdfs_kfree(ptr->flush_req1);
 		ptr->flush_req1 = NULL;
 	}
 
 	if (ptr->flush_req2) {
-		kfree(ptr->flush_req2);
+		ssdfs_kfree(ptr->flush_req2);
 		ptr->flush_req2 = NULL;
 	}
 
@@ -662,7 +662,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
 
-	kaddr = kzalloc(maptbl_obj_size, GFP_KERNEL);
+	kaddr = ssdfs_kzalloc(maptbl_obj_size, GFP_KERNEL);
 	if (!kaddr) {
 		SSDFS_ERR("fail to allocate mapping table object\n");
 		return -ENOMEM;
@@ -711,7 +711,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	mutex_init(&ptr->bmap_lock);
 	bmap_bytes = ptr->fragments_count + BITS_PER_LONG - 1;
 	bmap_bytes /= BITS_PER_BYTE;
-	ptr->dirty_bmap = kzalloc(bmap_bytes, GFP_KERNEL);
+	ptr->dirty_bmap = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
 	if (!ptr->dirty_bmap) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate dirty_bmap\n");
@@ -726,7 +726,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 		goto free_dirty_bmap;
 	}
 
-	kaddr = kcalloc(ptr->fragments_count, frag_desc_size, GFP_KERNEL);
+	kaddr = ssdfs_kcalloc(ptr->fragments_count, frag_desc_size, GFP_KERNEL);
 	if (!kaddr) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate fragment descriptors array\n");
@@ -797,14 +797,14 @@ destroy_seg_objects:
 	ssdfs_maptbl_destroy_segments(ptr);
 
 free_fragment_descriptors:
-	kfree(ptr->desc_array);
+	ssdfs_kfree(ptr->desc_array);
 
 free_dirty_bmap:
-	kfree(fsi->maptbl->dirty_bmap);
+	ssdfs_kfree(fsi->maptbl->dirty_bmap);
 	fsi->maptbl->dirty_bmap = NULL;
 
 free_maptbl_object:
-	kfree(fsi->maptbl);
+	ssdfs_kfree(fsi->maptbl);
 	fsi->maptbl = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -836,10 +836,10 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 	for (i = 0; i < fsi->maptbl->fragments_count; i++)
 		ssdfs_maptbl_destroy_fragment(fsi, i);
 
-	kfree(fsi->maptbl->desc_array);
-	kfree(fsi->maptbl->dirty_bmap);
+	ssdfs_kfree(fsi->maptbl->desc_array);
+	ssdfs_kfree(fsi->maptbl->dirty_bmap);
 	fsi->maptbl->dirty_bmap = NULL;
-	kfree(fsi->maptbl);
+	ssdfs_kfree(fsi->maptbl);
 	fsi->maptbl = NULL;
 }
 
@@ -2186,6 +2186,14 @@ fail_issue_fragment_updates:
 	if (i < pagevec_count(&pvec))
 		goto define_update_area;
 
+	for (j = 0; j < pagevec_count(&pvec); j++) {
+		ssdfs_put_page(pvec.pages[j]);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  pvec.pages[j],
+			  page_ref_count(pvec.pages[j]));
+	}
+
 	page_index += range_len;
 
 	if (page_index < tbl->fragment_pages) {
@@ -2193,7 +2201,7 @@ fail_issue_fragment_updates:
 			  (pgoff_t)PAGEVEC_SIZE,
 			  (pgoff_t)(tbl->fragment_pages - page_index));
 		end = page_index + range_len - 1;
-		pagevec_release(&pvec);
+		pagevec_reinit(&pvec);
 		goto retrive_dirty_pages;
 	}
 
@@ -2206,11 +2214,19 @@ finish_fragment_update:
 			err = -ERANGE;
 			SSDFS_ERR("invalid fragment state %#x\n", state);
 		}
+	} else {
+		for (j = 0; j < pagevec_count(&pvec); j++) {
+			ssdfs_put_page(pvec.pages[j]);
+
+			SSDFS_DBG("page %px, count %d\n",
+				  pvec.pages[j],
+				  page_ref_count(pvec.pages[j]));
+		}
 	}
 
 	up_write(&fdesc->lock);
 
-	pagevec_release(&pvec);
+	pagevec_reinit(&pvec);
 	return err;
 }
 
@@ -2667,7 +2683,10 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		kunmap(page);
 
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define volume extent: "
@@ -2987,7 +3006,10 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		kunmap(page);
 
 		unlock_page(page);
-		put_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define volume extent: "
@@ -3404,7 +3426,10 @@ int ssdfs_maptbl_get_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -3578,7 +3603,10 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -4015,7 +4043,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -4130,7 +4161,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -4227,7 +4261,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -4314,7 +4351,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -5554,7 +5594,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -5755,7 +5798,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_fragment_change:
 	up_write(&fdesc->lock);
@@ -5937,7 +5983,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_fragment_change:
 	return err;
@@ -6321,7 +6370,10 @@ finish_page_processing:
 	}
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -6645,7 +6697,10 @@ try_next_page:
 	has_reserved_pebs = has_fragment_reserved_pebs(hdr);
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
 		  "reserved_pebs %u, is_recovering %#x, "
@@ -6776,7 +6831,10 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_set_peb_descriptor:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -6870,7 +6928,10 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap(page);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -7453,7 +7514,10 @@ int ssdfs_maptbl_set_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -7667,7 +7731,10 @@ int ssdfs_maptbl_set_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -7979,7 +8046,10 @@ int ssdfs_maptbl_clear_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }
@@ -8198,7 +8268,10 @@ ssdfs_maptbl_break_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 finish_page_processing:
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	return err;
 }

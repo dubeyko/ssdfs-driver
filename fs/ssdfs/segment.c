@@ -45,6 +45,12 @@ static void ssdfs_init_seg_object_once(void *obj)
 	atomic_set(&seg_obj->refs_count, 0);
 }
 
+void ssdfs_shrink_seg_obj_cache(void)
+{
+	if (ssdfs_seg_obj_cachep)
+		kmem_cache_shrink(ssdfs_seg_obj_cachep);
+}
+
 void ssdfs_destroy_seg_obj_cache(void)
 {
 	if (ssdfs_seg_obj_cachep)
@@ -120,7 +126,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 			ssdfs_peb_container_destroy(pebc);
 		}
 
-		kfree(si->peb_array);
+		ssdfs_kfree(si->peb_array);
 	}
 
 	ssdfs_segment_blk_bmap_destroy(&si->blk_bmap);
@@ -133,6 +139,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 		ssdfs_requests_queue_remove_all(&si->create_rq, -ENOSPC);
 	}
 
+	ssdfs_memory_leaks_decrement(si);
 	kmem_cache_free(ssdfs_seg_obj_cachep, si);
 	return err;
 }
@@ -211,6 +218,8 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ssdfs_memory_leaks_increment(ptr);
+
 	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
 
 	ptr->seg_id = seg;
@@ -223,19 +232,10 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	init_waitqueue_head(&ptr->destruct_queue);
 	ssdfs_requests_queue_init(&ptr->create_rq);
 
-	err = ssdfs_sysfs_create_seg_group(ptr);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to create segment's sysfs group: "
-			  "seg %llu, err %d\n",
-			  seg, err);
-		kmem_cache_free(ssdfs_seg_obj_cachep, ptr);
-		return ERR_PTR(err);
-	}
-
 	ptr->pebs_count = fsi->pebs_per_seg;
-	ptr->peb_array = kcalloc(ptr->pebs_count,
-				 sizeof(struct ssdfs_peb_container),
-				 GFP_NOFS);
+	ptr->peb_array = ssdfs_kcalloc(ptr->pebs_count,
+				       sizeof(struct ssdfs_peb_container),
+				       GFP_KERNEL);
 	if (!ptr->peb_array) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate memory for peb array\n");
@@ -353,6 +353,14 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 				  seg, i, err);
 			goto destroy_seg_obj;
 		}
+	}
+
+	err = ssdfs_sysfs_create_seg_group(ptr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create segment's sysfs group: "
+			  "seg %llu, err %d\n",
+			  seg, err);
+		goto destroy_seg_obj;
 	}
 
 	return ptr;

@@ -161,7 +161,8 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
-	fsi->segs_tree = kzalloc(sizeof(struct ssdfs_segment_tree), GFP_KERNEL);
+	fsi->segs_tree = ssdfs_kzalloc(sizeof(struct ssdfs_segment_tree),
+					GFP_KERNEL);
 	if (!fsi->segs_tree) {
 		SSDFS_ERR("fail to allocate segment tree's root object\n");
 		return -ENOMEM;
@@ -200,7 +201,7 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 	return 0;
 
 free_memory:
-	kfree(fsi->segs_tree);
+	ssdfs_kfree(fsi->segs_tree);
 	fsi->segs_tree = NULL;
 
 	return err;
@@ -237,6 +238,8 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 			wait_queue_head_t *wq = &si->destruct_queue;
 			int err = 0;
 
+			SSDFS_DBG("si %px, seg_id %llu\n", si, si->seg_id);
+
 			if (atomic_read(&si->refs_count) > 0) {
 				unlock_page(page);
 
@@ -264,7 +267,10 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 	kunmap(page);
 
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 }
 
 /*
@@ -324,6 +330,10 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 		pages_count = find_get_pages(&fsi->segs_tree->pages, &start,
 					     SSDFS_MEM_PAGE_ARRAY_SIZE,
 					     &array[0]);
+
+		SSDFS_DBG("start %lu, pages_count %zu\n",
+			  start, pages_count);
+
 		if (pages_count != 0) {
 			ssdfs_segment_tree_destroy_objects_in_array(fsi,
 								&array[0],
@@ -360,7 +370,7 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 	inode_unlock(fsi->segs_tree_inode);
 
 	iput(fsi->segs_tree_inode);
-	kfree(fsi->segs_tree);
+	ssdfs_kfree(fsi->segs_tree);
 	fsi->segs_tree = NULL;
 }
 
@@ -391,11 +401,14 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !fsi->segs_tree || !si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, si %p, seg %llu\n",
+	SSDFS_DBG("fsi %p, si %px, seg %llu\n",
 		  fsi, si, si->seg_id);
 
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
+
+	SSDFS_DBG("page_index %lu, object_index %u\n",
+		  page_index, object_index);
 
 	inode_lock(fsi->segs_tree_inode);
 
@@ -411,7 +424,10 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	*(kaddr + object_index) = si;
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_add_segment:
 	inode_unlock(fsi->segs_tree_inode);
@@ -448,11 +464,14 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !fsi->segs_tree || !si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, si %p, seg %llu\n",
+	SSDFS_DBG("fsi %p, si %px, seg %llu\n",
 		  fsi, si, si->seg_id);
 
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
+
+	SSDFS_DBG("page_index %lu, object_index %u\n",
+		  page_index, object_index);
 
 	inode_lock(fsi->segs_tree_inode);
 
@@ -480,7 +499,10 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	}
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 	/*
 	 * Prevent from error of creation
@@ -535,6 +557,9 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 	page_index = div_u64_rem(seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
+	SSDFS_DBG("page_index %lu, object_index %u\n",
+		  page_index, object_index);
+
 	inode_lock_shared(fsi->segs_tree_inode);
 
 	page = find_lock_page(&fsi->segs_tree->pages, page_index);
@@ -556,7 +581,10 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 	}
 	kunmap_atomic(kaddr);
 	unlock_page(page);
-	put_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
 
 finish_find_segment:
 	inode_unlock_shared(fsi->segs_tree_inode);
