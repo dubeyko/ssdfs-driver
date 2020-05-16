@@ -64,15 +64,6 @@ void ssdfs_memory_leaks_increment(void *kaddr)
 	SSDFS_DBG("memory %px, allocation count %lld\n",
 		  kaddr,
 		  atomic64_read(&ssdfs_memory_leaks));
-
-
-
-if (atomic64_read(&ssdfs_memory_leaks) > 440 &&
-    atomic64_read(&ssdfs_memory_leaks) < 445) {
-	SSDFS_WARN("memory %px, allocation count %lld\n",
-		  kaddr,
-		  atomic64_read(&ssdfs_memory_leaks));
-}
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
