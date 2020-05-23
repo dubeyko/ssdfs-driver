@@ -26,6 +26,62 @@
 #include "extents_queue.h"
 #include "shared_extents_tree.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_shextree_page_leaks;
+atomic64_t ssdfs_shextree_memory_leaks;
+atomic64_t ssdfs_shextree_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_shextree_cache_leaks_increment(void *kaddr)
+ * void ssdfs_shextree_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_shextree_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_shextree_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_shextree_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_shextree_kfree(void *kaddr)
+ * struct page *ssdfs_shextree_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_shextree_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_shextree_free_page(struct page *page)
+ * void ssdfs_shextree_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(shextree)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(shextree)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_shextree_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_shextree_page_leaks, 0);
+	atomic64_set(&ssdfs_shextree_memory_leaks, 0);
+	atomic64_set(&ssdfs_shextree_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_shextree_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_shextree_page_leaks) != 0) {
+		SSDFS_ERR("SHARED EXTENTS TREE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_shextree_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_shextree_memory_leaks) != 0) {
+		SSDFS_ERR("SHARED EXTENTS TREE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_shextree_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_shextree_cache_leaks) != 0) {
+		SSDFS_ERR("SHARED EXTENTS TREE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_shextree_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * ssdfs_shextree_create() - create shared extents tree object
  * @fsi: file system info object
@@ -44,7 +100,7 @@ int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
-	kaddr = ssdfs_kzalloc(shextree_obj_size, GFP_KERNEL);
+	kaddr = ssdfs_shextree_kzalloc(shextree_obj_size, GFP_KERNEL);
 	if (!kaddr) {
 		SSDFS_ERR("fail to allocate shared extents tree's object\n");
 		return -ENOMEM;
@@ -75,7 +131,7 @@ destroy_shextree_object:
 	for (; i >= 0; i--)
 		ssdfs_shextree_stop_thread(ptr, i);
 
-	ssdfs_kfree(fsi->shextree);
+	ssdfs_shextree_kfree(fsi->shextree);
 	fsi->shextree = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -117,7 +173,7 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
 		ssdfs_extents_queue_remove_all(&fsi->shextree->array[i].queue);
 	}
 
-	ssdfs_kfree(fsi->shextree);
+	ssdfs_shextree_kfree(fsi->shextree);
 	fsi->shextree = NULL;
 }
 

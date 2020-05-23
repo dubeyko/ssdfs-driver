@@ -30,6 +30,62 @@
 #include "btree.h"
 #include "shared_dictionary.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_dict_page_leaks;
+atomic64_t ssdfs_dict_memory_leaks;
+atomic64_t ssdfs_dict_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_dict_cache_leaks_increment(void *kaddr)
+ * void ssdfs_dict_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_dict_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_dict_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_dict_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_dict_kfree(void *kaddr)
+ * struct page *ssdfs_dict_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_dict_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_dict_free_page(struct page *page)
+ * void ssdfs_dict_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dict)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(dict)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_dict_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_dict_page_leaks, 0);
+	atomic64_set(&ssdfs_dict_memory_leaks, 0);
+	atomic64_set(&ssdfs_dict_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_dict_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_dict_page_leaks) != 0) {
+		SSDFS_ERR("SHARED DICTIONARY: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_dict_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_dict_memory_leaks) != 0) {
+		SSDFS_ERR("SHARED DICTIONARY: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_dict_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_dict_cache_leaks) != 0) {
+		SSDFS_ERR("SHARED DICTIONARY: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_dict_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /******************************************************************************
  *                         NAME INFO FUNCTIONALITY                            *
  ******************************************************************************/
@@ -370,8 +426,8 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 
 	fsi->shdictree = NULL;
 
-	ptr = ssdfs_kzalloc(sizeof(struct ssdfs_shared_dict_btree_info),
-			    GFP_KERNEL);
+	ptr = ssdfs_dict_kzalloc(sizeof(struct ssdfs_shared_dict_btree_info),
+				 GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate shared dictionary tree\n");
 		return -ENOMEM;
@@ -416,7 +472,7 @@ destroy_shared_dict_object:
 	ssdfs_btree_destroy(&ptr->generic_tree);
 
 fail_create_shared_dict_tree:
-	ssdfs_kfree(ptr);
+	ssdfs_dict_kfree(ptr);
 	return err;
 }
 
@@ -450,7 +506,7 @@ void ssdfs_shared_dict_btree_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_names_queue_remove_all(&fsi->shdictree->requests.queue);
 
 	ssdfs_btree_destroy(&fsi->shdictree->generic_tree);
-	ssdfs_kfree(fsi->shdictree);
+	ssdfs_dict_kfree(fsi->shdictree);
 	fsi->shdictree = NULL;
 }
 
@@ -1378,7 +1434,6 @@ static
 int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree *tree;
-	struct page *page;
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	size_t hdr_size = sizeof(struct ssdfs_shared_dictionary_node_header);
 	u32 node_size;
@@ -1390,7 +1445,6 @@ int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 	u16 index_capacity = 0;
 	u32 index_area_size = 0;
 	size_t bmap_bytes;
-	u32 pages_count;
 	int i;
 	int err = 0;
 
@@ -1561,15 +1615,12 @@ finish_create_node:
 	if (unlikely(err))
 		return err;
 
-	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
-		if (!addr[i]) {
-			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
-				  i);
-			for (; i >= 0; i--)
-				ssdfs_kfree(addr[i]);
-			return -ENOMEM;
-		}
+	err = ssdfs_btree_node_allocate_bmaps(addr, bmap_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate node's bitmaps: "
+			  "bmap_bytes %zu, err %d\n",
+			  bmap_bytes, err);
+		return err;
 	}
 
 	down_write(&node->bmap_array.lock);
@@ -1581,33 +1632,13 @@ finish_create_node:
 	}
 	up_write(&node->bmap_array.lock);
 
-	pages_count = node_size / PAGE_SIZE;
-
-	if (pages_count == 0 || pages_count > PAGEVEC_SIZE) {
-		SSDFS_ERR("invalid pages_count %u\n",
-			  pages_count);
-		return -ERANGE;
+	err = ssdfs_btree_node_allocate_content_space(node, node_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate content space: "
+			  "node_size %u, err %d\n",
+			  node_size, err);
+		return err;
 	}
-
-	down_write(&node->full_lock);
-
-	pagevec_init(&node->content.pvec);
-	for (i = 0; i < pages_count; i++) {
-		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
-		if (IS_ERR_OR_NULL(page)) {
-			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-			SSDFS_ERR("unable to allocate memory page\n");
-			goto finish_init_pvec;
-		}
-
-		SSDFS_DBG("page %px, count %d\n",
-			  page, page_ref_count(page));
-
-		pagevec_add(&node->content.pvec, page);
-	}
-
-finish_init_pvec:
-	up_write(&node->full_lock);
 
 	return err;
 }
@@ -2097,7 +2128,6 @@ int ssdfs_shared_dict_btree_init_node(struct ssdfs_btree_node *node)
 	u32 index_area_size;
 	u16 index_capacity = 0;
 	size_t bmap_bytes;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2321,16 +2351,12 @@ finish_header_init:
 		goto finish_init_operation;
 	}
 
-	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		addr[i] = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
-		if (!addr[i]) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
-				  i);
-			for (; i >= 0; i--)
-				ssdfs_kfree(addr[i]);
-			goto finish_init_operation;
-		}
+	err = ssdfs_btree_node_allocate_bmaps(addr, bmap_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate node's bitmaps: "
+			  "bmap_bytes %zu, err %d\n",
+			  bmap_bytes, err);
+		goto finish_init_operation;
 	}
 
 	down_write(&node->bmap_array.lock);
@@ -2355,12 +2381,7 @@ finish_header_init:
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
 	node->bmap_array.bmap_bytes = bmap_bytes;
 
-	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
-		spin_lock(&node->bmap_array.bmap[i].lock);
-		node->bmap_array.bmap[i].ptr = addr[i];
-		addr[i] = NULL;
-		spin_unlock(&node->bmap_array.bmap[i].lock);
-	}
+	ssdfs_btree_node_init_bmaps(node, addr);
 
 	spin_lock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
 	bitmap_set(node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].ptr,
@@ -3967,22 +3988,13 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 			SSDFS_ERR("invalid found_items %u\n", found_items);
 			goto finish_index_search;
 		} else if (found_items > 1) {
-			search->result.name_state =
-				SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
-			search->result.name_string_size =
-				(size_t)found_items *
-				sizeof(struct ssdfs_name_string);
-			search->result.name =
-				ssdfs_kzalloc(search->result.name_string_size,
-					      GFP_KERNEL);
-			if (!search->result.buf) {
-				err = -ENOMEM;
-				SSDFS_ERR("fail to allocate buffer: "
-					  "size %zu\n",
-					  search->result.name_string_size);
+			err = ssdfs_btree_search_alloc_result_name(search,
+					(size_t)found_items *
+					    sizeof(struct ssdfs_name_string));
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to allocate buffer\n");
 				goto finish_index_search;
 			}
-			search->result.names_in_buffer = 0;
 
 			for (i = 0; i < found_items; i++) {
 				struct ssdfs_name_string *name;
@@ -13776,23 +13788,19 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 			search->result.name_string_size = buf_size;
 			search->result.names_in_buffer = 0;
 		} else {
-			search->result.name = ssdfs_kzalloc(buf_size,
-							    GFP_KERNEL);
-			if (!search->result.name) {
+			err = ssdfs_btree_search_alloc_result_name(search,
+								   buf_size);
+			if (unlikely(err)) {
 				SSDFS_ERR("fail to allocate buffer\n");
-				return -ENOMEM;
+				return err;
 			}
-			search->result.name_state =
-					SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
-			search->result.name_string_size = buf_size;
-			search->result.names_in_buffer = 0;
 		}
 		break;
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
 			if (search->result.name)
-				ssdfs_kfree(search->result.name);
+				ssdfs_dict_kfree(search->result.name);
 
 			search->result.name = &search->name;
 			search->result.name_state =

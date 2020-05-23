@@ -39,6 +39,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_read_page_leaks;
+atomic64_t ssdfs_read_memory_leaks;
+atomic64_t ssdfs_read_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_read_cache_leaks_increment(void *kaddr)
+ * void ssdfs_read_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_read_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_read_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_read_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_read_kfree(void *kaddr)
+ * struct page *ssdfs_read_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_read_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_read_free_page(struct page *page)
+ * void ssdfs_read_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(read)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(read)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_read_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_read_page_leaks, 0);
+	atomic64_set(&ssdfs_read_memory_leaks, 0);
+	atomic64_set(&ssdfs_read_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_read_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_read_page_leaks) != 0) {
+		SSDFS_ERR("READ THREAD: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_read_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_read_memory_leaks) != 0) {
+		SSDFS_ERR("READ THREAD: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_read_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_read_cache_leaks) != 0) {
+		SSDFS_ERR("READ THREAD: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_read_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * struct ssdfs_segbmap_extent - segbmap extent
  * @logical_offset: logical offset inside of segbmap's content
@@ -152,7 +208,7 @@ int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env)
 
 	SSDFS_DBG("env %p\n", env);
 
-	env->log_hdr = ssdfs_kzalloc(hdr_size, GFP_KERNEL);
+	env->log_hdr = ssdfs_read_kzalloc(hdr_size, GFP_KERNEL);
 	if (!env->log_hdr) {
 		SSDFS_ERR("fail to allocate log header buffer\n");
 		return -ENOMEM;
@@ -162,7 +218,7 @@ int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env)
 
 	footer_buf_size = max_t(size_t, hdr_size,
 				sizeof(struct ssdfs_log_footer));
-	env->footer = ssdfs_kzalloc(footer_buf_size, GFP_KERNEL);
+	env->footer = ssdfs_read_kzalloc(footer_buf_size, GFP_KERNEL);
 	if (!env->footer) {
 		SSDFS_ERR("fail to allocate log footer buffer\n");
 		return -ENOMEM;
@@ -189,19 +245,19 @@ void ssdfs_destroy_init_env(struct ssdfs_read_init_env *env)
 	SSDFS_DBG("env %p\n", env);
 
 	if (env->log_hdr)
-		ssdfs_kfree(env->log_hdr);
+		ssdfs_read_kfree(env->log_hdr);
 
 	env->log_hdr = NULL;
 	env->has_seg_hdr = false;
 
 	if (env->footer)
-		ssdfs_kfree(env->footer);
+		ssdfs_read_kfree(env->footer);
 
 	env->footer = NULL;
 	env->has_footer = false;
 
-	ssdfs_pagevec_release(&env->b_init.pvec);
-	ssdfs_pagevec_release(&env->t_init.pvec);
+	ssdfs_read_pagevec_release(&env->b_init.pvec);
+	ssdfs_read_pagevec_release(&env->t_init.pvec);
 }
 
 static
@@ -1381,7 +1437,7 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		return -EIO;
 	}
 
-	frag_descs = ssdfs_kcalloc(fragments, frag_desc_size, GFP_KERNEL);
+	frag_descs = ssdfs_read_kcalloc(fragments, frag_desc_size, GFP_KERNEL);
 	if (!frag_descs) {
 		SSDFS_ERR("fail to allocate fragment descriptors array\n");
 		return -ENOMEM;
@@ -1407,7 +1463,7 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		goto free_bufs;
 	}
 
-	cdata_buf = ssdfs_kzalloc(PAGE_SIZE, GFP_KERNEL);
+	cdata_buf = ssdfs_read_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!cdata_buf) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate cdata_buf\n");
@@ -1490,8 +1546,8 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	req->result.processed_blks += processed_blks;
 
 free_bufs:
-	ssdfs_kfree(frag_descs);
-	ssdfs_kfree(cdata_buf);
+	ssdfs_read_kfree(frag_descs);
+	ssdfs_read_kfree(cdata_buf);
 
 	return err;
 }
@@ -3710,7 +3766,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	cdata_buf = ssdfs_kzalloc(PAGE_SIZE, GFP_KERNEL);
+	cdata_buf = ssdfs_read_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!cdata_buf) {
 		SSDFS_ERR("fail to allocate cdata_buf\n");
 		return -ENOMEM;
@@ -3842,7 +3898,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 		frag_desc = &frag_array[i];
 
-		page = ssdfs_add_pagevec_page(&env->b_init.pvec);
+		page = ssdfs_read_add_pagevec_page(&env->b_init.pvec);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			err = !page ? -ENOMEM : PTR_ERR(page);
 			SSDFS_ERR("fail to add pagevec page: "
@@ -3884,7 +3940,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		  le16_to_cpu(frag_hdr->invalid_blks));
 
 fail_read_blk_bmap:
-	ssdfs_kfree(cdata_buf);
+	ssdfs_read_kfree(cdata_buf);
 	return err;
 }
 
@@ -3963,7 +4019,7 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 	}
 
 fail_init_blk_bmap_fragment:
-	ssdfs_pagevec_release(&env->b_init.pvec);
+	ssdfs_read_pagevec_release(&env->b_init.pvec);
 
 	return err;
 }
@@ -4048,7 +4104,7 @@ int ssdfs_read_blk2off_table_header(struct ssdfs_peb_info *pebi,
 		return -EIO;
 	}
 
-	page = ssdfs_add_pagevec_page(&env->t_init.pvec);
+	page = ssdfs_read_add_pagevec_page(&env->t_init.pvec);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
 		err = !page ? -ENOMEM : PTR_ERR(page);
 		SSDFS_ERR("fail to add pagevec page: err %d\n",
@@ -4116,7 +4172,7 @@ int ssdfs_read_blk2off_byte_stream(struct ssdfs_peb_info *pebi,
 		u32 offset, bytes;
 
 		if (env->t_init.write_off >= capacity) {
-			page = ssdfs_add_pagevec_page(&env->t_init.pvec);
+			page = ssdfs_read_add_pagevec_page(&env->t_init.pvec);
 			if (unlikely(IS_ERR_OR_NULL(page))) {
 				err = !page ? -ENOMEM : PTR_ERR(page);
 				SSDFS_ERR("fail to add pagevec page: err %d\n",
@@ -5753,7 +5809,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 			goto fail_init_blk2off_table;
 		}
 
-		ssdfs_pagevec_release(&env.t_init.pvec);
+		ssdfs_read_pagevec_release(&env.t_init.pvec);
 		log_diff = 0;
 	} while (env.log_offset > 0);
 
@@ -6387,10 +6443,8 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 			  "sequence_id %u, err %d\n",
 			  sequence_id, err);
 		goto fail_read_segbmap_page;
-	} else {
-		unlock_page(req->result.pvec.pages[0]);
-		req->result.pvec.pages[0] = NULL;
-	}
+	} else
+		ssdfs_request_unlock_and_remove_page(req, 0);
 
 	extent->logical_offset += extent->fragment_size;
 	extent->data_size -= extent->fragment_size;
@@ -6544,10 +6598,8 @@ int ssdfs_peb_read_segbmap_pages(struct ssdfs_peb_container *pebc,
 				  "sequence_id %u, err %d\n",
 				  sequence_id, err);
 			goto fail_read_segbmap_pages;
-		} else {
-			unlock_page(req->result.pvec.pages[i]);
-			req->result.pvec.pages[i] = NULL;
-		}
+		} else
+			ssdfs_request_unlock_and_remove_page(req, i);
 
 		sequence_id++;
 	}
@@ -6864,14 +6916,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 			}
 		}
 
-		for (i = 0; i < pages_count; i++) {
-			struct page *page = req->result.pvec.pages[i];
-			area->pages[area->pages_count] = page;
-			area->pages_count++;
-			unlock_page(page);
-			req->result.pvec.pages[i] = NULL;
-		}
-
+		ssdfs_maptbl_move_fragment_pages(req, area, pages_count);
 		ssdfs_request_unlock_and_remove_pages(req);
 		ssdfs_put_request(req);
 		ssdfs_request_free(req);
@@ -6938,7 +6983,7 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 		goto end_init;
 	}
 
-	area.pages = ssdfs_kcalloc(area.pages_capacity,
+	area.pages = ssdfs_read_kcalloc(area.pages_capacity,
 				   sizeof(struct page *),
 				   GFP_KERNEL);
 	if (!area.pages) {
@@ -6981,12 +7026,12 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 end_init:
 	for (i = 0; i < area.pages_capacity; i++) {
 		if (area.pages[i]) {
-			ssdfs_free_page(area.pages[i]);
+			ssdfs_read_free_page(area.pages[i]);
 			area.pages[i] = NULL;
 		}
 	}
 
-	ssdfs_kfree(area.pages);
+	ssdfs_read_kfree(area.pages);
 
 	{
 		int err1 = ssdfs_peb_release_pages(pebc);

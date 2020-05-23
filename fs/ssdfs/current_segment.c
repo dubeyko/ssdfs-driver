@@ -34,6 +34,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_cur_seg_page_leaks;
+atomic64_t ssdfs_cur_seg_memory_leaks;
+atomic64_t ssdfs_cur_seg_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_cur_seg_cache_leaks_increment(void *kaddr)
+ * void ssdfs_cur_seg_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_cur_seg_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_cur_seg_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_cur_seg_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_cur_seg_kfree(void *kaddr)
+ * struct page *ssdfs_cur_seg_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_cur_seg_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_cur_seg_free_page(struct page *page)
+ * void ssdfs_cur_seg_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(cur_seg)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(cur_seg)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_cur_seg_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_cur_seg_page_leaks, 0);
+	atomic64_set(&ssdfs_cur_seg_memory_leaks, 0);
+	atomic64_set(&ssdfs_cur_seg_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_cur_seg_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_cur_seg_page_leaks) != 0) {
+		SSDFS_ERR("CURRENT SEGMENT: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_cur_seg_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_cur_seg_memory_leaks) != 0) {
+		SSDFS_ERR("CURRENT SEGMENT: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_cur_seg_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_cur_seg_cache_leaks) != 0) {
+		SSDFS_ERR("CURRENT SEGMENT: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_cur_seg_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /******************************************************************************
  *               CURRENT SEGMENT CONTAINER FUNCTIONALITY                      *
  ******************************************************************************/
@@ -406,8 +462,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p\n", fsi);
 
-	fsi->cur_segs = ssdfs_kzalloc(sizeof(struct ssdfs_current_segs_array),
-				      GFP_KERNEL);
+	fsi->cur_segs =
+		ssdfs_cur_seg_kzalloc(sizeof(struct ssdfs_current_segs_array),
+					     GFP_KERNEL);
 	if (!fsi->cur_segs) {
 		SSDFS_ERR("fail to allocate current segments array\n");
 		return -ENOMEM;
@@ -512,7 +569,7 @@ destroy_cur_segs:
 		ssdfs_current_segment_unlock(fsi->cur_segs->objects[i]);
 	}
 
-	ssdfs_kfree(fsi->cur_segs);
+	ssdfs_cur_seg_kfree(fsi->cur_segs);
 	fsi->cur_segs = NULL;
 
 	return err;
@@ -564,6 +621,6 @@ void ssdfs_current_segment_array_destroy(struct ssdfs_fs_info *fsi)
 	BUG_ON(rwsem_is_locked(&fsi->cur_segs->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_kfree(fsi->cur_segs);
+	ssdfs_cur_seg_kfree(fsi->cur_segs);
 	fsi->cur_segs = NULL;
 }

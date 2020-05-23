@@ -34,6 +34,62 @@
 #include "btree.h"
 #include "extents_tree.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_seg_bmap_page_leaks;
+atomic64_t ssdfs_seg_bmap_memory_leaks;
+atomic64_t ssdfs_seg_bmap_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_seg_bmap_cache_leaks_increment(void *kaddr)
+ * void ssdfs_seg_bmap_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_seg_bmap_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_seg_bmap_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_seg_bmap_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_seg_bmap_kfree(void *kaddr)
+ * struct page *ssdfs_seg_bmap_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_seg_bmap_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_seg_bmap_free_page(struct page *page)
+ * void ssdfs_seg_bmap_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seg_bmap)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(seg_bmap)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_seg_bmap_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_seg_bmap_page_leaks, 0);
+	atomic64_set(&ssdfs_seg_bmap_memory_leaks, 0);
+	atomic64_set(&ssdfs_seg_bmap_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_seg_bmap_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_seg_bmap_page_leaks) != 0) {
+		SSDFS_ERR("SEGMENT BITMAP: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_seg_bmap_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_seg_bmap_memory_leaks) != 0) {
+		SSDFS_ERR("SEGMENT BITMAP: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_seg_bmap_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_seg_bmap_cache_leaks) != 0) {
+		SSDFS_ERR("SEGMENT BITMAP: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_seg_bmap_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 extern const bool detect_clean_seg[U8_MAX + 1];
 extern const bool detect_data_using_seg[U8_MAX + 1];
 extern const bool detect_lnode_using_seg[U8_MAX + 1];
@@ -415,7 +471,7 @@ int ssdfs_segbmap_create_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 
 		BUG_ON(*ptr);
 
-		*ptr = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
+		*ptr = ssdfs_seg_bmap_kzalloc(bmap_bytes, GFP_KERNEL);
 		if (!*ptr) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate fbmap: "
@@ -428,7 +484,7 @@ int ssdfs_segbmap_create_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 
 free_fbmaps:
 	for (; i >= 0; i--)
-		ssdfs_kfree(segbmap->fbmap[i]);
+		ssdfs_seg_bmap_kfree(segbmap->fbmap[i]);
 
 	return err;
 }
@@ -449,7 +505,7 @@ void ssdfs_segbmap_destroy_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 	SSDFS_DBG("segbmap %p\n", segbmap);
 
 	for (i = 0; i < SSDFS_SEGBMAP_FBMAP_TYPE_MAX; i++)
-		ssdfs_kfree(segbmap->fbmap[i]);
+		ssdfs_seg_bmap_kfree(segbmap->fbmap[i]);
 }
 
 /*
@@ -485,7 +541,7 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 
 	SSDFS_DBG("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
 
-	kaddr = ssdfs_kzalloc(segbmap_obj_size, GFP_KERNEL);
+	kaddr = ssdfs_seg_bmap_kzalloc(segbmap_obj_size, GFP_KERNEL);
 	if (!kaddr) {
 		SSDFS_ERR("fail to allocate segment bitmap object\n");
 		return -ENOMEM;
@@ -573,7 +629,8 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_segbmap_object;
 	}
 
-	kaddr = ssdfs_kcalloc(ptr->fragments_count, frag_desc_size, GFP_KERNEL);
+	kaddr = ssdfs_seg_bmap_kcalloc(ptr->fragments_count,
+					frag_desc_size, GFP_KERNEL);
 	if (!kaddr) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate fragment descriptors array\n");
@@ -690,13 +747,13 @@ forget_inode:
 	iput(fsi->segbmap_inode);
 
 free_desc_array:
-	ssdfs_kfree(fsi->segbmap->desc_array);
+	ssdfs_seg_bmap_kfree(fsi->segbmap->desc_array);
 
 free_fragment_bmaps:
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
 
 free_segbmap_object:
-	ssdfs_kfree(fsi->segbmap);
+	ssdfs_seg_bmap_kfree(fsi->segbmap);
 
 	fsi->segbmap = NULL;
 
@@ -755,21 +812,22 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 			  page, page_ref_count(page));
 
 		ssdfs_put_page(page);
-		ssdfs_free_page(page);
+		ssdfs_seg_bmap_free_page(page);
 	}
 
 	if (fsi->segbmap->pages.nrpages != 0)
 		truncate_inode_pages(&fsi->segbmap->pages, 0);
 
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
-	ssdfs_kfree(fsi->segbmap->desc_array);
+
+	ssdfs_seg_bmap_kfree(fsi->segbmap->desc_array);
 
 	up_write(&fsi->segbmap->resize_lock);
 	up_write(&fsi->segbmap->search_lock);
 	inode_unlock(fsi->segbmap_inode);
 
 	iput(fsi->segbmap_inode);
-	ssdfs_kfree(fsi->segbmap);
+	ssdfs_seg_bmap_kfree(fsi->segbmap);
 	fsi->segbmap = NULL;
 }
 
@@ -1018,6 +1076,8 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		desc->state = state;
 		kunmap_atomic(hdr);
 	}
+
+	ssdfs_seg_bmap_account_page(page);
 
 unlock_search_lock:
 	complete_all(&desc->init_end);

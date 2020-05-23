@@ -24,6 +24,62 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_fs_error_page_leaks;
+atomic64_t ssdfs_fs_error_memory_leaks;
+atomic64_t ssdfs_fs_error_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_fs_error_cache_leaks_increment(void *kaddr)
+ * void ssdfs_fs_error_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_fs_error_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_fs_error_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_fs_error_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_fs_error_kfree(void *kaddr)
+ * struct page *ssdfs_fs_error_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_fs_error_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_fs_error_free_page(struct page *page)
+ * void ssdfs_fs_error_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(fs_error)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(fs_error)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_fs_error_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_fs_error_page_leaks, 0);
+	atomic64_set(&ssdfs_fs_error_memory_leaks, 0);
+	atomic64_set(&ssdfs_fs_error_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_fs_error_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_fs_error_page_leaks) != 0) {
+		SSDFS_ERR("FS ERROR: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_fs_error_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_fs_error_memory_leaks) != 0) {
+		SSDFS_ERR("FS ERROR: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_fs_error_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_fs_error_cache_leaks) != 0) {
+		SSDFS_ERR("FS ERROR: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_fs_error_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static void ssdfs_handle_error(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
@@ -127,7 +183,7 @@ void ssdfs_clear_dirty_pages(struct address_space *mapping)
 					  (u64)page_index(page));
 			}
 		}
-		ssdfs_pagevec_release(&pvec);
+		ssdfs_fs_error_pagevec_release(&pvec);
 		cond_resched();
 	}
 }

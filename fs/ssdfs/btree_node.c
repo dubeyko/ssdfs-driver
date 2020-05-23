@@ -36,11 +36,67 @@
 #include "btree.h"
 #include "shared_extents_tree.h"
 
-static struct kmem_cache *ssdfs_btree_node_obj_cachep;
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_btree_node_page_leaks;
+atomic64_t ssdfs_btree_node_memory_leaks;
+atomic64_t ssdfs_btree_node_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_btree_node_cache_leaks_increment(void *kaddr)
+ * void ssdfs_btree_node_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_btree_node_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_btree_node_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_btree_node_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_btree_node_kfree(void *kaddr)
+ * struct page *ssdfs_btree_node_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_btree_node_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_btree_node_free_page(struct page *page)
+ * void ssdfs_btree_node_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(btree_node)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(btree_node)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_btree_node_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_btree_node_page_leaks, 0);
+	atomic64_set(&ssdfs_btree_node_memory_leaks, 0);
+	atomic64_set(&ssdfs_btree_node_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_btree_node_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_btree_node_page_leaks) != 0) {
+		SSDFS_ERR("BTREE NODE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_btree_node_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_btree_node_memory_leaks) != 0) {
+		SSDFS_ERR("BTREE NODE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_btree_node_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_btree_node_cache_leaks) != 0) {
+		SSDFS_ERR("BTREE NODE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_btree_node_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
 
 /******************************************************************************
  *                            BTREE NODE CACHE                                *
  ******************************************************************************/
+
+static struct kmem_cache *ssdfs_btree_node_obj_cachep;
 
 static void ssdfs_init_btree_node_object_once(void *obj)
 {
@@ -96,7 +152,7 @@ struct ssdfs_btree_node *ssdfs_btree_node_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ssdfs_memory_leaks_increment(ptr);
+	ssdfs_btree_node_cache_leaks_increment(ptr);
 
 	return ptr;
 }
@@ -114,7 +170,7 @@ void ssdfs_btree_node_free(struct ssdfs_btree_node *ptr)
 	if (!ptr)
 		return;
 
-	ssdfs_memory_leaks_decrement(ptr);
+	ssdfs_btree_node_cache_leaks_decrement(ptr);
 	kmem_cache_free(ssdfs_btree_node_obj_cachep, ptr);
 }
 
@@ -639,6 +695,110 @@ int ssdfs_btree_create_root_node(struct ssdfs_btree_node *node,
 }
 
 /*
+ * ssdfs_btree_node_allocate_content_space() - allocate content space
+ * @node: node object
+ * @node_size: node size
+ */
+int ssdfs_btree_node_allocate_content_space(struct ssdfs_btree_node *node,
+					    u32 node_size)
+{
+	struct page *page;
+	u32 pages_count;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !node->tree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("node_id %u, node_size %u\n",
+		  node->node_id, node_size);
+
+	pages_count = node_size / PAGE_SIZE;
+
+	if (pages_count == 0 || pages_count > PAGEVEC_SIZE) {
+		SSDFS_ERR("invalid pages_count %u\n",
+			  pages_count);
+		return -ERANGE;
+	}
+
+	down_write(&node->full_lock);
+
+	pagevec_init(&node->content.pvec);
+	for (i = 0; i < pages_count; i++) {
+		page = ssdfs_btree_node_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+			SSDFS_ERR("unable to allocate memory page\n");
+			goto finish_init_pvec;
+		}
+
+		SSDFS_DBG("page %px, count %d\n",
+			  page, page_ref_count(page));
+
+		pagevec_add(&node->content.pvec, page);
+	}
+
+finish_init_pvec:
+	up_write(&node->full_lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_btree_node_allocate_bmaps() - allocate node's bitmaps
+ * @addr: array of pointers
+ * @bmap_bytes: size of the bitmap in bytes
+ */
+int ssdfs_btree_node_allocate_bmaps(void *addr[SSDFS_BTREE_NODE_BMAP_COUNT],
+				    size_t bmap_bytes)
+{
+	int i;
+
+	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
+		addr[i] = ssdfs_btree_node_kzalloc(bmap_bytes, GFP_KERNEL);
+		if (!addr[i]) {
+			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
+				  i);
+			for (; i >= 0; i--)
+				ssdfs_btree_node_kfree(addr[i]);
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_btree_node_init_bmaps() - init node's bitmaps
+ * @node: node object
+ * @addr: array of pointers
+ */
+void ssdfs_btree_node_init_bmaps(struct ssdfs_btree_node *node,
+				 void *addr[SSDFS_BTREE_NODE_BMAP_COUNT])
+{
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+	BUG_ON(!rwsem_is_locked(&node->bmap_array.lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
+		void *tmp_addr = NULL;
+
+		spin_lock(&node->bmap_array.bmap[i].lock);
+		tmp_addr = node->bmap_array.bmap[i].ptr;
+		node->bmap_array.bmap[i].ptr = addr[i];
+		addr[i] = NULL;
+		spin_unlock(&node->bmap_array.bmap[i].lock);
+
+		if (tmp_addr)
+			ssdfs_btree_node_kfree(tmp_addr);
+	}
+}
+
+/*
  * ssdfs_btree_node_destroy() - destroy the btree node
  * @node: node object
  */
@@ -655,24 +815,21 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 		  atomic_read(&node->type));
 
 	switch (atomic_read(&node->state)) {
-	case SSDFS_BTREE_NODE_CREATED:
-		atomic_set(&node->state, SSDFS_BTREE_NODE_UNKNOWN_STATE);
-		wake_up_all(&node->wait_queue);
-		complete_all(&node->init_end);
-		break;
-
 	case SSDFS_BTREE_NODE_DIRTY:
 		SSDFS_WARN("node %u is dirty\n", node->node_id);
 		/* pass through */
 
+	case SSDFS_BTREE_NODE_CREATED:
 	case SSDFS_BTREE_NODE_INITIALIZED:
 		atomic_set(&node->state, SSDFS_BTREE_NODE_UNKNOWN_STATE);
 		wake_up_all(&node->wait_queue);
 		complete_all(&node->init_end);
 
 		spin_lock(&node->descriptor_lock);
-		ssdfs_segment_put_object(node->seg);
-		node->seg = NULL;
+		if (node->seg) {
+			ssdfs_segment_put_object(node->seg);
+			node->seg = NULL;
+		}
 		spin_unlock(&node->descriptor_lock);
 
 		if (rwsem_is_locked(&node->bmap_array.lock)) {
@@ -686,7 +843,7 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 		node->bmap_array.item_start_bit = ULONG_MAX;
 		for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
 			spin_lock(&node->bmap_array.bmap[i].lock);
-			ssdfs_kfree(node->bmap_array.bmap[i].ptr);
+			ssdfs_btree_node_kfree(node->bmap_array.bmap[i].ptr);
 			node->bmap_array.bmap[i].ptr = NULL;
 			spin_unlock(&node->bmap_array.bmap[i].lock);
 		}
@@ -697,7 +854,7 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 		}
 
 		if (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE)
-			ssdfs_pagevec_release(&node->content.pvec);
+			ssdfs_btree_node_pagevec_release(&node->content.pvec);
 		break;
 
 	default:
@@ -709,7 +866,6 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 	}
 
 	ssdfs_btree_node_free(node);
-	node = NULL;
 }
 
 /*
@@ -921,11 +1077,11 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		unlock_page(page);
 	}
 
-	pagevec_init(pvec);
+	ssdfs_btree_node_pagevec_release(pvec);
 	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 		pagevec_add(pvec, req->result.pvec.pages[i]);
-		unlock_page(req->result.pvec.pages[i]);
-		req->result.pvec.pages[i] = NULL;
+		ssdfs_btree_node_account_page(req->result.pvec.pages[i]);
+		ssdfs_request_unlock_and_remove_page(req, i);
 	}
 	pagevec_reinit(&req->result.pvec);
 
@@ -7791,7 +7947,7 @@ int ssdfs_move_common2common_node_index_range(struct ssdfs_btree_node *src,
 		return -ERANGE;
 	}
 
-	buf = ssdfs_kzalloc(PAGE_SIZE, GFP_KERNEL);
+	buf = ssdfs_btree_node_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!buf) {
 		SSDFS_ERR("fail to allocate buffer\n");
 		return -ERANGE;
@@ -7993,7 +8149,7 @@ finish_index_moving:
 		set_ssdfs_btree_node_dirty(dst);
 	}
 
-	ssdfs_kfree(buf);
+	ssdfs_btree_node_kfree(buf);
 	return err;
 }
 
@@ -12902,23 +13058,19 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 			search->result.buf_size = buf_size;
 			search->result.items_in_buffer = 0;
 		} else {
-			search->result.buf = ssdfs_kzalloc(buf_size,
-							   GFP_KERNEL);
-			if (!search->result.buf) {
+			err = ssdfs_btree_search_alloc_result_buf(search,
+								  buf_size);
+			if (unlikely(err)) {
 				SSDFS_ERR("fail to allocate buffer\n");
-				return -ENOMEM;
+				return err;
 			}
-			search->result.buf_state =
-					SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
-			search->result.buf_size = buf_size;
-			search->result.items_in_buffer = 0;
 		}
 		break;
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
 			if (search->result.buf)
-				ssdfs_kfree(search->result.buf);
+				ssdfs_btree_node_kfree(search->result.buf);
 
 			switch (tree->type) {
 			case SSDFS_EXTENTS_BTREE:

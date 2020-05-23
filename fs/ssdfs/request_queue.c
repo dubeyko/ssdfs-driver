@@ -28,6 +28,62 @@
 #include "page_array.h"
 #include "segment.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_req_queue_page_leaks;
+atomic64_t ssdfs_req_queue_memory_leaks;
+atomic64_t ssdfs_req_queue_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_req_queue_cache_leaks_increment(void *kaddr)
+ * void ssdfs_req_queue_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_req_queue_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_req_queue_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_req_queue_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_req_queue_kfree(void *kaddr)
+ * struct page *ssdfs_req_queue_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_req_queue_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_req_queue_free_page(struct page *page)
+ * void ssdfs_req_queue_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(req_queue)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(req_queue)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_req_queue_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_req_queue_page_leaks, 0);
+	atomic64_set(&ssdfs_req_queue_memory_leaks, 0);
+	atomic64_set(&ssdfs_req_queue_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_req_queue_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_req_queue_page_leaks) != 0) {
+		SSDFS_ERR("REQUESTS QUEUE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_req_queue_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_req_queue_memory_leaks) != 0) {
+		SSDFS_ERR("REQUESTS QUEUE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_req_queue_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_req_queue_cache_leaks) != 0) {
+		SSDFS_ERR("REQUESTS QUEUE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_req_queue_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static struct kmem_cache *ssdfs_seg_req_obj_cachep;
 
 static
@@ -435,7 +491,7 @@ struct ssdfs_segment_request *ssdfs_request_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ssdfs_memory_leaks_increment(ptr);
+	ssdfs_req_queue_cache_leaks_increment(ptr);
 
 	return ptr;
 }
@@ -452,7 +508,7 @@ void ssdfs_request_free(struct ssdfs_segment_request *req)
 	if (!req)
 		return;
 
-	ssdfs_memory_leaks_decrement(req);
+	ssdfs_req_queue_cache_leaks_decrement(req);
 	kmem_cache_free(ssdfs_seg_req_obj_cachep, req);
 }
 
@@ -546,7 +602,7 @@ ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req)
 		return ERR_PTR(-E2BIG);
 	}
 
-	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
 	if (IS_ERR_OR_NULL(page)) {
 		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
@@ -608,8 +664,80 @@ void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req)
 		unlock_page(page);
 	}
 
-	ssdfs_pagevec_release(&req->result.pvec);
+	ssdfs_req_queue_pagevec_release(&req->result.pvec);
 	pagevec_reinit(&req->result.pvec);
+}
+
+/*
+ * ssdfs_request_unlock_and_remove_page() - unlock and remove page
+ * @req: segment request [in|out]
+ * @page_index: page index
+ */
+void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
+					  int page_index)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (page_index >= pagevec_count(&req->result.pvec)) {
+		SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+			  page_index,
+			  pagevec_count(&req->result.pvec));
+		return;
+	}
+
+	if (!req->result.pvec.pages[page_index]) {
+		SSDFS_DBG("page %d is NULL\n", page_index);
+		return;
+	}
+
+	unlock_page(req->result.pvec.pages[page_index]);
+	ssdfs_req_queue_forget_page(req->result.pvec.pages[page_index]);
+	req->result.pvec.pages[page_index] = NULL;
+}
+
+/*
+ * ssdfs_free_flush_request_pages() - unlock and remove flush request's pages
+ * @req: segment request [out]
+ */
+void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
+{
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
+		struct page *page = req->result.pvec.pages[i];
+
+		if (!page) {
+			SSDFS_WARN("page %d is NULL\n", i);
+			continue;
+		}
+
+		if (PageLocked(page))
+			unlock_page(page);
+		else {
+			SSDFS_WARN("page %d is not locked: "
+				   "cmd %#x, type %#x\n",
+				   i, req->private.cmd,
+				   req->private.type);
+		}
+
+		if (PageWriteback(page))
+			end_page_writeback(page);
+		else {
+			SSDFS_WARN("page %d is not under writeback: "
+				   "cmd %#x, type %#x\n",
+				   i, req->private.cmd,
+				   req->private.type);
+		}
+
+		req->result.pvec.pages[i] = NULL;
+		ssdfs_req_queue_free_page(page);
+	}
 }
 
 /*

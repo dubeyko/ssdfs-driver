@@ -30,6 +30,62 @@
 #include "ssdfs.h"
 #include "compression.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_lzo_page_leaks;
+atomic64_t ssdfs_lzo_memory_leaks;
+atomic64_t ssdfs_lzo_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_lzo_cache_leaks_increment(void *kaddr)
+ * void ssdfs_lzo_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_lzo_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_lzo_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_lzo_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_lzo_kfree(void *kaddr)
+ * struct page *ssdfs_lzo_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_lzo_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_lzo_free_page(struct page *page)
+ * void ssdfs_lzo_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(lzo)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(lzo)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_lzo_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_lzo_page_leaks, 0);
+	atomic64_set(&ssdfs_lzo_memory_leaks, 0);
+	atomic64_set(&ssdfs_lzo_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_lzo_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_lzo_page_leaks) != 0) {
+		SSDFS_ERR("LZO: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_lzo_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_lzo_memory_leaks) != 0) {
+		SSDFS_ERR("LZO: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_lzo_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_lzo_cache_leaks) != 0) {
+		SSDFS_ERR("LZO: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_lzo_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static int ssdfs_lzo_compress(struct list_head *ws_ptr,
 				unsigned char *data_in,
 				unsigned char *cdata_out,
@@ -72,7 +128,7 @@ static void ssdfs_lzo_free_workspace(struct list_head *ptr)
 
 	vfree(workspace->cbuf);
 	vfree(workspace->mem);
-	ssdfs_kfree(workspace);
+	ssdfs_lzo_kfree(workspace);
 }
 
 static struct list_head *ssdfs_lzo_alloc_workspace(void)
@@ -81,7 +137,7 @@ static struct list_head *ssdfs_lzo_alloc_workspace(void)
 
 	SSDFS_DBG("try to allocate workspace\n");
 
-	workspace = ssdfs_kzalloc(sizeof(*workspace), GFP_KERNEL);
+	workspace = ssdfs_lzo_kzalloc(sizeof(*workspace), GFP_KERNEL);
 	if (unlikely(!workspace))
 		goto failed_alloc_workspaces;
 

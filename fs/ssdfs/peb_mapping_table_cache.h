@@ -96,4 +96,10 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 					     u64 leb_id,
 					     int consistency);
 
+/*
+ * PEB mapping table cache's internal API
+ */
+struct page *
+ssdfs_maptbl_cache_add_pagevec_page(struct ssdfs_maptbl_cache *cache);
+
 #endif /* _SSDFS_PEB_MAPPING_TABLE_CACHE_H */

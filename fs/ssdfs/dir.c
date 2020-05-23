@@ -29,6 +29,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_dir_page_leaks;
+atomic64_t ssdfs_dir_memory_leaks;
+atomic64_t ssdfs_dir_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_dir_cache_leaks_increment(void *kaddr)
+ * void ssdfs_dir_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_dir_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_dir_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_dir_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_dir_kfree(void *kaddr)
+ * struct page *ssdfs_dir_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_dir_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_dir_free_page(struct page *page)
+ * void ssdfs_dir_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dir)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(dir)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_dir_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_dir_page_leaks, 0);
+	atomic64_set(&ssdfs_dir_memory_leaks, 0);
+	atomic64_set(&ssdfs_dir_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_dir_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_dir_page_leaks) != 0) {
+		SSDFS_ERR("DIR: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_dir_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_dir_memory_leaks) != 0) {
+		SSDFS_ERR("DIR: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_dir_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_dir_cache_leaks) != 0) {
+		SSDFS_ERR("DIR: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_dir_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static unsigned char
 ssdfs_filetype_table[SSDFS_FT_MAX] = {
 	[SSDFS_FT_UNKNOWN]	= DT_UNKNOWN,

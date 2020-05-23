@@ -419,124 +419,6 @@ bool is_ssdfs_maptbl_under_flush(struct ssdfs_fs_info *fsi)
 	return atomic_read(&fsi->maptbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH;
 }
 
-static inline
-void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	int i, j;
-	size_t bytes_count;
-
-	BUG_ON(!tbl);
-
-	SSDFS_DBG("fragments_count %u, fragments_per_seg %u, "
-		  "fragments_per_peb %u, fragment_bytes %u, "
-		  "flags %#x, lebs_count %llu, pebs_count %llu, "
-		  "lebs_per_fragment %u, pebs_per_fragment %u, "
-		  "pebs_per_stripe %u, stripes_per_fragment %u\n",
-		  tbl->fragments_count, tbl->fragments_per_seg,
-		  tbl->fragments_per_peb, tbl->fragment_bytes,
-		  atomic_read(&tbl->flags), tbl->lebs_count,
-		  tbl->pebs_count, tbl->lebs_per_fragment,
-		  tbl->pebs_per_fragment, tbl->pebs_per_stripe,
-		  tbl->stripes_per_fragment);
-
-	for (i = 0; i < MAPTBL_LIMIT1; i++) {
-		for (j = 0; j < MAPTBL_LIMIT2; j++) {
-			struct ssdfs_meta_area_extent *extent;
-			extent = &tbl->extents[i][j];
-			SSDFS_DBG("extent[%d][%d]: "
-				  "start_id %llu, len %u, "
-				  "type %#x, flags %#x\n",
-				  i, j,
-				  le64_to_cpu(extent->start_id),
-				  le32_to_cpu(extent->len),
-				  le16_to_cpu(extent->type),
-				  le16_to_cpu(extent->flags));
-		}
-	}
-
-	SSDFS_DBG("segs_count %u\n", tbl->segs_count);
-
-	for (i = 0; i < SSDFS_MAPTBL_SEG_COPY_MAX; i++) {
-		if (!tbl->segs[i])
-			continue;
-
-		for (j = 0; j < tbl->segs_count; j++)
-			SSDFS_DBG("seg[%d][%d] %p\n", i, j, tbl->segs[i][j]);
-	}
-
-	SSDFS_DBG("pre_erase_pebs %u, max_erase_ops %u, "
-		  "last_peb_recover_cno %llu\n",
-		  atomic_read(&tbl->pre_erase_pebs),
-		  atomic_read(&tbl->max_erase_ops),
-		  (u64)atomic64_read(&tbl->last_peb_recover_cno));
-
-	bytes_count = tbl->fragments_count + BITS_PER_LONG - 1;
-	bytes_count /= BITS_PER_BYTE;
-	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				tbl->dirty_bmap, bytes_count);
-
-	for (i = 0; i < tbl->fragments_count; i++) {
-		struct ssdfs_maptbl_fragment_desc *desc;
-		struct page *page;
-		u32 pages_count;
-		int state;
-
-		desc = &tbl->desc_array[i];
-
-		state = atomic_read(&desc->state);
-		SSDFS_DBG("fragment #%d: "
-			  "state %#x, start_leb %llu, lebs_count %u, "
-			  "lebs_per_page %u, lebtbl_pages %u, "
-			  "pebs_per_page %u, stripe_pages %u, "
-			  "mapped_lebs %u, migrating_lebs %u, "
-			  "pre_erase_pebs %u, recovering_pebs %u\n",
-			  i, state,
-			  desc->start_leb, desc->lebs_count,
-			  desc->lebs_per_page, desc->lebtbl_pages,
-			  desc->pebs_per_page, desc->stripe_pages,
-			  desc->mapped_lebs, desc->migrating_lebs,
-			  desc->pre_erase_pebs, desc->recovering_pebs);
-
-		if (state == SSDFS_MAPTBL_FRAG_CREATED) {
-			SSDFS_DBG("fragment #%d isn't initialized\n", i);
-			continue;
-		} else if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
-			SSDFS_DBG("fragment #%d init was failed\n", i);
-			continue;
-		}
-
-		pages_count = desc->lebtbl_pages +
-			(desc->stripe_pages * tbl->stripes_per_fragment);
-
-		for (j = 0; j < pages_count; j++) {
-			void *kaddr;
-
-			page = ssdfs_page_array_get_page_locked(&desc->array,
-								j);
-
-			SSDFS_DBG("page[%d] %p\n", j, page);
-			if (IS_ERR_OR_NULL(page))
-				continue;
-
-			SSDFS_DBG("page_index %llu, flags %#lx\n",
-				  (u64)page_index(page), page->flags);
-
-			kaddr = kmap_atomic(page);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-						kaddr, PAGE_SIZE);
-			kunmap_atomic(kaddr);
-
-			unlock_page(page);
-			ssdfs_put_page(page);
-
-			SSDFS_DBG("page %px, count %d\n",
-				  page, page_ref_count(page));
-		}
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-}
-
 /*
  * PEB mapping table's API
  */
@@ -606,5 +488,11 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 int ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id);
+
+void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
+				      struct ssdfs_maptbl_area *area,
+				      u16 pages_count);
+
+void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl);
 
 #endif /* _SSDFS_PEB_MAPPING_TABLE_H */

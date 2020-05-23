@@ -36,6 +36,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_seg_obj_page_leaks;
+atomic64_t ssdfs_seg_obj_memory_leaks;
+atomic64_t ssdfs_seg_obj_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_seg_obj_cache_leaks_increment(void *kaddr)
+ * void ssdfs_seg_obj_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_seg_obj_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_seg_obj_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_seg_obj_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_seg_obj_kfree(void *kaddr)
+ * struct page *ssdfs_seg_obj_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_seg_obj_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_seg_obj_free_page(struct page *page)
+ * void ssdfs_seg_obj_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seg_obj)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(seg_obj)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_seg_obj_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_seg_obj_page_leaks, 0);
+	atomic64_set(&ssdfs_seg_obj_memory_leaks, 0);
+	atomic64_set(&ssdfs_seg_obj_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_seg_obj_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_seg_obj_page_leaks) != 0) {
+		SSDFS_ERR("SEGMENT: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_seg_obj_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_seg_obj_memory_leaks) != 0) {
+		SSDFS_ERR("SEGMENT: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_seg_obj_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_seg_obj_cache_leaks) != 0) {
+		SSDFS_ERR("SEGMENT: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_seg_obj_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static struct kmem_cache *ssdfs_seg_obj_cachep;
 
 static void ssdfs_init_seg_object_once(void *obj)
@@ -126,7 +182,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 			ssdfs_peb_container_destroy(pebc);
 		}
 
-		ssdfs_kfree(si->peb_array);
+		ssdfs_seg_obj_kfree(si->peb_array);
 	}
 
 	ssdfs_segment_blk_bmap_destroy(&si->blk_bmap);
@@ -139,7 +195,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 		ssdfs_requests_queue_remove_all(&si->create_rq, -ENOSPC);
 	}
 
-	ssdfs_memory_leaks_decrement(si);
+	ssdfs_seg_obj_cache_leaks_decrement(si);
 	kmem_cache_free(ssdfs_seg_obj_cachep, si);
 	return err;
 }
@@ -218,7 +274,7 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ssdfs_memory_leaks_increment(ptr);
+	ssdfs_seg_obj_cache_leaks_increment(ptr);
 
 	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
 
@@ -233,7 +289,7 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	ssdfs_requests_queue_init(&ptr->create_rq);
 
 	ptr->pebs_count = fsi->pebs_per_seg;
-	ptr->peb_array = ssdfs_kcalloc(ptr->pebs_count,
+	ptr->peb_array = ssdfs_seg_obj_kcalloc(ptr->pebs_count,
 				       sizeof(struct ssdfs_peb_container),
 				       GFP_KERNEL);
 	if (!ptr->peb_array) {

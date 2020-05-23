@@ -17,6 +17,62 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_map_queue_page_leaks;
+atomic64_t ssdfs_map_queue_memory_leaks;
+atomic64_t ssdfs_map_queue_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_map_queue_cache_leaks_increment(void *kaddr)
+ * void ssdfs_map_queue_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_map_queue_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_map_queue_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_map_queue_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_map_queue_kfree(void *kaddr)
+ * struct page *ssdfs_map_queue_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_map_queue_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_map_queue_free_page(struct page *page)
+ * void ssdfs_map_queue_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_queue)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(map_queue)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_map_queue_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_map_queue_page_leaks, 0);
+	atomic64_set(&ssdfs_map_queue_memory_leaks, 0);
+	atomic64_set(&ssdfs_map_queue_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_map_queue_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_map_queue_page_leaks) != 0) {
+		SSDFS_ERR("MAPPING QUEUE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_map_queue_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_map_queue_memory_leaks) != 0) {
+		SSDFS_ERR("MAPPING QUEUE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_map_queue_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_map_queue_cache_leaks) != 0) {
+		SSDFS_ERR("MAPPING QUEUE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_map_queue_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static struct kmem_cache *ssdfs_peb_mapping_info_cachep;
 
 static
@@ -226,7 +282,7 @@ struct ssdfs_peb_mapping_info *ssdfs_peb_mapping_info_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ssdfs_memory_leaks_increment(ptr);
+	ssdfs_map_queue_cache_leaks_increment(ptr);
 
 	return ptr;
 }
@@ -243,7 +299,7 @@ void ssdfs_peb_mapping_info_free(struct ssdfs_peb_mapping_info *pmi)
 	if (!pmi)
 		return;
 
-	ssdfs_memory_leaks_decrement(pmi);
+	ssdfs_map_queue_cache_leaks_decrement(pmi);
 	kmem_cache_free(ssdfs_peb_mapping_info_cachep, pmi);
 }
 

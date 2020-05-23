@@ -24,6 +24,62 @@
 #include "ssdfs.h"
 #include "compression.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_compr_page_leaks;
+atomic64_t ssdfs_compr_memory_leaks;
+atomic64_t ssdfs_compr_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_compr_cache_leaks_increment(void *kaddr)
+ * void ssdfs_compr_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_compr_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_compr_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_compr_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_compr_kfree(void *kaddr)
+ * struct page *ssdfs_compr_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_compr_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_compr_free_page(struct page *page)
+ * void ssdfs_compr_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(compr)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(compr)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_compr_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_compr_page_leaks, 0);
+	atomic64_set(&ssdfs_compr_memory_leaks, 0);
+	atomic64_set(&ssdfs_compr_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_compr_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_compr_page_leaks) != 0) {
+		SSDFS_ERR("COMPRESSION: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_compr_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_compr_memory_leaks) != 0) {
+		SSDFS_ERR("COMPRESSION: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_compr_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_compr_cache_leaks) != 0) {
+		SSDFS_ERR("COMPRESSION: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_compr_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 struct ssdfs_compressor *ssdfs_compressors[SSDFS_COMPR_TYPES_CNT];
 
 static struct list_head compr_idle_workspace[SSDFS_COMPR_TYPES_CNT];
@@ -151,7 +207,7 @@ out:
 	return err;
 }
 
-static void ssdfs_free_workspaces(void)
+void ssdfs_free_workspaces(void)
 {
 	struct list_head *workspace;
 	const struct ssdfs_compress_ops *ops;
@@ -324,8 +380,8 @@ bool ssdfs_can_compress_data(struct page *page,
 		return false;
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	counts = ssdfs_kzalloc(sizeof(unsigned) * SSDFS_DICT_SIZE,
-			       GFP_KERNEL);
+	counts = ssdfs_compr_kzalloc(sizeof(unsigned) * SSDFS_DICT_SIZE,
+				     GFP_KERNEL);
 	if (!counts) {
 		SSDFS_WARN("fail to alloc array\n");
 		return true;
@@ -347,7 +403,7 @@ bool ssdfs_can_compress_data(struct page *page,
 	}
 	kunmap_atomic(kaddr);
 
-	ssdfs_kfree(counts);
+	ssdfs_compr_kfree(counts);
 
 	SSDFS_DBG("data_size %u, found_symbols %u, min %u, max %u\n",
 		  data_size, found_symbols, min, max);

@@ -26,6 +26,62 @@
 #include "ssdfs.h"
 #include "block_bitmap.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_block_bmap_page_leaks;
+atomic64_t ssdfs_block_bmap_memory_leaks;
+atomic64_t ssdfs_block_bmap_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_block_bmap_cache_leaks_increment(void *kaddr)
+ * void ssdfs_block_bmap_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_block_bmap_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_block_bmap_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_block_bmap_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_block_bmap_kfree(void *kaddr)
+ * struct page *ssdfs_block_bmap_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_block_bmap_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_block_bmap_free_page(struct page *page)
+ * void ssdfs_block_bmap_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(block_bmap)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(block_bmap)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_block_bmap_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_block_bmap_page_leaks, 0);
+	atomic64_set(&ssdfs_block_bmap_memory_leaks, 0);
+	atomic64_set(&ssdfs_block_bmap_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_block_bmap_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_block_bmap_page_leaks) != 0) {
+		SSDFS_ERR("BLOCK BMAP: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_block_bmap_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_block_bmap_memory_leaks) != 0) {
+		SSDFS_ERR("BLOCK BMAP: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_block_bmap_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_block_bmap_cache_leaks) != 0) {
+		SSDFS_ERR("BLOCK BMAP: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_block_bmap_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 extern const bool detect_free_blk[U8_MAX + 1];
 extern const bool detect_pre_allocated_blk[U8_MAX + 1];
 extern const bool detect_valid_blk[U8_MAX + 1];
@@ -117,12 +173,12 @@ void ssdfs_block_bmap_storage_destroy(struct ssdfs_block_bmap_storage *storage)
 
 	switch (storage->state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-		ssdfs_pagevec_release(&storage->pvec);
+		ssdfs_block_bmap_pagevec_release(&storage->pvec);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
 		if (storage->buf)
-			ssdfs_kfree(storage->buf);
+			ssdfs_block_bmap_kfree(storage->buf);
 		break;
 
 	default:
@@ -187,7 +243,7 @@ int ssdfs_block_bmap_create_empty_storage(struct ssdfs_block_bmap_storage *ptr,
 		pagevec_init(&ptr->pvec);
 		ptr->state = SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC;
 	} else {
-		ptr->buf = ssdfs_kmalloc(bmap_bytes, GFP_KERNEL);
+		ptr->buf = ssdfs_block_bmap_kmalloc(bmap_bytes, GFP_KERNEL);
 		if (!ptr->buf) {
 			SSDFS_ERR("fail to allocate memory: "
 				  "bmap_bytes %zu\n",
@@ -241,7 +297,7 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 				return -ENOMEM;
 			}
 
-			page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL | __GFP_ZERO);
 			if (IS_ERR_OR_NULL(page)) {
 				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 				SSDFS_ERR("unable to allocate #%d page\n", i);
@@ -421,7 +477,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 	if (blk_bmap->storage.state != SSDFS_BLOCK_BMAP_STORAGE_ABSENT) {
 		switch (blk_bmap->storage.state) {
 		case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-			ssdfs_pagevec_release(&blk_bmap->storage.pvec);
+			ssdfs_block_bmap_pagevec_release(&blk_bmap->storage.pvec);
 			pagevec_reinit(&blk_bmap->storage.pvec);
 			break;
 
@@ -745,7 +801,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 	switch (blk_bmap->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
 		for (i = 0; i < pagevec_count(&blk_bmap->storage.pvec); i++) {
-			page = ssdfs_alloc_page(GFP_KERNEL);
+			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
 			if (IS_ERR_OR_NULL(page)) {
 				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 				SSDFS_ERR("unable to allocate #%d page\n", i);
@@ -771,7 +827,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		page = ssdfs_alloc_page(GFP_KERNEL);
+		page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
 		if (IS_ERR_OR_NULL(page)) {
 			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
@@ -899,8 +955,16 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 	return 0;
 
 cleanup_snapshot_pagevec:
-	ssdfs_pagevec_release(snapshot);
+	ssdfs_block_bmap_pagevec_release(snapshot);
 	return err;
+}
+
+void ssdfs_block_bmap_forget_snapshot(struct pagevec *snapshot)
+{
+	if (!snapshot)
+		return;
+
+	ssdfs_block_bmap_pagevec_release(snapshot);
 }
 
 /*

@@ -576,6 +576,12 @@ int ssdfs_set_dirty_items_range(struct ssdfs_btree_node *node,
 void ssdfs_clear_dirty_items_range_state(struct ssdfs_btree_node *node,
 					 u16 start_index, u16 count);
 
+int ssdfs_btree_node_allocate_bmaps(void *addr[SSDFS_BTREE_NODE_BMAP_COUNT],
+				    size_t bmap_bytes);
+void ssdfs_btree_node_init_bmaps(struct ssdfs_btree_node *node,
+				void *addr[SSDFS_BTREE_NODE_BMAP_COUNT]);
+int ssdfs_btree_node_allocate_content_space(struct ssdfs_btree_node *node,
+					    u32 node_size);
 int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 					struct ssdfs_btree_index_key *ptr,
 					u32 node_size,

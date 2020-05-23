@@ -30,6 +30,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_map_cache_page_leaks;
+atomic64_t ssdfs_map_cache_memory_leaks;
+atomic64_t ssdfs_map_cache_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_map_cache_cache_leaks_increment(void *kaddr)
+ * void ssdfs_map_cache_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_map_cache_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_map_cache_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_map_cache_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_map_cache_kfree(void *kaddr)
+ * struct page *ssdfs_map_cache_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_map_cache_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_map_cache_free_page(struct page *page)
+ * void ssdfs_map_cache_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_cache)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(map_cache)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_map_cache_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_map_cache_page_leaks, 0);
+	atomic64_set(&ssdfs_map_cache_memory_leaks, 0);
+	atomic64_set(&ssdfs_map_cache_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_map_cache_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_map_cache_page_leaks) != 0) {
+		SSDFS_ERR("MAPPING CACHE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_map_cache_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_map_cache_memory_leaks) != 0) {
+		SSDFS_ERR("MAPPING CACHE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_map_cache_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_map_cache_cache_leaks) != 0) {
+		SSDFS_ERR("MAPPING CACHE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_map_cache_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * ssdfs_maptbl_cache_init() - init mapping table cache
  */
@@ -58,7 +114,7 @@ void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 
 	SSDFS_DBG("cache %p\n", cache);
 
-	ssdfs_pagevec_release(&cache->pvec);
+	ssdfs_map_cache_pagevec_release(&cache->pvec);
 	ssdfs_peb_mapping_queue_remove_all(&cache->pm_queue);
 }
 
@@ -1567,6 +1623,28 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 	return 0;
 }
 
+struct page *
+ssdfs_maptbl_cache_add_pagevec_page(struct ssdfs_maptbl_cache *cache)
+{
+	struct page *page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p\n", cache);
+
+	page = ssdfs_map_cache_add_pagevec_page(&cache->pvec);
+	if (unlikely(IS_ERR_OR_NULL(page))) {
+		err = !page ? -ENOMEM : PTR_ERR(page);
+		SSDFS_ERR("fail to add pagevec page: err %d\n",
+			  err);
+	}
+
+	return page;
+}
+
 /*
  * ssdfs_maptbl_cache_add_page() - add fragment into maptbl cache
  * @cache: maptbl cache object
@@ -1606,7 +1684,7 @@ int ssdfs_maptbl_cache_add_page(struct ssdfs_maptbl_cache *cache,
 	item_index = 0;
 	page_index = pagevec_count(&cache->pvec);
 
-	page = ssdfs_add_pagevec_page(&cache->pvec);
+	page = ssdfs_map_cache_add_pagevec_page(&cache->pvec);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
 		err = !page ? -ENOMEM : PTR_ERR(page);
 		SSDFS_ERR("fail to add pagevec page: err %d\n",
@@ -3388,7 +3466,7 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 			SSDFS_DBG("page %px, count %d\n",
 				  page, page_ref_count(page));
 
-			ssdfs_free_page(page);
+			ssdfs_map_cache_free_page(page);
 			atomic_sub(PAGE_SIZE, &cache->bytes_count);
 		}
 	}

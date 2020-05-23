@@ -30,6 +30,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_recovery_page_leaks;
+atomic64_t ssdfs_recovery_memory_leaks;
+atomic64_t ssdfs_recovery_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_recovery_cache_leaks_increment(void *kaddr)
+ * void ssdfs_recovery_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_recovery_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_recovery_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_recovery_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_recovery_kfree(void *kaddr)
+ * struct page *ssdfs_recovery_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_recovery_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_recovery_free_page(struct page *page)
+ * void ssdfs_recovery_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(recovery)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(recovery)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_recovery_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_recovery_page_leaks, 0);
+	atomic64_set(&ssdfs_recovery_memory_leaks, 0);
+	atomic64_set(&ssdfs_recovery_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_recovery_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_recovery_page_leaks) != 0) {
+		SSDFS_ERR("RECOVERY: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_recovery_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_recovery_memory_leaks) != 0) {
+		SSDFS_ERR("RECOVERY: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_recovery_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_recovery_cache_leaks) != 0) {
+		SSDFS_ERR("RECOVERY: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_recovery_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 {
 	void *vh_buf = NULL;
@@ -45,8 +101,8 @@ int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 	BUG_ON(!sbi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	vh_buf = ssdfs_kzalloc(hdr_size, GFP_KERNEL);
-	vs_buf = ssdfs_kzalloc(footer_size, GFP_KERNEL);
+	vh_buf = ssdfs_recovery_kzalloc(hdr_size, GFP_KERNEL);
+	vs_buf = ssdfs_recovery_kzalloc(footer_size, GFP_KERNEL);
 	if (unlikely(!vh_buf || !vs_buf)) {
 		SSDFS_ERR("unable to allocate superblock buffers\n");
 		err = -ENOMEM;
@@ -59,8 +115,8 @@ int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 	return 0;
 
 free_buf:
-	ssdfs_kfree(vh_buf);
-	ssdfs_kfree(vs_buf);
+	ssdfs_recovery_kfree(vh_buf);
+	ssdfs_recovery_kfree(vs_buf);
 	return err;
 }
 
@@ -78,8 +134,8 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 		  sbi->last_log.peb_id, sbi->last_log.page_offset,
 		  sbi->last_log.pages_count);
 
-	ssdfs_kfree(sbi->vh_buf);
-	ssdfs_kfree(sbi->vs_buf);
+	ssdfs_recovery_kfree(sbi->vh_buf);
+	ssdfs_recovery_kfree(sbi->vs_buf);
 	sbi->vh_buf = NULL;
 	sbi->vs_buf = NULL;
 	memset(&sbi->last_log, 0, sizeof(struct ssdfs_peb_extent));
@@ -1464,12 +1520,13 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 	pages_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
 	for (i = 0; i < pages_count; i++) {
+		struct ssdfs_maptbl_cache *cache = &fsi->maptbl_cache;
 		size_t size;
 
 		size = min_t(size_t, (size_t)PAGE_SIZE,
 				(size_t)(bytes_count - read_bytes));
 
-		page = ssdfs_add_pagevec_page(&fsi->maptbl_cache.pvec);
+		page = ssdfs_maptbl_cache_add_pagevec_page(cache);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			err = !page ? -ENOMEM : PTR_ERR(page);
 			SSDFS_ERR("fail to add pagevec page: err %d\n",

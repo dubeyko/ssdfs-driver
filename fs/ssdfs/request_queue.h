@@ -321,7 +321,10 @@ int ssdfs_request_add_page(struct page *page,
 struct page *
 ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req);
 int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req);
+void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
+					  int page_index);
 void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req);
+void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req);
 u8 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
 			   struct pagevec *pvec);
 

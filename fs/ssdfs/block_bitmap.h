@@ -279,6 +279,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 				u32 *metadata_blks,
 				u32 *invalid_blks,
 				size_t *bytes_count);
+void ssdfs_block_bmap_forget_snapshot(struct pagevec *snapshot);
 
 int ssdfs_block_bmap_lock(struct ssdfs_block_bmap *blk_bmap);
 bool ssdfs_block_bmap_is_locked(struct ssdfs_block_bmap *blk_bmap);

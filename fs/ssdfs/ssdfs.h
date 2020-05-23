@@ -68,6 +68,7 @@ void ssdfs_destroy_btree_search_obj_cache(void);
 
 /* compression.c */
 int ssdfs_compressors_init(void);
+void ssdfs_free_workspaces(void);
 void ssdfs_compressors_exit(void);
 
 /* dir.c */
@@ -139,7 +140,6 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 					u32 log_pages,
 					u32 log_flags,
 					struct ssdfs_log_footer *footer);
-
 
 /* offset_translation_table.c */
 int ssdfs_init_blk2off_frag_obj_cache(void);
@@ -230,5 +230,87 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 					u16 seg_type,
 					u32 flags,
 					struct ssdfs_partial_log_header *hdr);
+
+/* memory leaks checker */
+void ssdfs_acl_memory_leaks_init(void);
+void ssdfs_acl_check_memory_leaks(void);
+void ssdfs_block_bmap_memory_leaks_init(void);
+void ssdfs_block_bmap_check_memory_leaks(void);
+void ssdfs_btree_memory_leaks_init(void);
+void ssdfs_btree_check_memory_leaks(void);
+void ssdfs_btree_hierarchy_memory_leaks_init(void);
+void ssdfs_btree_hierarchy_check_memory_leaks(void);
+void ssdfs_btree_node_memory_leaks_init(void);
+void ssdfs_btree_node_check_memory_leaks(void);
+void ssdfs_btree_search_memory_leaks_init(void);
+void ssdfs_btree_search_check_memory_leaks(void);
+void ssdfs_lzo_memory_leaks_init(void);
+void ssdfs_lzo_check_memory_leaks(void);
+void ssdfs_zlib_memory_leaks_init(void);
+void ssdfs_zlib_check_memory_leaks(void);
+void ssdfs_compr_memory_leaks_init(void);
+void ssdfs_compr_check_memory_leaks(void);
+void ssdfs_cur_seg_memory_leaks_init(void);
+void ssdfs_cur_seg_check_memory_leaks(void);
+void ssdfs_dentries_memory_leaks_init(void);
+void ssdfs_dentries_check_memory_leaks(void);
+void ssdfs_dev_bdev_memory_leaks_init(void);
+void ssdfs_dev_bdev_check_memory_leaks(void);
+void ssdfs_dev_mtd_memory_leaks_init(void);
+void ssdfs_dev_mtd_check_memory_leaks(void);
+void ssdfs_dir_memory_leaks_init(void);
+void ssdfs_dir_check_memory_leaks(void);
+void ssdfs_ext_queue_memory_leaks_init(void);
+void ssdfs_ext_queue_check_memory_leaks(void);
+void ssdfs_ext_tree_memory_leaks_init(void);
+void ssdfs_ext_tree_check_memory_leaks(void);
+void ssdfs_file_memory_leaks_init(void);
+void ssdfs_file_check_memory_leaks(void);
+void ssdfs_fs_error_memory_leaks_init(void);
+void ssdfs_fs_error_check_memory_leaks(void);
+void ssdfs_inode_memory_leaks_init(void);
+void ssdfs_inode_check_memory_leaks(void);
+void ssdfs_ino_tree_memory_leaks_init(void);
+void ssdfs_ino_tree_check_memory_leaks(void);
+void ssdfs_blk2off_memory_leaks_init(void);
+void ssdfs_blk2off_check_memory_leaks(void);
+void ssdfs_parray_memory_leaks_init(void);
+void ssdfs_parray_check_memory_leaks(void);
+void ssdfs_flush_memory_leaks_init(void);
+void ssdfs_flush_check_memory_leaks(void);
+void ssdfs_gc_memory_leaks_init(void);
+void ssdfs_gc_check_memory_leaks(void);
+void ssdfs_map_queue_memory_leaks_init(void);
+void ssdfs_map_queue_check_memory_leaks(void);
+void ssdfs_map_tbl_memory_leaks_init(void);
+void ssdfs_map_tbl_check_memory_leaks(void);
+void ssdfs_map_cache_memory_leaks_init(void);
+void ssdfs_map_cache_check_memory_leaks(void);
+void ssdfs_map_thread_memory_leaks_init(void);
+void ssdfs_map_thread_check_memory_leaks(void);
+void ssdfs_migration_memory_leaks_init(void);
+void ssdfs_migration_check_memory_leaks(void);
+void ssdfs_read_memory_leaks_init(void);
+void ssdfs_read_check_memory_leaks(void);
+void ssdfs_recovery_memory_leaks_init(void);
+void ssdfs_recovery_check_memory_leaks(void);
+void ssdfs_req_queue_memory_leaks_init(void);
+void ssdfs_req_queue_check_memory_leaks(void);
+void ssdfs_seg_obj_memory_leaks_init(void);
+void ssdfs_seg_obj_check_memory_leaks(void);
+void ssdfs_seg_bmap_memory_leaks_init(void);
+void ssdfs_seg_bmap_check_memory_leaks(void);
+void ssdfs_seg_blk_memory_leaks_init(void);
+void ssdfs_seg_blk_check_memory_leaks(void);
+void ssdfs_seg_tree_memory_leaks_init(void);
+void ssdfs_seg_tree_check_memory_leaks(void);
+void ssdfs_seq_arr_memory_leaks_init(void);
+void ssdfs_seq_arr_check_memory_leaks(void);
+void ssdfs_dict_memory_leaks_init(void);
+void ssdfs_dict_check_memory_leaks(void);
+void ssdfs_shextree_memory_leaks_init(void);
+void ssdfs_shextree_check_memory_leaks(void);
+void ssdfs_xattr_memory_leaks_init(void);
+void ssdfs_xattr_check_memory_leaks(void);
 
 #endif /* _SSDFS_H */

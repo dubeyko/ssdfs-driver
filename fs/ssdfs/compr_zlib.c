@@ -29,6 +29,62 @@
 #include "ssdfs.h"
 #include "compression.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_zlib_page_leaks;
+atomic64_t ssdfs_zlib_memory_leaks;
+atomic64_t ssdfs_zlib_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_zlib_cache_leaks_increment(void *kaddr)
+ * void ssdfs_zlib_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_zlib_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_zlib_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_zlib_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_zlib_kfree(void *kaddr)
+ * struct page *ssdfs_zlib_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_zlib_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_zlib_free_page(struct page *page)
+ * void ssdfs_zlib_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(zlib)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(zlib)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_zlib_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_zlib_page_leaks, 0);
+	atomic64_set(&ssdfs_zlib_memory_leaks, 0);
+	atomic64_set(&ssdfs_zlib_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_zlib_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_zlib_page_leaks) != 0) {
+		SSDFS_ERR("ZLIB: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_zlib_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_zlib_memory_leaks) != 0) {
+		SSDFS_ERR("ZLIB: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_zlib_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_zlib_cache_leaks) != 0) {
+		SSDFS_ERR("ZLIB: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_zlib_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 #define COMPR_LEVEL CONFIG_SSDFS_ZLIB_COMR_LEVEL
 
 static int ssdfs_zlib_compress(struct list_head *ws_ptr,
@@ -73,7 +129,7 @@ static void ssdfs_zlib_free_workspace(struct list_head *ptr)
 
 	vfree(workspace->deflate_stream.workspace);
 	vfree(workspace->inflate_stream.workspace);
-	ssdfs_kfree(workspace);
+	ssdfs_zlib_kfree(workspace);
 }
 
 static struct list_head *ssdfs_zlib_alloc_workspace(void)
@@ -83,7 +139,7 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 
 	SSDFS_DBG("try to allocate workspace\n");
 
-	workspace = ssdfs_kzalloc(sizeof(*workspace), GFP_KERNEL);
+	workspace = ssdfs_zlib_kzalloc(sizeof(*workspace), GFP_KERNEL);
 	if (unlikely(!workspace)) {
 		SSDFS_ERR("unable to allocate memory for workspace\n");
 		return ERR_PTR(-ENOMEM);

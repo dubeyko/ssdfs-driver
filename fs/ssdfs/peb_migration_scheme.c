@@ -33,6 +33,62 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_migration_page_leaks;
+atomic64_t ssdfs_migration_memory_leaks;
+atomic64_t ssdfs_migration_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_migration_cache_leaks_increment(void *kaddr)
+ * void ssdfs_migration_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_migration_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_migration_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_migration_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_migration_kfree(void *kaddr)
+ * struct page *ssdfs_migration_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_migration_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_migration_free_page(struct page *page)
+ * void ssdfs_migration_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(migration)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(migration)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_migration_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_migration_page_leaks, 0);
+	atomic64_set(&ssdfs_migration_memory_leaks, 0);
+	atomic64_set(&ssdfs_migration_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_migration_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_migration_page_leaks) != 0) {
+		SSDFS_ERR("MIGRATION SCHEME: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_migration_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_migration_memory_leaks) != 0) {
+		SSDFS_ERR("MIGRATION SCHEME: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_migration_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_migration_cache_leaks) != 0) {
+		SSDFS_ERR("MIGRATION SCHEME: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_migration_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * ssdfs_peb_start_migration() - prepare and start PEB's migration
  * @pebc: pointer on PEB container
@@ -509,7 +565,7 @@ repeat_valid_blocks_processing:
 	return 0;
 
 fail_process_valid_blocks:
-	ssdfs_pagevec_release(&req->result.pvec);
+	ssdfs_migration_pagevec_release(&req->result.pvec);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 
@@ -637,7 +693,7 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 	return 0;
 
 fail_process_pre_alloc_blocks:
-	ssdfs_pagevec_release(&req->result.pvec);
+	ssdfs_migration_pagevec_release(&req->result.pvec);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 

@@ -39,6 +39,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_flush_page_leaks;
+atomic64_t ssdfs_flush_memory_leaks;
+atomic64_t ssdfs_flush_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_flush_cache_leaks_increment(void *kaddr)
+ * void ssdfs_flush_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_flush_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_flush_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_flush_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_flush_kfree(void *kaddr)
+ * struct page *ssdfs_flush_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_flush_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_flush_free_page(struct page *page)
+ * void ssdfs_flush_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(flush)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(flush)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_flush_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_flush_page_leaks, 0);
+	atomic64_set(&ssdfs_flush_memory_leaks, 0);
+	atomic64_set(&ssdfs_flush_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_flush_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_flush_page_leaks) != 0) {
+		SSDFS_ERR("FLUSH THREAD: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_flush_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_flush_memory_leaks) != 0) {
+		SSDFS_ERR("FLUSH THREAD: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_flush_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_flush_cache_leaks) != 0) {
+		SSDFS_ERR("FLUSH THREAD: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_flush_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * struct ssdfs_fragment_source - fragment source descriptor
  * @page: memory page that contains uncompressed fragment
@@ -1159,7 +1215,7 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 	to.area_offset = 0;
 	to.write_offset = write_offset;
 
-	to.store = ssdfs_kzalloc(PAGE_SIZE, GFP_KERNEL);
+	to.store = ssdfs_flush_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!to.store) {
 		SSDFS_ERR("fail to allocate buffer for fragment\n");
 		return -ENOMEM;
@@ -1233,7 +1289,7 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 	} while (written_bytes < to.compr_size);
 
 free_compr_buffer:
-	ssdfs_kfree(to.store);
+	ssdfs_flush_kfree(to.store);
 
 	return err;
 }
@@ -1579,7 +1635,7 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		SSDFS_ERR("invalid fragments count %u\n", fragments);
 		return -ERANGE;
 	} else if (fragments > 1) {
-		array = ssdfs_kcalloc(fragments,
+		array = ssdfs_flush_kcalloc(fragments,
 				      sizeof(struct ssdfs_fragment_desc),
 				      GFP_KERNEL);
 		if (!array) {
@@ -1728,7 +1784,7 @@ try_get_next_page:
 
 free_array:
 	if (array)
-		ssdfs_kfree(array);
+		ssdfs_flush_kfree(array);
 
 	if (err)
 		area->write_offset = metadata_offset;
@@ -5129,7 +5185,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	allocation_size = frag_hdr_size;
 	allocation_size += pagevec_count(&desc->snapshot) * frag_desc_size;
 
-	frag_hdr = ssdfs_kzalloc(allocation_size, GFP_KERNEL);
+	frag_hdr = ssdfs_flush_kzalloc(allocation_size, GFP_KERNEL);
 	if (!frag_hdr) {
 		SSDFS_ERR("unable to allocate block bmap header\n");
 		return -ENOMEM;
@@ -5256,8 +5312,8 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 		  page, page_ref_count(page));
 
 fail_store_bmap_fragment:
-	ssdfs_pagevec_release(&desc->snapshot);
-	ssdfs_kfree(frag_hdr);
+	ssdfs_block_bmap_forget_snapshot(&desc->snapshot);
+	ssdfs_flush_kfree(frag_hdr);
 	return err;
 }
 
@@ -5798,7 +5854,7 @@ finish_store_dependent_blk_bmap:
 			return err;
 		}
 
-		ssdfs_pagevec_release(&desc.snapshot);
+		ssdfs_block_bmap_forget_snapshot(&desc.snapshot);
 	}
 
 	return 0;
@@ -8859,7 +8915,6 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 {
 	u32 pagesize;
 	u32 processed_bytes_max;
-	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
@@ -8886,93 +8941,12 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_REQ_ASYNC:
-		ssdfs_put_request(req);
-		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable_timeout(*wait,
-			    atomic_read(&req->private.refs_count) == 0,
-			    SSDFS_DEFAULT_TIMEOUT);
-			if (err < 0)
-				WARN_ON(err < 0);
-			else
-				err = 0;
-		}
-
-		for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
-			struct page *page = req->result.pvec.pages[i];
-
-			if (!page) {
-				SSDFS_WARN("page %d is NULL\n", i);
-				continue;
-			}
-
-			if (PageLocked(page))
-				unlock_page(page);
-			else {
-				SSDFS_WARN("page %d is not locked: "
-					   "cmd %#x, type %#x\n",
-					   i, req->private.cmd,
-					   req->private.type);
-			}
-
-			if (PageWriteback(page))
-				end_page_writeback(page);
-			else {
-				SSDFS_WARN("page %d is not under writeback: "
-					   "cmd %#x, type %#x\n",
-					   i, req->private.cmd,
-					   req->private.type);
-			}
-
-			req->result.pvec.pages[i] = NULL;
-			ssdfs_free_page(page);
-		}
-
+		ssdfs_free_flush_request_pages(req);
 		pagevec_reinit(&req->result.pvec);
-		ssdfs_request_free(req);
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
-		ssdfs_put_request(req);
-		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable_timeout(*wait,
-			    atomic_read(&req->private.refs_count) == 0,
-			    SSDFS_DEFAULT_TIMEOUT);
-			if (err < 0)
-				WARN_ON(err < 0);
-			else
-				err = 0;
-		}
-
-		for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
-			struct page *page = req->result.pvec.pages[i];
-
-			if (!page) {
-				SSDFS_WARN("page %d is NULL\n", i);
-				continue;
-			}
-
-			if (PageLocked(page))
-				unlock_page(page);
-			else {
-				SSDFS_WARN("page %d is not locked: "
-					   "cmd %#x, type %#x\n",
-					   i, req->private.cmd,
-					   req->private.type);
-			}
-
-			if (PageWriteback(page))
-				end_page_writeback(page);
-			else {
-				SSDFS_WARN("page %d is not under writeback: "
-					   "cmd %#x, type %#x\n",
-					   i, req->private.cmd,
-					   req->private.type);
-			}
-
-			req->result.pvec.pages[i] = NULL;
-			ssdfs_free_page(page);
-		}
-
+		ssdfs_free_flush_request_pages(req);
 		pagevec_reinit(&req->result.pvec);
 		break;
 
@@ -8980,14 +8954,56 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		BUG();
 	};
 
-	if (req->result.err) {
+	if (err) {
 		SSDFS_DBG("failure: req %p, err %d\n", req, err);
 		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
 	} else
 		atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
 
-	complete(&req->result.wait);
-	wake_up_all(&req->private.wait_queue);
+	switch (req->private.type) {
+	case SSDFS_REQ_SYNC:
+		complete(&req->result.wait);
+		wake_up_all(&req->private.wait_queue);
+		break;
+
+	case SSDFS_REQ_ASYNC:
+		complete(&req->result.wait);
+
+		ssdfs_put_request(req);
+		if (atomic_read(&req->private.refs_count) != 0) {
+			err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+		}
+
+		wake_up_all(&req->private.wait_queue);
+		ssdfs_request_free(req);
+		break;
+
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		complete(&req->result.wait);
+
+		ssdfs_put_request(req);
+		if (atomic_read(&req->private.refs_count) != 0) {
+			err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+		}
+
+		wake_up_all(&req->private.wait_queue);
+		break;
+
+	default:
+		BUG();
+	};
 }
 
 /*
@@ -9018,7 +9034,7 @@ void ssdfs_finish_pre_allocate_request(struct ssdfs_peb_container *pebc,
 
 	if (!err) {
 		WARN_ON(pagevec_count(&req->result.pvec) != 0);
-		ssdfs_pagevec_release(&req->result.pvec);
+		ssdfs_flush_pagevec_release(&req->result.pvec);
 	}
 
 	if (err == -EAGAIN) {

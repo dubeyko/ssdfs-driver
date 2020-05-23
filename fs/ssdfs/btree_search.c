@@ -28,11 +28,67 @@
 #include "btree_search.h"
 #include "btree_node.h"
 
-static struct kmem_cache *ssdfs_btree_search_obj_cachep;
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_btree_search_page_leaks;
+atomic64_t ssdfs_btree_search_memory_leaks;
+atomic64_t ssdfs_btree_search_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_btree_search_cache_leaks_increment(void *kaddr)
+ * void ssdfs_btree_search_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_btree_search_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_btree_search_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_btree_search_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_btree_search_kfree(void *kaddr)
+ * struct page *ssdfs_btree_search_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_btree_search_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_btree_search_free_page(struct page *page)
+ * void ssdfs_btree_search_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(btree_search)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(btree_search)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_btree_search_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_btree_search_page_leaks, 0);
+	atomic64_set(&ssdfs_btree_search_memory_leaks, 0);
+	atomic64_set(&ssdfs_btree_search_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_btree_search_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_btree_search_page_leaks) != 0) {
+		SSDFS_ERR("BTREE SEARCH: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_btree_search_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_btree_search_memory_leaks) != 0) {
+		SSDFS_ERR("BTREE SEARCH: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_btree_search_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_btree_search_cache_leaks) != 0) {
+		SSDFS_ERR("BTREE SEARCH: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_btree_search_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
 
 /******************************************************************************
  *                       BTREE SEARCH OBJECT CACHE                            *
  ******************************************************************************/
+
+static struct kmem_cache *ssdfs_btree_search_obj_cachep;
 
 static void ssdfs_init_btree_search_object_once(void *obj)
 {
@@ -91,7 +147,7 @@ struct ssdfs_btree_search *ssdfs_btree_search_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ssdfs_memory_leaks_increment(ptr);
+	ssdfs_btree_search_cache_leaks_increment(ptr);
 
 	return ptr;
 }
@@ -123,7 +179,7 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
 	    search->result.buf) {
 		/* free allocated memory */
-		ssdfs_kfree(search->result.buf);
+		ssdfs_btree_search_kfree(search->result.buf);
 		search->result.buf = NULL;
 	}
 
@@ -132,13 +188,13 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
 	    search->result.name) {
 		/* free allocated memory */
-		ssdfs_kfree(search->result.name);
+		ssdfs_btree_search_kfree(search->result.name);
 		search->result.name = NULL;
 	}
 
 	search->result.name = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 
-	ssdfs_memory_leaks_decrement(search);
+	ssdfs_btree_search_cache_leaks_decrement(search);
 	kmem_cache_free(ssdfs_btree_search_obj_cachep, search);
 }
 
@@ -154,7 +210,12 @@ void ssdfs_btree_search_init(struct ssdfs_btree_search *search)
 
 	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
 		if (search->result.buf)
-			ssdfs_kfree(search->result.buf);
+			ssdfs_btree_search_kfree(search->result.buf);
+	}
+
+	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
+		if (search->result.name)
+			ssdfs_btree_search_kfree(search->result.name);
 	}
 
 	memset(search, 0, sizeof(struct ssdfs_btree_search));
@@ -423,6 +484,57 @@ void ssdfs_btree_search_define_parent_node(struct ssdfs_btree_search *search,
 
 	if (search->node.parent)
 		ssdfs_btree_node_get(search->node.parent);
+}
+
+/*
+ * ssdfs_btree_search_alloc_result_buf() - allocate result buffer
+ * @search: search object
+ * @buf_size: buffer size
+ */
+int ssdfs_btree_search_alloc_result_buf(struct ssdfs_btree_search *search,
+					size_t buf_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->result.buf = ssdfs_btree_search_kzalloc(buf_size, GFP_KERNEL);
+	if (!search->result.buf) {
+		SSDFS_ERR("fail to allocate buffer: size %zu\n",
+			  buf_size);
+		return -ENOMEM;
+	}
+
+	search->result.buf_size = buf_size;
+	search->result.buf_state = SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
+	search->result.items_in_buffer = 0;
+	return 0;
+}
+
+/*
+ * ssdfs_btree_search_alloc_result_name() - allocate result name
+ * @search: search object
+ * @string_size: name string size
+ */
+int ssdfs_btree_search_alloc_result_name(struct ssdfs_btree_search *search,
+					 size_t string_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->result.name = ssdfs_btree_search_kzalloc(string_size,
+							 GFP_KERNEL);
+	if (!search->result.name) {
+		SSDFS_ERR("fail to allocate buffer: size %zu\n",
+			  string_size);
+		return -ENOMEM;
+	}
+
+	search->result.name_string_size = string_size;
+	search->result.name_state = SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
+	search->result.names_in_buffer = 0;
+	return 0;
 }
 
 void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)

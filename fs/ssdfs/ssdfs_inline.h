@@ -170,6 +170,18 @@ struct page *ssdfs_alloc_page(gfp_t gfp_mask)
 	return page;
 }
 
+static inline
+void ssdfs_account_page(struct page *page)
+{
+	return;
+}
+
+static inline
+void ssdfs_forget_page(struct page *page)
+{
+	return;
+}
+
 /*
  * ssdfs_add_pagevec_page() - add page into pagevec
  * @pvec: pagevec
@@ -275,12 +287,216 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 		atomic64_dec(&ssdfs_allocated_pages);
 
 		SSDFS_DBG("page %px, allocated_pages %lld\n",
-			  page, atomic64_read(&ssdfs_allocated_pages));
+			  page,
+			  atomic64_read(&ssdfs_allocated_pages));
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	pagevec_release(pvec);
 }
+
+#define SSDFS_MEMORY_LEAKS_CHECKER_FNS(name)				\
+static inline								\
+void ssdfs_##name##_cache_leaks_increment(void *kaddr)			\
+{									\
+	atomic64_inc(&ssdfs_##name##_cache_leaks);			\
+	SSDFS_DBG("memory %px, allocation count %lld\n",		\
+		  kaddr,						\
+		  atomic64_read(&ssdfs_##name##_cache_leaks));		\
+	ssdfs_memory_leaks_increment(kaddr);				\
+}									\
+static inline								\
+void ssdfs_##name##_cache_leaks_decrement(void *kaddr)			\
+{									\
+	atomic64_dec(&ssdfs_##name##_cache_leaks);			\
+	SSDFS_DBG("memory %px, allocation count %lld\n",		\
+		  kaddr,						\
+		  atomic64_read(&ssdfs_##name##_cache_leaks));		\
+	ssdfs_memory_leaks_decrement(kaddr);				\
+}									\
+static inline								\
+void *ssdfs_##name##_kmalloc(size_t size, gfp_t flags)			\
+{									\
+	void *kaddr = ssdfs_kmalloc(size, flags);			\
+	if (kaddr) {							\
+		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	return kaddr;							\
+}									\
+static inline								\
+void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
+{									\
+	void *kaddr = ssdfs_kzalloc(size, flags);			\
+	if (kaddr) {							\
+		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	return kaddr;							\
+}									\
+static inline								\
+void *ssdfs_##name##_kcalloc(size_t n, size_t size, gfp_t flags)	\
+{									\
+	void *kaddr = ssdfs_kcalloc(n, size, flags);			\
+	if (kaddr) {							\
+		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	return kaddr;							\
+}									\
+static inline								\
+void ssdfs_##name##_kfree(void *kaddr)					\
+{									\
+	if (kaddr) {							\
+		atomic64_dec(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	ssdfs_kfree(kaddr);						\
+}									\
+static inline								\
+struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
+{									\
+	struct page *page;						\
+	page = ssdfs_alloc_page(gfp_mask);				\
+	if (!IS_ERR_OR_NULL(page)) {					\
+		atomic64_inc(&ssdfs_##name##_page_leaks);		\
+		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+			  page,						\
+			  atomic64_read(&ssdfs_##name##_page_leaks));	\
+	}								\
+	return page;							\
+}									\
+static inline								\
+void ssdfs_##name##_account_page(struct page *page)			\
+{									\
+	if (page) {							\
+		atomic64_inc(&ssdfs_##name##_page_leaks);		\
+		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+			  page,						\
+			  atomic64_read(&ssdfs_##name##_page_leaks));	\
+	}								\
+}									\
+static inline								\
+void ssdfs_##name##_forget_page(struct page *page)			\
+{									\
+	if (page) {							\
+		atomic64_dec(&ssdfs_##name##_page_leaks);		\
+		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+			  page,						\
+			  atomic64_read(&ssdfs_##name##_page_leaks));	\
+	}								\
+}									\
+static inline								\
+struct page *ssdfs_##name##_add_pagevec_page(struct pagevec *pvec)	\
+{									\
+	struct page *page;						\
+	page = ssdfs_add_pagevec_page(pvec);				\
+	if (!IS_ERR_OR_NULL(page)) {					\
+		atomic64_inc(&ssdfs_##name##_page_leaks);		\
+		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+			  page,						\
+			  atomic64_read(&ssdfs_##name##_page_leaks));	\
+	}								\
+	return page;							\
+}									\
+static inline								\
+void ssdfs_##name##_free_page(struct page *page)			\
+{									\
+	if (page) {							\
+		atomic64_dec(&ssdfs_##name##_page_leaks);		\
+		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+			  page,						\
+			  atomic64_read(&ssdfs_##name##_page_leaks));	\
+	}								\
+	ssdfs_free_page(page);						\
+}									\
+static inline								\
+void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
+{									\
+	int i;								\
+	if (pvec) {							\
+		for (i = 0; i < pagevec_count(pvec); i++) {		\
+			struct page *page = pvec->pages[i];		\
+			if (!page)					\
+				continue;				\
+			atomic64_dec(&ssdfs_##name##_page_leaks);	\
+			SSDFS_DBG("page %px, allocated_pages %lld\n",	\
+			    page,					\
+			    atomic64_read(&ssdfs_##name##_page_leaks));	\
+		}							\
+	}								\
+	ssdfs_pagevec_release(pvec);					\
+}									\
+
+#define SSDFS_MEMORY_ALLOCATOR_FNS(name)				\
+static inline								\
+void ssdfs_##name##_cache_leaks_increment(void *kaddr)			\
+{									\
+	ssdfs_memory_leaks_increment(kaddr);				\
+}									\
+static inline								\
+void ssdfs_##name##_cache_leaks_decrement(void *kaddr)			\
+{									\
+	ssdfs_memory_leaks_decrement(kaddr);				\
+}									\
+static inline								\
+void *ssdfs_##name##_kmalloc(size_t size, gfp_t flags)			\
+{									\
+	return ssdfs_kmalloc(size, flags);				\
+}									\
+static inline								\
+void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
+{									\
+	return ssdfs_kzalloc(size, flags);				\
+}									\
+static inline								\
+void *ssdfs_##name##_kcalloc(size_t n, size_t size, gfp_t flags)	\
+{									\
+	return ssdfs_kcalloc(n, size, flags);				\
+}									\
+static inline								\
+void ssdfs_##name##_kfree(void *kaddr)					\
+{									\
+	ssdfs_kfree(kaddr);						\
+}									\
+static inline								\
+struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
+{									\
+	return ssdfs_alloc_page(gfp_mask);				\
+}									\
+static inline								\
+void ssdfs_##name##_account_page(struct page *page)			\
+{									\
+	ssdfs_account_page(page);					\
+}									\
+static inline								\
+void ssdfs_##name##_forget_page(struct page *page)			\
+{									\
+	ssdfs_forget_page(page);					\
+}									\
+static inline								\
+struct page *ssdfs_##name##_add_pagevec_page(struct pagevec *pvec)	\
+{									\
+	return ssdfs_add_pagevec_page(pvec);				\
+}									\
+static inline								\
+void ssdfs_##name##_free_page(struct page *page)			\
+{									\
+	ssdfs_free_page(page);						\
+}									\
+static inline								\
+void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
+{									\
+	ssdfs_pagevec_release(pvec);					\
+}									\
 
 static inline
 __le32 ssdfs_crc32_le(void *data, size_t len)

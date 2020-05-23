@@ -20,6 +20,62 @@
 #include "ssdfs.h"
 #include "sequence_array.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_seq_arr_page_leaks;
+atomic64_t ssdfs_seq_arr_memory_leaks;
+atomic64_t ssdfs_seq_arr_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_seq_arr_cache_leaks_increment(void *kaddr)
+ * void ssdfs_seq_arr_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_seq_arr_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_seq_arr_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_seq_arr_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_seq_arr_kfree(void *kaddr)
+ * struct page *ssdfs_seq_arr_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_seq_arr_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_seq_arr_free_page(struct page *page)
+ * void ssdfs_seq_arr_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seq_arr)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(seq_arr)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_seq_arr_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_seq_arr_page_leaks, 0);
+	atomic64_set(&ssdfs_seq_arr_memory_leaks, 0);
+	atomic64_set(&ssdfs_seq_arr_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_seq_arr_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_seq_arr_page_leaks) != 0) {
+		SSDFS_ERR("SEQUENCE ARRAY: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_seq_arr_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_seq_arr_memory_leaks) != 0) {
+		SSDFS_ERR("SEQUENCE ARRAY: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_seq_arr_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_seq_arr_cache_leaks) != 0) {
+		SSDFS_ERR("SEQUENCE ARRAY: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_seq_arr_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * ssdfs_create_sequence_array() - create sequence array
  * @revert_threshold: threshold of rollbacking to zero
@@ -47,7 +103,8 @@ ssdfs_create_sequence_array(unsigned long revert_threshold)
 		return ERR_PTR(-EINVAL);
 	}
 
-	ptr = ssdfs_kmalloc(sizeof(struct ssdfs_sequence_array), GFP_KERNEL);
+	ptr = ssdfs_seq_arr_kmalloc(sizeof(struct ssdfs_sequence_array),
+				    GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory\n");
 		return ERR_PTR(-ENOMEM);
@@ -100,7 +157,7 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 	array->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 	spin_unlock(&array->lock);
 
-	ssdfs_kfree(array);
+	ssdfs_seq_arr_kfree(array);
 }
 
 /*

@@ -57,7 +57,60 @@
 #ifdef CONFIG_SSDFS_DEBUG
 atomic64_t ssdfs_allocated_pages;
 atomic64_t ssdfs_memory_leaks;
+atomic64_t ssdfs_super_page_leaks;
+atomic64_t ssdfs_super_memory_leaks;
+atomic64_t ssdfs_super_cache_leaks;
 #endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_super_cache_leaks_increment(void *kaddr)
+ * void ssdfs_super_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_super_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_super_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_super_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_super_kfree(void *kaddr)
+ * struct page *ssdfs_super_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_super_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_super_free_page(struct page *page)
+ * void ssdfs_super_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(super)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(super)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_super_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_super_page_leaks, 0);
+	atomic64_set(&ssdfs_super_memory_leaks, 0);
+	atomic64_set(&ssdfs_super_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_super_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_super_page_leaks) != 0) {
+		SSDFS_ERR("SUPER: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_super_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_super_memory_leaks) != 0) {
+		SSDFS_ERR("SUPER: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_super_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_super_cache_leaks) != 0) {
+		SSDFS_ERR("SUPER: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_super_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
 
 struct ssdfs_payload_content {
 	struct pagevec pvec;
@@ -98,7 +151,7 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 	if (!ii)
 		return NULL;
 
-	ssdfs_memory_leaks_increment(ii);
+	ssdfs_super_cache_leaks_increment(ii);
 
 	init_once((void *)ii);
 
@@ -132,7 +185,7 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	if (ii->xattrs_tree)
 		ssdfs_xattrs_tree_destroy(ii);
 
-	ssdfs_memory_leaks_decrement(ii);
+	ssdfs_super_cache_leaks_decrement(ii);
 	kmem_cache_free(ssdfs_inode_cachep, ii);
 }
 
@@ -242,13 +295,13 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 		SSDFS_DBG("remount in RW mode\n");
 	}
 out:
-	ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
+	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	return 0;
 
 restore_opts:
 	sb->s_flags = old_sb_flags;
 	fsi->mount_opts = old_mount_opts;
-	ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
+	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	return err;
 }
 
@@ -459,7 +512,8 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 	pages_count = pagevec_count(&fsi->maptbl_cache.pvec);
 
 	for (i = 0; i < pages_count; i++) {
-		dpage = ssdfs_add_pagevec_page(&payload->maptbl_cache.pvec);
+		dpage =
+		    ssdfs_super_add_pagevec_page(&payload->maptbl_cache.pvec);
 		if (unlikely(IS_ERR_OR_NULL(dpage))) {
 			err = !dpage ? -ENOMEM : PTR_ERR(dpage);
 			SSDFS_ERR("fail to add pagevec page: "
@@ -494,7 +548,7 @@ finish_maptbl_snapshot:
 	up_read(&fsi->maptbl_cache.lock);
 
 	if (unlikely(err))
-		ssdfs_pagevec_release(&payload->maptbl_cache.pvec);
+		ssdfs_super_pagevec_release(&payload->maptbl_cache.pvec);
 
 	return err;
 }
@@ -1330,7 +1384,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		return err;
 	}
 
-	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	page = ssdfs_super_alloc_page(GFP_KERNEL | __GFP_ZERO);
 	if (IS_ERR_OR_NULL(page)) {
 		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
@@ -1446,7 +1500,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ClearPagePrivate(page);
 	unlock_page(page);
 
-	ssdfs_free_page(page);
+	ssdfs_super_free_page(page);
 	return 0;
 
 cleanup_after_failure:
@@ -1455,7 +1509,7 @@ cleanup_after_failure:
 	SSDFS_DBG("page %px, count %d\n",
 		  page, page_ref_count(page));
 
-	ssdfs_free_page(page);
+	ssdfs_super_free_page(page);
 
 	return err;
 }
@@ -1562,17 +1616,17 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		return -ERANGE;
 	}
 
-	payload_buf = ssdfs_kmalloc(inline_capacity, GFP_KERNEL);
+	payload_buf = ssdfs_super_kmalloc(inline_capacity, GFP_KERNEL);
 	if (!payload_buf) {
 		SSDFS_ERR("fail to allocate payload buffer\n");
 		return -ENOMEM;
 	}
 
-	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	page = ssdfs_super_alloc_page(GFP_KERNEL | __GFP_ZERO);
 	if (IS_ERR_OR_NULL(page)) {
 		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("unable to allocate memory page\n");
-		ssdfs_kfree(payload_buf);
+		ssdfs_super_kfree(payload_buf);
 		return err;
 	}
 
@@ -1607,7 +1661,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	unlock_page(page);
 
 free_payload_buffer:
-	ssdfs_kfree(payload_buf);
+	ssdfs_super_kfree(payload_buf);
 
 	if (unlikely(err))
 		goto cleanup_after_failure;
@@ -1667,7 +1721,7 @@ free_payload_buffer:
 	ClearPagePrivate(page);
 	unlock_page(page);
 
-	ssdfs_free_page(page);
+	ssdfs_super_free_page(page);
 	return 0;
 
 cleanup_after_failure:
@@ -1676,7 +1730,7 @@ cleanup_after_failure:
 	SSDFS_DBG("page %px, count %d\n",
 		  page, page_ref_count(page));
 
-	ssdfs_free_page(page);
+	ssdfs_super_free_page(page);
 
 	return err;
 }
@@ -1788,6 +1842,141 @@ finish_commit_super:
 	return err;
 }
 
+static void ssdfs_memory_leaks_checker_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_allocated_pages, 0);
+	atomic64_set(&ssdfs_memory_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_acl_memory_leaks_init();
+	ssdfs_block_bmap_memory_leaks_init();
+	ssdfs_btree_memory_leaks_init();
+	ssdfs_btree_hierarchy_memory_leaks_init();
+	ssdfs_btree_node_memory_leaks_init();
+	ssdfs_btree_search_memory_leaks_init();
+
+#ifdef CONFIG_SSDFS_ZLIB
+	ssdfs_zlib_memory_leaks_init();
+#endif /* CONFIG_SSDFS_ZLIB */
+
+#ifdef CONFIG_SSDFS_LZO
+	ssdfs_lzo_memory_leaks_init();
+#endif /* CONFIG_SSDFS_LZO */
+
+	ssdfs_compr_memory_leaks_init();
+	ssdfs_cur_seg_memory_leaks_init();
+	ssdfs_dentries_memory_leaks_init();
+
+#ifdef CONFIG_SSDFS_MTD_DEVICE
+	ssdfs_dev_mtd_memory_leaks_init();
+#elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
+	ssdfs_dev_bdev_memory_leaks_init();
+#else
+	BUILD_BUG();
+#endif
+
+	ssdfs_dir_memory_leaks_init();
+	ssdfs_ext_queue_memory_leaks_init();
+	ssdfs_ext_tree_memory_leaks_init();
+	ssdfs_file_memory_leaks_init();
+	ssdfs_fs_error_memory_leaks_init();
+	ssdfs_inode_memory_leaks_init();
+	ssdfs_ino_tree_memory_leaks_init();
+	ssdfs_blk2off_memory_leaks_init();
+	ssdfs_parray_memory_leaks_init();
+	ssdfs_flush_memory_leaks_init();
+	ssdfs_gc_memory_leaks_init();
+	ssdfs_map_queue_memory_leaks_init();
+	ssdfs_map_tbl_memory_leaks_init();
+	ssdfs_map_cache_memory_leaks_init();
+	ssdfs_map_thread_memory_leaks_init();
+	ssdfs_migration_memory_leaks_init();
+	ssdfs_read_memory_leaks_init();
+	ssdfs_recovery_memory_leaks_init();
+	ssdfs_req_queue_memory_leaks_init();
+	ssdfs_seg_obj_memory_leaks_init();
+	ssdfs_seg_bmap_memory_leaks_init();
+	ssdfs_seg_blk_memory_leaks_init();
+	ssdfs_seg_tree_memory_leaks_init();
+	ssdfs_seq_arr_memory_leaks_init();
+	ssdfs_dict_memory_leaks_init();
+	ssdfs_shextree_memory_leaks_init();
+	ssdfs_super_memory_leaks_init();
+	ssdfs_xattr_memory_leaks_init();
+}
+
+static void ssdfs_check_memory_leaks(void)
+{
+	ssdfs_acl_check_memory_leaks();
+	ssdfs_block_bmap_check_memory_leaks();
+	ssdfs_btree_check_memory_leaks();
+	ssdfs_btree_hierarchy_check_memory_leaks();
+	ssdfs_btree_node_check_memory_leaks();
+	ssdfs_btree_search_check_memory_leaks();
+
+#ifdef CONFIG_SSDFS_ZLIB
+	ssdfs_zlib_check_memory_leaks();
+#endif /* CONFIG_SSDFS_ZLIB */
+
+#ifdef CONFIG_SSDFS_LZO
+	ssdfs_lzo_check_memory_leaks();
+#endif /* CONFIG_SSDFS_LZO */
+
+	ssdfs_compr_check_memory_leaks();
+	ssdfs_cur_seg_check_memory_leaks();
+	ssdfs_dentries_check_memory_leaks();
+
+#ifdef CONFIG_SSDFS_MTD_DEVICE
+	ssdfs_dev_mtd_check_memory_leaks();
+#elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
+	ssdfs_dev_bdev_check_memory_leaks();
+#else
+	BUILD_BUG();
+#endif
+
+	ssdfs_dir_check_memory_leaks();
+	ssdfs_ext_queue_check_memory_leaks();
+	ssdfs_ext_tree_check_memory_leaks();
+	ssdfs_file_check_memory_leaks();
+	ssdfs_fs_error_check_memory_leaks();
+	ssdfs_inode_check_memory_leaks();
+	ssdfs_ino_tree_check_memory_leaks();
+	ssdfs_blk2off_check_memory_leaks();
+	ssdfs_parray_check_memory_leaks();
+	ssdfs_flush_check_memory_leaks();
+	ssdfs_gc_check_memory_leaks();
+	ssdfs_map_queue_check_memory_leaks();
+	ssdfs_map_tbl_check_memory_leaks();
+	ssdfs_map_cache_check_memory_leaks();
+	ssdfs_map_thread_check_memory_leaks();
+	ssdfs_migration_check_memory_leaks();
+	ssdfs_read_check_memory_leaks();
+	ssdfs_recovery_check_memory_leaks();
+	ssdfs_req_queue_check_memory_leaks();
+	ssdfs_seg_obj_check_memory_leaks();
+	ssdfs_seg_bmap_check_memory_leaks();
+	ssdfs_seg_blk_check_memory_leaks();
+	ssdfs_seg_tree_check_memory_leaks();
+	ssdfs_seq_arr_check_memory_leaks();
+	ssdfs_dict_check_memory_leaks();
+	ssdfs_shextree_check_memory_leaks();
+	ssdfs_super_check_memory_leaks();
+	ssdfs_xattr_check_memory_leaks();
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
+		SSDFS_WARN("Memory leaks include %lld pages\n",
+			   atomic64_read(&ssdfs_allocated_pages));
+	}
+
+	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
+		SSDFS_WARN("Memory allocator suffers from %lld leaks\n",
+			   atomic64_read(&ssdfs_memory_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct ssdfs_fs_info *fs_info;
@@ -1800,12 +1989,9 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
 
-#ifdef CONFIG_SSDFS_DEBUG
-	atomic64_set(&ssdfs_allocated_pages, 0);
-	atomic64_set(&ssdfs_memory_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+	ssdfs_memory_leaks_checker_init();
 
-	fs_info = ssdfs_kzalloc(sizeof(*fs_info), GFP_KERNEL);
+	fs_info = ssdfs_super_kzalloc(sizeof(*fs_info), GFP_KERNEL);
 	if (!fs_info)
 		return -ENOMEM;
 
@@ -1817,7 +2003,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_info->devops = &ssdfs_bdev_devops;
 	sb->s_bdi = bdi_get(sb->s_bdev->bd_bdi);
 	atomic_set(&fs_info->pending_bios, 0);
-	fs_info->erase_page = ssdfs_alloc_page(GFP_KERNEL);
+	fs_info->erase_page = ssdfs_super_alloc_page(GFP_KERNEL);
 	if (IS_ERR_OR_NULL(fs_info->erase_page)) {
 		err = (fs_info->erase_page == NULL ?
 				-ENOMEM : PTR_ERR(fs_info->erase_page));
@@ -2033,7 +2219,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 		up_write(&fs_info->volume_sem);
 
-		ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
+		ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 
 		if (err) {
 			SSDFS_NOTICE("fail to commit superblock info: "
@@ -2089,21 +2275,10 @@ release_maptbl_cache:
 
 free_erase_page:
 	if (fs_info->erase_page)
-		ssdfs_free_page(fs_info->erase_page);
+		ssdfs_super_free_page(fs_info->erase_page);
 
-#ifdef CONFIG_SSDFS_DEBUG
-	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
-		SSDFS_WARN("Memory leaks include %lld pages\n",
-			   atomic64_read(&ssdfs_allocated_pages));
-	}
-
-	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
-		SSDFS_WARN("Memory allocator suffers from %lld leaks\n",
-			   atomic64_read(&ssdfs_memory_leaks));
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	ssdfs_kfree(fs_info);
+	ssdfs_check_memory_leaks();
+	ssdfs_super_kfree(fs_info);
 
 	return err;
 }
@@ -2252,7 +2427,7 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
-	ssdfs_pagevec_release(&payload.maptbl_cache.pvec);
+	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
@@ -2267,27 +2442,19 @@ static void ssdfs_put_super(struct super_block *sb)
 		   SSDFS_VERSION, fsi->devops->device_name(sb));
 
 	if (fsi->erase_page)
-		ssdfs_free_page(fsi->erase_page);
+		ssdfs_super_free_page(fsi->erase_page);
 
 	ssdfs_maptbl_cache_destroy(&fsi->maptbl_cache);
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
 
-	ssdfs_kfree(fsi);
+	ssdfs_free_workspaces();
+
+	ssdfs_super_kfree(fsi);
 
 	rcu_barrier();
 
-#ifdef CONFIG_SSDFS_DEBUG
-	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
-		SSDFS_WARN("Memory leaks include %lld pages\n",
-			   atomic64_read(&ssdfs_allocated_pages));
-	}
-
-	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
-		SSDFS_WARN("Memory allocator suffers from %lld leaks\n",
-			   atomic64_read(&ssdfs_memory_leaks));
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
+	ssdfs_check_memory_leaks();
 
 	if (ssdfs_inode_cachep)
 		kmem_cache_shrink(ssdfs_inode_cachep);

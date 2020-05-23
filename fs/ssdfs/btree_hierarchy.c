@@ -36,6 +36,62 @@
 #include "btree.h"
 #include "btree_hierarchy.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_btree_hierarchy_page_leaks;
+atomic64_t ssdfs_btree_hierarchy_memory_leaks;
+atomic64_t ssdfs_btree_hierarchy_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_btree_hierarchy_cache_leaks_increment(void *kaddr)
+ * void ssdfs_btree_hierarchy_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_btree_hierarchy_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_btree_hierarchy_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_btree_hierarchy_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_btree_hierarchy_kfree(void *kaddr)
+ * struct page *ssdfs_btree_hierarchy_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_btree_hierarchy_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_btree_hierarchy_free_page(struct page *page)
+ * void ssdfs_btree_hierarchy_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(btree_hierarchy)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(btree_hierarchy)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_btree_hierarchy_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_btree_hierarchy_page_leaks, 0);
+	atomic64_set(&ssdfs_btree_hierarchy_memory_leaks, 0);
+	atomic64_set(&ssdfs_btree_hierarchy_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_btree_hierarchy_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_btree_hierarchy_page_leaks) != 0) {
+		SSDFS_ERR("BTREE HIERARCHY: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_btree_hierarchy_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_btree_hierarchy_memory_leaks) != 0) {
+		SSDFS_ERR("BTREE HIERARCHY: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_btree_hierarchy_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_btree_hierarchy_cache_leaks) != 0) {
+		SSDFS_ERR("BTREE HIERARCHY: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_btree_hierarchy_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * ssdfs_btree_hierarchy_allocate() - allocate hierarchy object
  * @tree: btree object
@@ -81,7 +137,7 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 	alloc_size = sizeof(struct ssdfs_btree_state_descriptor);
 	alloc_size += tree_height * sizeof(struct ssdfs_btree_level);
 
-	ptr = ssdfs_kzalloc(alloc_size, GFP_KERNEL);
+	ptr = ssdfs_btree_hierarchy_kzalloc(alloc_size, GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate tree levels' array\n");
 		return ERR_PTR(-ENOMEM);
@@ -190,7 +246,7 @@ void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy)
 	if (!hierarchy)
 		return;
 
-	ssdfs_kfree(hierarchy);
+	ssdfs_btree_hierarchy_kfree(hierarchy);
 }
 
 /*

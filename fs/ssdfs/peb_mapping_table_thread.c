@@ -31,6 +31,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_map_thread_page_leaks;
+atomic64_t ssdfs_map_thread_memory_leaks;
+atomic64_t ssdfs_map_thread_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_map_thread_cache_leaks_increment(void *kaddr)
+ * void ssdfs_map_thread_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_map_thread_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_map_thread_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_map_thread_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_map_thread_kfree(void *kaddr)
+ * struct page *ssdfs_map_thread_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_map_thread_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_map_thread_free_page(struct page *page)
+ * void ssdfs_map_thread_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_thread)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(map_thread)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_map_thread_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_map_thread_page_leaks, 0);
+	atomic64_set(&ssdfs_map_thread_memory_leaks, 0);
+	atomic64_set(&ssdfs_map_thread_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_map_thread_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_map_thread_page_leaks) != 0) {
+		SSDFS_ERR("MAPPING TABLE THREAD: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_map_thread_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_map_thread_memory_leaks) != 0) {
+		SSDFS_ERR("MAPPING TABLE THREAD: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_map_thread_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_map_thread_cache_leaks) != 0) {
+		SSDFS_ERR("MAPPING TABLE THREAD: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_map_thread_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /* Stage of recovering try */
 enum {
 	SSDFS_CHECK_RECOVERABILITY,
@@ -2068,7 +2124,7 @@ int ssdfs_maptbl_thread_func(void *data)
 	up_read(&tbl->tbl_lock);
 
 	array.size = 0;
-	array.ptr = ssdfs_kcalloc(array.capacity,
+	array.ptr = ssdfs_map_thread_kcalloc(array.capacity,
 				  sizeof(struct ssdfs_erase_result),
 				  GFP_KERNEL);
 	if (!array.ptr) {
@@ -2095,7 +2151,7 @@ repeat:
 	if (kthread_should_stop()) {
 		complete_all(&tbl->thread.full_stop);
 		if (array.ptr)
-			ssdfs_kfree(array.ptr);
+			ssdfs_map_thread_kfree(array.ptr);
 		return err;
 	}
 

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.56 [May 23, 2020]
+    (*) Fix memory leaks.
+
 v.3.55 [May 16, 2020]
     (*) Fix bugs with memory leaks.
     (*) Fix bug with btree's index size definition.

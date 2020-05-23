@@ -40,6 +40,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_inode_page_leaks;
+atomic64_t ssdfs_inode_memory_leaks;
+atomic64_t ssdfs_inode_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_inode_cache_leaks_increment(void *kaddr)
+ * void ssdfs_inode_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_inode_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_inode_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_inode_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_inode_kfree(void *kaddr)
+ * struct page *ssdfs_inode_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_inode_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_inode_free_page(struct page *page)
+ * void ssdfs_inode_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(inode)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(inode)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_inode_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_inode_page_leaks, 0);
+	atomic64_set(&ssdfs_inode_memory_leaks, 0);
+	atomic64_set(&ssdfs_inode_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_inode_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_inode_page_leaks) != 0) {
+		SSDFS_ERR("INODE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_inode_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_inode_memory_leaks) != 0) {
+		SSDFS_ERR("INODE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_inode_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_inode_cache_leaks) != 0) {
+		SSDFS_ERR("INODE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_inode_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 				   void *buf, size_t size)
 {

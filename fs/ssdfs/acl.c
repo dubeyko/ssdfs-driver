@@ -27,6 +27,62 @@
 #include "xattr.h"
 #include "acl.h"
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_acl_page_leaks;
+atomic64_t ssdfs_acl_memory_leaks;
+atomic64_t ssdfs_acl_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_acl_cache_leaks_increment(void *kaddr)
+ * void ssdfs_acl_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_acl_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_acl_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_acl_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_acl_kfree(void *kaddr)
+ * struct page *ssdfs_acl_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_acl_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_acl_free_page(struct page *page)
+ * void ssdfs_acl_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(acl)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(acl)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_acl_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_acl_page_leaks, 0);
+	atomic64_set(&ssdfs_acl_memory_leaks, 0);
+	atomic64_set(&ssdfs_acl_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_acl_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_acl_page_leaks) != 0) {
+		SSDFS_ERR("ACL: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_acl_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_acl_memory_leaks) != 0) {
+		SSDFS_ERR("ACL: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_acl_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_acl_cache_leaks) != 0) {
+		SSDFS_ERR("ACL: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_acl_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 {
 	struct posix_acl *acl;
@@ -55,7 +111,7 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 	size = __ssdfs_getxattr(inode, name_index, xattr_name, NULL, 0);
 
 	if (size > 0) {
-		value = ssdfs_kzalloc(size, GFP_KERNEL);
+		value = ssdfs_acl_kzalloc(size, GFP_KERNEL);
 		if (unlikely(!value)) {
 			SSDFS_ERR("unable to allocate memory\n");
 			return ERR_PTR(-ENOMEM);
@@ -71,7 +127,7 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 	else
 		acl = ERR_PTR(size);
 
-	ssdfs_kfree(value);
+	ssdfs_acl_kfree(value);
 	return acl;
 }
 
@@ -115,7 +171,7 @@ int ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 
 	if (acl) {
 		size = posix_acl_xattr_size(acl->a_count);
-		value = ssdfs_kzalloc(size, GFP_KERNEL);
+		value = ssdfs_acl_kzalloc(size, GFP_KERNEL);
 		if (!value) {
 			SSDFS_ERR("unable to allocate memory\n");
 			return -ENOMEM;
@@ -130,7 +186,7 @@ int ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	err = __ssdfs_setxattr(inode, name_index, xattr_name, value, size, 0);
 
 end_set_acl:
-	ssdfs_kfree(value);
+	ssdfs_acl_kfree(value);
 
 	if (!err)
 		set_cached_acl(inode, type, acl);

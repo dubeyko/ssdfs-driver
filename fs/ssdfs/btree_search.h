@@ -274,6 +274,10 @@ void ssdfs_btree_search_define_parent_node(struct ssdfs_btree_search *search,
 					   struct ssdfs_btree_node *parent);
 void ssdfs_btree_search_define_child_node(struct ssdfs_btree_search *search,
 					  struct ssdfs_btree_node *child);
+int ssdfs_btree_search_alloc_result_buf(struct ssdfs_btree_search *search,
+					size_t buf_size);
+int ssdfs_btree_search_alloc_result_name(struct ssdfs_btree_search *search,
+					 size_t string_size);
 
 void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search);
 

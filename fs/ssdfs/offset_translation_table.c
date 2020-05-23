@@ -33,11 +33,67 @@
 
 #include <trace/events/ssdfs.h>
 
-static struct kmem_cache *ssdfs_blk2off_frag_obj_cachep;
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_blk2off_page_leaks;
+atomic64_t ssdfs_blk2off_memory_leaks;
+atomic64_t ssdfs_blk2off_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_blk2off_cache_leaks_increment(void *kaddr)
+ * void ssdfs_blk2off_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_blk2off_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_blk2off_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_blk2off_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_blk2off_kfree(void *kaddr)
+ * struct page *ssdfs_blk2off_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_blk2off_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_blk2off_free_page(struct page *page)
+ * void ssdfs_blk2off_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(blk2off)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(blk2off)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_blk2off_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_blk2off_page_leaks, 0);
+	atomic64_set(&ssdfs_blk2off_memory_leaks, 0);
+	atomic64_set(&ssdfs_blk2off_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_blk2off_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_blk2off_page_leaks) != 0) {
+		SSDFS_ERR("BLK2OFF TABLE: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_blk2off_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_blk2off_memory_leaks) != 0) {
+		SSDFS_ERR("BLK2OFF TABLE: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_blk2off_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_blk2off_cache_leaks) != 0) {
+		SSDFS_ERR("BLK2OFF TABLE: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_blk2off_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
 
 /******************************************************************************
- *                            BTREE NODE CACHE                                *
+ *                           BLK2OFF TABLE CACHE                              *
  ******************************************************************************/
+
+static struct kmem_cache *ssdfs_blk2off_frag_obj_cachep;
 
 static void ssdfs_init_blk2off_frag_object_once(void *obj)
 {
@@ -95,7 +151,7 @@ struct ssdfs_phys_offset_table_fragment *ssdfs_blk2off_frag_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ssdfs_memory_leaks_increment(ptr);
+	ssdfs_blk2off_cache_leaks_increment(ptr);
 
 	return ptr;
 }
@@ -120,11 +176,11 @@ void ssdfs_blk2off_frag_free(void *ptr)
 	WARN_ON(atomic_read(&frag->state) == SSDFS_BLK2OFF_FRAG_DIRTY);
 
 	if (frag->buf) {
-		ssdfs_kfree(frag->buf);
+		ssdfs_blk2off_kfree(frag->buf);
 		frag->buf = NULL;
 	}
 
-	ssdfs_memory_leaks_decrement(frag);
+	ssdfs_blk2off_cache_leaks_decrement(frag);
 	kmem_cache_free(ssdfs_blk2off_frag_obj_cachep, frag);
 }
 
@@ -226,7 +282,7 @@ ssdfs_blk2off_table_init_fragment(struct ssdfs_phys_offset_table_fragment *ptr,
 	}
 
 	ptr->buf_size = fragment_size;
-	ptr->buf = ssdfs_kzalloc(ptr->buf_size, GFP_KERNEL);
+	ptr->buf = ssdfs_blk2off_kzalloc(ptr->buf_size, GFP_KERNEL);
 	if (!ptr->buf) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate table buffer\n");
@@ -291,8 +347,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("fsi %p, items_count %u, type %u, state %#x\n",
 		  fsi, items_count, type,  state);
 
-	ptr = (struct ssdfs_blk2off_table *)ssdfs_kzalloc(table_size,
-							  GFP_KERNEL);
+	ptr = (struct ssdfs_blk2off_table *)ssdfs_blk2off_kzalloc(table_size,
+								  GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate translation table\n");
 		return ERR_PTR(-ENOMEM);
@@ -316,8 +372,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 
 	bytes = ssdfs_blk2off_table_bmap_bytes(items_count);
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		ptr->lbmap[i] = (unsigned long *)ssdfs_kzalloc(bytes,
-							       GFP_KERNEL);
+		ptr->lbmap[i] = (unsigned long *)ssdfs_blk2off_kzalloc(bytes,
+								    GFP_KERNEL);
 		if (!ptr->lbmap[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate bitmaps\n");
@@ -327,7 +383,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 
 	ptr->lblk2off_capacity = items_count;
 
-	ptr->lblk2off = ssdfs_kzalloc(off_pos_size * items_count, GFP_KERNEL);
+	ptr->lblk2off = ssdfs_blk2off_kzalloc(off_pos_size * items_count,
+						GFP_KERNEL);
 	if (!ptr->lblk2off) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate translation array\n");
@@ -335,8 +392,9 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	}
 	memset(ptr->lblk2off, 0xFF, off_pos_size * items_count);
 
-	ptr->migrating_blks = ssdfs_kzalloc(blk_desc_size * items_count,
-					    GFP_KERNEL);
+	ptr->migrating_blks =
+		ssdfs_blk2off_kzalloc(blk_desc_size * items_count,
+					GFP_KERNEL);
 	if (!ptr->migrating_blks) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate migrating blocks array\n");
@@ -345,7 +403,7 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 
 	ptr->pebs_count = fsi->pebs_per_seg;
 
-	ptr->peb = ssdfs_kcalloc(ptr->pebs_count,
+	ptr->peb = ssdfs_blk2off_kcalloc(ptr->pebs_count,
 				 sizeof(struct ssdfs_phys_offset_table_array),
 				 GFP_KERNEL);
 	if (!ptr->peb) {
@@ -437,19 +495,19 @@ free_phys_offs_array:
 		ptr->peb[i].sequence = NULL;
 	}
 
-	ssdfs_kfree(ptr->peb);
+	ssdfs_blk2off_kfree(ptr->peb);
 
 free_migrating_blks_array:
-	ssdfs_kfree(ptr->migrating_blks);
+	ssdfs_blk2off_kfree(ptr->migrating_blks);
 
 free_translation_array:
-	ssdfs_kfree(ptr->lblk2off);
+	ssdfs_blk2off_kfree(ptr->lblk2off);
 
 free_bmap:
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++)
-		ssdfs_kfree(ptr->lbmap[i]);
+		ssdfs_blk2off_kfree(ptr->lbmap[i]);
 
-	ssdfs_kfree(ptr);
+	ssdfs_blk2off_kfree(ptr);
 
 	return ERR_PTR(err);
 }
@@ -484,7 +542,7 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 			WARN_ON(state == SSDFS_BLK2OFF_TABLE_DIRTY);
 		}
 
-		ssdfs_kfree(table->peb);
+		ssdfs_blk2off_kfree(table->peb);
 		table->peb = NULL;
 	}
 
@@ -501,25 +559,24 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 		case SSDFS_LBLOCK_UNDER_MIGRATION:
 		case SSDFS_LBLOCK_UNDER_COMMIT:
 			SSDFS_ERR("logical blk %d is under migration\n", i);
-			ssdfs_pagevec_release(&blk->pvec);
+			ssdfs_blk2off_pagevec_release(&blk->pvec);
 			break;
 		}
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_kfree(table->lblk2off);
+	ssdfs_blk2off_kfree(table->lblk2off);
 	table->lblk2off = NULL;
 
-	ssdfs_kfree(table->migrating_blks);
+	ssdfs_blk2off_kfree(table->migrating_blks);
 	table->migrating_blks = NULL;
 
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		ssdfs_kfree(table->lbmap[i]);
+		ssdfs_blk2off_kfree(table->lbmap[i]);
 		table->lbmap[i] = NULL;
 	}
 
-	ssdfs_kfree(table);
-	table = NULL;
+	ssdfs_blk2off_kfree(table);
 }
 
 /*
@@ -892,7 +949,7 @@ int ssdfs_blk2off_prepare_temp_bmap(struct ssdfs_blk2off_init *portion)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	portion->bmap_bytes = ssdfs_blk2off_table_bmap_bytes(portion->capacity);
-	portion->bmap = ssdfs_kzalloc(portion->bmap_bytes, GFP_KERNEL);
+	portion->bmap = ssdfs_blk2off_kzalloc(portion->bmap_bytes, GFP_KERNEL);
 	if (unlikely(!portion->bmap)) {
 		SSDFS_ERR("fail to allocate memory\n");
 		return -ENOMEM;
@@ -917,7 +974,7 @@ int ssdfs_blk2off_prepare_pos_array(struct ssdfs_blk2off_init *portion)
 
 	portion->pos_count = portion->capacity;
 	pos_array_bytes = portion->capacity * pos_size;
-	portion->pos_array = ssdfs_kzalloc(pos_array_bytes, GFP_KERNEL);
+	portion->pos_array = ssdfs_blk2off_kzalloc(pos_array_bytes, GFP_KERNEL);
 	if (unlikely(!portion->pos_array)) {
 		SSDFS_ERR("fail to allocate memory\n");
 		return -ENOMEM;
@@ -970,8 +1027,8 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 		int page_index;
 		u32 page_off;
 
-		portion->extent_array = ssdfs_kzalloc(ext_array_size,
-						      GFP_KERNEL);
+		portion->extent_array = ssdfs_blk2off_kzalloc(ext_array_size,
+							      GFP_KERNEL);
 		if (unlikely(!portion->extent_array)) {
 			SSDFS_ERR("fail to allocate memory\n");
 			return -ENOMEM;
@@ -2031,9 +2088,9 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 unlock_translation_table:
 	up_write(&table->translation_lock);
 
-	ssdfs_kfree(portion.bmap);
-	ssdfs_kfree(portion.pos_array);
-	ssdfs_kfree(portion.extent_array);
+	ssdfs_blk2off_kfree(portion.bmap);
+	ssdfs_blk2off_kfree(portion.pos_array);
+	ssdfs_blk2off_kfree(portion.extent_array);
 
 	return err;
 }
@@ -2472,7 +2529,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 	capacity = table->lblk2off_capacity;
 
 	bmap_bytes = ssdfs_blk2off_table_bmap_bytes(capacity);
-	snapshot->bmap_copy = ssdfs_kzalloc(bmap_bytes, GFP_KERNEL);
+	snapshot->bmap_copy = ssdfs_blk2off_kzalloc(bmap_bytes, GFP_KERNEL);
 	if (!snapshot->bmap_copy) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocated bytes %zu\n",
@@ -2481,7 +2538,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 	}
 
 	tbl_bytes = capacity * off_pos_size;
-	snapshot->tbl_copy = ssdfs_kzalloc(tbl_bytes, GFP_KERNEL);
+	snapshot->tbl_copy = ssdfs_blk2off_kzalloc(tbl_bytes, GFP_KERNEL);
 	if (!snapshot->tbl_copy) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocated bytes %zu\n",
@@ -2550,8 +2607,8 @@ finish_snapshoting:
 	up_read(&table->translation_lock);
 
 	if (err) {
-		ssdfs_kfree(snapshot->bmap_copy);
-		ssdfs_kfree(snapshot->tbl_copy);
+		ssdfs_blk2off_kfree(snapshot->bmap_copy);
+		ssdfs_blk2off_kfree(snapshot->tbl_copy);
 	}
 
 	return err;
@@ -2566,8 +2623,8 @@ void ssdfs_blk2off_table_free_snapshot(struct ssdfs_blk2off_table_snapshot *sp)
 	if (!sp)
 		return;
 
-	ssdfs_kfree(sp->bmap_copy);
-	ssdfs_kfree(sp->tbl_copy);
+	ssdfs_blk2off_kfree(sp->bmap_copy);
+	ssdfs_blk2off_kfree(sp->tbl_copy);
 
 	memset(sp, 0, sizeof(struct ssdfs_blk2off_table_snapshot));
 }
@@ -3478,7 +3535,7 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 		goto fail_store_off_table;
 	}
 
-	extents = ssdfs_kcalloc(snapshot.capacity,
+	extents = ssdfs_blk2off_kcalloc(snapshot.capacity,
 				sizeof(struct ssdfs_translation_extent),
 				GFP_KERNEL);
 	if (unlikely(!extents)) {
@@ -3618,7 +3675,8 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 
 fail_store_off_table:
 	ssdfs_blk2off_table_free_snapshot(&snapshot);
-	ssdfs_kfree(extents);
+
+	ssdfs_blk2off_kfree(extents);
 
 	return err;
 }
@@ -5159,11 +5217,11 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		struct page *page;
 		void *kaddr1, *kaddr2;
 
-		page = ssdfs_alloc_page(GFP_KERNEL);
+		page = ssdfs_blk2off_alloc_page(GFP_KERNEL);
 		if (IS_ERR_OR_NULL(page)) {
 			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate #%d memory page\n", i);
-			ssdfs_pagevec_release(&blk->pvec);
+			ssdfs_blk2off_pagevec_release(&blk->pvec);
 			goto finish_set_block_migration;
 		}
 
@@ -5465,7 +5523,7 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 
 		if (blk->state == SSDFS_LBLOCK_UNDER_COMMIT) {
 			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
-			ssdfs_pagevec_release(&blk->pvec);
+			ssdfs_blk2off_pagevec_release(&blk->pvec);
 		}
 	}
 

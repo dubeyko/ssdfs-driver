@@ -31,6 +31,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_DEBUG
+atomic64_t ssdfs_dev_bdev_page_leaks;
+atomic64_t ssdfs_dev_bdev_memory_leaks;
+atomic64_t ssdfs_dev_bdev_cache_leaks;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
+ * void ssdfs_dev_bdev_cache_leaks_increment(void *kaddr)
+ * void ssdfs_dev_bdev_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_dev_bdev_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_dev_bdev_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_dev_bdev_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_dev_bdev_kfree(void *kaddr)
+ * struct page *ssdfs_dev_bdev_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_dev_bdev_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_dev_bdev_free_page(struct page *page)
+ * void ssdfs_dev_bdev_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dev_bdev)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(dev_bdev)
+#endif /* CONFIG_SSDFS_DEBUG */
+
+void ssdfs_dev_bdev_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_dev_bdev_page_leaks, 0);
+	atomic64_set(&ssdfs_dev_bdev_memory_leaks, 0);
+	atomic64_set(&ssdfs_dev_bdev_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_dev_bdev_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_dev_bdev_page_leaks) != 0) {
+		SSDFS_ERR("BLOCK DEV: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_dev_bdev_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_dev_bdev_memory_leaks) != 0) {
+		SSDFS_ERR("BLOCK DEV: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_dev_bdev_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_dev_bdev_cache_leaks) != 0) {
+		SSDFS_ERR("BLOCK DEV: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_dev_bdev_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 static DECLARE_WAIT_QUEUE_HEAD(wq);
 
 /*
@@ -376,7 +432,7 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 	pagevec_init(&pvec);
 
 	for (i = 0; i < pages_count; i++) {
-		page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
+		page = ssdfs_dev_bdev_alloc_page(GFP_KERNEL | __GFP_ZERO);
 		if (IS_ERR_OR_NULL(page)) {
 			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 			SSDFS_ERR("unable to allocate memory page\n");
@@ -437,7 +493,7 @@ finish_bdev_read_pvec:
 			SSDFS_DBG("page %px, count %d\n",
 				  page, page_ref_count(page));
 
-			ssdfs_free_page(page);
+			ssdfs_dev_bdev_free_page(page);
 			pvec.pages[i] = NULL;
 		}
 	}
@@ -538,7 +594,7 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 	if (!need_check)
 		return 0;
 
-	buf = ssdfs_kzalloc(fsi->pagesize, GFP_KERNEL);
+	buf = ssdfs_dev_bdev_kzalloc(fsi->pagesize, GFP_KERNEL);
 	if (!buf) {
 		SSDFS_ERR("unable to allocate %d bytes\n", fsi->pagesize);
 		return -ENOMEM;
@@ -557,7 +613,7 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 	}
 
 free_buf:
-	ssdfs_kfree(buf);
+	ssdfs_dev_bdev_kfree(buf);
 	return err;
 }
 
