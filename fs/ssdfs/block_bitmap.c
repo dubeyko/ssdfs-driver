@@ -557,6 +557,9 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("pvec %p, pagevec count %u\n",
+		  source, pagevec_count(source));
+
 	return 0;
 }
 

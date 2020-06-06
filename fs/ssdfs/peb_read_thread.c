@@ -3980,6 +3980,8 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 		  env->log_offset, env->log_pages,
 		  env->b_init.fragment_index, env->b_init.read_bytes);
 
+	SSDFS_DBG("pvec %p\n", &env->b_init.pvec);
+
 	pagevec_init(&env->b_init.pvec);
 
 	err = ssdfs_read_checked_block_bitmap(pebi, env);

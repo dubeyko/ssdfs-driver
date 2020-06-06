@@ -133,6 +133,106 @@ struct ssdfs_erase_result_array {
 #define SSDFS_ERASE_RESULTS_PER_FRAGMENT	(10)
 
 /*
+ * is_peb_protected() - check that PEB is protected
+ * @found_item: PEB index in the fragment
+ */
+static
+bool is_peb_protected(unsigned long found_item)
+{
+	unsigned long remainder;
+
+	SSDFS_DBG("found_item %lu\n", found_item);
+
+	remainder = found_item % SSDFS_MAPTBL_PROTECTION_STEP;
+	return remainder == 0;
+}
+
+/*
+ * is_time_to_erase_peb() - check that PEB can be erased
+ * @hdr: fragment's header
+ * @found_item: PEB index in the fragment
+ */
+static
+bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
+			  unsigned long found_item)
+{
+	unsigned long *used_bmap;
+	unsigned long *dirty_bmap;
+	u16 pebs_count;
+	unsigned long protected_item = found_item;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("hdr %p, found_item %lu\n",
+		  hdr, found_item);
+
+	if (!is_peb_protected(found_item))
+		return true;
+
+	used_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
+	dirty_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
+	pebs_count = le16_to_cpu(hdr->pebs_count);
+
+	if (found_item >= pebs_count) {
+		SSDFS_ERR("found_item %lu >= pebs_count %u\n",
+			  found_item, pebs_count);
+		return false;
+	}
+
+	for (i = 0; i < SSDFS_MAPTBL_PROTECTION_RANGE; i++) {
+		unsigned long found;
+		unsigned long next_item;
+
+		protected_item += SSDFS_MAPTBL_PROTECTION_STEP;
+
+		if (protected_item >= pebs_count)
+			protected_item = SSDFS_MAPTBL_FIRST_PROTECTED_INDEX;
+
+		if (protected_item == found_item)
+			return false;
+
+		found = find_next_bit(used_bmap, pebs_count,
+				      protected_item);
+
+		SSDFS_DBG("i %d, protected_item %lu, found %lu\n",
+			  i, protected_item, found);
+
+		if (found == protected_item)
+			continue;
+
+		found = find_next_bit(dirty_bmap, pebs_count,
+				      protected_item);
+
+		SSDFS_DBG("i %d, protected_item %lu, found %lu\n",
+			  i, protected_item, found);
+
+		next_item = protected_item + SSDFS_MAPTBL_PROTECTION_STEP;
+
+		if (found == protected_item)
+			continue;
+		else if (found >= pebs_count) {
+			if (next_item < pebs_count) {
+				/* nothing was found */
+				goto finish_check;
+			} else {
+				protected_item =
+					SSDFS_MAPTBL_FIRST_PROTECTED_INDEX;
+				continue;
+			}
+		}
+
+finish_check:
+		/* the item is protected */
+		return false;
+	}
+
+	return true;
+}
+
+/*
  * ssdfs_maptbl_collect_stripe_dirty_pebs() - collect dirty PEBs in stripe
  * @fdesc: fragment descriptor
  * @fragment_index: index of fragment
@@ -218,6 +318,13 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 			if (found_item >= pebs_count) {
 				/* all dirty PEBs were found */
 				goto finish_page_processing;
+			}
+
+			if (!is_time_to_erase_peb(hdr, found_item)) {
+				SSDFS_DBG("PEB %llu is protected yet\n",
+					  GET_PEB_ID(kaddr, found_item));
+				found_item++;
+				continue;
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG

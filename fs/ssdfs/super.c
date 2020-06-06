@@ -2277,9 +2277,16 @@ free_erase_page:
 	if (fs_info->erase_page)
 		ssdfs_super_free_page(fs_info->erase_page);
 
-	ssdfs_check_memory_leaks();
+	ssdfs_destruct_sb_info(&fs_info->sbi);
+	ssdfs_destruct_sb_info(&fs_info->sbi_backup);
+
+	ssdfs_free_workspaces();
+
 	ssdfs_super_kfree(fs_info);
 
+	rcu_barrier();
+
+	ssdfs_check_memory_leaks();
 	return err;
 }
 

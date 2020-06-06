@@ -20,6 +20,10 @@
 #ifndef _SSDFS_PEB_MAPPING_TABLE_H
 #define _SSDFS_PEB_MAPPING_TABLE_H
 
+#define SSDFS_MAPTBL_FIRST_PROTECTED_INDEX	0
+#define SSDFS_MAPTBL_PROTECTION_STEP		50
+#define SSDFS_MAPTBL_PROTECTION_RANGE		3
+
 /*
  * struct ssdfs_maptbl_fragment_desc - fragment descriptor
  * @lock: fragment lock
