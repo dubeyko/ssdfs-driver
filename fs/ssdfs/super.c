@@ -854,6 +854,8 @@ static u64 ssdfs_reserve_clean_segment(struct super_block *sb,
 		u8 peb_type = SSDFS_MAPTBL_SBSEG_PEB_TYPE;
 		u64 leb_id = (reserved_seg * fsi->pebs_per_seg) + i;
 
+		SSDFS_DBG("leb_id %llu\n", leb_id);
+
 		err = ssdfs_maptbl_map_leb2peb(fsi, leb_id, peb_type,
 						&pebr, &end);
 		if (err == -EAGAIN) {
@@ -1014,8 +1016,9 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	}
 
 reserve_clean_segment:
-	SSDFS_DBG("cur_peb %llu, next_peb %llu, next_leb %llu\n",
-		  cur_peb, next_peb, next_leb);
+	SSDFS_DBG("cur_peb %llu, next_peb %llu, "
+		  "cur_leb %llu, next_leb %llu\n",
+		  cur_peb, next_peb, cur_leb, next_leb);
 
 	reserved_seg = ssdfs_reserve_clean_segment(sb, sb_seg_type, cur_leb);
 

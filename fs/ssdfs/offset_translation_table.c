@@ -2712,6 +2712,235 @@ void ssdfs_translation_extent_init(struct ssdfs_blk2off_range *found,
 }
 
 /*
+ * can_translation_extent_be_merged() - check opportunity to merge extents
+ * @extent: extent for checking
+ * @found: range of changed logical blocks
+ * @start_id: starting offset ID
+ * @state: state of logical blocks in extent (used, free and so on)
+ */
+static inline
+bool can_translation_extent_be_merged(struct ssdfs_translation_extent *extent,
+				      struct ssdfs_blk2off_range *found,
+				      u16 start_id, int state)
+{
+	u16 logical_blk;
+	u16 offset_id;
+	u16 len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!extent || !found);
+	BUG_ON(start_id == SSDFS_BLK2OFF_TABLE_INVALID_ID);
+	BUG_ON(state <= SSDFS_LOGICAL_BLK_UNKNOWN_STATE ||
+		state >= SSDFS_LOGICAL_BLK_STATE_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	logical_blk = le16_to_cpu(extent->logical_blk);
+	offset_id = le16_to_cpu(extent->offset_id);
+	len = le16_to_cpu(extent->len);
+
+	SSDFS_DBG("EXTENT: logical_blk %u, offset_id %u, len %u, "
+		  "sequence_id %u, state %#x; "
+		  "FOUND: logical_blk %u, start_id %u, "
+		  "len %u, state %#x\n",
+		  logical_blk, offset_id, len,
+		  extent->sequence_id, extent->state,
+		  found->start_lblk, start_id, found->len,
+		  state);
+
+	if (extent->state != state)
+		return false;
+
+	if (start_id == offset_id) {
+		SSDFS_ERR("start_id %u == offset_id %u\n",
+			  start_id, offset_id);
+		return false;
+	} else if (start_id > offset_id &&
+			(offset_id + len) == start_id) {
+		if ((logical_blk + len) == found->start_lblk)
+			return true;
+		else if ((found->start_lblk + found->len) == logical_blk)
+			return true;
+	} else if (start_id < offset_id &&
+			(start_id + found->len) == offset_id) {
+		if ((logical_blk + len) == found->start_lblk)
+			return true;
+		else if ((found->start_lblk + found->len) == logical_blk)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * ssdfs_merge_translation_extent() - merge translation extents
+ * @extent: extent for checking
+ * @found: range of changed logical blocks
+ * @start_id: starting offset ID
+ * @state: state of logical blocks in extent (used, free and so on)
+ */
+static inline
+int ssdfs_merge_translation_extent(struct ssdfs_translation_extent *extent,
+				   struct ssdfs_blk2off_range *found,
+				   u16 start_id, int state)
+{
+	u16 logical_blk;
+	u16 offset_id;
+	u16 len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!extent || !found);
+	BUG_ON(start_id == SSDFS_BLK2OFF_TABLE_INVALID_ID);
+	BUG_ON(state <= SSDFS_LOGICAL_BLK_UNKNOWN_STATE ||
+		state >= SSDFS_LOGICAL_BLK_STATE_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	logical_blk = le16_to_cpu(extent->logical_blk);
+	offset_id = le16_to_cpu(extent->offset_id);
+	len = le16_to_cpu(extent->len);
+
+	SSDFS_DBG("EXTENT: logical_blk %u, offset_id %u, len %u, "
+		  "sequence_id %u, state %#x; "
+		  "FOUND: logical_blk %u, start_id %u, "
+		  "len %u, state %#x\n",
+		  logical_blk, offset_id, len,
+		  extent->sequence_id, extent->state,
+		  found->start_lblk, start_id, found->len,
+		  state);
+
+	if (extent->state != state) {
+		SSDFS_ERR("extent->state %#x != state %#x\n",
+			  extent->state, state);
+		return -EINVAL;
+	}
+
+	if (start_id == offset_id) {
+		SSDFS_ERR("start_id %u == offset_id %u\n",
+			  start_id, offset_id);
+		return -ERANGE;
+	}
+
+	if (start_id > offset_id &&
+			(offset_id + len) == start_id) {
+		if ((logical_blk + len) == found->start_lblk) {
+			extent->len = cpu_to_le16(len + found->len);
+		} else if ((found->start_lblk + found->len) == logical_blk) {
+			extent->logical_blk = cpu_to_le16(found->start_lblk);
+			extent->len = cpu_to_le16(len + found->len);
+		}
+	} else if (start_id < offset_id &&
+			(start_id + found->len) == offset_id) {
+		if ((logical_blk + len) == found->start_lblk) {
+			extent->offset_id = cpu_to_le16(start_id);
+			extent->len = cpu_to_le16(len + found->len);
+		} else if ((found->start_lblk + found->len) == logical_blk) {
+			extent->logical_blk = cpu_to_le16(found->start_lblk);
+			extent->offset_id = cpu_to_le16(start_id);
+			extent->len = cpu_to_le16(len + found->len);
+		}
+	} else {
+		SSDFS_ERR("fail to merge the translation extent\n");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_insert_translation_extent() - insert translation extent into the queue
+ * @found: range of changed logical blocks
+ * @start_id: starting offset ID
+ * @state: state of logical blocks in extent (used, free and so on)
+ * @array: extents array [in|out]
+ * @capacity: capacity of extents array
+ * @extent_count: pointer on extents count value [out]
+ */
+static inline
+int ssdfs_insert_translation_extent(struct ssdfs_blk2off_range *found,
+				    u16 start_id, int state,
+				    struct ssdfs_translation_extent *array,
+				    u16 capacity, u16 *extent_count)
+{
+	struct ssdfs_translation_extent *extent;
+	size_t extent_size = sizeof(struct ssdfs_translation_extent);
+	u16 logical_blk;
+	u16 offset_id;
+	u16 len;
+	int i, j;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!found || !extent_count);
+	BUG_ON(start_id == SSDFS_BLK2OFF_TABLE_INVALID_ID);
+	BUG_ON(state <= SSDFS_LOGICAL_BLK_UNKNOWN_STATE ||
+		state >= SSDFS_LOGICAL_BLK_STATE_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("start_id %u, state %#x, extent_count %u\n",
+		  start_id, state, *extent_count);
+
+	BUG_ON(*extent_count >= capacity);
+
+	for (i = 0; i < *extent_count; i++) {
+		extent = &array[i];
+
+		logical_blk = le16_to_cpu(extent->logical_blk);
+		offset_id = le16_to_cpu(extent->offset_id);
+		len = le16_to_cpu(extent->len);
+
+		if (start_id == offset_id) {
+			SSDFS_ERR("start_id %u == offset_id %u\n",
+				  start_id, offset_id);
+			return -ERANGE;
+		} else if (start_id > offset_id &&
+			   can_translation_extent_be_merged(extent, found,
+							    start_id, state)) {
+			err = ssdfs_merge_translation_extent(extent, found,
+							     start_id, state);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to merge extent: "
+					  "err %d\n", err);
+				return err;
+			} else
+				return 0;
+		} else if (start_id < offset_id) {
+			if (can_translation_extent_be_merged(extent, found,
+							    start_id, state)) {
+				err = ssdfs_merge_translation_extent(extent,
+								     found,
+								     start_id,
+								     state);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to merge extent: "
+						  "err %d\n", err);
+					return err;
+				} else
+					return 0;
+			} else
+				break;
+		}
+	}
+
+	if (i < *extent_count) {
+		memmove(&array[i + 1], &array[i],
+			(*extent_count - i) * extent_size);
+
+		for (j = i + 1; j <= *extent_count; j++) {
+			extent = &array[j];
+			extent->sequence_id = j;
+		}
+	}
+
+	extent = &array[i];
+	ssdfs_translation_extent_init(found,
+					start_id, i,
+					state, extent);
+
+	(*extent_count)++;
+
+	return 0;
+}
+
+/*
  * ssdfs_blk2off_table_extract_extents() - extract changed extents
  * @sp: table's snapshot
  * @array: extents array [in|out]
@@ -2774,6 +3003,11 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 
 			pos = &sp->tbl_copy[blk];
 
+			SSDFS_DBG("cno %llx, id %u, peb_index %u, "
+				  "sequence_id %u, offset_index %u\n",
+				  pos->cno, pos->id, pos->peb_index,
+				  pos->sequence_id, pos->offset_index);
+
 			if (pos->peb_index == U16_MAX) {
 				SSDFS_WARN("invalid peb_index: "
 					   "logical_blk %u\n",
@@ -2785,8 +3019,8 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 			} else if (pos->id != SSDFS_BLK2OFF_TABLE_INVALID_ID) {
 				if (start_id == SSDFS_BLK2OFF_TABLE_INVALID_ID)
 					start_id = pos->id;
-				else if (pos->id < start_id)
-					start_id = pos->id;
+				else if ((start_id + found.len) != pos->id)
+					is_extent_ended = true;
 			} else if (pos->id == SSDFS_BLK2OFF_TABLE_INVALID_ID &&
 				   state != SSDFS_LOGICAL_BLK_FREE) {
 				/* state is changed */
@@ -2794,19 +3028,22 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 			}
 
 			if (is_extent_ended) {
-				struct ssdfs_translation_extent *extent;
-
 				if (found.start_lblk == U16_MAX)
 					continue;
 
-				extent = &array[*extent_count];
-
-				BUG_ON(*extent_count >= capacity);
-				ssdfs_translation_extent_init(&found, start_id,
-							      *extent_count,
-							      state,
-							      extent);
-				(*extent_count)++;
+				err = ssdfs_insert_translation_extent(&found,
+								start_id,
+								state,
+								array,
+								capacity,
+								extent_count);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to insert extent: "
+						  "start_id %u, state %#x, "
+						  "err %d\n",
+						  start_id, state, err);
+					return err;
+				}
 
 				pos = &sp->tbl_copy[blk];
 
@@ -2837,22 +3074,25 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 		}
 
 		if (found.start_lblk != U16_MAX) {
-			struct ssdfs_translation_extent *extent;
-
-			extent = &array[*extent_count];
-
-			BUG_ON(*extent_count >= capacity);
-			ssdfs_translation_extent_init(&found, start_id,
-						      *extent_count,
-						      state,
-						      extent);
+			err = ssdfs_insert_translation_extent(&found,
+								start_id,
+								state,
+								array,
+								capacity,
+								extent_count);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to insert extent: "
+					  "start_id %u, state %#x, "
+					  "err %d\n",
+					  start_id, state, err);
+				return err;
+			}
 
 			start = found.start_lblk + found.len;
 
 			found.start_lblk = U16_MAX;
 			found.len = 0;
 			state = SSDFS_LOGICAL_BLK_UNKNOWN_STATE;
-			(*extent_count)++;
 		} else
 			start = changed_area.start_lblk + changed_area.len;
 	} while (start < sp->capacity);

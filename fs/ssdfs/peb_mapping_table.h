@@ -424,6 +424,21 @@ bool is_ssdfs_maptbl_under_flush(struct ssdfs_fs_info *fsi)
 }
 
 /*
+ * is_peb_protected() - check that PEB is protected
+ * @found_item: PEB index in the fragment
+ */
+static inline
+bool is_peb_protected(unsigned long found_item)
+{
+	unsigned long remainder;
+
+	SSDFS_DBG("found_item %lu\n", found_item);
+
+	remainder = found_item % SSDFS_MAPTBL_PROTECTION_STEP;
+	return remainder == 0;
+}
+
+/*
  * PEB mapping table's API
  */
 int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi);

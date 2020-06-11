@@ -5194,8 +5194,12 @@ ssdfs_maptbl_get_erase_threshold(struct ssdfs_peb_table_fragment_header *hdr,
 	BUG_ON(!hdr || !found || !threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("hdr %p, start %lu, max %lu\n",
-		  hdr, start, max);
+	SSDFS_DBG("hdr %p, start_peb %llu, pebs_count %u, "
+		  "start %lu, max %lu, used_pebs %lu\n",
+		  hdr,
+		  le64_to_cpu(hdr->start_peb),
+		  le16_to_cpu(hdr->pebs_count),
+		  start, max, used_pebs);
 
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
 
@@ -5231,6 +5235,9 @@ ssdfs_maptbl_get_erase_threshold(struct ssdfs_peb_table_fragment_header *hdr,
 
 		if (desc->state != SSDFS_MAPTBL_BAD_PEB_STATE) {
 			u32 found_cycles = le32_to_cpu(desc->erase_cycles);
+
+			SSDFS_DBG("index %lu, found_cycles %u, threshold %u\n",
+				  index, found_cycles, *threshold);
 
 			if (*threshold > found_cycles) {
 				*threshold = found_cycles;
@@ -5297,6 +5304,12 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 
 	*found = ULONG_MAX;
 
+	if (start >= max) {
+		SSDFS_DBG("start %lu >= max %lu\n",
+			  start, max);
+		return -ENODATA;
+	}
+
 	do {
 		index = bitmap_find_next_zero_area(bmap, max, start, 1, 0);
 
@@ -5324,11 +5337,7 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 		if (desc->state != SSDFS_MAPTBL_BAD_PEB_STATE) {
 			u32 found_cycles = le32_to_cpu(desc->erase_cycles);
 
-			if (found_cycles < threshold) {
-				SSDFS_WARN("cycles %u < threshold %u\n",
-					   found_cycles, threshold);
-				return -ERANGE;
-			} else if (found_cycles == threshold) {
+			if (found_cycles <= threshold) {
 				*found = index;
 				SSDFS_DBG("found: index %lu, "
 					  "found_cycles %u, threshold %u\n",

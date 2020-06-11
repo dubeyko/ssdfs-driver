@@ -133,21 +133,6 @@ struct ssdfs_erase_result_array {
 #define SSDFS_ERASE_RESULTS_PER_FRAGMENT	(10)
 
 /*
- * is_peb_protected() - check that PEB is protected
- * @found_item: PEB index in the fragment
- */
-static
-bool is_peb_protected(unsigned long found_item)
-{
-	unsigned long remainder;
-
-	SSDFS_DBG("found_item %lu\n", found_item);
-
-	remainder = found_item % SSDFS_MAPTBL_PROTECTION_STEP;
-	return remainder == 0;
-}
-
-/*
  * is_time_to_erase_peb() - check that PEB can be erased
  * @hdr: fragment's header
  * @found_item: PEB index in the fragment

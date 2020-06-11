@@ -2,7 +2,7 @@
 
 if [[ $# -lt 3 ]]
 then
-    echo "Usage: $0 SSDFS-IMAGE STEP-INSIDE-MOUNT FILES-NUMBER"
+    echo "Usage: $0 SSDFS-IMAGE START-NUMBER STEP-INSIDE-MOUNT FILES-NUMBER"
     exit 1
 fi
 
@@ -18,21 +18,22 @@ then
     exit 1
 fi
 
-i="0"
+i=$2
 
-while [ $i -lt $3 ]
+while [ $i -lt $[$2+$4] ]
 do
-i=$[$i+1]
-
-echo $i
 
 sudo ./ssdfs_blkdev_mount_loop.sh $1 /mnt/ssdfs/
 
 j="0"
 
-while [ $j -lt $2 ]
+while [ $j -lt $3 ]
 do
 j=$[$j+1]
+
+i=$[$i+1]
+
+echo $i
 
 touch /mnt/ssdfs/$i".txt"
 
@@ -42,13 +43,13 @@ ls -lah /mnt/ssdfs
 
 sudo umount /mnt/ssdfs
 
-mkdir $i"-MOUNT-DUMP"
-chown -hR slavad $i"-MOUNT-DUMP"
+#mkdir $i"-MOUNT-DUMP"
+#chown -hR slavad $i"-MOUNT-DUMP"
 
-cd $i"-MOUNT-DUMP"
+#cd $i"-MOUNT-DUMP"
 
-dump.ssdfs -p parse_all,raw_dump -o ./ ../$1
+#dump.ssdfs -p parse_all,raw_dump -o ./ ../$1
 
-cd ../
+#cd ../
 
 done
