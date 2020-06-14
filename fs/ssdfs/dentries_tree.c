@@ -8353,6 +8353,12 @@ finish_detect_affected_items:
 
 	down_write(&node->header_lock);
 
+	SSDFS_DBG("INITIAL STATE: node_id %u, "
+		  "items_count %u, free_space %u\n",
+		  node->node_id,
+		  node->items_area.items_count,
+		  node->items_area.free_space);
+
 	if (node->items_area.items_count < search->request.count)
 		node->items_area.items_count = 0;
 	else
@@ -8369,6 +8375,12 @@ finish_detect_affected_items:
 		goto finish_items_area_correction;
 	}
 	node->items_area.free_space += deleted_space;
+
+	SSDFS_DBG("NEW STATE: node_id %u, "
+		  "items_count %u, free_space %u\n",
+		  node->node_id,
+		  node->items_area.items_count,
+		  node->items_area.free_space);
 
 	if (node->items_area.items_count == 0) {
 		start_hash = U64_MAX;

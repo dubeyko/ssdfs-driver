@@ -5756,11 +5756,82 @@ ssdfs_btree_move_items_parent2child(struct ssdfs_btree_state_descriptor *desc,
 		return err;
 	}
 
+	down_read(&child_node->header_lock);
+
+	switch (atomic_read(&child_node->index_area.state)) {
+	case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+		child->index_area.area_size = child_node->index_area.area_size;
+		calculated = child_node->index_area.index_capacity;
+		calculated -= child_node->index_area.index_count;
+		calculated *= child_node->index_area.index_size;
+		child->index_area.free_space = calculated;
+		child->index_area.hash.start =
+				child_node->index_area.start_hash;
+		child->index_area.hash.end =
+				child_node->index_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	switch (atomic_read(&child_node->items_area.state)) {
+	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+		child->items_area.area_size = child_node->items_area.area_size;
+		child->items_area.free_space =
+					child_node->items_area.free_space;
+		child->items_area.hash.start =
+				child_node->items_area.start_hash;
+		child->items_area.hash.end =
+				child_node->items_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	up_read(&child_node->header_lock);
+
 	down_read(&parent_node->header_lock);
-	child->index_area.hash.start = parent_node->index_area.start_hash;
-	child->index_area.hash.end = parent_node->index_area.end_hash;
-	child->items_area.hash.start = parent_node->items_area.start_hash;
-	child->items_area.hash.end = parent_node->items_area.end_hash;
+
+	switch (atomic_read(&parent_node->index_area.state)) {
+	case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+		parent->index_area.area_size =
+			parent_node->index_area.area_size;
+		calculated = parent_node->index_area.index_capacity;
+		calculated -= parent_node->index_area.index_count;
+		calculated *= parent_node->index_area.index_size;
+		parent->index_area.free_space = calculated;
+		parent->index_area.hash.start =
+				parent_node->index_area.start_hash;
+		parent->index_area.hash.end =
+				parent_node->index_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	switch (atomic_read(&parent_node->items_area.state)) {
+	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+		parent->items_area.area_size =
+					parent_node->items_area.area_size;
+		parent->items_area.free_space =
+					parent_node->items_area.free_space;
+		parent->items_area.hash.start =
+				parent_node->items_area.start_hash;
+		parent->items_area.hash.end =
+				parent_node->items_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
 	up_read(&parent_node->header_lock);
 
 	parent->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
@@ -5912,11 +5983,82 @@ ssdfs_btree_move_items_child2parent(struct ssdfs_btree_state_descriptor *desc,
 	}
 
 	down_read(&child_node->header_lock);
-	parent->index_area.hash.start = child_node->index_area.start_hash;
-	parent->index_area.hash.end = child_node->index_area.end_hash;
-	parent->items_area.hash.start = child_node->items_area.start_hash;
-	parent->items_area.hash.end = child_node->items_area.end_hash;
+
+	switch (atomic_read(&child_node->index_area.state)) {
+	case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+		child->index_area.area_size = child_node->index_area.area_size;
+		calculated = child_node->index_area.index_capacity;
+		calculated -= child_node->index_area.index_count;
+		calculated *= child_node->index_area.index_size;
+		child->index_area.free_space = calculated;
+		child->index_area.hash.start =
+				child_node->index_area.start_hash;
+		child->index_area.hash.end =
+				child_node->index_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	switch (atomic_read(&child_node->items_area.state)) {
+	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+		child->items_area.area_size = child_node->items_area.area_size;
+		child->items_area.free_space =
+					child_node->items_area.free_space;
+		child->items_area.hash.start =
+				child_node->items_area.start_hash;
+		child->items_area.hash.end =
+				child_node->items_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
 	up_read(&child_node->header_lock);
+
+	down_read(&parent_node->header_lock);
+
+	switch (atomic_read(&parent_node->index_area.state)) {
+	case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+		parent->index_area.area_size =
+			parent_node->index_area.area_size;
+		calculated = parent_node->index_area.index_capacity;
+		calculated -= parent_node->index_area.index_count;
+		calculated *= parent_node->index_area.index_size;
+		parent->index_area.free_space = calculated;
+		parent->index_area.hash.start =
+				parent_node->index_area.start_hash;
+		parent->index_area.hash.end =
+				parent_node->index_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	switch (atomic_read(&parent_node->items_area.state)) {
+	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+		parent->items_area.area_size =
+					parent_node->items_area.area_size;
+		parent->items_area.free_space =
+					parent_node->items_area.free_space;
+		parent->items_area.hash.start =
+				parent_node->items_area.start_hash;
+		parent->items_area.hash.end =
+				parent_node->items_area.end_hash;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	up_read(&parent_node->header_lock);
 
 	child->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
 
@@ -6546,6 +6688,13 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 	SSDFS_DBG("desc %p, child %p\n",
 		  desc, child);
 
+	node = child->nodes.old_node.ptr;
+
+	if (!node) {
+		SSDFS_ERR("node is NULL\n");
+		return -ERANGE;
+	}
+
 	if (!(child->flags & SSDFS_BTREE_TRY_RESIZE_INDEX_AREA)) {
 		SSDFS_WARN("resize hasn't been requested\n");
 		return 0;
@@ -6625,13 +6774,6 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 	BUG_ON(index_area_size == 0);
 	BUG_ON(index_area_size >= desc->node_size);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	node = child->nodes.old_node.ptr;
-
-	if (!node) {
-		SSDFS_ERR("node is NULL\n");
-		return -ERANGE;
-	}
 
 	err = ssdfs_btree_node_resize_index_area(node, index_area_size);
 	if (err == -ENOSPC) {

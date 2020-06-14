@@ -2437,6 +2437,252 @@ int ssdfs_btree_node_convert_index2id(struct ssdfs_btree *tree,
 }
 
 /*
+ * ssdfs_btree_check_found_leaf_node() - check found leaf node
+ * @tree: btree object
+ * @search: search object [in|out]
+ */
+static
+int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
+				      struct ssdfs_btree_search *search)
+{
+	struct ssdfs_btree_node *node = NULL, *parent_node = NULL;
+	struct ssdfs_btree_node_index_area area;
+	struct ssdfs_btree_index_key index_key;
+	u64 start_hash = U64_MAX, end_hash = U64_MAX;
+	u64 search_hash;
+	u16 items_count, items_capacity;
+	bool is_found = false;
+	bool is_right_adjacent = false;
+	u16 index_count = 0;
+	u16 index_capacity = 0;
+	u16 index_position;
+	int node_type;
+	u32 node_id;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, start_hash %llx\n",
+		  tree, search->request.start.hash);
+
+	if (!is_btree_leaf_node_found(search)) {
+		SSDFS_ERR("leaf node hasn't been found\n");
+		return -EINVAL;
+	}
+
+	node = search->node.child;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&node->items_area.state)) {
+	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_WARN("corrupted node %u\n",
+			   node->node_id);
+		return -ERANGE;
+	}
+
+	down_read(&node->header_lock);
+	start_hash = node->items_area.start_hash;
+	end_hash = node->items_area.end_hash;
+	items_count = node->items_area.items_count;
+	items_capacity = node->items_area.items_capacity;
+	up_read(&node->header_lock);
+
+	if (start_hash == U64_MAX || end_hash == U64_MAX) {
+		SSDFS_ERR("invalid items area's hash range: "
+			  "start_hash %llx, end_hash %llx\n",
+			  start_hash, end_hash);
+		return -ERANGE;
+	}
+
+	is_found = start_hash <= search->request.start.hash &&
+		   search->request.start.hash <= end_hash;
+	is_right_adjacent = search->request.start.hash > end_hash;
+
+	if (!is_found && items_count >= items_capacity) {
+		if (!is_right_adjacent)
+			goto unable_find_leaf_node;
+
+		spin_lock(&node->descriptor_lock);
+		search_hash = le64_to_cpu(node->node_index.index.hash);
+		spin_unlock(&node->descriptor_lock);
+
+		node = node->parent_node;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		down_read(&node->header_lock);
+
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+			index_count = node->index_area.index_count;
+			index_capacity = node->index_area.index_capacity;
+			break;
+
+		default:
+			err = -ERANGE;
+			break;
+		}
+
+		up_read(&node->header_lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("index area is absent\n");
+			return -ERANGE;
+		}
+
+		err = ssdfs_btree_node_find_index_position(node, search_hash,
+							   &index_position);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find the index position: "
+				  "search_hash %llx, err %d\n",
+				  search_hash, err);
+			return err;
+		}
+
+		index_position++;
+
+		if (index_position >= index_count)
+			goto unable_find_leaf_node;
+
+		node_type = atomic_read(&node->type);
+
+		down_read(&node->full_lock);
+
+		if (node_type == SSDFS_BTREE_ROOT_NODE) {
+			err = __ssdfs_btree_root_node_extract_index(node,
+							    index_position,
+							    &index_key);
+		} else {
+			down_read(&node->header_lock);
+			memcpy(&area, &node->index_area,
+				sizeof(struct ssdfs_btree_node_index_area));
+			up_read(&node->header_lock);
+
+			err = __ssdfs_btree_common_node_extract_index(node,
+								&area,
+								index_position,
+								&index_key);
+		}
+
+		up_read(&node->full_lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to extract index key: "
+				  "index_position %u, err %d\n",
+				  index_position, err);
+			return err;
+		}
+
+		parent_node = node;
+		node_id = le32_to_cpu(index_key.node_id);
+
+		err = ssdfs_btree_radix_tree_find(tree, node_id, &node);
+		if (err == -ENOENT) {
+			err = 0;
+			node = __ssdfs_btree_read_node(tree, parent_node,
+							&index_key,
+							index_key.node_type,
+							node_id);
+			if (unlikely(IS_ERR_OR_NULL(node))) {
+				err = !node ? -ENOMEM : PTR_ERR(node);
+				SSDFS_ERR("fail to read: "
+					  "node %llu, err %d\n",
+					  (u64)node_id, err);
+				return err;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find node in radix tree: "
+				  "node_id %llu, err %d\n",
+				  (u64)node_id, err);
+			return err;
+		} else if (!node) {
+			SSDFS_WARN("empty node pointer\n");
+			return -ERANGE;
+		}
+
+		ssdfs_btree_search_define_parent_node(search, parent_node);
+		ssdfs_btree_search_define_child_node(search, node);
+
+		memcpy(&search->node.found_index, &index_key,
+			sizeof(struct ssdfs_btree_index_key));
+
+		err = ssdfs_btree_node_convert_index2id(tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert index to ID: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		if (!is_btree_leaf_node_found(search)) {
+			SSDFS_ERR("leaf node hasn't been found\n");
+			return -ERANGE;
+		}
+
+		node = search->node.child;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("corrupted node %u\n",
+				   node->node_id);
+			return -ERANGE;
+		}
+
+		down_read(&node->header_lock);
+		start_hash = node->items_area.start_hash;
+		end_hash = node->items_area.end_hash;
+		items_count = node->items_area.items_count;
+		items_capacity = node->items_area.items_capacity;
+		up_read(&node->header_lock);
+
+		if (start_hash == U64_MAX || end_hash == U64_MAX) {
+			SSDFS_ERR("invalid items area's hash range: "
+				  "start_hash %llx, end_hash %llx\n",
+				  start_hash, end_hash);
+			return -ERANGE;
+		}
+
+		is_found = start_hash <= search->request.start.hash &&
+			   search->request.start.hash <= end_hash;
+
+		if (!is_found && items_count >= items_capacity)
+			goto unable_find_leaf_node;
+	}
+
+	return 0;
+
+unable_find_leaf_node:
+	search->node.state = SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC;
+
+	SSDFS_DBG("unable to find a leaf node: "
+		  "start_hash %llx, end_hash %llx, "
+		  "search_hash %llx\n",
+		  start_hash, end_hash,
+		  search->request.start.hash);
+
+	return -ENOENT;
+}
+
+/*
  * ssdfs_btree_find_leaf_node() - find a leaf node in the tree
  * @tree: btree object
  * @search: search object [in|out]
@@ -2461,7 +2707,6 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 	u8 upper_height;
 	u8 prev_height;
 	u64 start_hash = U64_MAX, end_hash = U64_MAX;
-	u16 items_count, items_capacity;
 	bool is_found = false;
 	int err = 0;
 
@@ -2697,47 +2942,9 @@ check_found_node:
 		SSDFS_DBG("btree has empty root node\n");
 		goto finish_search_leaf_node;
 	} else if (is_btree_leaf_node_found(search)) {
-		switch (atomic_read(&node->items_area.state)) {
-		case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
-			/* expected state */
-			break;
-
-		default:
-			err = -ERANGE;
-			SSDFS_WARN("corrupted node %u\n",
-				   node->node_id);
+		err = ssdfs_btree_check_found_leaf_node(tree, search);
+		if (err)
 			goto finish_search_leaf_node;
-		}
-
-		down_read(&node->header_lock);
-		start_hash = node->items_area.start_hash;
-		end_hash = node->items_area.end_hash;
-		items_count = node->items_area.items_count;
-		items_capacity = node->items_area.items_capacity;
-		up_read(&node->header_lock);
-
-		if (start_hash == U64_MAX || end_hash == U64_MAX) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid items area's hash range: "
-				  "start_hash %llx, end_hash %llx\n",
-				  start_hash, end_hash);
-			goto finish_search_leaf_node;
-		}
-
-		is_found = start_hash <= search->request.start.hash &&
-			   search->request.start.hash <= end_hash;
-
-		if (!is_found && items_count >= items_capacity) {
-			err = -ENOENT;
-			search->node.state =
-				SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC;
-			SSDFS_DBG("unable to find a leaf node: "
-				  "start_hash %llx, end_hash %llx, "
-				  "search_hash %llx\n",
-				  start_hash, end_hash,
-				  search->request.start.hash);
-			goto finish_search_leaf_node;
-		}
 	} else {
 		err = -ENOENT;
 		SSDFS_DBG("invalid leaf node descriptor: "
