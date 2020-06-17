@@ -9915,6 +9915,11 @@ finish_process_free_space_absence:
 			goto repeat;
 		}
 
+		SSDFS_DBG("seg %llu, peb_index %u, migration_state %#x\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
+			  atomic_read(&pebc->migration_state));
+
 		ssdfs_peb_current_log_lock(pebi);
 		peb_id = pebi->peb_id;
 		peb_has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);

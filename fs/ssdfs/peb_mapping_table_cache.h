@@ -101,5 +101,17 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
  */
 struct page *
 ssdfs_maptbl_cache_add_pagevec_page(struct ssdfs_maptbl_cache *cache);
+int ssdfs_maptbl_cache_convert_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
+					 u64 leb_id,
+					 struct ssdfs_maptbl_peb_relation *pebr);
+int __ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
+					 u64 leb_id,
+					 struct ssdfs_maptbl_peb_relation *pebr);
+int ssdfs_maptbl_cache_change_peb_state_nolock(struct ssdfs_maptbl_cache *cache,
+						u64 leb_id, int peb_state,
+						int consistency);
+int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
+					     u64 leb_id,
+					     int consistency);
 
 #endif /* _SSDFS_PEB_MAPPING_TABLE_CACHE_H */

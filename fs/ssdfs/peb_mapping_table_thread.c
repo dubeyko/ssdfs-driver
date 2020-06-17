@@ -1920,9 +1920,8 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 	int consistency = SSDFS_PEB_STATE_UNKNOWN;
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	int state;
-	bool need_make_consistent = false;
-	bool need_exclude_migration_peb = false;
 	u64 peb_id;
+	u8 peb_state;
 	int i;
 	int err = 0;
 
@@ -1962,9 +1961,9 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	err = ssdfs_maptbl_cache_convert_leb2peb(cache,
-						 pmi->leb_id,
-						 &pebr);
+	err = __ssdfs_maptbl_cache_convert_leb2peb(cache,
+						   pmi->leb_id,
+						   &pebr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to convert LEB to PEB: "
 			  "leb_id %llu, err %d\n",
@@ -1983,7 +1982,7 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 
 	if (consistency == SSDFS_PEB_STATE_UNKNOWN) {
 		SSDFS_DBG("peb_id %llu isn't be found\n", pmi->peb_id);
-		return -ENODATA;
+		return 0;
 	}
 
 	switch (consistency) {
@@ -2048,7 +2047,18 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 
 	switch (consistency) {
 	case SSDFS_PEB_STATE_INCONSISTENT:
+		down_write(&cache->lock);
 		down_write(&fdesc->lock);
+
+		err = ssdfs_maptbl_cache_convert_leb2peb_nolock(cache,
+								pmi->leb_id,
+								&pebr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert LEB to PEB: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+			goto finish_inconsistent_case;
+		}
 
 		err = ssdfs_maptbl_solve_inconsistency(tbl, fdesc,
 							pmi->leb_id,
@@ -2060,10 +2070,43 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_inconsistent_case;
 		}
 
-		need_make_consistent = true;
+		peb_id = pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id;
+		peb_state = pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
+		if (peb_id != U64_MAX) {
+			consistency = SSDFS_PEB_STATE_CONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state_nolock(cache,
+								  pmi->leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  pmi->leb_id, peb_state, err);
+				goto finish_inconsistent_case;
+			}
+		}
+
+		peb_id = pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id;
+		peb_state = pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
+		if (peb_id != U64_MAX) {
+			consistency = SSDFS_PEB_STATE_CONSISTENT;
+			err = ssdfs_maptbl_cache_change_peb_state_nolock(cache,
+								  pmi->leb_id,
+								  peb_state,
+								  consistency);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change PEB state: "
+					  "leb_id %llu, peb_state %#x, "
+					  "err %d\n",
+					  pmi->leb_id, peb_state, err);
+				goto finish_inconsistent_case;
+			}
+		}
 
 finish_inconsistent_case:
 		up_write(&fdesc->lock);
+		up_write(&cache->lock);
 
 		if (!err) {
 			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
@@ -2072,10 +2115,22 @@ finish_inconsistent_case:
 		break;
 
 	case SSDFS_PEB_STATE_PRE_DELETED:
+		down_write(&cache->lock);
 		down_write(&fdesc->lock);
 
+		err = ssdfs_maptbl_cache_convert_leb2peb_nolock(cache,
+								pmi->leb_id,
+								&pebr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert LEB to PEB: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+			goto finish_pre_deleted_case;
+		}
+
 		err = ssdfs_maptbl_solve_pre_deleted_state(tbl, fdesc,
-							   pmi->leb_id);
+							   pmi->leb_id,
+							   &pebr);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to resolve pre-deleted state: "
 				  "leb_id %llu, err %d\n",
@@ -2083,10 +2138,20 @@ finish_inconsistent_case:
 			goto finish_pre_deleted_case;
 		}
 
-		need_exclude_migration_peb = true;
+		consistency = SSDFS_PEB_STATE_CONSISTENT;
+		err = ssdfs_maptbl_cache_forget_leb2peb_nolock(cache,
+								pmi->leb_id,
+								consistency);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to exclude migration PEB: "
+				  "leb_id %llu, err %d\n",
+				  pmi->leb_id, err);
+			goto finish_pre_deleted_case;
+		}
 
 finish_pre_deleted_case:
 		up_write(&fdesc->lock);
+		up_write(&cache->lock);
 
 		if (!err) {
 			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
@@ -2105,52 +2170,6 @@ finish_resolving:
 	up_read(&tbl->tbl_lock);
 
 finish_resolving_no_lock:
-	if (!err && need_make_consistent) {
-		u8 peb_state;
-
-		peb_id = pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id;
-		peb_state = pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
-		if (peb_id != U64_MAX) {
-			consistency = SSDFS_PEB_STATE_CONSISTENT;
-			err = ssdfs_maptbl_cache_change_peb_state(cache,
-								  pmi->leb_id,
-								  peb_state,
-								  consistency);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to change PEB state: "
-					  "leb_id %llu, peb_state %#x, "
-					  "err %d\n",
-					  pmi->leb_id, peb_state, err);
-			}
-		}
-
-		peb_id = pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id;
-		peb_state = pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
-		if (peb_id != U64_MAX) {
-			consistency = SSDFS_PEB_STATE_CONSISTENT;
-			err = ssdfs_maptbl_cache_change_peb_state(cache,
-								  pmi->leb_id,
-								  peb_state,
-								  consistency);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to change PEB state: "
-					  "leb_id %llu, peb_state %#x, "
-					  "err %d\n",
-					  pmi->leb_id, peb_state, err);
-			}
-		}
-	} else if (!err && need_exclude_migration_peb) {
-		consistency = SSDFS_PEB_STATE_CONSISTENT;
-		err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
-								pmi->leb_id,
-								consistency);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to exclude migration PEB: "
-				  "leb_id %llu, err %d\n",
-				  pmi->leb_id, err);
-		}
-	}
-
 	SSDFS_DBG("finished\n");
 
 	return err;

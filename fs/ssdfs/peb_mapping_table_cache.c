@@ -1206,6 +1206,98 @@ finish_leb_id_search:
 }
 
 /*
+ * ssdfs_maptbl_cache_convert_leb2peb_nolock() - cache-based LEB/PEB conversion
+ * @cache: maptbl cache object
+ * @leb_id: LEB ID number
+ * @pebr: description of PEBs relation [out]
+ *
+ * This method tries to convert LEB ID into PEB ID on the basis of
+ * mapping table's cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - LEB doesn't mapped to PEB yet.
+ */
+int ssdfs_maptbl_cache_convert_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
+					 u64 leb_id,
+					 struct ssdfs_maptbl_peb_relation *pebr)
+{
+	struct ssdfs_maptbl_cache_search_result res;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache || !pebr);
+	BUG_ON(atomic_read(&cache->bytes_count) == 0);
+	BUG_ON(pagevec_count(&cache->pvec) == 0);
+	BUG_ON(atomic_read(&cache->bytes_count) >
+		(pagevec_count(&cache->pvec) * PAGE_SIZE));
+	BUG_ON(atomic_read(&cache->bytes_count) <=
+		((pagevec_count(&cache->pvec) - 1) * PAGE_SIZE));
+	BUG_ON(!rwsem_is_locked(&cache->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p, leb_id %llu, pebr %p\n",
+		  cache, leb_id, pebr);
+
+	err = ssdfs_maptbl_cache_find_leb(cache, leb_id, &res, pebr);
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to convert leb %llu to peb\n",
+			  leb_id);
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to convert leb %llu to peb: "
+			  "err %d\n",
+			  leb_id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * __ssdfs_maptbl_cache_convert_leb2peb() - cache-based LEB/PEB conversion
+ * @cache: maptbl cache object
+ * @leb_id: LEB ID number
+ * @pebr: description of PEBs relation [out]
+ *
+ * This method tries to convert LEB ID into PEB ID on the basis of
+ * mapping table's cache.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENODATA    - LEB doesn't mapped to PEB yet.
+ */
+int __ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
+					 u64 leb_id,
+					 struct ssdfs_maptbl_peb_relation *pebr)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache || !pebr);
+	BUG_ON(atomic_read(&cache->bytes_count) == 0);
+	BUG_ON(pagevec_count(&cache->pvec) == 0);
+	BUG_ON(atomic_read(&cache->bytes_count) >
+		(pagevec_count(&cache->pvec) * PAGE_SIZE));
+	BUG_ON(atomic_read(&cache->bytes_count) <=
+		((pagevec_count(&cache->pvec) - 1) * PAGE_SIZE));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p, leb_id %llu, pebr %p\n",
+		  cache, leb_id, pebr);
+
+	down_read(&cache->lock);
+	err = ssdfs_maptbl_cache_convert_leb2peb_nolock(cache, leb_id, pebr);
+	up_read(&cache->lock);
+
+	return err;
+}
+
+/*
  * ssdfs_maptbl_cache_convert_leb2peb() - maptbl cache-based LEB/PEB conversion
  * @cache: maptbl cache object
  * @leb_id: LEB ID number
@@ -1224,7 +1316,6 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 					u64 leb_id,
 					struct ssdfs_maptbl_peb_relation *pebr)
 {
-	struct ssdfs_maptbl_cache_search_result res;
 	int i;
 	int err = 0;
 
@@ -1241,20 +1332,9 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 	SSDFS_DBG("cache %p, leb_id %llu, pebr %p\n",
 		  cache, leb_id, pebr);
 
-	down_read(&cache->lock);
-	err = ssdfs_maptbl_cache_find_leb(cache, leb_id, &res, pebr);
-	up_read(&cache->lock);
-
-	if (err == -ENODATA) {
-		SSDFS_DBG("unable to convert leb %llu to peb\n",
-			  leb_id);
-		return err;
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to convert leb %llu to peb: "
-			  "err %d\n",
-			  leb_id, err);
-		return err;
-	}
+	err = __ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id, pebr);
+	if (unlikely(err))
+		goto finish_leb2peb_conversion;
 
 	for (i = SSDFS_MAPTBL_MAIN_INDEX; i < SSDFS_MAPTBL_RELATION_MAX; i++) {
 		struct ssdfs_peb_mapping_info *pmi = NULL;
@@ -1278,6 +1358,28 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 			ssdfs_peb_mapping_queue_add_tail(&cache->pm_queue, pmi);
 			break;
 		}
+	}
+
+	switch (pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency) {
+	case SSDFS_PEB_STATE_PRE_DELETED:
+		memcpy(&pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX],
+			&pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX],
+			sizeof(struct ssdfs_maptbl_peb_descriptor));
+
+		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id = U64_MAX;
+		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].shared_peb_index =
+									U8_MAX;
+		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type =
+						SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
+		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state = U8_MAX;
+		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].flags = 0;
+		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency =
+							SSDFS_PEB_STATE_UNKNOWN;
+		break;
+
+	default:
+		/* do nothing */
+		break;
 	}
 
 finish_leb2peb_conversion:
@@ -2689,7 +2791,657 @@ finish_page_modification:
 }
 
 /*
- * ssdfs_maptbl_cache_change_peb_state() - change PEB state of the item
+ * ssdfs_maptbl_cache_define_relation_index() - define relation index
+ * @pebr: descriptor of mapped LEB/PEB pair
+ * @peb_state: new state of the PEB
+ * @relation_index: index of the item in relation [out]
+ */
+static int
+ssdfs_maptbl_cache_define_relation_index(struct ssdfs_maptbl_peb_relation *pebr,
+					 int peb_state,
+					 int *relation_index)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebr || !relation_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+
+	*relation_index = SSDFS_MAPTBL_RELATION_MAX;
+
+	switch (peb_state) {
+	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+	case SSDFS_MAPTBL_USING_PEB_STATE:
+	case SSDFS_MAPTBL_USED_PEB_STATE:
+	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+		switch (pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency) {
+		case SSDFS_PEB_STATE_CONSISTENT:
+		case SSDFS_PEB_STATE_INCONSISTENT:
+			*relation_index = SSDFS_MAPTBL_MAIN_INDEX;
+			break;
+
+		case SSDFS_PEB_STATE_PRE_DELETED:
+			*relation_index = SSDFS_MAPTBL_RELATION_INDEX;
+			break;
+
+		default:
+			BUG();
+		}
+		break;
+
+	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+		switch (pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency) {
+		case SSDFS_PEB_STATE_CONSISTENT:
+		case SSDFS_PEB_STATE_INCONSISTENT:
+			*relation_index = SSDFS_MAPTBL_MAIN_INDEX;
+			break;
+
+		case SSDFS_PEB_STATE_PRE_DELETED:
+			SSDFS_ERR("main index is pre-deleted\n");
+			break;
+
+		default:
+			BUG();
+		}
+		break;
+
+	case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+		switch (pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency) {
+		case SSDFS_PEB_STATE_CONSISTENT:
+		case SSDFS_PEB_STATE_INCONSISTENT:
+			*relation_index = SSDFS_MAPTBL_RELATION_INDEX;
+			break;
+
+		case SSDFS_PEB_STATE_PRE_DELETED:
+			SSDFS_ERR("main index is pre-deleted\n");
+			break;
+
+		default:
+			BUG();
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected peb_state %#x\n", peb_state);
+		return -EINVAL;
+	}
+
+	if (*relation_index == SSDFS_MAPTBL_RELATION_MAX) {
+		SSDFS_ERR("fail to define relation index\n");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * can_peb_state_be_changed() - check that PEB state can be changed
+ * @pebr: descriptor of mapped LEB/PEB pair
+ * @peb_state: new state of the PEB
+ * @consistency: consistency of the item
+ * @relation_index: index of the item in relation
+ */
+static
+bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
+				int peb_state,
+				int consistency,
+				int relation_index)
+{
+	int old_consistency = SSDFS_PEB_STATE_UNKNOWN;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("peb_state %#x, consistency %#x, relation_index %d\n",
+		  peb_state, consistency, relation_index);
+
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+
+	switch (relation_index) {
+	case SSDFS_MAPTBL_MAIN_INDEX:
+		old_consistency =
+			pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency;
+
+		switch (consistency) {
+		case SSDFS_PEB_STATE_CONSISTENT:
+		case SSDFS_PEB_STATE_INCONSISTENT:
+			switch (old_consistency) {
+			case SSDFS_PEB_STATE_PRE_DELETED:
+				SSDFS_WARN("invalid consistency: "
+					   "peb_state %#x, consistency %#x, "
+					   "relation_index %d\n",
+					   peb_state,
+					   consistency,
+					   relation_index);
+				return false;
+
+			case SSDFS_PEB_STATE_CONSISTENT:
+			case SSDFS_PEB_STATE_INCONSISTENT:
+				/* valid consistency */
+				break;
+
+			default:
+				SSDFS_WARN("invalid old consistency %#x\n",
+					   old_consistency);
+				return false;
+			}
+
+		case SSDFS_PEB_STATE_PRE_DELETED:
+			/* valid consistency */
+			break;
+
+		default:
+			SSDFS_WARN("invalid consistency: "
+				   "peb_state %#x, consistency %#x, "
+				   "relation_index %d\n",
+				   peb_state,
+				   consistency,
+				   relation_index);
+			return false;
+		}
+
+		switch (pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state) {
+		case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_USING_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_USED_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		default:
+			BUG();
+		}
+		break;
+
+	case SSDFS_MAPTBL_RELATION_INDEX:
+		old_consistency =
+			pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency;
+
+		switch (consistency) {
+		case SSDFS_PEB_STATE_CONSISTENT:
+		case SSDFS_PEB_STATE_INCONSISTENT:
+			switch (old_consistency) {
+			case SSDFS_PEB_STATE_CONSISTENT:
+			case SSDFS_PEB_STATE_INCONSISTENT:
+				/* valid consistency */
+				break;
+
+			default:
+				SSDFS_WARN("invalid old consistency %#x\n",
+					   old_consistency);
+				return false;
+			}
+			break;
+
+		default:
+			SSDFS_WARN("invalid consistency: "
+				   "peb_state %#x, consistency %#x, "
+				   "relation_index %d\n",
+				   peb_state,
+				   consistency,
+				   relation_index);
+			return false;
+		}
+
+		switch (pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state) {
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_USING_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_USED_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			case SSDFS_MAPTBL_USING_PEB_STATE:
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		default:
+			BUG();
+		}
+		break;
+
+	default:
+		BUG();
+	}
+
+finish_check:
+	return true;
+}
+
+/*
+ * ssdfs_maptbl_cache_change_peb_state_nolock() - change PEB state of the item
  * @cache: maptbl cache object
  * @leb_id: LEB ID number
  * @peb_state: new state of the PEB
@@ -2708,12 +3460,13 @@ finish_page_modification:
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
-					u64 leb_id, int peb_state,
-					int consistency)
+int ssdfs_maptbl_cache_change_peb_state_nolock(struct ssdfs_maptbl_cache *cache,
+						u64 leb_id, int peb_state,
+						int consistency)
 {
 	struct ssdfs_maptbl_cache_search_result res;
 	struct ssdfs_maptbl_peb_relation pebr;
+	int relation_index = SSDFS_MAPTBL_RELATION_MAX;
 	int state;
 	unsigned page_index;
 	u16 item_index = U16_MAX;
@@ -2722,6 +3475,7 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache);
 	BUG_ON(leb_id == U64_MAX);
+	BUG_ON(!rwsem_is_locked(&cache->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("cache %p, leb_id %llu, peb_state %#x, consistency %#x\n",
@@ -2762,8 +3516,6 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 		return -EINVAL;
 	}
 
-	down_write(&cache->lock);
-
 	err = ssdfs_maptbl_cache_find_leb(cache, leb_id, &res, &pebr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find: leb_id %llu, err %d\n",
@@ -2780,80 +3532,107 @@ int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 		  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].page_index,
 		  res.pebs[SSDFS_MAPTBL_RELATION_INDEX].item_index);
 
-	switch (peb_state) {
-	case SSDFS_MAPTBL_BAD_PEB_STATE:
-	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
-	case SSDFS_MAPTBL_USING_PEB_STATE:
-	case SSDFS_MAPTBL_USED_PEB_STATE:
-	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
-	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
-	case SSDFS_MAPTBL_PRE_ERASE_STATE:
-	case SSDFS_MAPTBL_RECOVERING_STATE:
-	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
-	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
-	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
-		state = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state;
-		if (state != SSDFS_MAPTBL_CACHE_ITEM_FOUND) {
-			err = -ERANGE;
-			SSDFS_ERR("fail to change peb state: "
-				  "state %#x\n",
-				  state);
-			goto finish_peb_state_change;
-		}
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 
-		page_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].page_index;
-		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
 
-		err = __ssdfs_maptbl_cache_change_peb_state(cache,
-							    page_index,
-							    item_index,
-							    peb_state,
-							    consistency);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change peb state: "
-				  "page_index %u, item_index %u, "
-				  "err %d\n",
-				  page_index, item_index, err);
-			goto finish_peb_state_change;
-		}
-		break;
+	err = ssdfs_maptbl_cache_define_relation_index(&pebr, peb_state,
+							&relation_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define relation index: "
+			  "leb_id %llu, peb_state %#x, err %d\n",
+			  leb_id, peb_state, err);
+		goto finish_peb_state_change;
+	}
 
-	case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
-	case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
-	case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
-	case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
-	case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
-		state = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].state;
-		if (state != SSDFS_MAPTBL_CACHE_ITEM_FOUND) {
-			err = -ERANGE;
-			SSDFS_ERR("fail to change peb state: "
-				  "state %#x\n",
-				  state);
-			goto finish_peb_state_change;
-		}
+	if (!can_peb_state_be_changed(&pebr, peb_state,
+					consistency, relation_index)) {
+		err = -ERANGE;
+		SSDFS_ERR("PEB state cannot be changed: "
+			  "leb_id %llu, peb_state %#x, "
+			  "consistency %#x, relation_index %d\n",
+			  leb_id, peb_state, consistency, relation_index);
+		goto finish_peb_state_change;
+	}
 
-		page_index = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].page_index;
-		item_index = res.pebs[SSDFS_MAPTBL_RELATION_INDEX].item_index;
+	state = res.pebs[relation_index].state;
+	if (state != SSDFS_MAPTBL_CACHE_ITEM_FOUND) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to change peb state: "
+			  "state %#x\n",
+			  state);
+		goto finish_peb_state_change;
+	}
 
-		err = __ssdfs_maptbl_cache_change_peb_state(cache,
-							    page_index,
-							    item_index,
-							    peb_state,
-							    consistency);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change peb state: "
-				  "page_index %u, item_index %u, "
-				  "err %d\n",
-				  page_index, item_index, err);
-			goto finish_peb_state_change;
-		}
-		break;
+	page_index = res.pebs[relation_index].page_index;
+	item_index = res.pebs[relation_index].item_index;
 
-	default:
-		BUG();
+	err = __ssdfs_maptbl_cache_change_peb_state(cache,
+						    page_index,
+						    item_index,
+						    peb_state,
+						    consistency);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change peb state: "
+			  "page_index %u, item_index %u, "
+			  "err %d\n",
+			  page_index, item_index, err);
+		goto finish_peb_state_change;
 	}
 
 finish_peb_state_change:
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_cache_change_peb_state() - change PEB state of the item
+ * @cache: maptbl cache object
+ * @leb_id: LEB ID number
+ * @peb_state: new state of the PEB
+ * @consistency: consistency of the item
+ *
+ * This method tries to change the PEB state. If the item is consistent
+ * then it means that as mapping table cache as mapping table
+ * contain the same information about the item. Otherwise,
+ * for the case of inconsistent state, the mapping table cache contains
+ * the actual info about the item.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
+					u64 leb_id, int peb_state,
+					int consistency)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cache);
+	BUG_ON(leb_id == U64_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("cache %p, leb_id %llu, peb_state %#x, consistency %#x\n",
+		  cache, leb_id, peb_state, consistency);
+
+	down_write(&cache->lock);
+	err = ssdfs_maptbl_cache_change_peb_state_nolock(cache,
+							 leb_id,
+							 peb_state,
+							 consistency);
 	up_write(&cache->lock);
 
 	return err;
@@ -3207,7 +3986,7 @@ int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
 }
 
 /*
- * __ssdfs_maptbl_cache_forget_leb2peb() - exclude LEB/PEB pair from cache
+ * ssdfs_maptbl_cache_forget_leb2peb_nolock() - exclude LEB/PEB pair from cache
  * @cache: maptbl cache object
  * @leb_id: LEB ID number
  * @consistency: consistency of the item
@@ -3221,10 +4000,9 @@ int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-static
-int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
-					u64 leb_id,
-					int consistency)
+int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
+					     u64 leb_id,
+					     int consistency)
 {
 	struct ssdfs_maptbl_cache_search_result res;
 	struct ssdfs_maptbl_cache_header *hdr;
@@ -3242,10 +4020,11 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache);
 	BUG_ON(leb_id == U64_MAX);
+	BUG_ON(!rwsem_is_locked(&cache->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("cache %p, leb_id %llu\n",
-		  cache, leb_id);
+	SSDFS_DBG("cache %p, leb_id %llu, consistency %#x\n",
+		  cache, leb_id, consistency);
 
 	memset(&res, 0xFF, sizeof(struct ssdfs_maptbl_cache_search_result));
 	res.pebs[SSDFS_MAPTBL_MAIN_INDEX].state =
@@ -3264,8 +4043,6 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 			  consistency);
 		return -EINVAL;
 	}
-
-	down_write(&cache->lock);
 
 	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
 		struct ssdfs_maptbl_cache_header *hdr;
@@ -3472,12 +4249,10 @@ int __ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 	}
 
 finish_exclude_migration_peb:
-	up_write(&cache->lock);
-
 	if (consistency == SSDFS_PEB_STATE_PRE_DELETED) {
-		err = ssdfs_maptbl_cache_change_peb_state(cache, leb_id,
-							  saved_state.state,
-							  consistency);
+		err = ssdfs_maptbl_cache_change_peb_state_nolock(cache, leb_id,
+							    saved_state.state,
+							    consistency);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change PEB state: err %d\n", err);
 			return err;
@@ -3507,7 +4282,14 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 					     u64 leb_id,
 					     int consistency)
 {
-	return __ssdfs_maptbl_cache_forget_leb2peb(cache, leb_id, consistency);
+	int err;
+
+	down_write(&cache->lock);
+	err = ssdfs_maptbl_cache_forget_leb2peb_nolock(cache, leb_id,
+							consistency);
+	up_write(&cache->lock);
+
+	return err;
 }
 
 /*
@@ -3529,5 +4311,12 @@ int ssdfs_maptbl_cache_forget_leb2peb(struct ssdfs_maptbl_cache *cache,
 				      u64 leb_id,
 				      int consistency)
 {
-	return __ssdfs_maptbl_cache_forget_leb2peb(cache, leb_id, consistency);
+	int err;
+
+	down_write(&cache->lock);
+	err = ssdfs_maptbl_cache_forget_leb2peb_nolock(cache, leb_id,
+							consistency);
+	up_write(&cache->lock);
+
+	return err;
 }

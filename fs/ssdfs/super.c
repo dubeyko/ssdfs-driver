@@ -1448,6 +1448,14 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			  payload_page,
 			  page_ref_count(payload_page));
 
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr = kmap(payload_page);
+		SSDFS_DBG("PAYLOAD PAGE %d\n", i);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+		kunmap(payload_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		lock_page(payload_page);
 		SetPagePrivate(payload_page);
 		SetPageUptodate(payload_page);

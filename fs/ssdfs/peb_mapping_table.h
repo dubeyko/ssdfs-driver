@@ -506,7 +506,8 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_peb_relation *pebr);
 int ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
-				     u64 leb_id);
+				     u64 leb_id,
+				     struct ssdfs_maptbl_peb_relation *pebr);
 
 void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 				      struct ssdfs_maptbl_area *area,
