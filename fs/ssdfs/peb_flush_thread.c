@@ -2462,11 +2462,11 @@ u32 ssdfs_peb_estimate_data_fragment_size(u32 uncompr_bytes)
 	 * alternatives: (1) overestimate size; (2) underestimate size;
 	 * (3) try to predict possible size by means of some formula.
 	 *
-	 * Currently, I try to estimate size as 75% from uncompressed state
+	 * Currently, I try to estimate size as 65% from uncompressed state
 	 * for compression case.
 	 */
 
-	estimated_compr_size = (uncompr_bytes * 75) / 100;
+	estimated_compr_size = (uncompr_bytes * 65) / 100;
 
 	SSDFS_DBG("uncompr_bytes %u, estimated_compr_size %u\n",
 		  uncompr_bytes, estimated_compr_size);
@@ -4646,7 +4646,6 @@ int ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 	}
 	BUG_ON(req->private.type >= SSDFS_REQ_TYPE_MAX);
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
-	BUG_ON(req->result.processed_blks > 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -9564,6 +9563,31 @@ bool has_commit_log_now_requested(struct ssdfs_peb_container *pebc)
 	return commit_log_now;
 }
 
+static inline
+void ssdfs_peb_check_update_queue(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_segment_request *req = NULL;
+	int err;
+
+	if (is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
+		SSDFS_DBG("update request queue is empty\n");
+		return;
+	}
+
+	err = ssdfs_requests_queue_remove_first(&pebc->update_rq, &req);
+	if (err || !req)
+		return;
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
+		  req->private.class, req->private.cmd);
+
+	ssdfs_requests_queue_add_head(&pebc->update_rq, req);
+	return;
+}
+
 /* Flush thread possible states */
 enum {
 	SSDFS_FLUSH_THREAD_ERROR,
@@ -9950,6 +9974,10 @@ finish_process_free_space_absence:
 						  "seg %llu, peb %llu\n",
 						  pebc->parent_si->seg_id,
 						  peb_id);
+
+#ifdef CONFIG_SSDFS_DEBUG
+					ssdfs_peb_check_update_queue(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 					BUG();
 				} else {
 					SSDFS_ERR("maptbl is flushing\n");
@@ -10301,7 +10329,6 @@ process_flush_requests:
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
-			req->result.processed_blks = 0;
 			spin_lock(&pebc->crq_ptr_lock);
 			ssdfs_requests_queue_add_head(pebc->create_rq, req);
 			spin_unlock(&pebc->crq_ptr_lock);
@@ -10376,7 +10403,6 @@ finish_create_request_processing:
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
-			req->result.processed_blks = 0;
 			ssdfs_requests_queue_add_head(&pebc->update_rq, req);
 			req = NULL;
 			skip_finish_flush_request = true;
@@ -10406,7 +10432,6 @@ finish_create_request_processing:
 				thread_state =
 					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
 			} else if (have_flush_requests(pebc)) {
-				req->result.processed_blks = 0;
 				ssdfs_requests_queue_add_tail(&pebc->update_rq,
 								req);
 				req = NULL;
@@ -10668,6 +10693,10 @@ make_log_commit:
 		ssdfs_peb_current_log_unlock(pebi);
 
 		ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		ssdfs_peb_check_update_queue(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err))
 			goto repeat;
