@@ -705,7 +705,7 @@ static u64 ssdfs_correct_start_leb_id(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("fsi %p, seg_type %#x, leb_id %llu\n",
+	SSDFS_DBG("fsi %p, seg_type %#x, leb_id %llu\n",
 		  fsi, seg_type, leb_id);
 
 	found_peb_id = leb_id;
@@ -771,7 +771,7 @@ SSDFS_ERR("fsi %p, seg_type %#x, leb_id %llu\n",
 	}
 
 finish_leb_id_correction:
-SSDFS_ERR("leb_id %llu, calculated_leb_id %llu\n",
+	SSDFS_DBG("leb_id %llu, calculated_leb_id %llu\n",
 		  leb_id, calculated_leb_id);
 
 	return calculated_leb_id;
