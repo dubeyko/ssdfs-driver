@@ -2078,8 +2078,8 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 
 	state = atomic_read(&fdesc->state);
 	if (state != SSDFS_MAPTBL_FRAG_DIRTY) {
-		SSDFS_ERR("fragment hasn't dirty state: state %#x\n",
-			  state);
+		SSDFS_ERR("fragment %u hasn't dirty state: state %#x\n",
+			  fragment_index, state);
 		return -ERANGE;
 	}
 
@@ -2420,6 +2420,8 @@ int ssdfs_maptbl_flush_dirty_fragments(struct ssdfs_peb_mapping_table *tbl)
 		SSDFS_ERR("invalid bitmap pointer\n");
 		goto finish_flush_dirty_fragments;
 	}
+
+	SSDFS_DBG("bmap %px, found %px\n", bmap, found);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(((found - bmap) * BITS_PER_LONG) >= U32_MAX);
