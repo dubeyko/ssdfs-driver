@@ -163,6 +163,9 @@ u32 SEG_BMAP_BYTES(u64 items_count)
 
 	BUG_ON(bytes >= U32_MAX);
 
+	SSDFS_DBG("items_count %llu, bytes %llu\n",
+		  items_count, bytes);
+
 	return (u32)bytes;
 }
 
@@ -179,13 +182,18 @@ u16 SEG_BMAP_FRAGMENTS(u64 items_count)
 	fragments = (bytes + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	BUG_ON(fragments >= U16_MAX);
 
+	SSDFS_DBG("items_count %llu, pages %u, "
+		  "bytes %u, fragments %u\n",
+		  items_count, pages,
+		  bytes, fragments);
+
 	return (u16)fragments;
 }
 
 static inline
 u16 ssdfs_segbmap_seg_2_fragment_index(u64 seg)
 {
-	u16 fragments_count = SEG_BMAP_FRAGMENTS(seg);
+	u16 fragments_count = SEG_BMAP_FRAGMENTS(seg + 1);
 
 	BUG_ON(fragments_count == 0);
 	return fragments_count - 1;

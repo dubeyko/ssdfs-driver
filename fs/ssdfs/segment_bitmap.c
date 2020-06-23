@@ -3052,12 +3052,6 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !fbmap || !found_fragment);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-
-	if (start_fragment >= max_fragment) {
-		SSDFS_ERR("start_fragment %u >= max_fragment %u\n",
-			  start_fragment, max_fragment);
-		return -EINVAL;
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fbmap %p, start_fragment %u, max_fragment %u\n",
@@ -3065,11 +3059,24 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	*found_fragment = U16_MAX;
 
+	if (start_fragment >= max_fragment) {
+		SSDFS_DBG("start_fragment %u >= max_fragment %u\n",
+			  start_fragment, max_fragment);
+		return -ENODATA;
+	}
+
 	long_offset = (start_fragment + BITS_PER_LONG - 1) / BITS_PER_LONG;
 	first_fragment = long_offset * BITS_PER_LONG;
 
 	checking_fragment = min_t(u16, start_fragment, first_fragment);
 	checked_size = max_fragment - checking_fragment;
+
+	SSDFS_DBG("start_fragment %u, max_fragment %u, "
+		  "long_offset %u, first_fragment %u, "
+		  "checking_fragment %u, checked_size %u\n",
+		  start_fragment, max_fragment,
+		  long_offset, first_fragment,
+		  checking_fragment, checked_size);
 
 	for (i = 0; i < checked_size; i++) {
 		struct ssdfs_segbmap_fragment_desc *desc;
@@ -3130,10 +3137,15 @@ check_presence_valid_fragments:
 		size = min_t(u16, size, checked_size);
 		bitmap_clear(&value, 0, size);
 
-		if (!value) {
+		if (value != 0) {
 			found = __ffs(value);
 			*found_fragment = start_fragment + (u16)(found - size);
 			return 0;
+		} else {
+			SSDFS_DBG("unable to find fragment: "
+				  "value %#lx\n",
+				  value);
+			return -ENODATA;
 		}
 	} else {
 		/* first_fragment <= start_fragment */
@@ -3640,7 +3652,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 	} else if (items_count == 0) {
 		SSDFS_DBG("fragment %u hasn't items for search\n",
 			  fragment_index);
-		return -ENOENT;
+		return -ENODATA;
 	}
 
 	items_count = fragment->total_segs;
@@ -3716,12 +3728,6 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !seg);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-
-	if (start >= max) {
-		SSDFS_ERR("start %llu >= max %llu\n",
-			  start, max);
-		return -EINVAL;
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, start %llu, max %llu, "
@@ -3731,6 +3737,12 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 
 	*end = NULL;
 
+	if (start >= max) {
+		SSDFS_DBG("start %llu >= max %llu\n",
+			  start, max);
+		return -ENODATA;
+	}
+
 	fbmap = ssdfs_segbmap_choose_fbmap(segbmap, state, mask);
 	if (IS_ERR_OR_NULL(fbmap)) {
 		err = (fbmap == NULL ? -ENOMEM : PTR_ERR(fbmap));
@@ -3739,7 +3751,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 		return err;
 	}
 
-	start_fragment = SEG_BMAP_FRAGMENTS(start);
+	start_fragment = SEG_BMAP_FRAGMENTS(start + 1);
 	if (start_fragment > 0)
 		start_fragment -= 1;
 
@@ -3812,11 +3824,13 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 						     &found_state_for_iter);
 		if (err == -ENODATA) {
 			SSDFS_DBG("unable to find segment: "
+				  "fragment %d, "
 				  "state %#x, mask %#x, "
 				  "start %llu, max %llu\n",
+				  found_fragment,
 				  state, mask,
 				  start, max);
-			goto finish_seg_search;
+			/* try next fragment */
 		} else if (err == -ENOENT) {
 			SSDFS_DBG("mask %#x, found_for_mask %llu, "
 				  "found_for_iter %llu, "
