@@ -1664,11 +1664,6 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_dirty_pebs_processing;
 		}
 
-		if (kthread_should_stop()) {
-			err = -EAGAIN;
-			goto finish_dirty_pebs_processing;
-		}
-
 		err = ssdfs_maptbl_erase_pebs_array(tbl->fsi, array);
 		if (err == -EROFS) {
 			err = 0;
@@ -1685,11 +1680,6 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to correct erased PEBs state: err %d\n",
 				  err);
-			goto finish_collect_dirty_pebs;
-		}
-
-		if (kthread_should_stop()) {
-			err = -EAGAIN;
 			goto finish_collect_dirty_pebs;
 		}
 	}

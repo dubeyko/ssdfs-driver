@@ -864,6 +864,8 @@ bool should_gc_work(struct ssdfs_fs_info *fsi, int type)
 #define SSDFS_GC_UPPER_BOUND_THRESHOLD	(1000)
 #define SSDFS_GC_DISTANCE_THRESHOLD	(5)
 #define SSDFS_GC_DEFAULT_SEARCH_STEP	(100)
+#define SSDFS_GC_DIRTY_SEG_SEARCH_STEP	(1000)
+#define SSDFS_GC_DIRTY_SEG_DEFAULT_OPS	(50)
 
 /*
  * GC possible states
@@ -1852,6 +1854,21 @@ sleep_failed_gc_thread:
 }
 
 /*
+ * should_continue_processing() - should continue processing?
+ */
+static inline
+bool should_continue_processing(int mandatory_ops)
+{
+	if (kthread_should_stop()) {
+		if (mandatory_ops > 0)
+			return true;
+		else
+			return false;
+	} else
+		return true;
+}
+
+/*
  * __ssdfs_dirty_seg_gc_thread_func() - GC thread's function for dirty segments
  * @fsi: pointer on shared file system object
  * @thread_type: thread type
@@ -1879,11 +1896,11 @@ int __ssdfs_dirty_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 	wait_queue_head_t *wq;
 	u64 seg_id = 0;
 	u64 max_seg_id;
-	u64 seg_id_step = SSDFS_GC_DEFAULT_SEARCH_STEP;
 	u64 nsegs;
 	u64 leb_id;
 	u64 cur_leb_id;
 	u32 lebs_per_segment;
+	int mandatory_ops = SSDFS_GC_DIRTY_SEG_DEFAULT_OPS;
 	u32 i;
 	int res;
 	int err = 0;
@@ -1915,30 +1932,16 @@ repeat:
 		seg_id = 0;
 
 	while (seg_id < nsegs) {
-		max_seg_id = seg_id + seg_id_step;
-		max_seg_id = min_t(u64, max_seg_id, nsegs);
+		max_seg_id = nsegs;
 
 		err = ssdfs_gc_find_next_seg_id(fsi, seg_id, max_seg_id,
 						seg_state, seg_state_mask,
 						&seg_id);
 		if (err == -ENODATA) {
 			err = 0;
-
-			if (max_seg_id >= nsegs) {
-				seg_id = 0;
-				SSDFS_DBG("GC hasn't found any victim\n");
-				goto finish_seg_processing;
-			}
-
-			seg_id = max_seg_id;
-
-			wait_event_interruptible_timeout(*wq,
-					kthread_should_stop(), HZ);
-
-			if (kthread_should_stop())
-				goto finish_seg_processing;
-			else
-				continue;
+			seg_id = 0;
+			SSDFS_DBG("GC hasn't found any victim\n");
+			goto finish_seg_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find segment: "
 				  "seg_id %llu, nsegs %llu, err %d\n",
@@ -1950,7 +1953,7 @@ repeat:
 			  "seg_id %llu, seg_state %#x\n",
 			  seg_id, seg_state);
 
-		if (kthread_should_stop())
+		if (!should_continue_processing(mandatory_ops))
 			goto finish_seg_processing;
 
 		leb_id = seg_id * lebs_per_segment;
@@ -1958,9 +1961,6 @@ repeat:
 
 		for (; i < lebs_per_segment; i++) {
 			cur_leb_id = leb_id + i;
-
-			if (kthread_should_stop())
-				goto finish_seg_processing;
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
@@ -1987,7 +1987,7 @@ repeat:
 				continue;
 			}
 
-			if (kthread_should_stop())
+			if (!should_continue_processing(mandatory_ops))
 				goto finish_seg_processing;
 
 			goto try_to_find_seg_object;
@@ -2031,9 +2031,6 @@ try_to_find_seg_object:
 try_set_pre_erase_state:
 		for (; i < lebs_per_segment; i++) {
 			cur_leb_id = leb_id + i;
-
-			if (kthread_should_stop())
-				goto finish_seg_processing;
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
@@ -2118,9 +2115,10 @@ try_set_pre_erase_state:
 		}
 
 check_next_segment:
+		mandatory_ops--;
 		seg_id++;
 
-		if (kthread_should_stop())
+		if (!should_continue_processing(mandatory_ops))
 			goto finish_seg_processing;
 	}
 
