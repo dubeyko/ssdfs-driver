@@ -6848,7 +6848,7 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	item_index = search->result.start_index;
-	if ((item_index + search->request.count) >= items_area.items_capacity) {
+	if ((item_index + search->request.count) > items_area.items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "item_index %u, count %u\n",
 			  item_index, search->request.count);
