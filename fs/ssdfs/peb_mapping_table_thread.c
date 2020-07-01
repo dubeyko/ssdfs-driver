@@ -169,7 +169,6 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 
 	for (i = 0; i < SSDFS_MAPTBL_PROTECTION_RANGE; i++) {
 		unsigned long found;
-		unsigned long next_item;
 
 		protected_item += SSDFS_MAPTBL_PROTECTION_STEP;
 
@@ -194,22 +193,9 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 		SSDFS_DBG("i %d, protected_item %lu, found %lu\n",
 			  i, protected_item, found);
 
-		next_item = protected_item + SSDFS_MAPTBL_PROTECTION_STEP;
-
 		if (found == protected_item)
 			continue;
-		else if (found >= pebs_count) {
-			if (next_item < pebs_count) {
-				/* nothing was found */
-				goto finish_check;
-			} else {
-				protected_item =
-					SSDFS_MAPTBL_FIRST_PROTECTED_INDEX;
-				continue;
-			}
-		}
 
-finish_check:
 		/* the item is protected */
 		return false;
 	}

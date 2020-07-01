@@ -89,8 +89,7 @@ void ssdfs_restore_sb_info2(struct ssdfs_recovery_env *env)
 }
 
 static
-int find_seg_with_valid_start_peb2(struct ssdfs_recovery_env *env,
-				   int op_type)
+int find_seg_with_valid_start_peb2(struct ssdfs_recovery_env *env)
 {
 	struct super_block *sb = env->fsi->sb;
 	u64 dev_size = env->fsi->devops->device_size(sb);
@@ -100,31 +99,16 @@ int find_seg_with_valid_start_peb2(struct ssdfs_recovery_env *env,
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	struct ssdfs_volume_header *vh;
 	bool magic_valid = false;
+	u64 cno = U64_MAX, last_cno = U64_MAX;
 	int err;
 
-	SSDFS_DBG("env %p, op_type %#x, "
-		  "start_peb %llu, pebs_count %u\n",
-		  env, op_type,
-		  env->start_peb, env->pebs_count);
+	SSDFS_DBG("env %p, start_peb %llu, pebs_count %u\n",
+		  env, env->start_peb, env->pebs_count);
 
-	switch (op_type) {
-	case SSDFS_USE_PEB_ISBAD_OP:
-		if (!env->fsi->devops->peb_isbad) {
-			SSDFS_ERR("unable to detect bad PEB\n");
-			return -EOPNOTSUPP;
-		}
-		break;
-
-	case SSDFS_USE_READ_OP:
-		if (!env->fsi->devops->read) {
-			SSDFS_ERR("unable to read from device\n");
-			return -EOPNOTSUPP;
-		}
-		break;
-
-	default:
-		BUG();
-	};
+	if (!env->fsi->devops->read) {
+		SSDFS_ERR("unable to read from device\n");
+		return -EOPNOTSUPP;
+	}
 
 	lower_peb = env->start_peb;
 	if (lower_peb == 0)
@@ -165,97 +149,121 @@ int find_seg_with_valid_start_peb2(struct ssdfs_recovery_env *env,
 	env->upper_offset = U64_MAX;
 	env->middle_offset = U64_MAX;
 
+	SSDFS_DBG("lower_peb %llu, upper_peb %llu\n",
+		  lower_peb, upper_peb);
+
+	if (env->pebs_count <= ((u64)4 * SSDFS_MAPTBL_PROTECTION_STEP)) {
+		SSDFS_DBG("lower_off %llu\n", (u64)lower_off);
+		SSDFS_DBG("upper_off %llu\n", (u64)upper_off);
+		env->lower_offset = lower_off;
+		env->middle_offset = env->lower_offset;
+		env->upper_offset = termination_off;
+		SSDFS_RECOVERY_SET_FAST_SEARCH(env);
+		return 0;
+	}
+
 	do {
+		SSDFS_DBG("lower_off %llu\n", (u64)lower_off);
+
 		if (env->lower_offset == U64_MAX) {
-			SSDFS_DBG("lower_off %llu\n", (u64)lower_off);
-
-			switch (op_type) {
-			case SSDFS_USE_PEB_ISBAD_OP:
-				err = env->fsi->devops->peb_isbad(sb,
-								  lower_off);
-				magic_valid = true;
-				break;
-
-			case SSDFS_USE_READ_OP:
-				err = env->fsi->devops->read(sb,
-							     lower_off,
-							     hdr_size,
-							     env->sbi.vh_buf);
-				vh = SSDFS_VH(env->sbi.vh_buf);
-				magic_valid = is_ssdfs_magic_valid(&vh->magic);
-				break;
-
-			default:
-				BUG();
-			};
+			err = env->fsi->devops->read(sb,
+						     lower_off,
+						     hdr_size,
+						     env->sbi.vh_buf);
+			vh = SSDFS_VH(env->sbi.vh_buf);
+			magic_valid = is_ssdfs_magic_valid(&vh->magic);
 
 			if (!err && magic_valid) {
 				env->lower_offset = lower_off;
 				ssdfs_backup_sb_info2(env);
+
+				SSDFS_DBG("FOUND: lower_bound %llu\n",
+					  env->lower_offset);
 			} else {
 				ssdfs_restore_sb_info2(env);
 				SSDFS_DBG("offset %llu has corrupted PEB\n",
 					  (unsigned long long)lower_off);
 
 				lower_peb += SSDFS_MAPTBL_PROTECTION_STEP;
-				lower_off = lower_peb * env->erasesize;
+				if (lower_peb < upper_peb)
+					lower_off = lower_peb * env->erasesize;
 			}
 		}
 
-		if (env->upper_offset == U64_MAX) {
-			SSDFS_DBG("upper_off %llu\n", (u64)upper_off);
+		SSDFS_DBG("upper_off %llu\n", (u64)upper_off);
 
-			switch (op_type) {
-			case SSDFS_USE_PEB_ISBAD_OP:
-				err = env->fsi->devops->peb_isbad(sb,
-								  upper_off);
-				magic_valid = true;
-				break;
+		err = env->fsi->devops->read(sb,
+					     upper_off,
+					     hdr_size,
+					     env->sbi.vh_buf);
+		vh = SSDFS_VH(env->sbi.vh_buf);
+		magic_valid = is_ssdfs_magic_valid(&vh->magic);
+		cno = le64_to_cpu(SSDFS_SEG_HDR(env->sbi.vh_buf)->cno);
 
-			case SSDFS_USE_READ_OP:
-				err = env->fsi->devops->read(sb,
-							     upper_off,
-							     hdr_size,
-							     env->sbi.vh_buf);
-				vh = SSDFS_VH(env->sbi.vh_buf);
-				magic_valid = is_ssdfs_magic_valid(&vh->magic);
-				break;
-
-			default:
-				BUG();
-			};
-
-			if (!err && magic_valid) {
+		if (!err && magic_valid) {
+			if (last_cno >= U64_MAX) {
 				env->upper_offset = min_t(u64,
-						upper_off + range_bytes,
-						termination_off);
+							  upper_off + range_bytes,
+							  termination_off);
+				last_cno = cno;
+
+				SSDFS_DBG("FOUND: upper_bound %llu, cno %llu\n",
+					  env->upper_offset, cno);
+			} else if (cno > last_cno) {
+				env->upper_offset = min_t(u64,
+							  upper_off + range_bytes,
+							  termination_off);
+				last_cno = cno;
+
+				SSDFS_DBG("FOUND: upper_bound %llu, cno %llu\n",
+					  env->upper_offset, cno);
 			} else {
-				SSDFS_DBG("offset %llu has corrupted PEB\n",
-					  (unsigned long long)upper_off);
-
-				upper_peb -= SSDFS_MAPTBL_PROTECTION_STEP;
-				upper_off = upper_peb * env->erasesize;
+				SSDFS_DBG("ignore valid PEB: "
+					  "upper_bound %llu, cno %llu, "
+					  "last_cno %llu\n",
+					  env->upper_offset, cno, last_cno);
 			}
-
-			ssdfs_restore_sb_info2(env);
+		} else {
+			SSDFS_DBG("offset %llu has corrupted PEB\n",
+				  (unsigned long long)upper_off);
 		}
 
-		if (env->lower_offset != U64_MAX &&
-		    env->upper_offset != U64_MAX) {
-			SSDFS_RECOVERY_SET_MIDDLE_OFF(env);
-			SSDFS_RECOVERY_SET_FAST_SEARCH(env);
-			return 0;
-		}
+		upper_peb -= SSDFS_MAPTBL_PROTECTION_STEP;
+		if (lower_peb < upper_peb)
+			upper_off = upper_peb * env->erasesize;
+
+		ssdfs_restore_sb_info2(env);
+
+		SSDFS_DBG("lower_peb %llu, upper_peb %llu\n",
+			  lower_peb, upper_peb);
 
 		if (kthread_should_stop())
 			goto finish_search;
 	} while (lower_peb < upper_peb);
 
-	if (env->lower_offset != U64_MAX) {
+	SSDFS_DBG("env->lower_offset %llu, env->upper_offset %llu\n",
+		  env->lower_offset, env->upper_offset);
+
+	if (env->lower_offset != U64_MAX &&
+	    env->upper_offset != U64_MAX) {
+		SSDFS_RECOVERY_SET_MIDDLE_OFF(env);
+		env->upper_offset = termination_off;
+		SSDFS_RECOVERY_SET_FAST_SEARCH(env);
+		return 0;
+	} else if (env->lower_offset != U64_MAX &&
+		   env->upper_offset >= U64_MAX) {
 		env->upper_offset = min_t(u64,
 					  upper_off + range_bytes,
 					  termination_off);
 		SSDFS_RECOVERY_SET_MIDDLE_OFF(env);
+		env->upper_offset = termination_off;
+		SSDFS_RECOVERY_SET_FAST_SEARCH(env);
+		return 0;
+	} else if (env->lower_offset >= U64_MAX &&
+		   env->upper_offset != U64_MAX) {
+		env->lower_offset = lower_off;
+		SSDFS_RECOVERY_SET_MIDDLE_OFF(env);
+		env->upper_offset = termination_off;
 		SSDFS_RECOVERY_SET_FAST_SEARCH(env);
 		return 0;
 	}
@@ -382,7 +390,7 @@ int ssdfs_find_any_valid_volume_header2(struct ssdfs_recovery_env *env)
 	start_offset = env->start_peb * env->erasesize;
 	range_size = (u64)SSDFS_MAPTBL_PROTECTION_STEP * env->erasesize;
 
-	err = find_seg_with_valid_start_peb2(env, SSDFS_USE_READ_OP);
+	err = find_seg_with_valid_start_peb2(env);
 	if (unlikely(err)) {
 		SSDFS_DBG("unable to find valid start PEB: err %d\n", err);
 		return err;
@@ -629,7 +637,15 @@ try_again:
 				  "next_offset %llu >= end_offset %llu\n",
 				  next_offset,
 				  SSDFS_RECOVERY_UPPER_OFF(env));
-			return -E2BIG;
+			continue;
+		}
+
+		if ((env->start_peb * env->erasesize) > next_offset) {
+			SSDFS_DBG("unable to find valid SB segment: "
+				  "next_offset %llu >= start_offset %llu\n",
+				  next_offset,
+				  env->start_peb * env->erasesize);
+			continue;
 		}
 
 		if (*SSDFS_RECOVERY_CUR_OFF_PTR(env) <= next_offset)
@@ -1155,7 +1171,7 @@ try_next_peb:
 
 	err = ssdfs_check_next_sb_pebs_pair(env);
 	if (err == -E2BIG)
-		goto end_search;
+		goto continue_search;
 	else if (!err)
 		goto try_next_peb;
 
@@ -1166,10 +1182,11 @@ try_next_peb:
 
 	err = ssdfs_check_reserved_sb_pebs_pair(env);
 	if (err == -E2BIG)
-		goto end_search;
+		goto continue_search;
 	else if (!err)
 		goto try_next_peb;
 
+continue_search:
 	if (kthread_should_stop()) {
 		err = -ENODATA;
 		goto rollback_valid_vh;
@@ -1278,7 +1295,7 @@ int ssdfs_recovery_try_slow_search(struct ssdfs_recovery_env *env)
 
 	if (!is_slow_search_possible(env)) {
 		SSDFS_DBG("there is no room for slow search\n");
-		return -ENODATA;
+		return -EAGAIN;
 	}
 
 	SSDFS_RECOVERY_SET_SLOW_SEARCH(env);
@@ -1430,6 +1447,9 @@ repeat:
 		goto finish_recovery;
 	}
 
+	SSDFS_DBG("env->start_peb %llu, env->pebs_count %u\n",
+		  env->start_peb, env->pebs_count);
+
 	err = ssdfs_find_any_valid_volume_header2(env);
 	if (err)
 		goto finish_recovery;
@@ -1440,14 +1460,14 @@ repeat:
 	}
 
 	err = ssdfs_recovery_try_fast_search(env);
-	if (err == -EAGAIN) {
+	if (err == -EAGAIN || err == -E2BIG) {
 		if (kthread_should_stop()) {
 			err = -ENOENT;
 			goto finish_recovery;
 		}
 
 		err = ssdfs_recovery_try_slow_search(env);
-		if (err == -EAGAIN) {
+		if (err == -EAGAIN || err == -E2BIG) {
 			if (kthread_should_stop()) {
 				err = -ENOENT;
 				goto finish_recovery;

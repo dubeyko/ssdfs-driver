@@ -768,6 +768,11 @@ static u64 ssdfs_correct_start_leb_id(struct ssdfs_fs_info *fsi,
 			calculated_leb_id = found_peb_id;
 			calculated_leb_id++;
 		}
+
+		SSDFS_DBG("found_peb_id %llu, pebs_per_stripe %u, "
+			  "calculated_leb_id %llu\n",
+			  found_peb_id, pebs_per_stripe,
+			  calculated_leb_id);
 	}
 
 finish_leb_id_correction:

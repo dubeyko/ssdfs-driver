@@ -1229,6 +1229,9 @@ int ssdfs_maptbl_check_pebtbl_page(struct page *page,
 	pebs_count = le16_to_cpu(hdr->pebs_count);
 	reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
 
+	SSDFS_DBG("hdr->start_peb %llu, hdr->pebs_count %u\n",
+		  le64_to_cpu(hdr->start_peb), pebs_count);
+
 	SSDFS_DBG("hdr->reserved_pebs %u\n", reserved_pebs);
 
 	if (pebs_count > fdesc->pebs_per_page) {

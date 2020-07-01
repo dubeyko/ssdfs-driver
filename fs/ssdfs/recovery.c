@@ -1829,17 +1829,84 @@ static inline bool has_thread_finished(struct ssdfs_recovery_env *env)
 	return true;
 }
 
+static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
+					    u64 processed_pebs,
+					    u32 fragments_count,
+					    u16 pebs_per_fragment,
+					    u16 stripes_per_fragment,
+					    u16 pebs_per_stripe)
+{
+	u64 fragment_index;
+	u64 pebs_per_aligned_fragments;
+	u64 pebs_per_last_fragment;
+	u64 calculated = U16_MAX;
+
+	SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu, "
+		  "fragments_count %u, pebs_per_fragment %u, "
+		  "stripes_per_fragment %u, pebs_per_stripe %u\n",
+		  pebs_per_volume, processed_pebs,
+		  fragments_count, pebs_per_fragment,
+		  stripes_per_fragment, pebs_per_stripe);
+
+	if (fragments_count == 0) {
+		SSDFS_WARN("invalid fragments_count %u\n",
+			   fragments_count);
+		return pebs_per_stripe;
+	}
+
+	fragment_index = processed_pebs / pebs_per_fragment;
+
+	if (fragment_index >= fragments_count) {
+		SSDFS_WARN("fragment_index %llu >= fragments_count %u\n",
+			   fragment_index, fragments_count);
+	}
+
+	if ((fragment_index + 1) < fragments_count)
+		calculated = pebs_per_stripe;
+	else {
+		pebs_per_aligned_fragments = fragments_count - 1;
+		pebs_per_aligned_fragments *= pebs_per_fragment;
+
+		if (pebs_per_aligned_fragments >= pebs_per_volume) {
+			SSDFS_WARN("calculated %llu >= pebs_per_volume %llu\n",
+				   pebs_per_aligned_fragments,
+				   pebs_per_volume);
+			return 0;
+		}
+
+		pebs_per_last_fragment = pebs_per_volume -
+						pebs_per_aligned_fragments;
+		calculated = pebs_per_last_fragment / stripes_per_fragment;
+	}
+
+	SSDFS_DBG("calculated: fragment_index %llu, pebs_per_stripe %llu\n",
+		  fragment_index, calculated);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(calculated > pebs_per_stripe);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u16)calculated;
+}
+
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 {
 	struct ssdfs_volume_header *vh;
 	struct ssdfs_segment_header *seg_hdr;
 	struct ssdfs_recovery_env *array;
 	wait_queue_head_t *wq;
+	u64 dev_size;
+	u32 erasesize;
+	u64 pebs_per_volume;
 	u32 fragments_count = 0;
 	u16 pebs_per_fragment = 0;
+	u16 stripes_per_fragment = 0;
+	u16 pebs_per_stripe = 0;
+	u32 stripes_count = 0;
 	u32 threads_count;
 	u32 jobs_count;
-	u32 processed_fragments = 0;
+	u32 processed_stripes = 0;
+	u64 processed_pebs = 0;
 	u64 cno1, cno2;
 	bool has_sb_peb_found;
 	int i;
@@ -1866,7 +1933,15 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	vh = SSDFS_VH(fsi->sbi.vh_buf);
 	fragments_count = le32_to_cpu(vh->maptbl.fragments_count);
 	pebs_per_fragment = le16_to_cpu(vh->maptbl.pebs_per_fragment);
-	threads_count = min_t(u32, SSDFS_RECOVERY_THREADS, fragments_count);
+	pebs_per_stripe = le16_to_cpu(vh->maptbl.pebs_per_stripe);
+	stripes_per_fragment = le16_to_cpu(vh->maptbl.stripes_per_fragment);
+
+	dev_size = fsi->devops->device_size(fsi->sb);
+	erasesize = 1 << vh->log_erasesize;
+	pebs_per_volume = div_u64(dev_size, erasesize);
+
+	stripes_count = fragments_count * stripes_per_fragment;
+	threads_count = min_t(u32, SSDFS_RECOVERY_THREADS, stripes_count);
 
 	has_sb_peb_found = false;
 
@@ -1909,17 +1984,37 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 
 	jobs_count = 1;
 
-	while (processed_fragments < fragments_count) {
-		u32 start_peb = processed_fragments * pebs_per_fragment;
+	while (processed_pebs < pebs_per_volume) {
 		bool has_iteration_succeeded = false;
+
+		if (processed_stripes >= stripes_count) {
+			SSDFS_DBG("processed_stripes %u >= stripes_count %u\n",
+				  processed_stripes, stripes_count);
+			goto finish_sb_peb_search;
+		}
 
 		SSDFS_DBG("jobs_count %u\n", jobs_count);
 
 		for (i = 0; i < jobs_count; i++) {
-			array[i].start_peb = start_peb +
-						(i * pebs_per_fragment);
-			array[i].pebs_count = pebs_per_fragment;
+			u16 calculated =
+				ssdfs_get_pebs_per_stripe(pebs_per_volume,
+							  processed_pebs,
+							  fragments_count,
+							  pebs_per_fragment,
+							  stripes_per_fragment,
+							  pebs_per_stripe);
+
+			array[i].start_peb = processed_pebs;
+			array[i].pebs_count = calculated;
 			array[i].err = 0;
+
+			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
+				  i, array[i].start_peb, array[i].pebs_count);
+
+			processed_pebs += calculated;
+
+			SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu\n",
+				  pebs_per_volume, processed_pebs);
 
 			atomic_set(&array[i].state, SSDFS_START_RECOVERY);
 			wake_up(&array[i].request_wait_queue);
@@ -1934,8 +2029,8 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 
 			switch (atomic_read(&array[i].state)) {
 			case SSDFS_RECOVERY_FINISHED:
-				SSDFS_DBG("fragment %u has SB segment\n",
-					  processed_fragments + i);
+				SSDFS_DBG("stripe %u has SB segment\n",
+					  processed_stripes + i);
 
 				seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
 				cno1 = le64_to_cpu(seg_hdr->cno);
@@ -1949,15 +2044,15 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 					err = 0;
 					SSDFS_DBG("copy sb info: "
 						  "fragment %u\n",
-						  processed_fragments + i);
+						  processed_stripes + i);
 					ssdfs_copy_sb_info(fsi, &array[i]);
 					has_iteration_succeeded = true;
 				}
 				break;
 
 			default:
-				SSDFS_DBG("fragment %u has nothing\n",
-					  processed_fragments + i);
+				SSDFS_DBG("stripe %u has nothing\n",
+					  processed_stripes + i);
 				break;
 			}
 		}
@@ -1967,12 +2062,12 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 			goto finish_sb_peb_search;
 		}
 
-		processed_fragments += jobs_count;
+		processed_stripes += jobs_count;
 
 		jobs_count <<= 1;
 		jobs_count = min_t(u32, jobs_count, threads_count);
 		jobs_count = min_t(u32, jobs_count,
-				   fragments_count - processed_fragments);
+				   stripes_count - processed_stripes);
 	}
 
 finish_sb_peb_search:
@@ -1991,8 +2086,12 @@ free_environment:
 
 try_use_old_search:
 	if (!has_sb_peb_found) {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#else
 		SSDFS_ERR("unable to find latest valid sb segment: "
 			  "trying old algorithm!!!\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_find_any_valid_sb_segment(fsi, 0);
 		if (err)
