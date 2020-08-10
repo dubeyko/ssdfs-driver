@@ -5032,7 +5032,7 @@ int ssdfs_dentries_btree_delete_node(struct ssdfs_btree_node *node)
 {
 	/* TODO: implement */
 	SSDFS_DBG("TODO: implement\n");
-	return -ENOSYS;
+	return 0;
 
 /*
  * TODO: it needs to add special free space descriptor in the
@@ -5634,8 +5634,7 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 		   found_index, start_hash, end_hash,
 		   items_count, item_size);
 
-	if (start_hash <= search->request.end.hash &&
-	    search->request.end.hash < end_hash) {
+	if (start_hash == end_hash) {
 		/* use inline buffer */
 		found_dentries = 1;
 	} else {
@@ -7994,6 +7993,7 @@ int __ssdfs_dentries_btree_node_delete_range(struct ssdfs_btree_node *node,
 	struct ssdfs_btree_node_items_area items_area;
 	struct ssdfs_dir_entry dentry;
 	size_t item_size = sizeof(struct ssdfs_dir_entry);
+	u16 index_count = 0;
 	int free_items;
 	u16 item_index;
 	int direction;
@@ -8136,10 +8136,12 @@ int __ssdfs_dentries_btree_node_delete_range(struct ssdfs_btree_node *node,
 
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
-		if ((item_index + range_len) >= items_area.items_count) {
+		if ((item_index + range_len) > items_area.items_count) {
 			SSDFS_ERR("invalid request: "
-				  "item_index %u, count %u\n",
-				  item_index, range_len);
+				  "item_index %u, range_len %u, "
+				  "items_count %u\n",
+				  item_index, range_len,
+				  items_area.items_count);
 			return -ERANGE;
 		}
 		break;
@@ -8338,9 +8340,9 @@ finish_detect_affected_items:
 		}
 
 		err = __ssdfs_btree_node_clear_range(node,
-						     &items_area, item_size,
-						     item_index + range_len,
-						     shift_range_len);
+						&items_area, item_size,
+						item_index + shift_range_len,
+						range_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to clear range: "
 				  "start %u, count %u, err %d\n",
@@ -8522,12 +8524,30 @@ finish_delete_range:
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
 		if (dentries_count == 0) {
-			err = ssdfs_btree_node_delete_index(node, old_hash);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to delete index: "
-					  "old_hash %llx, err %d\n",
-					  old_hash, err);
-				return err;
+			int state;
+
+			down_read(&node->header_lock);
+			state = atomic_read(&node->index_area.state);
+			index_count = node->index_area.index_count;
+			up_read(&node->header_lock);
+
+			if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
+				SSDFS_ERR("invalid area state %#x\n",
+					  state);
+				return -ERANGE;
+			}
+
+			if (index_count <= 1) {
+				err = ssdfs_btree_node_delete_index(node,
+								    old_hash);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete index: "
+						  "old_hash %llx, err %d\n",
+						  old_hash, err);
+					return err;
+				}
+
+				index_count = 0;
 			}
 		} else if (old_hash != start_hash) {
 			struct ssdfs_btree_index_key old_key, new_key;
@@ -8557,7 +8577,7 @@ finish_delete_range:
 		break;
 	}
 
-	if (dentries_count == 0)
+	if (dentries_count == 0 && index_count == 0)
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;
 	else
 		search->result.state = SSDFS_BTREE_SEARCH_OBSOLETE_RESULT;
@@ -8602,12 +8622,14 @@ int ssdfs_dentries_btree_node_delete_item(struct ssdfs_btree_node *node,
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
-		  "parent %p, child %p\n",
+		  "parent %p, child %p, "
+		  "search->result.count %d\n",
 		  search->request.type, search->request.flags,
 		  search->request.start.hash, search->request.end.hash,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
-		  search->node.child);
+		  search->node.child,
+		  search->result.count);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.count != 1);

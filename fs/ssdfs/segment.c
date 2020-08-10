@@ -3248,7 +3248,10 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 	blk2off_tbl = si->blk2off_table;
 
 	for (blk = start_off; blk < upper_blk; blk++) {
+		struct ssdfs_segment_request *req;
 		struct ssdfs_peb_container *pebc;
+		struct ssdfs_requests_queue *rq;
+		wait_queue_head_t *wait;
 		u16 peb_index = U16_MAX;
 		u16 peb_page;
 
@@ -3306,7 +3309,9 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		err = ssdfs_blk2off_table_free_block(blk2off_tbl, (u16)blk);
+		err = ssdfs_blk2off_table_free_block(blk2off_tbl,
+						     peb_index,
+						     (u16)blk);
 		if (err == -EAGAIN) {
 			init_end = &blk2off_tbl->full_init_end;
 
@@ -3320,6 +3325,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			}
 
 			err = ssdfs_blk2off_table_free_block(blk2off_tbl,
+							     peb_index,
 							     (u16)blk);
 		}
 
@@ -3330,14 +3336,31 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		if (atomic_dec_and_test(&si->blk_bmap.valid_logical_blks)) {
-			SSDFS_ERR("negative count of valid_pages: "
-				  "seg %llu\n",
-				  si->seg_id);
-			return -ERANGE;
+		SSDFS_DBG("valid_blks %d, invalid_blks %d\n",
+			  atomic_read(&si->blk_bmap.valid_logical_blks),
+			  atomic_read(&si->blk_bmap.invalid_logical_blks));
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			return err;
 		}
 
-		atomic_inc(&si->blk_bmap.invalid_logical_blks);
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
+					    SSDFS_EXTENT_WAS_INVALIDATED,
+					    SSDFS_REQ_ASYNC, req);
+		ssdfs_request_define_segment(si->seg_id, req);
+
+		rq = &pebc->update_rq;
+		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
+
+		wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+		wake_up_all(wait);
 	}
 
 	err = ssdfs_segment_change_state(si);

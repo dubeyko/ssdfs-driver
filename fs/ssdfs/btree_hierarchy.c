@@ -4845,9 +4845,22 @@ int ssdfs_btree_check_level_for_delete(struct ssdfs_btree *tree,
 
 	parent_node = parent->nodes.old_node.ptr;
 	child_node = child->nodes.old_node.ptr;
-	if (!parent_node || !child_node) {
+
+	if (!child_node) {
 		SSDFS_ERR("node is NULL\n");
 		return -ERANGE;
+	}
+
+	switch (atomic_read(&child_node->type)) {
+	case SSDFS_BTREE_ROOT_NODE:
+		/* do nothing */
+		return 0;
+
+	default:
+		if (!parent_node) {
+			SSDFS_ERR("node is NULL\n");
+			return -ERANGE;
+		}
 	}
 
 	if (child->flags & SSDFS_BTREE_LEVEL_DELETE_NODE) {

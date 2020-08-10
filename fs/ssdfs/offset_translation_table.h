@@ -424,8 +424,9 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 				      u16 peb_index,
 				      struct ssdfs_phys_offset_descriptor *off);
 int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
-				   u16 logical_blk);
+				   u16 peb_index, u16 logical_blk);
 int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
+				    u16 peb_index,
 				    struct ssdfs_blk2off_range *extent);
 
 int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,

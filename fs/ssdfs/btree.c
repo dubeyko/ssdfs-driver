@@ -554,22 +554,24 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 				continue;
 			}
 
-			err = ssdfs_btree_node_pre_flush(node);
-			if (unlikely(err)) {
-				ssdfs_btree_node_put(node);
-				SSDFS_ERR("fail to pre-flush node: "
-					  "node_id %llu, err %d\n",
-					  (u64)iter.index, err);
-				goto finish_flush_tree_nodes;
-			}
+			if (!is_ssdfs_btree_node_pre_deleted(node)) {
+				err = ssdfs_btree_node_pre_flush(node);
+				if (unlikely(err)) {
+					ssdfs_btree_node_put(node);
+					SSDFS_ERR("fail to pre-flush node: "
+						  "node_id %llu, err %d\n",
+						  (u64)iter.index, err);
+					goto finish_flush_tree_nodes;
+				}
 
-			err = ssdfs_btree_node_flush(node);
-			if (unlikely(err)) {
-				ssdfs_btree_node_put(node);
-				SSDFS_ERR("fail to flush node: "
-					  "node_id %llu, err %d\n",
-					  (u64)iter.index, err);
-				goto finish_flush_tree_nodes;
+				err = ssdfs_btree_node_flush(node);
+				if (unlikely(err)) {
+					ssdfs_btree_node_put(node);
+					SSDFS_ERR("fail to flush node: "
+						  "node_id %llu, err %d\n",
+						  (u64)iter.index, err);
+					goto finish_flush_tree_nodes;
+				}
 			}
 
 			rcu_read_lock();
@@ -612,6 +614,13 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 			rcu_read_unlock();
 
 			if (atomic_read(&node->height) != cur_height) {
+				ssdfs_btree_node_put(node);
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				continue;
+			}
+
+			if (is_ssdfs_btree_node_pre_deleted(node)) {
 				ssdfs_btree_node_put(node);
 				rcu_read_lock();
 				spin_lock(&tree->nodes_lock);
@@ -716,15 +725,23 @@ check_flush_result_state:
 				 * Root node is inline.
 				 * Commit log operation is not necessary.
 				 */
-			} else {
+				ssdfs_btree_node_put(node);
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				continue;
+			}
+
+			if (is_ssdfs_btree_node_pre_deleted(node))
+				err = ssdfs_btree_deleted_node_commit_log(node);
+			else
 				err = ssdfs_btree_node_commit_log(node);
-				if (unlikely(err)) {
-					ssdfs_btree_node_put(node);
-					SSDFS_ERR("fail to request commit log: "
-						  "node_id %llu, err %d\n",
-						  (u64)iter.index, err);
-					goto finish_flush_tree_nodes;
-				}
+
+			if (unlikely(err)) {
+				ssdfs_btree_node_put(node);
+				SSDFS_ERR("fail to request commit log: "
+					  "node_id %llu, err %d\n",
+					  (u64)iter.index, err);
+				goto finish_flush_tree_nodes;
 			}
 
 			rcu_read_lock();
@@ -775,6 +792,9 @@ check_flush_result_state:
 				 */
 				goto clear_towrite_tag;
 			}
+
+			if (is_ssdfs_btree_node_pre_deleted(node))
+				goto clear_towrite_tag;
 
 check_commit_log_result_state:
 			switch (atomic_read(&node->flush_req.result.state)) {
@@ -829,12 +849,40 @@ check_commit_log_result_state:
 
 clear_towrite_tag:
 			rcu_read_lock();
-
 			spin_lock(&tree->nodes_lock);
+
 			radix_tree_tag_clear(&tree->nodes, iter.index,
 					     SSDFS_BTREE_NODE_TOWRITE_TAG);
 
 			ssdfs_btree_node_put(node);
+
+			spin_unlock(&tree->nodes_lock);
+			rcu_read_unlock();
+
+			if (is_ssdfs_btree_node_pre_deleted(node)) {
+				clear_ssdfs_btree_node_pre_deleted(node);
+
+				ssdfs_btree_radix_tree_delete(tree,
+							node->node_id);
+
+				if (tree->btree_ops &&
+				    tree->btree_ops->delete_node) {
+					err = tree->btree_ops->delete_node(node);
+					if (unlikely(err)) {
+						SSDFS_ERR("delete node failure: "
+							  "err %d\n", err);
+					}
+				}
+
+				if (tree->btree_ops &&
+				    tree->btree_ops->destroy_node)
+					tree->btree_ops->destroy_node(node);
+
+				ssdfs_btree_node_destroy(node);
+			}
+
+			rcu_read_lock();
+			spin_lock(&tree->nodes_lock);
 		}
 		spin_unlock(&tree->nodes_lock);
 
@@ -3301,26 +3349,13 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_btree_radix_tree_delete(tree, node->node_id);
-
-		if (tree->btree_ops && tree->btree_ops->delete_node) {
-			err = tree->btree_ops->delete_node(node);
-			if (unlikely(err)) {
-				SSDFS_ERR("delete node failure: err %d\n",
-					  err);
-			}
-		}
+		set_ssdfs_btree_node_pre_deleted(node);
 
 		err = ssdfs_segment_invalidate_node(node);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate node: id %u, err %d\n",
 				  node->node_id, err);
 		}
-
-		if (tree->btree_ops && tree->btree_ops->destroy_node)
-			tree->btree_ops->destroy_node(node);
-
-		ssdfs_btree_node_destroy(node);
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
