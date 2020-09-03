@@ -72,7 +72,7 @@ i=$[$i+1]
 
 echo $i
 
-touch /mnt/ssdfs/$i".txt"
+rm /mnt/ssdfs/$i".txt"
 
 done
 

@@ -110,7 +110,9 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 {
 	struct ssdfs_btree_hierarchy *ptr;
 	int tree_height;
-	size_t alloc_size;
+	size_t desc_size = sizeof(struct ssdfs_btree_hierarchy);
+	size_t ptr_size = sizeof(struct ssdfs_btree_level *);
+	size_t level_size = sizeof(struct ssdfs_btree_level);
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -134,13 +136,35 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 		tree_height += 1;
 	}
 
-	alloc_size = sizeof(struct ssdfs_btree_state_descriptor);
-	alloc_size += tree_height * sizeof(struct ssdfs_btree_level);
-
-	ptr = ssdfs_btree_hierarchy_kzalloc(alloc_size, GFP_KERNEL);
+	ptr = ssdfs_btree_hierarchy_kzalloc(desc_size, GFP_KERNEL);
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate tree levels' array\n");
 		return ERR_PTR(-ENOMEM);
+	}
+
+	ptr->array_ptr = ssdfs_btree_hierarchy_kzalloc(ptr_size * tree_height,
+							GFP_KERNEL);
+	if (!ptr) {
+		ssdfs_btree_hierarchy_kfree(ptr);
+		SSDFS_ERR("fail to allocate tree levels' array\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	for (i = 0; i < tree_height; i++) {
+		ptr->array_ptr[i] = ssdfs_btree_hierarchy_kzalloc(level_size,
+								  GFP_KERNEL);
+		if (!ptr) {
+			for (--i; i >= 0; i--) {
+				ssdfs_btree_hierarchy_kfree(ptr->array_ptr[i]);
+				ptr->array_ptr[i] = NULL;
+			}
+
+			ssdfs_btree_hierarchy_kfree(ptr->array_ptr);
+			ptr->array_ptr = NULL;
+			ssdfs_btree_hierarchy_kfree(ptr);
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			return ERR_PTR(-ENOMEM);
+		}
 	}
 
 	ptr->desc.height = tree_height;
@@ -152,84 +176,84 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 	ptr->desc.index_area_min_size = tree->index_area_min_size;
 
 	for (i = 0; i < tree_height; i++) {
-		ptr->array[i].flags = 0;
+		ptr->array_ptr[i]->flags = 0;
 
-		ptr->array[i].index_area.area_size = U32_MAX;
-		ptr->array[i].index_area.free_space = U32_MAX;
-		ptr->array[i].index_area.hash.start = U64_MAX;
-		ptr->array[i].index_area.hash.end = U64_MAX;
-		ptr->array[i].index_area.add.op_state =
+		ptr->array_ptr[i]->index_area.area_size = U32_MAX;
+		ptr->array_ptr[i]->index_area.free_space = U32_MAX;
+		ptr->array_ptr[i]->index_area.hash.start = U64_MAX;
+		ptr->array_ptr[i]->index_area.hash.end = U64_MAX;
+		ptr->array_ptr[i]->index_area.add.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		ptr->array[i].index_area.add.hash.start = U64_MAX;
-		ptr->array[i].index_area.add.hash.end = U64_MAX;
-		ptr->array[i].index_area.add.pos.state =
+		ptr->array_ptr[i]->index_area.add.hash.start = U64_MAX;
+		ptr->array_ptr[i]->index_area.add.hash.end = U64_MAX;
+		ptr->array_ptr[i]->index_area.add.pos.state =
 				SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-		ptr->array[i].index_area.add.pos.start = U16_MAX;
-		ptr->array[i].index_area.add.pos.count = 0;
-		ptr->array[i].index_area.insert.op_state =
+		ptr->array_ptr[i]->index_area.add.pos.start = U16_MAX;
+		ptr->array_ptr[i]->index_area.add.pos.count = 0;
+		ptr->array_ptr[i]->index_area.insert.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		ptr->array[i].index_area.insert.hash.start = U64_MAX;
-		ptr->array[i].index_area.insert.hash.end = U64_MAX;
-		ptr->array[i].index_area.insert.pos.state =
+		ptr->array_ptr[i]->index_area.insert.hash.start = U64_MAX;
+		ptr->array_ptr[i]->index_area.insert.hash.end = U64_MAX;
+		ptr->array_ptr[i]->index_area.insert.pos.state =
 				SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-		ptr->array[i].index_area.insert.pos.start = U16_MAX;
-		ptr->array[i].index_area.insert.pos.count = 0;
-		ptr->array[i].index_area.move.op_state =
+		ptr->array_ptr[i]->index_area.insert.pos.start = U16_MAX;
+		ptr->array_ptr[i]->index_area.insert.pos.count = 0;
+		ptr->array_ptr[i]->index_area.move.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		ptr->array[i].index_area.move.direction =
+		ptr->array_ptr[i]->index_area.move.direction =
 					SSDFS_BTREE_MOVE_NOWHERE;
-		ptr->array[i].index_area.move.pos.state =
+		ptr->array_ptr[i]->index_area.move.pos.state =
 				SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-		ptr->array[i].index_area.move.pos.start = U16_MAX;
-		ptr->array[i].index_area.move.pos.count = 0;
-		ptr->array[i].index_area.delete.op_state =
+		ptr->array_ptr[i]->index_area.move.pos.start = U16_MAX;
+		ptr->array_ptr[i]->index_area.move.pos.count = 0;
+		ptr->array_ptr[i]->index_area.delete.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		memset(&ptr->array[i].index_area.delete.node_index,
+		memset(&ptr->array_ptr[i]->index_area.delete.node_index,
 			0xFF, sizeof(struct ssdfs_btree_index_key));
 
-		ptr->array[i].items_area.area_size = U32_MAX;
-		ptr->array[i].items_area.free_space = U32_MAX;
-		ptr->array[i].items_area.hash.start = U64_MAX;
-		ptr->array[i].items_area.hash.end = U64_MAX;
-		ptr->array[i].items_area.add.op_state =
+		ptr->array_ptr[i]->items_area.area_size = U32_MAX;
+		ptr->array_ptr[i]->items_area.free_space = U32_MAX;
+		ptr->array_ptr[i]->items_area.hash.start = U64_MAX;
+		ptr->array_ptr[i]->items_area.hash.end = U64_MAX;
+		ptr->array_ptr[i]->items_area.add.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		ptr->array[i].items_area.add.hash.start = U64_MAX;
-		ptr->array[i].items_area.add.hash.end = U64_MAX;
-		ptr->array[i].items_area.add.pos.state =
+		ptr->array_ptr[i]->items_area.add.hash.start = U64_MAX;
+		ptr->array_ptr[i]->items_area.add.hash.end = U64_MAX;
+		ptr->array_ptr[i]->items_area.add.pos.state =
 				SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-		ptr->array[i].items_area.add.pos.start = U16_MAX;
-		ptr->array[i].items_area.add.pos.count = 0;
-		ptr->array[i].items_area.insert.op_state =
+		ptr->array_ptr[i]->items_area.add.pos.start = U16_MAX;
+		ptr->array_ptr[i]->items_area.add.pos.count = 0;
+		ptr->array_ptr[i]->items_area.insert.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		ptr->array[i].items_area.insert.hash.start = U64_MAX;
-		ptr->array[i].items_area.insert.hash.end = U64_MAX;
-		ptr->array[i].items_area.insert.pos.state =
+		ptr->array_ptr[i]->items_area.insert.hash.start = U64_MAX;
+		ptr->array_ptr[i]->items_area.insert.hash.end = U64_MAX;
+		ptr->array_ptr[i]->items_area.insert.pos.state =
 				SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-		ptr->array[i].items_area.insert.pos.start = U16_MAX;
-		ptr->array[i].items_area.insert.pos.count = 0;
-		ptr->array[i].items_area.move.op_state =
+		ptr->array_ptr[i]->items_area.insert.pos.start = U16_MAX;
+		ptr->array_ptr[i]->items_area.insert.pos.count = 0;
+		ptr->array_ptr[i]->items_area.move.op_state =
 				SSDFS_BTREE_AREA_OP_UNKNOWN;
-		ptr->array[i].items_area.move.direction =
+		ptr->array_ptr[i]->items_area.move.direction =
 					SSDFS_BTREE_MOVE_NOWHERE;
-		ptr->array[i].items_area.move.pos.state =
+		ptr->array_ptr[i]->items_area.move.pos.state =
 				SSDFS_HASH_RANGE_INTERSECTION_UNDEFINED;
-		ptr->array[i].items_area.move.pos.start = U16_MAX;
-		ptr->array[i].items_area.move.pos.count = 0;
+		ptr->array_ptr[i]->items_area.move.pos.start = U16_MAX;
+		ptr->array_ptr[i]->items_area.move.pos.count = 0;
 
-		ptr->array[i].nodes.old_node.type =
+		ptr->array_ptr[i]->nodes.old_node.type =
 				SSDFS_BTREE_NODE_UNKNOWN_TYPE;
-		ptr->array[i].nodes.old_node.index_hash.start = U64_MAX;
-		ptr->array[i].nodes.old_node.index_hash.end = U64_MAX;
-		ptr->array[i].nodes.old_node.items_hash.start = U64_MAX;
-		ptr->array[i].nodes.old_node.items_hash.end = U64_MAX;
-		ptr->array[i].nodes.old_node.ptr = NULL;
-		ptr->array[i].nodes.new_node.type =
+		ptr->array_ptr[i]->nodes.old_node.index_hash.start = U64_MAX;
+		ptr->array_ptr[i]->nodes.old_node.index_hash.end = U64_MAX;
+		ptr->array_ptr[i]->nodes.old_node.items_hash.start = U64_MAX;
+		ptr->array_ptr[i]->nodes.old_node.items_hash.end = U64_MAX;
+		ptr->array_ptr[i]->nodes.old_node.ptr = NULL;
+		ptr->array_ptr[i]->nodes.new_node.type =
 				SSDFS_BTREE_NODE_UNKNOWN_TYPE;
-		ptr->array[i].nodes.new_node.index_hash.start = U64_MAX;
-		ptr->array[i].nodes.new_node.index_hash.end = U64_MAX;
-		ptr->array[i].nodes.new_node.items_hash.start = U64_MAX;
-		ptr->array[i].nodes.new_node.items_hash.end = U64_MAX;
-		ptr->array[i].nodes.new_node.ptr = NULL;
+		ptr->array_ptr[i]->nodes.new_node.index_hash.start = U64_MAX;
+		ptr->array_ptr[i]->nodes.new_node.index_hash.end = U64_MAX;
+		ptr->array_ptr[i]->nodes.new_node.items_hash.start = U64_MAX;
+		ptr->array_ptr[i]->nodes.new_node.items_hash.end = U64_MAX;
+		ptr->array_ptr[i]->nodes.new_node.ptr = NULL;
 	}
 
 	return ptr;
@@ -241,10 +265,23 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
  */
 void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy)
 {
+	int tree_height;
+	int i;
+
 	SSDFS_DBG("hierarchy %p\n", hierarchy);
 
 	if (!hierarchy)
 		return;
+
+	tree_height = hierarchy->desc.height;
+
+	for (i = 0; i < tree_height; i++) {
+		ssdfs_btree_hierarchy_kfree(hierarchy->array_ptr[i]);
+		hierarchy->array_ptr[i] = NULL;
+	}
+
+	ssdfs_btree_hierarchy_kfree(hierarchy->array_ptr);
+	hierarchy->array_ptr = NULL;
 
 	ssdfs_btree_hierarchy_kfree(hierarchy);
 }
@@ -4732,13 +4769,13 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	level->nodes.old_node.type = child_node_type;
 	level->nodes.old_node.ptr = child_node;
 	ssdfs_btree_hierarchy_init_hash_range(level, child_node);
 
 	cur_height++;
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	level->nodes.old_node.type = parent_node_type;
 	level->nodes.old_node.ptr = parent_node;
 	ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
@@ -4752,7 +4789,7 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 		}
 
 		parent_node_type = atomic_read(&parent_node->type);
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 		level->nodes.old_node.type = parent_node_type;
 		level->nodes.old_node.ptr = parent_node;
 		ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
@@ -4774,8 +4811,8 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 		struct ssdfs_btree_level *parent;
 		struct ssdfs_btree_level *child;
 
-		parent = &hierarchy->array[cur_height + 1];
-		child = &hierarchy->array[cur_height];
+		parent = hierarchy->array_ptr[cur_height + 1];
+		child = hierarchy->array_ptr[cur_height];
 
 		err = ssdfs_btree_check_level_for_add(tree, search,
 						      parent, child);
@@ -5037,14 +5074,14 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	level->nodes.old_node.type = child_node_type;
 	level->nodes.old_node.ptr = child_node;
 	ssdfs_btree_hierarchy_init_hash_range(level, child_node);
 	level->flags |= SSDFS_BTREE_LEVEL_DELETE_NODE;
 
 	cur_height++;
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	level->nodes.old_node.type = parent_node_type;
 	level->nodes.old_node.ptr = parent_node;
 	ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
@@ -5058,7 +5095,7 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 		}
 
 		parent_node_type = atomic_read(&parent_node->type);
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 		level->nodes.old_node.type = parent_node_type;
 		level->nodes.old_node.ptr = parent_node;
 		ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
@@ -5071,8 +5108,8 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 		struct ssdfs_btree_level *parent;
 		struct ssdfs_btree_level *child;
 
-		parent = &hierarchy->array[cur_height + 1];
-		child = &hierarchy->array[cur_height];
+		parent = hierarchy->array_ptr[cur_height + 1];
+		child = hierarchy->array_ptr[cur_height];
 
 		err = ssdfs_btree_check_level_for_delete(tree, search,
 							 parent, child);
@@ -5284,13 +5321,13 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	level->nodes.old_node.type = child_node_type;
 	level->nodes.old_node.ptr = child_node;
 	ssdfs_btree_hierarchy_init_hash_range(level, child_node);
 
 	cur_height++;
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	level->nodes.old_node.type = parent_node_type;
 	level->nodes.old_node.ptr = parent_node;
 	ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
@@ -5305,7 +5342,7 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 		}
 
 		parent_node_type = atomic_read(&parent_node->type);
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 		level->nodes.old_node.type = parent_node_type;
 		level->nodes.old_node.ptr = parent_node;
 		ssdfs_btree_hierarchy_init_hash_range(level, parent_node);
@@ -5318,8 +5355,8 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 		struct ssdfs_btree_level *parent;
 		struct ssdfs_btree_level *child;
 
-		parent = &hierarchy->array[cur_height + 1];
-		child = &hierarchy->array[cur_height];
+		parent = hierarchy->array_ptr[cur_height + 1];
+		child = hierarchy->array_ptr[cur_height];
 
 		err = ssdfs_btree_check_level_for_update(tree, search,
 							 parent, child);
@@ -7415,7 +7452,7 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 	}
 
 	desc = &hierarchy->desc;
-	cur_level = &hierarchy->array[cur_height];
+	cur_level = hierarchy->array_ptr[cur_height];
 
 	if (!cur_level->flags) {
 		SSDFS_DBG("nothing to do: cur_height %d\n",
@@ -7426,7 +7463,7 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 	if (cur_height == (hierarchy->desc.height - 1))
 		goto check_necessity_increase_tree_height;
 
-	parent = &hierarchy->array[cur_height + 1];
+	parent = hierarchy->array_ptr[cur_height + 1];
 
 	if (cur_level->flags & ~SSDFS_BTREE_ADD_NODE_MASK ||
 	    parent->flags & ~SSDFS_BTREE_ADD_NODE_MASK) {
@@ -7654,8 +7691,8 @@ int ssdfs_btree_process_level_for_delete(struct ssdfs_btree_hierarchy *ptr,
 	}
 
 	desc = &ptr->desc;
-	cur_level = &ptr->array[cur_height];
-	parent = &ptr->array[cur_height + 1];
+	cur_level = ptr->array_ptr[cur_height];
+	parent = ptr->array_ptr[cur_height + 1];
 
 	if (!cur_level->flags) {
 		SSDFS_DBG("nothing to do: cur_height %d\n",
@@ -7728,8 +7765,8 @@ int ssdfs_btree_process_level_for_update(struct ssdfs_btree_hierarchy *ptr,
 	}
 
 	desc = &ptr->desc;
-	cur_level = &ptr->array[cur_height];
-	parent = &ptr->array[cur_height + 1];
+	cur_level = ptr->array_ptr[cur_height];
+	parent = ptr->array_ptr[cur_height + 1];
 
 	if (!parent->flags) {
 		SSDFS_DBG("nothing to do: cur_height %d\n",
@@ -7775,7 +7812,7 @@ void ssdfs_debug_btree_hierarchy_object(struct ssdfs_btree_hierarchy *ptr)
 		  ptr->desc.index_area_min_size);
 
 	for (i = 0; i < ptr->desc.height; i++) {
-		struct ssdfs_btree_level *level = &ptr->array[i];
+		struct ssdfs_btree_level *level = ptr->array_ptr[i];
 
 		SSDFS_DBG("LEVEL: height %d, flags %#x, "
 			  "OLD_NODE: type %#x, ptr %p, "

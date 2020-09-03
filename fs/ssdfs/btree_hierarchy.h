@@ -218,11 +218,11 @@ struct ssdfs_btree_state_descriptor {
 /*
  * struct ssdfs_btree_hierarchy - btree's hierarchy descriptor
  * @desc: btree state's descriptor
- * @array: btree level's array
+ * @array_ptr: btree level's array
  */
 struct ssdfs_btree_hierarchy {
 	struct ssdfs_btree_state_descriptor desc;
-	struct ssdfs_btree_level array[0];
+	struct ssdfs_btree_level **array_ptr;
 };
 
 /* Btree hierarchy inline methods */

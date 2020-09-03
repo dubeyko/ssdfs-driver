@@ -1475,6 +1475,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		page = array->pages[found];
 
 		if (page) {
+			lock_page(page);
+			ClearPageUptodate(page);
+			ClearPagePrivate(page);
+			unlock_page(page);
+
 			ssdfs_put_page(page);
 
 			SSDFS_DBG("page %px, count %d\n",

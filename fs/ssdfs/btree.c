@@ -1566,12 +1566,12 @@ int ssdfs_prepare_empty_btree_for_add(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	ssdfs_btree_prepare_add_node(tree, SSDFS_BTREE_LEAF_NODE,
 				     start_hash, end_hash,
 				     level, NULL);
 
-	level = &hierarchy->array[cur_height + 1];
+	level = hierarchy->array_ptr[cur_height + 1];
 	err = ssdfs_btree_prepare_add_index(level,
 					    start_hash,
 					    end_hash,
@@ -2107,7 +2107,7 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 
 	if (!(level->flags & SSDFS_BTREE_LEVEL_ADD_NODE))
 		return 0;
@@ -2119,7 +2119,7 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height + 1];
+	level = hierarchy->array_ptr[cur_height + 1];
 	if (level->flags & SSDFS_BTREE_LEVEL_ADD_NODE)
 		parent = level->nodes.new_node.ptr;
 	else if (level->nodes.new_node.type == SSDFS_BTREE_ROOT_NODE)
@@ -2151,7 +2151,7 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		return node_type < 0 ? node_type : -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	ptr = ssdfs_btree_node_create(tree, node_id, parent, cur_height,
 					node_type,
 					level->items_area.hash.start);
@@ -2288,7 +2288,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	for (cur_height = tree_height; cur_height >= 0; cur_height--) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_add_node(level))
 			continue;
@@ -2331,7 +2331,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 				  node->node_id, err);
 
 			for (; cur_height < tree_height; cur_height++) {
-				level = &hierarchy->array[cur_height];
+				level = hierarchy->array_ptr[cur_height];
 
 				if (!need_add_node(level))
 					continue;
@@ -2361,7 +2361,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	for (cur_height = tree_height; cur_height >= 0; cur_height--) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_add_node(level))
 			continue;
@@ -2379,7 +2379,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 					  "err %d\n", err);
 
 				for (; cur_height < tree_height; cur_height++) {
-					level = &hierarchy->array[cur_height];
+					level = hierarchy->array_ptr[cur_height];
 
 					if (!need_add_node(level))
 						continue;
@@ -2414,7 +2414,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 
 	tree_height = atomic_read(&tree->height);
 	for (cur_height = 0; cur_height < tree_height; cur_height++) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_add_node(level))
 			continue;
@@ -3338,7 +3338,7 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 	}
 
 	for (cur_height = 0; cur_height < tree_height; cur_height++) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_delete_node(level))
 			continue;

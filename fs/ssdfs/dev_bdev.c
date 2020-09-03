@@ -324,6 +324,7 @@ static int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
 					   REQ_OP_READ, REQ_SYNC);
 	if (err) {
 		ClearPageUptodate(page);
+		ClearPagePrivate(page);
 		SetPageError(page);
 	} else {
 		SetPageUptodate(page);
@@ -369,6 +370,7 @@ static int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
 
 		if (err) {
 			ClearPageUptodate(page);
+			ClearPagePrivate(page);
 			SetPageError(page);
 		} else {
 			SetPageUptodate(page);

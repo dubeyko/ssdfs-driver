@@ -432,6 +432,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				ClearPageUptodate(page);
+				ClearPagePrivate(page);
 				ClearPageMappedToDisk(page);
 				ssdfs_clear_dirty_page(page);
 				unlock_page(page);
@@ -459,6 +460,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				ClearPageUptodate(page);
+				ClearPagePrivate(page);
 				ClearPageMappedToDisk(page);
 				ssdfs_clear_dirty_page(page);
 				unlock_page(page);

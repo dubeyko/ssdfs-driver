@@ -1055,13 +1055,11 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	for (i = 0; i < req->result.processed_blks; i++)
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
-	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 #ifdef CONFIG_SSDFS_DEBUG
+	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 		void *kaddr;
-#endif /* CONFIG_SSDFS_DEBUG */
 		struct page *page = req->result.pvec.pages[i];
 
-#ifdef CONFIG_SSDFS_DEBUG
 		kaddr = kmap(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
@@ -1072,10 +1070,8 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		kunmap(page);
 
 		WARN_ON(!PageLocked(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		unlock_page(page);
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_node_pagevec_release(pvec);
 	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {

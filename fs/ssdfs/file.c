@@ -393,6 +393,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 fail_read_page:
 	ClearPageUptodate(page);
+	ClearPagePrivate(page);
 	SetPageError(page);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
@@ -1223,6 +1224,7 @@ int ssdfs_writepage_wrapper(struct page *page,
 
 discard_page:
 	ClearPageUptodate(page);
+	ClearPagePrivate(page);
 	ClearPageMappedToDisk(page);
 	ssdfs_clear_dirty_page(page);
 

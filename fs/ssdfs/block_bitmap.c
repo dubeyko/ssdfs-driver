@@ -843,7 +843,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 
 		kaddr1 = blk_bmap->storage.buf;
 		kaddr2 = kmap_atomic(page);
-		memcpy(kaddr2, kaddr1, PAGE_SIZE);
+		memcpy(kaddr2, kaddr1, blk_bmap->bytes_count);
 		kunmap_atomic(kaddr2);
 
 #ifdef CONFIG_SSDFS_DEBUG
