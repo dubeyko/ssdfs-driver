@@ -567,6 +567,9 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	}
 
 	ssdfs_request_init(req1);
+	/* read thread puts request */
+	ssdfs_get_request(req1);
+	/* it needs to be sure that request will be not freed */
 	ssdfs_get_request(req1);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -694,6 +697,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		 */
 	}
 
+	ssdfs_put_request(req1);
+
 	/*
 	 * Current log start_page and data_free_pages count was defined
 	 * in the read thread during searching last actual state of block
@@ -772,6 +777,9 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	}
 
 	ssdfs_request_init(req1);
+	/* read thread puts request */
+	ssdfs_get_request(req1);
+	/* it needs to be sure that request will be not freed */
 	ssdfs_get_request(req1);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -870,6 +878,8 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		 * request about free pages count.
 		 */
 	}
+
+	ssdfs_put_request(req1);
 
 	/*
 	 * Current log start_page and data_free_pages count was defined

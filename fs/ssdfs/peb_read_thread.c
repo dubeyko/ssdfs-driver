@@ -629,6 +629,13 @@ struct page *ssdfs_peb_read_page_locked(struct ssdfs_peb_info *pebi,
 	err = ssdfs_read_page_from_volume(fsi, pebi->peb_id,
 					  page_off << PAGE_SHIFT,
 					  page);
+
+	/*
+	 * ->readpage() unlock the page
+	 * But caller expects that page is locked
+	 */
+	lock_page(page);
+
 	if (unlikely(err))
 		goto fail_read_page;
 

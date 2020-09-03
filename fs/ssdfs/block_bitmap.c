@@ -506,6 +506,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 				return -ERANGE;
 			}
 
+			lock_page(source->pages[i]);
+
 #ifdef CONFIG_SSDFS_DEBUG
 			kaddr = kmap(source->pages[i]);
 			SSDFS_DBG("BMAP INIT\n");
@@ -535,6 +537,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			SSDFS_WARN("page %d is NULL\n", 0);
 			return -ERANGE;
 		}
+
+		lock_page(page);
 
 		kaddr = kmap_atomic(page);
 		memcpy(blk_bmap->storage.buf, kaddr, blk_bmap->bytes_count);
