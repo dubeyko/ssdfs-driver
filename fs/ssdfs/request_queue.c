@@ -25,6 +25,7 @@
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 

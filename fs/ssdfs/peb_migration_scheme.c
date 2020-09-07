@@ -27,6 +27,7 @@
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
 #include "peb_container.h"

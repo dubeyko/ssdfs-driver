@@ -32,6 +32,7 @@
 #include "ssdfs.h"
 #include "version.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb_container.h"
 #include "segment.h"
@@ -2277,6 +2278,7 @@ destroy_segbmap:
 	ssdfs_segbmap_destroy(fs_info);
 
 destroy_maptbl:
+	ssdfs_maptbl_stop_thread(fs_info->maptbl);
 	ssdfs_maptbl_destroy(fs_info);
 
 destroy_segments_tree:

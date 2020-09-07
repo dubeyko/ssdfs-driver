@@ -28,6 +28,7 @@
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 #include "extents_queue.h"
@@ -1466,6 +1467,8 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 	int pages_count;
 	size_t copied_data = 0;
 	size_t cur_len;
+	u64 seg_id;
+	struct ssdfs_blk2off_range extent;
 	int i;
 	int err = 0;
 
@@ -1529,7 +1532,7 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		set_page_writeback(page);
 	}
 
-	err = ssdfs_segment_add_data_extent_async(fsi, req);
+	err = ssdfs_segment_add_data_extent_async(fsi, req, &seg_id, &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add external blob: "
 			  "size %zu, err %d\n",
@@ -1537,10 +1540,14 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		goto finish_save_external_blob;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(seg_id == U64_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	desc->hash = cpu_to_le64(generate_value_hash(value, size));
-	desc->extent.seg_id = cpu_to_le64(req->place.start.seg_id);
-	desc->extent.logical_blk = cpu_to_le32(req->place.start.blk_index);
-	desc->extent.len = cpu_to_le32(req->place.len);
+	desc->extent.seg_id = cpu_to_le64(seg_id);
+	desc->extent.logical_blk = cpu_to_le32(extent.start_lblk);
+	desc->extent.len = cpu_to_le32(extent.len);
 
 	return 0;
 

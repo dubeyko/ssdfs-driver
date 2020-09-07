@@ -154,7 +154,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	if (!si)
 		return 0;
 
-	SSDFS_DBG("seg %llu, seg_state %#x, log_pages %u, "
+SSDFS_ERR("seg %llu, seg_state %#x, log_pages %u, "
 		  "create_threads %u\n",
 		  si->seg_id, atomic_read(&si->seg_state),
 		  si->log_pages, si->create_threads);
@@ -1273,6 +1273,8 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
  * __ssdfs_segment_add_block() - add new block into segment
  * @cur_seg: current segment container
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new block into segment.
  *
@@ -1285,7 +1287,9 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
  */
 static
 int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
-			       struct ssdfs_segment_request *req)
+			       struct ssdfs_segment_request *req,
+			       u64 *seg_id,
+			       struct ssdfs_blk2off_range *extent)
 {
 	struct ssdfs_segment_info *si;
 	int seg_type;
@@ -1293,7 +1297,7 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg || !req);
+	BUG_ON(!cur_seg || !req || !seg_id || !extent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
@@ -1301,6 +1305,8 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+
+	*seg_id = U64_MAX;
 
 	ssdfs_current_segment_lock(cur_seg);
 
@@ -1355,6 +1361,7 @@ add_new_current_segment:
 
 			table = si->blk2off_table;
 
+			*seg_id = si->seg_id;
 			ssdfs_request_define_segment(si->seg_id, req);
 
 			err = ssdfs_blk2off_table_allocate_block(table, &blk);
@@ -1384,6 +1391,9 @@ add_new_current_segment:
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(blk > U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+			extent->start_lblk = blk;
+			extent->len = 1;
 
 			ssdfs_request_define_volume_extent(blk, 1, req);
 
@@ -1424,6 +1434,8 @@ finish_add_block:
  * __ssdfs_segment_add_extent() - add new extent into segment
  * @cur_seg: current segment container
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new extent into segment.
  *
@@ -1436,7 +1448,9 @@ finish_add_block:
  */
 static
 int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
-			       struct ssdfs_segment_request *req)
+			       struct ssdfs_segment_request *req,
+			       u64 *seg_id,
+			       struct ssdfs_blk2off_range *extent)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
@@ -1445,7 +1459,7 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg || !req);
+	BUG_ON(!cur_seg || !req || !seg_id || !extent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
@@ -1455,6 +1469,7 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 		  req->extent.parent_snapshot);
 
 	fsi = cur_seg->fsi;
+	*seg_id = U64_MAX;
 
 	ssdfs_current_segment_lock(cur_seg);
 
@@ -1519,15 +1534,15 @@ add_new_current_segment:
 		} else {
 			struct ssdfs_blk2off_table *table;
 			struct ssdfs_requests_queue *create_rq;
-			struct ssdfs_blk2off_range extent;
 
 			table = si->blk2off_table;
 
+			*seg_id = si->seg_id;
 			ssdfs_request_define_segment(si->seg_id, req);
 
 			err = ssdfs_blk2off_table_allocate_extent(table,
 								  blks_count,
-								  &extent);
+								  extent);
 			if (err == -EAGAIN) {
 				struct completion *end;
 				unsigned long res;
@@ -1544,7 +1559,7 @@ add_new_current_segment:
 
 				err = ssdfs_blk2off_table_allocate_extent(table,
 								     blks_count,
-								     &extent);
+								     extent);
 			}
 
 			if (unlikely(err)) {
@@ -1553,14 +1568,14 @@ add_new_current_segment:
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(extent.start_lblk >= U16_MAX);
-			BUG_ON(extent.len != blks_count);
+			BUG_ON(extent->start_lblk >= U16_MAX);
+			BUG_ON(extent->len != blks_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			ssdfs_request_define_volume_extent(extent.start_lblk,
-							   extent.len, req);
+			ssdfs_request_define_volume_extent(extent->start_lblk,
+							   extent->len, req);
 
-			if (atomic_sub_return(extent.len,
+			if (atomic_sub_return(extent->len,
 					&blk_bmap->free_logical_blks) < 0) {
 				err = -ERANGE;
 				SSDFS_WARN("invalid free pages management\n");
@@ -1600,6 +1615,8 @@ finish_add_extent:
  * @fsi: pointer on shared file system object
  * @req_class: request class
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new block into segment.
  *
@@ -1613,7 +1630,9 @@ finish_add_extent:
 static
 int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 				   int req_class,
-				   struct ssdfs_segment_request *req)
+				   struct ssdfs_segment_request *req,
+				   u64 *seg_id,
+				   struct ssdfs_blk2off_range *extent)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -1637,7 +1656,7 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 
 	down_read(&fsi->cur_segs->lock);
 	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
-	err = __ssdfs_segment_add_block(cur_seg, req);
+	err = __ssdfs_segment_add_block(cur_seg, req, seg_id, extent);
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
@@ -1648,6 +1667,8 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
  * @fsi: pointer on shared file system object
  * @req_class: request class
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new block into segment.
  *
@@ -1661,7 +1682,9 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 static
 int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
 				    int req_class,
-				    struct ssdfs_segment_request *req)
+				    struct ssdfs_segment_request *req,
+				    u64 *seg_id,
+				    struct ssdfs_blk2off_range *extent)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -1685,7 +1708,7 @@ int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
 
 	down_read(&fsi->cur_segs->lock);
 	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
-	err = __ssdfs_segment_add_block(cur_seg, req);
+	err = __ssdfs_segment_add_block(cur_seg, req, seg_id, extent);
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
@@ -1695,6 +1718,8 @@ int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
  * ssdfs_segment_pre_alloc_data_block_sync() - synchronous pre-alloc data block
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a new data block into segment.
  *
@@ -1706,17 +1731,21 @@ int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-					      req);
+					      req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_data_block_async() - async pre-alloc data block
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a new data block into segment.
  *
@@ -1728,17 +1757,21 @@ int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-					       req);
+					       req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_leaf_node_block_sync() - sync pre-alloc leaf node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a leaf node's block into segment.
  *
@@ -1750,17 +1783,21 @@ int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
-					   struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ,
-					      req);
+					      req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_leaf_node_block_async() - async pre-alloc leaf node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a leaf node's block into segment.
  *
@@ -1772,17 +1809,21 @@ int ssdfs_segment_pre_alloc_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_leaf_node_block_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ,
-					       req);
+					       req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_hybrid_node_block_sync() - sync pre-alloc hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a hybrid node's block into segment.
  *
@@ -1794,17 +1835,21 @@ int ssdfs_segment_pre_alloc_leaf_node_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ,
-					      req);
+					      req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_hybrid_node_block_async() - pre-alloc hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a hybrid node's block into segment.
  *
@@ -1816,17 +1861,21 @@ int ssdfs_segment_pre_alloc_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ,
-					       req);
+					       req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_index_node_block_sync() - sync pre-alloc index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate an index node's block into segment.
  *
@@ -1838,17 +1887,21 @@ int ssdfs_segment_pre_alloc_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_index_node_block_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					     SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
-					     req);
+					     req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_index_node_block_async() - pre-alloc index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate an index node's block into segment.
  *
@@ -1860,17 +1913,21 @@ int ssdfs_segment_pre_alloc_index_node_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_index_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					     SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
-					     req);
+					     req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_data_block_sync() - add new data block synchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new data block into segment.
  *
@@ -1882,17 +1939,21 @@ int ssdfs_segment_pre_alloc_index_node_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_data_block_async() - add new data block asynchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new data block into segment.
  *
@@ -1904,17 +1965,21 @@ int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_leaf_node_block_sync() - add new leaf node synchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new leaf node's block into segment.
  *
@@ -1926,17 +1991,21 @@ int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_leaf_node_block_async() - add new leaf node asynchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new leaf node's block into segment.
  *
@@ -1948,17 +2017,21 @@ int ssdfs_segment_add_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_leaf_node_block_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_hybrid_node_block_sync() - add new hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new hybrid node's block into segment
  * synchronously.
@@ -1971,17 +2044,21 @@ int ssdfs_segment_add_leaf_node_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_hybrid_node_block_async() - add new hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new hybrid node's block into segment
  * asynchronously.
@@ -1994,17 +2071,21 @@ int ssdfs_segment_add_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
-					      struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_index_node_block_sync() - add new index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new index node's block into segment
  * synchronously.
@@ -2017,17 +2098,21 @@ int ssdfs_segment_add_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_index_node_block_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_index_node_block_async() - add new index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new index node's block into segment
  * asynchronously.
@@ -2040,11 +2125,13 @@ int ssdfs_segment_add_index_node_block_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
@@ -2052,6 +2139,8 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
  * @fsi: pointer on shared file system object
  * @req_class: request class
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new extent into segment.
  *
@@ -2065,7 +2154,9 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
 static
 int __ssdfs_segment_add_extent_sync(struct ssdfs_fs_info *fsi,
 				    int req_class,
-				    struct ssdfs_segment_request *req)
+				    struct ssdfs_segment_request *req,
+				    u64 *seg_id,
+				    struct ssdfs_blk2off_range *extent)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -2089,7 +2180,7 @@ int __ssdfs_segment_add_extent_sync(struct ssdfs_fs_info *fsi,
 
 	down_read(&fsi->cur_segs->lock);
 	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
-	err = __ssdfs_segment_add_extent(cur_seg, req);
+	err = __ssdfs_segment_add_extent(cur_seg, req, seg_id, extent);
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
@@ -2100,6 +2191,8 @@ int __ssdfs_segment_add_extent_sync(struct ssdfs_fs_info *fsi,
  * @fsi: pointer on shared file system object
  * @req_class: request class
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new extent into segment.
  *
@@ -2113,7 +2206,9 @@ int __ssdfs_segment_add_extent_sync(struct ssdfs_fs_info *fsi,
 static
 int __ssdfs_segment_add_extent_async(struct ssdfs_fs_info *fsi,
 				     int req_class,
-				     struct ssdfs_segment_request *req)
+				     struct ssdfs_segment_request *req,
+				     u64 *seg_id,
+				     struct ssdfs_blk2off_range *extent)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -2137,7 +2232,7 @@ int __ssdfs_segment_add_extent_async(struct ssdfs_fs_info *fsi,
 
 	down_read(&fsi->cur_segs->lock);
 	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
-	err = __ssdfs_segment_add_extent(cur_seg, req);
+	err = __ssdfs_segment_add_extent(cur_seg, req, seg_id, extent);
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
@@ -2147,6 +2242,8 @@ int __ssdfs_segment_add_extent_async(struct ssdfs_fs_info *fsi,
  * ssdfs_segment_pre_alloc_data_extent_sync() - sync pre-alloc a data extent
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a new data extent into segment.
  *
@@ -2158,17 +2255,21 @@ int __ssdfs_segment_add_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-					       req);
+					       req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_data_extent_async() - async pre-alloc a data extent
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a new data extent into segment.
  *
@@ -2180,17 +2281,21 @@ int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 						SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_leaf_node_extent_sync() - pre-alloc a leaf node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a leaf node's extent into segment.
  *
@@ -2202,17 +2307,21 @@ int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
-					   struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ,
-					       req);
+					       req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_leaf_node_extent_async() - pre-alloc a leaf node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a leaf node's extent into segment.
  *
@@ -2224,17 +2333,21 @@ int ssdfs_segment_pre_alloc_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_leaf_node_extent_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 					    SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ,
-					    req);
+					    req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_hybrid_node_extent_sync() - pre-alloc a hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a hybrid node's extent into segment.
  *
@@ -2246,17 +2359,21 @@ int ssdfs_segment_pre_alloc_leaf_node_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_hybrid_node_extent_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ,
-					       req);
+					       req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_hybrid_node_extent_sync() - pre-alloc a hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate a hybrid node's extent into segment.
  *
@@ -2268,17 +2385,21 @@ int ssdfs_segment_pre_alloc_hybrid_node_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_hybrid_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 					    SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ,
-					    req);
+					    req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_index_node_extent_sync() - pre-alloc an index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate an index node's extent into segment.
  *
@@ -2290,17 +2411,21 @@ int ssdfs_segment_pre_alloc_hybrid_node_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_index_node_extent_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 					    SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
-					    req);
+					    req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_pre_alloc_index_node_extent_sync() - pre-alloc an index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to pre-allocate an index node's extent into segment.
  *
@@ -2312,17 +2437,21 @@ int ssdfs_segment_pre_alloc_index_node_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_pre_alloc_index_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 					    SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
-					    req);
+					    req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_data_extent_sync() - add new data extent synchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new data extent into segment.
  *
@@ -2334,17 +2463,21 @@ int ssdfs_segment_pre_alloc_index_node_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_data_extent_async() - add new data extent asynchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new data extent into segment.
  *
@@ -2356,17 +2489,21 @@ int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_leaf_node_extent_sync() - add new leaf node synchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new leaf node's extent into segment.
  *
@@ -2378,17 +2515,21 @@ int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_leaf_node_extent_async() - add new leaf node asynchronously
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new leaf node's extent into segment.
  *
@@ -2400,17 +2541,21 @@ int ssdfs_segment_add_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_leaf_node_extent_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_hybrid_node_extent_sync() - add new hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new hybrid node's extent into segment
  * synchronously.
@@ -2423,17 +2568,21 @@ int ssdfs_segment_add_leaf_node_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_hybrid_node_extent_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_hybrid_node_extent_async() - add new hybrid node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new hybrid node's extent into segment
  * asynchronously.
@@ -2446,17 +2595,21 @@ int ssdfs_segment_add_hybrid_node_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_hybrid_node_extent_async(struct ssdfs_fs_info *fsi,
-					      struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_index_node_extent_sync() - add new index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new index node's extent into segment
  * synchronously.
@@ -2469,17 +2622,21 @@ int ssdfs_segment_add_hybrid_node_extent_async(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_index_node_extent_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_sync(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*
  * ssdfs_segment_add_index_node_extent_async() - add new index node
  * @fsi: pointer on shared file system object
  * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
  *
  * This function tries to add new index node's extent into segment
  * asynchronously.
@@ -2492,11 +2649,13 @@ int ssdfs_segment_add_index_node_extent_sync(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_add_index_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req)
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
 {
 	return __ssdfs_segment_add_extent_async(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
-						req);
+						req, seg_id, extent);
 }
 
 /*

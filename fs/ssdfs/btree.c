@@ -27,6 +27,7 @@
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 #include "btree_search.h"
@@ -1295,6 +1296,7 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	u64 logical_offset;
 	u64 seg_id;
 	int seg_type;
+	struct ssdfs_blk2off_range extent;
 	int err = 0;
 
 	SSDFS_DBG("node_type %#x\n", node_type);
@@ -1330,16 +1332,22 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 
 	switch (node_type) {
 	case SSDFS_BTREE_INDEX_NODE:
-		err = ssdfs_segment_pre_alloc_index_node_extent_async(fsi, req);
+		err = ssdfs_segment_pre_alloc_index_node_extent_async(fsi, req,
+								      &seg_id,
+								      &extent);
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
 		err = ssdfs_segment_pre_alloc_hybrid_node_extent_async(fsi,
-									req);
+								       req,
+								       &seg_id,
+								       &extent);
 		break;
 
 	case SSDFS_BTREE_LEAF_NODE:
-		err = ssdfs_segment_pre_alloc_leaf_node_extent_async(fsi, req);
+		err = ssdfs_segment_pre_alloc_leaf_node_extent_async(fsi, req,
+								     &seg_id,
+								     &extent);
 		break;
 
 	default:
@@ -1358,29 +1366,20 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 		goto free_segment_request;
 	}
 
-	if (req->result.err) {
-		err = req->result.err;
-		SSDFS_ERR("request finished with err %d\n",
-			  err);
-		goto free_segment_request;
-	}
-
-	if (node->pages_per_node != req->place.len) {
+	if (node->pages_per_node != extent.len) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid request result: "
 			  "pages_per_node %u != len %u\n",
 			  node->pages_per_node,
-			  req->place.len);
+			  extent.len);
 		goto finish_pre_allocate_node;
 	}
-
-	seg_id = req->place.start.seg_id;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(seg_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	seg_type = SEG_TYPE(req->private.class);
+	seg_type = NODE2SEG_TYPE(node_type);
 
 	si = ssdfs_grab_segment(fsi, seg_type, seg_id, U64_MAX);
 	if (IS_ERR_OR_NULL(si)) {
@@ -1394,8 +1393,8 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	spin_lock(&node->descriptor_lock);
 	node->seg = si;
 	node->extent.seg_id = cpu_to_le64(seg_id);
-	node->extent.logical_blk = cpu_to_le32(req->place.start.blk_index);
-	node->extent.len = cpu_to_le32(req->place.len);
+	node->extent.logical_blk = cpu_to_le32(extent.start_lblk);
+	node->extent.len = cpu_to_le32(extent.len);
 	memcpy(&node->node_index.index.extent, &node->extent,
 		sizeof(struct ssdfs_raw_extent));
 	spin_unlock(&node->descriptor_lock);
@@ -1403,18 +1402,15 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	SSDFS_DBG("tree_type %#x, node_id %u, node_type %#x, "
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  node->tree->type, node->node_id, node_type,
-		  seg_id, req->place.start.blk_index,
-		  req->place.len);
+		  seg_id, extent.start_lblk, extent.len);
 
 	return 0;
-
-finish_pre_allocate_node:
-	ssdfs_put_request(req);
-	return err;
 
 free_segment_request:
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
+
+finish_pre_allocate_node:
 	return err;
 }
 
@@ -1769,13 +1765,13 @@ finish_insert_node:
 	return ptr;
 
 fail_read_node:
+	complete_all(&ptr->init_end);
 	ssdfs_btree_radix_tree_delete(tree, node_id);
 	if (tree->btree_ops && tree->btree_ops->delete_node)
 		tree->btree_ops->delete_node(ptr);
 	if (tree->btree_ops && tree->btree_ops->destroy_node)
 		tree->btree_ops->destroy_node(ptr);
 	ssdfs_btree_node_destroy(ptr);
-	complete_all(&ptr->init_end);
 	return ERR_PTR(err);
 }
 

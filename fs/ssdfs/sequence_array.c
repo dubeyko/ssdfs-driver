@@ -131,20 +131,27 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 				  ssdfs_free_item free_item)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
+	unsigned long index = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !free_item);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("array %p\n", array);
+SSDFS_ERR("array %p\n", array);
 
+	rcu_read_lock();
 	spin_lock(&array->lock);
-	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
+	radix_tree_for_each_slot(slot, &array->map, &iter, index) {
 		item_ptr = radix_tree_delete(&array->map, iter.index);
 
 		spin_unlock(&array->lock);
+		rcu_read_unlock();
+
+SSDFS_ERR("index %llu, ptr %px (%p)\n",
+			  (u64)iter.index, item_ptr, item_ptr);
+
 		if (!item_ptr) {
 			SSDFS_WARN("empty node pointer: "
 				   "index %llu\n",
@@ -152,10 +159,15 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 		} else {
 			free_item(item_ptr);
 		}
+
+		index = iter.index + 1;
+
+		rcu_read_lock();
 		spin_lock(&array->lock);
 	}
 	array->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 	spin_unlock(&array->lock);
+	rcu_read_unlock();
 
 	ssdfs_seq_arr_kfree(array);
 }
@@ -183,8 +195,8 @@ int ssdfs_sequence_array_init_item(struct ssdfs_sequence_array *array,
 	BUG_ON(!array || !item);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("array %p, id %lu, item %p\n",
-		  array, id, item);
+SSDFS_ERR("array %p, id %lu, item %px (%p)\n",
+		  array, id, item, item);
 
 	if (id > array->revert_threshold) {
 		SSDFS_ERR("invalid input: "
@@ -244,8 +256,8 @@ int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
 	BUG_ON(!array || !item || !id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("array %p, item %p, id %p\n",
-		  array, item, id);
+SSDFS_ERR("array %p, item %px (%p), id %px (%p)\n",
+		  array, item, item, id, id);
 
 	*id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 
@@ -282,6 +294,10 @@ finish_add_item:
 	spin_unlock(&array->lock);
 
 	radix_tree_preload_end();
+
+
+SSDFS_ERR("id %lu\n", *id);
+
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add item into radix tree: "
