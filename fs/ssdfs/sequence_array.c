@@ -133,7 +133,6 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 	struct radix_tree_iter iter;
 	void __rcu **slot;
 	void *item_ptr;
-	unsigned long index = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !free_item);
@@ -143,8 +142,8 @@ SSDFS_ERR("array %p\n", array);
 
 	rcu_read_lock();
 	spin_lock(&array->lock);
-	radix_tree_for_each_slot(slot, &array->map, &iter, index) {
-		item_ptr = radix_tree_delete(&array->map, iter.index);
+	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
+		item_ptr = rcu_dereference_raw(*slot);
 
 		spin_unlock(&array->lock);
 		rcu_read_unlock();
@@ -160,10 +159,10 @@ SSDFS_ERR("index %llu, ptr %px (%p)\n",
 			free_item(item_ptr);
 		}
 
-		index = iter.index + 1;
-
 		rcu_read_lock();
 		spin_lock(&array->lock);
+
+		radix_tree_iter_delete(&array->map, &iter, slot);
 	}
 	array->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 	spin_unlock(&array->lock);

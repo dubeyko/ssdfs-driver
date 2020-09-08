@@ -4306,6 +4306,7 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 	u64 old_hash;
 	u32 bmap_bytes;
 	u16 valid_inodes;
+	u64 allocated_inodes;
 	u64 free_inodes;
 	u64 inodes_capacity;
 	u32 area_size;
@@ -4508,16 +4509,49 @@ finish_delete_range:
 		index_count = node->index_area.index_count;
 		up_read(&node->header_lock);
 
-		if (items_count == 0 && index_count <= 1) {
-			err = ssdfs_btree_node_delete_index(node, old_hash);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to delete index: "
-					  "old_hash %llx, err %d\n",
-					  old_hash, err);
-				return err;
-			}
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_DELETE_RANGE:
+		case SSDFS_BTREE_SEARCH_DELETE_ALL:
+			/*
+			 * Moving all items into a leaf node
+			 */
+			if (items_count == 0) {
+				err = ssdfs_btree_node_delete_index(node,
+								    old_hash);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete index: "
+						  "old_hash %llx, err %d\n",
+						  old_hash, err);
+					return err;
+				}
 
-			index_count = 0;
+				if (index_count > 0)
+					index_count--;
+			} else {
+				SSDFS_WARN("unexpected items_count %u\n",
+					   items_count);
+				return -ERANGE;
+			}
+			break;
+
+		case SSDFS_BTREE_SEARCH_DELETE_ITEM:
+			if (items_count == 0 && index_count <= 1) {
+				err = ssdfs_btree_node_delete_index(node,
+								    old_hash);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete index: "
+						  "old_hash %llx, err %d\n",
+						  old_hash, err);
+					return err;
+				}
+
+				if (index_count > 0)
+					index_count--;
+			}
+			break;
+
+		default:
+			BUG();
 		}
 		break;
 
@@ -4531,6 +4565,7 @@ finish_delete_range:
 	spin_lock(&itree->lock);
 	free_inodes = itree->free_inodes;
 	inodes_capacity = itree->inodes_capacity;
+	allocated_inodes = itree->allocated_inodes;
 	if (itree->allocated_inodes < search->request.count)
 		err = -ERANGE;
 	else if ((free_inodes + search->request.count) > inodes_capacity)
@@ -4540,6 +4575,18 @@ finish_delete_range:
 		itree->free_inodes += search->request.count;
 	}
 	spin_unlock(&itree->lock);
+
+
+
+SSDFS_ERR("valid_inodes %u, allocated_inodes %llu, "
+	  "free_inodes %llu, inodes_capacity %llu, "
+	  "search->request.count %u\n",
+	  valid_inodes, allocated_inodes,
+	  free_inodes, inodes_capacity,
+	  search->request.count);
+
+
+
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct allocated_inodes count: "

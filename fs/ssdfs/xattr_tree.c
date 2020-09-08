@@ -8462,7 +8462,8 @@ finish_delete_range:
 					return err;
 				}
 
-				index_count = 0;
+				if (index_count > 0)
+					index_count--;
 			}
 		} else if (old_hash != start_hash) {
 			struct ssdfs_btree_index_key old_key, new_key;
