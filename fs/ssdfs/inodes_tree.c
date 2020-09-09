@@ -521,6 +521,13 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 	ptr->nodes_count = le32_to_cpu(raw_btree->nodes_count);
 	ptr->raw_inode_size = le16_to_cpu(raw_btree->desc.item_size);
 
+	SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
+		  "free_inodes %llu, inodes_capacity %llu\n",
+		  ptr->upper_allocated_ino,
+		  ptr->allocated_inodes,
+		  ptr->free_inodes,
+		  ptr->inodes_capacity);
+
 	memcpy(&ptr->root_folder, &fsi->vs->root_folder, raw_inode_size);
 	if (!is_raw_inode_checksum_correct(fsi,
 					   &ptr->root_folder,
@@ -548,6 +555,17 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 		search->request.start.hash = 0;
 		search->request.end.hash = 0;
 		search->request.count = 1;
+
+		ptr->allocated_inodes = 0;
+		ptr->free_inodes = 0;
+		ptr->inodes_capacity = 0;
+
+	SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
+		  "free_inodes %llu, inodes_capacity %llu\n",
+		  ptr->upper_allocated_ino,
+		  ptr->allocated_inodes,
+		  ptr->free_inodes,
+		  ptr->inodes_capacity);
 
 		err = ssdfs_btree_add_node(&ptr->generic_tree, search);
 		if (unlikely(err)) {
@@ -1668,7 +1686,7 @@ int ssdfs_process_deleted_nodes(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !node->tree || !q);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, state %#x, "
+	SSDFS_DBG("node_id %u, state %#x, "
 		  "start_hash %llx, end_hash %llx, "
 		  "inodes_per_node %u\n",
 		  node->node_id, atomic_read(&node->state),
@@ -1748,7 +1766,7 @@ int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !node->tree || !q);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, state %#x\n",
+	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 
 	down_read(&node->header_lock);
@@ -1821,7 +1839,7 @@ SSDFS_ERR("node_id %u, state %#x\n",
 
 		start_hash = le64_to_cpu(index.index.hash);
 
-SSDFS_ERR("start_hash %llx, index_area.start_hash %llx\n",
+		SSDFS_DBG("start_hash %llx, index_area.start_hash %llx\n",
 			  start_hash, index_area.start_hash);
 
 		if (index_area.start_hash != start_hash) {
@@ -1860,7 +1878,7 @@ SSDFS_ERR("start_hash %llx, index_area.start_hash %llx\n",
 
 			start_hash = le64_to_cpu(index.index.hash);
 
-SSDFS_ERR("i %lld, index_area.index_count %u, "
+			SSDFS_DBG("i %lld, index_area.index_count %u, "
 				  "prev_hash %llx, start_hash %llx, "
 				  "inodes_per_node %u\n",
 				  i, index_area.index_count,
@@ -1938,7 +1956,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!node || !node->tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, state %#x\n",
+	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 
 	if (node->tree->type == SSDFS_INODES_BTREE)
@@ -2011,16 +2029,11 @@ SSDFS_ERR("node_id %u, state %#x\n",
 	inodes_count = le16_to_cpu(hdr->inodes_count);
 	valid_inodes = le16_to_cpu(hdr->valid_inodes);
 
-
-
-
-SSDFS_ERR("start_hash %llx, end_hash %llx, "
-	  "items_capacity %u, valid_inodes %u, "
-	  "inodes_count %u\n",
-	  start_hash, end_hash, items_capacity,
-	  valid_inodes, inodes_count);
-
-
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "items_capacity %u, valid_inodes %u, "
+		  "inodes_count %u\n",
+		  start_hash, end_hash, items_capacity,
+		  valid_inodes, inodes_count);
 
 	if (item_size == 0 || node_size % item_size) {
 		err = -EIO;
@@ -3300,6 +3313,9 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	u64 end_hash;
 	u32 bmap_bytes;
 	u64 free_inodes;
+	u64 allocated_inodes;
+	u64 upper_allocated_ino;
+	u64 inodes_capacity;
 	u32 used_space;
 	int i;
 	int err = 0;
@@ -3512,7 +3528,19 @@ finish_allocate_item:
 		if (itree->upper_allocated_ino < upper_bound)
 			itree->upper_allocated_ino = upper_bound;
 	}
+
+	upper_allocated_ino = itree->upper_allocated_ino;
+	allocated_inodes = itree->allocated_inodes;
+	free_inodes = itree->free_inodes;
+	inodes_capacity = itree->inodes_capacity;
 	spin_unlock(&itree->lock);
+
+	SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
+		  "free_inodes %llu, inodes_capacity %llu\n",
+		  itree->upper_allocated_ino,
+		  itree->allocated_inodes,
+		  itree->free_inodes,
+		  itree->inodes_capacity);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct free_inodes count: "
@@ -3772,6 +3800,9 @@ int __ssdfs_inodes_btree_node_insert_range(struct ssdfs_btree_node *node,
 	int free_items;
 	u16 inodes_count = 0;
 	u32 used_space;
+	u64 free_inodes;
+	u64 allocated_inodes;
+	u64 inodes_capacity;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4028,6 +4059,33 @@ finish_insert_item:
 	default:
 		/* do nothing */
 		break;
+	}
+
+	spin_lock(&itree->lock);
+	free_inodes = itree->free_inodes;
+	if (free_inodes < search->request.count)
+		err = -ERANGE;
+	else {
+		itree->allocated_inodes += search->request.count;
+		itree->free_inodes -= search->request.count;
+	}
+	allocated_inodes = itree->allocated_inodes;
+	free_inodes = itree->free_inodes;
+	inodes_capacity = itree->inodes_capacity;
+	spin_unlock(&itree->lock);
+
+	SSDFS_DBG("allocated_inodes %llu, "
+		  "free_inodes %llu, inodes_capacity %llu, "
+		  "search->request.count %u\n",
+		  allocated_inodes,
+		  free_inodes, inodes_capacity,
+		  search->request.count);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to correct allocated_inodes count: "
+			  "err %d\n",
+			  err);
+		return err;
 	}
 
 	ssdfs_debug_btree_node_object(node);
@@ -4565,7 +4623,6 @@ finish_delete_range:
 	spin_lock(&itree->lock);
 	free_inodes = itree->free_inodes;
 	inodes_capacity = itree->inodes_capacity;
-	allocated_inodes = itree->allocated_inodes;
 	if (itree->allocated_inodes < search->request.count)
 		err = -ERANGE;
 	else if ((free_inodes + search->request.count) > inodes_capacity)
@@ -4574,19 +4631,16 @@ finish_delete_range:
 		itree->allocated_inodes -= search->request.count;
 		itree->free_inodes += search->request.count;
 	}
+	free_inodes = itree->free_inodes;
+	allocated_inodes = itree->allocated_inodes;
 	spin_unlock(&itree->lock);
 
-
-
-SSDFS_ERR("valid_inodes %u, allocated_inodes %llu, "
-	  "free_inodes %llu, inodes_capacity %llu, "
-	  "search->request.count %u\n",
-	  valid_inodes, allocated_inodes,
-	  free_inodes, inodes_capacity,
-	  search->request.count);
-
-
-
+	SSDFS_DBG("valid_inodes %u, allocated_inodes %llu, "
+		  "free_inodes %llu, inodes_capacity %llu, "
+		  "search->request.count %u\n",
+		  valid_inodes, allocated_inodes,
+		  free_inodes, inodes_capacity,
+		  search->request.count);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct allocated_inodes count: "

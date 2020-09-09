@@ -12281,7 +12281,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
+SSDFS_ERR("node_id %u, area_offset %u, area_size %u, "
 		  "item_size %zu, start_index %u, "
 		  "range_len %u, shift %u\n",
 		  node->node_id, area_offset, area_size,
@@ -12294,7 +12294,13 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		u32 range_len1, range_len2;
 		u32 moving_items;
 
-		SSDFS_DBG("src_index %d, dst_index %d\n",
+		if (moved_items >= range_len) {
+			SSDFS_ERR("moved_items %u >= range_len %u\n",
+			      moved_items, range_len);
+			return -ERANGE;
+		}
+
+SSDFS_ERR("src_index %d, dst_index %d\n",
 			  src_index, dst_index);
 
 		item_offset1 = (u32)src_index * item_size;
@@ -12371,7 +12377,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		SSDFS_DBG("page_index1 %d, item_offset1 %u, "
+SSDFS_ERR("page_index1 %d, item_offset1 %u, "
 			  "page_index2 %d, item_offset2 %u\n",
 			  page_index1, item_offset1,
 			  page_index2, item_offset2);
@@ -12398,7 +12404,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		src_index += moving_items;
 		dst_index += moving_items;
 
-		SSDFS_DBG("moving_items %u, src_index %d, dst_index %d\n",
+SSDFS_ERR("moving_items %u, src_index %d, dst_index %d\n",
 			  moving_items, src_index, dst_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -12406,13 +12412,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		moved_items += moving_items;
-	} while (dst_index < start_index);
-
-	if (moved_items != range_len) {
-		SSDFS_ERR("moved_items %u != range_len %u\n",
-			  moved_items, range_len);
-		return -ERANGE;
-	}
+	} while (moved_items < range_len);
 
 	return 0;
 }
