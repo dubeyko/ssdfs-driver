@@ -4392,7 +4392,6 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 				     int blk_state,
 				     struct ssdfs_block_bmap_range *range)
 {
-	u32 max_blk;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4403,9 +4402,9 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("blk_bmap %p, start %u, max_len %u\n",
+SSDFS_ERR("blk_bmap %p, start %u, max_len %u\n",
 		  blk_bmap, start, max_len);
-	SSDFS_DBG("items_count %zu, used_blks %u, "
+SSDFS_ERR("items_count %zu, used_blks %u, "
 		  "metadata_items %u\n",
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
@@ -4414,14 +4413,6 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
-	}
-
-	max_blk = blk_bmap->items_count - blk_bmap->metadata_items;
-
-	if (start >= max_blk) {
-		SSDFS_ERR("invalid start %u; items count %u\n",
-			  start, max_blk);
-		return -EINVAL;
 	}
 
 	switch (blk_state) {
@@ -4436,18 +4427,18 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	};
 
-	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len, max_blk,
+	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len, max_len,
 					  blk_state, range);
 	if (err == -ENODATA) {
 		SSDFS_DBG("range (start %u, len %u) hasn't valid blocks\n",
-			  range->start, range->len);
+			  start, max_len);
 		return err;
 	} else if (err) {
 		SSDFS_ERR("fail to find valid blocks: err %d\n", err);
 		return err;
 	}
 
-	SSDFS_DBG("range (start %u, len %u) has been collected as garbage\n",
+SSDFS_ERR("range (start %u, len %u) has been collected as garbage\n",
 		  range->start, range->len);
 
 	return 0;
