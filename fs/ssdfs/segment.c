@@ -154,7 +154,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	if (!si)
 		return 0;
 
-SSDFS_ERR("seg %llu, seg_state %#x, log_pages %u, "
+	SSDFS_DBG("seg %llu, seg_state %#x, log_pages %u, "
 		  "create_threads %u\n",
 		  si->seg_id, atomic_read(&si->seg_state),
 		  si->log_pages, si->create_threads);

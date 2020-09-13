@@ -527,7 +527,7 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	int migrating_blks = -1;
 	int i;
 
-SSDFS_ERR("table %p\n", table);
+	SSDFS_DBG("table %p\n", table);
 
 	if (!table) {
 		WARN_ON(!table);

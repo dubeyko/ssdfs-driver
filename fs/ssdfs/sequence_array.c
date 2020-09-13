@@ -138,7 +138,7 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 	BUG_ON(!array || !free_item);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("array %p\n", array);
+	SSDFS_DBG("array %p\n", array);
 
 	rcu_read_lock();
 	spin_lock(&array->lock);
@@ -148,8 +148,8 @@ SSDFS_ERR("array %p\n", array);
 		spin_unlock(&array->lock);
 		rcu_read_unlock();
 
-SSDFS_ERR("index %llu, ptr %px (%p)\n",
-			  (u64)iter.index, item_ptr, item_ptr);
+		SSDFS_DBG("index %llu, ptr %p\n",
+			  (u64)iter.index, item_ptr);
 
 		if (!item_ptr) {
 			SSDFS_WARN("empty node pointer: "
@@ -194,8 +194,8 @@ int ssdfs_sequence_array_init_item(struct ssdfs_sequence_array *array,
 	BUG_ON(!array || !item);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("array %p, id %lu, item %px (%p)\n",
-		  array, id, item, item);
+	SSDFS_DBG("array %p, id %lu, item %p\n",
+		  array, id, item);
 
 	if (id > array->revert_threshold) {
 		SSDFS_ERR("invalid input: "
@@ -255,8 +255,8 @@ int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
 	BUG_ON(!array || !item || !id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("array %p, item %px (%p), id %px (%p)\n",
-		  array, item, item, id, id);
+	SSDFS_DBG("array %p, item %p, id %p\n",
+		  array, item, id);
 
 	*id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 
@@ -294,9 +294,7 @@ finish_add_item:
 
 	radix_tree_preload_end();
 
-
-SSDFS_ERR("id %lu\n", *id);
-
+	SSDFS_DBG("id %lu\n", *id);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add item into radix tree: "
