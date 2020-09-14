@@ -4298,7 +4298,7 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 
 		default:
 			/* do nothing */
-			SSDFS_ERR("PEB not under migration: "
+			SSDFS_DBG("PEB not under migration: "
 				  "state %#x\n",
 				  found_state->state);
 			goto finish_exclude_migration_peb;

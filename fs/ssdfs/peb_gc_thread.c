@@ -1264,8 +1264,8 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 		SSDFS_ERR("fail to prepare range migration: "
 			  "err %d\n", err);
 	} else if (count == 0) {
-		err = -ERANGE;
-		SSDFS_ERR("no data for migration: "
+		err = -ENODATA;
+		SSDFS_DBG("no data for migration: "
 			  "seg %llu, peb_index %u\n",
 			  si->seg_id, pebc->peb_index);
 	}
@@ -1286,14 +1286,8 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 	ssdfs_request_init(pair->req);
 	ssdfs_get_request(pair->req);
 
-	/*
-	 * Define fake extent
-	 */
-	pair->req->place.start.blk_index = 0;
-	pair->req->place.len = 1;
-
-	err = ssdfs_segment_commit_log_async(si, SSDFS_REQ_ASYNC_NO_FREE,
-					     pair->req);
+	err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC_NO_FREE,
+					      pebc->peb_index, pair->req);
 	if (unlikely(err)) {
 		SSDFS_ERR("commit log request failed: "
 			  "err %d\n", err);
@@ -1409,14 +1403,8 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 	ssdfs_request_init(pair->req);
 	ssdfs_get_request(pair->req);
 
-	/*
-	 * Define fake extent
-	 */
-	pair->req->place.start.blk_index = 0;
-	pair->req->place.len = 1;
-
-	err = ssdfs_segment_commit_log_async(si, SSDFS_REQ_ASYNC_NO_FREE,
-					     pair->req);
+	err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC_NO_FREE,
+					      pebc->peb_index, pair->req);
 	if (unlikely(err)) {
 		SSDFS_ERR("commit log request failed: "
 			  "err %d\n", err);
@@ -1783,7 +1771,14 @@ collect_garbage_now:
 
 				err = ssdfs_gc_stimulate_migration(si, pebc,
 								   &reqs_array);
-				if (unlikely(err)) {
+				if (err == -ENODATA) {
+					SSDFS_ERR("no data for migration: "
+						  "seg %llu, leb_id %llu, "
+						  "err %d\n",
+						  seg_id, cur_leb_id, err);
+					err = 0;
+					ssdfs_segment_put_object(si);
+				} else if (unlikely(err)) {
 					SSDFS_ERR("fail to stimulate migration: "
 						  "seg %llu, leb_id %llu, "
 						  "err %d\n",

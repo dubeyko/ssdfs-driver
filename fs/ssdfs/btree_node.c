@@ -1531,7 +1531,7 @@ int ssdfs_btree_init_node_index_area(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, height %u\n",
+	SSDFS_DBG("node_id %u, height %u\n",
 		  node->node_id,
 		  atomic_read(&node->height));
 
@@ -1670,13 +1670,10 @@ SSDFS_ERR("node_id %u, height %u\n",
 		node->index_area.end_hash = end_hash;
 	}
 
-
-SSDFS_ERR("start_hash %llx, end_hash %llx, "
-	  "index_count %u, index_capacity %u\n",
-	  start_hash, end_hash,
-	  index_count, index_capacity);
-
-
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
+		  start_hash, end_hash,
+		  index_count, index_capacity);
 
 	return 0;
 }
@@ -6443,7 +6440,7 @@ int ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, position %u, index_count %u\n",
+	SSDFS_DBG("node_id %u, position %u, index_count %u\n",
 		  node->node_id, position,
 		  node->index_area.index_count);
 
@@ -6512,8 +6509,8 @@ SSDFS_ERR("node_id %u, position %u, index_count %u\n",
 
 	node->index_area.end_hash = le64_to_cpu(tmp_key.index.hash);
 
-SSDFS_ERR("start_hash %llx, end_hash %llx, "
-	  "index_count %u, index_capacity %u\n",
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
 		  node->index_area.start_hash,
 		  node->index_area.end_hash,
 		  node->index_area.index_count,
@@ -7416,7 +7413,7 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("node_id %u, position %u, index_count %u\n",
+	SSDFS_DBG("node_id %u, position %u, index_count %u\n",
 		  node->node_id, position,
 		  node->index_area.index_count);
 
@@ -7485,16 +7482,12 @@ SSDFS_ERR("node_id %u, position %u, index_count %u\n",
 		}
 	}
 
-
-
-SSDFS_ERR("start_hash %llx, end_hash %llx, "
-	  "index_count %u, index_capacity %u\n",
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
 		  node->index_area.start_hash,
 		  node->index_area.end_hash,
 		  node->index_area.index_count,
 		  node->index_area.index_capacity);
-
-
 
 finish_common_node_delete_index:
 	return 0;
@@ -7689,11 +7682,8 @@ finish_change_root_node:
 		BUG_ON(found == U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-
-SSDFS_ERR("index_count %u, found %u\n",
-	  node->index_area.index_count, found);
-
-
+		SSDFS_DBG("index_count %u, found %u\n",
+			  node->index_area.index_count, found);
 
 		count = node->index_area.index_count - found;
 		err = ssdfs_lock_index_range(node, found, count);

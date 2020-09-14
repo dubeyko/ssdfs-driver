@@ -4402,9 +4402,9 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-SSDFS_ERR("blk_bmap %p, start %u, max_len %u\n",
+	SSDFS_DBG("blk_bmap %p, start %u, max_len %u\n",
 		  blk_bmap, start, max_len);
-SSDFS_ERR("items_count %zu, used_blks %u, "
+	SSDFS_DBG("items_count %zu, used_blks %u, "
 		  "metadata_items %u\n",
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
@@ -4438,7 +4438,7 @@ SSDFS_ERR("items_count %zu, used_blks %u, "
 		return err;
 	}
 
-SSDFS_ERR("range (start %u, len %u) has been collected as garbage\n",
+	SSDFS_DBG("range (start %u, len %u) has been collected as garbage\n",
 		  range->start, range->len);
 
 	return 0;

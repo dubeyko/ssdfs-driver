@@ -418,6 +418,12 @@ int ssdfs_segment_commit_log_sync(struct ssdfs_segment_info *si,
 int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
 				   int req_type,
 				   struct ssdfs_segment_request *req);
+int ssdfs_segment_commit_log_sync2(struct ssdfs_segment_info *si,
+				   u16 peb_index,
+				   struct ssdfs_segment_request *req);
+int ssdfs_segment_commit_log_async2(struct ssdfs_segment_info *si,
+				    int req_type, u16 peb_index,
+				    struct ssdfs_segment_request *req);
 
 int ssdfs_segment_invalidate_logical_block(struct ssdfs_segment_info *si,
 					   u32 blk_offset);

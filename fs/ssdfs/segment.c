@@ -3373,6 +3373,158 @@ int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
 }
 
 /*
+ * __ssdfs_segment_commit_log2() - request the commit log operation
+ * @si: segment info
+ * @peb_index: PEB's index
+ * @req: segment request [in|out]
+ *
+ * This function tries to request the commit log operation.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
+				u16 peb_index,
+				struct ssdfs_segment_request *req)
+{
+	struct ssdfs_peb_container *pebc;
+	struct ssdfs_requests_queue *rq;
+	wait_queue_head_t *wait;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, peb_index, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+
+	if (peb_index >= si->pebs_count) {
+		SSDFS_ERR("peb_index %u >= si->pebs_count %u\n",
+			  peb_index, si->pebs_count);
+		return -ERANGE;
+	}
+
+	pebc = &si->peb_array[peb_index];
+	rq = &pebc->update_rq;
+
+	switch (req->private.class) {
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
+		break;
+
+	default:
+		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
+		break;
+	}
+
+	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+	wake_up_all(wait);
+
+	return 0;
+}
+
+/*
+ * ssdfs_segment_commit_log_sync2() - request the commit log operation
+ * @si: segment info
+ * @peb_index: PEB's index
+ * @req: segment request [in|out]
+ *
+ * This function tries to request the commit log operation
+ * synchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_commit_log_sync2(struct ssdfs_segment_info *si,
+				   u16 peb_index,
+				   struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, peb_index, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
+					    SSDFS_COMMIT_LOG_NOW,
+					    SSDFS_REQ_SYNC,
+					    req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_commit_log2(si, peb_index, req);
+}
+
+/*
+ * ssdfs_segment_commit_log_async2() - request the commit log operation
+ * @si: segment info
+ * @req_type: request type
+ * @peb_index: PEB's index
+ * @req: segment request [in|out]
+ *
+ * This function tries to request the commit log operation
+ * asynchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_commit_log_async2(struct ssdfs_segment_info *si,
+				    int req_type, u16 peb_index,
+				    struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, peb_index, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
+					    SSDFS_COMMIT_LOG_NOW,
+					    req_type, req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_commit_log2(si, peb_index, req);
+}
+
+/*
  * ssdfs_segment_invalidate_logical_extent() - invalidate logical extent
  * @si: segment info
  * @start_off: starting logical block

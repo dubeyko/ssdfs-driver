@@ -95,51 +95,6 @@ u8 FIRST_STATE_IN_BYTE(u8 *value, int state,
 }
 
 /*
- * FIRST_MASK_IN_BYTE() - determine first item's offset for requested mask
- * @value: pointer on analysed byte
- * @mask: requested mask
- * @start_offset: starting item's offset for analysis beginning
- * @state_bits: bits per state
- * @state_mask: mask of a bitmap's state
- *
- * This function tries to determine an item for @mask in
- * @value starting from @start_off.
- *
- * RETURN:
- * [success] - found item's offset.
- * [failure] - BITS_PER_BYTE.
- */
-static inline
-u8 FIRST_MASK_IN_BYTE(u8 *value, int mask,
-		      u8 start_offset, u8 state_bits,
-		      int state_mask)
-{
-	u8 i;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!value);
-	BUG_ON(state_bits > BITS_PER_BYTE);
-	BUG_ON((state_bits % 2) != 0);
-	BUG_ON(start_offset > SSDFS_ITEMS_PER_BYTE(state_bits));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("value %#x, mask %#x, "
-		  "start_offset %u, state_bits %u\n",
-		  *value, mask, start_offset, state_bits);
-
-	i = start_offset * state_bits;
-	for (; i < BITS_PER_BYTE; i += state_bits) {
-		if (((*value >> i) & state_mask) & mask) {
-			SSDFS_DBG("found bit %u, found item %u\n",
-				  i, i / state_bits);
-			return i / state_bits;
-		}
-	}
-
-	return SSDFS_ITEMS_PER_BYTE(state_bits);
-}
-
-/*
  * FIND_FIRST_ITEM_IN_BYTE() - find item in byte value
  * @value: pointer on analysed byte
  * @state: requested state or mask
