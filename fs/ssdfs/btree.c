@@ -4375,7 +4375,7 @@ finish_allocate_range:
 static inline
 bool need_update_parent_node(struct ssdfs_btree_search *search)
 {
-	struct ssdfs_btree_node *parent;
+	struct ssdfs_btree_node *child;
 	u64 start_hash;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4384,12 +4384,12 @@ bool need_update_parent_node(struct ssdfs_btree_search *search)
 
 	start_hash = search->request.start.hash;
 
-	parent = search->node.parent;
+	child = search->node.child;
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!parent);
+	BUG_ON(!child);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return need_update_parent_index_area(start_hash, parent);
+	return need_update_parent_index_area(start_hash, child);
 }
 
 /*
@@ -5170,25 +5170,23 @@ try_delete_item:
 		goto finish_delete_item;
 	}
 
-finish_delete_item:
-	up_read(&tree->lock);
-
-	if (unlikely(err))
-		return err;
-
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE) {
+		up_read(&tree->lock);
 		err = ssdfs_btree_delete_node(tree, search);
+		down_read(&tree->lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete btree node: "
 				  "node_id %llu, err %d\n",
 				  (u64)search->node.id, err);
-			return err;
+			goto finish_delete_item;
 		}
 	} else if (need_update_parent_node(search)) {
 		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
 		if (!hierarchy) {
+			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate tree levels' array\n");
-			return -ENOMEM;
+			goto finish_delete_item;
 		}
 
 		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
@@ -5215,11 +5213,15 @@ finish_update_parent:
 		ssdfs_btree_hierarchy_free(hierarchy);
 
 		if (unlikely(err))
-			return err;
+			goto finish_delete_item;
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
-	return 0;
+
+finish_delete_item:
+	up_read(&tree->lock);
+
+	return err;
 }
 
 /*
@@ -5291,9 +5293,9 @@ int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 		return -EINVAL;
 	}
 
-try_delete_next_range:
 	down_read(&tree->lock);
 
+try_delete_next_range:
 	err = __ssdfs_btree_find_range(tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find range: "
@@ -5327,8 +5329,6 @@ try_delete_range_again:
 	}
 
 finish_delete_range:
-	up_read(&tree->lock);
-
 	if (err == -EAGAIN) {
 		/* the range have to be deleted in the next node */
 		err = 0;
@@ -5339,22 +5339,27 @@ finish_delete_range:
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
+		up_read(&tree->lock);
 		return err;
 	}
 
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE) {
+		up_read(&tree->lock);
 		err = ssdfs_btree_delete_node(tree, search);
+		down_read(&tree->lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete btree node: "
 				  "node_id %llu, err %d\n",
 				  (u64)search->node.id, err);
-			return err;
+			goto fail_delete_range;
 		}
 	} else if (need_update_parent_node(search)) {
 		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
 		if (!hierarchy) {
+			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate tree levels' array\n");
-			return -ENOMEM;
+			goto fail_delete_range;
 		}
 
 		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
@@ -5381,7 +5386,7 @@ finish_update_parent:
 		ssdfs_btree_hierarchy_free(hierarchy);
 
 		if (unlikely(err))
-			return err;
+			goto fail_delete_range;
 	}
 
 	if (need_continue_deletion) {
@@ -5390,7 +5395,10 @@ finish_update_parent:
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
-	return 0;
+
+fail_delete_range:
+	up_read(&tree->lock);
+	return err;
 }
 
 /*

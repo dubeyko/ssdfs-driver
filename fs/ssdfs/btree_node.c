@@ -6967,7 +6967,6 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 
 	if (node_type == SSDFS_BTREE_ROOT_NODE) {
 		down_read(&node->full_lock);
-		down_write(&node->header_lock);
 
 		err = ssdfs_find_index_by_hash(node, &node->index_area,
 						old_hash, &found);
@@ -6987,6 +6986,8 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 		BUG_ON(found == U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		down_write(&node->header_lock);
+
 		err = ssdfs_btree_root_node_change_index(node, found,
 							 new_index);
 		if (unlikely(err)) {
@@ -6997,8 +6998,8 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 				  found, err);
 		}
 
-finish_change_root_node:
 		up_write(&node->header_lock);
+finish_change_root_node:
 		up_read(&node->full_lock);
 
 		if (unlikely(err))

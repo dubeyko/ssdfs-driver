@@ -2137,32 +2137,69 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 /*
  * need_update_parent_index_area() - does it need to update parent's index area
  * @start_hash: starting hash value
- * @parent: btree node object
+ * @child: btree node object
  */
 bool need_update_parent_index_area(u64 start_hash,
-				   struct ssdfs_btree_node *parent)
+				   struct ssdfs_btree_node *child)
 {
 	int state;
+	u64 child_start_hash = U64_MAX;
 	bool need_update = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!parent);
+	BUG_ON(!child);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_hash %llx, node_id %u\n",
-		  start_hash, parent->node_id);
+		  start_hash, child->node_id);
 
-	state = atomic_read(&parent->index_area.state);
-	if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
-		SSDFS_ERR("invalid index area's state %#x\n",
-			  state);
-		return -ERANGE;
+	switch (atomic_read(&child->type)) {
+	case SSDFS_BTREE_INDEX_NODE:
+		state = atomic_read(&child->index_area.state);
+		if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  state);
+			return false;
+		}
+
+		down_read(&child->header_lock);
+		child_start_hash = child->index_area.start_hash;
+		up_read(&child->header_lock);
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+	case SSDFS_BTREE_LEAF_NODE:
+		state = atomic_read(&child->items_area.state);
+		if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  state);
+			return false;
+		}
+
+		down_read(&child->header_lock);
+		child_start_hash = child->items_area.start_hash;
+		up_read(&child->header_lock);
+		break;
+
+	default:
+		SSDFS_ERR("unexpected node's type %#x\n",
+			  atomic_read(&child->type));
+		return false;
 	}
 
-	down_read(&parent->header_lock);
-	if (start_hash < parent->index_area.start_hash)
+	if (child_start_hash >= U64_MAX) {
+		SSDFS_ERR("invalid start_hash %llx\n",
+			  child_start_hash);
+		return false;
+	}
+
+	if (start_hash <= child_start_hash)
 		need_update = true;
-	up_read(&parent->header_lock);
+
+	SSDFS_DBG("start_hash %llx, child_start_hash %llx, "
+		  "need_update %#x\n",
+		  start_hash, child_start_hash,
+		  need_update);
 
 	return need_update;
 }
@@ -2592,7 +2629,7 @@ int ssdfs_btree_check_root_index_pair(struct ssdfs_btree *tree,
 			 */
 			return -ENOSPC;
 		}
-	} else if (need_update_parent_index_area(start_hash, parent_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -2774,7 +2811,7 @@ int ssdfs_btree_check_root_hybrid_pair(struct ssdfs_btree *tree,
 			return -ENOSPC;
 		}
 	} else if (need_update_parent_index_area(start_hash,
-						 parent_node)) {
+						 child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -3124,7 +3161,7 @@ int ssdfs_btree_check_index_index_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, parent_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -3281,7 +3318,7 @@ int ssdfs_btree_check_index_hybrid_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, parent_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -3754,7 +3791,7 @@ int ssdfs_btree_check_hybrid_index_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, parent_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -3939,7 +3976,7 @@ int ssdfs_btree_check_hybrid_hybrid_pair(struct ssdfs_btree *tree,
 				return err;
 			}
 		}
-	} else if (need_update_parent_index_area(start_hash, parent_node)) {
+	} else if (need_update_parent_index_area(start_hash, child_node)) {
 		err = ssdfs_btree_prepare_update_index(parent,
 							start_hash,
 							end_hash,
@@ -5209,8 +5246,13 @@ int ssdfs_btree_check_level_for_update(struct ssdfs_btree *tree,
 			/* set necessity to update the parent's index */
 			parent->flags |= SSDFS_BTREE_LEVEL_UPDATE_INDEX;
 		} else {
-			/* show warning */
-			SSDFS_WARN("no necessity to update parent's index\n");
+			err = ssdfs_btree_prepare_do_nothing(parent,
+							     parent_node);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare index node: "
+					  "err %d\n", err);
+				return err;
+			}
 		}
 		break;
 

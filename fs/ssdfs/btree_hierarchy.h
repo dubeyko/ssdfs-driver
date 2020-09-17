@@ -244,7 +244,7 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree);
 void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy);
 
 bool need_update_parent_index_area(u64 start_hash,
-				   struct ssdfs_btree_node *parent);
+				   struct ssdfs_btree_node *child);
 int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 					struct ssdfs_btree_search *search,
 					struct ssdfs_btree_hierarchy *ptr);
