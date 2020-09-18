@@ -1772,7 +1772,7 @@ collect_garbage_now:
 				err = ssdfs_gc_stimulate_migration(si, pebc,
 								   &reqs_array);
 				if (err == -ENODATA) {
-					SSDFS_ERR("no data for migration: "
+					SSDFS_DBG("no data for migration: "
 						  "seg %llu, leb_id %llu, "
 						  "err %d\n",
 						  seg_id, cur_leb_id, err);

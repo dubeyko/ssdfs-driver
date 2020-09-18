@@ -8292,38 +8292,6 @@ finish_detect_affected_items:
 		goto finish_delete_range;
 	}
 
-	switch (search->request.type) {
-	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
-	case SSDFS_BTREE_SEARCH_DELETE_RANGE:
-		switch (search->result.state) {
-		case SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE:
-			err = ssdfs_set_node_header_dirty(node,
-					items_area.items_capacity);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to set header dirty: "
-					  "err %d\n", err);
-			}
-			goto finish_delete_range;
-
-		default:
-			/* continue to shift rest names to left */
-			break;
-		}
-		break;
-
-	case SSDFS_BTREE_SEARCH_DELETE_ALL:
-		err = ssdfs_set_node_header_dirty(node,
-						  items_area.items_capacity);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set header dirty: err %d\n",
-				  err);
-		}
-		goto finish_delete_range;
-
-	default:
-		BUG();
-	}
-
 	shift_range_len = locked_len - range_len;
 	if (shift_range_len != 0) {
 		err = ssdfs_shift_range_left(node, &items_area, item_size,
@@ -8410,6 +8378,11 @@ finish_detect_affected_items:
 
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = end_hash;
+
+	SSDFS_DBG("items_area.start_hash %llx, "
+		  "items_area.end_hash %llx\n",
+		  node->items_area.start_hash,
+		  node->items_area.end_hash);
 
 	if (node->items_area.items_count == 0)
 		ssdfs_initialize_lookup_table(node);
