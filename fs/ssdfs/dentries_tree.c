@@ -7758,8 +7758,6 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 				  struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree_node *parent = NULL;
-	struct ssdfs_dentries_btree_node_header *hdr;
-	size_t item_size = sizeof(struct ssdfs_dir_entry);
 	bool is_hybrid = false;
 	bool has_index_area = false;
 	bool index_area_empty = false;
@@ -7799,21 +7797,18 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 
 	down_write(&node->header_lock);
 
-	hdr = &node->raw.dentries_header;
-	if (node->items_area.items_count == range_len) {
-		items_area_empty = true;
-		node->items_area.items_count =
-			node->items_area.items_count - range_len;
-		node->items_area.free_space =
-			node->items_area.area_size -
-				(node->items_area.items_count * item_size);
-		node->items_area.start_hash = U64_MAX;
-		node->items_area.end_hash = U64_MAX;
-		ssdfs_initialize_lookup_table(node);
-		hdr->dentries_count = cpu_to_le16(0);
-		hdr->inline_names = cpu_to_le16(0);
-	} else
+	switch (atomic_read(&node->items_area.state)) {
+	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+		if (node->items_area.items_count == range_len)
+			items_area_empty = true;
+		else
+			items_area_empty = false;
+		break;
+
+	default:
 		items_area_empty = false;
+		break;
+	}
 
 	switch (atomic_read(&node->index_area.state)) {
 	case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
