@@ -237,7 +237,7 @@ struct ssdfs_btree_search {
 	struct ssdfs_btree_search_request request;
 	struct ssdfs_btree_search_node_desc node;
 	struct ssdfs_btree_search_result result;
-	union {
+	union ssdfs_btree_search_raw_data {
 		struct ssdfs_raw_fork fork;
 		struct ssdfs_inode inode;
 		struct ssdfs_raw_dentry {
