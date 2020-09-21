@@ -494,13 +494,22 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 			kaddr = &tbl->segs[array_type][created_segs];
 			BUG_ON(*kaddr != NULL);
 
-			*kaddr = ssdfs_segment_create_object(fsi, seg, seg_state,
-							    seg_type, log_pages,
-							    create_threads);
+			*kaddr = ssdfs_segment_allocate_object(seg);
 			if (IS_ERR_OR_NULL(*kaddr)) {
 				err = !*kaddr ? -ENOMEM : PTR_ERR(*kaddr);
 				*kaddr = NULL;
-				SSDFS_ERR("fail to create segment object: "
+				SSDFS_ERR("fail to allocate segment object: "
+					  "seg %llu, err %d\n",
+					  seg, err);
+				return err;
+			}
+
+			err = ssdfs_segment_create_object(fsi, seg, seg_state,
+							  seg_type, log_pages,
+							  create_threads,
+							  *kaddr);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to create segment: "
 					  "seg %llu, err %d\n",
 					  seg, err);
 				return err;

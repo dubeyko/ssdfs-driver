@@ -135,6 +135,7 @@ void ssdfs_current_segment_destroy(struct ssdfs_current_segment *cur_seg)
 
 	if (!is_ssdfs_current_segment_empty(cur_seg)) {
 		ssdfs_current_segment_lock(cur_seg);
+		ssdfs_segment_put_object(cur_seg->real_seg);
 		ssdfs_current_segment_remove(cur_seg);
 		ssdfs_current_segment_unlock(cur_seg);
 	}
@@ -523,23 +524,14 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		/* TODO: make final desicion later */
 		create_threads = SSDFS_CREATE_THREADS_DEFAULT;
 
-		si = ssdfs_segment_create_object(fsi, seg,
-						 seg_state, seg_type,
-						 log_pages,
-						 create_threads);
+		si = __ssdfs_create_new_segment(fsi, seg,
+						seg_state, seg_type,
+						log_pages,
+						create_threads);
 		if (IS_ERR_OR_NULL(si)) {
 			SSDFS_WARN("fail to create segment object: "
 				   "seg %llu, err %d\n",
 				   seg, err);
-			continue;
-		}
-
-		err = ssdfs_segment_tree_add(fsi, si);
-		if (unlikely(err)) {
-			ssdfs_segment_destroy_object(si);
-			SSDFS_ERR("fail to add segment object into tree: "
-				  "seg %llu, err %d\n",
-				  seg, err);
 			goto destroy_cur_segs;
 		}
 
@@ -549,6 +541,7 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 		if (err == -ENOSPC) {
 			SSDFS_DBG("current segment is absent\n");
+			ssdfs_segment_put_object(si);
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to make segment %llu as current: "
 				  "err %d\n",
@@ -563,11 +556,15 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 destroy_cur_segs:
 	for (; i >= 0; i--) {
-		si = NULL;
+		struct ssdfs_current_segment *cur_seg;
 
-		ssdfs_current_segment_lock(fsi->cur_segs->objects[i]);
-		ssdfs_current_segment_remove(fsi->cur_segs->objects[i]);
-		ssdfs_current_segment_unlock(fsi->cur_segs->objects[i]);
+		cur_seg = fsi->cur_segs->objects[i];
+
+		ssdfs_current_segment_lock(cur_seg);
+		if (!is_ssdfs_current_segment_empty(cur_seg))
+			ssdfs_segment_put_object(cur_seg->real_seg);
+		ssdfs_current_segment_remove(cur_seg);
+		ssdfs_current_segment_unlock(cur_seg);
 	}
 
 	ssdfs_cur_seg_kfree(fsi->cur_segs);

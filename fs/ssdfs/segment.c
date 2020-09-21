@@ -134,6 +134,74 @@ int ssdfs_init_seg_obj_cache(void)
  ******************************************************************************/
 
 /*
+ * ssdfs_segment_allocate_object() - allocate segment object
+ * @seg_id: segment number
+ *
+ * This function tries to allocate segment object.
+ *
+ * RETURN:
+ * [success] - pointer on allocated segment object
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ */
+struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
+{
+	struct ssdfs_segment_info *ptr;
+
+	ptr = kmem_cache_alloc(ssdfs_seg_obj_cachep, GFP_KERNEL);
+	if (!ptr) {
+		SSDFS_ERR("fail to allocate memory for segment %llu\n",
+			  seg_id);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	ssdfs_seg_obj_cache_leaks_increment(ptr);
+
+	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
+	atomic_set(&ptr->obj_state, SSDFS_SEG_OBJECT_UNDER_CREATION);
+	ptr->seg_id = seg_id;
+	atomic_set(&ptr->refs_count, 0);
+	init_waitqueue_head(&ptr->object_queue);
+
+	SSDFS_DBG("segment object %p, seg_id %llu\n",
+		  ptr, seg_id);
+
+	return ptr;
+}
+
+/*
+ * ssdfs_segment_free_object() - free segment object
+ * @si: pointer on segment object
+ *
+ * This function tries to free segment object.
+ */
+void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
+{
+	SSDFS_DBG("segment object %p\n", si);
+
+	if (!si)
+		return;
+
+	SSDFS_DBG("seg_id %llu\n", si->seg_id);
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_UNDER_CREATION:
+	case SSDFS_SEG_OBJECT_CREATED:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected segment object's state %#x\n",
+			   atomic_read(&si->obj_state));
+		break;
+	}
+
+	ssdfs_seg_obj_cache_leaks_decrement(si);
+	kmem_cache_free(ssdfs_seg_obj_cachep, si);
+}
+
+/*
  * ssdfs_segment_destroy_object() - destroy segment object
  * @si: pointer on segment object
  *
@@ -154,6 +222,21 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	if (!si)
 		return 0;
 
+	SSDFS_DBG("obj_state %#x\n",
+		  atomic_read(&si->obj_state));
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_UNDER_CREATION:
+	case SSDFS_SEG_OBJECT_CREATED:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected segment object's state %#x\n",
+			   atomic_read(&si->obj_state));
+		break;
+	}
+
 	SSDFS_DBG("seg %llu, seg_state %#x, log_pages %u, "
 		  "create_threads %u\n",
 		  si->seg_id, atomic_read(&si->seg_state),
@@ -165,10 +248,22 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 		  si, si->seg_id, refs_count);
 
 	if (refs_count != 0) {
-		SSDFS_WARN("unable to destroy object of segment %llu: "
-			   "refs_count %d\n",
-			   si->seg_id, refs_count);
-		return -EBUSY;
+		wait_queue_head_t *wq = &si->object_queue;
+
+		err = wait_event_killable_timeout(*wq,
+				atomic_read(&si->refs_count) <= 0,
+				SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0) {
+			WARN_ON(err < 0);
+		} else
+			err = 0;
+
+		if (atomic_read(&si->refs_count) != 0) {
+			SSDFS_WARN("unable to destroy object of segment %llu: "
+				   "refs_count %d\n",
+				   si->seg_id, refs_count);
+			return -EBUSY;
+		}
 	}
 
 	ssdfs_sysfs_delete_seg_group(si);
@@ -195,8 +290,8 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 		ssdfs_requests_queue_remove_all(&si->create_rq, -ENOSPC);
 	}
 
-	ssdfs_seg_obj_cache_leaks_decrement(si);
-	kmem_cache_free(ssdfs_seg_obj_cachep, si);
+	ssdfs_segment_free_object(si);
+
 	return err;
 }
 
@@ -208,52 +303,53 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
  * @seg_type: segment type
  * @log_pages: count of pages in log
  * @create_threads: number of flush PEB's threads for new page requests
+ * @si: pointer on segment object [in|out]
  *
  * This function tries to create segment object for @seg
  * identification number.
  *
  * RETURN:
- * [success] - pointer on constructed segment object
+ * [success]
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input.
  * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
  */
-struct ssdfs_segment_info *
-ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
-			    u64 seg,
-			    int seg_state,
-			    u16 seg_type,
-			    u16 log_pages,
-			    u8 create_threads)
+int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
+				u64 seg,
+				int seg_state,
+				u16 seg_type,
+				u16 log_pages,
+				u8 create_threads,
+				struct ssdfs_segment_info *si)
 {
-	struct ssdfs_segment_info *ptr;
 	int state = SSDFS_BLK2OFF_OBJECT_CREATED;
 	struct ssdfs_migration_destination *destination;
 	int refs_count = fsi->pebs_per_seg;
 	int destination_pebs = 0;
 	int init_flag, init_state;
 	int i;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi);
+	BUG_ON(!fsi || !si);
 
 	if (seg_state >= SSDFS_SEG_STATE_MAX) {
 		SSDFS_ERR("invalid segment state %#x\n", seg_state);
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
 	if (seg_type > SSDFS_LAST_KNOWN_SEG_TYPE) {
 		SSDFS_ERR("invalid segment type %#x\n", seg_type);
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
 	if (create_threads > fsi->pebs_per_seg ||
 	    fsi->pebs_per_seg % create_threads) {
 		SSDFS_ERR("invalid create threads count %u\n",
 			  create_threads);
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -264,56 +360,55 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	if (seg >= fsi->nsegs) {
 		SSDFS_ERR("requested seg %llu >= nsegs %llu\n",
 			  seg, fsi->nsegs);
-		return ERR_PTR(-EINVAL);
+		return -EINVAL;
 	}
 
-	ptr = kmem_cache_alloc(ssdfs_seg_obj_cachep, GFP_KERNEL);
-	if (!ptr) {
-		SSDFS_ERR("fail to allocate memory for segment %llu\n",
-			  seg);
-		return ERR_PTR(-ENOMEM);
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_UNDER_CREATION:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_WARN("invalid segment object's state %#x\n",
+			   atomic_read(&si->obj_state));
+		ssdfs_segment_free_object(si);
+		return -EINVAL;
 	}
 
-	ssdfs_seg_obj_cache_leaks_increment(ptr);
+	si->seg_id = seg;
+	si->seg_type = seg_type;
+	si->log_pages = log_pages;
+	si->create_threads = create_threads;
+	si->fsi = fsi;
+	atomic_set(&si->seg_state, seg_state);
+	ssdfs_requests_queue_init(&si->create_rq);
 
-	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
-
-	ptr->seg_id = seg;
-	ptr->seg_type = seg_type;
-	ptr->log_pages = log_pages;
-	ptr->create_threads = create_threads;
-	ptr->fsi = fsi;
-	atomic_set(&ptr->seg_state, seg_state);
-	atomic_set(&ptr->refs_count, 0);
-	init_waitqueue_head(&ptr->destruct_queue);
-	ssdfs_requests_queue_init(&ptr->create_rq);
-
-	ptr->pebs_count = fsi->pebs_per_seg;
-	ptr->peb_array = ssdfs_seg_obj_kcalloc(ptr->pebs_count,
+	si->pebs_count = fsi->pebs_per_seg;
+	si->peb_array = ssdfs_seg_obj_kcalloc(si->pebs_count,
 				       sizeof(struct ssdfs_peb_container),
 				       GFP_KERNEL);
-	if (!ptr->peb_array) {
+	if (!si->peb_array) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate memory for peb array\n");
 		goto destroy_seg_obj;
 	}
 
-	atomic_set(&ptr->migration.migrating_pebs, 0);
-	init_waitqueue_head(&ptr->migration.wait);
-	spin_lock_init(&ptr->migration.lock);
+	atomic_set(&si->migration.migrating_pebs, 0);
+	init_waitqueue_head(&si->migration.wait);
+	spin_lock_init(&si->migration.lock);
 
-	destination = &ptr->migration.array[SSDFS_LAST_DESTINATION];
+	destination = &si->migration.array[SSDFS_LAST_DESTINATION];
 	destination->state = SSDFS_EMPTY_DESTINATION;
 	destination->destination_pebs = 0;
 	destination->shared_peb_index = -1;
 
-	destination = &ptr->migration.array[SSDFS_CREATING_DESTINATION];
+	destination = &si->migration.array[SSDFS_CREATING_DESTINATION];
 	destination->state = SSDFS_EMPTY_DESTINATION;
 	destination->destination_pebs = 0;
 	destination->shared_peb_index = -1;
 
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++)
-		init_waitqueue_head(&ptr->wait_queue[i]);
+		init_waitqueue_head(&si->wait_queue[i]);
 
 	if (seg_state == SSDFS_SEG_CLEAN) {
 		state = SSDFS_BLK2OFF_OBJECT_COMPLETE_INIT;
@@ -324,7 +419,7 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		init_state = SSDFS_BLK_STATE_MAX;
 	}
 
-	err = ssdfs_segment_blk_bmap_create(ptr, fsi->pages_per_peb,
+	err = ssdfs_segment_blk_bmap_create(si, fsi->pages_per_peb,
 					    init_flag, init_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segment block bitmap: "
@@ -332,19 +427,19 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		goto destroy_seg_obj;
 	}
 
-	ptr->blk2off_table = ssdfs_blk2off_table_create(fsi, fsi->pages_per_seg,
+	si->blk2off_table = ssdfs_blk2off_table_create(fsi, fsi->pages_per_seg,
 							SSDFS_SEG_OFF_TABLE,
 							state);
-	if (!ptr->blk2off_table) {
+	if (!si->blk2off_table) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate memory for translation table\n");
 		goto destroy_seg_obj;
 	}
 
-	for (i = 0; i < ptr->pebs_count; i++) {
+	for (i = 0; i < si->pebs_count; i++) {
 		err = ssdfs_peb_container_create(fsi, seg, i,
 						  SEG2PEB_TYPE(seg_type),
-						  log_pages, ptr);
+						  log_pages, si);
 		if (err) {
 			SSDFS_ERR("fail to create PEB container: "
 				  "seg %llu, peb index %d, err %d\n",
@@ -353,9 +448,9 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	for (i = 0; i < ptr->pebs_count; i++) {
-		int cur_refs = atomic_read(&ptr->peb_array[i].dst_peb_refs);
-		int items_state = atomic_read(&ptr->peb_array[i].items_state);
+	for (i = 0; i < si->pebs_count; i++) {
+		int cur_refs = atomic_read(&si->peb_array[i].dst_peb_refs);
+		int items_state = atomic_read(&si->peb_array[i].items_state);
 
 		switch (items_state) {
 		case SSDFS_PEB1_DST_CONTAINER:
@@ -377,12 +472,12 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 			refs_count = cur_refs;
 	}
 
-	destination = &ptr->migration.array[SSDFS_LAST_DESTINATION];
-	spin_lock(&ptr->migration.lock);
+	destination = &si->migration.array[SSDFS_LAST_DESTINATION];
+	spin_lock(&si->migration.lock);
 	destination->shared_peb_index = refs_count;
 	destination->destination_pebs = destination_pebs;
 	destination->state = SSDFS_VALID_DESTINATION;
-	spin_unlock(&ptr->migration.lock);
+	spin_unlock(&si->migration.lock);
 
 	/*
 	 * The goal of this cycle is to finish segment object
@@ -391,9 +486,9 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	 * The ssdfs_peb_get_free_pages() method waits the
 	 * ending of PEB object complete initialization.
 	 */
-	for (i = 0; i < ptr->pebs_count; i++) {
+	for (i = 0; i < si->pebs_count; i++) {
 		int peb_free_pages;
-		struct ssdfs_peb_container *pebc = &ptr->peb_array[i];
+		struct ssdfs_peb_container *pebc = &si->peb_array[i];
 
 		if (is_peb_container_empty(pebc)) {
 			SSDFS_DBG("segment %llu hasn't PEB %d\n",
@@ -411,7 +506,7 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	err = ssdfs_sysfs_create_seg_group(ptr);
+	err = ssdfs_sysfs_create_seg_group(si);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segment's sysfs group: "
 			  "seg %llu, err %d\n",
@@ -419,11 +514,16 @@ ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		goto destroy_seg_obj;
 	}
 
-	return ptr;
+	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_CREATED);
+	wake_up_all(&si->object_queue);
+
+	return 0;
 
 destroy_seg_obj:
-	ssdfs_segment_destroy_object(ptr);
-	return ERR_PTR(err);
+	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_FAILURE);
+	wake_up_all(&si->object_queue);
+	ssdfs_segment_destroy_object(si);
+	return err;
 }
 
 /*
@@ -457,7 +557,7 @@ void ssdfs_segment_put_object(struct ssdfs_segment_info *si)
 	WARN_ON(atomic_dec_return(&si->refs_count) < 0);
 
 	if (atomic_read(&si->refs_count) <= 0)
-		wake_up_all(&si->destruct_queue);
+		wake_up_all(&si->object_queue);
 }
 
 /*
@@ -582,6 +682,132 @@ finish_seg_id_correction:
 		  start_search_id, calculated_seg_id);
 
 	return calculated_seg_id;
+}
+
+/*
+ * __ssdfs_create_new_segment() - create new segment and add into the tree
+ * @fsi: pointer on shared file system object
+ * @seg_id: segment number
+ * @seg_state: segment state
+ * @seg_type: segment type
+ * @log_pages: count of pages in log
+ * @create_threads: number of flush PEB's threads for new page requests
+ *
+ * This function tries to create segment object for @seg
+ * identification number.
+ *
+ * RETURN:
+ * [success] - pointer on created segment object
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+struct ssdfs_segment_info *
+__ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
+			   u64 seg_id, int seg_state,
+			   u16 seg_type, u16 log_pages,
+			   u8 create_threads)
+{
+	struct ssdfs_segment_info *si;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	if (seg_state >= SSDFS_SEG_STATE_MAX) {
+		SSDFS_ERR("invalid segment state %#x\n", seg_state);
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (seg_type > SSDFS_LAST_KNOWN_SEG_TYPE) {
+		SSDFS_ERR("invalid segment type %#x\n", seg_type);
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (create_threads > fsi->pebs_per_seg ||
+	    fsi->pebs_per_seg % create_threads) {
+		SSDFS_ERR("invalid create threads count %u\n",
+			  create_threads);
+		return ERR_PTR(-EINVAL);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg %llu, seg_state %#x, log_pages %u, "
+		  "create_threads %u\n",
+		  fsi, seg_id, seg_state, log_pages, create_threads);
+
+	si = ssdfs_segment_allocate_object(seg_id);
+	if (IS_ERR_OR_NULL(si)) {
+		SSDFS_ERR("fail to allocate segment: "
+			  "seg %llu, err %ld\n",
+			  seg_id, PTR_ERR(si));
+		return si;
+	}
+
+	err = ssdfs_segment_tree_add(fsi, si);
+	if (err == -EEXIST) {
+		wait_queue_head_t *wq = &si->object_queue;
+
+		ssdfs_segment_free_object(si);
+
+		si = ssdfs_segment_tree_find(fsi, seg_id);
+		if (IS_ERR_OR_NULL(si)) {
+			SSDFS_ERR("fail to find segment: "
+				  "seg %llu, err %d\n",
+				  seg_id, err);
+			return ERR_PTR(err);
+		}
+
+		ssdfs_segment_get_object(si);
+
+		err = wait_event_killable_timeout(*wq,
+				is_ssdfs_segment_created(si),
+				SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0) {
+			WARN_ON(err < 0);
+		} else
+			err = 0;
+
+		switch (atomic_read(&si->obj_state)) {
+		case SSDFS_SEG_OBJECT_CREATED:
+			/* do nothing */
+			break;
+
+		default:
+			ssdfs_segment_put_object(si);
+			SSDFS_ERR("fail to create segment: "
+				  "seg %llu\n",
+				  seg_id);
+			return ERR_PTR(-ERANGE);
+		}
+
+		return si;
+	} else if (unlikely(err)) {
+		ssdfs_segment_free_object(si);
+		SSDFS_ERR("fail to add segment into tree: "
+			  "seg %llu, err %d\n",
+			  seg_id, err);
+		return ERR_PTR(err);
+	} else {
+		err = ssdfs_segment_create_object(fsi,
+						  seg_id,
+						  seg_state,
+						  seg_type,
+						  log_pages,
+						  create_threads,
+						  si);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to create segment: "
+				  "seg %llu, err %d\n",
+				  seg_id, err);
+			return ERR_PTR(err);
+		}
+	}
+
+	ssdfs_segment_get_object(si);
+	return si;
 }
 
 /*
@@ -797,24 +1023,20 @@ create_segment_object:
 			/* TODO: make final desicion later */
 			create_threads = SSDFS_CREATE_THREADS_DEFAULT;
 
-			si = ssdfs_segment_create_object(fsi, seg_id,
-							 seg_state, seg_type,
-							 log_pages,
-							 create_threads);
+			si = __ssdfs_create_new_segment(fsi,
+							seg_id,
+							seg_state,
+							seg_type,
+							log_pages,
+							create_threads);
 			if (IS_ERR_OR_NULL(si)) {
-				SSDFS_ERR("fail to create segment: "
-					  "seg %llu, err %ld\n",
-					  seg_id, PTR_ERR(si));
-				return si;
-			}
-
-			err = ssdfs_segment_tree_add(fsi, si);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to add segment into tree: "
+				err = PTR_ERR(si);
+				SSDFS_ERR("fail to add new segment into tree: "
 					  "seg %llu, err %d\n",
 					  seg_id, err);
-				return ERR_PTR(err);
 			}
+
+			return si;
 		} else if (err == 0) {
 			SSDFS_ERR("segment tree returns NULL\n");
 			return ERR_PTR(-ERANGE);
@@ -1327,7 +1549,7 @@ add_new_current_segment:
 		}
 
 		err = ssdfs_current_segment_add(cur_seg, si);
-		ssdfs_segment_put_object(si);
+		//ssdfs_segment_put_object(si);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add segment %llu as current: "
 				  "err %d\n",
@@ -1489,7 +1711,7 @@ add_new_current_segment:
 		}
 
 		err = ssdfs_current_segment_add(cur_seg, si);
-		ssdfs_segment_put_object(si);
+		//ssdfs_segment_put_object(si);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add segment %llu as current: "
 				  "err %d\n",
