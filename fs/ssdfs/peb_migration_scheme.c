@@ -627,6 +627,13 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 		ssdfs_request_define_segment(si->seg_id, req);
 
 		logical_blk = range->start + processed_blks;
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(logical_blk >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		req->place.start.blk_index = (u16)logical_blk;
+		req->place.len = 1;
+
 		err = ssdfs_peb_copy_pre_alloc_page(pebc, logical_blk, req);
 		if (err == -ENODATA) {
 			/* pre-allocated page hasn't content */

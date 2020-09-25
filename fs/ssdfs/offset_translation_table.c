@@ -544,7 +544,18 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 			table->peb[i].sequence = NULL;
 
 			state = atomic_read(&table->peb[i].state);
-			WARN_ON(state == SSDFS_BLK2OFF_TABLE_DIRTY);
+
+			switch (state) {
+			case SSDFS_BLK2OFF_TABLE_DIRTY:
+			case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
+				SSDFS_WARN("unexpected table state %#x\n",
+					   state);
+				break;
+
+			default:
+				/* do nothing */
+				break;
+			}
 		}
 
 		ssdfs_blk2off_kfree(table->peb);
@@ -1866,6 +1877,19 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 			state = atomic_cmpxchg(&table->peb[peb_index].state,
 					SSDFS_BLK2OFF_TABLE_PARTIAL_INIT,
 					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+			if (state == SSDFS_BLK2OFF_TABLE_PARTIAL_INIT) {
+				/* table is completely initialized */
+				goto finish_define_peb_table_state;
+			}
+
+			state = atomic_cmpxchg(&table->peb[peb_index].state,
+					SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT,
+					SSDFS_BLK2OFF_TABLE_DIRTY);
+			if (state == SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT) {
+				/* table is dirty already */
+				goto finish_define_peb_table_state;
+			}
+
 			if (state < SSDFS_BLK2OFF_TABLE_PARTIAL_INIT ||
 			    state > SSDFS_BLK2OFF_TABLE_COMPLETE_INIT) {
 				SSDFS_WARN("unexpected state %#x\n",
@@ -1878,6 +1902,7 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 		return -ERANGE;
 	}
 
+finish_define_peb_table_state:
 	return 0;
 }
 
@@ -1916,6 +1941,7 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table)
 		break;
 
 	case SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT:
+	case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
 		state = atomic_cmpxchg(&table->state,
 					SSDFS_BLK2OFF_OBJECT_CREATED,
 					SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT);
@@ -1930,6 +1956,7 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table)
 		break;
 
 	case SSDFS_BLK2OFF_TABLE_COMPLETE_INIT:
+	case SSDFS_BLK2OFF_TABLE_DIRTY:
 		state = atomic_cmpxchg(&table->state,
 					SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT,
 					SSDFS_BLK2OFF_OBJECT_COMPLETE_INIT);
@@ -2338,6 +2365,7 @@ bool ssdfs_blk2off_table_dirtied(struct ssdfs_blk2off_table *table,
 
 	switch (atomic_read(&phys_off_table->state)) {
 	case SSDFS_BLK2OFF_TABLE_DIRTY:
+	case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
 		if (!is_dirty) {
 			/* table is dirty without dirty fragments */
 			SSDFS_WARN("table is marked as dirty!\n");
@@ -2346,7 +2374,7 @@ bool ssdfs_blk2off_table_dirtied(struct ssdfs_blk2off_table *table,
 
 	default:
 		if (is_dirty) {
-			/* there dirty fragments but table is clean */
+			/* there are dirty fragments but table is clean */
 			SSDFS_WARN("table is not dirty\n");
 		}
 		break;
@@ -3407,14 +3435,19 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 	}
 
 	state = atomic_cmpxchg(&pot_table->state,
-				SSDFS_BLK2OFF_TABLE_DIRTY,
-				SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
-	if (state != SSDFS_BLK2OFF_TABLE_DIRTY) {
-		err = -ERANGE;
-		SSDFS_ERR("table isn't dirty: "
-			  "state %#x\n",
-			  state);
-		goto finish_forget_snapshot;
+				SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT,
+				SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
+	if (state != SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT) {
+		state = atomic_cmpxchg(&pot_table->state,
+					SSDFS_BLK2OFF_TABLE_DIRTY,
+					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+		if (state != SSDFS_BLK2OFF_TABLE_DIRTY) {
+			err = -ERANGE;
+			SSDFS_ERR("table isn't dirty: "
+				  "state %#x\n",
+				  state);
+			goto finish_forget_snapshot;
+		}
 	}
 
 	lbmap1 = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
@@ -4816,6 +4849,7 @@ int ssdfs_table_fragment_set_dirty(struct ssdfs_blk2off_table *table,
 				    u16 peb_index, u16 sequence_id)
 {
 	struct ssdfs_phys_offset_table_array *phys_off_table;
+	int new_state = SSDFS_BLK2OFF_TABLE_UNDEFINED;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4844,21 +4878,32 @@ int ssdfs_table_fragment_set_dirty(struct ssdfs_blk2off_table *table,
 
 	switch (atomic_read(&phys_off_table->state)) {
 	case SSDFS_BLK2OFF_TABLE_COMPLETE_INIT:
-		/* expected state */
+		new_state = SSDFS_BLK2OFF_TABLE_DIRTY;
+		break;
+
+	case SSDFS_BLK2OFF_TABLE_PARTIAL_INIT:
+		new_state = SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT;
+		break;
+
+	case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
+		SSDFS_DBG("blk2off table is dirty already\n");
+		new_state = SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT;
 		break;
 
 	case SSDFS_BLK2OFF_TABLE_DIRTY:
 		SSDFS_DBG("blk2off table is dirty already\n");
+		new_state = SSDFS_BLK2OFF_TABLE_DIRTY;
 		break;
 
 	default:
 		SSDFS_WARN("unexpected blk2off state %#x\n",
 			   atomic_read(&phys_off_table->state));
+		new_state = SSDFS_BLK2OFF_TABLE_DIRTY;
 		break;
 	}
 
 	atomic_set(&phys_off_table->state,
-		   SSDFS_BLK2OFF_TABLE_DIRTY);
+		   new_state);
 
 	return 0;
 }
@@ -5598,7 +5643,7 @@ int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
  * @table: pointer on table object
  * @logical_blk: logical block number
  * @peb_index: PEB index in the segment
- * @blk_state: pagevec with block's content
+ * @req: request's result with block's content
  *
  * This method tries to set migration state for logical block.
  *
@@ -5613,23 +5658,49 @@ int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
 int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 					    u16 logical_blk,
 					    u16 peb_index,
-					    struct pagevec *blk_state)
+					    struct ssdfs_segment_request *req)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_migrating_block *blk = NULL;
+	u32 pages_per_lblk;
+	u32 count;
 	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!table || !blk_state);
+	BUG_ON(!table || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("table %p, logical_blk %u, peb_index %u, blk_state %p\n",
-		  table, logical_blk, peb_index, blk_state);
+	SSDFS_DBG("table %p, logical_blk %u, peb_index %u, req %p\n",
+		  table, logical_blk, peb_index, req);
+
+	fsi = table->fsi;
+	pages_per_lblk = fsi->pagesize >> PAGE_SHIFT;
 
 	if (peb_index >= table->pebs_count) {
 		SSDFS_ERR("fail to set block migration: "
 			  "peb_index %u >= pebs_count %u\n",
 			  peb_index, table->pebs_count);
+		return -EINVAL;
+	}
+
+	if (logical_blk < req->place.start.blk_index ||
+	    logical_blk >= (req->place.start.blk_index + req->place.len)) {
+		SSDFS_ERR("inconsistent request: "
+			  "logical_blk %u, "
+			  "request (start_blk %u, len %u)\n",
+			  logical_blk,
+			  req->place.start.blk_index,
+			  req->place.len);
+		return -EINVAL;
+	}
+
+	count = pagevec_count(&req->result.pvec);
+	if (count % pages_per_lblk) {
+		SSDFS_ERR("inconsistent request: "
+			  "pagevec count %u, "
+			  "pages_per_lblk %u, req->place.len %u\n",
+			  count, pages_per_lblk, req->place.len);
 		return -EINVAL;
 	}
 
@@ -5680,7 +5751,9 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 	}
 
 	pagevec_init(&blk->pvec);
-	for (i = 0; i < pagevec_count(blk_state); i++) {
+
+	i = logical_blk - req->place.start.blk_index;
+	for (; i < pages_per_lblk; i++) {
 		struct page *page;
 		void *kaddr1, *kaddr2;
 
@@ -5695,14 +5768,14 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		SSDFS_DBG("page %px, count %d\n",
 			  page, page_ref_count(page));
 
-		kaddr1 = kmap_atomic(blk_state->pages[i]);
+		kaddr1 = kmap_atomic(req->result.pvec.pages[i]);
 		kaddr2 = kmap_atomic(page);
 		memcpy(kaddr2, kaddr1, PAGE_SIZE);
 		kunmap_atomic(kaddr2);
 		kunmap_atomic(kaddr1);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr1 = kmap_atomic(blk_state->pages[i]);
+		kaddr1 = kmap_atomic(req->result.pvec.pages[i]);
 		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr1, PAGE_SIZE);
@@ -5805,6 +5878,14 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		SSDFS_ERR("unexpected state %#x\n",
 			  blk->state);
 		goto finish_get_block_state;
+	}
+
+	if (pagevec_count(&blk->pvec) == (fsi->pagesize >> PAGE_SHIFT)) {
+		SSDFS_DBG("logical_blk %u, blk pagevec count %u\n",
+			  logical_blk, pagevec_count(&blk->pvec));
+	} else {
+		SSDFS_WARN("logical_blk %u, blk pagevec count %u\n",
+			  logical_blk, pagevec_count(&blk->pvec));
 	}
 
 	for (i = 0; i < pagevec_count(&blk->pvec); i++) {

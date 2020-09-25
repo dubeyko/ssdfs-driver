@@ -278,6 +278,7 @@ finish_copy_page:
  *
  * %-ERANGE     - internal error.
  * %-ENODATA     - pre-allocated block hasn't content.
+ * %-EAGAIN     - unable to extract the whole range.
  */
 int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 				  u32 logical_blk,
@@ -354,9 +355,9 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 		}
 
 		err = ssdfs_blk2off_table_set_block_migration(table,
-							    logical_blk,
-							    peb_index,
-							    &req->result.pvec);
+							      logical_blk,
+							      peb_index,
+							      req);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set migration state: "
 				  "logical_blk %u, peb_index %u, err %d\n",
@@ -396,7 +397,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_phys_offset_descriptor *desc_off = NULL;
 	u16 peb_index;
-	int err = 0;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
@@ -450,25 +451,29 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	}
 
 	err = __ssdfs_peb_copy_page(pebc, desc_off, req);
-	if (unlikely(err)) {
+	if (err == -EAGAIN) {
+		SSDFS_DBG("unable to copy the whole range: "
+			  "logical_blk %u, peb_index %u\n",
+			  logical_blk, peb_index);
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to copy page: "
 			  "logical_blk %u, peb_index %u, err %d\n",
 			  logical_blk, peb_index, err);
 		return err;
 	}
 
-	err = ssdfs_blk2off_table_set_block_migration(table,
-						    logical_blk,
-						    peb_index,
-						    &req->result.pvec);
-	if (unlikely(err)) {
+	err1 = ssdfs_blk2off_table_set_block_migration(table,
+						       logical_blk,
+						       peb_index,
+						       req);
+	if (unlikely(err1)) {
 		SSDFS_ERR("fail to set migration state: "
 			  "logical_blk %u, peb_index %u, err %d\n",
-			  logical_blk, peb_index, err);
-		return err;
+			  logical_blk, peb_index, err1);
+		return err1;
 	}
 
-	return 0;
+	return err;
 }
 
 /*
@@ -523,17 +528,22 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 
 	for (i = 0; i < range->len; i++) {
 		logical_blk = range->start + i;
+		req->place.len++;
 
 		err = ssdfs_peb_copy_page(pebc, logical_blk, req);
-		if (unlikely(err)) {
+		if (err == -EAGAIN) {
+			SSDFS_DBG("unable to copy the whole range: "
+				  "seg %llu, logical_blk %u, len %u\n",
+				  pebc->parent_si->seg_id,
+				  logical_blk, req->place.len);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy page: "
 				  "seg %llu, logical_blk %u, err %d\n",
 				  pebc->parent_si->seg_id,
 				  logical_blk, err);
 			return err;
 		}
-
-		req->place.len++;
 	}
 
 	return 0;
@@ -1202,6 +1212,7 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 				 struct ssdfs_peb_container *pebc,
 				 struct ssdfs_seg2req_pair_array *array)
 {
+	struct ssdfs_peb_info *pebi;
 	struct ssdfs_seg2req_pair *pair;
 	u32 index;
 	int count;
@@ -1234,6 +1245,32 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 			  index);
 		return -ERANGE;
 	}
+
+	if (!is_peb_under_migration(pebc)) {
+		SSDFS_ERR("invalid PEB state: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, pebc->peb_index);
+		return -ERANGE;
+	}
+
+	pebi = ssdfs_get_current_peb_locked(pebc);
+	if (IS_ERR_OR_NULL(pebi)) {
+		err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+		SSDFS_ERR("fail to get PEB object: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err);
+		return err;
+	}
+
+	/*
+	 * The ssdfs_get_current_peb_locked() defines
+	 * migration phase. It should be set properly
+	 * before the ssdfs_peb_prepare_range_migration()
+	 * call.
+	 */
+
+	ssdfs_unlock_current_peb(pebc);
 
 	mutex_lock(&pebc->migration_lock);
 

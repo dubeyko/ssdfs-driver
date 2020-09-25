@@ -83,6 +83,7 @@ enum {
 	SSDFS_BLK2OFF_TABLE_UNDEFINED,
 	SSDFS_BLK2OFF_TABLE_CREATED,
 	SSDFS_BLK2OFF_TABLE_PARTIAL_INIT,
+	SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT,
 	SSDFS_BLK2OFF_TABLE_COMPLETE_INIT,
 	SSDFS_BLK2OFF_TABLE_DIRTY,
 	SSDFS_BLK2OFF_TABLE_STATE_MAX,
@@ -432,7 +433,7 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 					    u16 logical_blk,
 					    u16 peb_index,
-					    struct pagevec *blk_state);
+					    struct ssdfs_segment_request *req);
 int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 					struct ssdfs_segment_request *req);
 int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,
