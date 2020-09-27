@@ -7755,7 +7755,7 @@ int ssdfs_btree_process_level_for_delete(struct ssdfs_btree_hierarchy *ptr,
 				  err);
 			return err;
 		}
-	} else if (cur_level->flags & SSDFS_BTREE_LEVEL_UPDATE_INDEX) {
+	} else if (parent->flags & SSDFS_BTREE_LEVEL_UPDATE_INDEX) {
 		err = ssdfs_btree_update_index(desc, parent, cur_level);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to update the index: err %d\n",

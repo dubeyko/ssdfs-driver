@@ -5663,6 +5663,7 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_migrating_block *blk = NULL;
 	u32 pages_per_lblk;
+	u32 start_page;
 	u32 count;
 	int i;
 	int err = 0;
@@ -5739,7 +5740,7 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 	case SSDFS_LBLOCK_UNDER_MIGRATION:
 	case SSDFS_LBLOCK_UNDER_COMMIT:
 		err = -ERANGE;
-		SSDFS_ERR("logical_blk %u is under migration already\n",
+		SSDFS_WARN("logical_blk %u is under migration already\n",
 			  logical_blk);
 		goto finish_set_block_migration;
 
@@ -5752,10 +5753,18 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 
 	pagevec_init(&blk->pvec);
 
-	i = logical_blk - req->place.start.blk_index;
-	for (; i < pages_per_lblk; i++) {
+	start_page = logical_blk - req->place.start.blk_index;
+	for (i = start_page; i < (start_page + pages_per_lblk); i++) {
 		struct page *page;
 		void *kaddr1, *kaddr2;
+
+		SSDFS_DBG("start_page %u, logical_blk %u, "
+			  "blk_index %u, i %d, "
+			  "pagevec_count %u\n",
+			  start_page, logical_blk,
+			  req->place.start.blk_index,
+			  i,
+			  pagevec_count(&req->result.pvec));
 
 		page = ssdfs_blk2off_alloc_page(GFP_KERNEL);
 		if (IS_ERR_OR_NULL(page)) {
@@ -5767,6 +5776,11 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 
 		SSDFS_DBG("page %px, count %d\n",
 			  page, page_ref_count(page));
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(i >= pagevec_count(&req->result.pvec));
+		BUG_ON(!req->result.pvec.pages[i]);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		kaddr1 = kmap_atomic(req->result.pvec.pages[i]);
 		kaddr2 = kmap_atomic(page);

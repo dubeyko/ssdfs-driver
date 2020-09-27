@@ -397,7 +397,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_phys_offset_descriptor *desc_off = NULL;
 	u16 peb_index;
-	int err = 0, err1;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
@@ -455,6 +455,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		SSDFS_DBG("unable to copy the whole range: "
 			  "logical_blk %u, peb_index %u\n",
 			  logical_blk, peb_index);
+		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to copy page: "
 			  "logical_blk %u, peb_index %u, err %d\n",
@@ -462,15 +463,15 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
-	err1 = ssdfs_blk2off_table_set_block_migration(table,
-						       logical_blk,
-						       peb_index,
-						       req);
-	if (unlikely(err1)) {
+	err = ssdfs_blk2off_table_set_block_migration(table,
+						      logical_blk,
+						      peb_index,
+						      req);
+	if (unlikely(err)) {
 		SSDFS_ERR("fail to set migration state: "
 			  "logical_blk %u, peb_index %u, err %d\n",
-			  logical_blk, peb_index, err1);
-		return err1;
+			  logical_blk, peb_index, err);
+		return err;
 	}
 
 	return err;
