@@ -2154,6 +2154,7 @@ bool need_update_parent_index_area(u64 start_hash,
 		  start_hash, child->node_id);
 
 	switch (atomic_read(&child->type)) {
+	case SSDFS_BTREE_HYBRID_NODE:
 	case SSDFS_BTREE_INDEX_NODE:
 		state = atomic_read(&child->index_area.state);
 		if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
@@ -2167,7 +2168,6 @@ bool need_update_parent_index_area(u64 start_hash,
 		up_read(&child->header_lock);
 		break;
 
-	case SSDFS_BTREE_HYBRID_NODE:
 	case SSDFS_BTREE_LEAF_NODE:
 		state = atomic_read(&child->items_area.state);
 		if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
@@ -2188,7 +2188,7 @@ bool need_update_parent_index_area(u64 start_hash,
 	}
 
 	if (child_start_hash >= U64_MAX) {
-		SSDFS_ERR("invalid start_hash %llx\n",
+		SSDFS_WARN("invalid start_hash %llx\n",
 			  child_start_hash);
 		return false;
 	}

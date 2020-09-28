@@ -1143,6 +1143,7 @@ int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
  *
  * %-EINVAL     - invalid input.
  * %-EIO        - corrupted fragment.
+ * %-EEXIST     - has been initialized already.
  */
 static
 int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
@@ -1187,6 +1188,18 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 	}
 
 	phys_off_table = &portion->table->peb[portion->peb_index];
+
+	kaddr = ssdfs_sequence_array_get_item(phys_off_table->sequence,
+						sequence_id);
+	if (IS_ERR_OR_NULL(kaddr)) {
+		/* expected state -> continue logic */
+		SSDFS_DBG("fragment %u is absent\n",
+			  sequence_id);
+	} else {
+		SSDFS_DBG("fragment %u has been initialized already\n",
+			  sequence_id);
+		return -EEXIST;
+	}
 
 	fragment = ssdfs_blk2off_frag_alloc();
 	if (IS_ERR_OR_NULL(fragment)) {
@@ -1711,7 +1724,13 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 	}
 
 	err = ssdfs_get_checked_fragment(portion);
-	if (err) {
+	if (err == -EEXIST) {
+		SSDFS_DBG("fragment has been initialized already: "
+			  "peb_index %u, offset %u\n",
+			  portion->peb_index,
+			  portion->pot_hdr_off);
+		return err;
+	} else if (err) {
 		SSDFS_ERR("fail to get checked fragment: "
 			  "peb_index %u, offset %u, err %d\n",
 			  portion->peb_index,
@@ -2080,7 +2099,12 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	for (i = 0; i < portion.fragments_count; i++) {
 		err = ssdfs_blk2off_fragment_init(&portion,
 						  &extent_index);
-		if (unlikely(err)) {
+		if (err == -EEXIST) {
+			SSDFS_DBG("fragment has been initiliazed already: "
+				  "fragment_index %d, extent_index %d\n",
+				  i, extent_index);
+			continue;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to initialize fragment: "
 				  "fragment_index %d, extent_index %d, "
 				  "err %d\n",

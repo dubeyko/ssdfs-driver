@@ -8546,6 +8546,10 @@ finish_delete_range:
 		break;
 	}
 
+	SSDFS_DBG("node_type %#x, dentries_count %u, index_count %u\n",
+		  atomic_read(&node->type),
+		  dentries_count, index_count);
+
 	if (dentries_count == 0 && index_count == 0)
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;
 	else
