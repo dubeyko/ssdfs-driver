@@ -5100,13 +5100,14 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (page_off == 0) {
-		SSDFS_ERR("page_off == 0\n");
+	if (page_index == 0 && page_off < area->offset) {
+		SSDFS_ERR("page_off %u < area->offset %u\n",
+			  page_off, area->offset);
 		return -ERANGE;
 	}
 
 	if (page_off % area->index_size) {
-		SSDFS_ERR("offset doesn't be aligned: "
+		SSDFS_ERR("offset is not aligned: "
 			  "page_off %u, index_size %u\n",
 			  page_off, area->index_size);
 		return -ERANGE;
@@ -5384,9 +5385,20 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 						      search_hash,
 						      found_index,
 						      &processed_bytes);
-		if (err == -ENODATA)
+		if (err == -ENODATA) {
 			err = 0;
-		else if (err == -ENOENT) {
+
+			if (*found_index >= U16_MAX) {
+				/*
+				 * continue to search
+				 */
+			} else if ((*found_index + 1) >= area->index_count) {
+				/*
+				 * index has been found
+				 */
+				break;
+			}
+		} else if (err == -ENOENT) {
 			err = 0;
 
 			if (prev_found != U16_MAX) {

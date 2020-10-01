@@ -4736,7 +4736,8 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 	inline_names = le16_to_cpu(hdr->inline_names);
 	free_space = le16_to_cpu(hdr->free_space);
 
-	if (start_hash >= U64_MAX || end_hash >= U64_MAX) {
+	if (dentries_count > 0 &&
+	    (start_hash >= U64_MAX || end_hash >= U64_MAX)) {
 		err = -EIO;
 		SSDFS_ERR("invalid hash range: "
 			  "start_hash %llx, end_hash %llx\n",
@@ -8497,6 +8498,7 @@ finish_delete_range:
 			down_read(&node->header_lock);
 			state = atomic_read(&node->index_area.state);
 			index_count = node->index_area.index_count;
+			end_hash = node->index_area.end_hash;
 			up_read(&node->header_lock);
 
 			if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
@@ -8505,7 +8507,11 @@ finish_delete_range:
 				return -ERANGE;
 			}
 
-			if (index_count <= 1) {
+			SSDFS_DBG("index_count %u, end_hash %llx, "
+				  "old_hash %llx\n",
+				  index_count, end_hash, old_hash);
+
+			if (index_count <= 1 || end_hash == old_hash) {
 				err = ssdfs_btree_node_delete_index(node,
 								    old_hash);
 				if (unlikely(err)) {
