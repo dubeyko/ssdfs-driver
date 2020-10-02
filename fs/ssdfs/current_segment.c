@@ -135,7 +135,6 @@ void ssdfs_current_segment_destroy(struct ssdfs_current_segment *cur_seg)
 
 	if (!is_ssdfs_current_segment_empty(cur_seg)) {
 		ssdfs_current_segment_lock(cur_seg);
-		ssdfs_segment_put_object(cur_seg->real_seg);
 		ssdfs_current_segment_remove(cur_seg);
 		ssdfs_current_segment_unlock(cur_seg);
 	}
@@ -547,6 +546,13 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 				  "err %d\n",
 				  seg, err);
 			goto destroy_cur_segs;
+		} else {
+			/*
+			 * Segment object was referenced two times
+			 * in __ssdfs_create_new_segment() and
+			 * ssdfs_current_segment_add().
+			 */
+			ssdfs_segment_put_object(si);
 		}
 	}
 
@@ -561,8 +567,6 @@ destroy_cur_segs:
 		cur_seg = fsi->cur_segs->objects[i];
 
 		ssdfs_current_segment_lock(cur_seg);
-		if (!is_ssdfs_current_segment_empty(cur_seg))
-			ssdfs_segment_put_object(cur_seg->real_seg);
 		ssdfs_current_segment_remove(cur_seg);
 		ssdfs_current_segment_unlock(cur_seg);
 	}

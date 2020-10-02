@@ -1549,7 +1549,10 @@ add_new_current_segment:
 		}
 
 		err = ssdfs_current_segment_add(cur_seg, si);
-		//ssdfs_segment_put_object(si);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add segment %llu as current: "
 				  "err %d\n",
@@ -1711,7 +1714,10 @@ add_new_current_segment:
 		}
 
 		err = ssdfs_current_segment_add(cur_seg, si);
-		//ssdfs_segment_put_object(si);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add segment %llu as current: "
 				  "err %d\n",
