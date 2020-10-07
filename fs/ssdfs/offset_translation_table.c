@@ -4297,7 +4297,7 @@ int ssdfs_blk2off_table_check_fragment_desc(struct ssdfs_blk2off_table *table,
  * @table: pointer on table object
  * @logical_blk: logical block number
  * @peb_index: pointer on PEB index value [out]
- * @is_migrating: is block under migration? [out]
+ * @migration_state: migration state of the block [out]
  *
  * This method tries to convert logical block number into offset.
  *
@@ -4315,7 +4315,7 @@ struct ssdfs_phys_offset_descriptor *
 ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 			    u16 logical_blk,
 			    u16 *peb_index,
-			    bool *is_migrating)
+			    int *migration_state)
 {
 	struct ssdfs_phys_offset_table_array *phys_off_table;
 	struct ssdfs_sequence_array *sequence;
@@ -4360,19 +4360,9 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 		}
 	}
 
-	if (is_migrating) {
+	if (migration_state) {
 		blk = &table->migrating_blks[logical_blk];
-
-		switch (blk->state) {
-		case SSDFS_LBLOCK_UNDER_MIGRATION:
-		case SSDFS_LBLOCK_UNDER_COMMIT:
-			*is_migrating = true;
-			break;
-
-		default:
-			*is_migrating = false;
-			break;
-		}
+		*migration_state = blk->state;
 	}
 
 	err = ssdfs_blk2off_table_get_checked_position(table, logical_blk,
@@ -6104,12 +6094,18 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 	for (i = 0; i <= tbl->last_allocated_blk; i++) {
 		blk = &tbl->migrating_blks[i];
 
+		SSDFS_DBG("blk->peb_index %u, peb_index %u\n",
+			  blk->peb_index, peb_index);
+
 		if (blk->peb_index != peb_index)
 			continue;
 
 		if (blk->state == SSDFS_LBLOCK_UNDER_COMMIT) {
 			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
 			ssdfs_blk2off_pagevec_release(&blk->pvec);
+
+			SSDFS_DBG("reverting migration state: blk %d\n",
+				  i);
 		}
 	}
 

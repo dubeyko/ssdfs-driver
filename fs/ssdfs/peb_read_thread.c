@@ -1676,7 +1676,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	int area_index;
 	u8 peb_migration_id;
 	u16 peb_index;
-	bool is_migrating = false;
+	int migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1704,7 +1704,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	logical_blk = req->place.start.blk_index + req->result.processed_blks;
 
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
-						&peb_index, &is_migrating);
+						&peb_index, &migration_state);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *init_end;
 		unsigned long res;
@@ -1722,7 +1722,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 
 		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
 							&peb_index,
-							&is_migrating);
+							&migration_state);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -1748,13 +1748,13 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 		  desc_off->blk_state.peb_migration_id,
 		  le32_to_cpu(desc_off->blk_state.byte_offset));
 
-	if (is_migrating) {
+	if (is_ssdfs_logical_block_migrating(migration_state)) {
 		err = ssdfs_blk2off_table_get_block_state(table, req);
 		if (err == -EAGAIN) {
 			desc_off = ssdfs_blk2off_table_convert(table,
-								logical_blk,
-								&peb_index,
-								&is_migrating);
+							    logical_blk,
+							    &peb_index,
+							    &migration_state);
 			if (IS_ERR_OR_NULL(desc_off)) {
 				err = (desc_off == NULL ?
 						-ERANGE : PTR_ERR(desc_off));

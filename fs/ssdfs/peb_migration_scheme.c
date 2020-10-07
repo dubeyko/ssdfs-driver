@@ -776,6 +776,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range = {0, 0};
+	u32 pages_per_peb;
 	int used_pages;
 	int err = 0;
 
@@ -814,6 +815,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+	pages_per_peb = si->fsi->pages_per_peb;
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_UNDER_MIGRATION:
@@ -856,11 +858,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 	if (used_pages > 0) {
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							 0, range_len,
+							 0, pages_per_peb,
 							 blk_type,
 							 &range);
 
-		SSDFS_DBG("range.start %u, range.len %u, err %d\n",
+		SSDFS_DBG("found range: (start %u, len %u), err %d\n",
 			  range.start, range.len, err);
 
 		if (err == -ENODATA) {
@@ -877,6 +879,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 				  range.start, range.len);
 			return -ERANGE;
 		}
+
+		range.len = min_t(u32, range_len, (u32)range.len);
+
+		SSDFS_DBG("final range: (start %u, len %u)\n",
+			  range.start, range.len);
 
 		switch (blk_type) {
 		case SSDFS_BLK_VALID:
