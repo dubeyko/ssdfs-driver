@@ -4116,6 +4116,13 @@ int ssdfs_btree_node_resize_index_area(struct ssdfs_btree_node *node,
 		goto finish_resize_operation;
 	}
 
+	SSDFS_DBG("index_size %u, index_count %u, "
+		  "index_capacity %u, index_area_size %u, "
+		  "cur_size %u, new_size %u\n",
+		  index_size, index_count,
+		  index_capacity, area_size,
+		  cur_size, new_size);
+
 	if (new_size < node->index_area.area_size) {
 		/* shrink index area */
 
@@ -7564,6 +7571,11 @@ bool need_shrink_index_area(struct ssdfs_btree_node *node, u32 *new_size)
 		else
 			*new_size = U32_MAX;
 	}
+
+	SSDFS_DBG("count %u, capacity %u, index_size %u, "
+		  "index_area_min_size %u, new_size %u\n",
+		  count, capacity, index_size,
+		  index_area_min_size, *new_size);
 
 	return false;
 }
@@ -12520,19 +12532,15 @@ int ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		  node->node_id, item_size,
 		  start_index, range_len, shift);
 
-	if (start_index > area->items_count) {
+	if (start_index >= area->items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "start_index %u, items_count %u\n",
-			  start_index, area->items_count);
+			  "start_index %u, items_capacity %u\n",
+			  start_index, area->items_capacity);
 		return -ERANGE;
-	} else if (start_index == area->items_count) {
-		SSDFS_DBG("start_index %u == items_count %u\n",
-			  start_index, area->items_count);
-		return 0;
-	} else if ((start_index + range_len) > area->items_count) {
-		SSDFS_ERR("range is out of existing items: "
-			  "start_index %u, range_len %u, items_count %u\n",
-			  start_index, range_len, area->items_count);
+	} else if ((start_index + range_len) > area->items_capacity) {
+		SSDFS_ERR("range is out of capacity: "
+			  "start_index %u, range_len %u, items_capacity %u\n",
+			  start_index, range_len, area->items_capacity);
 		return -ERANGE;
 	} else if (shift > start_index) {
 		SSDFS_ERR("shift is out of node: "
@@ -13600,7 +13608,7 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		items_offset = node->items_area.offset;
 		items_size = node->items_area.area_size;
 
-		if ((hdr_size + indexes_size) != items_offset) {
+		if ((hdr_size + indexes_size) > items_offset) {
 			err = -EFAULT;
 			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 			SSDFS_ERR("corrupted items area: "
@@ -13638,7 +13646,7 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		goto finish_area_resize;
 	}
 
-	if ((hdr_size + indexes_size + items_size) != node->node_size) {
+	if ((hdr_size + indexes_size + items_size) > node->node_size) {
 		err = -EFAULT;
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 		SSDFS_ERR("corrupted node: "
@@ -13707,12 +13715,28 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 
 	if (new_size > items_size) {
 		/* increase items area */
+		u32 unused_space;
+
+		if ((hdr_size + indexes_size) > items_offset) {
+			err = -EFAULT;
+			SSDFS_ERR("corrupted node: "
+				  "hdr_size %zu, indexes_size %u, "
+				  "items_offset %u\n",
+				  hdr_size, indexes_size, items_offset);
+			goto finish_area_resize;
+		}
+
+		unused_space = items_offset - (hdr_size + indexes_size);
 		diff_size = new_size - items_size;
 
-		if (indexes_free_space < diff_size) {
+		if ((indexes_free_space + unused_space) < diff_size) {
 			err = -EFAULT;
-			SSDFS_ERR("indexes_free_space %u < diff_size %u\n",
-				  indexes_free_space, diff_size);
+			SSDFS_ERR("corrupted_node: "
+				  "indexes_free_space %u, unused_space %u, "
+				  "diff_size %u\n",
+				  indexes_free_space,
+				  unused_space,
+				  diff_size);
 			goto finish_area_resize;
 		}
 
@@ -13727,17 +13751,32 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		start_index = (u16)shift;
 		range_len = node->items_area.items_count;
 
-		node->index_area.area_size -= diff_size;
-		node->index_area.index_capacity =
-			node->index_area.area_size /
-				node->index_area.index_size;
+		if (unused_space >= diff_size) {
+			/*
+			 * Do nothing.
+			 * It doesn't need to correct index area.
+			 */
+		} else if (indexes_free_space >= diff_size) {
+			node->index_area.area_size -= diff_size;
+			node->index_area.index_capacity =
+				node->index_area.area_size /
+					node->index_area.index_size;
 
-		if (node->index_area.area_size == 0) {
-			node->index_area.offset = U32_MAX;
-			node->index_area.start_hash = U64_MAX;
-			node->index_area.end_hash = U64_MAX;
-			atomic_set(&node->index_area.state,
-				   SSDFS_BTREE_NODE_AREA_ABSENT);
+			if (node->index_area.area_size == 0) {
+				node->index_area.offset = U32_MAX;
+				node->index_area.start_hash = U64_MAX;
+				node->index_area.end_hash = U64_MAX;
+				atomic_set(&node->index_area.state,
+					   SSDFS_BTREE_NODE_AREA_ABSENT);
+			}
+		} else {
+			err = -ERANGE;
+			SSDFS_ERR("node is corrupted: "
+				  "indexes_free_space %u, "
+				  "unused_space %u\n",
+				  indexes_free_space,
+				  unused_space);
+			goto finish_area_resize;
 		}
 
 		switch (atomic_read(&node->items_area.state)) {
