@@ -13832,18 +13832,25 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 			BUG();
 		}
 
-		err = ssdfs_shift_range_left(node, &node->items_area,
-					     item_size,
-					     start_index, range_len,
-					     (u16)shift);
-		if (unlikely(err)) {
-			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-			SSDFS_ERR("fail to shift range to left: "
-				  "start_index %u, range_len %u, "
-				  "shift %u, err %d\n",
-				  start_index, range_len,
-				  shift, err);
-			goto finish_area_resize;
+		if (range_len > 0) {
+			err = ssdfs_shift_range_left(node, &node->items_area,
+						     item_size,
+						     start_index, range_len,
+						     (u16)shift);
+			if (unlikely(err)) {
+				atomic_set(&node->state,
+						SSDFS_BTREE_NODE_CORRUPTED);
+				SSDFS_ERR("fail to shift range to left: "
+					  "start_index %u, range_len %u, "
+					  "shift %u, err %d\n",
+					  start_index, range_len,
+					  shift, err);
+				goto finish_area_resize;
+			}
+		} else {
+			SSDFS_DBG("items shift is not necessary: "
+				  "range_len %u\n",
+				  range_len);
 		}
 
 		/*
