@@ -28,6 +28,7 @@
 #include "compression.h"
 #include "block_bitmap.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
 #include "peb_container.h"

@@ -2518,7 +2518,7 @@ int ssdfs_shared_dict_btree_delete_node(struct ssdfs_btree_node *node)
 {
 	/* TODO: implement */
 	SSDFS_DBG("TODO: implement\n");
-	return -ENOSYS;
+	return 0;
 
 
 /*

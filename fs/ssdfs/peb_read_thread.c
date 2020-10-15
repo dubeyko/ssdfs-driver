@@ -629,6 +629,13 @@ struct page *ssdfs_peb_read_page_locked(struct ssdfs_peb_info *pebi,
 	err = ssdfs_read_page_from_volume(fsi, pebi->peb_id,
 					  page_off << PAGE_SHIFT,
 					  page);
+
+	/*
+	 * ->readpage() unlock the page
+	 * But caller expects that page is locked
+	 */
+	lock_page(page);
+
 	if (unlikely(err))
 		goto fail_read_page;
 
@@ -1669,7 +1676,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	int area_index;
 	u8 peb_migration_id;
 	u16 peb_index;
-	bool is_migrating = false;
+	int migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1697,7 +1704,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	logical_blk = req->place.start.blk_index + req->result.processed_blks;
 
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
-						&peb_index, &is_migrating);
+						&peb_index, &migration_state);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *init_end;
 		unsigned long res;
@@ -1715,7 +1722,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 
 		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
 							&peb_index,
-							&is_migrating);
+							&migration_state);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -1741,13 +1748,13 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 		  desc_off->blk_state.peb_migration_id,
 		  le32_to_cpu(desc_off->blk_state.byte_offset));
 
-	if (is_migrating) {
+	if (is_ssdfs_logical_block_migrating(migration_state)) {
 		err = ssdfs_blk2off_table_get_block_state(table, req);
 		if (err == -EAGAIN) {
 			desc_off = ssdfs_blk2off_table_convert(table,
-								logical_blk,
-								&peb_index,
-								&is_migrating);
+							    logical_blk,
+							    &peb_index,
+							    &migration_state);
 			if (IS_ERR_OR_NULL(desc_off)) {
 				err = (desc_off == NULL ?
 						-ERANGE : PTR_ERR(desc_off));
@@ -5900,15 +5907,85 @@ static
 int ssdfs_finish_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 					     struct ssdfs_segment_request *req)
 {
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct completion *end;
+	struct ssdfs_maptbl_peb_descriptor *ptr;
+	u64 leb_id;
 	int log_diff = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !req);
+	BUG_ON(!pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, peb_index %u\n",
 		  pebi->peb_id, pebi->peb_index);
+
+	fsi = pebi->pebc->parent_si->fsi;
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_index);
+	if (leb_id == U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_index);
+		return -ERANGE;
+	}
+
+	err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
+					   pebi->pebc->peb_type,
+					   &pebr, &end);
+	if (err == -EAGAIN) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
+						   pebi->pebc->peb_type,
+						   &pebr, &end);
+	}
+
+	if (err == -ENODATA) {
+		SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
+			  leb_id);
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to convert LEB to PEB: "
+			  "leb_id %llu, peb_type %#x, err %d\n",
+			  leb_id, pebi->pebc->peb_type, err);
+		return err;
+	}
+
+	ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+	if (ptr->peb_id != pebi->peb_id) {
+		SSDFS_ERR("ptr->peb_id %llu != pebi->peb_id %llu\n",
+			  ptr->peb_id, pebi->peb_id);
+		return -ERANGE;
+	}
+
+	switch (ptr->state) {
+	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+		SSDFS_DBG("ignore PEB: peb_id %llu, state %#x\n",
+			  pebi->peb_id, ptr->state);
+		return 0;
+
+	default:
+		/* continue logic */
+		break;
+	}
 
 	switch (atomic_read(&pebi->current_log.state)) {
 	case SSDFS_LOG_INITIALIZED:

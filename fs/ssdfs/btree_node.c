@@ -1055,13 +1055,11 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	for (i = 0; i < req->result.processed_blks; i++)
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
-	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 #ifdef CONFIG_SSDFS_DEBUG
+	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 		void *kaddr;
-#endif /* CONFIG_SSDFS_DEBUG */
 		struct page *page = req->result.pvec.pages[i];
 
-#ifdef CONFIG_SSDFS_DEBUG
 		kaddr = kmap(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
@@ -1072,10 +1070,8 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		kunmap(page);
 
 		WARN_ON(!PageLocked(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		unlock_page(page);
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_node_pagevec_release(pvec);
 	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
@@ -1673,6 +1669,11 @@ int ssdfs_btree_init_node_index_area(struct ssdfs_btree_node *node,
 		node->index_area.start_hash = start_hash;
 		node->index_area.end_hash = end_hash;
 	}
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
+		  start_hash, end_hash,
+		  index_count, index_capacity);
 
 	return 0;
 }
@@ -3051,6 +3052,100 @@ int ssdfs_btree_node_commit_log(struct ssdfs_btree_node *node)
 }
 
 /*
+ * ssdfs_btree_deleted_node_commit_log() - request the log commit (deleted node)
+ * @node: node object
+ *
+ * This method tries to request the log commit for the deleted node.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_btree_deleted_node_commit_log(struct ssdfs_btree_node *node)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	u64 seg_id;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !node->tree || !node->tree->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("node_id %u, height %u, type %#x\n",
+		  node->node_id, atomic_read(&node->height),
+		  atomic_read(&node->type));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_INDEX_NODE:
+	case SSDFS_BTREE_HYBRID_NODE:
+	case SSDFS_BTREE_LEAF_NODE:
+		/* expected state */
+		break;
+
+	default:
+		BUG();
+	};
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_ssdfs_btree_node_pre_deleted(node)) {
+		SSDFS_ERR("node %u is not pre-deleted\n",
+			  node->node_id);
+		return -ERANGE;
+	}
+
+	fsi = node->tree->fsi;
+
+	spin_lock(&node->descriptor_lock);
+	si = node->seg;
+	seg_id = le64_to_cpu(node->extent.seg_id);
+	spin_unlock(&node->descriptor_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+	BUG_ON(seg_id != si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < si->pebs_count; i++) {
+		struct ssdfs_segment_request *req;
+		struct ssdfs_peb_container *pebc;
+		struct ssdfs_requests_queue *rq;
+		wait_queue_head_t *wait;
+
+		pebc = &si->peb_array[i];
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			return err;
+		}
+
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
+						    SSDFS_COMMIT_LOG_NOW,
+						    SSDFS_REQ_ASYNC, req);
+		ssdfs_request_define_segment(si->seg_id, req);
+
+		rq = &pebc->update_rq;
+		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
+
+		wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+		wake_up_all(wait);
+	}
+
+	return 0;
+}
+
+/*
  * is_ssdfs_btree_node_dirty() - check that btree node is dirty
  * @node: node object
  */
@@ -3066,6 +3161,7 @@ bool is_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 
 	switch (state) {
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		return true;
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
@@ -3155,6 +3251,112 @@ void clear_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 }
 
 /*
+ * is_ssdfs_btree_node_pre_deleted() - check that btree node is pre-deleted
+ * @node: node object
+ */
+bool is_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
+{
+	int state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	state = atomic_read(&node->state);
+
+	switch (state) {
+	case SSDFS_BTREE_NODE_PRE_DELETED:
+		return true;
+
+	case SSDFS_BTREE_NODE_INITIALIZED:
+	case SSDFS_BTREE_NODE_DIRTY:
+		return false;
+
+	default:
+		SSDFS_WARN("invalid node state %#x\n",
+			   state);
+		/* pass through */
+	};
+
+	return false;
+}
+
+/*
+ * set_ssdfs_btree_node_pre_deleted() - set btree node in pre-deleted state
+ * @node: node object
+ */
+void set_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
+{
+	int state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !node->tree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	state = atomic_read(&node->state);
+
+	switch (state) {
+	case SSDFS_BTREE_NODE_PRE_DELETED:
+	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_INITIALIZED:
+	case SSDFS_BTREE_NODE_CREATED:
+		atomic_set(&node->state, SSDFS_BTREE_NODE_PRE_DELETED);
+		spin_lock(&node->tree->nodes_lock);
+		radix_tree_tag_set(&node->tree->nodes, node->node_id,
+				   SSDFS_BTREE_NODE_DIRTY_TAG);
+		spin_unlock(&node->tree->nodes_lock);
+		break;
+
+	default:
+		SSDFS_WARN("invalid node state %#x\n",
+			   state);
+		/* pass through */
+	};
+}
+
+/*
+ * clear_ssdfs_btree_node_pre_deleted() - clear pre-deleted state of btree node
+ * @node: node object
+ */
+void clear_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
+{
+	int state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !node->tree);
+	BUG_ON(!rwsem_is_locked(&node->tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	state = atomic_read(&node->state);
+
+	switch (state) {
+	case SSDFS_BTREE_NODE_PRE_DELETED:
+		atomic_set(&node->state, SSDFS_BTREE_NODE_INITIALIZED);
+		spin_lock(&node->tree->nodes_lock);
+		radix_tree_tag_clear(&node->tree->nodes, node->node_id,
+				     SSDFS_BTREE_NODE_DIRTY_TAG);
+		spin_unlock(&node->tree->nodes_lock);
+		break;
+
+	case SSDFS_BTREE_NODE_CORRUPTED:
+		spin_lock(&node->tree->nodes_lock);
+		radix_tree_tag_clear(&node->tree->nodes, node->node_id,
+				     SSDFS_BTREE_NODE_DIRTY_TAG);
+		spin_unlock(&node->tree->nodes_lock);
+		break;
+
+	case SSDFS_BTREE_NODE_INITIALIZED:
+		/* do nothing */
+		break;
+
+	default:
+		SSDFS_WARN("invalid node state %#x\n",
+			   state);
+		/* pass through */
+	};
+}
+
+/*
  * is_ssdfs_btree_node_index_area_exist() - check that node has index area
  * @node: node object
  */
@@ -3176,6 +3378,7 @@ bool is_ssdfs_btree_node_index_area_exist(struct ssdfs_btree_node *node)
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -3239,6 +3442,7 @@ bool is_ssdfs_btree_node_index_area_empty(struct ssdfs_btree_node *node)
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -3326,6 +3530,7 @@ bool is_ssdfs_btree_node_items_area_exist(struct ssdfs_btree_node *node)
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -3386,6 +3591,7 @@ bool is_ssdfs_btree_node_items_area_empty(struct ssdfs_btree_node *node)
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -3909,6 +4115,13 @@ int ssdfs_btree_node_resize_index_area(struct ssdfs_btree_node *node,
 			  cur_size, area_size);
 		goto finish_resize_operation;
 	}
+
+	SSDFS_DBG("index_size %u, index_count %u, "
+		  "index_capacity %u, index_area_size %u, "
+		  "cur_size %u, new_size %u\n",
+		  index_size, index_count,
+		  index_capacity, area_size,
+		  cur_size, new_size);
 
 	if (new_size < node->index_area.area_size) {
 		/* shrink index area */
@@ -4894,13 +5107,14 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (page_off == 0) {
-		SSDFS_ERR("page_off == 0\n");
+	if (page_index == 0 && page_off < area->offset) {
+		SSDFS_ERR("page_off %u < area->offset %u\n",
+			  page_off, area->offset);
 		return -ERANGE;
 	}
 
 	if (page_off % area->index_size) {
-		SSDFS_ERR("offset doesn't be aligned: "
+		SSDFS_ERR("offset is not aligned: "
 			  "page_off %u, index_size %u\n",
 			  page_off, area->index_size);
 		return -ERANGE;
@@ -5178,9 +5392,20 @@ int ssdfs_btree_common_node_find_index(struct ssdfs_btree_node *node,
 						      search_hash,
 						      found_index,
 						      &processed_bytes);
-		if (err == -ENODATA)
+		if (err == -ENODATA) {
 			err = 0;
-		else if (err == -ENOENT) {
+
+			if (*found_index >= U16_MAX) {
+				/*
+				 * continue to search
+				 */
+			} else if ((*found_index + 1) >= area->index_count) {
+				/*
+				 * index has been found
+				 */
+				break;
+			}
+		} else if (err == -ENOENT) {
 			err = 0;
 
 			if (prev_found != U16_MAX) {
@@ -5244,6 +5469,10 @@ int __ssdfs_btree_root_node_extract_index(struct ssdfs_btree_node *node,
 			  found_index);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("index 0: node_id %u; index 1: node_id %u\n",
+		  cpu_to_le32(node->raw.root_node.header.node_ids[0]),
+		  cpu_to_le32(node->raw.root_node.header.node_ids[1]));
 
 	down_read(&node->header_lock);
 	node_id = node->raw.root_node.header.node_ids[found_index];
@@ -5374,6 +5603,15 @@ int ssdfs_btree_node_get_index(struct pagevec *pvec,
 	memcpy(ptr, (u8 *)kaddr + page_off,
 		sizeof(struct ssdfs_btree_index_key));
 	kunmap_atomic(kaddr);
+
+	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le32_to_cpu(ptr->node_id),
+		  ptr->node_type,
+		  le64_to_cpu(ptr->index.hash),
+		  le64_to_cpu(ptr->index.extent.seg_id),
+		  le32_to_cpu(ptr->index.extent.logical_blk),
+		  le32_to_cpu(ptr->index.extent.len));
 
 	return 0;
 }
@@ -6290,9 +6528,12 @@ int ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 
 	node->index_area.end_hash = le64_to_cpu(tmp_key.index.hash);
 
-	SSDFS_DBG("start_hash %llx, end_hash %llx\n",
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
 		  node->index_area.start_hash,
-		  node->index_area.end_hash);
+		  node->index_area.end_hash,
+		  node->index_area.index_count,
+		  node->index_area.index_capacity);
 
 	return 0;
 }
@@ -6745,7 +6986,6 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 
 	if (node_type == SSDFS_BTREE_ROOT_NODE) {
 		down_read(&node->full_lock);
-		down_write(&node->header_lock);
 
 		err = ssdfs_find_index_by_hash(node, &node->index_area,
 						old_hash, &found);
@@ -6765,6 +7005,8 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 		BUG_ON(found == U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		down_write(&node->header_lock);
+
 		err = ssdfs_btree_root_node_change_index(node, found,
 							 new_index);
 		if (unlikely(err)) {
@@ -6775,8 +7017,8 @@ int ssdfs_btree_node_change_index(struct ssdfs_btree_node *node,
 				  found, err);
 		}
 
-finish_change_root_node:
 		up_write(&node->header_lock);
+finish_change_root_node:
 		up_read(&node->full_lock);
 
 		if (unlikely(err))
@@ -6873,6 +7115,10 @@ int ssdfs_btree_root_node_delete_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("index 0: node_id %u; index 1: node_id %u\n",
+		  cpu_to_le32(node->raw.root_node.header.node_ids[0]),
+		  cpu_to_le32(node->raw.root_node.header.node_ids[1]));
 
 	SSDFS_DBG("node_id %u, position %u\n",
 		  node->node_id, position);
@@ -7187,8 +7433,9 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, position %u\n",
-		  node->node_id, position);
+	SSDFS_DBG("node_id %u, position %u, index_count %u\n",
+		  node->node_id, position,
+		  node->index_area.index_count);
 
 	if (node->index_area.index_count > node->index_area.index_capacity) {
 		SSDFS_ERR("index_count %u > index_capacity %u\n",
@@ -7232,6 +7479,16 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 
 	node->index_area.index_count--;
 
+	switch (node->tree->type) {
+	case SSDFS_INODES_BTREE:
+		/* keep the index range unchanged */
+		goto finish_common_node_delete_index;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
 	if (node->index_area.index_count == 0) {
 		node->index_area.start_hash = U64_MAX;
 		node->index_area.end_hash = U64_MAX;
@@ -7245,6 +7502,14 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 		}
 	}
 
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
+		  node->index_area.start_hash,
+		  node->index_area.end_hash,
+		  node->index_area.index_count,
+		  node->index_area.index_capacity);
+
+finish_common_node_delete_index:
 	return 0;
 }
 
@@ -7306,6 +7571,11 @@ bool need_shrink_index_area(struct ssdfs_btree_node *node, u32 *new_size)
 		else
 			*new_size = U32_MAX;
 	}
+
+	SSDFS_DBG("count %u, capacity %u, index_size %u, "
+		  "index_area_min_size %u, new_size %u\n",
+		  count, capacity, index_size,
+		  index_area_min_size, *new_size);
 
 	return false;
 }
@@ -7437,7 +7707,10 @@ finish_change_root_node:
 		BUG_ON(found == U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		count = (node->index_area.index_count + 1) - found;
+		SSDFS_DBG("index_count %u, found %u\n",
+			  node->index_area.index_count, found);
+
+		count = node->index_area.index_count - found;
 		err = ssdfs_lock_index_range(node, found, count);
 		BUG_ON(err == -ENODATA);
 		if (unlikely(err)) {
@@ -9917,12 +10190,7 @@ int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (start_index > area->items_count) {
-		SSDFS_ERR("invalid request: "
-			  "start_index %u, items_count %u\n",
-			  start_index, area->items_count);
-		return -ERANGE;
-	} else if ((start_index + range_len) > area->items_capacity) {
+	if ((start_index + range_len) > area->items_capacity) {
 		SSDFS_ERR("range is out of capacity: "
 			  "start_index %u, range_len %u, items_capacity %u\n",
 			  start_index, range_len, area->items_capacity);
@@ -11543,6 +11811,10 @@ try_extract_range:
 			goto finish_extract_range;
 		}
 
+		SSDFS_DBG("found_index %u, start_hash %llx, "
+			  "end_hash %llx\n",
+			  found_index, start_hash, end_hash);
+
 		down_read(&node->bmap_array.lock);
 		spin_lock(&bmap->lock);
 		bitmap_clear(bmap->ptr, (unsigned int)start_index, 1);
@@ -11551,7 +11823,7 @@ try_extract_range:
 
 		wake_up_all(&node->wait_queue);
 
-		if (search->request.end.hash < end_hash)
+		if (search->request.end.hash <= end_hash)
 			break;
 	}
 
@@ -12043,6 +12315,15 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		u32 range_len1, range_len2;
 		u32 moving_items;
 
+		if (moved_items >= range_len) {
+			SSDFS_ERR("moved_items %u >= range_len %u\n",
+			      moved_items, range_len);
+			return -ERANGE;
+		}
+
+		SSDFS_DBG("src_index %d, dst_index %d\n",
+			  src_index, dst_index);
+
 		item_offset1 = (u32)src_index * item_size;
 		if (item_offset1 >= area_size) {
 			SSDFS_ERR("item_offset %u >= area_size %u\n",
@@ -12117,6 +12398,11 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
+		SSDFS_DBG("page_index1 %d, item_offset1 %u, "
+			  "page_index2 %d, item_offset2 %u\n",
+			  page_index1, item_offset1,
+			  page_index2, item_offset2);
+
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
@@ -12139,24 +12425,15 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		src_index += moving_items;
 		dst_index += moving_items;
 
+		SSDFS_DBG("moving_items %u, src_index %d, dst_index %d\n",
+			  moving_items, src_index, dst_index);
+
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(moving_items >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		moved_items += moving_items;
-	} while (dst_index < start_index);
-
-	if (moved_items != range_len) {
-		SSDFS_ERR("moved_items %u != range_len %u\n",
-			  moved_items, range_len);
-		return -ERANGE;
-	}
-
-	if (dst_index != start_index) {
-		SSDFS_ERR("dst_index %d != start_index %d\n",
-			  dst_index, start_index);
-		return -ERANGE;
-	}
+	} while (moved_items < range_len);
 
 	return 0;
 }
@@ -12255,19 +12532,15 @@ int ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		  node->node_id, item_size,
 		  start_index, range_len, shift);
 
-	if (start_index > area->items_count) {
+	if (start_index >= area->items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "start_index %u, items_count %u\n",
-			  start_index, area->items_count);
+			  "start_index %u, items_capacity %u\n",
+			  start_index, area->items_capacity);
 		return -ERANGE;
-	} else if (start_index == area->items_count) {
-		SSDFS_DBG("start_index %u == items_count %u\n",
-			  start_index, area->items_count);
-		return 0;
-	} else if ((start_index + range_len) > area->items_count) {
-		SSDFS_ERR("range is out of existing items: "
-			  "start_index %u, range_len %u, items_count %u\n",
-			  start_index, range_len, area->items_count);
+	} else if ((start_index + range_len) > area->items_capacity) {
+		SSDFS_ERR("range is out of capacity: "
+			  "start_index %u, range_len %u, items_capacity %u\n",
+			  start_index, range_len, area->items_capacity);
 		return -ERANGE;
 	} else if (shift > start_index) {
 		SSDFS_ERR("shift is out of node: "
@@ -13335,7 +13608,7 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		items_offset = node->items_area.offset;
 		items_size = node->items_area.area_size;
 
-		if ((hdr_size + indexes_size) != items_offset) {
+		if ((hdr_size + indexes_size) > items_offset) {
 			err = -EFAULT;
 			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 			SSDFS_ERR("corrupted items area: "
@@ -13373,7 +13646,7 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		goto finish_area_resize;
 	}
 
-	if ((hdr_size + indexes_size + items_size) != node->node_size) {
+	if ((hdr_size + indexes_size + items_size) > node->node_size) {
 		err = -EFAULT;
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 		SSDFS_ERR("corrupted node: "
@@ -13442,12 +13715,28 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 
 	if (new_size > items_size) {
 		/* increase items area */
+		u32 unused_space;
+
+		if ((hdr_size + indexes_size) > items_offset) {
+			err = -EFAULT;
+			SSDFS_ERR("corrupted node: "
+				  "hdr_size %zu, indexes_size %u, "
+				  "items_offset %u\n",
+				  hdr_size, indexes_size, items_offset);
+			goto finish_area_resize;
+		}
+
+		unused_space = items_offset - (hdr_size + indexes_size);
 		diff_size = new_size - items_size;
 
-		if (indexes_free_space < diff_size) {
+		if ((indexes_free_space + unused_space) < diff_size) {
 			err = -EFAULT;
-			SSDFS_ERR("indexes_free_space %u < diff_size %u\n",
-				  indexes_free_space, diff_size);
+			SSDFS_ERR("corrupted_node: "
+				  "indexes_free_space %u, unused_space %u, "
+				  "diff_size %u\n",
+				  indexes_free_space,
+				  unused_space,
+				  diff_size);
 			goto finish_area_resize;
 		}
 
@@ -13462,17 +13751,32 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		start_index = (u16)shift;
 		range_len = node->items_area.items_count;
 
-		node->index_area.area_size -= diff_size;
-		node->index_area.index_capacity =
-			node->index_area.area_size /
-				node->index_area.index_size;
+		if (unused_space >= diff_size) {
+			/*
+			 * Do nothing.
+			 * It doesn't need to correct index area.
+			 */
+		} else if (indexes_free_space >= diff_size) {
+			node->index_area.area_size -= diff_size;
+			node->index_area.index_capacity =
+				node->index_area.area_size /
+					node->index_area.index_size;
 
-		if (node->index_area.area_size == 0) {
-			node->index_area.offset = U32_MAX;
-			node->index_area.start_hash = U64_MAX;
-			node->index_area.end_hash = U64_MAX;
-			atomic_set(&node->index_area.state,
-				   SSDFS_BTREE_NODE_AREA_ABSENT);
+			if (node->index_area.area_size == 0) {
+				node->index_area.offset = U32_MAX;
+				node->index_area.start_hash = U64_MAX;
+				node->index_area.end_hash = U64_MAX;
+				atomic_set(&node->index_area.state,
+					   SSDFS_BTREE_NODE_AREA_ABSENT);
+			}
+		} else {
+			err = -ERANGE;
+			SSDFS_ERR("node is corrupted: "
+				  "indexes_free_space %u, "
+				  "unused_space %u\n",
+				  indexes_free_space,
+				  unused_space);
+			goto finish_area_resize;
 		}
 
 		switch (atomic_read(&node->items_area.state)) {
@@ -13528,18 +13832,25 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 			BUG();
 		}
 
-		err = ssdfs_shift_range_left(node, &node->items_area,
-					     item_size,
-					     start_index, range_len,
-					     (u16)shift);
-		if (unlikely(err)) {
-			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-			SSDFS_ERR("fail to shift range to left: "
-				  "start_index %u, range_len %u, "
-				  "shift %u, err %d\n",
-				  start_index, range_len,
-				  shift, err);
-			goto finish_area_resize;
+		if (range_len > 0) {
+			err = ssdfs_shift_range_left(node, &node->items_area,
+						     item_size,
+						     start_index, range_len,
+						     (u16)shift);
+			if (unlikely(err)) {
+				atomic_set(&node->state,
+						SSDFS_BTREE_NODE_CORRUPTED);
+				SSDFS_ERR("fail to shift range to left: "
+					  "start_index %u, range_len %u, "
+					  "shift %u, err %d\n",
+					  start_index, range_len,
+					  shift, err);
+				goto finish_area_resize;
+			}
+		} else {
+			SSDFS_DBG("items shift is not necessary: "
+				  "range_len %u\n",
+				  range_len);
 		}
 
 		/*

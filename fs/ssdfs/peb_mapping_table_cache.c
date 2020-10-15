@@ -4142,6 +4142,10 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 		/* simply change the state */
 		goto finish_exclude_migration_peb;
 	} else {
+		unsigned page_index = i;
+		u16 deleted_item = item_index;
+		u8 new_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
+
 		err = ssdfs_maptbl_cache_remove_leb(cache, i, item_index);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to remove LEB: "
@@ -4245,6 +4249,72 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 
 			ssdfs_map_cache_free_page(page);
 			atomic_sub(PAGE_SIZE, &cache->bytes_count);
+		}
+
+		page = cache->pvec.pages[page_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		lock_page(page);
+		kaddr = kmap(page);
+		err = ssdfs_maptbl_cache_get_peb_state(kaddr,
+						       deleted_item,
+						       &found_state);
+		kunmap(page);
+		unlock_page(page);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get peb state: "
+				  "item_index %u, err %d\n",
+				  deleted_item, err);
+			goto finish_exclude_migration_peb;
+		}
+
+		SSDFS_DBG("found_state->state %#x\n",
+			  found_state->state);
+
+		switch (found_state->state) {
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			new_peb_state = SSDFS_MAPTBL_CLEAN_PEB_STATE;
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			new_peb_state = SSDFS_MAPTBL_USING_PEB_STATE;
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			new_peb_state = SSDFS_MAPTBL_USED_PEB_STATE;
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			new_peb_state = SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE;
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+			new_peb_state = SSDFS_MAPTBL_DIRTY_PEB_STATE;
+			break;
+
+		default:
+			/* do nothing */
+			SSDFS_DBG("PEB not under migration: "
+				  "state %#x\n",
+				  found_state->state);
+			goto finish_exclude_migration_peb;
+		}
+
+		err = __ssdfs_maptbl_cache_change_peb_state(cache,
+							    page_index,
+							    deleted_item,
+							    new_peb_state,
+							    consistency);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change peb state: "
+				  "page_index %u, item_index %u, "
+				  "err %d\n",
+				  page_index, deleted_item, err);
+			goto finish_exclude_migration_peb;
 		}
 	}
 

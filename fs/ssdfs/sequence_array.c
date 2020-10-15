@@ -131,7 +131,7 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 				  ssdfs_free_item free_item)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -140,11 +140,17 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 
 	SSDFS_DBG("array %p\n", array);
 
+	rcu_read_lock();
 	spin_lock(&array->lock);
 	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
-		item_ptr = radix_tree_delete(&array->map, iter.index);
+		item_ptr = rcu_dereference_raw(*slot);
 
 		spin_unlock(&array->lock);
+		rcu_read_unlock();
+
+		SSDFS_DBG("index %llu, ptr %p\n",
+			  (u64)iter.index, item_ptr);
+
 		if (!item_ptr) {
 			SSDFS_WARN("empty node pointer: "
 				   "index %llu\n",
@@ -152,10 +158,15 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 		} else {
 			free_item(item_ptr);
 		}
+
+		rcu_read_lock();
 		spin_lock(&array->lock);
+
+		radix_tree_iter_delete(&array->map, &iter, slot);
 	}
 	array->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 	spin_unlock(&array->lock);
+	rcu_read_unlock();
 
 	ssdfs_seq_arr_kfree(array);
 }
@@ -282,6 +293,8 @@ finish_add_item:
 	spin_unlock(&array->lock);
 
 	radix_tree_preload_end();
+
+	SSDFS_DBG("id %lu\n", *id);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add item into radix tree: "

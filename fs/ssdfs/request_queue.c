@@ -25,6 +25,7 @@
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 
@@ -432,6 +433,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				ClearPageUptodate(page);
+				ClearPagePrivate(page);
 				ClearPageMappedToDisk(page);
 				ssdfs_clear_dirty_page(page);
 				unlock_page(page);
@@ -459,6 +461,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				ClearPageUptodate(page);
+				ClearPagePrivate(page);
 				ClearPageMappedToDisk(page);
 				ssdfs_clear_dirty_page(page);
 				unlock_page(page);

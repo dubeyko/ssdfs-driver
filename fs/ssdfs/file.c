@@ -393,6 +393,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 fail_read_page:
 	ClearPageUptodate(page);
+	ClearPagePrivate(page);
 	SetPageError(page);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
@@ -619,7 +620,12 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		err = ssdfs_segment_add_data_block_async(fsi, *req);
+		u64 seg_id;
+		struct ssdfs_blk2off_range extent;
+
+		err = ssdfs_segment_add_data_block_async(fsi, *req,
+							 &seg_id,
+							 &extent);
 		if (!err) {
 			err = ssdfs_extents_tree_add_block(inode, *req);
 			if (err) {
@@ -684,7 +690,12 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		err = ssdfs_segment_add_data_block_sync(fsi, *req);
+		u64 seg_id;
+		struct ssdfs_blk2off_range extent;
+
+		err = ssdfs_segment_add_data_block_sync(fsi, *req,
+							&seg_id,
+							&extent);
 		if (!err) {
 			err = ssdfs_extents_tree_add_block(inode, *req);
 			if (!err)
@@ -741,7 +752,12 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		err = ssdfs_segment_add_data_extent_async(fsi, *req);
+		u64 seg_id;
+		struct ssdfs_blk2off_range extent;
+
+		err = ssdfs_segment_add_data_extent_async(fsi, *req,
+							  &seg_id,
+							  &extent);
 		if (!err) {
 			u32 extent_bytes = data_bytes;
 
@@ -815,7 +831,12 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		err = ssdfs_segment_add_data_extent_sync(fsi, *req);
+		u64 seg_id;
+		struct ssdfs_blk2off_range extent;
+
+		err = ssdfs_segment_add_data_extent_sync(fsi, *req,
+							 &seg_id,
+							 &extent);
 		if (!err) {
 			u32 extent_bytes = data_bytes;
 
@@ -1223,6 +1244,7 @@ int ssdfs_writepage_wrapper(struct page *page,
 
 discard_page:
 	ClearPageUptodate(page);
+	ClearPagePrivate(page);
 	ClearPageMappedToDisk(page);
 	ssdfs_clear_dirty_page(page);
 

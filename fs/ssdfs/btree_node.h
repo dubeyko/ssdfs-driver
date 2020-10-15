@@ -177,7 +177,7 @@ struct ssdfs_state_bitmap_array {
 };
 
 /*
- * union ssdfs_btree_node_content - btree node's content
+ * struct ssdfs_btree_node_content - btree node's content
  * @pvec: page vector
  */
 struct ssdfs_btree_node_content {
@@ -293,6 +293,7 @@ enum {
 	SSDFS_BTREE_NODE_CONTENT_PREPARED,
 	SSDFS_BTREE_NODE_INITIALIZED,
 	SSDFS_BTREE_NODE_DIRTY,
+	SSDFS_BTREE_NODE_PRE_DELETED,
 	SSDFS_BTREE_NODE_INVALID,
 	SSDFS_BTREE_NODE_CORRUPTED,
 	SSDFS_BTREE_NODE_STATE_MAX
@@ -352,6 +353,9 @@ u8 NODE2SEG_TYPE(u8 node_type)
 static inline
 int RANGE_WITHOUT_INTERSECTION(u64 start1, u64 end1, u64 start2, u64 end2)
 {
+	SSDFS_DBG("start1 %llx, end1 %llx, start2 %llx, end2 %llx\n",
+		  start1, end1, start2, end2);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(start1 >= U64_MAX || end1 >= U64_MAX ||
 		start2 >= U64_MAX || end2 >= U64_MAX);
@@ -379,6 +383,9 @@ static inline
 bool RANGE_HAS_PARTIAL_INTERSECTION(u64 start1, u64 end1,
 				    u64 start2, u64 end2)
 {
+	SSDFS_DBG("start1 %llx, end1 %llx, start2 %llx, end2 %llx\n",
+		  start1, end1, start2, end2);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(start1 >= U64_MAX || end1 >= U64_MAX ||
 		start2 >= U64_MAX || end2 >= U64_MAX);
@@ -522,6 +529,9 @@ bool is_ssdfs_node_shared(struct ssdfs_btree_node *node);
 bool is_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node);
 void set_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node);
 void clear_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node);
+bool is_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node);
+void set_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node);
+void clear_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node);
 
 bool is_ssdfs_btree_node_index_area_exist(struct ssdfs_btree_node *node);
 bool is_ssdfs_btree_node_index_area_empty(struct ssdfs_btree_node *node);
@@ -594,6 +604,7 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 					struct ssdfs_btree_node_header *hdr);
 int ssdfs_btree_common_node_flush(struct ssdfs_btree_node *node);
 int ssdfs_btree_node_commit_log(struct ssdfs_btree_node *node);
+int ssdfs_btree_deleted_node_commit_log(struct ssdfs_btree_node *node);
 int __ssdfs_btree_root_node_extract_index(struct ssdfs_btree_node *node,
 					  u16 found_index,
 					  struct ssdfs_btree_index_key *ptr);

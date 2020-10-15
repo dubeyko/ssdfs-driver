@@ -506,6 +506,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 				return -ERANGE;
 			}
 
+			lock_page(source->pages[i]);
+
 #ifdef CONFIG_SSDFS_DEBUG
 			kaddr = kmap(source->pages[i]);
 			SSDFS_DBG("BMAP INIT\n");
@@ -535,6 +537,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			SSDFS_WARN("page %d is NULL\n", 0);
 			return -ERANGE;
 		}
+
+		lock_page(page);
 
 		kaddr = kmap_atomic(page);
 		memcpy(blk_bmap->storage.buf, kaddr, blk_bmap->bytes_count);
@@ -839,7 +843,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 
 		kaddr1 = blk_bmap->storage.buf;
 		kaddr2 = kmap_atomic(page);
-		memcpy(kaddr2, kaddr1, PAGE_SIZE);
+		memcpy(kaddr2, kaddr1, blk_bmap->bytes_count);
 		kunmap_atomic(kaddr2);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4388,7 +4392,6 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 				     int blk_state,
 				     struct ssdfs_block_bmap_range *range)
 {
-	u32 max_blk;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4412,14 +4415,6 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return -ENOENT;
 	}
 
-	max_blk = blk_bmap->items_count - blk_bmap->metadata_items;
-
-	if (start >= max_blk) {
-		SSDFS_ERR("invalid start %u; items count %u\n",
-			  start, max_blk);
-		return -EINVAL;
-	}
-
 	switch (blk_state) {
 	case SSDFS_BLK_PRE_ALLOCATED:
 	case SSDFS_BLK_VALID:
@@ -4432,11 +4427,11 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	};
 
-	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len, max_blk,
+	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len, max_len,
 					  blk_state, range);
 	if (err == -ENODATA) {
 		SSDFS_DBG("range (start %u, len %u) hasn't valid blocks\n",
-			  range->start, range->len);
+			  start, max_len);
 		return err;
 	} else if (err) {
 		SSDFS_ERR("fail to find valid blocks: err %d\n", err);

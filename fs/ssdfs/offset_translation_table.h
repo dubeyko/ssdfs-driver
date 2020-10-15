@@ -83,6 +83,7 @@ enum {
 	SSDFS_BLK2OFF_TABLE_UNDEFINED,
 	SSDFS_BLK2OFF_TABLE_CREATED,
 	SSDFS_BLK2OFF_TABLE_PARTIAL_INIT,
+	SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT,
 	SSDFS_BLK2OFF_TABLE_COMPLETE_INIT,
 	SSDFS_BLK2OFF_TABLE_DIRTY,
 	SSDFS_BLK2OFF_TABLE_STATE_MAX,
@@ -288,6 +289,25 @@ int ssdfs_show_fragment_details(void *ptr)
 }
 
 static inline
+bool is_ssdfs_logical_block_migrating(int blk_state)
+{
+	bool is_migrating = false;
+
+	switch (blk_state) {
+	case SSDFS_LBLOCK_UNDER_MIGRATION:
+	case SSDFS_LBLOCK_UNDER_COMMIT:
+		is_migrating = true;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return is_migrating;
+}
+
+static inline
 void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -413,7 +433,7 @@ int ssdfs_blk2off_table_get_offset_position(struct ssdfs_blk2off_table *table,
 struct ssdfs_phys_offset_descriptor *
 ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 			    u16 logical_blk, u16 *peb_index,
-			    bool *is_migrating);
+			    int *migration_state);
 int ssdfs_blk2off_table_allocate_block(struct ssdfs_blk2off_table *table,
 					u16 *logical_blk);
 int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
@@ -424,14 +444,15 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 				      u16 peb_index,
 				      struct ssdfs_phys_offset_descriptor *off);
 int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
-				   u16 logical_blk);
+				   u16 peb_index, u16 logical_blk);
 int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
+				    u16 peb_index,
 				    struct ssdfs_blk2off_range *extent);
 
 int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 					    u16 logical_blk,
 					    u16 peb_index,
-					    struct pagevec *blk_state);
+					    struct ssdfs_segment_request *req);
 int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 					struct ssdfs_segment_request *req);
 int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,

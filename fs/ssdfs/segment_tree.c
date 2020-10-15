@@ -24,6 +24,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 #include "btree_search.h"
@@ -292,7 +293,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 		struct ssdfs_segment_info *si = *(kaddr + i);
 
 		if (si) {
-			wait_queue_head_t *wq = &si->destruct_queue;
+			wait_queue_head_t *wq = &si->object_queue;
 			int err = 0;
 
 			SSDFS_DBG("si %px, seg_id %llu\n", si, si->seg_id);
@@ -444,6 +445,7 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
  * [failure] - error code:
  *
  * %-ENOMEM  - fail to allocate memory.
+ * %-EEXIST  - segment has been added already.
  */
 int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 			   struct ssdfs_segment_info *si)
@@ -451,7 +453,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	pgoff_t page_index;
 	u32 object_index;
 	struct page *page;
-	struct ssdfs_segment_info **kaddr;
+	struct ssdfs_segment_info **kaddr, *object;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -478,7 +480,13 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	}
 
 	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
-	*(kaddr + object_index) = si;
+	object = *(kaddr + object_index);
+	if (object) {
+		err = -EEXIST;
+		SSDFS_DBG("object exists for segment %llu\n",
+			  si->seg_id);
+	} else
+		*(kaddr + object_index) = si;
 	kunmap_atomic(kaddr);
 	unlock_page(page);
 	ssdfs_put_page(page);

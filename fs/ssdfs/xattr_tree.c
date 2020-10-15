@@ -28,6 +28,7 @@
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 #include "extents_queue.h"
@@ -1466,6 +1467,8 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 	int pages_count;
 	size_t copied_data = 0;
 	size_t cur_len;
+	u64 seg_id;
+	struct ssdfs_blk2off_range extent;
 	int i;
 	int err = 0;
 
@@ -1529,7 +1532,7 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		set_page_writeback(page);
 	}
 
-	err = ssdfs_segment_add_data_extent_async(fsi, req);
+	err = ssdfs_segment_add_data_extent_async(fsi, req, &seg_id, &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add external blob: "
 			  "size %zu, err %d\n",
@@ -1537,10 +1540,14 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		goto finish_save_external_blob;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(seg_id == U64_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	desc->hash = cpu_to_le64(generate_value_hash(value, size));
-	desc->extent.seg_id = cpu_to_le64(req->place.start.seg_id);
-	desc->extent.logical_blk = cpu_to_le32(req->place.start.blk_index);
-	desc->extent.len = cpu_to_le32(req->place.len);
+	desc->extent.seg_id = cpu_to_le64(seg_id);
+	desc->extent.logical_blk = cpu_to_le32(extent.start_lblk);
+	desc->extent.len = cpu_to_le32(extent.len);
 
 	return 0;
 
@@ -5136,7 +5143,7 @@ int ssdfs_xattrs_btree_delete_node(struct ssdfs_btree_node *node)
 {
 	/* TODO: implement */
 	SSDFS_DBG("TODO: implement\n");
-	return -ENOSYS;
+	return 0;
 
 /*
  * TODO: it needs to add special free space descriptor in the
@@ -8005,6 +8012,7 @@ int __ssdfs_xattrs_btree_node_delete_range(struct ssdfs_btree_node *node,
 	struct ssdfs_btree_node_items_area items_area;
 	struct ssdfs_xattr_entry xattr;
 	size_t item_size = sizeof(struct ssdfs_xattr_entry);
+	u16 index_count = 0;
 	int free_items;
 	u16 item_index;
 	int direction;
@@ -8431,12 +8439,31 @@ finish_delete_range:
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
 		if (xattrs_count == 0) {
-			err = ssdfs_btree_node_delete_index(node, old_hash);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to delete index: "
-					  "old_hash %llx, err %d\n",
-					  old_hash, err);
-				return err;
+			int state;
+
+			down_read(&node->header_lock);
+			state = atomic_read(&node->index_area.state);
+			index_count = node->index_area.index_count;
+			up_read(&node->header_lock);
+
+			if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
+				SSDFS_ERR("invalid area state %#x\n",
+					  state);
+				return -ERANGE;
+			}
+
+			if (index_count <= 1) {
+				err = ssdfs_btree_node_delete_index(node,
+								    old_hash);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete index: "
+						  "old_hash %llx, err %d\n",
+						  old_hash, err);
+					return err;
+				}
+
+				if (index_count > 0)
+					index_count--;
 			}
 		} else if (old_hash != start_hash) {
 			struct ssdfs_btree_index_key old_key, new_key;
@@ -8466,7 +8493,7 @@ finish_delete_range:
 		break;
 	}
 
-	if (xattrs_count == 0)
+	if (xattrs_count == 0 && index_count == 0)
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;
 	else
 		search->result.state = SSDFS_BTREE_SEARCH_OBSOLETE_RESULT;

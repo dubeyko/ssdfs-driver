@@ -218,11 +218,11 @@ struct ssdfs_btree_state_descriptor {
 /*
  * struct ssdfs_btree_hierarchy - btree's hierarchy descriptor
  * @desc: btree state's descriptor
- * @array: btree level's array
+ * @array_ptr: btree level's array
  */
 struct ssdfs_btree_hierarchy {
 	struct ssdfs_btree_state_descriptor desc;
-	struct ssdfs_btree_level array[0];
+	struct ssdfs_btree_level **array_ptr;
 };
 
 /* Btree hierarchy inline methods */
@@ -244,7 +244,7 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree);
 void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy);
 
 bool need_update_parent_index_area(u64 start_hash,
-				   struct ssdfs_btree_node *parent);
+				   struct ssdfs_btree_node *child);
 int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 					struct ssdfs_btree_search *search,
 					struct ssdfs_btree_hierarchy *ptr);

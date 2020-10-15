@@ -72,12 +72,13 @@ struct ssdfs_segment_migration_info {
  * @log_pages: count of pages in full partial log
  * @create_threads: number of flush PEB's threads for new page requests
  * @seg_type: segment type
+ * @seg_state: current state of segment
+ * @obj_state: segment object's state
  * @peb_array: array of PEB's descriptors
  * @pebs_count: count of items in PEBS array
  * @migration: migration info
  * @refs_count: counter of references on segment object
- * @destruct_queue: wait queue for segment destruction
- * @seg_state: current state of segment
+ * @object_queue: wait queue for segment creation/destruction
  * @create_rq: new page requests queue
  * @wait_queue: array of PEBs' wait queues
  * @blk_bmap: segment's block bitmap
@@ -95,6 +96,10 @@ struct ssdfs_segment_info {
 	u8 create_threads;
 	u16 seg_type;
 
+	/* Mutable data */
+	atomic_t seg_state;
+	atomic_t obj_state;
+
 	/* Segment's PEB's containers array */
 	struct ssdfs_peb_container *peb_array;
 	u16 pebs_count;
@@ -104,10 +109,7 @@ struct ssdfs_segment_info {
 
 	/* Reference counter */
 	atomic_t refs_count;
-	wait_queue_head_t destruct_queue;
-
-	/* Mutable data */
-	atomic_t seg_state;
+	wait_queue_head_t object_queue;
 
 	/*
 	 * New pages processing:
@@ -132,9 +134,45 @@ struct ssdfs_segment_info {
 	struct completion pebs_kobj_unregister;
 };
 
+/* Segment object states */
+enum {
+	SSDFS_SEG_OBJECT_UNKNOWN_STATE,
+	SSDFS_SEG_OBJECT_UNDER_CREATION,
+	SSDFS_SEG_OBJECT_CREATED,
+	SSDFS_SEG_OBJECT_FAILURE,
+	SSDFS_SEG_OBJECT_STATE_MAX
+};
+
 /*
  * Inline functions
  */
+
+/*
+ * is_ssdfs_segment_created() - check that segment object is created
+ *
+ * This function returns TRUE for the case of successful
+ * creation of segment's object or failure of the creation.
+ * The responsibility of the caller to check that
+ * segment object has been created successfully.
+ */
+static inline
+bool is_ssdfs_segment_created(struct ssdfs_segment_info *si)
+{
+	bool is_created = false;
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_CREATED:
+	case SSDFS_SEG_OBJECT_FAILURE:
+		is_created = true;
+		break;
+
+	default:
+		is_created = false;
+		break;
+	}
+
+	return is_created;
+}
 
 /*
  * CUR_SEG_TYPE() - convert request class into current segment type
@@ -235,13 +273,15 @@ int SEG_TYPE_TO_USING_STATE(u16 seg_type)
 /*
  * Segment object's API
  */
-struct ssdfs_segment_info *
-ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
-			    u64 seg,
-			    int seg_state,
-			    u16 seg_type,
-			    u16 log_pages,
-			    u8 create_threads);
+struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id);
+void ssdfs_segment_free_object(struct ssdfs_segment_info *si);
+int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
+				u64 seg,
+				int seg_state,
+				u16 seg_type,
+				u16 log_pages,
+				u8 create_threads,
+				struct ssdfs_segment_info *si);
 int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si);
 void ssdfs_segment_get_object(struct ssdfs_segment_info *si);
 void ssdfs_segment_put_object(struct ssdfs_segment_info *si);
@@ -256,72 +296,136 @@ int ssdfs_segment_read_block_async(struct ssdfs_segment_info *si,
 				  struct ssdfs_segment_request *req);
 
 int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
-					   struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_leaf_node_block_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_index_node_block_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_index_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 
 int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
-					   struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_leaf_node_block_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_index_node_block_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 
 int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
-					   struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_leaf_node_extent_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_hybrid_node_extent_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_hybrid_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_index_node_extent_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_pre_alloc_index_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 
 int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
-					   struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_leaf_node_extent_async(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_hybrid_node_extent_sync(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_hybrid_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_index_node_extent_sync(struct ssdfs_fs_info *fsi,
-					    struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_index_node_extent_async(struct ssdfs_fs_info *fsi,
-					     struct ssdfs_segment_request *req);
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 
 int ssdfs_segment_update_block_sync(struct ssdfs_segment_info *si,
 				    struct ssdfs_segment_request *req);
@@ -354,6 +458,12 @@ int ssdfs_segment_commit_log_sync(struct ssdfs_segment_info *si,
 int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
 				   int req_type,
 				   struct ssdfs_segment_request *req);
+int ssdfs_segment_commit_log_sync2(struct ssdfs_segment_info *si,
+				   u16 peb_index,
+				   struct ssdfs_segment_request *req);
+int ssdfs_segment_commit_log_async2(struct ssdfs_segment_info *si,
+				    int req_type, u16 peb_index,
+				    struct ssdfs_segment_request *req);
 
 int ssdfs_segment_invalidate_logical_block(struct ssdfs_segment_info *si,
 					   u32 blk_offset);
@@ -366,5 +476,14 @@ int ssdfs_segment_migrate_pre_alloc_page_async(struct ssdfs_segment_info *si,
 					    struct ssdfs_segment_request *req);
 int ssdfs_segment_migrate_fragment_async(struct ssdfs_segment_info *si,
 					 struct ssdfs_segment_request *req);
+
+/*
+ * Internal segment object's API
+ */
+struct ssdfs_segment_info *
+__ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
+			   u64 seg_id, int seg_state,
+			   u16 seg_type, u16 log_pages,
+			   u8 create_threads);
 
 #endif /* _SSDFS_SEGMENT_H */

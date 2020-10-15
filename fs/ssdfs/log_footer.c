@@ -25,6 +25,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 #include "current_segment.h"

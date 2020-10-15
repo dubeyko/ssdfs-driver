@@ -27,6 +27,7 @@
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
 #include "peb_container.h"
@@ -460,6 +461,7 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 					 struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_segment_request *req;
+	struct ssdfs_block_bmap_range copy_range;
 	struct ssdfs_block_bmap_range sub_range;
 	bool need_repeat = false;
 	int processed_blks;
@@ -481,6 +483,8 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 		return -EINVAL;
 	}
 
+	memcpy(&copy_range, range, sizeof(struct ssdfs_block_bmap_range));
+
 repeat_valid_blocks_processing:
 	req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(req)) {
@@ -500,7 +504,7 @@ repeat_valid_blocks_processing:
 					    req);
 	ssdfs_request_define_segment(si->seg_id, req);
 
-	err = ssdfs_peb_copy_pages_range(pebc, range, req);
+	err = ssdfs_peb_copy_pages_range(pebc, &copy_range, req);
 	if (err == -EAGAIN) {
 		err = 0;
 		need_repeat = true;
@@ -512,10 +516,10 @@ repeat_valid_blocks_processing:
 
 	processed_blks = req->result.processed_blks;
 
-	if (range->len < processed_blks) {
+	if (copy_range.len < processed_blks) {
 		err = -ERANGE;
 		SSDFS_ERR("range1 %u <= range2 %d\n",
-			  range->len, processed_blks);
+			  copy_range.len, processed_blks);
 		goto fail_process_valid_blocks;
 	}
 
@@ -543,7 +547,7 @@ repeat_valid_blocks_processing:
 		goto fail_process_valid_blocks;
 	}
 
-	sub_range.start = range->start;
+	sub_range.start = copy_range.start;
 	sub_range.len = processed_blks;
 
 	err = ssdfs_peb_blk_bmap_invalidate(peb_blkbmap,
@@ -557,8 +561,8 @@ repeat_valid_blocks_processing:
 	}
 
 	if (need_repeat) {
-		range->start += processed_blks;
-		range->len -= processed_blks;
+		copy_range.start += processed_blks;
+		copy_range.len -= processed_blks;
 		goto repeat_valid_blocks_processing;
 	}
 
@@ -626,6 +630,13 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 		ssdfs_request_define_segment(si->seg_id, req);
 
 		logical_blk = range->start + processed_blks;
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(logical_blk >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		req->place.start.blk_index = (u16)logical_blk;
+		req->place.len = 1;
+
 		err = ssdfs_peb_copy_pre_alloc_page(pebc, logical_blk, req);
 		if (err == -ENODATA) {
 			/* pre-allocated page hasn't content */
@@ -765,6 +776,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range = {0, 0};
+	u32 pages_per_peb;
 	int used_pages;
 	int err = 0;
 
@@ -803,6 +815,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+	pages_per_peb = si->fsi->pages_per_peb;
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_UNDER_MIGRATION:
@@ -845,11 +858,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 	if (used_pages > 0) {
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							 0, range_len,
+							 0, pages_per_peb,
 							 blk_type,
 							 &range);
 
-		SSDFS_DBG("range.start %u, range.len %u, err %d\n",
+		SSDFS_DBG("found range: (start %u, len %u), err %d\n",
 			  range.start, range.len, err);
 
 		if (err == -ENODATA) {
@@ -866,6 +879,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 				  range.start, range.len);
 			return -ERANGE;
 		}
+
+		range.len = min_t(u32, range_len, (u32)range.len);
+
+		SSDFS_DBG("final range: (start %u, len %u)\n",
+			  range.start, range.len);
 
 		switch (blk_type) {
 		case SSDFS_BLK_VALID:
@@ -917,6 +935,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int used_pages;
 	u32 pages_per_peb;
+	int old_migration_state;
 	bool is_peb_exhausted = false;
 	int err = 0;
 
@@ -940,6 +959,8 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	mutex_lock(&pebc->migration_lock);
 
 check_migration_state:
+	old_migration_state = atomic_read(&pebc->migration_state);
+
 	used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
 	if (used_pages < 0) {
 		err = used_pages;
@@ -948,7 +969,7 @@ check_migration_state:
 		goto finish_migration_done;
 	}
 
-	switch (atomic_read(&pebc->migration_state)) {
+	switch (old_migration_state) {
 	case SSDFS_PEB_NOT_MIGRATING:
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
@@ -1016,6 +1037,8 @@ try_finish_migration_now:
 	while (used_pages > 0) {
 		struct ssdfs_block_bmap_range range1 = {0, 0};
 		struct ssdfs_block_bmap_range range2 = {0, 0};
+
+		SSDFS_DBG("used_pages %d\n", used_pages);
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
 							 0, pages_per_peb,
@@ -1133,6 +1156,19 @@ try_finish_migration_now:
 	}
 
 finish_migration_done:
+	if (err) {
+		switch (atomic_read(&pebc->migration_state)) {
+		case SSDFS_PEB_FINISHING_MIGRATION:
+			atomic_set(&pebc->migration_state,
+				   old_migration_state);
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+	}
+
 	mutex_unlock(&pebc->migration_lock);
 
 	SSDFS_DBG("finished\n");

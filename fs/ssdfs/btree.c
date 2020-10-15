@@ -27,6 +27,7 @@
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "segment.h"
 #include "btree_search.h"
@@ -554,22 +555,24 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 				continue;
 			}
 
-			err = ssdfs_btree_node_pre_flush(node);
-			if (unlikely(err)) {
-				ssdfs_btree_node_put(node);
-				SSDFS_ERR("fail to pre-flush node: "
-					  "node_id %llu, err %d\n",
-					  (u64)iter.index, err);
-				goto finish_flush_tree_nodes;
-			}
+			if (!is_ssdfs_btree_node_pre_deleted(node)) {
+				err = ssdfs_btree_node_pre_flush(node);
+				if (unlikely(err)) {
+					ssdfs_btree_node_put(node);
+					SSDFS_ERR("fail to pre-flush node: "
+						  "node_id %llu, err %d\n",
+						  (u64)iter.index, err);
+					goto finish_flush_tree_nodes;
+				}
 
-			err = ssdfs_btree_node_flush(node);
-			if (unlikely(err)) {
-				ssdfs_btree_node_put(node);
-				SSDFS_ERR("fail to flush node: "
-					  "node_id %llu, err %d\n",
-					  (u64)iter.index, err);
-				goto finish_flush_tree_nodes;
+				err = ssdfs_btree_node_flush(node);
+				if (unlikely(err)) {
+					ssdfs_btree_node_put(node);
+					SSDFS_ERR("fail to flush node: "
+						  "node_id %llu, err %d\n",
+						  (u64)iter.index, err);
+					goto finish_flush_tree_nodes;
+				}
 			}
 
 			rcu_read_lock();
@@ -612,6 +615,13 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 			rcu_read_unlock();
 
 			if (atomic_read(&node->height) != cur_height) {
+				ssdfs_btree_node_put(node);
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				continue;
+			}
+
+			if (is_ssdfs_btree_node_pre_deleted(node)) {
 				ssdfs_btree_node_put(node);
 				rcu_read_lock();
 				spin_lock(&tree->nodes_lock);
@@ -716,15 +726,23 @@ check_flush_result_state:
 				 * Root node is inline.
 				 * Commit log operation is not necessary.
 				 */
-			} else {
+				ssdfs_btree_node_put(node);
+				rcu_read_lock();
+				spin_lock(&tree->nodes_lock);
+				continue;
+			}
+
+			if (is_ssdfs_btree_node_pre_deleted(node))
+				err = ssdfs_btree_deleted_node_commit_log(node);
+			else
 				err = ssdfs_btree_node_commit_log(node);
-				if (unlikely(err)) {
-					ssdfs_btree_node_put(node);
-					SSDFS_ERR("fail to request commit log: "
-						  "node_id %llu, err %d\n",
-						  (u64)iter.index, err);
-					goto finish_flush_tree_nodes;
-				}
+
+			if (unlikely(err)) {
+				ssdfs_btree_node_put(node);
+				SSDFS_ERR("fail to request commit log: "
+					  "node_id %llu, err %d\n",
+					  (u64)iter.index, err);
+				goto finish_flush_tree_nodes;
 			}
 
 			rcu_read_lock();
@@ -775,6 +793,9 @@ check_flush_result_state:
 				 */
 				goto clear_towrite_tag;
 			}
+
+			if (is_ssdfs_btree_node_pre_deleted(node))
+				goto clear_towrite_tag;
 
 check_commit_log_result_state:
 			switch (atomic_read(&node->flush_req.result.state)) {
@@ -829,12 +850,40 @@ check_commit_log_result_state:
 
 clear_towrite_tag:
 			rcu_read_lock();
-
 			spin_lock(&tree->nodes_lock);
+
 			radix_tree_tag_clear(&tree->nodes, iter.index,
 					     SSDFS_BTREE_NODE_TOWRITE_TAG);
 
 			ssdfs_btree_node_put(node);
+
+			spin_unlock(&tree->nodes_lock);
+			rcu_read_unlock();
+
+			if (is_ssdfs_btree_node_pre_deleted(node)) {
+				clear_ssdfs_btree_node_pre_deleted(node);
+
+				ssdfs_btree_radix_tree_delete(tree,
+							node->node_id);
+
+				if (tree->btree_ops &&
+				    tree->btree_ops->delete_node) {
+					err = tree->btree_ops->delete_node(node);
+					if (unlikely(err)) {
+						SSDFS_ERR("delete node failure: "
+							  "err %d\n", err);
+					}
+				}
+
+				if (tree->btree_ops &&
+				    tree->btree_ops->destroy_node)
+					tree->btree_ops->destroy_node(node);
+
+				ssdfs_btree_node_destroy(node);
+			}
+
+			rcu_read_lock();
+			spin_lock(&tree->nodes_lock);
 		}
 		spin_unlock(&tree->nodes_lock);
 
@@ -1247,6 +1296,7 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	u64 logical_offset;
 	u64 seg_id;
 	int seg_type;
+	struct ssdfs_blk2off_range extent;
 	int err = 0;
 
 	SSDFS_DBG("node_type %#x\n", node_type);
@@ -1282,16 +1332,22 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 
 	switch (node_type) {
 	case SSDFS_BTREE_INDEX_NODE:
-		err = ssdfs_segment_pre_alloc_index_node_extent_async(fsi, req);
+		err = ssdfs_segment_pre_alloc_index_node_extent_async(fsi, req,
+								      &seg_id,
+								      &extent);
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
 		err = ssdfs_segment_pre_alloc_hybrid_node_extent_async(fsi,
-									req);
+								       req,
+								       &seg_id,
+								       &extent);
 		break;
 
 	case SSDFS_BTREE_LEAF_NODE:
-		err = ssdfs_segment_pre_alloc_leaf_node_extent_async(fsi, req);
+		err = ssdfs_segment_pre_alloc_leaf_node_extent_async(fsi, req,
+								     &seg_id,
+								     &extent);
 		break;
 
 	default:
@@ -1310,29 +1366,20 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 		goto free_segment_request;
 	}
 
-	if (req->result.err) {
-		err = req->result.err;
-		SSDFS_ERR("request finished with err %d\n",
-			  err);
-		goto free_segment_request;
-	}
-
-	if (node->pages_per_node != req->place.len) {
+	if (node->pages_per_node != extent.len) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid request result: "
 			  "pages_per_node %u != len %u\n",
 			  node->pages_per_node,
-			  req->place.len);
+			  extent.len);
 		goto finish_pre_allocate_node;
 	}
-
-	seg_id = req->place.start.seg_id;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(seg_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	seg_type = SEG_TYPE(req->private.class);
+	seg_type = NODE2SEG_TYPE(node_type);
 
 	si = ssdfs_grab_segment(fsi, seg_type, seg_id, U64_MAX);
 	if (IS_ERR_OR_NULL(si)) {
@@ -1346,8 +1393,8 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	spin_lock(&node->descriptor_lock);
 	node->seg = si;
 	node->extent.seg_id = cpu_to_le64(seg_id);
-	node->extent.logical_blk = cpu_to_le32(req->place.start.blk_index);
-	node->extent.len = cpu_to_le32(req->place.len);
+	node->extent.logical_blk = cpu_to_le32(extent.start_lblk);
+	node->extent.len = cpu_to_le32(extent.len);
 	memcpy(&node->node_index.index.extent, &node->extent,
 		sizeof(struct ssdfs_raw_extent));
 	spin_unlock(&node->descriptor_lock);
@@ -1355,18 +1402,15 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	SSDFS_DBG("tree_type %#x, node_id %u, node_type %#x, "
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  node->tree->type, node->node_id, node_type,
-		  seg_id, req->place.start.blk_index,
-		  req->place.len);
+		  seg_id, extent.start_lblk, extent.len);
 
 	return 0;
-
-finish_pre_allocate_node:
-	ssdfs_put_request(req);
-	return err;
 
 free_segment_request:
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
+
+finish_pre_allocate_node:
 	return err;
 }
 
@@ -1518,12 +1562,12 @@ int ssdfs_prepare_empty_btree_for_add(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	ssdfs_btree_prepare_add_node(tree, SSDFS_BTREE_LEAF_NODE,
 				     start_hash, end_hash,
 				     level, NULL);
 
-	level = &hierarchy->array[cur_height + 1];
+	level = hierarchy->array_ptr[cur_height + 1];
 	err = ssdfs_btree_prepare_add_index(level,
 					    start_hash,
 					    end_hash,
@@ -1721,13 +1765,13 @@ finish_insert_node:
 	return ptr;
 
 fail_read_node:
+	complete_all(&ptr->init_end);
 	ssdfs_btree_radix_tree_delete(tree, node_id);
 	if (tree->btree_ops && tree->btree_ops->delete_node)
 		tree->btree_ops->delete_node(ptr);
 	if (tree->btree_ops && tree->btree_ops->destroy_node)
 		tree->btree_ops->destroy_node(ptr);
 	ssdfs_btree_node_destroy(ptr);
-	complete_all(&ptr->init_end);
 	return ERR_PTR(err);
 }
 
@@ -2059,7 +2103,7 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 
 	if (!(level->flags & SSDFS_BTREE_LEVEL_ADD_NODE))
 		return 0;
@@ -2071,7 +2115,7 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height + 1];
+	level = hierarchy->array_ptr[cur_height + 1];
 	if (level->flags & SSDFS_BTREE_LEVEL_ADD_NODE)
 		parent = level->nodes.new_node.ptr;
 	else if (level->nodes.new_node.type == SSDFS_BTREE_ROOT_NODE)
@@ -2103,7 +2147,7 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 		return node_type < 0 ? node_type : -ERANGE;
 	}
 
-	level = &hierarchy->array[cur_height];
+	level = hierarchy->array_ptr[cur_height];
 	ptr = ssdfs_btree_node_create(tree, node_id, parent, cur_height,
 					node_type,
 					level->items_area.hash.start);
@@ -2240,7 +2284,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	for (cur_height = tree_height; cur_height >= 0; cur_height--) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_add_node(level))
 			continue;
@@ -2283,7 +2327,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 				  node->node_id, err);
 
 			for (; cur_height < tree_height; cur_height++) {
-				level = &hierarchy->array[cur_height];
+				level = hierarchy->array_ptr[cur_height];
 
 				if (!need_add_node(level))
 					continue;
@@ -2313,7 +2357,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	for (cur_height = tree_height; cur_height >= 0; cur_height--) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_add_node(level))
 			continue;
@@ -2331,7 +2375,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 					  "err %d\n", err);
 
 				for (; cur_height < tree_height; cur_height++) {
-					level = &hierarchy->array[cur_height];
+					level = hierarchy->array_ptr[cur_height];
 
 					if (!need_add_node(level))
 						continue;
@@ -2366,7 +2410,7 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 
 	tree_height = atomic_read(&tree->height);
 	for (cur_height = 0; cur_height < tree_height; cur_height++) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_add_node(level))
 			continue;
@@ -3290,7 +3334,7 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 	}
 
 	for (cur_height = 0; cur_height < tree_height; cur_height++) {
-		level = &hierarchy->array[cur_height];
+		level = hierarchy->array_ptr[cur_height];
 
 		if (!need_delete_node(level))
 			continue;
@@ -3301,26 +3345,13 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_btree_radix_tree_delete(tree, node->node_id);
-
-		if (tree->btree_ops && tree->btree_ops->delete_node) {
-			err = tree->btree_ops->delete_node(node);
-			if (unlikely(err)) {
-				SSDFS_ERR("delete node failure: err %d\n",
-					  err);
-			}
-		}
+		set_ssdfs_btree_node_pre_deleted(node);
 
 		err = ssdfs_segment_invalidate_node(node);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate node: id %u, err %d\n",
 				  node->node_id, err);
 		}
-
-		if (tree->btree_ops && tree->btree_ops->destroy_node)
-			tree->btree_ops->destroy_node(node);
-
-		ssdfs_btree_node_destroy(node);
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
@@ -4344,7 +4375,7 @@ finish_allocate_range:
 static inline
 bool need_update_parent_node(struct ssdfs_btree_search *search)
 {
-	struct ssdfs_btree_node *parent;
+	struct ssdfs_btree_node *child;
 	u64 start_hash;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4353,12 +4384,12 @@ bool need_update_parent_node(struct ssdfs_btree_search *search)
 
 	start_hash = search->request.start.hash;
 
-	parent = search->node.parent;
+	child = search->node.child;
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!parent);
+	BUG_ON(!child);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return need_update_parent_index_area(start_hash, parent);
+	return need_update_parent_index_area(start_hash, child);
 }
 
 /*
@@ -5139,25 +5170,23 @@ try_delete_item:
 		goto finish_delete_item;
 	}
 
-finish_delete_item:
-	up_read(&tree->lock);
-
-	if (unlikely(err))
-		return err;
-
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE) {
+		up_read(&tree->lock);
 		err = ssdfs_btree_delete_node(tree, search);
+		down_read(&tree->lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete btree node: "
 				  "node_id %llu, err %d\n",
 				  (u64)search->node.id, err);
-			return err;
+			goto finish_delete_item;
 		}
 	} else if (need_update_parent_node(search)) {
 		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
 		if (!hierarchy) {
+			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate tree levels' array\n");
-			return -ENOMEM;
+			goto finish_delete_item;
 		}
 
 		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
@@ -5184,11 +5213,15 @@ finish_update_parent:
 		ssdfs_btree_hierarchy_free(hierarchy);
 
 		if (unlikely(err))
-			return err;
+			goto finish_delete_item;
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
-	return 0;
+
+finish_delete_item:
+	up_read(&tree->lock);
+
+	return err;
 }
 
 /*
@@ -5260,9 +5293,9 @@ int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 		return -EINVAL;
 	}
 
-try_delete_next_range:
 	down_read(&tree->lock);
 
+try_delete_next_range:
 	err = __ssdfs_btree_find_range(tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find range: "
@@ -5296,8 +5329,6 @@ try_delete_range_again:
 	}
 
 finish_delete_range:
-	up_read(&tree->lock);
-
 	if (err == -EAGAIN) {
 		/* the range have to be deleted in the next node */
 		err = 0;
@@ -5308,22 +5339,27 @@ finish_delete_range:
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
+		up_read(&tree->lock);
 		return err;
 	}
 
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE) {
+		up_read(&tree->lock);
 		err = ssdfs_btree_delete_node(tree, search);
+		down_read(&tree->lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete btree node: "
 				  "node_id %llu, err %d\n",
 				  (u64)search->node.id, err);
-			return err;
+			goto fail_delete_range;
 		}
 	} else if (need_update_parent_node(search)) {
 		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
 		if (!hierarchy) {
+			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate tree levels' array\n");
-			return -ENOMEM;
+			goto fail_delete_range;
 		}
 
 		err = ssdfs_btree_check_hierarchy_for_update(tree, search,
@@ -5350,7 +5386,7 @@ finish_update_parent:
 		ssdfs_btree_hierarchy_free(hierarchy);
 
 		if (unlikely(err))
-			return err;
+			goto fail_delete_range;
 	}
 
 	if (need_continue_deletion) {
@@ -5359,7 +5395,10 @@ finish_update_parent:
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
-	return 0;
+
+fail_delete_range:
+	up_read(&tree->lock);
+	return err;
 }
 
 /*

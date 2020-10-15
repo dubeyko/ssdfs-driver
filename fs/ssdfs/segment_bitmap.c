@@ -24,6 +24,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
 #include "peb_container.h"
@@ -299,15 +300,24 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 		kaddr = &segbmap->segs[i][array_type];
 		BUG_ON(*kaddr != NULL);
 
-		*kaddr = ssdfs_segment_create_object(fsi, seg,
-						    SSDFS_SEG_LEAF_NODE_USING,
-						    SSDFS_SEGBMAP_SEG_TYPE,
-						    log_pages,
-						    create_threads);
+		*kaddr = ssdfs_segment_allocate_object(seg);
 		if (IS_ERR_OR_NULL(*kaddr)) {
 			err = !*kaddr ? -ENOMEM : PTR_ERR(*kaddr);
 			*kaddr = NULL;
-			SSDFS_ERR("fail to create segment object: "
+			SSDFS_ERR("fail to allocate segment object: "
+				  "seg %llu, err %d\n",
+				  seg, err);
+			return err;
+		}
+
+		err = ssdfs_segment_create_object(fsi, seg,
+						  SSDFS_SEG_LEAF_NODE_USING,
+						  SSDFS_SEGBMAP_SEG_TYPE,
+						  log_pages,
+						  create_threads,
+						  *kaddr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to create segment: "
 				  "seg %llu, err %d\n",
 				  seg, err);
 			return err;
@@ -3361,6 +3371,51 @@ bool BYTE_CONTAINS_MASK(u8 *value, int mask)
 }
 
 /*
+ * FIRST_MASK_IN_BYTE() - determine first item's offset for requested mask
+ * @value: pointer on analysed byte
+ * @mask: requested mask
+ * @start_offset: starting item's offset for analysis beginning
+ * @state_bits: bits per state
+ * @state_mask: mask of a bitmap's state
+ *
+ * This function tries to determine an item for @mask in
+ * @value starting from @start_off.
+ *
+ * RETURN:
+ * [success] - found item's offset.
+ * [failure] - BITS_PER_BYTE.
+ */
+static inline
+u8 FIRST_MASK_IN_BYTE(u8 *value, int mask,
+		      u8 start_offset, u8 state_bits,
+		      int state_mask)
+{
+	u8 i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!value);
+	BUG_ON(state_bits > BITS_PER_BYTE);
+	BUG_ON((state_bits % 2) != 0);
+	BUG_ON(start_offset > SSDFS_ITEMS_PER_BYTE(state_bits));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("value %#x, mask %#x, "
+		  "start_offset %u, state_bits %u\n",
+		  *value, mask, start_offset, state_bits);
+
+	i = start_offset * state_bits;
+	for (; i < BITS_PER_BYTE; i += state_bits) {
+		if (IS_STATE_GOOD_FOR_MASK(mask, (*value >> i) & state_mask)) {
+			SSDFS_DBG("found bit %u, found item %u\n",
+				  i, i / state_bits);
+			return i / state_bits;
+		}
+	}
+
+	return SSDFS_ITEMS_PER_BYTE(state_bits);
+}
+
+/*
  * FIND_FIRST_ITEM_IN_FRAGMENT() - find first item in fragment
  * @hdr: pointer on segbmap fragment's header
  * @fragment: pointer on bitmap in fragment
@@ -3512,11 +3567,17 @@ ignore_search_for_mask:
 		if (err == -ENODATA) {
 			start_offset = 0;
 			continue;
+		} else if (err == -ENOENT) {
+			/*
+			 * Value for mask has been found.
+			 * Simply end the search.
+			 */
+			break;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find items in byte: "
-				  "start_offset %u, state %#x, "
+				  "byte_index %u, state %#x, "
 				  "err %d\n",
-				  start_offset, state, err);
+				  byte_index, state, err);
 			goto end_search;
 		}
 
@@ -3542,9 +3603,6 @@ ignore_search_for_mask:
 		SSDFS_DBG("nothing was found: err %d\n", err);
 
 end_search:
-	SSDFS_DBG("found_seg %llu, "
-		  "found_for_mask %llu, err %d\n",
-		  *found_seg, *found_for_mask, err);
 	return err;
 }
 

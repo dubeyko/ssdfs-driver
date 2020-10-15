@@ -4432,7 +4432,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	int range_state;
 	u32 written_bytes;
 	u16 peb_index;
-	bool is_migrating = false;
+	int migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4480,7 +4480,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 	blk_desc_off = ssdfs_blk2off_table_convert(table, blk,
 						   &peb_index,
-						   &is_migrating);
+						   &migration_state);
 	if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -4498,7 +4498,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 		blk_desc_off = ssdfs_blk2off_table_convert(table, blk,
 							   &peb_index,
-							   &is_migrating);
+							   &migration_state);
 	}
 
 	if (IS_ERR_OR_NULL(blk_desc_off)) {
@@ -4507,6 +4507,13 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  "logical_blk %u, err %d\n",
 			  blk, err);
 		return err;
+	}
+
+	if (migration_state == SSDFS_LBLOCK_UNDER_COMMIT) {
+		SSDFS_DBG("try again to add block: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id, blk, pebi->peb_id);
+		return -EAGAIN;
 	}
 
 	err = ssdfs_peb_reserve_block_descriptor(pebi, req);
@@ -4578,7 +4585,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	if (is_migrating) {
+	if (is_ssdfs_logical_block_migrating(migration_state)) {
 		err = ssdfs_blk2off_table_set_block_commit(table, blk,
 							   peb_index);
 		if (unlikely(err)) {
@@ -4753,6 +4760,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 	case SSDFS_COMMIT_LOG_NOW:
 	case SSDFS_START_MIGRATION_NOW:
+	case SSDFS_EXTENT_WAS_INVALIDATED:
 		/* simply continue logic */
 		break;
 
@@ -7988,7 +7996,6 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 	if (!log_has_data) {
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
-		goto define_next_log_start;
 	}
 
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
@@ -8043,7 +8050,6 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 	SSDFS_DBG("0006: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
 
-define_next_log_start:
 	ssdfs_peb_define_next_log_start(pebi, SSDFS_START_PARTIAL_LOG,
 					&cur_page, &write_offset);
 
@@ -8129,7 +8135,6 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 	if (!log_has_data) {
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
-		goto define_next_log_start;
 	}
 
 	flags = SSDFS_LOG_IS_PARTIAL |
@@ -8164,7 +8169,6 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
 
-define_next_log_start:
 	ssdfs_peb_define_next_log_start(pebi, SSDFS_CONTINUE_PARTIAL_LOG,
 					&cur_page, &write_offset);
 
@@ -9588,6 +9592,59 @@ void ssdfs_peb_check_update_queue(struct ssdfs_peb_container *pebc)
 	return;
 }
 
+static inline
+int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_segment_request *req;
+	int err;
+
+	SSDFS_DBG("seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+
+	err = ssdfs_peb_finish_migration(pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to finish migration: "
+			  "seg %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+		return err;
+	}
+
+	/*
+	 * The responsibility of finish migration code
+	 * is to copy the state of valid blocks of
+	 * source erase block into the buffers.
+	 * So, this buffered state of valid blocks
+	 * should be commited ASAP. It needs to send
+	 * the COMMIT_LOG_NOW command to guarantee
+	 * that valid blocks will be flushed on teh volume.
+	 */
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate request: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	ssdfs_request_init(req);
+	ssdfs_get_request(req);
+
+	err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
+						pebc->peb_index, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("commit log request failed: "
+			  "err %d\n", err);
+		ssdfs_put_request(req);
+		ssdfs_request_free(req);
+		return err;
+	}
+
+	return 0;
+}
+
 /* Flush thread possible states */
 enum {
 	SSDFS_FLUSH_THREAD_ERROR,
@@ -9599,6 +9656,7 @@ enum {
 	SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST,
 	SSDFS_FLUSH_THREAD_PROCESS_CREATE_REQUEST,
 	SSDFS_FLUSH_THREAD_PROCESS_UPDATE_REQUEST,
+	SSDFS_FLUSH_THREAD_PROCESS_INVALIDATED_EXTENT,
 	SSDFS_FLUSH_THREAD_CHECK_MIGRATION_NEED,
 	SSDFS_FLUSH_THREAD_START_MIGRATION_NOW,
 	SSDFS_FLUSH_THREAD_COMMIT_LOG,
@@ -9623,7 +9681,8 @@ enum {
 int ssdfs_peb_flush_thread_func(void *data)
 {
 	struct ssdfs_peb_container *pebc = data;
-	struct ssdfs_fs_info *fsi = pebc->parent_si->fsi;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_segment_request *req;
 	struct ssdfs_segment_request *postponed_req = NULL;
@@ -9640,6 +9699,7 @@ int ssdfs_peb_flush_thread_func(void *data)
 	bool skip_finish_flush_request = false;
 	bool need_create_log = true;
 	bool has_migration_check_requested = false;
+	bool has_extent_been_invalidated = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -9743,7 +9803,7 @@ stop_flush_thread:
 			err = 0;
 
 			if (is_peb_under_migration(pebc)) {
-				err = ssdfs_peb_finish_migration(pebc);
+				err = __ssdfs_peb_finish_migration(pebc);
 				if (unlikely(err))
 					goto finish_process_free_space_absence;
 			}
@@ -9988,7 +10048,7 @@ finish_process_free_space_absence:
 			}
 
 			if (is_peb_under_migration(pebc)) {
-				err = ssdfs_peb_finish_migration(pebc);
+				err = __ssdfs_peb_finish_migration(pebc);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to finish migration: "
 						  "seg %llu, peb_index %u, "
@@ -10051,7 +10111,7 @@ finish_process_free_space_absence:
 		    has_peb_migration_done(pebc)) {
 			ssdfs_unlock_current_peb(pebc);
 
-			err = ssdfs_peb_finish_migration(pebc);
+			err = __ssdfs_peb_finish_migration(pebc);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to finish migration: "
 					  "seg %llu, peb_index %u, "
@@ -10418,10 +10478,19 @@ finish_create_request_processing:
 			goto finish_update_request_processing;
 		}
 
-		if (req->private.cmd == SSDFS_START_MIGRATION_NOW) {
+		switch (req->private.cmd) {
+		case SSDFS_EXTENT_WAS_INVALIDATED:
+			/* log has to be committed */
+			has_extent_been_invalidated = true;
+			thread_state =
+				SSDFS_FLUSH_THREAD_PROCESS_INVALIDATED_EXTENT;
+			goto finish_update_request_processing;
+
+		case SSDFS_START_MIGRATION_NOW:
 			thread_state = SSDFS_FLUSH_THREAD_START_MIGRATION_NOW;
 			goto finish_update_request_processing;
-		} else if (req->private.cmd == SSDFS_COMMIT_LOG_NOW) {
+
+		case SSDFS_COMMIT_LOG_NOW:
 			if (has_commit_log_now_requested(pebc)) {
 				SSDFS_DBG("Ignore current COMMIT_LOG_NOW: "
 					  "seg %llu, peb_index %u\n",
@@ -10437,7 +10506,8 @@ finish_create_request_processing:
 				req = NULL;
 				thread_state =
 					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-			} else if (ssdfs_peb_has_dirty_pages(pebi)) {
+			} else if (ssdfs_peb_has_dirty_pages(pebi) ||
+				   has_extent_been_invalidated) {
 				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			} else {
 				ssdfs_finish_flush_request(pebc, req,
@@ -10445,8 +10515,11 @@ finish_create_request_processing:
 				thread_state =
 					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
 			}
-
 			goto finish_update_request_processing;
+
+		default:
+			/* do nothing */
+			break;
 		}
 
 		if (req->private.type == SSDFS_REQ_SYNC) {
@@ -10476,6 +10549,69 @@ finish_update_request_processing:
 			goto next_partial_step;
 		} else
 			goto repeat;
+		break;
+
+	case SSDFS_FLUSH_THREAD_PROCESS_INVALIDATED_EXTENT:
+		SSDFS_DBG("[FLUSH THREAD STATE] PROCESS INVALIDATED EXTENT: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (IS_ERR_OR_NULL(pebi)) {
+			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+			SSDFS_ERR("fail to get PEB object: "
+				  "seg %llu, peb_index %u, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err);
+			thread_state = SSDFS_FLUSH_THREAD_ERROR;
+			goto repeat;
+		}
+
+		if (is_peb_under_migration(pebc) &&
+		    has_peb_migration_done(pebc)) {
+			ssdfs_unlock_current_peb(pebc);
+
+			err = __ssdfs_peb_finish_migration(pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to finish migration: "
+					  "seg %llu, peb_index %u, "
+					  "err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+
+			pebi = ssdfs_get_current_peb_locked(pebc);
+			if (IS_ERR_OR_NULL(pebi)) {
+				err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+				SSDFS_ERR("fail to get PEB object: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+
+			err = ssdfs_peb_container_change_state(pebc);
+			if (unlikely(err)) {
+				ssdfs_unlock_current_peb(pebc);
+				SSDFS_ERR("fail to change peb state: "
+					  "err %d\n", err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+		}
+
+		ssdfs_peb_current_log_lock(pebi);
+		ssdfs_finish_flush_request(pebc, req, wait_queue, err);
+		ssdfs_peb_current_log_unlock(pebi);
+
+		ssdfs_unlock_current_peb(pebc);
+
+		thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		goto next_partial_step;
 		break;
 
 	case SSDFS_FLUSH_THREAD_START_MIGRATION_NOW:
@@ -10511,6 +10647,16 @@ finish_update_request_processing:
 			ssdfs_unlock_current_peb(pebc);
 
 			if (is_peb_under_migration(pebc)) {
+				/*
+				 * START_MIGRATION_NOW is requested during
+				 * the flush operation of PEB mapping table,
+				 * segment bitmap or any btree. It is the first
+				 * step to initiate the migration.
+				 * Then, fragments or nodes will be flushed.
+				 * And final step is the COMMIT_LOG_NOW
+				 * request. So, it doesn't need to request
+				 * the COMMIT_LOG_NOW here.
+				 */
 				err = ssdfs_peb_finish_migration(pebc);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to finish migration: "
@@ -10677,6 +10823,8 @@ make_log_commit:
 		ssdfs_peb_current_log_unlock(pebi);
 
 		if (!err) {
+			has_extent_been_invalidated = false;
+
 			err = ssdfs_peb_container_change_state(pebc);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to change peb state: "
