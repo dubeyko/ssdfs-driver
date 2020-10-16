@@ -4226,6 +4226,14 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 		} else
 			i--;
 
+		if (i < page_index) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid page index: "
+				  "i %u, page_index %u\n",
+				  i, page_index);
+			goto finish_exclude_migration_peb;
+		}
+
 		page = cache->pvec.pages[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4249,6 +4257,36 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 
 			ssdfs_map_cache_free_page(page);
 			atomic_sub(PAGE_SIZE, &cache->bytes_count);
+
+			if (i == page_index) {
+				SSDFS_DBG("do nothing: "
+					  "page %u was deleted\n",
+					  page_index);
+				goto finish_exclude_migration_peb;
+			}
+		}
+
+		switch (saved_state.state) {
+		case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+		case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+		case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+			/* continue logic */
+			break;
+
+		default:
+			SSDFS_DBG("do not change PEB state: "
+				  "page_index %u, deleted_item %u, "
+				  "state %#x\n",
+				  page_index, deleted_item,
+				  saved_state.state);
+			goto finish_exclude_migration_peb;
+		}
+
+		if (deleted_item >= items_count) {
+			err = -ERANGE;
+			SSDFS_ERR("deleted_item %u >= items_count %u\n",
+				  deleted_item, items_count);
+			goto finish_exclude_migration_peb;
 		}
 
 		page = cache->pvec.pages[page_index];

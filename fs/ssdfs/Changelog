@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.68 [October 15, 2020]
+    (*) Fix bugs in delete file functionality (step 2).
+
 v.3.67 [October 12, 2020]
     (*) Fix bugs in delete file functionality (step 1).
 
