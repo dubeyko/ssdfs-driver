@@ -546,7 +546,7 @@ ssdfs_page_array_allocate_page_locked(struct ssdfs_page_array *array,
 		return ERR_PTR(err);
 	}
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	return page;
 }
 
@@ -687,7 +687,7 @@ struct page *ssdfs_page_array_get_page_locked(struct ssdfs_page_array *array,
 			  "page_index %lu, err %d\n",
 			  page_index, (int)PTR_ERR(page));
 	} else
-		lock_page(page);
+		ssdfs_lock_page(page);
 
 	return page;
 }
@@ -1475,10 +1475,10 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		page = array->pages[found];
 
 		if (page) {
-			lock_page(page);
+			ssdfs_lock_page(page);
 			ClearPageUptodate(page);
 			ClearPagePrivate(page);
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 
 			ssdfs_put_page(page);
 

@@ -1291,7 +1291,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 
 fail_copy_fragment:
 	kunmap(spage);
-	unlock_page(spage);
+	ssdfs_unlock_page(spage);
 	ssdfs_put_page(spage);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -1950,7 +1950,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			}
 
 			kunmap(page);
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
 			SSDFS_DBG("page %px, count %d\n",
@@ -2509,7 +2509,7 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 	kunmap_atomic(kaddr);
 
 free_page:
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -2852,7 +2852,7 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 		__set_page_dirty_nobuffers(page);
 
 free_page:
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -3736,7 +3736,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 					  found_state_for_mask);
 
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",

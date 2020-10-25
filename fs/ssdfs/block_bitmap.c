@@ -506,7 +506,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 				return -ERANGE;
 			}
 
-			lock_page(source->pages[i]);
+			ssdfs_lock_page(source->pages[i]);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			kaddr = kmap(source->pages[i]);
@@ -517,7 +517,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			pagevec_add(&blk_bmap->storage.pvec, source->pages[i]);
-			unlock_page(source->pages[i]);
+			ssdfs_unlock_page(source->pages[i]);
 			source->pages[i] = NULL;
 		}
 
@@ -538,7 +538,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			return -ERANGE;
 		}
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 
 		kaddr = kmap_atomic(page);
 		memcpy(blk_bmap->storage.buf, kaddr, blk_bmap->bytes_count);
@@ -552,7 +552,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 		kunmap(page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		break;
 
 	default:

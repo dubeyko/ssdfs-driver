@@ -399,7 +399,7 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 					kaddr, PAGE_SIZE);
 		kunmap_atomic(kaddr);
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",

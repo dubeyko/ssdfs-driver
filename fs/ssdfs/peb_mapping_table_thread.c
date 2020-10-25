@@ -319,7 +319,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 		kunmap(page);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
@@ -643,7 +643,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -1006,7 +1006,7 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -1376,7 +1376,7 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 finish_page_processing:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",

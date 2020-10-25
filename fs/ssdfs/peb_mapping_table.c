@@ -1031,7 +1031,7 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 		  fdesc, page_index,
 		  *lebs_per_fragment);
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap(page);
 	hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 
@@ -1116,7 +1116,7 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 
 finish_lebtbl_check:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	return err;
 }
@@ -1177,7 +1177,7 @@ int ssdfs_maptbl_check_pebtbl_page(struct page *page,
 		  fdesc, stripe_id, page_index,
 		  *pebs_per_fragment);
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap(page);
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -1276,7 +1276,7 @@ int ssdfs_maptbl_check_pebtbl_page(struct page *page,
 
 finish_pebtbl_check:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	return err;
 }
@@ -1525,12 +1525,12 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 			goto finish_fragment_init;
 		}
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 		SetPagePrivate(page);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_add_page(&fdesc->array,
 						page, i);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add page %d: err %d\n",
@@ -1669,7 +1669,7 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 
 	spage = pvec->pages[spage_index];
 
-	lock_page(spage);
+	ssdfs_lock_page(spage);
 	kaddr1 = kmap(spage);
 
 	magic = (__le16 *)kaddr1;
@@ -1728,7 +1728,7 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 
 end_copy_dirty_page:
 	kunmap(spage);
-	unlock_page(spage);
+	ssdfs_unlock_page(spage);
 
 	return err;
 }
@@ -2783,7 +2783,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 							&seg_index);
 		kunmap(page);
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
@@ -3106,7 +3106,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 							&seg_index);
 		kunmap(page);
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
@@ -3526,7 +3526,7 @@ int ssdfs_maptbl_get_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -3703,7 +3703,7 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -4143,7 +4143,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -4261,7 +4261,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -4385,7 +4385,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -4487,7 +4487,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -5792,7 +5792,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -5996,7 +5996,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -6181,7 +6181,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -6568,7 +6568,7 @@ finish_page_processing:
 		}
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -6888,7 +6888,7 @@ try_next_page:
 	is_recovering = is_pebtbl_stripe_recovering(hdr);
 	has_reserved_pebs = has_fragment_reserved_pebs(hdr);
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -7022,7 +7022,7 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_set_peb_descriptor:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -7119,7 +7119,7 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -7706,7 +7706,7 @@ int ssdfs_maptbl_set_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -7923,7 +7923,7 @@ int ssdfs_maptbl_set_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -8238,7 +8238,7 @@ int ssdfs_maptbl_clear_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -8460,7 +8460,7 @@ ssdfs_maptbl_break_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -8819,7 +8819,7 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 						kaddr, PAGE_SIZE);
 			kunmap_atomic(kaddr);
 
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
 			SSDFS_DBG("page %px, count %d\n",

@@ -187,7 +187,7 @@ static int ssdfs_mtd_readpage(struct super_block *sb, struct page *page,
 		flush_dcache_page(page);
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	return err;
 }
@@ -348,7 +348,7 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 	BUG_ON(PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap(page);
 	ret = mtd_write(mtd, to_off, len, &retlen, kaddr + from_off);
 	kunmap(page);
@@ -365,7 +365,7 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 		ClearPageError(page);
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",

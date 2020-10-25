@@ -61,6 +61,8 @@ atomic64_t ssdfs_memory_leaks;
 atomic64_t ssdfs_super_page_leaks;
 atomic64_t ssdfs_super_memory_leaks;
 atomic64_t ssdfs_super_cache_leaks;
+
+atomic64_t ssdfs_locked_pages;
 #endif /* CONFIG_SSDFS_DEBUG */
 
 /*
@@ -439,12 +441,12 @@ u32 ssdfs_sb_payload_size(struct pagevec *pvec)
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		page = pvec->pages[i];
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 		kaddr = kmap_atomic(page);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		fragment_bytes_count = le16_to_cpu(hdr->bytes_count);
 		kunmap_atomic(kaddr);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		WARN_ON(fragment_bytes_count > PAGE_SIZE);
@@ -531,15 +533,15 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 			goto finish_maptbl_snapshot;
 		}
 
-		lock_page(spage);
-		lock_page(dpage);
+		ssdfs_lock_page(spage);
+		ssdfs_lock_page(dpage);
 		kaddr1 = kmap_atomic(spage);
 		kaddr2 = kmap_atomic(dpage);
 		memcpy(kaddr2, kaddr1, PAGE_SIZE);
 		kunmap_atomic(kaddr1);
 		kunmap_atomic(kaddr2);
-		unlock_page(dpage);
-		unlock_page(spage);
+		ssdfs_unlock_page(dpage);
+		ssdfs_unlock_page(spage);
 	}
 
 	payload->maptbl_cache.bytes_count =
@@ -1296,7 +1298,7 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 		BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 		kaddr = kmap(page);
 
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
@@ -1305,7 +1307,7 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 		csum = crc32(csum, kaddr, bytes_count);
 
 		kunmap(page);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 	}
 
 	desc->check.csum = cpu_to_le32(csum);
@@ -1407,14 +1409,14 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		  page, page_ref_count(page));
 
 	/* write segment header */
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap_atomic(page);
 	memcpy(kaddr, fsi->sbi.vh_buf, hdr_size);
 	kunmap_atomic(kaddr);
 	SetPagePrivate(page);
 	SetPageUptodate(page);
 	SetPageDirty(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
 	peb_offset <<= fsi->log_pagesize;
@@ -1433,10 +1435,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		goto cleanup_after_failure;
 	}
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	ClearPageUptodate(page);
 	ClearPagePrivate(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	offset += PAGE_SIZE;
 
@@ -1462,11 +1464,11 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		kunmap(payload_page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		lock_page(payload_page);
+		ssdfs_lock_page(payload_page);
 		SetPagePrivate(payload_page);
 		SetPageUptodate(payload_page);
 		SetPageDirty(payload_page);
-		unlock_page(payload_page);
+		ssdfs_unlock_page(payload_page);
 
 		err = fsi->devops->writepage(sb, offset, payload_page,
 					     0, PAGE_SIZE);
@@ -1477,10 +1479,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			goto cleanup_after_failure;
 		}
 
-		lock_page(payload_page);
+		ssdfs_lock_page(payload_page);
 		ClearPageUptodate(payload_page);
 		ClearPagePrivate(payload_page);
-		unlock_page(payload_page);
+		ssdfs_unlock_page(payload_page);
 
 		offset += PAGE_SIZE;
 	}
@@ -1494,7 +1496,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		  page, page_ref_count(page));
 
 	/* write log footer */
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap_atomic(page);
 	memset(kaddr, 0, PAGE_SIZE);
 	memcpy(kaddr, fsi->sbi.vs_buf, footer_size);
@@ -1502,7 +1504,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	SetPagePrivate(page);
 	SetPageUptodate(page);
 	SetPageDirty(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	err = fsi->devops->writepage(sb, offset, page, 0, footer_size);
 	if (err) {
@@ -1512,10 +1514,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		goto cleanup_after_failure;
 	}
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	ClearPageUptodate(page);
 	ClearPagePrivate(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	ssdfs_super_free_page(page);
 	return 0;
@@ -1660,14 +1662,14 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		goto free_payload_buffer;
 	}
 
-	lock_page(payload_page);
+	ssdfs_lock_page(payload_page);
 	kaddr2 = kmap_atomic(payload_page);
 	memcpy(payload_buf, kaddr2, payload_size);
 	kunmap_atomic(kaddr2);
-	unlock_page(payload_page);
+	ssdfs_unlock_page(payload_page);
 
 	/* write segment header + payload */
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr1 = kmap_atomic(page);
 	memcpy(kaddr1, fsi->sbi.vh_buf, hdr_size);
 	memcpy((u8 *)kaddr1 + hdr_size, payload_buf, payload_size);
@@ -1675,7 +1677,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	SetPagePrivate(page);
 	SetPageUptodate(page);
 	SetPageDirty(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 free_payload_buffer:
 	ssdfs_super_kfree(payload_buf);
@@ -1701,10 +1703,10 @@ free_payload_buffer:
 		goto cleanup_after_failure;
 	}
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	ClearPageUptodate(page);
 	ClearPagePrivate(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	offset += PAGE_SIZE;
 
@@ -1715,7 +1717,7 @@ free_payload_buffer:
 		  page, page_ref_count(page));
 
 	/* write log footer */
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr1 = kmap_atomic(page);
 	memset(kaddr1, 0, PAGE_SIZE);
 	memcpy(kaddr1, fsi->sbi.vs_buf, footer_size);
@@ -1723,7 +1725,7 @@ free_payload_buffer:
 	SetPagePrivate(page);
 	SetPageUptodate(page);
 	SetPageDirty(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	err = fsi->devops->writepage(sb, offset, page, 0, footer_size);
 	if (err) {
@@ -1733,10 +1735,10 @@ free_payload_buffer:
 		goto cleanup_after_failure;
 	}
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	ClearPageUptodate(page);
 	ClearPagePrivate(page);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	ssdfs_super_free_page(page);
 	return 0;
@@ -1857,6 +1859,23 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 
 finish_commit_super:
 	return err;
+}
+
+static void ssdfs_memory_page_locks_checker_init(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_set(&ssdfs_locked_pages, 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static void ssdfs_check_memory_page_locks(void)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_locked_pages) != 0) {
+		SSDFS_WARN("Lock keeps %lld memory pages\n",
+			   atomic64_read(&ssdfs_locked_pages));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static void ssdfs_memory_leaks_checker_init(void)
@@ -2006,6 +2025,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
 
+	ssdfs_memory_page_locks_checker_init();
 	ssdfs_memory_leaks_checker_init();
 
 	fs_info = ssdfs_super_kzalloc(sizeof(*fs_info), GFP_KERNEL);
@@ -2304,6 +2324,7 @@ free_erase_page:
 
 	rcu_barrier();
 
+	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_leaks();
 	return err;
 }
@@ -2479,6 +2500,7 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	rcu_barrier();
 
+	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_leaks();
 
 	if (ssdfs_inode_cachep)

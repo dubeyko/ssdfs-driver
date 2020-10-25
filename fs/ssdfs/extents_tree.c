@@ -950,7 +950,7 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				  "err %d\n", err);
 			return err;
 		} else
-			return -ENODATA;
+			tree = SSDFS_EXTREE(ii);
 	}
 
 	requested_blk = req->extent.logical_offset >> fsi->log_pagesize;
@@ -1176,7 +1176,8 @@ int ssdfs_extents_tree_add_block(struct inode *inode,
 			SSDFS_ERR("fail to create extents tree: "
 				  "err %d\n", err);
 			return err;
-		}
+		} else
+			tree = SSDFS_EXTREE(ii);
 	}
 
 	requested_blk = req->extent.logical_offset >> fsi->log_pagesize;
@@ -1356,7 +1357,7 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 		SSDFS_DBG("empty tree\n");
 		search->result.state = SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
 		search->result.err = -ENODATA;
-		search->result.start_index = U16_MAX;
+		search->result.start_index = 0;
 		search->result.count = 0;
 		search->result.search_cno = ssdfs_current_cno(tree->fsi->sb);
 		search->result.buf_state =

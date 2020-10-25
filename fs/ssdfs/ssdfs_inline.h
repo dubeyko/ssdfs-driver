@@ -53,6 +53,8 @@
 #ifdef CONFIG_SSDFS_DEBUG
 extern atomic64_t ssdfs_allocated_pages;
 extern atomic64_t ssdfs_memory_leaks;
+
+extern atomic64_t ssdfs_locked_pages;
 #endif /* CONFIG_SSDFS_DEBUG */
 
 static inline
@@ -142,6 +144,40 @@ void ssdfs_put_page(struct page *page)
 		SSDFS_WARN("page %px, count %d\n",
 			  page, page_ref_count(page));
 	}
+}
+
+static inline
+void ssdfs_lock_page(struct page *page)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (PageLocked(page)) {
+		SSDFS_WARN("page %p, page_index %llu\n",
+			   page, (u64)page_index(page));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	lock_page(page);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_inc(&ssdfs_locked_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+void ssdfs_unlock_page(struct page *page)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!PageLocked(page)) {
+		SSDFS_WARN("page %p, page_index %llu\n",
+			   page, (u64)page_index(page));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	unlock_page(page);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	atomic64_dec(&ssdfs_locked_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline

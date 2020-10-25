@@ -935,11 +935,11 @@ int ssdfs_get_checked_table_header(struct ssdfs_blk2off_init *portion)
 
 	page = portion->source->pages[page_index];
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap_atomic(page);
 	memcpy(&portion->tbl_hdr, (u8 *)kaddr + page_off, hdr_size);
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	err = ssdfs_check_table_header(&portion->tbl_hdr, hdr_size);
 	if (err) {
@@ -1064,12 +1064,12 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 					array_size);
 			page = portion->source->pages[page_index];
 
-			lock_page(page);
+			ssdfs_lock_page(page);
 			kaddr = kmap_atomic(page);
 			memcpy((u8 *)portion->extent_array + read_bytes,
 				(u8 *)kaddr + page_off, size);
 			kunmap_atomic(kaddr);
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 
 			read_bytes += size;
 			array_size -= size;
@@ -1122,11 +1122,11 @@ int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
 
 	page = portion->source->pages[page_index];
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	kaddr = kmap_atomic(page);
 	memcpy((u8 *)&portion->pot_hdr, (u8 *)kaddr + page_off, hdr_size);
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	return 0;
 }
@@ -1252,12 +1252,12 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 		size = min_t(u32, PAGE_SIZE - page_off, fragment_size);
 		page = portion->source->pages[page_index];
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 		kaddr = kmap_atomic(page);
 		memcpy((u8 *)fragment->buf + read_bytes,
 		       (u8 *)kaddr + page_off, size);
 		kunmap_atomic(kaddr);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 
 		read_bytes += size;
 		fragment_size -= size;
@@ -3567,7 +3567,7 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 			  *cur_page, err);
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -3666,7 +3666,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 				  *cur_page, err);
 		}
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
@@ -3813,7 +3813,7 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 				  *cur_page, err);
 		}
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
@@ -5934,7 +5934,7 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		}
 
 		page = req->result.pvec.pages[page_index];
-		lock_page(blk->pvec.pages[i]);
+		ssdfs_lock_page(blk->pvec.pages[i]);
 
 		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
 		kaddr2 = kmap_atomic(page);
@@ -5951,7 +5951,7 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		kunmap_atomic(kaddr1);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		unlock_page(blk->pvec.pages[i]);
+		ssdfs_unlock_page(blk->pvec.pages[i]);
 		SetPageUptodate(page);
 
 		data_bytes += PAGE_SIZE;

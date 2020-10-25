@@ -436,7 +436,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 				ClearPagePrivate(page);
 				ClearPageMappedToDisk(page);
 				ssdfs_clear_dirty_page(page);
-				unlock_page(page);
+				ssdfs_unlock_page(page);
 				end_page_writeback(page);
 			}
 
@@ -464,7 +464,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 				ClearPagePrivate(page);
 				ClearPageMappedToDisk(page);
 				ssdfs_clear_dirty_page(page);
-				unlock_page(page);
+				ssdfs_unlock_page(page);
 				end_page_writeback(page);
 			}
 
@@ -637,7 +637,7 @@ int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req)
 		return err;
 	}
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	return 0;
 }
 
@@ -664,7 +664,7 @@ void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req)
 			continue;
 		}
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 	}
 
 	ssdfs_req_queue_pagevec_release(&req->result.pvec);
@@ -695,7 +695,7 @@ void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
 		return;
 	}
 
-	unlock_page(req->result.pvec.pages[page_index]);
+	ssdfs_unlock_page(req->result.pvec.pages[page_index]);
 	ssdfs_req_queue_forget_page(req->result.pvec.pages[page_index]);
 	req->result.pvec.pages[page_index] = NULL;
 }
@@ -721,7 +721,7 @@ void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
 		}
 
 		if (PageLocked(page))
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 		else {
 			SSDFS_WARN("page %d is not locked: "
 				   "cmd %#x, type %#x\n",

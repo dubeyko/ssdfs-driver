@@ -414,7 +414,7 @@ int ssdfs_readpage(struct file *file, struct page *page)
 		  file_inode(file)->i_ino, page_index(page));
 
 	err = ssdfs_readpage_nolock(file, page, SSDFS_CURRENT_THREAD_READ);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	return err;
 }
 
@@ -986,11 +986,13 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			clear_page_new(page);
-			ClearPageDirty(page);
-			SetPageUptodate(page);
+			ClearPageUptodate(page);
+			ClearPagePrivate(page);
+			ClearPageMappedToDisk(page);
 			ClearPageError(page);
+			ssdfs_clear_dirty_page(page);
 
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 			end_page_writeback(page);
 		}
 
@@ -1009,16 +1011,27 @@ fail_issue_write_request:
 		BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		SetPageError(page);
+		if (!PageLocked(page)) {
+			SSDFS_WARN("page %p, PageLocked %#x\n",
+				   page, PageLocked(page));
+			ssdfs_lock_page(page);
+		}
 
-		if (wbc->sync_mode == WB_SYNC_ALL)
-			unlock_page(page);
+		clear_page_new(page);
+		ClearPageUptodate(page);
+		ClearPagePrivate(page);
+		ClearPageMappedToDisk(page);
+		ClearPageError(page);
+		ssdfs_clear_dirty_page(page);
 
+		ssdfs_unlock_page(page);
 		end_page_writeback(page);
 	}
 
-	ssdfs_put_request(*req);
-	ssdfs_request_free(*req);
+	if (wbc->sync_mode == WB_SYNC_ALL) {
+		ssdfs_put_request(*req);
+		ssdfs_request_free(*req);
+	}
 
 	return err;
 }
@@ -1249,7 +1262,8 @@ discard_page:
 	ssdfs_clear_dirty_page(page);
 
 finish_write_page:
-	unlock_page(page);
+	ssdfs_unlock_page(page);
+
 	return err;
 }
 
@@ -1349,13 +1363,23 @@ retry:
 
 		nr_pages = (int)min_t(pgoff_t, end - index,
 					(pgoff_t)PAGEVEC_SIZE-1) + 1;
+
+		SSDFS_DBG("index %llu, end %llu, "
+			  "nr_pages %d, tag %#x\n",
+			  (u64)index, (u64)end, nr_pages, tag);
+
 		nr_pages = pagevec_lookup_range_nr_tag(&pvec, mapping, &index,
 							end, tag, nr_pages);
 		if (nr_pages == 0)
 			break;
 
+		SSDFS_DBG("FOUND: nr_pages %d\n", nr_pages);
+
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
+
+			SSDFS_DBG("page %p, index %d, page->index %ld\n",
+				  page, i, page->index);
 
 			/*
 			 * At this point, the page may be truncated or
@@ -1375,7 +1399,7 @@ retry:
 
 			done_index = page->index;
 
-			lock_page(page);
+			ssdfs_lock_page(page);
 
 			/*
 			 * Page truncated or invalidated. We can freely skip it
@@ -1387,9 +1411,16 @@ retry:
 			 */
 			if (unlikely(page->mapping != mapping)) {
 continue_unlock:
-				unlock_page(page);
+				ssdfs_unlock_page(page);
 				continue;
 			}
+
+			SSDFS_DBG("page %p, index %d, page->index %ld, "
+				  "PageLocked %#x, PageDirty %#x, "
+				  "PageWriteback %#x\n",
+				  page, i, page->index,
+				  PageLocked(page), PageDirty(page),
+				  PageWriteback(page));
 
 			if (!PageDirty(page)) {
 				/* someone wrote it for us */
@@ -1430,6 +1461,13 @@ continue_unlock:
 				}
 			}
 
+			SSDFS_DBG("page %p, index %d, page->index %ld, "
+				  "PageLocked %#x, PageDirty %#x, "
+				  "PageWriteback %#x\n",
+				  page, i, page->index,
+				  PageLocked(page), PageDirty(page),
+				  PageWriteback(page));
+
 			/*
 			 * We stop writing back only if we are not doing
 			 * integrity sync. In case of integrity sync we have to
@@ -1443,7 +1481,7 @@ continue_unlock:
 			}
 		}
 
-		ssdfs_file_pagevec_release(&pvec);
+		pagevec_reinit(&pvec);
 		cond_resched();
 	};
 
@@ -1524,7 +1562,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 				fsi->free_pages += blks;
 				spin_unlock(&fsi->volume_state_lock);
 
-				unlock_page(page);
+				ssdfs_unlock_page(page);
 				ssdfs_put_page(page);
 
 				SSDFS_DBG("page %px, count %d\n",
@@ -1602,7 +1640,7 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 		__set_page_dirty_nobuffers(page);
 
 out:
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",

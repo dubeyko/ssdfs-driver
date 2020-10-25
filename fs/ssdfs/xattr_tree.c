@@ -1511,7 +1511,7 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		}
 
 		ssdfs_get_page(page);
-		lock_page(page);
+		ssdfs_lock_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
 			  page, page_ref_count(page));
@@ -1524,7 +1524,7 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		kunmap_atomic(kaddr);
 
 		ssdfs_put_page(page);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",
 			  page, page_ref_count(page));

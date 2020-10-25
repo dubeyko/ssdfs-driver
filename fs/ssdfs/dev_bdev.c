@@ -332,7 +332,7 @@ static int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
 		flush_dcache_page(page);
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 
 	return err;
 }
@@ -378,7 +378,7 @@ static int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
 			flush_dcache_page(page);
 		}
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 	}
 
 	return err;
@@ -442,7 +442,7 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 		}
 
 		ssdfs_get_page(page);
-		lock_page(page);
+		ssdfs_lock_page(page);
 		pagevec_add(&pvec, page);
 
 		SSDFS_DBG("page %px, count %d\n",
@@ -489,7 +489,7 @@ finish_bdev_read_pvec:
 		page = pvec.pages[i];
 
 		if (page) {
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
 			SSDFS_DBG("page %px, count %d\n",
@@ -666,7 +666,7 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	BUG_ON(PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 	atomic_inc(&fsi->pending_bios);
 
 	err = ssdfs_bdev_sync_page_request(sb, page, to_off,
@@ -681,7 +681,7 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 		ClearPageError(page);
 	}
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -754,7 +754,7 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 		BUG_ON(PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 	}
 
 	atomic_inc(&fsi->pending_bios);
@@ -777,7 +777,7 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 			ClearPageError(page);
 		}
 
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
 		SSDFS_DBG("page %px, count %d\n",

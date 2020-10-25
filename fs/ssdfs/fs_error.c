@@ -173,9 +173,9 @@ void ssdfs_clear_dirty_pages(struct address_space *mapping)
 		for (i = 0; i < pagevec_count(&pvec); i++) {
 			struct page *page = pvec.pages[i];
 
-			lock_page(page);
+			ssdfs_lock_page(page);
 			err = ssdfs_clear_dirty_page(page);
-			unlock_page(page);
+			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
 				SSDFS_DBG("fail clear page dirty: "

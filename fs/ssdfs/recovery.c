@@ -1700,7 +1700,7 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 			goto finish_read_maptbl_cache;
 		}
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 		kaddr = kmap(page);
 
 		err = ssdfs_unaligned_read_buffer(fsi, peb_id,
@@ -1713,7 +1713,7 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 		}
 
 		kunmap(page);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 
 		read_off += size;
 		read_bytes += size;
@@ -1728,7 +1728,7 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 		BUG_ON(i >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		lock_page(page);
+		ssdfs_lock_page(page);
 		kaddr = kmap(page);
 
 		maptbl_cache_hdr = SSDFS_MAPTBL_CACHE_HDR(kaddr);
@@ -1750,7 +1750,7 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 
 unlock_cur_page:
 		kunmap(page);
-		unlock_page(page);
+		ssdfs_unlock_page(page);
 
 		if (unlikely(err))
 			goto finish_read_maptbl_cache;

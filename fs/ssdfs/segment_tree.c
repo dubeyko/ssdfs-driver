@@ -285,7 +285,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	SSDFS_DBG("page %p\n", page);
 
-	lock_page(page);
+	ssdfs_lock_page(page);
 
 	kaddr = (struct ssdfs_segment_info **)kmap(page);
 
@@ -299,7 +299,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 			SSDFS_DBG("si %px, seg_id %llu\n", si, si->seg_id);
 
 			if (atomic_read(&si->refs_count) > 0) {
-				unlock_page(page);
+				ssdfs_unlock_page(page);
 
 				err = wait_event_killable_timeout(*wq,
 					atomic_read(&si->refs_count) <= 0,
@@ -309,7 +309,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 				else
 					err = 0;
 
-				lock_page(page);
+				ssdfs_lock_page(page);
 			}
 
 			err = ssdfs_segment_destroy_object(si);
@@ -324,7 +324,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	kunmap(page);
 
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -488,7 +488,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	} else
 		*(kaddr + object_index) = si;
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -563,7 +563,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		*(kaddr + object_index) = NULL;
 	}
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -645,7 +645,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 			  seg_id);
 	}
 	kunmap_atomic(kaddr);
-	unlock_page(page);
+	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
