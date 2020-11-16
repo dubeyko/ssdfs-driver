@@ -128,6 +128,9 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 	BUG_ON(!sbi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (!sbi->vh_buf || !sbi->vs_buf)
+		return;
+
 	SSDFS_DBG("sbi %p, sbi->vh_buf %p, sbi->vs_buf %p, "
 		  "sbi->last_log.leb_id %llu, sbi->last_log.peb_id %llu, "
 		  "sbi->last_log.page_offset %u, "
@@ -241,6 +244,19 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 	memcpy(fsi->sbi.vs_buf, fsi->sbi_backup.vs_buf, footer_size);
 	memcpy(&fsi->sbi.last_log, &fsi->sbi_backup.last_log,
 		sizeof(struct ssdfs_peb_extent));
+
+	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
+		  "page_offset %u, pages_count %u, "
+		  "volume state: free_pages %llu, timestamp %#llx, "
+		  "cno %#llx, fs_state %#x\n",
+		  fsi->sbi.last_log.leb_id,
+		  fsi->sbi.last_log.peb_id,
+		  fsi->sbi.last_log.page_offset,
+		  fsi->sbi.last_log.pages_count,
+		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->free_pages),
+		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->timestamp),
+		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->cno),
+		  le16_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->state));
 }
 
 static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
@@ -351,7 +367,10 @@ static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 
 	sb = fsi->sb;
 	dev_size = fsi->devops->device_size(sb);
-	threshold = dev_size / 4;
+
+	threshold = SSDFS_MAPTBL_PROTECTION_STEP;
+	threshold *= SSDFS_MAPTBL_PROTECTION_RANGE;
+	threshold *= seg_size;
 	threshold = min_t(u64, dev_size, threshold + offset);
 
 	SSDFS_DBG("offset %llu, dev_size %llu, threshold %llu\n",
@@ -1553,6 +1572,12 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("sb_lebs[NEXT][COPY] %llu, sb_pebs[NEXT][COPY] %llu\n",
 		  fsi->sb_lebs[SSDFS_NEXT_SB_SEG][SSDFS_COPY_SB_SEG],
 		  fsi->sb_pebs[SSDFS_NEXT_SB_SEG][SSDFS_COPY_SB_SEG]);
+	SSDFS_DBG("sb_lebs[RESERVED][MAIN] %llu, sb_pebs[RESERVED][MAIN] %llu\n",
+		  fsi->sb_lebs[SSDFS_RESERVED_SB_SEG][SSDFS_MAIN_SB_SEG],
+		  fsi->sb_pebs[SSDFS_RESERVED_SB_SEG][SSDFS_MAIN_SB_SEG]);
+	SSDFS_DBG("sb_lebs[RESERVED][COPY] %llu, sb_pebs[RESERVED][COPY] %llu\n",
+		  fsi->sb_lebs[SSDFS_RESERVED_SB_SEG][SSDFS_COPY_SB_SEG],
+		  fsi->sb_pebs[SSDFS_RESERVED_SB_SEG][SSDFS_COPY_SB_SEG]);
 	SSDFS_DBG("sb_lebs[PREV][MAIN] %llu, sb_pebs[PREV][MAIN] %llu\n",
 		  fsi->sb_lebs[SSDFS_PREV_SB_SEG][SSDFS_MAIN_SB_SEG],
 		  fsi->sb_pebs[SSDFS_PREV_SB_SEG][SSDFS_MAIN_SB_SEG]);
@@ -1785,19 +1810,7 @@ static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 
 	SSDFS_DBG("fsi %p, vh %p, env %p\n", fsi, vh, env);
 
-	env->pagesize = 1 << vh->log_pagesize;
-	env->erasesize = 1 << vh->log_erasesize;
-	env->segsize = 1 << vh->log_segsize;
-	env->pebs_per_seg = 1 << vh->log_pebs_per_seg;
-	env->pages_per_peb = env->erasesize / env->pagesize;
-	env->pages_per_seg = env->segsize / env->pagesize;
-	env->start_peb = U64_MAX;
-	env->pebs_count = U32_MAX;
-	env->lower_offset = U64_MAX;
-	env->middle_offset = U64_MAX;
-	env->upper_offset = U64_MAX;
-	env->current_offset = U64_MAX;
-	env->search_phase = SSDFS_RECOVERY_NO_SEARCH;
+	env->found = NULL;
 	env->err = 0;
 	env->fsi = fsi;
 
@@ -1889,12 +1902,172 @@ static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
 	return (u16)calculated;
 }
 
+static inline
+void ssdfs_init_found_pebs_details(struct ssdfs_found_protected_pebs *ptr)
+{
+	int i, j;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("ptr %p\n", ptr);
+
+	ptr->start_peb = U64_MAX;
+	ptr->pebs_count = U32_MAX;
+	ptr->lower_offset = U64_MAX;
+	ptr->middle_offset = U64_MAX;
+	ptr->upper_offset = U64_MAX;
+	ptr->current_offset = U64_MAX;
+	ptr->search_phase = SSDFS_RECOVERY_NO_SEARCH;
+
+	for (i = 0; i < SSDFS_PROTECTED_PEB_CHAIN_MAX; i++) {
+		struct ssdfs_found_protected_peb *cur_peb;
+
+		cur_peb = &ptr->array[i];
+
+		cur_peb->peb.peb_id = U64_MAX;
+		cur_peb->peb.is_superblock_peb = false;
+		cur_peb->peb.state = SSDFS_PEB_NOT_CHECKED;
+
+		for (j = 0; j < SSDFS_SB_CHAIN_MAX; j++) {
+			struct ssdfs_superblock_pebs_pair *cur_pair;
+			struct ssdfs_found_peb *cur_sb_peb;
+
+			cur_pair = &cur_peb->found.sb_pebs[j];
+
+			cur_sb_peb = &cur_pair->pair[SSDFS_MAIN_SB_SEG];
+			cur_sb_peb->peb_id = U64_MAX;
+			cur_sb_peb->is_superblock_peb = false;
+			cur_sb_peb->state = SSDFS_PEB_NOT_CHECKED;
+
+			cur_sb_peb = &cur_pair->pair[SSDFS_COPY_SB_SEG];
+			cur_sb_peb->peb_id = U64_MAX;
+			cur_sb_peb->is_superblock_peb = false;
+			cur_sb_peb->state = SSDFS_PEB_NOT_CHECKED;
+		}
+	}
+}
+
+static inline
+int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
+				struct ssdfs_found_protected_pebs *found,
+				u64 start_peb, u32 pebs_count, int search_phase)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || env->found || !found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("env %p, found %p, start_peb %llu, "
+		  "pebs_count %u, search_phase %#x\n",
+		  env, found, start_peb,
+		  pebs_count, search_phase);
+
+	env->found = found;
+	env->err = 0;
+
+	if (search_phase == SSDFS_RECOVERY_FAST_SEARCH) {
+		env->found->start_peb = start_peb;
+		env->found->pebs_count = pebs_count;
+	} else if (search_phase == SSDFS_RECOVERY_SLOW_SEARCH) {
+		struct ssdfs_found_protected_peb *protected;
+
+		if (env->found->start_peb != start_peb ||
+		    env->found->pebs_count != pebs_count) {
+			SSDFS_DBG("ignore search in fragment: "
+				  "found (start_peb %llu, pebs_count %u), "
+				  "start_peb %llu, pebs_count %u\n",
+				  env->found->start_peb,
+				  env->found->pebs_count,
+				  start_peb, pebs_count);
+			env->err = -ENODATA;
+			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
+			return -ENODATA;
+		}
+
+		protected = &env->found->array[SSDFS_UPPER_PEB_INDEX];
+		if (protected->peb.peb_id >= U64_MAX) {
+			env->err = -ENODATA;
+			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
+			return -ENODATA;
+		}
+	} else {
+		SSDFS_ERR("unexpected search phase %#x\n",
+			  search_phase);
+		return -ERANGE;
+	}
+
+	env->found->search_phase = search_phase;
+	atomic_set(&env->state, SSDFS_START_RECOVERY);
+	wake_up(&env->request_wait_queue);
+
+	return 0;
+}
+
+static inline
+void ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
+				       struct ssdfs_recovery_env *env,
+				       u32 stripe_id,
+				       bool *has_sb_peb_found)
+{
+	struct ssdfs_segment_header *seg_hdr;
+	wait_queue_head_t *wq;
+	u64 cno1, cno2;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !has_sb_peb_found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("env %p, has_sb_peb_found %p, stripe_id %u\n",
+		  env, has_sb_peb_found, stripe_id);
+
+	/*
+	 * Do not change has_sb_peb_found
+	 * if nothing has been found!!!!
+	 */
+
+	wq = &env->result_wait_queue;
+
+	wait_event_interruptible_timeout(*wq,
+			has_thread_finished(env),
+			SSDFS_DEFAULT_TIMEOUT);
+
+	switch (atomic_read(&env->state)) {
+	case SSDFS_RECOVERY_FINISHED:
+		SSDFS_DBG("stripe %u has SB segment\n",
+			  stripe_id);
+
+		seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
+		cno1 = le64_to_cpu(seg_hdr->cno);
+		seg_hdr = SSDFS_SEG_HDR(env->sbi.vh_buf);
+		cno2 = le64_to_cpu(seg_hdr->cno);
+
+		SSDFS_DBG("cno1 %llu, cno2 %llu\n",
+			  cno1, cno2);
+
+		if (cno1 <= cno2) {
+			SSDFS_DBG("copy sb info: "
+				  "stripe_id %u\n",
+				  stripe_id);
+			ssdfs_copy_sb_info(fsi, env);
+			*has_sb_peb_found = true;
+		}
+		break;
+
+	default:
+		SSDFS_DBG("stripe %u has nothing\n",
+			  stripe_id);
+		break;
+	}
+
+	env->found = NULL;
+}
+
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 {
 	struct ssdfs_volume_header *vh;
-	struct ssdfs_segment_header *seg_hdr;
-	struct ssdfs_recovery_env *array;
-	wait_queue_head_t *wq;
+	struct ssdfs_recovery_env *array = NULL;
+	struct ssdfs_found_protected_pebs *found_pebs = NULL;
 	u64 dev_size;
 	u32 erasesize;
 	u64 pebs_per_volume;
@@ -1907,10 +2080,11 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	u32 jobs_count;
 	u32 processed_stripes = 0;
 	u64 processed_pebs = 0;
-	u64 cno1, cno2;
-	bool has_sb_peb_found;
+	bool has_sb_peb_found1, has_sb_peb_found2;
+	bool has_iteration_succeeded;
+	u16 calculated;
 	int i;
-	int err;
+	int err = 0;
 
 	SSDFS_DBG("fsi %p, silent %#x\n", fsi, silent);
 
@@ -1943,7 +2117,21 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	stripes_count = fragments_count * stripes_per_fragment;
 	threads_count = min_t(u32, SSDFS_RECOVERY_THREADS, stripes_count);
 
-	has_sb_peb_found = false;
+	has_sb_peb_found1 = false;
+	has_sb_peb_found2 = false;
+
+	found_pebs = ssdfs_recovery_kcalloc(stripes_count,
+				sizeof(struct ssdfs_found_protected_pebs),
+				GFP_KERNEL);
+	if (!found_pebs) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate the PEBs details array\n");
+		goto free_environment;
+	}
+
+	for (i = 0; i < stripes_count; i++) {
+		ssdfs_init_found_pebs_details(&found_pebs[i]);
+	}
 
 	array = ssdfs_recovery_kcalloc(threads_count,
 				sizeof(struct ssdfs_recovery_env),
@@ -1951,7 +2139,7 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	if (!array) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate the environment\n");
-		goto try_use_old_search;
+		goto free_environment;
 	}
 
 	for (i = 0; i < threads_count; i++) {
@@ -1984,8 +2172,12 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 
 	jobs_count = 1;
 
+	processed_stripes = 0;
+	processed_pebs = 0;
+
 	while (processed_pebs < pebs_per_volume) {
-		bool has_iteration_succeeded = false;
+		/* Fast search phase */
+		has_iteration_succeeded = false;
 
 		if (processed_stripes >= stripes_count) {
 			SSDFS_DBG("processed_stripes %u >= stripes_count %u\n",
@@ -1993,10 +2185,10 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 			goto finish_sb_peb_search;
 		}
 
-		SSDFS_DBG("jobs_count %u\n", jobs_count);
+		SSDFS_DBG("FAST_SEARCH: jobs_count %u\n", jobs_count);
 
 		for (i = 0; i < jobs_count; i++) {
-			u16 calculated =
+			calculated =
 				ssdfs_get_pebs_per_stripe(pebs_per_volume,
 							  processed_pebs,
 							  fragments_count,
@@ -2004,61 +2196,54 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 							  stripes_per_fragment,
 							  pebs_per_stripe);
 
-			array[i].start_peb = processed_pebs;
-			array[i].pebs_count = calculated;
-			array[i].err = 0;
-
 			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
-				  i, array[i].start_peb, array[i].pebs_count);
-
-			processed_pebs += calculated;
-
+				  i, processed_pebs, calculated);
 			SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu\n",
 				  pebs_per_volume, processed_pebs);
 
-			atomic_set(&array[i].state, SSDFS_START_RECOVERY);
-			wake_up(&array[i].request_wait_queue);
+			err = ssdfs_start_recovery_thread_activity(&array[i],
+					&found_pebs[processed_stripes + i],
+					processed_pebs, calculated,
+					SSDFS_RECOVERY_FAST_SEARCH);
+			if (err) {
+				SSDFS_ERR("fail to start thread's activity: "
+					  "err %d\n", err);
+				goto finish_sb_peb_search;
+			}
+
+			processed_pebs += calculated;
 		}
 
 		for (i = 0; i < jobs_count; i++) {
-			wq = &array[i].result_wait_queue;
+			ssdfs_wait_recovery_thread_finish(fsi, &array[i],
+						processed_stripes + i,
+						&has_iteration_succeeded);
 
-			wait_event_interruptible_timeout(*wq,
-					has_thread_finished(&array[i]),
-					SSDFS_DEFAULT_TIMEOUT);
+			switch (array[i].err) {
+			case 0:
+				/* SB PEB has been found */
+				/* continue logic */
+				break;
 
-			switch (atomic_read(&array[i].state)) {
-			case SSDFS_RECOVERY_FINISHED:
-				SSDFS_DBG("stripe %u has SB segment\n",
-					  processed_stripes + i);
-
-				seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
-				cno1 = le64_to_cpu(seg_hdr->cno);
-				seg_hdr = SSDFS_SEG_HDR(array[i].sbi.vh_buf);
-				cno2 = le64_to_cpu(seg_hdr->cno);
-
-				SSDFS_DBG("cno1 %llu, cno2 %llu\n",
-					  cno1, cno2);
-
-				if (cno1 <= cno2) {
-					err = 0;
-					SSDFS_DBG("copy sb info: "
-						  "fragment %u\n",
-						  processed_stripes + i);
-					ssdfs_copy_sb_info(fsi, &array[i]);
-					has_iteration_succeeded = true;
-				}
+			case -ENODATA:
+			case -ENOENT:
+			case -EAGAIN:
+			case -E2BIG:
+				/* SB PEB has not been found */
+				/* continue logic */
 				break;
 
 			default:
-				SSDFS_DBG("stripe %u has nothing\n",
-					  processed_stripes + i);
-				break;
+				/* Something is going wrong */
+				/* stop execution */
+				err = array[i].err;
+				has_sb_peb_found1 = false;
+				goto finish_sb_peb_search;
 			}
 		}
 
 		if (has_iteration_succeeded) {
-			has_sb_peb_found = true;
+			has_sb_peb_found1 = true;
 			goto finish_sb_peb_search;
 		}
 
@@ -2068,7 +2253,94 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		jobs_count = min_t(u32, jobs_count, threads_count);
 		jobs_count = min_t(u32, jobs_count,
 				   stripes_count - processed_stripes);
-	}
+	};
+
+	processed_stripes = 0;
+	processed_pebs = 0;
+
+	jobs_count = threads_count;
+	jobs_count = min_t(u32, jobs_count,
+			   stripes_count - processed_stripes);
+
+	while (processed_pebs < pebs_per_volume) {
+		/* Slow search phase */
+		has_iteration_succeeded = false;
+
+		if (processed_stripes >= stripes_count) {
+			SSDFS_DBG("processed_stripes %u >= stripes_count %u\n",
+				  processed_stripes, stripes_count);
+			goto finish_sb_peb_search;
+		}
+
+		SSDFS_DBG("SLOW_SEARCH: jobs_count %u\n", jobs_count);
+
+		for (i = 0; i < jobs_count; i++) {
+			calculated =
+				ssdfs_get_pebs_per_stripe(pebs_per_volume,
+							  processed_pebs,
+							  fragments_count,
+							  pebs_per_fragment,
+							  stripes_per_fragment,
+							  pebs_per_stripe);
+
+			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
+				  i, processed_pebs, calculated);
+			SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu\n",
+				  pebs_per_volume, processed_pebs);
+
+			err = ssdfs_start_recovery_thread_activity(&array[i],
+					&found_pebs[processed_stripes + i],
+					processed_pebs, calculated,
+					SSDFS_RECOVERY_SLOW_SEARCH);
+			if (err == -ENODATA) {
+				/* thread continues to sleep */
+				/* continue logic */
+			} else if (err) {
+				SSDFS_ERR("fail to start thread's activity: "
+					  "err %d\n", err);
+				goto finish_sb_peb_search;
+			}
+
+			processed_pebs += calculated;
+		}
+
+		for (i = 0; i < jobs_count; i++) {
+			ssdfs_wait_recovery_thread_finish(fsi, &array[i],
+						processed_stripes + i,
+						&has_iteration_succeeded);
+
+			switch (array[i].err) {
+			case 0:
+				/* SB PEB has been found */
+				/* continue logic */
+				break;
+
+			case -ENODATA:
+			case -ENOENT:
+			case -EAGAIN:
+			case -E2BIG:
+				/* SB PEB has not been found */
+				/* continue logic */
+				break;
+
+			default:
+				/* Something is going wrong */
+				/* stop execution */
+				err = array[i].err;
+				has_sb_peb_found2 = false;
+				goto finish_sb_peb_search;
+			}
+		}
+
+		if (has_iteration_succeeded) {
+			has_sb_peb_found2 = true;
+			goto finish_sb_peb_search;
+		}
+
+		processed_stripes += jobs_count;
+		jobs_count = min_t(u32, jobs_count,
+				   stripes_count - processed_stripes);
+	};
 
 finish_sb_peb_search:
 	for (i = 0; i < threads_count; i++)
@@ -2081,12 +2353,46 @@ destruct_sb_info:
 	}
 
 free_environment:
-	ssdfs_recovery_kfree(array);
-	array = NULL;
+	if (found_pebs) {
+		ssdfs_recovery_kfree(found_pebs);
+		found_pebs = NULL;
+	}
 
-try_use_old_search:
-	if (!has_sb_peb_found) {
+	if (array) {
+		ssdfs_recovery_kfree(array);
+		array = NULL;
+	}
+
+	switch (err) {
+	case 0:
+		/* SB PEB has been found */
+		/* continue logic */
+		break;
+
+	case -ENODATA:
+	case -ENOENT:
+	case -EAGAIN:
+	case -E2BIG:
+		/* SB PEB has not been found */
+		/* continue logic */
+		break;
+
+	default:
+		/* Something is going wrong */
+		/* stop execution */
+		SSDFS_ERR("fail to find valid SB PEB: err %d\n", err);
+		goto forget_buf;
+	}
+
+	if (has_sb_peb_found1)
+		SSDFS_DBG("FAST_SEARCH: found SB seg\n");
+	else if (has_sb_peb_found2)
+		SSDFS_DBG("SLOW_SEARCH: found SB seg\n");
+
+	if (!has_sb_peb_found1 && !has_sb_peb_found2) {
 #ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_ERR("unable to find latest valid sb segment: "
+			  "trying old algorithm!!!\n");
 		BUG();
 #else
 		SSDFS_ERR("unable to find latest valid sb segment: "

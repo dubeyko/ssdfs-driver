@@ -149,16 +149,35 @@ void ssdfs_put_page(struct page *page)
 static inline
 void ssdfs_lock_page(struct page *page)
 {
-#ifdef CONFIG_SSDFS_DEBUG
-	if (PageLocked(page)) {
-		SSDFS_WARN("page %p, page_index %llu\n",
-			   page, (u64)page_index(page));
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	lock_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
+	if (atomic64_read(&ssdfs_locked_pages) < 0) {
+		SSDFS_WARN("ssdfs_locked_pages %lld\n",
+			   atomic64_read(&ssdfs_locked_pages));
+	}
+
+	atomic64_inc(&ssdfs_locked_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+void ssdfs_account_locked_page(struct page *page)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!page)
+		return;
+
+	if (!PageLocked(page)) {
+		SSDFS_WARN("page %p, page_index %llu\n",
+			   page, (u64)page_index(page));
+	}
+
+	if (atomic64_read(&ssdfs_locked_pages) < 0) {
+		SSDFS_WARN("ssdfs_locked_pages %lld\n",
+			   atomic64_read(&ssdfs_locked_pages));
+	}
+
 	atomic64_inc(&ssdfs_locked_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
@@ -177,6 +196,11 @@ void ssdfs_unlock_page(struct page *page)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	atomic64_dec(&ssdfs_locked_pages);
+
+	if (atomic64_read(&ssdfs_locked_pages) < 0) {
+		SSDFS_WARN("ssdfs_locked_pages %lld\n",
+			   atomic64_read(&ssdfs_locked_pages));
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
@@ -269,6 +293,13 @@ void ssdfs_free_page(struct page *page)
 	if (!page)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	if (PageLocked(page)) {
+		SSDFS_WARN("page %px is still locked\n",
+			   page);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %px, count %d\n",
@@ -307,6 +338,13 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 
 		if (!page)
 			continue;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		if (PageLocked(page)) {
+			SSDFS_WARN("page %px is still locked\n",
+				   page);
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_put_page(page);
 

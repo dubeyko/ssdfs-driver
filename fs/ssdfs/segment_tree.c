@@ -479,6 +479,8 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 		goto finish_add_segment;
 	}
 
+	ssdfs_account_locked_page(page);
+
 	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
 	object = *(kaddr + object_index);
 	if (object) {
@@ -549,6 +551,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		goto finish_remove_segment;
 	}
 
+	ssdfs_account_locked_page(page);
 	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
 	object = *(kaddr + object_index);
 	if (!object) {
@@ -636,6 +639,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 		goto finish_find_segment;
 	}
 
+	ssdfs_account_locked_page(page);
 	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
 	object = *(kaddr + object_index);
 	if (!object) {

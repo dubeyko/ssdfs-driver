@@ -204,6 +204,7 @@ bool __is_ssdfs_segment_header_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr);
 bool is_ssdfs_partial_log_header_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_volume_header_csum_valid(void *vh_buf, size_t buf_size);
+bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size);
 bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 					u64 dev_size);
 int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,

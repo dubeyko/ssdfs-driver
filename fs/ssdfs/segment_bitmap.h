@@ -391,6 +391,8 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		if (!page)
 			continue;
 
+		ssdfs_account_locked_page(page);
+
 		SSDFS_DBG("page_index %llu, flags %#lx\n",
 			  (u64)page_index(page), page->flags);
 

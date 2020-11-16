@@ -17,19 +17,86 @@
 #define SSDFS_RECOVERY_THREADS		(12)
 
 /*
- * struct ssdfs_recovery_env - recovery environment
- * @pagesize: page size in bytes
- * @erasesize: physical erase block size in bytes
- * @segsize: segment size in bytes
- * @pebs_per_seg: physical erase blocks per segment
- * @pages_per_peb: pages per physical erase block
- * @pages_per_seg: pages per segment
+ * struct ssdfs_found_peb - found PEB details
+ * @peb_id: PEB's ID
+ * @cno: PEB's starting checkpoint
+ * @is_superblock_peb: has superblock PEB been found?
+ * @state: PEB's state
+ */
+struct ssdfs_found_peb {
+	u64 peb_id;
+	u64 cno;
+	bool is_superblock_peb;
+	int state;
+};
+
+/*
+ * States of found PEB
+ */
+enum {
+	SSDFS_PEB_NOT_CHECKED,
+	SSDFS_FOUND_PEB_VALID,
+	SSDFS_FOUND_PEB_INVALID,
+	SSDFS_FOUND_PEB_STATE_MAX
+};
+
+/*
+ * struct ssdfs_superblock_pebs_pair - pair of superblock PEBs
+ * @pair: main and copy superblock PEBs
+ */
+struct ssdfs_superblock_pebs_pair {
+	struct ssdfs_found_peb pair[SSDFS_SB_SEG_COPY_MAX];
+};
+
+/*
+ * struct ssdfs_found_superblock_pebs - found superblock PEBs
+ * sb_pebs: array of superblock PEBs details
+ */
+struct ssdfs_found_superblock_pebs {
+	struct ssdfs_superblock_pebs_pair sb_pebs[SSDFS_SB_CHAIN_MAX];
+};
+
+/*
+ * struct ssdfs_found_protected_peb - protected PEB details
+ * @peb: protected PEB details
+ * @found: superblock PEBs details
+ */
+struct ssdfs_found_protected_peb {
+	struct ssdfs_found_peb peb;
+	struct ssdfs_found_superblock_pebs found;
+};
+
+/*
+ * struct ssdfs_found_protected_pebs - found protected PEBs
  * @start_peb: starting PEB ID in fragment
  * @pebs_count: PEBs count in fragment
  * @lower_offset: lower offset bound
  * @middle_offset: middle offset
  * @upper_offset: upper offset bound
  * @current_offset: current position of the search
+ * @search_phase: current search phase
+ * array: array of protected PEBs details
+ */
+struct ssdfs_found_protected_pebs {
+	u64 start_peb;
+	u32 pebs_count;
+
+	u64 lower_offset;
+	u64 middle_offset;
+	u64 upper_offset;
+	u64 current_offset;
+	int search_phase;
+
+#define SSDFS_LOWER_PEB_INDEX			(0)
+#define SSDFS_UPPER_PEB_INDEX			(1)
+#define SSDFS_LAST_CNO_PEB_INDEX		(2)
+#define SSDFS_PROTECTED_PEB_CHAIN_MAX		(3)
+	struct ssdfs_found_protected_peb array[SSDFS_PROTECTED_PEB_CHAIN_MAX];
+};
+
+/*
+ * struct ssdfs_recovery_env - recovery environment
+ * @found: found PEBs' details
  * @err: result of the search
  * @state: recovery thread's state
  * @last_vh: buffer for last valid volume header
@@ -41,21 +108,7 @@
  * @fsi: file system info object
  */
 struct ssdfs_recovery_env {
-	u32 pagesize;
-	u32 erasesize;
-	u32 segsize;
-	u32 pebs_per_seg;
-	u32 pages_per_peb;
-	u32 pages_per_seg;
-
-	u64 start_peb;
-	u32 pebs_count;
-
-	u64 lower_offset;
-	u64 middle_offset;
-	u64 upper_offset;
-	u64 current_offset;
-	int search_phase;
+	struct ssdfs_found_protected_pebs *found;
 
 	int err;
 	atomic_t state;
@@ -77,7 +130,9 @@ enum {
 	SSDFS_RECOVERY_NO_SEARCH,
 	SSDFS_RECOVERY_FAST_SEARCH,
 	SSDFS_RECOVERY_SLOW_SEARCH,
-	SSDFS_RECOVERY_LAST_TRY_SEARCH,
+	SSDFS_RECOVERY_FIRST_SLOW_TRY,
+	SSDFS_RECOVERY_SECOND_SLOW_TRY,
+	SSDFS_RECOVERY_THIRD_SLOW_TRY,
 	SSDFS_RECOVERY_SEARCH_PHASES_MAX
 };
 
@@ -105,17 +160,89 @@ enum {
  */
 
 static inline
+struct ssdfs_found_peb *
+CUR_MAIN_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_CUR_SB_SEG].pair[SSDFS_MAIN_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+CUR_COPY_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_CUR_SB_SEG].pair[SSDFS_COPY_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+NEXT_MAIN_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_NEXT_SB_SEG].pair[SSDFS_MAIN_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+NEXT_COPY_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_NEXT_SB_SEG].pair[SSDFS_COPY_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+RESERVED_MAIN_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_RESERVED_SB_SEG].pair[SSDFS_MAIN_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+RESERVED_COPY_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_RESERVED_SB_SEG].pair[SSDFS_COPY_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+PREV_MAIN_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_PREV_SB_SEG].pair[SSDFS_MAIN_SB_SEG];
+}
+
+static inline
+struct ssdfs_found_peb *
+PREV_COPY_SB_PEB(struct ssdfs_found_superblock_pebs *ptr)
+{
+	return &ptr->sb_pebs[SSDFS_PREV_SB_SEG].pair[SSDFS_COPY_SB_SEG];
+}
+
+static inline
+bool IS_INSIDE_STRIPE(struct ssdfs_found_protected_pebs *ptr,
+		      struct ssdfs_found_peb *found)
+{
+	return found->peb_id >= ptr->start_peb &&
+		found->peb_id < (ptr->start_peb + ptr->pebs_count);
+}
+
+static inline
 u64 SSDFS_RECOVERY_LOW_OFF(struct ssdfs_recovery_env *env)
 {
-	switch (env->search_phase) {
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->fsi || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (env->found->search_phase) {
 	case SSDFS_RECOVERY_FAST_SEARCH:
-		return env->middle_offset;
+		return env->found->lower_offset;
 
 	case SSDFS_RECOVERY_SLOW_SEARCH:
-		return env->lower_offset;
+	case SSDFS_RECOVERY_FIRST_SLOW_TRY:
+		return env->found->middle_offset;
 
-	case SSDFS_RECOVERY_LAST_TRY_SEARCH:
-		return env->start_peb * env->erasesize;
+	case SSDFS_RECOVERY_SECOND_SLOW_TRY:
+		return env->found->lower_offset;
+
+	case SSDFS_RECOVERY_THIRD_SLOW_TRY:
+		return env->found->start_peb * env->fsi->erasesize;
 	}
 
 	return U64_MAX;
@@ -124,15 +251,25 @@ u64 SSDFS_RECOVERY_LOW_OFF(struct ssdfs_recovery_env *env)
 static inline
 u64 SSDFS_RECOVERY_UPPER_OFF(struct ssdfs_recovery_env *env)
 {
-	switch (env->search_phase) {
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->fsi || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (env->found->search_phase) {
 	case SSDFS_RECOVERY_FAST_SEARCH:
-		return env->upper_offset;
+		return env->found->middle_offset +
+			    ((SSDFS_MAPTBL_PROTECTION_STEP - 1) *
+				env->fsi->erasesize);
 
 	case SSDFS_RECOVERY_SLOW_SEARCH:
-		return env->middle_offset;
+	case SSDFS_RECOVERY_FIRST_SLOW_TRY:
+		return env->found->upper_offset;
 
-	case SSDFS_RECOVERY_LAST_TRY_SEARCH:
-		return env->lower_offset;
+	case SSDFS_RECOVERY_SECOND_SLOW_TRY:
+		return env->found->middle_offset;
+
+	case SSDFS_RECOVERY_THIRD_SLOW_TRY:
+		return env->found->lower_offset;
 	}
 
 	return U64_MAX;
@@ -141,91 +278,125 @@ u64 SSDFS_RECOVERY_UPPER_OFF(struct ssdfs_recovery_env *env)
 static inline
 u64 *SSDFS_RECOVERY_CUR_OFF_PTR(struct ssdfs_recovery_env *env)
 {
-	return &env->current_offset;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return &env->found->current_offset;
 }
 
 static inline
-void SSDFS_RECOVERY_SET_MIDDLE_OFF(struct ssdfs_recovery_env *env)
+void SSDFS_RECOVERY_SET_FAST_SEARCH_TRY(struct ssdfs_recovery_env *env)
 {
-	u64 range_bytes;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	if (env->lower_offset == env->upper_offset) {
-		SSDFS_WARN("lower_offset %llu == upper_offset %llu\n",
-			   env->lower_offset,
-			   env->upper_offset);
-		return;
-	}
+	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->lower_offset;
+	env->found->search_phase = SSDFS_RECOVERY_FAST_SEARCH;
 
-	range_bytes = (u64)SSDFS_MAPTBL_PROTECTION_STEP * env->erasesize;
-
-	env->middle_offset =
-		max_t(u64, env->lower_offset, env->upper_offset - range_bytes);
+	SSDFS_DBG("lower_offset %llu, "
+		  "middle_offset %llu, "
+		  "upper_offset %llu, "
+		  "current_offset %llu, "
+		  "search_phase %#x\n",
+		  env->found->lower_offset,
+		  env->found->middle_offset,
+		  env->found->upper_offset,
+		  env->found->current_offset,
+		  env->found->search_phase);
 }
 
 static inline
-void SSDFS_RECOVERY_SET_FAST_SEARCH(struct ssdfs_recovery_env *env)
+void SSDFS_RECOVERY_SET_FIRST_SLOW_TRY(struct ssdfs_recovery_env *env)
 {
-	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->middle_offset;
-	env->search_phase = SSDFS_RECOVERY_FAST_SEARCH;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("env->lower_offset %llu, "
-		  "env->middle_offset %llu, "
-		  "env->upper_offset %llu, "
-		  "env->current_offset %llu, "
-		  "env->search_phase %#x\n",
-		  env->lower_offset,
-		  env->middle_offset,
-		  env->upper_offset,
-		  env->current_offset,
-		  env->search_phase);
+	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->middle_offset;
+	env->found->search_phase = SSDFS_RECOVERY_FIRST_SLOW_TRY;
+
+	SSDFS_DBG("lower_offset %llu, "
+		  "middle_offset %llu, "
+		  "upper_offset %llu, "
+		  "current_offset %llu, "
+		  "search_phase %#x\n",
+		  env->found->lower_offset,
+		  env->found->middle_offset,
+		  env->found->upper_offset,
+		  env->found->current_offset,
+		  env->found->search_phase);
 }
 
 static inline
-bool is_slow_search_possible(struct ssdfs_recovery_env *env)
+bool is_second_slow_try_possible(struct ssdfs_recovery_env *env)
 {
-	return env->lower_offset < env->middle_offset;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return env->found->lower_offset < env->found->middle_offset;
 }
 
 static inline
-void SSDFS_RECOVERY_SET_SLOW_SEARCH(struct ssdfs_recovery_env *env)
+void SSDFS_RECOVERY_SET_SECOND_SLOW_TRY(struct ssdfs_recovery_env *env)
 {
-	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->lower_offset;
-	env->search_phase = SSDFS_RECOVERY_SLOW_SEARCH;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("env->lower_offset %llu, "
-		  "env->middle_offset %llu, "
-		  "env->upper_offset %llu, "
-		  "env->current_offset %llu, "
-		  "env->search_phase %#x\n",
-		  env->lower_offset,
-		  env->middle_offset,
-		  env->upper_offset,
-		  env->current_offset,
-		  env->search_phase);
+	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->lower_offset;
+	env->found->search_phase = SSDFS_RECOVERY_SECOND_SLOW_TRY;
+
+	SSDFS_DBG("lower_offset %llu, "
+		  "middle_offset %llu, "
+		  "upper_offset %llu, "
+		  "current_offset %llu, "
+		  "search_phase %#x\n",
+		  env->found->lower_offset,
+		  env->found->middle_offset,
+		  env->found->upper_offset,
+		  env->found->current_offset,
+		  env->found->search_phase);
 }
 
 static inline
-bool is_last_try_search_possible(struct ssdfs_recovery_env *env)
+bool is_third_slow_try_possible(struct ssdfs_recovery_env *env)
 {
-	return (env->start_peb * env->erasesize) < env->lower_offset;
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->fsi || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = env->found->start_peb * env->fsi->erasesize;
+	return offset < env->found->lower_offset;
 }
 
 static inline
-void SSDFS_RECOVERY_SET_LAST_TRY_SEARCH(struct ssdfs_recovery_env *env)
+void SSDFS_RECOVERY_SET_THIRD_SLOW_TRY(struct ssdfs_recovery_env *env)
 {
-	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->start_peb * env->erasesize;
-	env->search_phase = SSDFS_RECOVERY_LAST_TRY_SEARCH;
+	u64 offset;
 
-	SSDFS_DBG("env->lower_offset %llu, "
-		  "env->middle_offset %llu, "
-		  "env->upper_offset %llu, "
-		  "env->current_offset %llu, "
-		  "env->search_phase %#x\n",
-		  env->lower_offset,
-		  env->middle_offset,
-		  env->upper_offset,
-		  env->current_offset,
-		  env->search_phase);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env || !env->fsi || !env->found);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = env->found->start_peb * env->fsi->erasesize;
+	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = offset;
+	env->found->search_phase = SSDFS_RECOVERY_THIRD_SLOW_TRY;
+
+	SSDFS_DBG("lower_offset %llu, "
+		  "middle_offset %llu, "
+		  "upper_offset %llu, "
+		  "current_offset %llu, "
+		  "search_phase %#x\n",
+		  env->found->lower_offset,
+		  env->found->middle_offset,
+		  env->found->upper_offset,
+		  env->found->current_offset,
+		  env->found->search_phase);
 }
 
 /*
@@ -234,5 +405,23 @@ void SSDFS_RECOVERY_SET_LAST_TRY_SEARCH(struct ssdfs_recovery_env *env)
 int ssdfs_recovery_start_thread(struct ssdfs_recovery_env *env,
 				u32 id);
 int ssdfs_recovery_stop_thread(struct ssdfs_recovery_env *env);
+void ssdfs_backup_sb_info2(struct ssdfs_recovery_env *env);
+void ssdfs_restore_sb_info2(struct ssdfs_recovery_env *env);
+int ssdfs_read_checked_sb_info3(struct ssdfs_recovery_env *env,
+				u64 peb_id, u32 pages_off);
+int __ssdfs_find_any_valid_volume_header2(struct ssdfs_recovery_env *env,
+					  u64 start_offset,
+					  u64 end_offset,
+					  u64 step);
+int ssdfs_find_any_valid_sb_segment2(struct ssdfs_recovery_env *env,
+				     u64 threshold_peb);
+bool is_cur_main_sb_peb_exhausted(struct ssdfs_recovery_env *env);
+bool is_cur_copy_sb_peb_exhausted(struct ssdfs_recovery_env *env);
+int ssdfs_check_next_sb_pebs_pair(struct ssdfs_recovery_env *env);
+int ssdfs_check_reserved_sb_pebs_pair(struct ssdfs_recovery_env *env);
+int ssdfs_find_latest_valid_sb_segment2(struct ssdfs_recovery_env *env);
+int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env);
+int ssdfs_recovery_try_fast_search(struct ssdfs_recovery_env *env);
+int ssdfs_recovery_try_slow_search(struct ssdfs_recovery_env *env);
 
 #endif /* _SSDFS_RECOVERY_H */

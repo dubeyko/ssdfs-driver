@@ -842,6 +842,28 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 }
 
 /*
+ * ssdfs_segbmap_get_state_from_byte() - retrieve state of item from byte
+ * @byte_ptr: pointer on byte
+ * @byte_item: index of item in byte
+ */
+static inline
+int ssdfs_segbmap_get_state_from_byte(u8 *byte_ptr, u32 byte_item)
+{
+	u32 shift;
+
+	SSDFS_DBG("byte_ptr %p, byte_item %u\n",
+		  byte_ptr, byte_item);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!byte_ptr);
+	BUG_ON(byte_item >= SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	shift = byte_item * SSDFS_SEG_STATE_BITS;
+	return (int)((*byte_ptr >> shift) & SSDFS_SEG_STATE_MASK);
+}
+
+/*
  * ssdfs_segbmap_check_fragment_header() - check fragment's header
  * @pebc: pointer on PEB container
  * @seg_index: index of segment in segbmap's segments sequence
@@ -869,6 +891,17 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 	__le32 old_csum, csum;
 	u16 total_segs, calculated_segs;
 	u16 clean_or_using_segs, used_or_dirty_segs, bad_segs;
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS);
+	u32 byte_offset;
+	u8 *byte_ptr;
+	u32 byte_item;
+	int state = SSDFS_SEG_STATE_MAX;
+	u16 clean_or_using_segs_calculated;
+	u16 used_or_dirty_segs_calculated;
+	u16 bad_segs_calculated;
+	int i;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -975,6 +1008,78 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 		goto fragment_hdr_corrupted;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	clean_or_using_segs_calculated = 0;
+	used_or_dirty_segs_calculated = 0;
+	bad_segs_calculated = 0;
+
+	for (i = 0; i < total_segs; i++) {
+		byte_offset = ssdfs_segbmap_get_item_byte_offset(i);
+
+		if (byte_offset >= PAGE_SIZE) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid byte_offset %u\n",
+				  byte_offset);
+			goto fragment_hdr_corrupted;
+		}
+
+		byte_item = i - ((byte_offset - hdr_size) * items_per_byte);
+
+		byte_ptr = (u8 *)kaddr + byte_offset;
+		state = ssdfs_segbmap_get_state_from_byte(byte_ptr, byte_item);
+
+		switch (state) {
+		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_LEAF_NODE_USING:
+		case SSDFS_SEG_HYBRID_NODE_USING:
+		case SSDFS_SEG_INDEX_NODE_USING:
+		case SSDFS_SEG_RESERVED:
+			clean_or_using_segs_calculated++;
+			break;
+
+		case SSDFS_SEG_USED:
+		case SSDFS_SEG_PRE_DIRTY:
+		case SSDFS_SEG_DIRTY:
+			used_or_dirty_segs_calculated++;
+			break;
+
+		case SSDFS_SEG_BAD:
+			bad_segs_calculated++;
+
+		default:
+			err = -EIO;
+			SSDFS_ERR("unexpected state %#x\n",
+				  state);
+			goto fragment_hdr_corrupted;
+		}
+	}
+
+	if (clean_or_using_segs_calculated != clean_or_using_segs) {
+		err = -EIO;
+		SSDFS_ERR("calculated %u != clean_or_using_segs %u\n",
+			  clean_or_using_segs_calculated,
+			  clean_or_using_segs);
+	}
+
+	if (used_or_dirty_segs_calculated != used_or_dirty_segs) {
+		err = -EIO;
+		SSDFS_ERR("calculated %u != used_or_dirty_segs %u\n",
+			  used_or_dirty_segs_calculated,
+			  used_or_dirty_segs);
+	}
+
+	if (bad_segs_calculated != bad_segs) {
+		err = -EIO;
+		SSDFS_ERR("calculated %u != bad_segs %u\n",
+			  bad_segs_calculated,
+			  bad_segs);
+	}
+
+	if (err)
+		goto fragment_hdr_corrupted;
+#endif /* CONFIG_SSDFS_DEBUG */
+
 fragment_hdr_corrupted:
 	kunmap(page);
 
@@ -1055,7 +1160,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 
 		SSDFS_DBG("total_segs %u, clean_or_using_segs %u, "
 			  "used_or_dirty_segs %u, bad_segs %u\n",
-			 le16_to_cpu(hdr->total_segs),
+			  le16_to_cpu(hdr->total_segs),
 			  le16_to_cpu(hdr->clean_or_using_segs),
 			  le16_to_cpu(hdr->used_or_dirty_segs),
 			  le16_to_cpu(hdr->bad_segs));
@@ -1197,8 +1302,9 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 		return -ERANGE;
 	}
 
-	kaddr1 = kmap(spage);
+	ssdfs_account_locked_page(spage);
 
+	kaddr1 = kmap(spage);
 	hdr = SSDFS_SBMP_FRAG_HDR(kaddr1);
 
 	if (le32_to_cpu(hdr->magic) != SSDFS_SEGBMAP_HDR_MAGIC) {
@@ -1936,6 +2042,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 				goto fail_issue_commit_logs;
 			}
 
+			ssdfs_account_locked_page(page);
 			kaddr = kmap(page);
 
 			hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
@@ -2355,28 +2462,6 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
 }
 
 /*
- * ssdfs_segbmap_get_state_from_byte() - retrieve state of item from byte
- * @byte_ptr: pointer on byte
- * @byte_item: index of item in byte
- */
-static inline
-int ssdfs_segbmap_get_state_from_byte(u8 *byte_ptr, u32 byte_item)
-{
-	u32 shift;
-
-	SSDFS_DBG("byte_ptr %p, byte_item %u\n",
-		  byte_ptr, byte_item);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!byte_ptr);
-	BUG_ON(byte_item >= SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	shift = byte_item * SSDFS_SEG_STATE_BITS;
-	return (int)((*byte_ptr >> shift) & SSDFS_SEG_STATE_MASK);
-}
-
-/*
  * ssdfs_segbmap_get_state() - get segment state
  * @segbmap: pointer on segment bitmap object
  * @seg: segment number
@@ -2473,6 +2558,8 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 			  fragment_index);
 		goto finish_get_state;
 	}
+
+	ssdfs_account_locked_page(page);
 
 	page_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
 							     fragment_size);
@@ -2648,6 +2735,12 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		  segbmap, fragment_index,
 		  old_state, new_state, kaddr);
 
+	if (old_state == new_state) {
+		SSDFS_DBG("old_state %#x == new_state %#x\n",
+			  old_state, new_state);
+		return;
+	}
+
 	fragment = &segbmap->desc_array[fragment_index];
 	hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 	fragment_bytes = le16_to_cpu(hdr->fragment_bytes);
@@ -2656,10 +2749,112 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 
 	switch (old_state) {
 	case SSDFS_SEG_CLEAN:
+		switch (new_state) {
+		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_LEAF_NODE_USING:
+		case SSDFS_SEG_HYBRID_NODE_USING:
+		case SSDFS_SEG_INDEX_NODE_USING:
+		case SSDFS_SEG_RESERVED:
+		case SSDFS_SEG_BAD:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
 	case SSDFS_SEG_DATA_USING:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
+		switch (new_state) {
+		case SSDFS_SEG_USED:
+		case SSDFS_SEG_PRE_DIRTY:
+		case SSDFS_SEG_DIRTY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
+	case SSDFS_SEG_USED:
+	case SSDFS_SEG_PRE_DIRTY:
+	case SSDFS_SEG_RESERVED:
+		switch (new_state) {
+		case SSDFS_SEG_DIRTY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
+	case SSDFS_SEG_DIRTY:
+		switch (new_state) {
+		case SSDFS_SEG_CLEAN:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
+	case SSDFS_SEG_BAD:
+		switch (new_state) {
+		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_BAD:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
+
+	default:
+		SSDFS_WARN("unexpected state: "
+			   "old_state %#x\n",
+			   old_state);
+		break;
+	}
+
+	SSDFS_DBG("BEFORE: total_segs %u, "
+		  "clean_or_using_segs %u, "
+		  "used_or_dirty_segs %u, "
+		  "bad_segs %u\n",
+		  fragment->total_segs,
+		  fragment->clean_or_using_segs,
+		  fragment->used_or_dirty_segs,
+		  fragment->bad_segs);
+
+	switch (old_state) {
+	case SSDFS_SEG_CLEAN:
+	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_LEAF_NODE_USING:
+	case SSDFS_SEG_HYBRID_NODE_USING:
+	case SSDFS_SEG_INDEX_NODE_USING:
+	case SSDFS_SEG_RESERVED:
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
 		BUG_ON(fragment->clean_or_using_segs == 0);
 		fragment->clean_or_using_segs--;
@@ -2668,7 +2863,6 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		break;
 
 	case SSDFS_SEG_USED:
-	case SSDFS_SEG_RESERVED:
 	case SSDFS_SEG_PRE_DIRTY:
 	case SSDFS_SEG_DIRTY:
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_USED_DIRTY_FBMAP];
@@ -2690,12 +2884,22 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		BUG();
 	}
 
+	SSDFS_DBG("OLD_STATE: total_segs %u, "
+		  "clean_or_using_segs %u, "
+		  "used_or_dirty_segs %u, "
+		  "bad_segs %u\n",
+		  fragment->total_segs,
+		  fragment->clean_or_using_segs,
+		  fragment->used_or_dirty_segs,
+		  fragment->bad_segs);
+
 	switch (new_state) {
 	case SSDFS_SEG_CLEAN:
 	case SSDFS_SEG_DATA_USING:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
+	case SSDFS_SEG_RESERVED:
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
 		if (fragment->clean_or_using_segs == 0)
 			bitmap_set(fbmap, fragment_index, 1);
@@ -2704,7 +2908,6 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		break;
 
 	case SSDFS_SEG_USED:
-	case SSDFS_SEG_RESERVED:
 	case SSDFS_SEG_PRE_DIRTY:
 	case SSDFS_SEG_DIRTY:
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_USED_DIRTY_FBMAP];
@@ -2725,6 +2928,15 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	default:
 		BUG();
 	}
+
+	SSDFS_DBG("NEW_STATE: total_segs %u, "
+		  "clean_or_using_segs %u, "
+		  "used_or_dirty_segs %u, "
+		  "bad_segs %u\n",
+		  fragment->total_segs,
+		  fragment->clean_or_using_segs,
+		  fragment->used_or_dirty_segs,
+		  fragment->bad_segs);
 
 	hdr->clean_or_using_segs = cpu_to_le16(fragment->clean_or_using_segs);
 	hdr->used_or_dirty_segs = cpu_to_le16(fragment->used_or_dirty_segs);
@@ -2799,6 +3011,8 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 			  fragment_index);
 		goto finish_set_state;
 	}
+
+	ssdfs_account_locked_page(page);
 
 	page_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
 							     fragment_size);
@@ -3727,6 +3941,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 		return -ERANGE;
 	}
 
+	ssdfs_account_locked_page(page);
 	kaddr = kmap(page);
 	bmap = (unsigned long *)((u8 *)kaddr + hdr_size);
 

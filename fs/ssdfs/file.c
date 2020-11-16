@@ -1540,6 +1540,8 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		return -ENOMEM;
 	}
 
+	ssdfs_account_locked_page(page);
+
 	start_blk = pos >> fsi->log_pagesize;
 	end_blk = (pos + len) >> fsi->log_pagesize;
 

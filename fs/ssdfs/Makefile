@@ -8,7 +8,9 @@ obj-$(CONFIG_SSDFS)			+= ssdfs.o
 
 #ccflags-$(CONFIG_SSDFS_DEBUG)		+= -DDEBUG
 
-ssdfs-y	:= super.o fs_error.o recovery.o recovery_thread.o \
+ssdfs-y	:= super.o fs_error.o recovery.o \
+		recovery_fast_search.o recovery_slow_search.o \
+		recovery_thread.o \
 		options.o page_array.o \
 		volume_header.o log_footer.o \
 		block_bitmap.o block_bitmap_tables.o \

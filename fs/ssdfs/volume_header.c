@@ -598,6 +598,7 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 	struct ssdfs_segment_header *hdr;
 	struct ssdfs_partial_log_header *pl_hdr;
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	u64 offset = 0;
 	size_t read_bytes;
 	int err;
 
@@ -611,8 +612,12 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 	BUG_ON(pages_off >= fsi->pages_per_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_aligned_read_buffer(fsi, peb_id,
-					pages_off * fsi->pagesize,
+	if (peb_id == 0 && pages_off == 0)
+		offset = SSDFS_RESERVED_VBR_SIZE;
+	else
+		offset = (u64)pages_off * fsi->pagesize;
+
+	err = ssdfs_aligned_read_buffer(fsi, peb_id, offset,
 					buf, hdr_size,
 					&read_bytes);
 	if (unlikely(err)) {
