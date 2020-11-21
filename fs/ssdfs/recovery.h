@@ -377,14 +377,11 @@ bool is_third_slow_try_possible(struct ssdfs_recovery_env *env)
 static inline
 void SSDFS_RECOVERY_SET_THIRD_SLOW_TRY(struct ssdfs_recovery_env *env)
 {
-	u64 offset;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || !env->fsi || !env->found);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset = env->found->start_peb * env->fsi->erasesize;
-	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = offset;
+	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->lower_offset;
 	env->found->search_phase = SSDFS_RECOVERY_THIRD_SLOW_TRY;
 
 	SSDFS_DBG("lower_offset %llu, "

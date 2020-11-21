@@ -3895,6 +3895,7 @@ bool should_cache_peb_info(u8 peb_type)
  * @tbl: pointer on mapping table object
  * @desc: fragment descriptor
  * @leb_id: LEB ID number
+ * @peb_desc_index: PEB descriptor index
  *
  * RETURN:
  * [success] - page index.
@@ -3903,7 +3904,8 @@ bool should_cache_peb_info(u8 peb_type)
 static
 pgoff_t ssdfs_maptbl_define_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 					struct ssdfs_maptbl_fragment_desc *desc,
-					u64 leb_id)
+					u64 leb_id,
+					u16 peb_desc_index)
 {
 	u64 leb_id_diff;
 	u64 stripe_index;
@@ -3919,16 +3921,29 @@ pgoff_t ssdfs_maptbl_define_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 			  leb_id, desc->start_leb, desc->lebs_count);
 		return ULONG_MAX;
 	}
+
+	if (peb_desc_index != U16_MAX) {
+		if (peb_desc_index >= tbl->pebs_per_fragment) {
+			SSDFS_ERR("peb_desc_index %u >= pebs_per_fragment %u\n",
+				  peb_desc_index, tbl->pebs_per_fragment);
+			return ULONG_MAX;
+		}
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, desc %p, leb_id %llu\n", tbl, desc, leb_id);
 
-	leb_id_diff = leb_id - desc->start_leb;
-	stripe_index = div_u64(leb_id_diff, tbl->pebs_per_stripe);
-	page_index = leb_id_diff - (stripe_index * tbl->pebs_per_stripe);
-	page_index = div_u64(page_index, desc->pebs_per_page);
-	page_index += stripe_index * desc->stripe_pages;
-	page_index += desc->lebtbl_pages;
+	if (peb_desc_index >= U16_MAX) {
+		leb_id_diff = leb_id - desc->start_leb;
+		stripe_index = div_u64(leb_id_diff, tbl->pebs_per_stripe);
+		page_index = leb_id_diff -
+				(stripe_index * tbl->pebs_per_stripe);
+		page_index = div_u64(page_index, desc->pebs_per_page);
+		page_index += stripe_index * desc->stripe_pages;
+		page_index += desc->lebtbl_pages;
+	} else {
+		page_index = PEBTBL_PAGE_INDEX(desc, peb_desc_index);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(page_index > ULONG_MAX);
@@ -4011,12 +4026,25 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		return err;
 	}
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc, leb_id);
+	physical_index = le16_to_cpu(leb_desc.physical_index);
+
+	if (physical_index == U16_MAX) {
+		SSDFS_ERR("unitialized leb descriptor: "
+			  "leb_id %llu\n", leb_id);
+		return -ENODATA;
+	}
+
+	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
+						     leb_id, physical_index);
 	if (page_index == ULONG_MAX) {
 		SSDFS_ERR("fail to define PEB table's page_index: "
-			  "leb_id %llu\n", leb_id);
+			  "leb_id %llu, physical_index %u\n",
+			  leb_id, physical_index);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("leb_id %llu, physical_index %u, page_index %lu\n",
+		  leb_id, physical_index, page_index);
 
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
 	if (IS_ERR_OR_NULL(page)) {
@@ -4037,16 +4065,7 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 			  "stripe %u is under recovering\n",
 			  leb_id,
 			  le16_to_cpu(hdr->stripe_id));
-		goto finish_page_processing;
-	}
-
-	physical_index = le16_to_cpu(leb_desc.physical_index);
-
-	if (physical_index == U16_MAX) {
-		err = -ENODATA;
-		SSDFS_ERR("unitialized leb descriptor: "
-			  "leb_id %llu\n", leb_id);
-		goto finish_page_processing;
+		goto finish_physical_index_processing;
 	}
 
 	item_index = physical_index % fdesc->pebs_per_page;
@@ -4057,8 +4076,20 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("fail to define peb_id: "
 			  "page_index %lu, item_index %u\n",
 			  page_index, item_index);
-		goto finish_page_processing;
+		goto finish_physical_index_processing;
 	}
+
+	SSDFS_DBG("physical_index %u, item_index %u, "
+		  "pebs_per_page %u, peb_id %llu\n",
+		  physical_index, item_index,
+		  fdesc->pebs_per_page, peb_id);
+
+	SSDFS_DBG("PAGE DUMP: page_index %lu\n",
+		  page_index);
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
 
 	peb_desc = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(peb_desc)) {
@@ -4066,7 +4097,7 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("fail to get peb_descriptor: "
 			  "page_index %lu, item_index %u, err %d\n",
 			  page_index, item_index, err);
-		goto finish_page_processing;
+		goto finish_physical_index_processing;
 	}
 
 	cached = &pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX];
@@ -4076,25 +4107,80 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("invalid main index: "
 			  "cached->peb_id %llu, peb_id %llu\n",
 			  cached->peb_id, peb_id);
-		goto finish_page_processing;
+		goto finish_physical_index_processing;
 	}
 
 	peb_desc->state = cached->state;
 	peb_desc->flags = cached->flags;
 	peb_desc->shared_peb_index = cached->shared_peb_index;
 
+finish_physical_index_processing:
+	kunmap(page);
+
+	if (!err) {
+		SetPagePrivate(page);
+		SetPageUptodate(page);
+		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
+						      page_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
+				  page_index, err);
+		}
+	}
+
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %px, count %d\n",
+		  page, page_ref_count(page));
+
+	if (err)
+		return err;
+
 	cached = &pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX];
 	relation_index = le16_to_cpu(leb_desc.relation_index);
 
 	if (cached->peb_id >= U64_MAX && relation_index == U16_MAX) {
-		err = 0;
 		SSDFS_DBG("LEB %llu hasn't relation\n", leb_id);
-		goto finish_page_processing;
+		return 0;
 	} else if (relation_index == U16_MAX) {
-		err = -ENODATA;
 		SSDFS_ERR("unitialized leb descriptor: "
 			  "leb_id %llu\n", leb_id);
-		goto finish_page_processing;
+		return -ENODATA;
+	}
+
+	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
+						     leb_id, relation_index);
+	if (page_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define PEB table's page_index: "
+			  "leb_id %llu, relation_index %u\n",
+			  leb_id, relation_index);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("leb_id %llu, relation_index %u, page_index %lu\n",
+		  leb_id, relation_index, page_index);
+
+	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
+		SSDFS_ERR("fail to find page: page_index %lu\n",
+			  page_index);
+		return err;
+	}
+
+	kaddr = kmap(page);
+
+	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
+
+	if (is_pebtbl_stripe_recovering(hdr)) {
+		err = -EACCES;
+		SSDFS_DBG("unable to change the PEB state: "
+			  "leb_id %llu: "
+			  "stripe %u is under recovering\n",
+			  leb_id,
+			  le16_to_cpu(hdr->stripe_id));
+		goto finish_relation_index_processing;
 	}
 
 	item_index = relation_index % fdesc->pebs_per_page;
@@ -4105,8 +4191,20 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("fail to define peb_id: "
 			  "page_index %lu, item_index %u\n",
 			  page_index, item_index);
-		goto finish_page_processing;
+		goto finish_relation_index_processing;
 	}
+
+	SSDFS_DBG("relation_index %u, item_index %u, "
+		  "pebs_per_page %u, peb_id %llu\n",
+		  relation_index, item_index,
+		  fdesc->pebs_per_page, peb_id);
+
+	SSDFS_DBG("PAGE DUMP: page_index %lu\n",
+		  page_index);
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
 
 	peb_desc = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(peb_desc)) {
@@ -4114,7 +4212,7 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("fail to get peb_descriptor: "
 			  "page_index %lu, item_index %u, err %d\n",
 			  page_index, item_index, err);
-		goto finish_page_processing;
+		goto finish_relation_index_processing;
 	}
 
 	if (cached->peb_id != peb_id) {
@@ -4122,14 +4220,14 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("invalid main index: "
 			  "cached->peb_id %llu, peb_id %llu\n",
 			  cached->peb_id, peb_id);
-		goto finish_page_processing;
+		goto finish_relation_index_processing;
 	}
 
 	peb_desc->state = cached->state;
 	peb_desc->flags = cached->flags;
 	peb_desc->shared_peb_index = cached->shared_peb_index;
 
-finish_page_processing:
+finish_relation_index_processing:
 	kunmap(page);
 
 	if (!err) {
@@ -5915,7 +6013,8 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 	} else
 		err = 0;
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc, leb_id);
+	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
+						     leb_id, U16_MAX);
 	if (page_index == ULONG_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define PEB table's page_index: "
@@ -6113,7 +6212,8 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc, leb_id);
+	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
+						     leb_id, selected_index);
 	if (page_index == ULONG_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define PEB table's page_index: "
@@ -6859,7 +6959,8 @@ pgoff_t ssdfs_maptbl_select_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!tbl || !fdesc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc, leb_id);
+	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
+						     leb_id, U16_MAX);
 	if (page_index == ULONG_MAX) {
 		SSDFS_ERR("fail to define PEB table's page_index: "
 			  "leb_id %llu\n", leb_id);

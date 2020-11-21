@@ -1872,6 +1872,7 @@ static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
 	if (fragment_index >= fragments_count) {
 		SSDFS_WARN("fragment_index %llu >= fragments_count %u\n",
 			   fragment_index, fragments_count);
+		return pebs_per_stripe;
 	}
 
 	if ((fragment_index + 1) < fragments_count)
@@ -2255,12 +2256,10 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 				   stripes_count - processed_stripes);
 	};
 
+	jobs_count = 1;
+
 	processed_stripes = 0;
 	processed_pebs = 0;
-
-	jobs_count = threads_count;
-	jobs_count = min_t(u32, jobs_count,
-			   stripes_count - processed_stripes);
 
 	while (processed_pebs < pebs_per_volume) {
 		/* Slow search phase */
@@ -2338,6 +2337,9 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		}
 
 		processed_stripes += jobs_count;
+
+		jobs_count <<= 1;
+		jobs_count = min_t(u32, jobs_count, threads_count);
 		jobs_count = min_t(u32, jobs_count,
 				   stripes_count - processed_stripes);
 	};

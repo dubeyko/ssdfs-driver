@@ -161,6 +161,16 @@ end_search:
 	return err;
 }
 
+static inline
+bool need_continue_search(struct ssdfs_recovery_env *env)
+{
+	SSDFS_DBG("cur_off %llu, upper_off %llu\n",
+		  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+		  SSDFS_RECOVERY_UPPER_OFF(env));
+
+	return *SSDFS_RECOVERY_CUR_OFF_PTR(env) < SSDFS_RECOVERY_UPPER_OFF(env);
+}
+
 static
 int ssdfs_recovery_first_phase_slow_search(struct ssdfs_recovery_env *env)
 {
@@ -174,17 +184,39 @@ int ssdfs_recovery_first_phase_slow_search(struct ssdfs_recovery_env *env)
 
 	SSDFS_DBG("env %p, env->sbi.vh_buf %p\n", env, env->sbi.vh_buf);
 
+try_another_search:
+	if (kthread_should_stop()) {
+		err = -ENOENT;
+		goto finish_first_phase;
+	}
+
 	threshold_peb = *SSDFS_RECOVERY_CUR_OFF_PTR(env) / env->fsi->erasesize;
 
 	err = ssdfs_find_any_valid_sb_segment2(env, threshold_peb);
 	if (err == -E2BIG) {
 		ssdfs_restore_sb_info2(env);
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
-		goto finish_first_phase;
-	} else if (err) {
+		if (err == -ENODATA || err == -ENOENT) {
+			if (need_continue_search(env)) {
+				ssdfs_restore_sb_info2(env);
+				err = __ssdfs_find_any_valid_volume_header2(env,
+					    *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+					    SSDFS_RECOVERY_UPPER_OFF(env),
+					    env->fsi->erasesize);
+				if (err) {
+					SSDFS_DBG("valid magic is not found\n");
+					goto finish_first_phase;
+				} else
+					goto try_another_search;
+			} else
+				goto finish_first_phase;
+		} else
+			goto finish_first_phase;
+	} else if (err == -ENODATA || err == -ENOENT) {
 		err = -EAGAIN;
 		goto finish_first_phase;
-	}
+	} else if (err)
+		goto finish_first_phase;
 
 	if (kthread_should_stop()) {
 		err = -ENOENT;
@@ -192,6 +224,21 @@ int ssdfs_recovery_first_phase_slow_search(struct ssdfs_recovery_env *env)
 	}
 
 	err = ssdfs_find_latest_valid_sb_segment2(env);
+	if (err == -ENODATA || err == -ENOENT) {
+		if (need_continue_search(env)) {
+			ssdfs_restore_sb_info2(env);
+			err = __ssdfs_find_any_valid_volume_header2(env,
+					*SSDFS_RECOVERY_CUR_OFF_PTR(env),
+					SSDFS_RECOVERY_UPPER_OFF(env),
+					env->fsi->erasesize);
+				if (err) {
+					SSDFS_DBG("valid magic is not found\n");
+					goto finish_first_phase;
+				} else
+					goto try_another_search;
+		} else
+			goto finish_first_phase;
+	}
 
 finish_first_phase:
 	return err;
@@ -217,6 +264,10 @@ int ssdfs_recovery_second_phase_slow_search(struct ssdfs_recovery_env *env)
 
 	SSDFS_RECOVERY_SET_SECOND_SLOW_TRY(env);
 
+try_another_search:
+	if (kthread_should_stop())
+		return -ENOENT;
+
 	err = __ssdfs_find_any_valid_volume_header2(env,
 					*SSDFS_RECOVERY_CUR_OFF_PTR(env),
 					SSDFS_RECOVERY_UPPER_OFF(env),
@@ -235,11 +286,19 @@ int ssdfs_recovery_second_phase_slow_search(struct ssdfs_recovery_env *env)
 	if (err == -E2BIG) {
 		ssdfs_restore_sb_info2(env);
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
-		goto finish_second_phase;
-	} else if (err) {
+		if (err == -ENODATA || err == -ENOENT) {
+			if (need_continue_search(env)) {
+				ssdfs_restore_sb_info2(env);
+				goto try_another_search;
+			} else
+				goto finish_second_phase;
+		} else
+			goto finish_second_phase;
+	} else if (err == -ENODATA || err == -ENOENT) {
 		err = -EAGAIN;
 		goto finish_second_phase;
-	}
+	} else if (err)
+		goto finish_second_phase;
 
 	if (kthread_should_stop()) {
 		err = -ENOENT;
@@ -247,6 +306,13 @@ int ssdfs_recovery_second_phase_slow_search(struct ssdfs_recovery_env *env)
 	}
 
 	err = ssdfs_find_latest_valid_sb_segment2(env);
+	if (err == -ENODATA || err == -ENOENT) {
+		if (need_continue_search(env)) {
+			ssdfs_restore_sb_info2(env);
+			goto try_another_search;
+		} else
+			goto finish_second_phase;
+	}
 
 finish_second_phase:
 	return err;
@@ -272,6 +338,10 @@ int ssdfs_recovery_third_phase_slow_search(struct ssdfs_recovery_env *env)
 
 	SSDFS_RECOVERY_SET_THIRD_SLOW_TRY(env);
 
+try_another_search:
+	if (kthread_should_stop())
+		return -ENOENT;
+
 	err = __ssdfs_find_any_valid_volume_header2(env,
 					*SSDFS_RECOVERY_CUR_OFF_PTR(env),
 					SSDFS_RECOVERY_UPPER_OFF(env),
@@ -290,8 +360,15 @@ int ssdfs_recovery_third_phase_slow_search(struct ssdfs_recovery_env *env)
 	if (err == -E2BIG) {
 		ssdfs_restore_sb_info2(env);
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
-		goto finish_third_phase;
-	} else if (err)
+		if (err == -ENODATA || err == -ENOENT) {
+			if (need_continue_search(env)) {
+				ssdfs_restore_sb_info2(env);
+				goto try_another_search;
+			} else
+				goto finish_third_phase;
+		} else
+			goto finish_third_phase;
+	}  else if (err)
 		goto finish_third_phase;
 
 	if (kthread_should_stop()) {
@@ -300,6 +377,13 @@ int ssdfs_recovery_third_phase_slow_search(struct ssdfs_recovery_env *env)
 	}
 
 	err = ssdfs_find_latest_valid_sb_segment2(env);
+	if (err == -ENODATA || err == -ENOENT) {
+		if (need_continue_search(env)) {
+			ssdfs_restore_sb_info2(env);
+			goto try_another_search;
+		} else
+			goto finish_third_phase;
+	}
 
 finish_third_phase:
 	return err;
@@ -344,6 +428,17 @@ int ssdfs_recovery_try_slow_search(struct ssdfs_recovery_env *env)
 		memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
 		ssdfs_backup_sb_info2(env);
 	}
+
+	if (env->found->start_peb == 0)
+		env->found->lower_offset = SSDFS_RESERVED_VBR_SIZE;
+	else {
+		env->found->lower_offset =
+			env->found->start_peb * env->fsi->erasesize;
+	}
+
+	env->found->upper_offset = (env->found->start_peb +
+					env->found->pebs_count - 1);
+	env->found->upper_offset *= env->fsi->erasesize;
 
 	SSDFS_RECOVERY_SET_FIRST_SLOW_TRY(env);
 
