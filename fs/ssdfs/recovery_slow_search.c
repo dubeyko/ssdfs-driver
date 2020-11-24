@@ -175,6 +175,7 @@ static
 int ssdfs_recovery_first_phase_slow_search(struct ssdfs_recovery_env *env)
 {
 	u64 threshold_peb;
+	u64 peb_id;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -192,13 +193,29 @@ try_another_search:
 
 	threshold_peb = *SSDFS_RECOVERY_CUR_OFF_PTR(env) / env->fsi->erasesize;
 
+	SSDFS_DBG("cur_off %llu, threshold_peb %llu\n",
+		  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+		  threshold_peb);
+
 	err = ssdfs_find_any_valid_sb_segment2(env, threshold_peb);
 	if (err == -E2BIG) {
 		ssdfs_restore_sb_info2(env);
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
 		if (err == -ENODATA || err == -ENOENT) {
+			if (kthread_should_stop()) {
+				err = -ENOENT;
+				goto finish_first_phase;
+			}
+
 			if (need_continue_search(env)) {
 				ssdfs_restore_sb_info2(env);
+
+				peb_id = *SSDFS_RECOVERY_CUR_OFF_PTR(env) /
+							env->fsi->erasesize;
+				SSDFS_DBG("cur_off %llu, peb %llu\n",
+					  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+					  peb_id);
+
 				err = __ssdfs_find_any_valid_volume_header2(env,
 					    *SSDFS_RECOVERY_CUR_OFF_PTR(env),
 					    SSDFS_RECOVERY_UPPER_OFF(env),
@@ -213,7 +230,11 @@ try_another_search:
 		} else
 			goto finish_first_phase;
 	} else if (err == -ENODATA || err == -ENOENT) {
-		err = -EAGAIN;
+		if (kthread_should_stop())
+			err = -ENOENT;
+		else
+			err = -EAGAIN;
+
 		goto finish_first_phase;
 	} else if (err)
 		goto finish_first_phase;
@@ -225,8 +246,20 @@ try_another_search:
 
 	err = ssdfs_find_latest_valid_sb_segment2(env);
 	if (err == -ENODATA || err == -ENOENT) {
+		if (kthread_should_stop()) {
+			err = -ENOENT;
+			goto finish_first_phase;
+		}
+
 		if (need_continue_search(env)) {
 			ssdfs_restore_sb_info2(env);
+
+			peb_id = *SSDFS_RECOVERY_CUR_OFF_PTR(env) /
+						env->fsi->erasesize;
+			SSDFS_DBG("cur_off %llu, peb %llu\n",
+				  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+				  peb_id);
+
 			err = __ssdfs_find_any_valid_volume_header2(env,
 					*SSDFS_RECOVERY_CUR_OFF_PTR(env),
 					SSDFS_RECOVERY_UPPER_OFF(env),
@@ -248,6 +281,7 @@ static
 int ssdfs_recovery_second_phase_slow_search(struct ssdfs_recovery_env *env)
 {
 	u64 threshold_peb;
+	u64 peb_id;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -268,6 +302,12 @@ try_another_search:
 	if (kthread_should_stop())
 		return -ENOENT;
 
+	peb_id = *SSDFS_RECOVERY_CUR_OFF_PTR(env) /
+				env->fsi->erasesize;
+	SSDFS_DBG("cur_off %llu, peb %llu\n",
+		  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+		  peb_id);
+
 	err = __ssdfs_find_any_valid_volume_header2(env,
 					*SSDFS_RECOVERY_CUR_OFF_PTR(env),
 					SSDFS_RECOVERY_UPPER_OFF(env),
@@ -282,11 +322,20 @@ try_another_search:
 
 	threshold_peb = *SSDFS_RECOVERY_CUR_OFF_PTR(env) / env->fsi->erasesize;
 
+	SSDFS_DBG("cur_off %llu, threshold_peb %llu\n",
+		  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+		  threshold_peb);
+
 	err = ssdfs_find_any_valid_sb_segment2(env, threshold_peb);
 	if (err == -E2BIG) {
 		ssdfs_restore_sb_info2(env);
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
 		if (err == -ENODATA || err == -ENOENT) {
+			if (kthread_should_stop()) {
+				err = -ENOENT;
+				goto finish_second_phase;
+			}
+
 			if (need_continue_search(env)) {
 				ssdfs_restore_sb_info2(env);
 				goto try_another_search;
@@ -295,7 +344,11 @@ try_another_search:
 		} else
 			goto finish_second_phase;
 	} else if (err == -ENODATA || err == -ENOENT) {
-		err = -EAGAIN;
+		if (kthread_should_stop())
+			err = -ENOENT;
+		else
+			err = -EAGAIN;
+
 		goto finish_second_phase;
 	} else if (err)
 		goto finish_second_phase;
@@ -307,6 +360,11 @@ try_another_search:
 
 	err = ssdfs_find_latest_valid_sb_segment2(env);
 	if (err == -ENODATA || err == -ENOENT) {
+		if (kthread_should_stop()) {
+			err = -ENOENT;
+			goto finish_second_phase;
+		}
+
 		if (need_continue_search(env)) {
 			ssdfs_restore_sb_info2(env);
 			goto try_another_search;
@@ -322,6 +380,7 @@ static
 int ssdfs_recovery_third_phase_slow_search(struct ssdfs_recovery_env *env)
 {
 	u64 threshold_peb;
+	u64 peb_id;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -342,6 +401,12 @@ try_another_search:
 	if (kthread_should_stop())
 		return -ENOENT;
 
+	peb_id = *SSDFS_RECOVERY_CUR_OFF_PTR(env) /
+				env->fsi->erasesize;
+	SSDFS_DBG("cur_off %llu, peb %llu\n",
+		  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+		  peb_id);
+
 	err = __ssdfs_find_any_valid_volume_header2(env,
 					*SSDFS_RECOVERY_CUR_OFF_PTR(env),
 					SSDFS_RECOVERY_UPPER_OFF(env),
@@ -356,11 +421,20 @@ try_another_search:
 
 	threshold_peb = *SSDFS_RECOVERY_CUR_OFF_PTR(env) / env->fsi->erasesize;
 
+	SSDFS_DBG("cur_off %llu, threshold_peb %llu\n",
+		  *SSDFS_RECOVERY_CUR_OFF_PTR(env),
+		  threshold_peb);
+
 	err = ssdfs_find_any_valid_sb_segment2(env, threshold_peb);
 	if (err == -E2BIG) {
 		ssdfs_restore_sb_info2(env);
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
 		if (err == -ENODATA || err == -ENOENT) {
+			if (kthread_should_stop()) {
+				err = -ENOENT;
+				goto finish_third_phase;
+			}
+
 			if (need_continue_search(env)) {
 				ssdfs_restore_sb_info2(env);
 				goto try_another_search;
@@ -378,6 +452,11 @@ try_another_search:
 
 	err = ssdfs_find_latest_valid_sb_segment2(env);
 	if (err == -ENODATA || err == -ENOENT) {
+		if (kthread_should_stop()) {
+			err = -ENOENT;
+			goto finish_third_phase;
+		}
+
 		if (need_continue_search(env)) {
 			ssdfs_restore_sb_info2(env);
 			goto try_another_search;

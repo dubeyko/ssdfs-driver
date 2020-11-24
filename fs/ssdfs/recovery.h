@@ -242,7 +242,10 @@ u64 SSDFS_RECOVERY_LOW_OFF(struct ssdfs_recovery_env *env)
 		return env->found->lower_offset;
 
 	case SSDFS_RECOVERY_THIRD_SLOW_TRY:
-		return env->found->start_peb * env->fsi->erasesize;
+		if (env->found->start_peb == 0)
+			return SSDFS_RESERVED_VBR_SIZE;
+		else
+			return env->found->start_peb * env->fsi->erasesize;
 	}
 
 	return U64_MAX;

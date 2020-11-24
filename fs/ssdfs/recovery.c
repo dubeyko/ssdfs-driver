@@ -2006,7 +2006,7 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 }
 
 static inline
-void ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
+int ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
 				       struct ssdfs_recovery_env *env,
 				       u32 stripe_id,
 				       bool *has_sb_peb_found)
@@ -2014,6 +2014,7 @@ void ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
 	struct ssdfs_segment_header *seg_hdr;
 	wait_queue_head_t *wq;
 	u64 cno1, cno2;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || !has_sb_peb_found);
@@ -2055,13 +2056,25 @@ void ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
 		}
 		break;
 
-	default:
+	case SSDFS_RECOVERY_FAILED:
 		SSDFS_DBG("stripe %u has nothing\n",
 			  stripe_id);
 		break;
+
+	case SSDFS_START_RECOVERY:
+		err = -ERANGE;
+		SSDFS_WARN("thread is working too long: "
+			   "stripe %u\n",
+			   stripe_id);
+		atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
+		break;
+
+	default:
+		BUG();
 	}
 
 	env->found = NULL;
+	return err;
 }
 
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
@@ -2216,9 +2229,14 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		}
 
 		for (i = 0; i < jobs_count; i++) {
-			ssdfs_wait_recovery_thread_finish(fsi, &array[i],
+			err = ssdfs_wait_recovery_thread_finish(fsi,
+						&array[i],
 						processed_stripes + i,
 						&has_iteration_succeeded);
+			if (unlikely(err)) {
+				has_sb_peb_found1 = false;
+				goto finish_sb_peb_search;
+			}
 
 			switch (array[i].err) {
 			case 0:
@@ -2304,9 +2322,14 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		}
 
 		for (i = 0; i < jobs_count; i++) {
-			ssdfs_wait_recovery_thread_finish(fsi, &array[i],
+			err = ssdfs_wait_recovery_thread_finish(fsi,
+						&array[i],
 						processed_stripes + i,
 						&has_iteration_succeeded);
+			if (unlikely(err)) {
+				has_sb_peb_found2 = false;
+				goto finish_sb_peb_search;
+			}
 
 			switch (array[i].err) {
 			case 0:

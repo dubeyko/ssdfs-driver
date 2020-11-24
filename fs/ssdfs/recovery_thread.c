@@ -217,10 +217,14 @@ int __ssdfs_find_any_valid_volume_header2(struct ssdfs_recovery_env *env,
 		  "end_offset %llu, step %llu\n",
 		  env, start_offset, end_offset, step);
 
-	if (start_offset >= end_offset)
-		return -E2BIG;
-
 	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = start_offset;
+
+	if (start_offset >= end_offset) {
+		err = -E2BIG;
+		SSDFS_DBG("start_offset %llu, end_offset %llu, err %d\n",
+			  start_offset, end_offset, err);
+		return err;
+	}
 
 	while (*SSDFS_RECOVERY_CUR_OFF_PTR(env) < end_offset) {
 		if (kthread_should_stop())
