@@ -1855,6 +1855,9 @@ finish_check_src_bmap:
 finish_pre_allocate:
 	up_read(&bmap->lock);
 
+	SSDFS_DBG("PRE-ALLOCATED: range (start %u, len %u), err %d\n",
+		  range->start, range->len, err);
+
 	return err;
 }
 
@@ -2120,6 +2123,9 @@ finish_check_src_bmap:
 finish_allocate:
 	up_read(&bmap->lock);
 
+	SSDFS_DBG("ALLOCATED: range (start %u, len %u), err %d\n",
+		  range->start, range->len, err);
+
 	return err;
 }
 
@@ -2306,6 +2312,9 @@ init_failed:
 
 finish_invalidate:
 	up_read(&bmap->lock);
+
+	SSDFS_DBG("INVALIDATED: range (start %u, len %u), err %d\n",
+		  range->start, range->len, err);
 
 	return err;
 }
@@ -2524,6 +2533,11 @@ unlock_bmap:
 finish_update_range:
 	up_read(&bmap->lock);
 
+	SSDFS_DBG("UPDATED: range (start %u, len %u), "
+		  "new_range_state %#x, err %d\n",
+		  range->start, range->len,
+		  new_range_state, err);
+
 	return err;
 }
 
@@ -2627,6 +2641,11 @@ init_failed:
 
 finish_collect_garbage:
 	up_read(&bmap->lock);
+
+	SSDFS_DBG("GARBAGE: range (start %u, len %u), "
+		  "blk_state %#x, err %d\n",
+		  range->start, range->len,
+		  blk_state, err);
 
 	return err;
 }

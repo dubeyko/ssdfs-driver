@@ -1835,6 +1835,8 @@ int ssdfs_segbmap_wait_flush_end(struct ssdfs_segment_bmap *segbmap,
 	bool has_backup;
 	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
+	int state;
+	int count;
 	int i;
 	int err;
 
@@ -1879,9 +1881,25 @@ check_req1_state:
 
 					goto check_req1_state;
 				} else {
-					SSDFS_ERR("invalid refs_count %d\n",
-						  atomic_read(refs_count));
-					return -ERANGE;
+					state =
+					    atomic_read(&req1->result.state);
+					count = atomic_read(refs_count);
+
+					switch (state) {
+					case SSDFS_REQ_FINISHED:
+					case SSDFS_REQ_FAILED:
+						goto check_req1_state;
+
+					default:
+						SSDFS_ERR("invalid "
+							  "refs_count %d, "
+							  "state %#x\n",
+							  count, state);
+#ifdef CONFIG_SSDFS_DEBUG
+						BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+						return -ERANGE;
+					}
 				}
 				break;
 
@@ -1928,9 +1946,25 @@ check_req2_state:
 
 					goto check_req2_state;
 				} else {
-					SSDFS_ERR("invalid refs_count %d\n",
-						  atomic_read(refs_count));
-					return -ERANGE;
+					state =
+					    atomic_read(&req2->result.state);
+					count = atomic_read(refs_count);
+
+					switch (state) {
+					case SSDFS_REQ_FINISHED:
+					case SSDFS_REQ_FAILED:
+						goto check_req2_state;
+
+					default:
+						SSDFS_ERR("invalid "
+							  "refs_count %d, "
+							  "state %#x\n",
+							  count, state);
+#ifdef CONFIG_SSDFS_DEBUG
+						BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+						return -ERANGE;
+					}
 				}
 				break;
 
@@ -2145,6 +2179,8 @@ int ssdfs_segbmap_wait_finish_commit_logs(struct ssdfs_segment_bmap *segbmap,
 	bool has_backup;
 	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
+	int state;
+	int count;
 	int i;
 	int err;
 
@@ -2189,9 +2225,25 @@ check_req1_state:
 
 					goto check_req1_state;
 				} else {
-					SSDFS_ERR("invalid refs_count %d\n",
-						  atomic_read(refs_count));
-					return -ERANGE;
+					state =
+					    atomic_read(&req1->result.state);
+					count = atomic_read(refs_count);
+
+					switch (state) {
+					case SSDFS_REQ_FINISHED:
+					case SSDFS_REQ_FAILED:
+						goto check_req1_state;
+
+					default:
+						SSDFS_ERR("invalid "
+							  "refs_count %d, "
+							  "state %#x\n",
+							  count, state);
+#ifdef CONFIG_SSDFS_DEBUG
+						BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+						return -ERANGE;
+					}
 				}
 				break;
 
@@ -2238,9 +2290,25 @@ check_req2_state:
 
 					goto check_req2_state;
 				} else {
-					SSDFS_ERR("invalid refs_count %d\n",
-						  atomic_read(refs_count));
-					return -ERANGE;
+					state =
+					    atomic_read(&req2->result.state);
+					count = atomic_read(refs_count);
+
+					switch (state) {
+					case SSDFS_REQ_FINISHED:
+					case SSDFS_REQ_FAILED:
+						goto check_req2_state;
+
+					default:
+						SSDFS_ERR("invalid "
+							  "refs_count %d, "
+							  "state %#x\n",
+							  count, state);
+#ifdef CONFIG_SSDFS_DEBUG
+						BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+						return -ERANGE;
+					}
 				}
 				break;
 
@@ -3384,6 +3452,10 @@ check_presence_valid_fragments:
 
 		found = find_first_bit(addr, size);
 
+		found += first_fragment;
+		BUG_ON(found >= U16_MAX);
+		*found_fragment = found;
+
 		if (found >= size) {
 			if (size < requested_size) {
 				SSDFS_DBG("Wait init of fragment %lu\n",
@@ -3397,9 +3469,6 @@ check_presence_valid_fragments:
 			}
 		}
 
-		found += first_fragment;
-		BUG_ON(found >= U16_MAX);
-		*found_fragment = found;
 		return 0;
 	}
 

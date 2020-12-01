@@ -9447,11 +9447,41 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 	u16 reserved_pages;
 	u16 min_partial_log_pages;
 	int empty_pages;
+	int migration_state;
+	int migration_phase;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!mutex_is_locked(&pebi->current_log.lock));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	migration_state = atomic_read(&pebi->pebc->migration_state);
+	migration_phase = atomic_read(&pebi->pebc->migration_phase);
+
+	switch (migration_state) {
+	case SSDFS_PEB_NOT_MIGRATING:
+		/* continue logic */
+		break;
+
+	case SSDFS_PEB_UNDER_MIGRATION:
+		switch (migration_phase) {
+		case SSDFS_SRC_PEB_NOT_EXHAUSTED:
+			is_ready_to_exhaust = false;
+			SSDFS_DBG("peb under migration: "
+				  "src_peb %llu is not exhausted\n",
+				  pebi->peb_id);
+			return is_ready_to_exhaust;
+
+		default:
+			/* continue logic */
+			break;
+		}
+		break;
+
+	default:
+		BUG();
+		break;
+	}
 
 	start_page = pebi->current_log.start_page;
 	pages_per_peb = fsi->pages_per_peb;
@@ -9564,6 +9594,25 @@ bool has_commit_log_now_requested(struct ssdfs_peb_container *pebc)
 	commit_log_now = req->private.cmd == SSDFS_COMMIT_LOG_NOW;
 	ssdfs_requests_queue_add_head(&pebc->update_rq, req);
 	return commit_log_now;
+}
+
+static inline
+bool has_start_migration_now_requested(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_segment_request *req = NULL;
+	bool start_migration_now = false;
+	int err;
+
+	if (is_ssdfs_requests_queue_empty(&pebc->update_rq))
+		return false;
+
+	err = ssdfs_requests_queue_remove_first(&pebc->update_rq, &req);
+	if (err || !req)
+		return false;
+
+	start_migration_now = req->private.cmd == SSDFS_START_MIGRATION_NOW;
+	ssdfs_requests_queue_add_head(&pebc->update_rq, req);
+	return start_migration_now;
 }
 
 static inline
@@ -9980,6 +10029,19 @@ finish_process_free_space_absence:
 			 * then ignore the log creation now.
 			 */
 			SSDFS_DBG("Don't create log: COMMIT_LOG_NOW command: "
+				  "seg %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+			goto repeat;
+		}
+
+		if (has_start_migration_now_requested(pebc)) {
+			/*
+			 * No necessity to create log
+			 * for START_MIGRATION_NOW command.
+			 */
+			SSDFS_DBG("Don't create log: START_MIGRATION_NOW command: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);

@@ -3293,6 +3293,13 @@ try_get_current_peb:
 		return ERR_PTR(-ERANGE);
 	}
 
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "migration_state %#x, migration_phase %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->migration_phase));
+
 	return pebi;
 
 fail_to_get_current_peb:
@@ -3314,7 +3321,7 @@ void ssdfs_unlock_current_peb(struct ssdfs_peb_container *pebc)
 		SSDFS_WARN("PEB container hasn't been locked: "
 			   "seg %llu, peb_index %u\n",
 			   pebc->parent_si->seg_id,
-			  pebc->peb_index);
+			   pebc->peb_index);
 	} else
 		up_read(&pebc->lock);
 }

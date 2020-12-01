@@ -695,19 +695,23 @@ check_segment_state:
 			goto check_segment_state;
 		else if (res == -ENODATA)
 			goto finish_search_segments;
-		else
+		else if (res == -EAGAIN) {
+			res = -ENODATA;
+			goto finish_search_segments;
+		} else
 			goto fail_find_segment;
 	} else if (res == -ENODATA) {
 finish_search_segments:
 		SSDFS_DBG("no more victim segments: "
-			  "seg_id %llu, max_seg_id %llu\n",
-			  *seg_id, max_seg_id);
+			  "start_seg_id %llu, max_seg_id %llu\n",
+			  start_seg_id, max_seg_id);
 		return res;
 	} else {
 fail_find_segment:
 		SSDFS_ERR("fail to find segment number: "
+			  "start_seg_id %llu, max_seg_id %llu, "
 			  "err %d\n",
-			  res);
+			  start_seg_id, max_seg_id, res);
 		return res;
 	}
 
@@ -1085,9 +1089,21 @@ check_req_state:
 
 			goto check_req_state;
 		} else {
-			SSDFS_ERR("invalid refs_count %d\n",
-				  atomic_read(refs_count));
-			return -ERANGE;
+			switch (atomic_read(&req->result.state)) {
+			case SSDFS_REQ_FINISHED:
+			case SSDFS_REQ_FAILED:
+				goto check_req_state;
+
+			default:
+				SSDFS_ERR("invalid refs_count %d, "
+					  "state %#x\n",
+					  atomic_read(refs_count),
+					  atomic_read(&req->result.state));
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+				return -ERANGE;
+			}
 		}
 		break;
 

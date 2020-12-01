@@ -2251,6 +2251,8 @@ define_update_area:
 						SSDFS_REQ_ASYNC_NO_FREE,
 						req1);
 
+	SSDFS_DBG("update extent async: seg %llu\n", si->seg_id);
+
 	if (!err && has_backup) {
 		if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
 			err = -ERANGE;
@@ -2559,9 +2561,21 @@ check_req_state:
 
 			goto check_req_state;
 		} else {
-			SSDFS_ERR("invalid refs_count %d\n",
-				  atomic_read(refs_count));
-			return -ERANGE;
+			switch (atomic_read(&req->result.state)) {
+			case SSDFS_REQ_FINISHED:
+			case SSDFS_REQ_FAILED:
+				goto check_req_state;
+
+			default:
+				SSDFS_ERR("invalid refs_count %d, "
+					  "state %#x\n",
+					  atomic_read(refs_count),
+					  atomic_read(&req->result.state));
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+				return -ERANGE;
+			}
 		}
 		break;
 
@@ -3125,6 +3139,9 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+
+		SSDFS_DBG("start migration now: seg %llu\n", si->seg_id);
+
 		err = ssdfs_segment_prepare_migration_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
 						req1);
@@ -3200,9 +3217,6 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 	for (i = 0; i < fragments_count; i++) {
 		fdesc = &tbl->desc_array[i];
 
-		if (atomic_read(&fdesc->state) != SSDFS_MAPTBL_FRAG_DIRTY)
-			continue;
-
 		down_write(&fdesc->lock);
 
 		err = __ssdfs_maptbl_prepare_migration(tbl, fdesc, i);
@@ -3257,9 +3271,6 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 
 	for (i = 0; i < fragments_count; i++) {
 		fdesc = &tbl->desc_array[i];
-
-		if (atomic_read(&fdesc->state) != SSDFS_MAPTBL_FRAG_DIRTY)
-			continue;
 
 		down_write(&fdesc->lock);
 

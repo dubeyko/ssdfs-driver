@@ -516,6 +516,8 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 	int tree_height, cur_height;
 	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
+	const atomic_t *state;
+	int count;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -629,7 +631,9 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 			}
 
 check_flush_result_state:
-			switch (atomic_read(&node->flush_req.result.state)) {
+			state = &node->flush_req.result.state;
+
+			switch (atomic_read(state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
 				refs_count =
@@ -647,11 +651,26 @@ check_flush_result_state:
 
 					goto check_flush_result_state;
 				} else {
-					ssdfs_btree_node_put(node);
-					err = -ERANGE;
-					SSDFS_ERR("invalid refs_count %d\n",
-						  atomic_read(refs_count));
-					goto finish_flush_tree_nodes;
+					count = atomic_read(refs_count);
+
+					switch (atomic_read(state)) {
+					case SSDFS_REQ_FINISHED:
+					case SSDFS_REQ_FAILED:
+						goto check_flush_result_state;
+
+					default:
+						ssdfs_btree_node_put(node);
+						err = -ERANGE;
+						SSDFS_ERR("invalid "
+							  "refs_count %d, "
+							  "state %#x\n",
+							  count,
+							  atomic_read(state));
+#ifdef CONFIG_SSDFS_DEBUG
+						BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+						goto finish_flush_tree_nodes;
+					}
 				}
 				break;
 
@@ -798,7 +817,9 @@ check_flush_result_state:
 				goto clear_towrite_tag;
 
 check_commit_log_result_state:
-			switch (atomic_read(&node->flush_req.result.state)) {
+			state = &node->flush_req.result.state;
+
+			switch (atomic_read(state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
 				refs_count =
@@ -815,11 +836,26 @@ check_commit_log_result_state:
 						err = 0;
 					goto check_commit_log_result_state;
 				} else {
-					ssdfs_btree_node_put(node);
-					err = -ERANGE;
-					SSDFS_ERR("invalid refs_count %d\n",
-						  atomic_read(refs_count));
-					goto finish_flush_tree_nodes;
+					count = atomic_read(refs_count);
+
+					switch (atomic_read(state)) {
+					case SSDFS_REQ_FINISHED:
+					case SSDFS_REQ_FAILED:
+						goto check_commit_log_result_state;
+
+					default:
+						ssdfs_btree_node_put(node);
+						err = -ERANGE;
+						SSDFS_ERR("invalid "
+							  "refs_count %d, "
+							  "state %#x\n",
+							  count,
+							  atomic_read(state));
+#ifdef CONFIG_SSDFS_DEBUG
+						BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+						goto finish_flush_tree_nodes;
+					}
 				}
 				break;
 
