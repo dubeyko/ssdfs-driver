@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.74 [November 30, 2020]
+    (*) Fix bugs in extents tree functionality.
+
 v.3.73 [November 30, 2020]
     (*) Fix bugs in new mount logic (step 3).
 

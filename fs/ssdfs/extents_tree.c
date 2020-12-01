@@ -1368,6 +1368,9 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 		search->result.buf = NULL;
 		search->result.buf_size = 0;
 		search->result.items_in_buffer = 0;
+
+		ssdfs_debug_btree_search_object(search);
+
 		return -ENODATA;
 	} else if (forks_count > SSDFS_INLINE_FORKS_COUNT) {
 		SSDFS_ERR("invalid forks_count %llu\n",
@@ -1427,6 +1430,8 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 	err = -ENODATA;
 	search->result.err = -ENODATA;
 	search->result.state = SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+
+	ssdfs_debug_btree_search_object(search);
 
 finish_search_inline_fork:
 	return err;
@@ -1951,7 +1956,7 @@ int ssdfs_add_extent_into_fork(u64 blk,
 				  start_offset, blks_count,
 				  blk, len);
 			return err;
-		} else {
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add the head extent into fork: "
 				  "fork (start %llu, blks_count %llu), "
 				  "extent (blk %llu, len %u)\n",
@@ -1968,7 +1973,7 @@ int ssdfs_add_extent_into_fork(u64 blk,
 				  start_offset, blks_count,
 				  blk, len);
 			return err;
-		} else {
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add the tail extent into fork: "
 				  "fork (start %llu, blks_count %llu), "
 				  "extent (blk %llu, len %u)\n",
@@ -2019,7 +2024,7 @@ int ssdfs_prepare_empty_fork(u64 blk,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.start_index >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
-	search->result.start_index++;
+	search->result.start_index = 0;
 	search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.buf);
@@ -2029,6 +2034,10 @@ int ssdfs_prepare_empty_fork(u64 blk,
 	search->result.items_in_buffer = 1;
 
 	memset(&search->raw.fork, 0xFF, sizeof(struct ssdfs_raw_fork));
+
+	search->raw.fork.start_offset = cpu_to_le64(0);
+	search->raw.fork.blks_count = cpu_to_le64(0);
+
 	return 0;
 }
 
@@ -2712,6 +2721,8 @@ int ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 		search->request.count = 1;
 	}
 
+	ssdfs_debug_btree_search_object(search);
+
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_EXTENTS_BTREE_CREATED:
 	case SSDFS_EXTENTS_BTREE_INITIALIZED:
@@ -2743,6 +2754,8 @@ int ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 
 		if (err == -ENODATA) {
 add_new_inline_fork:
+			ssdfs_debug_btree_search_object(search);
+
 			err = ssdfs_prepare_empty_fork(blk, search);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare empty fork: "
@@ -2751,6 +2764,8 @@ add_new_inline_fork:
 				goto finish_add_extent;
 			}
 
+			ssdfs_debug_btree_search_object(search);
+
 			err = ssdfs_add_extent_into_fork(blk, extent, search);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to add extent into fork: "
@@ -2758,6 +2773,8 @@ add_new_inline_fork:
 					  err);
 				goto finish_add_extent;
 			}
+
+			ssdfs_debug_btree_search_object(search);
 
 			search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
 			err = ssdfs_extents_tree_add_inline_fork(tree, search);
@@ -2816,6 +2833,8 @@ try_to_add_into_generic_tree:
 
 		if (err == -ENODATA) {
 add_new_generic_fork:
+			ssdfs_debug_btree_search_object(search);
+
 			err = ssdfs_prepare_empty_fork(blk, search);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare empty fork: "
@@ -6455,6 +6474,8 @@ int ssdfs_check_found_fork(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("requested range exists partially\n");
 	}
 
+	ssdfs_debug_btree_search_object(search);
+
 	return err;
 }
 
@@ -6730,6 +6751,8 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 			search->result.items_in_buffer = 0;
 			break;
 		}
+
+		ssdfs_debug_btree_search_object(search);
 
 		return -ENODATA;
 	} else if (unlikely(err)) {
