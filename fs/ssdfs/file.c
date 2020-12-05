@@ -1061,6 +1061,8 @@ int __ssdfs_writepage(struct page *page, u32 len,
 	ssdfs_request_init(*req);
 	ssdfs_get_request(*req);
 
+	(*req)->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
+
 	logical_offset = (loff_t)index << PAGE_SHIFT;
 	ssdfs_request_prepare_logical_extent(ino, (u64)logical_offset,
 					     len, 0, 0, *req);
@@ -1113,6 +1115,8 @@ try_add_page_into_request:
 
 		ssdfs_request_init(*req);
 		ssdfs_get_request(*req);
+
+		(*req)->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
 
 		err = ssdfs_request_add_page(page, *req);
 		if (err) {

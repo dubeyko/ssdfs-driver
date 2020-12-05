@@ -102,6 +102,12 @@ enum {
 };
 
 /*
+ * Request types
+ */
+#define SSDFS_REQ_DONT_FREE_PAGES			(1 << 0)
+#define SSDFS_REQ_FLAGS_MASK				0x1
+
+/*
  * Result states
  */
 enum {
@@ -135,6 +141,7 @@ struct ssdfs_logical_extent {
  * @cmd: request command
  * @type: request type
  * @refs_count: reference counter
+ * @flags: request flags
  * @wait_queue: queue for result waiting
  */
 struct ssdfs_request_internal_data {
@@ -142,6 +149,7 @@ struct ssdfs_request_internal_data {
 	int cmd;
 	int type;
 	atomic_t refs_count;
+	u32 flags;
 	wait_queue_head_t wait_queue;
 };
 

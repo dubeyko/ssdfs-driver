@@ -739,7 +739,9 @@ void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
 		}
 
 		req->result.pvec.pages[i] = NULL;
-		ssdfs_req_queue_free_page(page);
+
+		if (!(req->private.flags & SSDFS_REQ_DONT_FREE_PAGES))
+			ssdfs_req_queue_free_page(page);
 	}
 }
 
