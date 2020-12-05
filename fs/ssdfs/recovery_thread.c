@@ -206,6 +206,7 @@ int __ssdfs_find_any_valid_volume_header2(struct ssdfs_recovery_env *env,
 					  u64 end_offset,
 					  u64 step)
 {
+	u64 dev_size;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -216,6 +217,9 @@ int __ssdfs_find_any_valid_volume_header2(struct ssdfs_recovery_env *env,
 	SSDFS_DBG("env %p, start_offset %llu, "
 		  "end_offset %llu, step %llu\n",
 		  env, start_offset, end_offset, step);
+
+	dev_size = env->fsi->devops->device_size(env->fsi->sb);
+	end_offset = min_t(u64, dev_size, end_offset);
 
 	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = start_offset;
 
@@ -688,7 +692,8 @@ int ssdfs_check_next_sb_pebs_pair(struct ssdfs_recovery_env *env)
 	SSDFS_DBG("MAIN: next_leb %llu, next_peb %llu\n",
 		  next_leb, next_peb);
 
-	if (next_peb >= (env->found->start_peb + env->found->pebs_count)) {
+	if (next_peb < env->found->start_peb ||
+	    next_peb >= (env->found->start_peb + env->found->pebs_count)) {
 		err = -E2BIG;
 		SSDFS_DBG("next_peb %llu, start_peb %llu, pebs_count %u\n",
 			  next_peb,
@@ -729,7 +734,8 @@ int ssdfs_check_next_sb_pebs_pair(struct ssdfs_recovery_env *env)
 	SSDFS_DBG("COPY: next_leb %llu, next_peb %llu\n",
 		  next_leb, next_peb);
 
-	if (next_peb >= (env->found->start_peb + env->found->pebs_count)) {
+	if (next_peb < env->found->start_peb ||
+	    next_peb >= (env->found->start_peb + env->found->pebs_count)) {
 		err = -E2BIG;
 		SSDFS_DBG("next_peb %llu, start_peb %llu, pebs_count %u\n",
 			  next_peb,
@@ -793,7 +799,8 @@ int ssdfs_check_reserved_sb_pebs_pair(struct ssdfs_recovery_env *env)
 	SSDFS_DBG("MAIN: reserved_leb %llu, reserved_peb %llu\n",
 		  reserved_leb, reserved_peb);
 
-	if (reserved_peb >= (env->found->start_peb + env->found->pebs_count)) {
+	if (reserved_peb < env->found->start_peb ||
+	    reserved_peb >= (env->found->start_peb + env->found->pebs_count)) {
 		err = -E2BIG;
 		SSDFS_DBG("reserved_peb %llu, start_peb %llu, pebs_count %u\n",
 			  reserved_peb,
@@ -831,7 +838,8 @@ int ssdfs_check_reserved_sb_pebs_pair(struct ssdfs_recovery_env *env)
 	SSDFS_DBG("COPY: reserved_leb %llu, reserved_peb %llu\n",
 		  reserved_leb, reserved_peb);
 
-	if (reserved_peb >= (env->found->start_peb + env->found->pebs_count)) {
+	if (reserved_peb < env->found->start_peb ||
+	    reserved_peb >= (env->found->start_peb + env->found->pebs_count)) {
 		err = -E2BIG;
 		SSDFS_DBG("reserved_peb %llu, start_peb %llu, pebs_count %u\n",
 			  reserved_peb,

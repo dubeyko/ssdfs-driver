@@ -10797,7 +10797,23 @@ process_migration_failure:
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
-		thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		state = ssdfs_peb_get_current_log_state(pebc);
+		if (state <= SSDFS_LOG_UNKNOWN ||
+		    state >= SSDFS_LOG_STATE_MAX) {
+			err = -ERANGE;
+			SSDFS_WARN("invalid log state: "
+				   "state %#x\n",
+				   state);
+			goto repeat;
+		}
+
+		if (state != SSDFS_LOG_CREATED) {
+			thread_state =
+				SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+		} else {
+			thread_state =
+				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		}
 		goto next_partial_step;
 		break;
 
