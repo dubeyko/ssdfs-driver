@@ -457,7 +457,6 @@ fail_define_pages_count:
 	case SSDFS_SRC_BLK_BMAP:
 		if (is_dst_peb_clean && !(flags & SSDFS_MIGRATING_BLK_BMAP)) {
 			atomic_set(&bmap->valid_logical_blks, used_blks);
-			atomic_set(&bmap->free_logical_blks, free_blks);
 
 			atomic_add(fsi->pages_per_peb - used_blks,
 					&bmap->free_logical_blks);
