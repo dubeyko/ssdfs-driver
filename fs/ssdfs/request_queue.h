@@ -204,6 +204,16 @@ struct ssdfs_peb_phys_offset {
 struct ssdfs_segment_info;
 
 /*
+ * struct ssdfs_seg2req_pair - segment/request pair
+ * @si: pointer on segment object
+ * @req: pointer on request object
+ */
+struct ssdfs_seg2req_pair {
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_request *req;
+};
+
+/*
  * Request's inline functions
  */
 

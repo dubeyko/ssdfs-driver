@@ -20,6 +20,21 @@
 #ifndef _SSDFS_EXTENTS_TREE_H
 #define _SSDFS_EXTENTS_TREE_H
 
+#define SSDFS_COMMIT_QUEUE_DEFAULT_CAPACITY	(16)
+#define SSDFS_COMMIT_QUEUE_THRESHOLD		(32)
+
+/*
+ * struct ssdfs_commit_queue - array of segment IDs
+ * @ids: array of segment IDs
+ * @count: number of items in the queue
+ * @capacity: maximum number of available positions in the queue
+ */
+struct ssdfs_commit_queue {
+	u64 *ids;
+	u32 count;
+	u32 capacity;
+};
+
 /*
  * struct ssdfs_extents_btree_info - extents btree info
  * @type: extents btree type
@@ -32,6 +47,7 @@
  * @buffer.forks: piece of memory for the inline forks
  * @root: pointer on root node
  * @root_buffer: buffer for root node
+ * @updated_segs: updated segments queue
  * @desc: b-tree descriptor
  * @owner: pointer on owner inode object
  * @fsi: pointer on shared file system object
@@ -59,6 +75,7 @@ struct ssdfs_extents_btree_info {
 	} buffer;
 	struct ssdfs_btree_inline_root_node *root;
 	struct ssdfs_btree_inline_root_node root_buffer;
+	struct ssdfs_commit_queue updated_segs;
 
 	struct ssdfs_extents_btree_descriptor desc;
 	struct ssdfs_inode_info *owner;
@@ -93,6 +110,8 @@ int ssdfs_extents_tree_init(struct ssdfs_fs_info *fsi,
 void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii);
 int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 			     struct ssdfs_inode_info *ii);
+int ssdfs_extents_tree_add_updated_seg_id(struct ssdfs_extents_btree_info *tree,
+					  u64 seg_id);
 
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req);

@@ -588,10 +588,13 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 {
 	struct page *page;
 	struct inode *inode;
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_extents_btree_info *etree;
 	struct ssdfs_fs_info *fsi;
 	ino_t ino;
 	u64 logical_offset;
 	u32 data_bytes;
+	u64 seg_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -610,6 +613,7 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = page->mapping->host;
+	ii = SSDFS_I(inode);
 	fsi = SSDFS_FS_I(inode->i_sb);
 	ino = inode->i_ino;
 	logical_offset = (*req)->extent.logical_offset;
@@ -620,7 +624,6 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		u64 seg_id;
 		struct ssdfs_blk2off_range extent;
 
 		err = ssdfs_segment_add_data_block_async(fsi, *req,
@@ -639,13 +642,32 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 
 			inode_add_bytes(inode, fsi->pagesize);
 		}
-	} else
+	} else {
 		err = ssdfs_update_block(fsi, *req, wbc);
+		seg_id = (*req)->place.start.seg_id;
+	}
 
 	if (err) {
 		SSDFS_ERR("fail to write page async: "
 			  "ino %lu, page_index %llu, err %d\n",
 			  ino, (u64)page_index(page), err);
+		return err;
+	}
+
+	etree = SSDFS_EXTREE(ii);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!etree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&etree->lock);
+	err = ssdfs_extents_tree_add_updated_seg_id(etree, seg_id);
+	up_write(&etree->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add updated segment in queue: "
+			  "seg_id %llu, err %d\n",
+			  seg_id, err);
 		return err;
 	}
 
@@ -658,10 +680,13 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 {
 	struct page *page;
 	struct inode *inode;
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_extents_btree_info *etree;
 	struct ssdfs_fs_info *fsi;
 	ino_t ino;
 	u64 logical_offset;
 	u32 data_bytes;
+	u64 seg_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -680,6 +705,7 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = page->mapping->host;
+	ii = SSDFS_I(inode);
 	fsi = SSDFS_FS_I(inode->i_sb);
 	ino = inode->i_ino;
 	logical_offset = (*req)->extent.logical_offset;
@@ -690,7 +716,6 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		u64 seg_id;
 		struct ssdfs_blk2off_range extent;
 
 		err = ssdfs_segment_add_data_block_sync(fsi, *req,
@@ -701,13 +726,32 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 			if (!err)
 				inode_add_bytes(inode, fsi->pagesize);
 		}
-	} else
+	} else {
 		err = ssdfs_update_block(fsi, *req, wbc);
+		seg_id = (*req)->place.start.seg_id;
+	}
 
 	if (err) {
 		SSDFS_ERR("fail to write page sync: "
 			  "ino %lu, page_index %llu, err %d\n",
 			  ino, (u64)page_index(page), err);
+		return err;
+	}
+
+	etree = SSDFS_EXTREE(ii);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!etree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&etree->lock);
+	err = ssdfs_extents_tree_add_updated_seg_id(etree, seg_id);
+	up_write(&etree->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add updated segment in queue: "
+			  "seg_id %llu, err %d\n",
+			  seg_id, err);
 		return err;
 	}
 
@@ -720,10 +764,13 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 {
 	struct page *page;
 	struct inode *inode;
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_extents_btree_info *etree;
 	struct ssdfs_fs_info *fsi;
 	ino_t ino;
 	u64 logical_offset;
 	u32 data_bytes;
+	u64 seg_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -742,6 +789,7 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = page->mapping->host;
+	ii = SSDFS_I(inode);
 	fsi = SSDFS_FS_I(inode->i_sb);
 	ino = inode->i_ino;
 	logical_offset = (*req)->extent.logical_offset;
@@ -752,7 +800,6 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		u64 seg_id;
 		struct ssdfs_blk2off_range extent;
 
 		err = ssdfs_segment_add_data_extent_async(fsi, *req,
@@ -780,13 +827,32 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 
 			inode_add_bytes(inode, extent_bytes);
 		}
-	} else
+	} else {
 		err = ssdfs_update_extent(fsi, *req, wbc);
+		seg_id = (*req)->place.start.seg_id;
+	}
 
 	if (err) {
 		SSDFS_ERR("fail to write extent async: "
 			  "ino %lu, page_index %llu, err %d\n",
 			  ino, (u64)page_index(page), err);
+		return err;
+	}
+
+	etree = SSDFS_EXTREE(ii);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!etree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&etree->lock);
+	err = ssdfs_extents_tree_add_updated_seg_id(etree, seg_id);
+	up_write(&etree->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add updated segment in queue: "
+			  "seg_id %llu, err %d\n",
+			  seg_id, err);
 		return err;
 	}
 
@@ -799,10 +865,13 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 {
 	struct page *page;
 	struct inode *inode;
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_extents_btree_info *etree;
 	struct ssdfs_fs_info *fsi;
 	ino_t ino;
 	u64 logical_offset;
 	u32 data_bytes;
+	u64 seg_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -821,6 +890,7 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = page->mapping->host;
+	ii = SSDFS_I(inode);
 	fsi = SSDFS_FS_I(inode->i_sb);
 	ino = inode->i_ino;
 	logical_offset = (*req)->extent.logical_offset;
@@ -831,7 +901,6 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 
 	if (need_add_block(page)) {
-		u64 seg_id;
 		struct ssdfs_blk2off_range extent;
 
 		err = ssdfs_segment_add_data_extent_sync(fsi, *req,
@@ -859,13 +928,32 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 
 			inode_add_bytes(inode, extent_bytes);
 		}
-	} else
+	} else {
 		err = ssdfs_update_extent(fsi, *req, wbc);
+		seg_id = (*req)->place.start.seg_id;
+	}
 
 	if (err) {
 		SSDFS_ERR("fail to write page sync: "
 			  "ino %lu, page_index %llu, err %d\n",
 			  ino, (u64)page_index(page), err);
+		return err;
+	}
+
+	etree = SSDFS_EXTREE(ii);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!etree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&etree->lock);
+	err = ssdfs_extents_tree_add_updated_seg_id(etree, seg_id);
+	up_write(&etree->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add updated segment in queue: "
+			  "seg_id %llu, err %d\n",
+			  seg_id, err);
 		return err;
 	}
 
@@ -877,9 +965,9 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 			      struct ssdfs_segment_request **req,
 			      int req_type)
 {
-	struct page *page;
-	struct inode *inode;
 	struct ssdfs_fs_info *fsi;
+	struct inode *inode;
+	struct page *page;
 	ino_t ino;
 	u64 logical_offset;
 	u32 data_bytes;

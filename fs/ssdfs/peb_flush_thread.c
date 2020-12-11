@@ -10023,7 +10023,8 @@ finish_process_free_space_absence:
 			}
 		}
 
-		if (has_commit_log_now_requested(pebc)) {
+		if (has_commit_log_now_requested(pebc) &&
+		    is_create_requests_queue_empty(pebc)) {
 			/*
 			 * If no other commands in the queue
 			 * then ignore the log creation now.

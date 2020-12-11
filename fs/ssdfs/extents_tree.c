@@ -100,6 +100,786 @@ void ssdfs_ext_tree_check_memory_leaks(void)
 }
 
 /*
+ * ssdfs_commit_queue_create() - create commit queue
+ * @tree: extents tree
+ *
+ * This method tries to create the commit queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static inline
+int ssdfs_commit_queue_create(struct ssdfs_extents_btree_info *tree)
+{
+	size_t bytes_count = sizeof(u64) * SSDFS_COMMIT_QUEUE_DEFAULT_CAPACITY;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p\n", tree);
+
+	tree->updated_segs.ids = ssdfs_ext_tree_kzalloc(bytes_count,
+							GFP_KERNEL);
+	if (!tree->updated_segs.ids) {
+		SSDFS_ERR("fail to allocate commit queue\n");
+		return -ENOMEM;
+	}
+
+	tree->updated_segs.count = 0;
+	tree->updated_segs.capacity = SSDFS_COMMIT_QUEUE_DEFAULT_CAPACITY;
+
+	return 0;
+}
+
+/*
+ * ssdfs_commit_queue_destroy() - destroy commit queue
+ * @tree: extents tree
+ *
+ * This method tries to destroy the commit queue.
+ */
+static inline
+void ssdfs_commit_queue_destroy(struct ssdfs_extents_btree_info *tree)
+{
+	u32 i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p\n", tree);
+
+	if (!tree->updated_segs.ids)
+		return;
+
+	SSDFS_DBG("count %u, capacity %u\n",
+		  tree->updated_segs.count,
+		  tree->updated_segs.capacity);
+
+	if (tree->updated_segs.count > tree->updated_segs.capacity ||
+	    tree->updated_segs.capacity == 0) {
+		SSDFS_WARN("count %u > capacity %u\n",
+			   tree->updated_segs.count,
+			   tree->updated_segs.capacity);
+	}
+
+	if (tree->updated_segs.count != 0) {
+		SSDFS_ERR("NOT processed segments:\n");
+
+		for (i = 0; i < tree->updated_segs.count; i++) {
+			SSDFS_ERR("ino %lu --> seg %llu\n",
+				  tree->owner->vfs_inode.i_ino,
+				  tree->updated_segs.ids[i]);
+		}
+
+		SSDFS_WARN("commit queue contains not processed segments: "
+			   "count %u\n",
+			   tree->updated_segs.count);
+	}
+
+	ssdfs_ext_tree_kfree(tree->updated_segs.ids);
+	tree->updated_segs.ids = NULL;
+	tree->updated_segs.count = 0;
+	tree->updated_segs.capacity = 0;
+}
+
+/*
+ * ssdfs_commit_queue_realloc() - realloc commit queue
+ * @tree: extents tree
+ *
+ * This method tries to realloc the commit queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static inline
+int ssdfs_commit_queue_realloc(struct ssdfs_extents_btree_info *tree)
+{
+	size_t old_size, new_size;
+	size_t step_size = sizeof(u64) * SSDFS_COMMIT_QUEUE_DEFAULT_CAPACITY;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p\n", tree);
+
+	if (!tree->updated_segs.ids) {
+		SSDFS_ERR("commit queue is absent!!!\n");
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("count %u, capacity %u\n",
+		  tree->updated_segs.count,
+		  tree->updated_segs.capacity);
+
+	if (tree->updated_segs.count > tree->updated_segs.capacity ||
+	    tree->updated_segs.capacity == 0) {
+		SSDFS_ERR("count %u > capacity %u\n",
+			   tree->updated_segs.count,
+			   tree->updated_segs.capacity);
+		return -ERANGE;
+	}
+
+	if (tree->updated_segs.count < tree->updated_segs.capacity) {
+		SSDFS_DBG("NO realloc necessary: "
+			  "count %u < capacity %u\n",
+			  tree->updated_segs.count,
+			  tree->updated_segs.capacity);
+		return 0;
+	}
+
+	old_size = sizeof(u64) * tree->updated_segs.capacity;
+	new_size = old_size + step_size;
+
+	tree->updated_segs.ids = krealloc(tree->updated_segs.ids,
+					  new_size,
+					  GFP_KERNEL | __GFP_ZERO);
+	if (!tree->updated_segs.ids) {
+		SSDFS_ERR("fail to re-allocate commit queue\n");
+		return -ENOMEM;
+	}
+
+	tree->updated_segs.capacity += SSDFS_COMMIT_QUEUE_DEFAULT_CAPACITY;
+
+	return 0;
+}
+
+/*
+ * ssdfs_commit_queue_add_segment_id() - add updated segment ID in queue
+ * @tree: extents tree
+ * @seg_id: segment ID
+ *
+ * This method tries to add the updated segment ID into
+ * the commit queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static
+int ssdfs_commit_queue_add_segment_id(struct ssdfs_extents_btree_info *tree,
+				      u64 seg_id)
+{
+	u32 i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, seg_id %llu\n", tree, seg_id);
+
+	if (!tree->updated_segs.ids) {
+		SSDFS_ERR("commit queue is absent!!!\n");
+		return -ERANGE;
+	}
+
+	if (seg_id >= U64_MAX) {
+		SSDFS_ERR("invalid seg_id %llu\n", seg_id);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("count %u, capacity %u\n",
+		  tree->updated_segs.count,
+		  tree->updated_segs.capacity);
+
+	if (tree->updated_segs.count > tree->updated_segs.capacity ||
+	    tree->updated_segs.capacity == 0) {
+		SSDFS_ERR("count %u > capacity %u\n",
+			   tree->updated_segs.count,
+			   tree->updated_segs.capacity);
+		return -ERANGE;
+	}
+
+	for (i = 0; i < tree->updated_segs.count; i++) {
+		if (tree->updated_segs.ids[i] == seg_id) {
+			SSDFS_DBG("seg_id %llu in the queue already\n",
+				  seg_id);
+			return 0;
+		}
+	}
+
+	if (tree->updated_segs.count == tree->updated_segs.capacity) {
+		err = ssdfs_commit_queue_realloc(tree);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc commit queue: "
+				  "seg_id %llu, count %u, "
+				  "capacity %u, err %d\n",
+				  seg_id,
+				  tree->updated_segs.count,
+				  tree->updated_segs.capacity,
+				  err);
+			return err;
+		}
+	}
+
+
+	tree->updated_segs.ids[tree->updated_segs.count] = seg_id;
+	tree->updated_segs.count++;
+
+	return 0;
+}
+
+/*
+ * __ssdfs_commit_queue_issue_requests_async() - issue commit now requests async
+ * @fsi: pointer on shared file system object
+ * @seg_id: segment ID
+ *
+ * This method tries to issue commit now requests
+ * asynchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static int
+__ssdfs_commit_queue_issue_requests_async(struct ssdfs_fs_info *fsi,
+					  u64 seg_id)
+{
+	struct ssdfs_segment_info *si;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg_id %llu\n", fsi, seg_id);
+
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				seg_id, U64_MAX);
+	if (unlikely(IS_ERR_OR_NULL(si))) {
+		err = !si ? -ENOMEM : PTR_ERR(si);
+		SSDFS_ERR("fail to grab segment object: "
+			  "seg %llu, err %d\n",
+			  seg_id, err);
+		return err;
+	}
+
+	for (i = 0; i < si->pebs_count; i++) {
+		struct ssdfs_segment_request *req;
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto finish_issue_requests_async;
+		}
+
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
+						      i, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("commit log request failed: "
+				  "peb_index %d, err %d\n",
+				  i, err);
+			ssdfs_put_request(req);
+			ssdfs_request_free(req);
+			goto finish_issue_requests_async;
+		}
+	}
+
+finish_issue_requests_async:
+	ssdfs_segment_put_object(si);
+
+	return err;
+}
+
+/*
+ * ssdfs_commit_queue_issue_requests_async() - issue commit now requests async
+ * @tree: extents tree
+ *
+ * This method tries to issue commit now requests
+ * asynchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static int
+ssdfs_commit_queue_issue_requests_async(struct ssdfs_extents_btree_info *tree)
+{
+	struct ssdfs_fs_info *fsi;
+	size_t bytes_count;
+	u32 i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p\n", tree);
+
+	fsi = tree->fsi;
+
+	if (!tree->updated_segs.ids) {
+		SSDFS_ERR("commit queue is absent!!!\n");
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("count %u, capacity %u\n",
+		  tree->updated_segs.count,
+		  tree->updated_segs.capacity);
+
+	if (tree->updated_segs.count > tree->updated_segs.capacity ||
+	    tree->updated_segs.capacity == 0) {
+		SSDFS_ERR("count %u > capacity %u\n",
+			   tree->updated_segs.count,
+			   tree->updated_segs.capacity);
+		return -ERANGE;
+	}
+
+	if (tree->updated_segs.count == 0) {
+		SSDFS_DBG("commit queue is empty\n");
+		return 0;
+	}
+
+	for (i = 0; i < tree->updated_segs.count; i++) {
+		u64 seg_id = tree->updated_segs.ids[i];
+
+		err = __ssdfs_commit_queue_issue_requests_async(fsi, seg_id);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to issue commit requests: "
+				  "seg_id %llu, err %d\n",
+				  seg_id, err);
+			goto finish_issue_requests_async;
+		}
+	}
+
+	bytes_count = sizeof(u64) * tree->updated_segs.capacity;
+	memset(tree->updated_segs.ids, 0, bytes_count);
+
+	tree->updated_segs.count = 0;
+
+finish_issue_requests_async:
+	return err;
+}
+
+/*
+ * __ssdfs_commit_queue_issue_requests_sync() - issue commit now requests sync
+ * @fsi: pointer on shared file system object
+ * @seg_id: segment ID
+ * @pair: pointer on starting seg2req pair
+ *
+ * This method tries to issue commit now requests
+ * synchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static int
+__ssdfs_commit_queue_issue_requests_sync(struct ssdfs_fs_info *fsi,
+					 u64 seg_id,
+					 struct ssdfs_seg2req_pair *pair)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_seg2req_pair *cur_pair;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pair);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg_id %llu, pair %p\n",
+		  fsi, seg_id, pair);
+
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				seg_id, U64_MAX);
+	if (unlikely(IS_ERR_OR_NULL(si))) {
+		err = !si ? -ENOMEM : PTR_ERR(si);
+		SSDFS_ERR("fail to grab segment object: "
+			  "seg %llu, err %d\n",
+			  seg_id, err);
+		return err;
+	}
+
+	for (i = 0; i < si->pebs_count; i++) {
+		cur_pair = pair + i;
+
+		cur_pair->req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(cur_pair->req)) {
+			err = (cur_pair->req == NULL ?
+					-ENOMEM : PTR_ERR(cur_pair->req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto finish_issue_requests_sync;
+		}
+
+		ssdfs_request_init(cur_pair->req);
+		ssdfs_get_request(cur_pair->req);
+
+		err = ssdfs_segment_commit_log_async2(si,
+						      SSDFS_REQ_ASYNC_NO_FREE,
+						      i, cur_pair->req);
+		if (unlikely(err)) {
+			SSDFS_ERR("commit log request failed: "
+				  "err %d\n", err);
+			ssdfs_put_request(pair->req);
+			ssdfs_request_free(pair->req);
+			pair->req = NULL;
+			goto finish_issue_requests_sync;
+		}
+
+		ssdfs_segment_get_object(si);
+		cur_pair->si = si;
+	}
+
+finish_issue_requests_sync:
+	ssdfs_segment_put_object(si);
+
+	return err;
+}
+
+/*
+ * ssdfs_commit_queue_check_request() - check request
+ * @req: segment request
+ *
+ * This method tries to check the state of request.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_commit_queue_check_request(struct ssdfs_segment_request *req)
+{
+	atomic_t *refs_count;
+	wait_queue_head_t *wq = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("req %p\n", req);
+
+check_req_state:
+	switch (atomic_read(&req->result.state)) {
+	case SSDFS_REQ_CREATED:
+	case SSDFS_REQ_STARTED:
+		refs_count = &req->private.refs_count;
+		wq = &req->private.wait_queue;
+
+		if (atomic_read(refs_count) != 0) {
+			err = wait_event_killable_timeout(*wq,
+					atomic_read(refs_count) == 0,
+					SSDFS_DEFAULT_TIMEOUT);
+
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+
+			goto check_req_state;
+		} else {
+			switch (atomic_read(&req->result.state)) {
+			case SSDFS_REQ_FINISHED:
+			case SSDFS_REQ_FAILED:
+				goto check_req_state;
+
+			default:
+				SSDFS_ERR("invalid refs_count %d, "
+					  "state %#x\n",
+					  atomic_read(refs_count),
+					  atomic_read(&req->result.state));
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+				return -ERANGE;
+			}
+		}
+		break;
+
+	case SSDFS_REQ_FINISHED:
+		/* do nothing */
+		break;
+
+	case SSDFS_REQ_FAILED:
+		err = req->result.err;
+
+		if (!err) {
+			SSDFS_ERR("error code is absent: "
+				  "req %p, err %d\n",
+				  req, err);
+			err = -ERANGE;
+		}
+
+		SSDFS_ERR("flush request is failed: "
+			  "err %d\n", err);
+		return err;
+
+	default:
+		SSDFS_ERR("invalid result's state %#x\n",
+		    atomic_read(&req->result.state));
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_commit_queue_wait_commit_logs_end() - wait commit logs end
+ * @fsi: pointer on shared file system object
+ * @seg_id: segment ID
+ * @pair: pointer on starting seg2req pair
+ *
+ * This method waits the requests ending and checking
+ * the requests.
+ */
+static void
+ssdfs_commit_queue_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
+					u64 seg_id,
+					struct ssdfs_seg2req_pair *pair)
+{
+	struct ssdfs_seg2req_pair *cur_pair;
+	int refs_count;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pair);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg_id %llu, pair %p\n",
+		  fsi, seg_id, pair);
+
+	for (i = 0; i < fsi->pebs_per_seg; i++) {
+		cur_pair = pair + i;
+
+		if (cur_pair->req != NULL) {
+			err = ssdfs_commit_queue_check_request(cur_pair->req);
+			if (unlikely(err)) {
+				SSDFS_ERR("flush request failed: "
+					  "err %d\n", err);
+			}
+
+			refs_count =
+				atomic_read(&cur_pair->req->private.refs_count);
+			WARN_ON(refs_count != 0);
+
+			ssdfs_request_free(cur_pair->req);
+			cur_pair->req = NULL;
+		} else {
+			SSDFS_ERR("request is NULL: "
+				  "item_index %d\n", i);
+		}
+
+		if (cur_pair->si != NULL) {
+			ssdfs_segment_put_object(cur_pair->si);
+			cur_pair->si = NULL;
+		} else {
+			SSDFS_ERR("segment is NULL: "
+				  "item_index %d\n", i);
+		}
+	}
+}
+
+/*
+ * ssdfs_commit_queue_issue_requests_sync() - issue commit now requests sync
+ * @tree: extents tree
+ *
+ * This method tries to issue commit now requests
+ * synchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static int
+ssdfs_commit_queue_issue_requests_sync(struct ssdfs_extents_btree_info *tree)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_seg2req_pair *pairs;
+	u32 items_count;
+	size_t bytes_count;
+	u32 i, j;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p\n", tree);
+
+	fsi = tree->fsi;
+
+	if (!tree->updated_segs.ids) {
+		SSDFS_ERR("commit queue is absent!!!\n");
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("count %u, capacity %u\n",
+		  tree->updated_segs.count,
+		  tree->updated_segs.capacity);
+
+	if (tree->updated_segs.count > tree->updated_segs.capacity ||
+	    tree->updated_segs.capacity == 0) {
+		SSDFS_ERR("count %u > capacity %u\n",
+			   tree->updated_segs.count,
+			   tree->updated_segs.capacity);
+		return -ERANGE;
+	}
+
+	if (tree->updated_segs.count == 0) {
+		SSDFS_DBG("commit queue is empty\n");
+		return 0;
+	}
+
+	items_count = tree->updated_segs.count * fsi->pebs_per_seg;
+
+	pairs = ssdfs_ext_tree_kcalloc(items_count,
+					sizeof(struct ssdfs_seg2req_pair),
+					GFP_KERNEL);
+	if (!pairs) {
+		SSDFS_ERR("fail to allocate requsts array\n");
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < tree->updated_segs.count; i++) {
+		u64 seg_id = tree->updated_segs.ids[i];
+		struct ssdfs_seg2req_pair *start_pair;
+
+		start_pair = &pairs[i * fsi->pebs_per_seg];
+
+		err = __ssdfs_commit_queue_issue_requests_sync(fsi, seg_id,
+								start_pair);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to issue commit requests: "
+				  "seg_id %llu, err %d\n",
+				  seg_id, err);
+			i++;
+			break;
+		}
+	}
+
+	for (j = 0; j < i; j++) {
+		u64 seg_id = tree->updated_segs.ids[j];
+		struct ssdfs_seg2req_pair *start_pair;
+
+		start_pair = &pairs[j * fsi->pebs_per_seg];
+
+		ssdfs_commit_queue_wait_commit_logs_end(fsi, seg_id,
+							start_pair);
+	}
+
+	if (!err) {
+		bytes_count = sizeof(u64) * tree->updated_segs.capacity;
+		memset(tree->updated_segs.ids, 0, bytes_count);
+		tree->updated_segs.count = 0;
+	}
+
+	ssdfs_ext_tree_kfree(pairs);
+
+	return err;
+}
+
+/*
+ * ssdfs_extents_tree_add_updated_seg_id() - add updated segment ID in queue
+ * @tree: extents tree
+ * @seg_id: segment ID
+ *
+ * This method tries to add the updated segment ID into
+ * the commit queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_extents_tree_add_updated_seg_id(struct ssdfs_extents_btree_info *tree,
+					  u64 seg_id)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, seg_id %llu\n", tree, seg_id);
+
+	if (tree->updated_segs.count >= SSDFS_COMMIT_QUEUE_THRESHOLD) {
+		err = ssdfs_commit_queue_issue_requests_async(tree);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to issue commit requests: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	err = ssdfs_commit_queue_add_segment_id(tree, seg_id);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add segment ID: "
+			  "seg_id %llu, err %d\n",
+			  seg_id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_extents_tree_commit_logs_now() - commit logs now
+ * @tree: extents tree
+ *
+ * This method tries to commit logs in updated segments.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static inline
+int ssdfs_extents_tree_commit_logs_now(struct ssdfs_extents_btree_info *tree)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p\n", tree);
+
+	return ssdfs_commit_queue_issue_requests_sync(tree);
+}
+
+/*
  * ssdfs_init_inline_root_node() - initialize inline root node
  * @fsi: pointer on shared file system object
  * @root: pointer on inline root node [out]
@@ -145,6 +925,7 @@ int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_extents_btree_info *ptr;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !ii);
@@ -165,6 +946,14 @@ int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate extents tree\n");
 		return -ENOMEM;
+	}
+
+	err = ssdfs_commit_queue_create(ptr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create commit queue: err %d\n",
+			  err);
+		ssdfs_ext_tree_kfree(ptr);
+		return err;
 	}
 
 	atomic_set(&ptr->state, SSDFS_EXTENTS_BTREE_UNKNOWN_STATE);
@@ -285,6 +1074,8 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 
 	tree->owner = NULL;
 	tree->fsi = NULL;
+
+	ssdfs_commit_queue_destroy(tree);
 
 	atomic_set(&tree->type, SSDFS_EXTENTS_BTREE_UNKNOWN_TYPE);
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_UNKNOWN_STATE);
@@ -726,7 +1517,7 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 	struct ssdfs_extents_btree_info *tree;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	int flags;
-	u64 forks_count;
+	u64 forks_count = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -744,7 +1535,19 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
+	ssdfs_debug_extents_btree_object(tree);
+
 	flags = atomic_read(&ii->private_flags);
+
+	down_write(&tree->lock);
+
+	err = ssdfs_extents_tree_commit_logs_now(tree);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to commit logs: "
+			  "ino %lu, err %d\n",
+			  ii->vfs_inode.i_ino, err);
+		goto finish_extents_tree_flush;
+	}
 
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_EXTENTS_BTREE_DIRTY:
@@ -754,25 +1557,25 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 	case SSDFS_EXTENTS_BTREE_CREATED:
 	case SSDFS_EXTENTS_BTREE_INITIALIZED:
 		/* do nothing */
-		return 0;
+		goto finish_extents_tree_flush;
 
 	case SSDFS_EXTENTS_BTREE_CORRUPTED:
+		err = -EOPNOTSUPP;
 		SSDFS_DBG("extents btree corrupted: ino %lu\n",
 			  ii->vfs_inode.i_ino);
-		return -EOPNOTSUPP;
+		goto finish_extents_tree_flush;
 
 	default:
+		err = -ERANGE;
 		SSDFS_WARN("unexpected state of tree %#x\n",
 			   atomic_read(&tree->state));
-		return -ERANGE;
+		goto finish_extents_tree_flush;
 	}
 
-	down_write(&tree->lock);
+	forks_count = atomic64_read(&tree->forks_count);
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_FORKS_ARRAY:
-		forks_count = atomic64_read(&tree->forks_count);
-
 		if (!tree->inline_forks) {
 			err = -ERANGE;
 			atomic_set(&tree->state,
@@ -884,8 +1687,17 @@ finish_generic_tree_flush:
 		goto finish_extents_tree_flush;
 	}
 
+	ii->raw_inode.count_of.forks = cpu_to_le32((u32)forks_count);
+	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_INITIALIZED);
+
 finish_extents_tree_flush:
 	up_write(&tree->lock);
+
+	SSDFS_DBG("RAW INODE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     &ii->raw_inode,
+			     sizeof(struct ssdfs_inode));
+	SSDFS_DBG("\n");
 
 	return err;
 }
@@ -1184,6 +1996,11 @@ int ssdfs_extents_tree_add_block(struct inode *inode,
 	extent.seg_id = cpu_to_le64(req->place.start.seg_id);
 	extent.logical_blk = cpu_to_le32(req->place.start.blk_index);
 	extent.len = cpu_to_le32(req->place.len);
+
+	SSDFS_DBG("requested_blk %llu, "
+		  "extent (seg_id %llu, logical_blk %u, len %u)\n",
+		  requested_blk, extent.seg_id,
+		  extent.logical_blk, extent.len);
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -1556,7 +2373,7 @@ int ssdfs_add_head_extent_into_fork(u64 blk,
 				    struct ssdfs_raw_extent *extent,
 				    struct ssdfs_raw_fork *fork)
 {
-	struct ssdfs_raw_extent *cur;
+	struct ssdfs_raw_extent *cur = NULL;
 	u64 seg1, seg2;
 	u32 lblk1, lblk2;
 	u32 len1, len2;
@@ -1591,6 +2408,7 @@ int ssdfs_add_head_extent_into_fork(u64 blk,
 	if (blks_count == 0 || blks_count >= U64_MAX) {
 		fork->start_offset = cpu_to_le64(blk);
 		fork->blks_count = cpu_to_le64(len2);
+		cur = &fork->extents[0];
 		memcpy(cur, extent, sizeof(struct ssdfs_raw_extent));
 		return 0;
 	} else if (le64_to_cpu(fork->start_offset) >= U64_MAX) {
@@ -1703,7 +2521,7 @@ int ssdfs_add_tail_extent_into_fork(u64 blk,
 				    struct ssdfs_raw_extent *extent,
 				    struct ssdfs_raw_fork *fork)
 {
-	struct ssdfs_raw_extent *cur;
+	struct ssdfs_raw_extent *cur = NULL;
 	u64 seg1, seg2;
 	u32 lblk1, lblk2;
 	u32 len1, len2;
@@ -1741,6 +2559,7 @@ int ssdfs_add_tail_extent_into_fork(u64 blk,
 	if (blks_count == 0 || blks_count >= U64_MAX) {
 		fork->start_offset = cpu_to_le64(blk);
 		fork->blks_count = cpu_to_le64(len2);
+		cur = &fork->extents[0];
 		memcpy(cur, extent, sizeof(struct ssdfs_raw_extent));
 		return 0;
 	} else if (start_offset >= U64_MAX) {
@@ -1946,6 +2765,11 @@ int ssdfs_add_extent_into_fork(u64 blk,
 			  blk, len);
 		return -ENOSPC;
 	}
+
+	SSDFS_DBG("fork (start %llu, blks_count %llu), "
+		  "extent (blk %llu, len %u)\n",
+		  start_offset, blks_count,
+		  blk, len);
 
 	if ((blk + len) == start_offset) {
 		err = ssdfs_add_head_extent_into_fork(blk, extent, fork);
@@ -2887,6 +3711,8 @@ add_new_generic_fork:
 
 finish_add_extent:
 	up_write(&tree->lock);
+
+	ssdfs_debug_extents_btree_object(tree);
 
 	return err;
 }

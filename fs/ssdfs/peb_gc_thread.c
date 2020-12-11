@@ -1003,16 +1003,6 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 	return SSDFS_WAIT_IDLE_STATE;
 }
 
-/*
- * struct ssdfs_seg2req_pair - segment/request pair
- * @si: pointer on segment object
- * @req: pointer on request object
- */
-struct ssdfs_seg2req_pair {
-	struct ssdfs_segment_info *si;
-	struct ssdfs_segment_request *req;
-};
-
 #define SSDFS_SEG2REQ_PAIR_CAPACITY	(10)
 
 /*

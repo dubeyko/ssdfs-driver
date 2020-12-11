@@ -33,6 +33,8 @@ dd if=/dev/urandom of=/mnt/ssdfs/$2 conv=notrunc oflag=append bs=1 count=$4
 
 ls -lah /mnt/ssdfs
 
+cat /mnt/ssdfs/$2
+
 sudo umount /mnt/ssdfs
 
 #mkdir $i"-MOUNT-DUMP"
