@@ -276,7 +276,7 @@ int ssdfs_find_any_valid_sb_segment2(struct ssdfs_recovery_env *env,
 		  env->found->pebs_count, threshold_peb);
 
 	dev_size = env->fsi->devops->device_size(env->fsi->sb);
-	step = (u64)2 * env->fsi->erasesize;
+	step = env->fsi->erasesize;
 
 	start_peb = max_t(u64,
 			*SSDFS_RECOVERY_CUR_OFF_PTR(env) / env->fsi->erasesize,

@@ -1972,6 +1972,9 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 		env->found->pebs_count = pebs_count;
 	} else if (search_phase == SSDFS_RECOVERY_SLOW_SEARCH) {
 		struct ssdfs_found_protected_peb *protected;
+		u64 lower_peb_id;
+		u64 upper_peb_id;
+		u64 last_cno_peb_id;
 
 		if (env->found->start_peb != start_peb ||
 		    env->found->pebs_count != pebs_count) {
@@ -1986,8 +1989,45 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 			return -ENODATA;
 		}
 
+		protected = &env->found->array[SSDFS_LOWER_PEB_INDEX];
+		lower_peb_id = protected->peb.peb_id;
+
 		protected = &env->found->array[SSDFS_UPPER_PEB_INDEX];
-		if (protected->peb.peb_id >= U64_MAX) {
+		upper_peb_id = protected->peb.peb_id;
+
+		protected = &env->found->array[SSDFS_LAST_CNO_PEB_INDEX];
+		last_cno_peb_id = protected->peb.peb_id;
+
+		SSDFS_DBG("protected PEBs: "
+			  "lower %llu, upper %llu, last_cno_peb %llu\n",
+			  lower_peb_id, upper_peb_id, last_cno_peb_id);
+
+		if (lower_peb_id >= U64_MAX) {
+			SSDFS_ERR("ignore search in fragment: "
+				  "found (start_peb %llu, pebs_count %u), "
+				  "start_peb %llu, pebs_count %u, "
+				  "lower %llu, upper %llu, "
+				  "last_cno_peb %llu\n",
+				  env->found->start_peb,
+				  env->found->pebs_count,
+				  start_peb, pebs_count,
+				  lower_peb_id, upper_peb_id,
+				  last_cno_peb_id);
+			env->err = -ENODATA;
+			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
+			return -ENODATA;
+		} else if (lower_peb_id == env->found->start_peb &&
+			   upper_peb_id >= U64_MAX) {
+			SSDFS_ERR("ignore search in fragment: "
+				  "found (start_peb %llu, pebs_count %u), "
+				  "start_peb %llu, pebs_count %u, "
+				  "lower %llu, upper %llu, "
+				  "last_cno_peb %llu\n",
+				  env->found->start_peb,
+				  env->found->pebs_count,
+				  start_peb, pebs_count,
+				  lower_peb_id, upper_peb_id,
+				  last_cno_peb_id);
 			env->err = -ENODATA;
 			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
 			return -ENODATA;

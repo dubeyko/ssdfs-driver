@@ -50,7 +50,7 @@ int ssdfs_find_latest_valid_sb_segment2(struct ssdfs_recovery_env *env)
 	SSDFS_DBG("env %p, env->sbi.vh_buf %p\n", env, env->sbi.vh_buf);
 
 	dev_size = env->fsi->devops->device_size(env->fsi->sb);
-	step = (u64)2 * env->fsi->erasesize;
+	step = env->fsi->erasesize;
 
 try_next_peb:
 	if (kthread_should_stop()) {
