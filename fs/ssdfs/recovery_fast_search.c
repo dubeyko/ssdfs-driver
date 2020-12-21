@@ -531,6 +531,8 @@ int ssdfs_check_cur_main_sb_peb(struct ssdfs_recovery_env *env)
 	leb_id = SSDFS_MAIN_SB_LEB(vh, SSDFS_CUR_SB_SEG);
 	peb_id = SSDFS_MAIN_SB_PEB(vh, SSDFS_CUR_SB_SEG);
 
+	ssdfs_backup_sb_info2(env);
+
 	err = ssdfs_read_sb_peb_checked(env, peb_id);
 	if (err == -ENODATA)
 		goto finish_check;
@@ -586,6 +588,8 @@ int ssdfs_check_cur_copy_sb_peb(struct ssdfs_recovery_env *env)
 	vh = SSDFS_VH(env->sbi.vh_buf);
 	leb_id = SSDFS_COPY_SB_LEB(vh, SSDFS_CUR_SB_SEG);
 	peb_id = SSDFS_COPY_SB_PEB(vh, SSDFS_CUR_SB_SEG);
+
+	ssdfs_backup_sb_info2(env);
 
 	err = ssdfs_read_sb_peb_checked(env, peb_id);
 	if (err == -ENODATA)

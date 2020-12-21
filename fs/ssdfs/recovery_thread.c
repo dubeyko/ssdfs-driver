@@ -288,6 +288,8 @@ int ssdfs_find_any_valid_sb_segment2(struct ssdfs_recovery_env *env,
 		  start_peb, start_offset,
 		  SSDFS_RECOVERY_UPPER_OFF(env));
 
+	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = start_offset;
+
 	if (start_offset >= SSDFS_RECOVERY_UPPER_OFF(env)) {
 		SSDFS_DBG("start_offset %llu >= end_offset %llu\n",
 			  start_offset, SSDFS_RECOVERY_UPPER_OFF(env));
@@ -324,6 +326,7 @@ try_again:
 		start_offset = (threshold_peb * env->fsi->erasesize) + step;
 		start_offset = max_t(u64, start_offset,
 				     *SSDFS_RECOVERY_CUR_OFF_PTR(env) + step);
+		*SSDFS_RECOVERY_CUR_OFF_PTR(env) = start_offset;
 		err = __ssdfs_find_any_valid_volume_header2(env, start_offset,
 					SSDFS_RECOVERY_UPPER_OFF(env), step);
 		if (!err) {
@@ -390,8 +393,6 @@ try_again:
 			continue;
 		}
 
-		if (*SSDFS_RECOVERY_CUR_OFF_PTR(env) <= next_offset)
-			*SSDFS_RECOVERY_CUR_OFF_PTR(env) = next_offset;
 
 		err = ssdfs_read_checked_sb_info3(env, peb_id, 0);
 		if (err) {

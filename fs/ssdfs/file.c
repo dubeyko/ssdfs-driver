@@ -413,6 +413,7 @@ int ssdfs_readpage(struct file *file, struct page *page)
 	SSDFS_DBG("ino %lu, page_index %lu\n",
 		  file_inode(file)->i_ino, page_index(page));
 
+	ssdfs_account_locked_page(page);
 	err = ssdfs_readpage_nolock(file, page, SSDFS_CURRENT_THREAD_READ);
 	ssdfs_unlock_page(page);
 	return err;
