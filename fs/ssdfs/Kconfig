@@ -43,6 +43,26 @@ config SSDFS_DEBUG
 	  If you are going to debug SSDFS driver then choose Y here.
 	  If unsure, say N.
 
+config SSDFS_MEMORY_LEAKS_ACCOUNTING
+	bool "SSDFS memory leaks accounting"
+	depends on SSDFS
+	help
+	  This option enables accounting of memory allocation
+	  (kmalloc, kzalloc, kcalloc, kmem_cache_alloc, alloc_page)
+	  by means of incrementing a global counters and deallocation
+	  (kfree, kmem_cache_free, free_page) by means decrementing
+	  the same global counters. Also, there are special global counters
+	  that tracking the number of locked/unlocked memory pages.
+	  However, global counters have an unpleasant side effect.
+	  If there are several mounted SSDFS partitions in the system
+	  then memory leaks accounting subsystem is miscalculating
+	  the number of memory leaks and triggers false alarms.
+	  It makes sense to use the memory leaks accounting subsystem
+	  only for single mounted SSDFS partition in the system.
+
+	  If you are going to check memory leaks in SSDFS driver then
+	  choose Y here. If unsure, say N.
+
 config SSDFS_POSIX_ACL
 	bool "SSDFS POSIX Access Control Lists"
 	depends on SSDFS

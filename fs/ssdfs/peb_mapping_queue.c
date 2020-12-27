@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/peb_mapping_queue.c - PEB mappings queue implementation.
  *
- * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2021 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -17,11 +17,11 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_map_queue_page_leaks;
 atomic64_t ssdfs_map_queue_memory_leaks;
 atomic64_t ssdfs_map_queue_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_map_queue_cache_leaks_increment(void *kaddr)
@@ -35,24 +35,24 @@ atomic64_t ssdfs_map_queue_cache_leaks;
  * void ssdfs_map_queue_free_page(struct page *page)
  * void ssdfs_map_queue_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_queue)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(map_queue)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_map_queue_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_map_queue_page_leaks, 0);
 	atomic64_set(&ssdfs_map_queue_memory_leaks, 0);
 	atomic64_set(&ssdfs_map_queue_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_map_queue_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_map_queue_page_leaks) != 0) {
 		SSDFS_ERR("MAPPING QUEUE: "
 			  "memory leaks include %lld pages\n",
@@ -70,7 +70,7 @@ void ssdfs_map_queue_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_map_queue_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static struct kmem_cache *ssdfs_peb_mapping_info_cachep;

@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/btree.c - generalized btree functionality implementation.
  *
- * Copyright (c) 2014-2020 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2021 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2020, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -35,11 +35,11 @@
 #include "btree_hierarchy.h"
 #include "btree.h"
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_btree_page_leaks;
 atomic64_t ssdfs_btree_memory_leaks;
 atomic64_t ssdfs_btree_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_btree_cache_leaks_increment(void *kaddr)
@@ -53,24 +53,24 @@ atomic64_t ssdfs_btree_cache_leaks;
  * void ssdfs_btree_free_page(struct page *page)
  * void ssdfs_btree_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(btree)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(btree)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_btree_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_btree_page_leaks, 0);
 	atomic64_set(&ssdfs_btree_memory_leaks, 0);
 	atomic64_set(&ssdfs_btree_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_btree_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_btree_page_leaks) != 0) {
 		SSDFS_ERR("BTREE: "
 			  "memory leaks include %lld pages\n",
@@ -88,7 +88,7 @@ void ssdfs_btree_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_btree_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 /*

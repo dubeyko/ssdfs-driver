@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/sequence_array.c - sequence array implementation.
  *
- * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2021 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -20,11 +20,11 @@
 #include "ssdfs.h"
 #include "sequence_array.h"
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_seq_arr_page_leaks;
 atomic64_t ssdfs_seq_arr_memory_leaks;
 atomic64_t ssdfs_seq_arr_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_seq_arr_cache_leaks_increment(void *kaddr)
@@ -38,24 +38,24 @@ atomic64_t ssdfs_seq_arr_cache_leaks;
  * void ssdfs_seq_arr_free_page(struct page *page)
  * void ssdfs_seq_arr_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seq_arr)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(seq_arr)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_seq_arr_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_seq_arr_page_leaks, 0);
 	atomic64_set(&ssdfs_seq_arr_memory_leaks, 0);
 	atomic64_set(&ssdfs_seq_arr_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_seq_arr_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_seq_arr_page_leaks) != 0) {
 		SSDFS_ERR("SEQUENCE ARRAY: "
 			  "memory leaks include %lld pages\n",
@@ -73,7 +73,7 @@ void ssdfs_seq_arr_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_seq_arr_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 /*
@@ -344,6 +344,8 @@ void *ssdfs_sequence_array_get_item(struct ssdfs_sequence_array *array,
 		return ERR_PTR(-ENOENT);
 	}
 
+	SSDFS_DBG("item_ptr %p\n", item_ptr);
+
 	return item_ptr;
 }
 
@@ -387,6 +389,9 @@ int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
 		spin_unlock(&array->lock);
 
 		rcu_read_unlock();
+
+		SSDFS_DBG("id %llu, item_ptr %p\n",
+			  (u64)iter.index, item_ptr);
 
 		err = apply_action(item_ptr);
 		if (unlikely(err)) {
@@ -473,6 +478,9 @@ int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
 		goto finish_change_state;
 	}
 
+	SSDFS_DBG("id %llu, item_ptr %p\n",
+		  (u64)id, item_ptr);
+
 	err = change_state(item_ptr, old_state, new_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to change state: "
@@ -550,6 +558,9 @@ int ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
 
 		rcu_read_unlock();
 
+		SSDFS_DBG("id %llu, item_ptr %p\n",
+			  (u64)iter.index, item_ptr);
+
 		err = change_state(item_ptr, old_state, new_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change state: "
@@ -597,11 +608,13 @@ bool has_ssdfs_sequence_array_state(struct ssdfs_sequence_array *array,
 	BUG_ON(!array);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("array %p\n", array);
+	SSDFS_DBG("array %p, tag %#x\n", array, tag);
 
 	spin_lock(&array->lock);
 	res = radix_tree_tagged(&array->map, tag);
 	spin_unlock(&array->lock);
+
+	SSDFS_DBG("res %#x\n", res);
 
 	return res;
 }

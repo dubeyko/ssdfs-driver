@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/super.c - module and superblock management.
  *
- * Copyright (c) 2014-2020 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2021 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2020, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -55,7 +55,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_allocated_pages;
 atomic64_t ssdfs_memory_leaks;
 atomic64_t ssdfs_super_page_leaks;
@@ -63,7 +63,7 @@ atomic64_t ssdfs_super_memory_leaks;
 atomic64_t ssdfs_super_cache_leaks;
 
 atomic64_t ssdfs_locked_pages;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_super_cache_leaks_increment(void *kaddr)
@@ -77,24 +77,24 @@ atomic64_t ssdfs_locked_pages;
  * void ssdfs_super_free_page(struct page *page)
  * void ssdfs_super_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(super)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(super)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_super_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_super_page_leaks, 0);
 	atomic64_set(&ssdfs_super_memory_leaks, 0);
 	atomic64_set(&ssdfs_super_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_super_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_super_page_leaks) != 0) {
 		SSDFS_ERR("SUPER: "
 			  "memory leaks include %lld pages\n",
@@ -112,7 +112,7 @@ void ssdfs_super_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_super_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 struct ssdfs_payload_content {
@@ -1863,27 +1863,27 @@ finish_commit_super:
 
 static void ssdfs_memory_page_locks_checker_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_locked_pages, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static void ssdfs_check_memory_page_locks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_locked_pages) != 0) {
 		SSDFS_WARN("Lock keeps %lld memory pages\n",
 			   atomic64_read(&ssdfs_locked_pages));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static void ssdfs_memory_leaks_checker_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_allocated_pages, 0);
 	atomic64_set(&ssdfs_memory_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	ssdfs_acl_memory_leaks_init();
 	ssdfs_block_bmap_memory_leaks_init();
@@ -2000,7 +2000,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_super_check_memory_leaks();
 	ssdfs_xattr_check_memory_leaks();
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
 		SSDFS_WARN("Memory leaks include %lld pages\n",
 			   atomic64_read(&ssdfs_allocated_pages));
@@ -2010,7 +2010,7 @@ static void ssdfs_check_memory_leaks(void)
 		SSDFS_WARN("Memory allocator suffers from %lld leaks\n",
 			   atomic64_read(&ssdfs_memory_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)

@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/fs_error.c - logic for the case of file system errors detection.
  *
- * Copyright (c) 2014-2020 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2021 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2020, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -24,11 +24,11 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_fs_error_page_leaks;
 atomic64_t ssdfs_fs_error_memory_leaks;
 atomic64_t ssdfs_fs_error_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_fs_error_cache_leaks_increment(void *kaddr)
@@ -42,24 +42,24 @@ atomic64_t ssdfs_fs_error_cache_leaks;
  * void ssdfs_fs_error_free_page(struct page *page)
  * void ssdfs_fs_error_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(fs_error)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(fs_error)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_fs_error_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_fs_error_page_leaks, 0);
 	atomic64_set(&ssdfs_fs_error_memory_leaks, 0);
 	atomic64_set(&ssdfs_fs_error_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_fs_error_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_fs_error_page_leaks) != 0) {
 		SSDFS_ERR("FS ERROR: "
 			  "memory leaks include %lld pages\n",
@@ -77,7 +77,7 @@ void ssdfs_fs_error_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_fs_error_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static void ssdfs_handle_error(struct super_block *sb)

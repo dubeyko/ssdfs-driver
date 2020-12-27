@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/recovery_fast_search.c - fast superblock search.
  *
- * Copyright (c) 2020 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2020-2021 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -432,9 +432,11 @@ finish_check:
 
 int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 {
+#ifdef CONFIG_SSDFS_DEBUG
+	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+#endif /* CONFIG_SSDFS_DEBUG */
 	struct super_block *sb;
 	struct ssdfs_volume_header *vh;
-	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	u64 leb_id;
 	u64 peb_id;
 	bool magic_valid = false;

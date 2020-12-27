@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/compression.c - compression logic implementation.
  *
- * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2021 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -24,11 +24,11 @@
 #include "ssdfs.h"
 #include "compression.h"
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_compr_page_leaks;
 atomic64_t ssdfs_compr_memory_leaks;
 atomic64_t ssdfs_compr_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_compr_cache_leaks_increment(void *kaddr)
@@ -42,24 +42,24 @@ atomic64_t ssdfs_compr_cache_leaks;
  * void ssdfs_compr_free_page(struct page *page)
  * void ssdfs_compr_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(compr)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(compr)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_compr_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_compr_page_leaks, 0);
 	atomic64_set(&ssdfs_compr_memory_leaks, 0);
 	atomic64_set(&ssdfs_compr_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_compr_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_compr_page_leaks) != 0) {
 		SSDFS_ERR("COMPRESSION: "
 			  "memory leaks include %lld pages\n",
@@ -77,7 +77,7 @@ void ssdfs_compr_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_compr_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 struct ssdfs_compressor *ssdfs_compressors[SSDFS_COMPR_TYPES_CNT];

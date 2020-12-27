@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/ssdfs_inline.h - inline functions and macros.
  *
- * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2021 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -50,35 +50,35 @@
 
 #endif /* CONFIG_SSDFS_DEBUG */
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 extern atomic64_t ssdfs_allocated_pages;
 extern atomic64_t ssdfs_memory_leaks;
 
 extern atomic64_t ssdfs_locked_pages;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 static inline
 void ssdfs_memory_leaks_increment(void *kaddr)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_inc(&ssdfs_memory_leaks);
 
 	SSDFS_DBG("memory %px, allocation count %lld\n",
 		  kaddr,
 		  atomic64_read(&ssdfs_memory_leaks));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static inline
 void ssdfs_memory_leaks_decrement(void *kaddr)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_dec(&ssdfs_memory_leaks);
 
 	SSDFS_DBG("memory %px, allocation count %lld\n",
 		  kaddr,
 		  atomic64_read(&ssdfs_memory_leaks));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static inline
@@ -151,20 +151,20 @@ void ssdfs_lock_page(struct page *page)
 {
 	lock_page(page);
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_locked_pages) < 0) {
 		SSDFS_WARN("ssdfs_locked_pages %lld\n",
 			   atomic64_read(&ssdfs_locked_pages));
 	}
 
 	atomic64_inc(&ssdfs_locked_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static inline
 void ssdfs_account_locked_page(struct page *page)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (!page)
 		return;
 
@@ -179,29 +179,29 @@ void ssdfs_account_locked_page(struct page *page)
 	}
 
 	atomic64_inc(&ssdfs_locked_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static inline
 void ssdfs_unlock_page(struct page *page)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (!PageLocked(page)) {
 		SSDFS_WARN("page %p, page_index %llu\n",
 			   page, (u64)page_index(page));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	unlock_page(page);
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_dec(&ssdfs_locked_pages);
 
 	if (atomic64_read(&ssdfs_locked_pages) < 0) {
 		SSDFS_WARN("ssdfs_locked_pages %lld\n",
 			   atomic64_read(&ssdfs_locked_pages));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static inline
@@ -220,12 +220,12 @@ struct page *ssdfs_alloc_page(gfp_t gfp_mask)
 	SSDFS_DBG("page %px, count %d\n",
 		  page, page_ref_count(page));
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_inc(&ssdfs_allocated_pages);
 
 	SSDFS_DBG("page %px, allocated_pages %lld\n",
 		  page, atomic64_read(&ssdfs_allocated_pages));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	return page;
 }
@@ -293,12 +293,12 @@ void ssdfs_free_page(struct page *page)
 	if (!page)
 		return;
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (PageLocked(page)) {
 		SSDFS_WARN("page %px is still locked\n",
 			   page);
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	ssdfs_put_page(page);
 
@@ -311,12 +311,12 @@ void ssdfs_free_page(struct page *page)
 			  page, page_ref_count(page));
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_dec(&ssdfs_allocated_pages);
 
 	SSDFS_DBG("page %px, allocated_pages %lld\n",
 		  page, atomic64_read(&ssdfs_allocated_pages));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	__free_pages(page, 0);
 }
@@ -339,12 +339,12 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 		if (!page)
 			continue;
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 		if (PageLocked(page)) {
 			SSDFS_WARN("page %px is still locked\n",
 				   page);
 		}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 		ssdfs_put_page(page);
 
@@ -357,13 +357,13 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 				  page, page_ref_count(page));
 		}
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 		atomic64_dec(&ssdfs_allocated_pages);
 
 		SSDFS_DBG("page %px, allocated_pages %lld\n",
 			  page,
 			  atomic64_read(&ssdfs_allocated_pages));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 	}
 
 	pagevec_release(pvec);
@@ -394,7 +394,7 @@ void *ssdfs_##name##_kmalloc(size_t size, gfp_t flags)			\
 	void *kaddr = ssdfs_kmalloc(size, flags);			\
 	if (kaddr) {							\
 		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
-		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
 			  kaddr,					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
@@ -406,7 +406,7 @@ void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
 	void *kaddr = ssdfs_kzalloc(size, flags);			\
 	if (kaddr) {							\
 		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
-		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
 			  kaddr,					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
@@ -418,7 +418,7 @@ void *ssdfs_##name##_kcalloc(size_t n, size_t size, gfp_t flags)	\
 	void *kaddr = ssdfs_kcalloc(n, size, flags);			\
 	if (kaddr) {							\
 		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
-		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
 			  kaddr,					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
@@ -429,7 +429,7 @@ void ssdfs_##name##_kfree(void *kaddr)					\
 {									\
 	if (kaddr) {							\
 		atomic64_dec(&ssdfs_##name##_memory_leaks);		\
-		SSDFS_DBG("memory %px, allocation count %lld\n",	\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
 			  kaddr,					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
@@ -442,7 +442,7 @@ struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
 	page = ssdfs_alloc_page(gfp_mask);				\
 	if (!IS_ERR_OR_NULL(page)) {					\
 		atomic64_inc(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
 			  page,						\
 			  atomic64_read(&ssdfs_##name##_page_leaks));	\
 	}								\
@@ -453,7 +453,7 @@ void ssdfs_##name##_account_page(struct page *page)			\
 {									\
 	if (page) {							\
 		atomic64_inc(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
 			  page,						\
 			  atomic64_read(&ssdfs_##name##_page_leaks));	\
 	}								\
@@ -463,7 +463,7 @@ void ssdfs_##name##_forget_page(struct page *page)			\
 {									\
 	if (page) {							\
 		atomic64_dec(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
 			  page,						\
 			  atomic64_read(&ssdfs_##name##_page_leaks));	\
 	}								\
@@ -475,7 +475,7 @@ struct page *ssdfs_##name##_add_pagevec_page(struct pagevec *pvec)	\
 	page = ssdfs_add_pagevec_page(pvec);				\
 	if (!IS_ERR_OR_NULL(page)) {					\
 		atomic64_inc(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
 			  page,						\
 			  atomic64_read(&ssdfs_##name##_page_leaks));	\
 	}								\
@@ -486,7 +486,7 @@ void ssdfs_##name##_free_page(struct page *page)			\
 {									\
 	if (page) {							\
 		atomic64_dec(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %px, allocated_pages %lld\n",		\
+		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
 			  page,						\
 			  atomic64_read(&ssdfs_##name##_page_leaks));	\
 	}								\
@@ -502,7 +502,7 @@ void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
 			if (!page)					\
 				continue;				\
 			atomic64_dec(&ssdfs_##name##_page_leaks);	\
-			SSDFS_DBG("page %px, allocated_pages %lld\n",	\
+			SSDFS_DBG("page %p, allocated_pages %lld\n",	\
 			    page,					\
 			    atomic64_read(&ssdfs_##name##_page_leaks));	\
 		}							\

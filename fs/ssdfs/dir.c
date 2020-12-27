@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/dir.c - folder operations.
  *
- * Copyright (c) 2019-2020 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2021 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -29,11 +29,11 @@
 
 #include <trace/events/ssdfs.h>
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_dir_page_leaks;
 atomic64_t ssdfs_dir_memory_leaks;
 atomic64_t ssdfs_dir_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_dir_cache_leaks_increment(void *kaddr)
@@ -47,24 +47,24 @@ atomic64_t ssdfs_dir_cache_leaks;
  * void ssdfs_dir_free_page(struct page *page)
  * void ssdfs_dir_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dir)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(dir)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_dir_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_dir_page_leaks, 0);
 	atomic64_set(&ssdfs_dir_memory_leaks, 0);
 	atomic64_set(&ssdfs_dir_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_dir_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_dir_page_leaks) != 0) {
 		SSDFS_ERR("DIR: "
 			  "memory leaks include %lld pages\n",
@@ -82,7 +82,7 @@ void ssdfs_dir_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_dir_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 static unsigned char

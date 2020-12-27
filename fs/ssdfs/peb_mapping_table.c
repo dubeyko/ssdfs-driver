@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_mapping_table.c - PEB mapping table implementation.
  *
- * Copyright (c) 2014-2020 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2021 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2020, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -39,11 +39,11 @@
 
 #include <trace/events/ssdfs.h>
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_map_tbl_page_leaks;
 atomic64_t ssdfs_map_tbl_memory_leaks;
 atomic64_t ssdfs_map_tbl_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_map_tbl_cache_leaks_increment(void *kaddr)
@@ -57,24 +57,24 @@ atomic64_t ssdfs_map_tbl_cache_leaks;
  * void ssdfs_map_tbl_free_page(struct page *page)
  * void ssdfs_map_tbl_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_tbl)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(map_tbl)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_map_tbl_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_map_tbl_page_leaks, 0);
 	atomic64_set(&ssdfs_map_tbl_memory_leaks, 0);
 	atomic64_set(&ssdfs_map_tbl_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_map_tbl_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_map_tbl_page_leaks) != 0) {
 		SSDFS_ERR("MAPPING TABLE: "
 			  "memory leaks include %lld pages\n",
@@ -92,7 +92,7 @@ void ssdfs_map_tbl_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_map_tbl_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 /*
@@ -3103,6 +3103,11 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 							     0, 0, 0,
 							     req2);
 		}
+
+		SSDFS_DBG("area_start %lu, area_size %lu, "
+			  "processed_pages %lu, tbl->fragment_pages %u\n",
+			  area_start, area_size, processed_pages,
+			  tbl->fragment_pages);
 
 		page = ssdfs_page_array_get_page_locked(&fdesc->array,
 							area_start);

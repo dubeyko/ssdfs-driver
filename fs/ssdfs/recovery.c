@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/recovery.c - searching actual state and recovery on mount code.
  *
- * Copyright (c) 2014-2020 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2021 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2020, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -32,11 +32,11 @@
 
 #include <trace/events/ssdfs.h>
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_recovery_page_leaks;
 atomic64_t ssdfs_recovery_memory_leaks;
 atomic64_t ssdfs_recovery_cache_leaks;
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
  * void ssdfs_recovery_cache_leaks_increment(void *kaddr)
@@ -50,24 +50,24 @@ atomic64_t ssdfs_recovery_cache_leaks;
  * void ssdfs_recovery_free_page(struct page *page)
  * void ssdfs_recovery_pagevec_release(struct pagevec *pvec)
  */
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(recovery)
 #else
 	SSDFS_MEMORY_ALLOCATOR_FNS(recovery)
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 void ssdfs_recovery_memory_leaks_init(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_recovery_page_leaks, 0);
 	atomic64_set(&ssdfs_recovery_memory_leaks, 0);
 	atomic64_set(&ssdfs_recovery_cache_leaks, 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 void ssdfs_recovery_check_memory_leaks(void)
 {
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_recovery_page_leaks) != 0) {
 		SSDFS_ERR("RECOVERY: "
 			  "memory leaks include %lld pages\n",
@@ -85,7 +85,7 @@ void ssdfs_recovery_check_memory_leaks(void)
 			  "caches suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_recovery_cache_leaks));
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
