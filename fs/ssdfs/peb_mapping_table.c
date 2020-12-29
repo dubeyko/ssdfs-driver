@@ -1525,6 +1525,9 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 			goto finish_fragment_init;
 		}
 
+		SSDFS_DBG("page_index %d, page %p\n",
+			  i, page);
+
 		ssdfs_lock_page(page);
 		SetPagePrivate(page);
 		SetPageUptodate(page);
@@ -3205,7 +3208,7 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	u32 fragments_count;
-	bool has_backup;
+	int state;
 	u32 i;
 	int err = 0;
 
@@ -3217,26 +3220,66 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 	SSDFS_DBG("maptbl %p\n", tbl);
 
 	fragments_count = tbl->fragments_count;
-	has_backup = atomic_read(&tbl->flags) & SSDFS_MAPTBL_HAS_COPY;
 
 	for (i = 0; i < fragments_count; i++) {
 		fdesc = &tbl->desc_array[i];
 
-		down_write(&fdesc->lock);
+		state = atomic_read(&fdesc->state);
+		if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
+			SSDFS_ERR("fragment is corrupted: index %u\n",
+				  i);
+			return -EFAULT;
+		} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+			struct completion *end = &fdesc->init_end;
+			unsigned long res;
 
+			up_read(&tbl->tbl_lock);
+
+			SSDFS_DBG("wait fragment initialization end: "
+				  "index %u, state %#x\n",
+				  i, state);
+
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				SSDFS_ERR("maptbl's fragment init failed: "
+					  "index %u\n", i);
+				return -ERANGE;
+			}
+			down_read(&tbl->tbl_lock);
+		}
+
+		state = atomic_read(&fdesc->state);
+		switch (state) {
+		case SSDFS_MAPTBL_FRAG_INITIALIZED:
+		case SSDFS_MAPTBL_FRAG_DIRTY:
+			/* expected state */
+			break;
+
+		case SSDFS_MAPTBL_FRAG_CREATED:
+		case SSDFS_MAPTBL_FRAG_INIT_FAILED:
+			SSDFS_WARN("fragment is not initialized: "
+				   "index %u, state %#x\n",
+				   i, state);
+			return -EFAULT;
+
+		default:
+			SSDFS_WARN("unexpected fragment state: "
+				   "index %u, state %#x\n",
+				   i, atomic_read(&fdesc->state));
+			return -ERANGE;
+		}
+
+		down_write(&fdesc->lock);
 		err = __ssdfs_maptbl_prepare_migration(tbl, fdesc, i);
+		up_write(&fdesc->lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare migration: "
 				  "fragment_index %u, err %d\n",
 				  i, err);
-			goto finish_fragment_processing;
-		}
-
-finish_fragment_processing:
-		up_write(&fdesc->lock);
-
-		if (unlikely(err))
 			return err;
+		}
 	}
 
 	return 0;

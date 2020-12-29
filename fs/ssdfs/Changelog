@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.82 [December 29, 2020]
+    (*) Fix bug in PEB mapping table's flushing logic.
+
 v.3.81 [December 27, 2020]
     (*) Rework memory leaks accounting subsystem.
 
