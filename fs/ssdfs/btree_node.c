@@ -733,7 +733,7 @@ int ssdfs_btree_node_allocate_content_space(struct ssdfs_btree_node *node,
 			goto finish_init_pvec;
 		}
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		pagevec_add(&node->content.pvec, page);

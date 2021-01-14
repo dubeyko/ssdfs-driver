@@ -458,7 +458,7 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		read_bytes += iter_read_bytes;
@@ -576,7 +576,7 @@ fail_copy_desc_array:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
@@ -648,7 +648,7 @@ fail_read_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	SSDFS_ERR("fail to read locked page: "
@@ -820,7 +820,7 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (cur_item->chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
@@ -971,7 +971,7 @@ read_next_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	size -= read_size;
@@ -1050,7 +1050,7 @@ read_next_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	size -= read_size;
@@ -2095,7 +2095,7 @@ fail_read_footer:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (err == -ENODATA) {
@@ -2291,7 +2291,7 @@ fail_read_log_header:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (err == -ENODATA) {
@@ -2550,7 +2550,7 @@ int ssdfs_peb_get_log_pages_count(struct ssdfs_fs_info *fsi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -2670,7 +2670,7 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		magic = (struct ssdfs_signature *)env->log_hdr;
@@ -2990,7 +2990,7 @@ int ssdfs_get_segment_header_blk_bmap_desc(struct ssdfs_peb_info *pebi,
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 
@@ -3087,7 +3087,7 @@ int ssdfs_get_partial_header_blk_bmap_desc(struct ssdfs_peb_info *pebi,
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 
@@ -3172,7 +3172,7 @@ int ssdfs_pre_fetch_block_bitmap(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -3260,13 +3260,13 @@ finish_read_page:
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		} else {
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 	}
@@ -3456,7 +3456,7 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -3532,13 +3532,13 @@ finish_read_page:
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		} else {
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 	}
@@ -3609,7 +3609,7 @@ int ssdfs_read_checked_block_bitmap_header(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -5549,7 +5549,7 @@ int ssdfs_find_prev_partial_log(struct ssdfs_fs_info *fsi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		magic = (struct ssdfs_signature *)env->log_hdr;
@@ -7367,7 +7367,7 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 
@@ -7405,7 +7405,7 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 		break;

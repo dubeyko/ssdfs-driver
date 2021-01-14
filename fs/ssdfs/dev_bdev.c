@@ -152,7 +152,7 @@ static int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
 	BUG_ON(!bio || !page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	res = bio_add_page(bio, page, len, offset);
@@ -198,7 +198,7 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 	bio_set_dev(bio, sb->s_bdev);
 	bio_set_op_attrs(bio, op, op_flags);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	err = ssdfs_bdev_bio_add_page(bio, page, PAGE_SIZE, 0);
@@ -272,7 +272,7 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 		BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 		err = ssdfs_bdev_bio_add_page(bio, page,
@@ -445,7 +445,7 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 		ssdfs_lock_page(page);
 		pagevec_add(&pvec, page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -492,7 +492,7 @@ finish_bdev_read_pvec:
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			ssdfs_dev_bdev_free_page(page);
@@ -684,7 +684,7 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
@@ -780,7 +780,7 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 

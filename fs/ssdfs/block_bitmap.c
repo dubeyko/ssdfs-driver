@@ -304,7 +304,7 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 				return err;
 			}
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			pagevec_add(&ptr->storage.pvec, page);

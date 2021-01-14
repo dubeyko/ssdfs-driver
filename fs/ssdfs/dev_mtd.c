@@ -368,7 +368,7 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;

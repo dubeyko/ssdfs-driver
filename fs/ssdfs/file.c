@@ -1660,7 +1660,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 				ssdfs_unlock_page(page);
 				ssdfs_put_page(page);
 
-				SSDFS_DBG("page %px, count %d\n",
+				SSDFS_DBG("page %p, count %d\n",
 					  page, page_ref_count(page));
 				SSDFS_DBG("volume hasn't free space\n");
 				return err;
@@ -1738,7 +1738,7 @@ out:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err ? err : copied;

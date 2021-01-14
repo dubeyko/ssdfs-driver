@@ -463,7 +463,7 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 	} else {
 		ssdfs_get_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		array->pages[page_index] = page;
@@ -643,7 +643,7 @@ finish_get_page:
 
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return page;
@@ -736,7 +736,7 @@ struct page *ssdfs_page_array_grab_page(struct ssdfs_page_array *array,
 		} else {
 			ssdfs_get_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 	} else if (IS_ERR_OR_NULL(page)) {
@@ -1217,7 +1217,7 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 			}
 			ssdfs_get_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			pagevec_add(pvec, page);
@@ -1360,7 +1360,7 @@ finish_delete_page:
 
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	ssdfs_parray_forget_page(page);
@@ -1482,7 +1482,7 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			ssdfs_parray_free_page(page);

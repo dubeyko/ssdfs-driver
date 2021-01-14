@@ -173,7 +173,7 @@ struct ssdfs_blk2off_table {
 	u16 last_allocated_blk;
 	unsigned long *lbmap[SSDFS_LBMAP_ARRAY_MAX];
 	struct ssdfs_offset_position *lblk2off;
-	struct ssdfs_migrating_block *migrating_blks;
+	struct ssdfs_migrating_block **migrating_blks;
 	u16 lblk2off_capacity;
 
 	struct ssdfs_phys_offset_table_array *peb;

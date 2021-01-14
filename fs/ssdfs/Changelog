@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.83 [January 14, 2021]
+    (*) Fix bugs in new mount logic (step 7).
+
 v.3.82 [December 29, 2020]
     (*) Fix bug in PEB mapping table's flushing logic.
 

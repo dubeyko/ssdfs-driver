@@ -404,7 +404,7 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 #endif /* CONFIG_SSDFS_DEBUG */

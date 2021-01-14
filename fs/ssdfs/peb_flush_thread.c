@@ -607,7 +607,7 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 	ssdfs_put_page(page);
 	ssdfs_unlock_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	metadata->area.blk_desc.items_count = 0;
@@ -1279,7 +1279,7 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (err)
@@ -1380,7 +1380,7 @@ int ssdfs_peb_store_block_state_desc(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -1945,7 +1945,7 @@ bool has_current_page_free_space(struct ssdfs_peb_info *pebi,
 		is_page_available = true;
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -2033,7 +2033,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			index_start++;
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 	} while (index_start < index_end);
@@ -2077,7 +2077,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		ssdfs_put_page(page);
 		ssdfs_unlock_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
@@ -2347,7 +2347,7 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -3378,7 +3378,7 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err))
@@ -4917,7 +4917,7 @@ int ssdfs_reserve_segment_header(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	*write_offset = offsetof(struct ssdfs_segment_header, payload);
@@ -4989,7 +4989,7 @@ int ssdfs_reserve_partial_log_header(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	*write_offset = offsetof(struct ssdfs_partial_log_header, payload);
@@ -5111,7 +5111,7 @@ try_get_next_page:
 		ssdfs_unlock_page(dst_page);
 		ssdfs_put_page(dst_page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  dst_page, page_ref_count(dst_page));
 
 		if (err == -EAGAIN) {
@@ -5314,7 +5314,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 fail_store_bmap_fragment:
@@ -6118,7 +6118,7 @@ finish_bmap_hdr_preparation:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_store_block_bitmap:
@@ -6245,7 +6245,7 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
@@ -6309,7 +6309,7 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 try_copy_area_data:
 			ssdfs_lock_page(page1);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page1, page_ref_count(page1));
 
 			if (*write_offset >= PAGE_SIZE)
@@ -6362,13 +6362,13 @@ unlock_page2:
 			ssdfs_unlock_page(page2);
 			ssdfs_put_page(page2);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page2, page_ref_count(page2));
 
 unlock_page1:
 			ssdfs_unlock_page(page1);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page1, page_ref_count(page1));
 
 finish_current_copy:
@@ -6523,7 +6523,7 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
@@ -6570,7 +6570,7 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 
 			ssdfs_lock_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			page2 = ssdfs_page_array_delete_page(smap, src_off);
@@ -6613,7 +6613,7 @@ finish_current_move:
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			if (unlikely(err)) {
@@ -6840,7 +6840,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
@@ -7184,7 +7184,7 @@ finish_segment_header_preparation:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
@@ -7734,7 +7734,7 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
@@ -7852,7 +7852,7 @@ finish_pl_header_preparation:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err)) {
@@ -10023,33 +10023,6 @@ finish_process_free_space_absence:
 			}
 		}
 
-		if (has_commit_log_now_requested(pebc) &&
-		    is_create_requests_queue_empty(pebc)) {
-			/*
-			 * If no other commands in the queue
-			 * then ignore the log creation now.
-			 */
-			SSDFS_DBG("Don't create log: COMMIT_LOG_NOW command: "
-				  "seg %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-			goto repeat;
-		}
-
-		if (has_start_migration_now_requested(pebc)) {
-			/*
-			 * No necessity to create log
-			 * for START_MIGRATION_NOW command.
-			 */
-			SSDFS_DBG("Don't create log: START_MIGRATION_NOW command: "
-				  "seg %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-			goto repeat;
-		}
-
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi)) {
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -10084,6 +10057,35 @@ finish_process_free_space_absence:
 			ssdfs_unlock_current_peb(pebc);
 			thread_state = SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
 			goto sleep_flush_thread;
+		}
+
+		if (has_commit_log_now_requested(pebc) &&
+		    is_create_requests_queue_empty(pebc)) {
+			/*
+			 * If no other commands in the queue
+			 * then ignore the log creation now.
+			 */
+			 SSDFS_DBG("Don't create log: COMMIT_LOG_NOW command: "
+				  "seg %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+			ssdfs_unlock_current_peb(pebc);
+			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+			goto repeat;
+		}
+
+		if (has_start_migration_now_requested(pebc)) {
+			/*
+			 * No necessity to create log
+			 * for START_MIGRATION_NOW command.
+			 */
+			 SSDFS_DBG("Don't create log: START_MIGRATION_NOW command: "
+				  "seg %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+			ssdfs_unlock_current_peb(pebc);
+			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+			goto repeat;
 		}
 
 		if (is_peb_exhausted) {
@@ -10811,6 +10813,7 @@ process_migration_failure:
 		if (state != SSDFS_LOG_CREATED) {
 			thread_state =
 				SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+			goto sleep_flush_thread;
 		} else {
 			thread_state =
 				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;

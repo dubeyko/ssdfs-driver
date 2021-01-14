@@ -2024,7 +2024,7 @@ finish_tree_processing:
 					  le64_to_cpu(dentry->ino),
 					  hash);
 
-				SSDFS_DBG("dentry %px, name %px\n",
+				SSDFS_DBG("dentry %p, name %p\n",
 					  dentry, dentry->inline_string);
 
 				if (!dir_emit(ctx,

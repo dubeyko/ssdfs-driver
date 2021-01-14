@@ -2293,7 +2293,7 @@ fail_issue_fragment_updates:
 	for (j = 0; j < pagevec_count(&pvec); j++) {
 		ssdfs_put_page(pvec.pages[j]);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  pvec.pages[j],
 			  page_ref_count(pvec.pages[j]));
 	}
@@ -2322,7 +2322,7 @@ finish_fragment_update:
 		for (j = 0; j < pagevec_count(&pvec); j++) {
 			ssdfs_put_page(pvec.pages[j]);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  pvec.pages[j],
 				  page_ref_count(pvec.pages[j]));
 		}
@@ -2439,7 +2439,7 @@ int ssdfs_maptbl_flush_dirty_fragments(struct ssdfs_peb_mapping_table *tbl)
 		goto finish_flush_dirty_fragments;
 	}
 
-	SSDFS_DBG("bmap %px, found %px\n", bmap, found);
+	SSDFS_DBG("bmap %p, found %p\n", bmap, found);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(((found - bmap) * BITS_PER_LONG) >= U32_MAX);
@@ -2803,7 +2803,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
@@ -3131,7 +3131,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (unlikely(err)) {
@@ -3588,7 +3588,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -3765,7 +3765,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -4190,7 +4190,7 @@ finish_physical_index_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (err)
@@ -4303,7 +4303,7 @@ finish_relation_index_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -4421,7 +4421,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -4545,7 +4545,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -4647,7 +4647,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -5952,7 +5952,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -6157,7 +6157,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_fragment_change:
@@ -6343,7 +6343,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_fragment_change:
@@ -6730,7 +6730,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -7051,7 +7051,7 @@ try_next_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
@@ -7185,7 +7185,7 @@ finish_set_peb_descriptor:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -7282,7 +7282,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -7869,7 +7869,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -8086,7 +8086,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -8401,7 +8401,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -8623,7 +8623,7 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;
@@ -8982,7 +8982,7 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 	}

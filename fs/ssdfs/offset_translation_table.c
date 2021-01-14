@@ -309,6 +309,102 @@ finish_fragment_init:
 }
 
 /*
+ * ssdfs_get_migrating_block() - get pointer on migrating block
+ * @table: pointer on translation table object
+ * @logical_blk: logical block ID
+ * @need_allocate: should descriptor being allocated?
+ *
+ * This method tries to return pointer on migrating block's
+ * descriptor. In the case of necessity the descriptor
+ * will be allocated (if @need_allocate is true).
+ *
+ * RETURN:
+ * [success] - pointer on migrating block's descriptor.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid value.
+ * %-ENOMEM     - fail to allocate memory.
+ */
+static
+struct ssdfs_migrating_block *
+ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
+			  u16 logical_blk,
+			  bool need_allocate)
+{
+	struct ssdfs_migrating_block *migrating_blk = NULL;
+	u32 items_count = table->lblk2off_capacity;
+	size_t ptr_size = sizeof(struct ssdfs_migrating_block *);
+	size_t blk_desc_size = sizeof(struct ssdfs_migrating_block);
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!table);
+	BUG_ON(logical_blk >= table->lblk2off_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!table->migrating_blks) {
+		table->migrating_blks =
+			ssdfs_blk2off_kzalloc(ptr_size * items_count,
+						GFP_KERNEL);
+		if (!table->migrating_blks) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate migrating blocks array\n");
+			goto fail_get_migrating_blk;
+		}
+	}
+
+	migrating_blk = table->migrating_blks[logical_blk];
+
+	if (!migrating_blk && need_allocate) {
+		migrating_blk = ssdfs_blk2off_kzalloc(blk_desc_size,
+							GFP_KERNEL);
+		if (!migrating_blk) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate migrating block desc\n");
+			goto fail_get_migrating_blk;
+		}
+
+		table->migrating_blks[logical_blk] = migrating_blk;
+	}
+
+	return migrating_blk;
+
+fail_get_migrating_blk:
+	return ERR_PTR(err);
+}
+
+/*
+ * ssdfs_destroy_migrating_blocks_array() - destroy descriptors array
+ * @table: pointer on translation table object
+ *
+ * This method tries to free memory of migrating block
+ * descriptors array.
+ */
+static
+void ssdfs_destroy_migrating_blocks_array(struct ssdfs_blk2off_table *table)
+{
+	u32 items_count = table->lblk2off_capacity;
+	u32 i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!table);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!table->migrating_blks)
+		return;
+
+	for (i = 0; i < items_count; i++) {
+		if (table->migrating_blks[i]) {
+			ssdfs_blk2off_kfree(table->migrating_blks[i]);
+			table->migrating_blks[i] = NULL;
+		}
+	}
+
+	ssdfs_blk2off_kfree(table->migrating_blks);
+	table->migrating_blks = NULL;
+}
+
+/*
  * ssdfs_blk2off_table_create() - create translation table object
  * @fsi: pointer on shared file system object
  * @items_count: table's capacity
@@ -332,7 +428,6 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	struct ssdfs_blk2off_table *ptr;
 	size_t table_size = sizeof(struct ssdfs_blk2off_table);
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
-	size_t blk_desc_size = sizeof(struct ssdfs_migrating_block);
 	u32 bytes;
 	int i;
 	int err;
@@ -399,14 +494,7 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	}
 	memset(ptr->lblk2off, 0xFF, off_pos_size * items_count);
 
-	ptr->migrating_blks =
-		ssdfs_blk2off_kzalloc(blk_desc_size * items_count,
-					GFP_KERNEL);
-	if (!ptr->migrating_blks) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate migrating blocks array\n");
-		goto free_translation_array;
-	}
+	ptr->migrating_blks = NULL;
 
 	ptr->pebs_count = fsi->pebs_per_seg;
 
@@ -416,7 +504,7 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	if (!ptr->peb) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate phys offsets array\n");
-		goto free_migrating_blks_array;
+		goto free_translation_array;
 	}
 
 	for (i = 0; i < ptr->pebs_count; i++) {
@@ -504,9 +592,6 @@ free_phys_offs_array:
 
 	ssdfs_blk2off_kfree(ptr->peb);
 
-free_migrating_blks_array:
-	ssdfs_blk2off_kfree(ptr->migrating_blks);
-
 free_translation_array:
 	ssdfs_blk2off_kfree(ptr->lblk2off);
 
@@ -573,7 +658,11 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 		migrating_blks = table->last_allocated_blk + 1;
 
 	for (i = 0; i < migrating_blks; i++) {
-		struct ssdfs_migrating_block *blk = &table->migrating_blks[i];
+		struct ssdfs_migrating_block *blk =
+				ssdfs_get_migrating_block(table, i, false);
+
+		if (IS_ERR_OR_NULL(blk))
+			continue;
 
 		switch (blk->state) {
 		case SSDFS_LBLOCK_UNDER_MIGRATION:
@@ -588,8 +677,7 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	ssdfs_blk2off_kfree(table->lblk2off);
 	table->lblk2off = NULL;
 
-	ssdfs_blk2off_kfree(table->migrating_blks);
-	table->migrating_blks = NULL;
+	ssdfs_destroy_migrating_blocks_array(table);
 
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
 		ssdfs_blk2off_kfree(table->lbmap[i]);
@@ -2278,9 +2366,9 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 {
 	unsigned long *bmap_ptr;
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
-	size_t blk_desc_size = sizeof(struct ssdfs_migrating_block);
+	size_t blk_desc_ptr_size = sizeof(struct ssdfs_migrating_block *);
 	u16 *off_ptr;
-	u16 *migrating_ptr;
+	void *migrating_ptr;
 	u32 new_bytes;
 	u16 last_blk;
 	int diff;
@@ -2340,21 +2428,23 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 		(off_pos_size * table->lblk2off_capacity),
 		0xFF, off_pos_size * diff);
 
-	migrating_ptr = krealloc(table->migrating_blks,
-				 blk_desc_size * new_items_count,
-				 GFP_KERNEL | __GFP_ZERO);
-	if (!migrating_ptr) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate migrating blocks array\n");
-		goto finish_table_resize;
-	} else {
-		table->migrating_blks =
-			(struct ssdfs_migrating_block *)migrating_ptr;
+	if (table->migrating_blks) {
+		migrating_ptr = krealloc(table->migrating_blks,
+					 blk_desc_ptr_size * new_items_count,
+					 GFP_KERNEL | __GFP_ZERO);
+		if (!migrating_ptr) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate migrating blocks array\n");
+			goto finish_table_resize;
+		} else {
+			table->migrating_blks =
+				(struct ssdfs_migrating_block **)migrating_ptr;
+		}
 	}
 
 	memset((u8 *)table->migrating_blks +
-		(blk_desc_size * table->lblk2off_capacity),
-		0, blk_desc_size * diff);
+		(blk_desc_ptr_size * table->lblk2off_capacity),
+		0, blk_desc_ptr_size * diff);
 
 	table->lblk2off_capacity = new_items_count;
 	table->free_logical_blks += diff;
@@ -3574,7 +3664,7 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (unlikely(err))
@@ -3673,7 +3763,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (unlikely(err))
@@ -3820,7 +3910,7 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (unlikely(err))
@@ -4365,8 +4455,11 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 	}
 
 	if (migration_state) {
-		blk = &table->migrating_blks[logical_blk];
-		*migration_state = blk->state;
+		blk = ssdfs_get_migrating_block(table, logical_blk, false);
+		if (IS_ERR_OR_NULL(blk))
+			*migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
+		else
+			*migration_state = blk->state;
 	}
 
 	err = ssdfs_blk2off_table_get_checked_position(table, logical_blk,
@@ -5748,7 +5841,14 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		}
 	}
 
-	blk = &table->migrating_blks[logical_blk];
+	blk = ssdfs_get_migrating_block(table, logical_blk, true);
+	if (IS_ERR_OR_NULL(blk)) {
+		err = (blk == NULL ? -ENOENT : PTR_ERR(blk));
+		SSDFS_ERR("fail to get migrating block: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto finish_set_block_migration;
+	}
 
 	switch (blk->state) {
 	case SSDFS_LBLOCK_UNKNOWN_STATE:
@@ -5792,7 +5892,7 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 			goto finish_set_block_migration;
 		}
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5893,7 +5993,11 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		goto finish_get_block_state;
 	}
 
-	blk = &table->migrating_blks[logical_blk];
+	blk = ssdfs_get_migrating_block(table, logical_blk, false);
+	if (IS_ERR_OR_NULL(blk)) {
+		err = -EAGAIN;
+		goto finish_get_block_state;
+	}
 
 	switch (blk->state) {
 	case SSDFS_LBLOCK_UNDER_MIGRATION:
@@ -6020,7 +6124,14 @@ int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,
 		goto finish_set_block_commit;
 	}
 
-	blk = &table->migrating_blks[logical_blk];
+	blk = ssdfs_get_migrating_block(table, logical_blk, false);
+	if (IS_ERR_OR_NULL(blk)) {
+		err = (blk == NULL ? -ENOENT : PTR_ERR(blk));
+		SSDFS_ERR("fail to get migrating block: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto finish_set_block_commit;
+	}
 
 	switch (blk->state) {
 	case SSDFS_LBLOCK_UNDER_MIGRATION:
@@ -6096,7 +6207,9 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 	down_write(&tbl->translation_lock);
 
 	for (i = 0; i <= tbl->last_allocated_blk; i++) {
-		blk = &tbl->migrating_blks[i];
+		blk = ssdfs_get_migrating_block(tbl, i, false);
+		if (IS_ERR_OR_NULL(blk))
+			continue;
 
 		SSDFS_DBG("blk->peb_index %u, peb_index %u\n",
 			  blk->peb_index, peb_index);
@@ -6111,6 +6224,9 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 			SSDFS_DBG("reverting migration state: blk %d\n",
 				  i);
 		}
+
+		ssdfs_blk2off_kfree(tbl->migrating_blks[i]);
+		tbl->migrating_blks[i] = NULL;
 	}
 
 	up_write(&tbl->translation_lock);

@@ -1405,7 +1405,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	/* ->writepage() calls put_page() */
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	/* write segment header */
@@ -1452,7 +1452,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		/* ->writepage() calls put_page() */
 		ssdfs_get_page(payload_page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  payload_page,
 			  page_ref_count(payload_page));
 
@@ -1492,7 +1492,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	/* ->writepage() calls put_page() */
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	/* write log footer */
@@ -1525,7 +1525,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 cleanup_after_failure:
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	ssdfs_super_free_page(page);
@@ -1652,7 +1652,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	/* ->writepage() calls put_page() */
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	payload_page = payload->maptbl_cache.pvec.pages[0];
@@ -1713,7 +1713,7 @@ free_payload_buffer:
 	/* ->writepage() calls put_page() */
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	/* write log footer */
@@ -1746,7 +1746,7 @@ free_payload_buffer:
 cleanup_after_failure:
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	ssdfs_super_free_page(page);

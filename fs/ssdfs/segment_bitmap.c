@@ -818,7 +818,7 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 
 		page->mapping = NULL;
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		ssdfs_put_page(page);
@@ -1124,7 +1124,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	ssdfs_get_page(page);
 	page->index = sequence_id;
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	down_write(&segbmap->search_lock);
@@ -1140,7 +1140,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		page->mapping = NULL;
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 	} else {
 		page->mapping = &segbmap->pages;
@@ -1400,7 +1400,7 @@ fail_copy_fragment:
 	ssdfs_unlock_page(spage);
 	ssdfs_put_page(spage);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  spage, page_ref_count(spage));
 
 	return err;
@@ -2094,7 +2094,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
-			SSDFS_DBG("page %px, count %d\n",
+			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
 
 			if (unlikely(err))
@@ -2667,7 +2667,7 @@ free_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_get_state:
@@ -3137,7 +3137,7 @@ free_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_set_state:
@@ -4023,7 +4023,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return err;

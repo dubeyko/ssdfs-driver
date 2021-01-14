@@ -191,7 +191,7 @@ int ssdfs_find_first_dirty_fragment(unsigned long *addr,
 
 	*found_addr = (unsigned long *)((u8 *)addr + (found / BITS_PER_LONG));
 
-	SSDFS_DBG("found %lu, addr %px, found_addr %px\n",
+	SSDFS_DBG("found %lu, addr %p, found_addr %p\n",
 		  found, addr, *found_addr);
 
 	return 0;

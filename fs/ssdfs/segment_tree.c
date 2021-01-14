@@ -296,7 +296,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 			wait_queue_head_t *wq = &si->object_queue;
 			int err = 0;
 
-			SSDFS_DBG("si %px, seg_id %llu\n", si, si->seg_id);
+			SSDFS_DBG("si %p, seg_id %llu\n", si, si->seg_id);
 
 			if (atomic_read(&si->refs_count) > 0) {
 				ssdfs_unlock_page(page);
@@ -327,7 +327,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 }
 
@@ -460,7 +460,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !fsi->segs_tree || !si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, si %px, seg %llu\n",
+	SSDFS_DBG("fsi %p, si %p, seg %llu\n",
 		  fsi, si, si->seg_id);
 
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
@@ -493,7 +493,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_add_segment:
@@ -531,7 +531,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !fsi->segs_tree || !si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, si %px, seg %llu\n",
+	SSDFS_DBG("fsi %p, si %p, seg %llu\n",
 		  fsi, si, si->seg_id);
 
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
@@ -569,7 +569,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	/*
@@ -652,7 +652,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 finish_find_segment:

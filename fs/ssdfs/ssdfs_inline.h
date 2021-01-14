@@ -14,6 +14,7 @@
 #define _SSDFS_INLINE_H
 
 #include <linux/slab.h>
+#include <linux/swap.h>
 
 #define SSDFS_CRIT(fmt, ...) \
 	pr_crit("pid %d:%s:%d %s(): " fmt, \
@@ -63,7 +64,7 @@ void ssdfs_memory_leaks_increment(void *kaddr)
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_inc(&ssdfs_memory_leaks);
 
-	SSDFS_DBG("memory %px, allocation count %lld\n",
+	SSDFS_DBG("memory %p, allocation count %lld\n",
 		  kaddr,
 		  atomic64_read(&ssdfs_memory_leaks));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -75,7 +76,7 @@ void ssdfs_memory_leaks_decrement(void *kaddr)
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_dec(&ssdfs_memory_leaks);
 
-	SSDFS_DBG("memory %px, allocation count %lld\n",
+	SSDFS_DBG("memory %p, allocation count %lld\n",
 		  kaddr,
 		  atomic64_read(&ssdfs_memory_leaks));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -128,8 +129,8 @@ void ssdfs_get_page(struct page *page)
 {
 	get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("page %p, count %d, flags %#lx\n",
+		  page, page_ref_count(page), page->flags);
 }
 
 static inline
@@ -137,11 +138,11 @@ void ssdfs_put_page(struct page *page)
 {
 	put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (page_ref_count(page) < 1) {
-		SSDFS_WARN("page %px, count %d\n",
+		SSDFS_WARN("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 }
@@ -217,13 +218,13 @@ struct page *ssdfs_alloc_page(gfp_t gfp_mask)
 
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_inc(&ssdfs_allocated_pages);
 
-	SSDFS_DBG("page %px, allocated_pages %lld\n",
+	SSDFS_DBG("page %p, allocated_pages %lld\n",
 		  page, atomic64_read(&ssdfs_allocated_pages));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
@@ -281,7 +282,7 @@ struct page *ssdfs_add_pagevec_page(struct pagevec *pvec)
 
 	SSDFS_DBG("pvec %p, pagevec count %u\n",
 		  pvec, pagevec_count(pvec));
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	return page;
@@ -295,26 +296,26 @@ void ssdfs_free_page(struct page *page)
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (PageLocked(page)) {
-		SSDFS_WARN("page %px is still locked\n",
+		SSDFS_WARN("page %p is still locked\n",
 			   page);
 	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	ssdfs_put_page(page);
 
-	SSDFS_DBG("page %px, count %d\n",
+	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 
 	if (page_ref_count(page) <= 0 ||
 	    page_ref_count(page) > 1) {
-		SSDFS_WARN("page %px, count %d\n",
+		SSDFS_WARN("page %p, count %d\n",
 			  page, page_ref_count(page));
 	}
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_dec(&ssdfs_allocated_pages);
 
-	SSDFS_DBG("page %px, allocated_pages %lld\n",
+	SSDFS_DBG("page %p, allocated_pages %lld\n",
 		  page, atomic64_read(&ssdfs_allocated_pages));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
@@ -341,26 +342,26 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 		if (PageLocked(page)) {
-			SSDFS_WARN("page %px is still locked\n",
+			SSDFS_WARN("page %p is still locked\n",
 				   page);
 		}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %px, count %d\n",
+		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
 		if (page_ref_count(page) <= 0 ||
 		    page_ref_count(page) > 1) {
-			SSDFS_WARN("page %px, count %d\n",
+			SSDFS_WARN("page %p, count %d\n",
 				  page, page_ref_count(page));
 		}
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 		atomic64_dec(&ssdfs_allocated_pages);
 
-		SSDFS_DBG("page %px, allocated_pages %lld\n",
+		SSDFS_DBG("page %p, allocated_pages %lld\n",
 			  page,
 			  atomic64_read(&ssdfs_allocated_pages));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -374,7 +375,7 @@ static inline								\
 void ssdfs_##name##_cache_leaks_increment(void *kaddr)			\
 {									\
 	atomic64_inc(&ssdfs_##name##_cache_leaks);			\
-	SSDFS_DBG("memory %px, allocation count %lld\n",		\
+	SSDFS_DBG("memory %p, allocation count %lld\n",		\
 		  kaddr,						\
 		  atomic64_read(&ssdfs_##name##_cache_leaks));		\
 	ssdfs_memory_leaks_increment(kaddr);				\
@@ -383,7 +384,7 @@ static inline								\
 void ssdfs_##name##_cache_leaks_decrement(void *kaddr)			\
 {									\
 	atomic64_dec(&ssdfs_##name##_cache_leaks);			\
-	SSDFS_DBG("memory %px, allocation count %lld\n",		\
+	SSDFS_DBG("memory %p, allocation count %lld\n",		\
 		  kaddr,						\
 		  atomic64_read(&ssdfs_##name##_cache_leaks));		\
 	ssdfs_memory_leaks_decrement(kaddr);				\
