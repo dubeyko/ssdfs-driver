@@ -136,6 +136,9 @@ void ssdfs_get_page(struct page *page)
 static inline
 void ssdfs_put_page(struct page *page)
 {
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
 	put_page(page);
 
 	SSDFS_DBG("page %p, count %d\n",
@@ -320,6 +323,9 @@ void ssdfs_free_page(struct page *page)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	__free_pages(page, 0);
+
+	SSDFS_DBG("page %p, count %d, flags %#lx\n",
+		  page, page_ref_count(page), page->flags);
 }
 
 static inline

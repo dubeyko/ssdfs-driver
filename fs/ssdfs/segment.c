@@ -1159,11 +1159,13 @@ int ssdfs_segment_read_block_sync(struct ssdfs_segment_info *si,
 
 /*
  * ssdfs_segment_read_block_async() - read segment's block asynchronously
+ * @req_type: request type
  * @si: segment info
  * @req: segment request [in|out]
  */
 int ssdfs_segment_read_block_async(struct ssdfs_segment_info *si,
-				   struct ssdfs_segment_request *req)
+				  int req_type,
+				  struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
@@ -1176,10 +1178,21 @@ int ssdfs_segment_read_block_async(struct ssdfs_segment_info *si,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
 
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    SSDFS_READ_PAGE,
-					    SSDFS_REQ_ASYNC,
-					    req);
+					    req_type, req);
 	ssdfs_request_define_segment(si->seg_id, req);
 
 	return __ssdfs_segment_read_block(si, req);

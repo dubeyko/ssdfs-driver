@@ -2839,6 +2839,12 @@ finish_last_log_search:
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
+		  "new_log_start_page %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, pebi->peb_index,
+		  *new_log_start_page);
+
 	return 0;
 }
 
@@ -3288,6 +3294,7 @@ finish_read_page:
  *
  * %-ERANGE     - internal error.
  * %-EIO        - I/O error.
+ * %-ENOENT     - blk2off table's descriptor is absent.
  */
 static inline
 int ssdfs_get_segment_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
@@ -3320,10 +3327,8 @@ int ssdfs_get_segment_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
 		}
 
 		if (!ssdfs_log_footer_has_offset_table(env->footer)) {
-			ssdfs_fs_error(fsi->sb, __FILE__,
-					__func__, __LINE__,
-					"log hasn't blk2off table\n");
-			return -EIO;
+			SSDFS_DBG("log hasn't blk2off table\n");
+			return -ENOENT;
 		}
 
 		*desc = &env->footer->desc_array[SSDFS_OFF_TABLE_INDEX];
@@ -3347,6 +3352,7 @@ int ssdfs_get_segment_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
  *
  * %-ERANGE     - internal error.
  * %-EIO        - I/O error.
+ * %-ENOENT     - blk2off table's descriptor is absent.
  */
 static inline
 int ssdfs_get_partial_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
@@ -3379,10 +3385,8 @@ int ssdfs_get_partial_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
 		}
 
 		if (!ssdfs_log_footer_has_offset_table(env->footer)) {
-			ssdfs_fs_error(fsi->sb, __FILE__, __func__,
-					__LINE__,
-					"log hasn't block bitmap\n");
-			return -EIO;
+			SSDFS_DBG("log hasn't blk2off table\n");
+			return -ENOENT;
 		}
 
 		*desc = &env->footer->desc_array[SSDFS_OFF_TABLE_INDEX];
@@ -3408,6 +3412,7 @@ int ssdfs_get_partial_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
  * %-ERANGE     - internal error.
  * %-EIO        - I/O error.
  * %-ENOMEM     - fail to allocate memory.
+ * %-ENOENT     - blk2off table is absent.
  */
 static
 int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
@@ -3475,7 +3480,10 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 								&desc);
 	}
 
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("blk2off table is absent\n");
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get descriptor: "
 			  "err %d\n", err);
 		return err;
@@ -4605,10 +4613,26 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 		min_log_pages = ssdfs_peb_estimate_min_partial_log_pages(pebi);
 		sequence_id++;
 
+		SSDFS_DBG("free_pages %u, min_log_pages %u, "
+			  "new_log_start_page %u\n",
+			  free_pages, min_log_pages,
+			  new_log_start_page);
+
 		if (free_pages == pebi->log_pages) {
 			/* start new full log */
 			sequence_id = 0;
 		} else if (free_pages < min_log_pages) {
+			SSDFS_WARN("POTENTIAL HOLE: "
+				   "seg %llu, peb %llu, "
+				   "peb_index %u, start_page %u, "
+				   "free_pages %u, min_log_pages %u, "
+				   "new_log_start_page %u\n",
+				   pebi->pebc->parent_si->seg_id,
+				   pebi->peb_id, pebi->peb_index,
+				   new_log_start_page,
+				   free_pages, min_log_pages,
+				   new_log_start_page + free_pages);
+
 			new_log_start_page += free_pages;
 			free_pages = pebi->log_pages;
 			sequence_id = 0;
@@ -4635,7 +4659,10 @@ fail_init_using_blk_bmap:
 		goto fail_init_using_peb;
 
 	err = ssdfs_pre_fetch_blk2off_table_area(pebi, env);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("blk2off table's fragment is absent\n");
+		return 0;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-fetch blk2off_table area: "
 			  "seg %llu, peb %llu, log_offset %u, err %d\n",
 			  si->seg_id, pebi->peb_id,
@@ -4801,7 +4828,10 @@ fail_init_used_blk_bmap:
 		goto fail_init_used_peb;
 
 	err = ssdfs_pre_fetch_blk2off_table_area(pebi, env);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("blk2off table's fragment is absent\n");
+		return 0;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-fetch blk2off_table area: "
 			  "seg %llu, peb %llu, log_offset %u, err %d\n",
 			  si->seg_id, pebi->peb_id,
@@ -5775,7 +5805,15 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		}
 
 		err = ssdfs_pre_fetch_blk2off_table_area(pebi, &env);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("blk2off table's fragment is absent: "
+				  "seg %llu, peb %llu, log_offset %u\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  env.log_offset);
+			goto try_next_log;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to pre-fetch blk2off_table area: "
 				  "seg %llu, peb %llu, log_offset %u, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
@@ -5818,6 +5856,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 			goto fail_init_blk2off_table;
 		}
 
+try_next_log:
 		ssdfs_read_pagevec_release(&env.t_init.pvec);
 		log_diff = 0;
 	} while (env.log_offset > 0);
@@ -7364,11 +7403,16 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 			WARN_ON(!PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+			SetPageLRU(page);
+			SetPageActive(page);
+
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+			SSDFS_DBG("page_index %llu, flags %#lx\n",
+				  (u64)page_index(page), page->flags);
 		}
 
 		ssdfs_request_free(req);
@@ -7402,11 +7446,16 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 			WARN_ON(!PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+			SetPageLRU(page);
+			SetPageActive(page);
+
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+			SSDFS_DBG("page_index %llu, flags %#lx\n",
+				  (u64)page_index(page), page->flags);
 		}
 		break;
 

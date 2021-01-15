@@ -293,6 +293,7 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 int ssdfs_segment_read_block_sync(struct ssdfs_segment_info *si,
 				  struct ssdfs_segment_request *req);
 int ssdfs_segment_read_block_async(struct ssdfs_segment_info *si,
+				  int req_type,
 				  struct ssdfs_segment_request *req);
 
 int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,

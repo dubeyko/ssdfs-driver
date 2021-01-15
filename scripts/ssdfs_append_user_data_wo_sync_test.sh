@@ -29,11 +29,15 @@ echo $i
 
 sudo ./ssdfs_blkdev_mount_loop.sh $1 /mnt/ssdfs/
 
+touch /mnt/ssdfs/$2
+md5sum /mnt/ssdfs/$2
+
 dd if=/dev/urandom of=/mnt/ssdfs/$2 conv=notrunc oflag=append bs=1 count=$4
 
 ls -lah /mnt/ssdfs
 
-cat /mnt/ssdfs/$2
+md5sum /mnt/ssdfs/$2
+#hexdump /mnt/ssdfs/$2
 
 sudo umount /mnt/ssdfs
 

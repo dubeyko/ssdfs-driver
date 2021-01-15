@@ -109,6 +109,11 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 					SetPageUptodate(page);
 				}
 			}
+
+			SSDFS_DBG("page %p, count %d\n",
+				  page, page_ref_count(page));
+			SSDFS_DBG("page_index %ld, flags %#lx\n",
+				  page->index, page->flags);
 		}
 	}
 }

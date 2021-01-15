@@ -149,7 +149,7 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 		return PTR_ERR(si);
 	}
 
-	err = ssdfs_segment_read_block_async(si, req);
+	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("read request failed: "
 			  "ino %llu, logical_offset %llu, size %u, err %d\n",
@@ -416,18 +416,281 @@ int ssdfs_readpage(struct file *file, struct page *page)
 	ssdfs_account_locked_page(page);
 	err = ssdfs_readpage_nolock(file, page, SSDFS_CURRENT_THREAD_READ);
 	ssdfs_unlock_page(page);
+
+	SSDFS_DBG("ino %lu, page_index %lu, page %p, "
+		  "count %d, flags %#lx\n",
+		  file_inode(file)->i_ino, page_index(page),
+		  page, page_ref_count(page), page->flags);
+
 	return err;
 }
 
-static inline
-int ssdfs_readahead_page(struct file *file, struct page *page)
+static
+struct ssdfs_segment_request *
+ssdfs_issue_read_request(struct file *file, struct page *page)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(file_inode(file)->i_sb);
+	struct ssdfs_segment_request *req = NULL;
+	struct ssdfs_segment_info *si;
+	ino_t ino = file_inode(file)->i_ino;
+	pgoff_t index = page_index(page);
+	loff_t logical_offset;
+	loff_t data_bytes;
+	loff_t file_size;
+	void *kaddr;
 	int err;
 
 	SSDFS_DBG("ino %lu, page_index %lu\n",
 		  file_inode(file)->i_ino, page_index(page));
 
-	err = ssdfs_readpage_nolock(file, page, SSDFS_DELEGATE_TO_READ_THREAD);
+	logical_offset = (loff_t)index << PAGE_SHIFT;
+
+	file_size = i_size_read(file_inode(file));
+	data_bytes = file_size - logical_offset;
+	data_bytes = min_t(loff_t, PAGE_SIZE, data_bytes);
+
+	BUG_ON(data_bytes > U32_MAX);
+
+	kaddr = kmap_atomic(page);
+	memset(kaddr, 0, PAGE_SIZE);
+	kunmap_atomic(kaddr);
+
+	if (logical_offset >= file_size) {
+		/* Reading beyond inode */
+		SSDFS_DBG("Reading beyond inode: "
+			  "logical_offset %llu, file_size %llu\n",
+			  logical_offset, file_size);
+		SetPageUptodate(page);
+		ClearPageError(page);
+		flush_dcache_page(page);
+		return ERR_PTR(-ENODATA);
+	}
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		return req;
+	}
+
+	ssdfs_request_init(req);
+	ssdfs_get_request(req);
+
+	ssdfs_request_prepare_logical_extent(ino,
+					     (u64)logical_offset,
+					     (u32)data_bytes,
+					     0, 0, req);
+
+	err = ssdfs_request_add_page(page, req);
+	if (err) {
+		SSDFS_ERR("fail to add page into request: "
+			  "ino %lu, page_index %lu, err %d\n",
+			  ino, index, err);
+		goto fail_issue_read_request;
+	}
+
+	err = ssdfs_prepare_volume_extent(fsi, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare volume extent: "
+			  "ino %llu, logical_offset %llu, "
+			  "data_bytes %u, cno %llu, "
+			  "parent_snapshot %llu, err %d\n",
+			  req->extent.ino,
+			  req->extent.logical_offset,
+			  req->extent.data_bytes,
+			  req->extent.cno,
+			  req->extent.parent_snapshot,
+			  err);
+		goto fail_issue_read_request;
+	}
+
+	req->place.len = 1;
+
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				req->place.start.seg_id, U64_MAX);
+	if (unlikely(IS_ERR_OR_NULL(si))) {
+		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+		SSDFS_ERR("fail to grab segment object: "
+			  "seg %llu, err %d\n",
+			  req->place.start.seg_id,
+			  err);
+		goto fail_issue_read_request;
+	}
+
+	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC_NO_FREE, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("read request failed: "
+			  "ino %llu, logical_offset %llu, size %u, err %d\n",
+			  req->extent.ino, req->extent.logical_offset,
+			  req->extent.data_bytes, err);
+		goto fail_issue_read_request;
+	}
+
+	ssdfs_segment_put_object(si);
+
+	return req;
+
+fail_issue_read_request:
+	ClearPageUptodate(page);
+	ClearPagePrivate(page);
+	SetPageError(page);
+	ssdfs_put_request(req);
+	ssdfs_request_free(req);
+
+	return ERR_PTR(err);
+}
+
+static
+int ssdfs_check_read_request(struct ssdfs_segment_request *req)
+{
+	atomic_t *refs_count;
+	wait_queue_head_t *wq = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("req %p\n", req);
+
+check_req_state:
+	switch (atomic_read(&req->result.state)) {
+	case SSDFS_REQ_CREATED:
+	case SSDFS_REQ_STARTED:
+		refs_count = &req->private.refs_count;
+		wq = &req->private.wait_queue;
+
+		if (atomic_read(refs_count) != 0) {
+			err = wait_event_killable_timeout(*wq,
+					atomic_read(refs_count) == 0,
+					SSDFS_DEFAULT_TIMEOUT);
+
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+
+			goto check_req_state;
+		} else {
+			switch (atomic_read(&req->result.state)) {
+			case SSDFS_REQ_FINISHED:
+			case SSDFS_REQ_FAILED:
+				goto check_req_state;
+
+			default:
+				SSDFS_ERR("invalid refs_count %d, "
+					  "state %#x\n",
+					  atomic_read(refs_count),
+					  atomic_read(&req->result.state));
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+				return -ERANGE;
+			}
+		}
+		break;
+
+	case SSDFS_REQ_FINISHED:
+		/* do nothing */
+		break;
+
+	case SSDFS_REQ_FAILED:
+		err = req->result.err;
+
+		if (!err) {
+			SSDFS_ERR("error code is absent: "
+				  "req %p, err %d\n",
+				  req, err);
+			err = -ERANGE;
+		}
+
+		SSDFS_ERR("read request is failed: "
+			  "err %d\n", err);
+		return err;
+
+	default:
+		SSDFS_ERR("invalid result's state %#x\n",
+		    atomic_read(&req->result.state));
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_wait_read_request_end(struct ssdfs_segment_request *req)
+{
+	int err = 0;
+
+	SSDFS_DBG("req %p\n", req);
+
+	if (!req)
+		return 0;
+
+	err = ssdfs_check_read_request(req);
+	if (unlikely(err)) {
+		SSDFS_ERR("read request failed: "
+			  "err %d\n", err);
+	}
+
+	ssdfs_request_free(req);
+
+	return err;
+}
+
+struct ssdfs_readahead_env {
+	struct file *file;
+	struct ssdfs_segment_request **reqs;
+	unsigned count;
+	unsigned capacity;
+};
+
+static inline
+int ssdfs_readahead_page(void *data, struct page *page)
+{
+	struct ssdfs_readahead_env *env = (struct ssdfs_readahead_env *)data;
+	unsigned index;
+	int err = 0;
+
+	SSDFS_DBG("ino %lu, page_index %lu, page %p, "
+		  "count %d, flags %#lx\n",
+		  file_inode(env->file)->i_ino, page_index(page),
+		  page, page_ref_count(page), page->flags);
+
+	if (env->count >= env->capacity) {
+		SSDFS_ERR("count %u >= capacity %u\n",
+			  env->count, env->capacity);
+		return -ERANGE;
+	}
+
+	index = env->count;
+
+	ssdfs_get_page(page);
+	ssdfs_account_locked_page(page);
+
+	env->reqs[index] = ssdfs_issue_read_request(env->file, page);
+	if (IS_ERR_OR_NULL(env->reqs[index])) {
+		err = (env->reqs[index] == NULL ? -ENOMEM :
+						PTR_ERR(env->reqs[index]));
+		env->reqs[index] = NULL;
+
+		if (err == -ENODATA) {
+			SSDFS_DBG("no data for the page: "
+				  "index %d\n", index);
+		} else {
+			SSDFS_DBG("unable to issue request: "
+				  "index %d, err %d\n",
+				  index, err);
+
+			SetPageError(page);
+			zero_user_segment(page, 0, PAGE_SIZE);
+			ssdfs_unlock_page(page);
+			ssdfs_put_page(page);
+		}
+	} else
+		env->count++;
+
 	return err;
 }
 
@@ -442,11 +705,53 @@ static
 int ssdfs_readpages(struct file *file, struct address_space *mapping,
 		    struct list_head *pages, unsigned nr_pages)
 {
+	struct ssdfs_readahead_env env;
+	unsigned i;
+	int res;
+	int err = 0;
+
 	SSDFS_DBG("ino %lu, nr_pages %u\n",
 		  file_inode(file)->i_ino, nr_pages);
 
-	return read_cache_pages(mapping, pages,
-				(void *)ssdfs_readahead_page, file);
+	env.file = file;
+	env.count = 0;
+	env.capacity = nr_pages;
+
+	env.reqs = ssdfs_file_kcalloc(nr_pages,
+				  sizeof(struct ssdfs_segment_request *),
+				  GFP_KERNEL);
+	if (!env.reqs) {
+		SSDFS_ERR("fail to allocate requests array\n");
+		return -ENOMEM;
+	}
+
+	err = read_cache_pages(mapping, pages,
+				(void *)ssdfs_readahead_page, &env);
+
+	for (i = 0; i < nr_pages; i++) {
+		res = ssdfs_wait_read_request_end(env.reqs[i]);
+		if (res) {
+			SSDFS_DBG("waiting has finished with issue: "
+				  "index %d, err %d\n",
+				  i, res);
+		}
+
+		if (err == 0)
+			err = res;
+
+		env.reqs[i] = NULL;
+	}
+
+	if (env.reqs)
+		ssdfs_file_kfree(env.reqs);
+
+	if (err) {
+		SSDFS_DBG("readahead fails: "
+			  "ino %lu, nr_pages %u, err %d\n",
+			  file_inode(file)->i_ino, nr_pages, err);
+	}
+
+	return err;
 }
 
 /*
@@ -1617,6 +1922,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	pgoff_t index = pos >> PAGE_SHIFT;
 	unsigned blks = 0;
 	loff_t start_blk, end_blk, cur_blk;
+	u64 free_pages = 0;
 	bool is_new_blk = false;
 	int err = 0;
 
@@ -1626,6 +1932,9 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
+	SSDFS_DBG("ino %lu, index %lu, flags %#x\n",
+		  inode->i_ino, index, flags);
+
 	page = grab_cache_page_write_begin(mapping, index, flags);
 	if (!page) {
 		SSDFS_ERR("fail to grab page: index %lu, flags %#x\n",
@@ -1633,24 +1942,37 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		return -ENOMEM;
 	}
 
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
 	ssdfs_account_locked_page(page);
 
 	start_blk = pos >> fsi->log_pagesize;
 	end_blk = (pos + len) >> fsi->log_pagesize;
+
+	SSDFS_DBG("start_blk %llu, end_blk %llu\n",
+		  (u64)start_blk, (u64)end_blk);
 
 	cur_blk = start_blk;
 	do {
 		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
 								   inode);
 
+		SSDFS_DBG("cur_blk %llu, is_new_blk %#x, blks %u\n",
+			  (u64)cur_blk, is_new_blk, blks);
+
 		if (is_new_blk) {
 			spin_lock(&fsi->volume_state_lock);
 			if (fsi->free_pages > 0) {
 				fsi->free_pages--;
+				free_pages = fsi->free_pages;
 				blks++;
 			} else
 				err = -ENOSPC;
 			spin_unlock(&fsi->volume_state_lock);
+
+			SSDFS_DBG("free_pages %llu, blks %u\n",
+				  free_pages, blks);
 
 			if (err) {
 				spin_lock(&fsi->volume_state_lock);
@@ -1673,14 +1995,23 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		cur_blk++;
 	} while (cur_blk < end_blk);
 
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
 	*pagep = page;
 
 	if ((len == PAGE_SIZE) || PageUptodate(page))
 		return 0;
 
+	SSDFS_DBG("pos %llu, inode_size %llu\n",
+		  pos, (u64)i_size_read(inode));
+
 	if ((pos & PAGE_MASK) >= i_size_read(inode)) {
 		unsigned start = pos & (PAGE_SIZE - 1);
 		unsigned end = start + len;
+
+		SSDFS_DBG("start %u, end %u, len %u\n",
+			  start, end, len);
 
 		/* Reading beyond i_size is simple: memset to zero */
 		zero_user_segments(page, 0, start, end, PAGE_SIZE);

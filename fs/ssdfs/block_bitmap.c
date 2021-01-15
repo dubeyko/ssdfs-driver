@@ -597,8 +597,8 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  u16 invalid_blks)
 {
 	struct ssdfs_block_bmap_range found;
-	u16 start_item = 0;
-	int blk_state = SSDFS_BLK_VALID;
+	u16 start_item;
+	int blk_state;
 	int free_pages;
 	int i;
 	int err;
@@ -693,6 +693,9 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 
 	blk_bmap->used_blks = 0;
 
+	start_item = 0;
+	blk_state = SSDFS_BLK_VALID;
+
 	do {
 		err = ssdfs_block_bmap_find_range(blk_bmap,
 					start_item,
@@ -701,6 +704,30 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 					blk_state, &found);
 		if (err == -ENODATA) {
 			SSDFS_DBG("unable to find more valid blocks: "
+				  "start_item %u\n",
+				  start_item);
+			goto check_pre_allocated_blocks;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find range: err %d\n", err);
+			return err;
+		}
+
+		blk_bmap->used_blks += found.len;
+		start_item = found.start + found.len;
+	} while (start_item < blk_bmap->items_count);
+
+check_pre_allocated_blocks:
+	start_item = 0;
+	blk_state = SSDFS_BLK_PRE_ALLOCATED;
+
+	do {
+		err = ssdfs_block_bmap_find_range(blk_bmap,
+					start_item,
+					blk_bmap->items_count - start_item,
+					blk_bmap->items_count,
+					blk_state, &found);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find more pre-allocated blocks: "
 				  "start_item %u\n",
 				  start_item);
 			goto finish_block_bmap_init;
@@ -3478,7 +3505,7 @@ bool ssdfs_block_bmap_test_range(struct ssdfs_block_bmap *blk_bmap,
 					  range->start + range->len,
 					  blk_state, &found);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to find range: err %d\n", err);
+		SSDFS_DBG("fail to find range: err %d\n", err);
 		return false;
 	}
 
@@ -4334,8 +4361,9 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (!is_range_valid(blk_bmap, range)) {
-		SSDFS_ERR("range (start %u, len %u) hasn't valid blocks only\n",
+	if (!is_range_valid(blk_bmap, range) &&
+	    !is_range_pre_allocated(blk_bmap, range)) {
+		SSDFS_ERR("range (start %u, len %u) contains not valid blocks\n",
 			  range->start, range->len);
 		return -EINVAL;
 	}

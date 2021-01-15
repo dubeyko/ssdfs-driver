@@ -2139,7 +2139,8 @@ bool need_initialize_extent_btree_search(u64 blk,
  *
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
- * %-ENODATA    - item hasn't been found
+ * %-ENOENT     - fork is empty (no extents).
+ * %-ENODATA    - item hasn't been found.
  */
 static
 int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
@@ -2173,7 +2174,7 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 	} else if (forks_count == 0) {
 		SSDFS_DBG("empty tree\n");
 		search->result.state = SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
-		search->result.err = -ENODATA;
+		search->result.err = -ENOENT;
 		search->result.start_index = 0;
 		search->result.count = 0;
 		search->result.search_cno = ssdfs_current_cno(tree->fsi->sb);
@@ -2188,7 +2189,7 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 
 		ssdfs_debug_btree_search_object(search);
 
-		return -ENODATA;
+		return -ENOENT;
 	} else if (forks_count > SSDFS_INLINE_FORKS_COUNT) {
 		SSDFS_ERR("invalid forks_count %llu\n",
 			  forks_count);
@@ -2315,8 +2316,8 @@ int ssdfs_extents_tree_find_fork(struct ssdfs_extents_btree_info *tree,
 		err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
 		up_read(&tree->lock);
 
-		if (err == -ENODATA) {
-			SSDFS_ERR("unable to find the inline fork: "
+		if (err == -ENODATA || err == -ENOENT) {
+			SSDFS_DBG("unable to find the inline fork: "
 				  "blk %llu\n",
 				  blk);
 		} else if (unlikely(err)) {
@@ -2332,7 +2333,7 @@ int ssdfs_extents_tree_find_fork(struct ssdfs_extents_btree_info *tree,
 		up_read(&tree->lock);
 
 		if (err == -ENODATA) {
-			SSDFS_ERR("unable to find the fork: "
+			SSDFS_DBG("unable to find the fork: "
 				  "blk %llu\n",
 				  blk);
 		} else if (unlikely(err)) {
@@ -2688,6 +2689,7 @@ int ssdfs_add_extent_into_fork(u64 blk,
 
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 		/* expected state */
 		break;
 
@@ -3212,6 +3214,8 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	s64 forks_count, forks_capacity;
 	u16 start_index;
 	int lower_bound, upper_bound;
+	u64 start_offset;
+	u64 blks_count;
 	int i, j;
 	int err;
 
@@ -3263,8 +3267,15 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 		return -ERANGE;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
-		SSDFS_ERR("invalid search result's state %#x\n",
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid search object state %#x\n",
 			  search->result.state);
 		return -ERANGE;
 	}
@@ -3276,13 +3287,15 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	}
 
 	start_hash = search->request.start.hash;
-	if (start_hash != le64_to_cpu(search->raw.fork.start_offset)) {
+	start_offset = le64_to_cpu(search->raw.fork.start_offset);
+	blks_count = le64_to_cpu(search->raw.fork.blks_count);
+
+	if (start_hash < start_offset ||
+	    start_hash >= (start_offset + blks_count)) {
 		SSDFS_ERR("corrupted fork: "
 			  "start_hash %llx, "
 			  "fork (start %llu, blks_count %llu)\n",
-			  start_hash,
-			  le64_to_cpu(search->raw.fork.start_offset),
-			  le64_to_cpu(search->raw.fork.blks_count));
+			  start_hash, start_offset, blks_count);
 		return -ERANGE;
 	}
 
@@ -3564,19 +3577,30 @@ int ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_FORKS_ARRAY:
 		err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
-		if (err == -ENODATA) {
+		if (err == -ENOENT) {
 			/*
 			 * Fork doesn't exist for requested extent.
 			 * It needs to create a new fork.
+			 */
+		} else if (err == -ENODATA) {
+			/*
+			 * Fork doesn't contain the requested extent.
+			 * It needs to add a new extent.
 			 */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the inline fork: "
 				  "blk %llu, err %d\n",
 				  blk, err);
 			goto finish_add_extent;
+		} else {
+			err = -EEXIST;
+			SSDFS_ERR("block exists already: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_add_extent;
 		}
 
-		if (err == -ENODATA) {
+		if (err == -ENOENT) {
 add_new_inline_fork:
 			ssdfs_debug_btree_search_object(search);
 
@@ -3643,13 +3667,24 @@ add_new_inline_fork:
 	case SSDFS_PRIVATE_EXTENTS_BTREE:
 try_to_add_into_generic_tree:
 		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (err == -ENODATA) {
+		if (err == -ENOENT) {
 			/*
 			 * Fork doesn't exist for requested extent.
 			 * It needs to create a new fork.
 			 */
+		} else if (err == -ENODATA) {
+			/*
+			 * Fork doesn't contain the requested extent.
+			 * It needs to add a new extent.
+			 */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the fork: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_add_extent;
+		} else {
+			err = -EEXIST;
+			SSDFS_ERR("block exists already: "
 				  "blk %llu, err %d\n",
 				  blk, err);
 			goto finish_add_extent;
