@@ -1853,6 +1853,7 @@ static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
 	u64 pebs_per_aligned_fragments;
 	u64 pebs_per_last_fragment;
 	u64 calculated = U16_MAX;
+	u32 remainder;
 
 	SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu, "
 		  "fragments_count %u, pebs_per_fragment %u, "
@@ -1891,6 +1892,12 @@ static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
 		pebs_per_last_fragment = pebs_per_volume -
 						pebs_per_aligned_fragments;
 		calculated = pebs_per_last_fragment / stripes_per_fragment;
+
+		div_u64_rem(pebs_per_last_fragment,
+			    (u64)stripes_per_fragment, &remainder);
+
+		if (remainder != 0)
+			calculated++;
 	}
 
 	SSDFS_DBG("calculated: fragment_index %llu, pebs_per_stripe %llu\n",
@@ -2236,7 +2243,7 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		if (processed_stripes >= stripes_count) {
 			SSDFS_DBG("processed_stripes %u >= stripes_count %u\n",
 				  processed_stripes, stripes_count);
-			goto finish_sb_peb_search;
+			goto try_slow_search;
 		}
 
 		SSDFS_DBG("FAST_SEARCH: jobs_count %u\n", jobs_count);
@@ -2249,6 +2256,9 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 							  pebs_per_fragment,
 							  stripes_per_fragment,
 							  pebs_per_stripe);
+
+			if ((processed_pebs + calculated) > pebs_per_volume)
+				calculated = pebs_per_volume - processed_pebs;
 
 			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
 				  i, processed_pebs, calculated);
@@ -2297,6 +2307,8 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 				/* stop execution */
 				err = array[i].err;
 				has_sb_peb_found1 = false;
+				SSDFS_ERR("fail to find valid SB PEB: "
+					  "err %d\n", err);
 				goto finish_sb_peb_search;
 			}
 		}
@@ -2314,6 +2326,7 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 				   stripes_count - processed_stripes);
 	};
 
+try_slow_search:
 	jobs_count = 1;
 
 	processed_stripes = 0;
@@ -2339,6 +2352,9 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 							  pebs_per_fragment,
 							  stripes_per_fragment,
 							  pebs_per_stripe);
+
+			if ((processed_pebs + calculated) > pebs_per_volume)
+				calculated = pebs_per_volume - processed_pebs;
 
 			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
 				  i, processed_pebs, calculated);
@@ -2390,6 +2406,8 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 				/* stop execution */
 				err = array[i].err;
 				has_sb_peb_found2 = false;
+				SSDFS_ERR("fail to find valid SB PEB: "
+					  "err %d\n", err);
 				goto finish_sb_peb_search;
 			}
 		}

@@ -494,6 +494,11 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl);
 int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl);
 
+int ssdfs_maptbl_define_fragment_info(struct ssdfs_fs_info *fsi,
+				      u64 leb_id,
+				      u16 *pebs_per_fragment,
+				      u16 *pebs_per_stripe,
+				      u16 *stripes_per_fragment);
 struct ssdfs_maptbl_fragment_desc *
 ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
 				     u64 leb_id);

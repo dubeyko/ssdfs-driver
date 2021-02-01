@@ -304,6 +304,35 @@ void ssdfs_request_define_volume_extent(u16 start, u16 len,
 }
 
 /*
+ * has_request_been_executed() - check that reqeust has been executed
+ * @req: segment request
+ */
+static inline
+bool has_request_been_executed(struct ssdfs_segment_request *req)
+{
+	bool has_been_executed = false;
+
+	switch (atomic_read(&req->result.state)) {
+	case SSDFS_REQ_CREATED:
+	case SSDFS_REQ_STARTED:
+		has_been_executed = false;
+		break;
+
+	case SSDFS_REQ_FINISHED:
+	case SSDFS_REQ_FAILED:
+		has_been_executed = true;
+		break;
+
+	default:
+		SSDFS_ERR("invalid result's state %#x\n",
+			  atomic_read(&req->result.state));
+		has_been_executed = true;
+	}
+
+	return has_been_executed;
+}
+
+/*
  * Request queue's API
  */
 void ssdfs_requests_queue_init(struct ssdfs_requests_queue *rq);

@@ -574,7 +574,6 @@ finish_issue_requests_sync:
 static
 int ssdfs_commit_queue_check_request(struct ssdfs_segment_request *req)
 {
-	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
 	int err;
 
@@ -588,37 +587,17 @@ check_req_state:
 	switch (atomic_read(&req->result.state)) {
 	case SSDFS_REQ_CREATED:
 	case SSDFS_REQ_STARTED:
-		refs_count = &req->private.refs_count;
 		wq = &req->private.wait_queue;
 
-		if (atomic_read(refs_count) != 0) {
-			err = wait_event_killable_timeout(*wq,
-					atomic_read(refs_count) == 0,
+		err = wait_event_killable_timeout(*wq,
+					has_request_been_executed(req),
 					SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0)
+			WARN_ON(err < 0);
+		else
+			err = 0;
 
-			if (err < 0)
-				WARN_ON(err < 0);
-			else
-				err = 0;
-
-			goto check_req_state;
-		} else {
-			switch (atomic_read(&req->result.state)) {
-			case SSDFS_REQ_FINISHED:
-			case SSDFS_REQ_FAILED:
-				goto check_req_state;
-
-			default:
-				SSDFS_ERR("invalid refs_count %d, "
-					  "state %#x\n",
-					  atomic_read(refs_count),
-					  atomic_read(&req->result.state));
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-				return -ERANGE;
-			}
-		}
+		goto check_req_state;
 		break;
 
 	case SSDFS_REQ_FINISHED:

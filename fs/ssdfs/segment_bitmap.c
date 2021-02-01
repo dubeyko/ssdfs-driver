@@ -1833,10 +1833,7 @@ int ssdfs_segbmap_wait_flush_end(struct ssdfs_segment_bmap *segbmap,
 	struct ssdfs_segbmap_fragment_desc *fragment;
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	bool has_backup;
-	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
-	int state;
-	int count;
 	int i;
 	int err;
 
@@ -1867,40 +1864,17 @@ check_req1_state:
 			switch (atomic_read(&req1->result.state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
-				refs_count = &req1->private.refs_count;
 				wq = &req1->private.wait_queue;
 
-				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable_timeout(*wq,
-						atomic_read(refs_count) == 0,
-						SSDFS_DEFAULT_TIMEOUT);
-					if (err < 0)
-						WARN_ON(err < 0);
-					else
-						err = 0;
+				err = wait_event_killable_timeout(*wq,
+					    has_request_been_executed(req1),
+					    SSDFS_DEFAULT_TIMEOUT);
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					goto check_req1_state;
-				} else {
-					state =
-					    atomic_read(&req1->result.state);
-					count = atomic_read(refs_count);
-
-					switch (state) {
-					case SSDFS_REQ_FINISHED:
-					case SSDFS_REQ_FAILED:
-						goto check_req1_state;
-
-					default:
-						SSDFS_ERR("invalid "
-							  "refs_count %d, "
-							  "state %#x\n",
-							  count, state);
-#ifdef CONFIG_SSDFS_DEBUG
-						BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-						return -ERANGE;
-					}
-				}
+				goto check_req1_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
@@ -1932,40 +1906,17 @@ check_req2_state:
 			switch (atomic_read(&req2->result.state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
-				refs_count = &req2->private.refs_count;
 				wq = &req2->private.wait_queue;
 
-				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable_timeout(*wq,
-						atomic_read(refs_count) == 0,
-						SSDFS_DEFAULT_TIMEOUT);
-					if (err < 0)
-						WARN_ON(err < 0);
-					else
-						err = 0;
+				err = wait_event_killable_timeout(*wq,
+					    has_request_been_executed(req2),
+					    SSDFS_DEFAULT_TIMEOUT);
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					goto check_req2_state;
-				} else {
-					state =
-					    atomic_read(&req2->result.state);
-					count = atomic_read(refs_count);
-
-					switch (state) {
-					case SSDFS_REQ_FINISHED:
-					case SSDFS_REQ_FAILED:
-						goto check_req2_state;
-
-					default:
-						SSDFS_ERR("invalid "
-							  "refs_count %d, "
-							  "state %#x\n",
-							  count, state);
-#ifdef CONFIG_SSDFS_DEBUG
-						BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-						return -ERANGE;
-					}
-				}
+				goto check_req2_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
@@ -1980,7 +1931,7 @@ check_req2_state:
 					SSDFS_ERR("error code is absent\n");
 				}
 
-				SSDFS_ERR("flush request is failed: "
+				SSDFS_ERR("flush request failed: "
 					  "err %d\n", err);
 				return err;
 
@@ -2177,10 +2128,7 @@ int ssdfs_segbmap_wait_finish_commit_logs(struct ssdfs_segment_bmap *segbmap,
 	struct ssdfs_segbmap_fragment_desc *fragment;
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	bool has_backup;
-	atomic_t *refs_count;
 	wait_queue_head_t *wq = NULL;
-	int state;
-	int count;
 	int i;
 	int err;
 
@@ -2211,40 +2159,17 @@ check_req1_state:
 			switch (atomic_read(&req1->result.state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
-				refs_count = &req1->private.refs_count;
 				wq = &req1->private.wait_queue;
 
-				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable_timeout(*wq,
-						atomic_read(refs_count) == 0,
-						SSDFS_DEFAULT_TIMEOUT);
-					if (err < 0)
-						WARN_ON(err < 0);
-					else
-						err = 0;
+				err = wait_event_killable_timeout(*wq,
+					    has_request_been_executed(req1),
+					    SSDFS_DEFAULT_TIMEOUT);
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					goto check_req1_state;
-				} else {
-					state =
-					    atomic_read(&req1->result.state);
-					count = atomic_read(refs_count);
-
-					switch (state) {
-					case SSDFS_REQ_FINISHED:
-					case SSDFS_REQ_FAILED:
-						goto check_req1_state;
-
-					default:
-						SSDFS_ERR("invalid "
-							  "refs_count %d, "
-							  "state %#x\n",
-							  count, state);
-#ifdef CONFIG_SSDFS_DEBUG
-						BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-						return -ERANGE;
-					}
-				}
+				goto check_req1_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
@@ -2276,40 +2201,17 @@ check_req2_state:
 			switch (atomic_read(&req2->result.state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
-				refs_count = &req2->private.refs_count;
 				wq = &req2->private.wait_queue;
 
-				if (atomic_read(refs_count) != 0) {
-					err = wait_event_killable_timeout(*wq,
-						atomic_read(refs_count) == 0,
-						SSDFS_DEFAULT_TIMEOUT);
-					if (err < 0)
-						WARN_ON(err < 0);
-					else
-						err = 0;
+				err = wait_event_killable_timeout(*wq,
+					    has_request_been_executed(req2),
+					    SSDFS_DEFAULT_TIMEOUT);
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					goto check_req2_state;
-				} else {
-					state =
-					    atomic_read(&req2->result.state);
-					count = atomic_read(refs_count);
-
-					switch (state) {
-					case SSDFS_REQ_FINISHED:
-					case SSDFS_REQ_FAILED:
-						goto check_req2_state;
-
-					default:
-						SSDFS_ERR("invalid "
-							  "refs_count %d, "
-							  "state %#x\n",
-							  count, state);
-#ifdef CONFIG_SSDFS_DEBUG
-						BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-						return -ERANGE;
-					}
-				}
+				goto check_req2_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:

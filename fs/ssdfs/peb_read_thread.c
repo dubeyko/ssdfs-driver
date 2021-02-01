@@ -1381,6 +1381,7 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	int page_index;
 	u16 fragments;
 	u32 processed_blks;
+	u32 uncompr_bytes;
 	int i;
 	int err = 0;
 
@@ -1431,11 +1432,16 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	if (data_bytes > le32_to_cpu(found_blk_state.chain_hdr.uncompr_bytes)) {
-		SSDFS_ERR("data_bytes %u > uncompr_bytes %u\n",
-			  data_bytes,
-			  le32_to_cpu(found_blk_state.chain_hdr.uncompr_bytes));
-		return -EIO;
+	uncompr_bytes = le32_to_cpu(found_blk_state.chain_hdr.uncompr_bytes);
+	if (data_bytes > uncompr_bytes) {
+		SSDFS_DBG("data_bytes %u > uncompr_bytes %u\n",
+			  data_bytes, uncompr_bytes);
+
+		req->extent.data_bytes -= data_bytes - uncompr_bytes;
+		data_bytes = uncompr_bytes;
+
+		SSDFS_DBG("CORRECTED VALUE: data_bytes %u\n",
+			  data_bytes);
 	}
 
 	fragments = le16_to_cpu(found_blk_state.chain_hdr.fragments_count);
@@ -2666,6 +2672,7 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 
 		kaddr = kmap_atomic(page);
 		memcpy(env->log_hdr, kaddr, hdr_buf_size);
+		memcpy(env->footer, kaddr, hdr_buf_size);
 		kunmap_atomic(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
@@ -2702,6 +2709,11 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 			byte_offset += fsi->pagesize - 1;
 			page_offset = byte_offset / fsi->pagesize;
 
+			SSDFS_DBG("byte_offset %u, page_offset %u, "
+				  "new_log_start_page %u\n",
+				  byte_offset, page_offset, *new_log_start_page);
+			SSDFS_DBG("log_bytes %u\n", env->log_bytes);
+
 			if (*new_log_start_page < page_offset) {
 				SSDFS_DBG("correct new log start page: "
 					  "old value %u, new value %u\n",
@@ -2722,7 +2734,7 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 		} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 			u32 flags;
 
-			pl_hdr = SSDFS_PLH(kaddr);
+			pl_hdr = SSDFS_PLH(env->log_hdr);
 
 			err = ssdfs_check_partial_log_header(fsi, pl_hdr,
 							     false);
@@ -2746,10 +2758,17 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 				byte_offset = (i + 1) * fsi->pagesize;
 				byte_offset += fsi->pagesize - 1;
 
+				SSDFS_DBG("byte_offset %u, "
+					  "new_log_start_page %u\n",
+					  byte_offset, *new_log_start_page);
+
 				*new_log_start_page =
 					(u16)(byte_offset / fsi->pagesize);
 				env->log_bytes =
 					le32_to_cpu(pl_hdr->log_bytes);
+
+				SSDFS_DBG("log_bytes %u\n", env->log_bytes);
+
 				continue;
 			} else if (flags & SSDFS_LOG_HAS_FOOTER) {
 				/* last partial log */
@@ -2761,6 +2780,11 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 				byte_offset += env->log_bytes;
 				byte_offset += fsi->pagesize - 1;
 				page_offset = byte_offset / fsi->pagesize;
+
+				SSDFS_DBG("byte_offset %u, page_offset %u, "
+					  "new_log_start_page %u\n",
+					  byte_offset, page_offset, *new_log_start_page);
+				SSDFS_DBG("log_bytes %u\n", env->log_bytes);
 
 				if (*new_log_start_page < page_offset) {
 					SSDFS_DBG("correct new log start page: "
@@ -2791,6 +2815,11 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 				byte_offset += fsi->pagesize - 1;
 				page_offset = byte_offset / fsi->pagesize;
 
+				SSDFS_DBG("byte_offset %u, page_offset %u, "
+					  "new_log_start_page %u\n",
+					  byte_offset, page_offset, *new_log_start_page);
+				SSDFS_DBG("log_bytes %u\n", env->log_bytes);
+
 #ifdef CONFIG_SSDFS_DEBUG
 				BUG_ON(page_offset >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2809,10 +2838,16 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 			byte_offset = (i + 1) * fsi->pagesize;
 			byte_offset += fsi->pagesize - 1;
 
+			SSDFS_DBG("byte_offset %u, new_log_start_page %u\n",
+				  byte_offset, *new_log_start_page);
+
 			*new_log_start_page =
 				(u16)(byte_offset / fsi->pagesize);
 			env->log_bytes =
 				le32_to_cpu(footer->log_bytes);
+
+			SSDFS_DBG("log_bytes %u\n", env->log_bytes);
+
 			continue;
 		} else {
 			SSDFS_ERR("log header is corrupted: "
@@ -5575,6 +5610,7 @@ int ssdfs_find_prev_partial_log(struct ssdfs_fs_info *fsi,
 
 		kaddr = kmap_atomic(page);
 		memcpy(env->log_hdr, kaddr, hdr_buf_size);
+		memcpy(env->footer, kaddr, hdr_buf_size);
 		kunmap_atomic(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
@@ -5624,7 +5660,7 @@ int ssdfs_find_prev_partial_log(struct ssdfs_fs_info *fsi,
 		} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 			u32 flags;
 
-			pl_hdr = SSDFS_PLH(kaddr);
+			pl_hdr = SSDFS_PLH(env->log_hdr);
 
 			err = ssdfs_check_partial_log_header(fsi, pl_hdr,
 							     false);

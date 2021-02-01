@@ -342,6 +342,9 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 	BUG_ON(logical_blk >= table->lblk2off_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("logical_blk %u, need_allocate %#x\n",
+		  logical_blk, need_allocate);
+
 	if (!table->migrating_blks) {
 		table->migrating_blks =
 			ssdfs_blk2off_kzalloc(ptr_size * items_count,
@@ -351,6 +354,8 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 			SSDFS_ERR("fail to allocate migrating blocks array\n");
 			goto fail_get_migrating_blk;
 		}
+
+		SSDFS_DBG("migrating_blks array has been allocated\n");
 	}
 
 	migrating_blk = table->migrating_blks[logical_blk];
@@ -365,6 +370,14 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 		}
 
 		table->migrating_blks[logical_blk] = migrating_blk;
+
+		SSDFS_DBG("logical_blk %u descriptor has been allocated\n",
+			  logical_blk);
+	}
+
+	if (migrating_blk) {
+		SSDFS_DBG("logical_blk %u, state %#x\n",
+			  logical_blk, migrating_blk->state);
 	}
 
 	return migrating_blk;
@@ -4460,6 +4473,9 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 			*migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
 		else
 			*migration_state = blk->state;
+
+		SSDFS_DBG("logical_blk %u, migration_state %#x\n",
+			  logical_blk, *migration_state);
 	}
 
 	err = ssdfs_blk2off_table_get_checked_position(table, logical_blk,
@@ -5925,8 +5941,9 @@ finish_set_block_migration:
 	up_write(&table->translation_lock);
 
 	if (!err) {
-		SSDFS_DBG("logical_blk %u (peb_index %u) is under migration\n",
-			  logical_blk, peb_index);
+		SSDFS_DBG("logical_blk %u is under migration: "
+			  "(peb_index %u, state %#x)\n",
+			  logical_blk, peb_index, blk->state);
 	}
 
 	return err;
@@ -6015,6 +6032,9 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 			  blk->state);
 		goto finish_get_block_state;
 	}
+
+	SSDFS_DBG("logical_blk %u, state %#x\n",
+		  logical_blk, blk->state);
 
 	if (pagevec_count(&blk->pvec) == (fsi->pagesize >> PAGE_SHIFT)) {
 		SSDFS_DBG("logical_blk %u, blk pagevec count %u\n",
@@ -6164,8 +6184,9 @@ finish_set_block_commit:
 	up_write(&table->translation_lock);
 
 	if (!err) {
-		SSDFS_DBG("logical_blk %u (peb_index %u) is under commit\n",
-			  logical_blk, peb_index);
+		SSDFS_DBG("logical_blk %u is under commit: "
+			  "(peb_index %u, state %#x)\n",
+			  logical_blk, peb_index, blk->state);
 	}
 
 	return err;
@@ -6218,15 +6239,14 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 			continue;
 
 		if (blk->state == SSDFS_LBLOCK_UNDER_COMMIT) {
-			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
-			ssdfs_blk2off_pagevec_release(&blk->pvec);
-
 			SSDFS_DBG("reverting migration state: blk %d\n",
 				  i);
-		}
 
-		ssdfs_blk2off_kfree(tbl->migrating_blks[i]);
-		tbl->migrating_blks[i] = NULL;
+			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
+			ssdfs_blk2off_pagevec_release(&blk->pvec);
+			ssdfs_blk2off_kfree(tbl->migrating_blks[i]);
+			tbl->migrating_blks[i] = NULL;
+		}
 	}
 
 	up_write(&tbl->translation_lock);

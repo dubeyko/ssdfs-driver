@@ -4634,6 +4634,11 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
+	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_block %u, "
+		  "migration_state %#x\n",
+		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
+		  req->place.start.blk_index, migration_state);
+
 	if (is_ssdfs_logical_block_migrating(migration_state)) {
 		err = ssdfs_blk2off_table_set_block_commit(table, blk,
 							   peb_index);
@@ -4646,6 +4651,12 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	}
 
 	req->result.processed_blks += range.len;
+
+	SSDFS_DBG("finish update block: "
+		  "ino %llu, seg %llu, peb %llu, logical_block %u\n",
+		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
+		  req->place.start.blk_index);
+
 	return 0;
 }
 

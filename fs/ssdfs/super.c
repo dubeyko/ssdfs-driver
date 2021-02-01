@@ -699,7 +699,9 @@ static u64 ssdfs_correct_start_leb_id(struct ssdfs_fs_info *fsi,
 	u64 peb_id1, peb_id2;
 	u64 found_peb_id;
 	u64 peb_id_off;
+	u16 pebs_per_fragment;
 	u16 pebs_per_stripe;
+	u16 stripes_per_fragment;
 	u64 calculated_leb_id = leb_id;
 	int i;
 	int err;
@@ -715,9 +717,15 @@ static u64 ssdfs_correct_start_leb_id(struct ssdfs_fs_info *fsi,
 	peb_type = SEG2PEB_TYPE(seg_type);
 	pebs_per_seg = fsi->pebs_per_seg;
 
-	down_read(&fsi->maptbl->tbl_lock);
-	pebs_per_stripe = fsi->maptbl->pebs_per_stripe;
-	up_read(&fsi->maptbl->tbl_lock);
+	err = ssdfs_maptbl_define_fragment_info(fsi, leb_id,
+						&pebs_per_fragment,
+						&pebs_per_stripe,
+						&stripes_per_fragment);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define fragment info: "
+			  "err %d\n", err);
+		return err;
+	}
 
 	for (i = 0; i < pebs_per_seg; i++) {
 		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id + i,

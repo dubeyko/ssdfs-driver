@@ -205,6 +205,7 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 
 /*
  * ssdfs_maptbl_collect_stripe_dirty_pebs() - collect dirty PEBs in stripe
+ * @tbl: mapping table object
  * @fdesc: fragment descriptor
  * @fragment_index: index of fragment
  * @stripe_index: index of stripe
@@ -221,7 +222,8 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
  * %-ERANGE  - internal error.
  */
 static int
-ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
+ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
+					struct ssdfs_maptbl_fragment_desc *fdesc,
 					u32 fragment_index,
 					int stripe_index,
 					int erases_per_stripe,
@@ -232,6 +234,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 	u16 stripe_pages = fdesc->stripe_pages;
 	pgoff_t start_page;
 	unsigned long *dirty_bmap;
+	bool has_protected_peb_collected = false;
 	int i;
 	int err = 0;
 
@@ -254,6 +257,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		void *kaddr;
 		unsigned long found_item = 0;
 		u16 peb_index;
+		u64 start_peb;
 		u16 pebs_count;
 
 		page = ssdfs_page_array_get_page_locked(&fdesc->array,
@@ -270,6 +274,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 		dirty_bmap =
 		    (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
+		start_peb = le64_to_cpu(hdr->start_peb);
 		pebs_count = le16_to_cpu(hdr->pebs_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -291,12 +296,20 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 				goto finish_page_processing;
 			}
 
+			if ((start_peb + found_item) >= tbl->pebs_count) {
+				/* all dirty PEBs were found */
+				goto finish_page_processing;
+			}
+
 			if (!is_time_to_erase_peb(hdr, found_item)) {
 				SSDFS_DBG("PEB %llu is protected yet\n",
 					  GET_PEB_ID(kaddr, found_item));
 				found_item++;
 				continue;
 			}
+
+			if (is_peb_protected(found_item))
+				has_protected_peb_collected = true;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(array->size >= array->capacity);
@@ -315,6 +328,9 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 			array->size++;
 			found_pebs++;
 			found_item++;
+
+			if (has_protected_peb_collected)
+				goto finish_page_processing;
 		};
 
 finish_page_processing:
@@ -404,7 +420,7 @@ int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	for (i = 0; i < stripes_per_fragment; i++) {
-		err = ssdfs_maptbl_collect_stripe_dirty_pebs(fdesc,
+		err = ssdfs_maptbl_collect_stripe_dirty_pebs(tbl, fdesc,
 							     fragment_index,
 							     i,
 							     erases_per_stripe,
@@ -448,7 +464,7 @@ int ssdfs_maptbl_erase_pebs_array(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !array || !array->ptr);
-	BUG_ON(!fsi->devops || !fsi->devops->erase);
+	BUG_ON(!fsi->devops || !fsi->devops->trim);
 	BUG_ON(array->capacity == 0);
 	BUG_ON(array->capacity < array->size);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -482,7 +498,7 @@ int ssdfs_maptbl_erase_pebs_array(struct ssdfs_fs_info *fsi,
 			}
 			err = 0;
 		} else {
-			err = fsi->devops->erase(fsi->sb, offset, len);
+			err = fsi->devops->trim(fsi->sb, offset, len);
 			if (err == -EROFS) {
 				SSDFS_DBG("file system has READ_ONLY state\n");
 				return err;

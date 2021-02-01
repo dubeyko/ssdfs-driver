@@ -806,6 +806,15 @@ static void ssdfs_bdev_erase_end_io(struct bio *bio)
 }
 
 /*
+ * ssdfs_bdev_support_discard() - check that block device supports discard
+ */
+static inline bool ssdfs_bdev_support_discard(struct block_device *bdev)
+{
+	return blk_queue_discard(bdev_get_queue(bdev)) ||
+		bdev_is_zoned(bdev);
+}
+
+/*
  * ssdfs_bdev_erase_request() - initiate erase request
  * @sb: superblock object
  * @nr_iovecs: number of pages for erase
@@ -842,7 +851,7 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 
 	max_pages = min_t(unsigned int, nr_iovecs, BIO_MAX_PAGES);
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOIO, max_pages);
+	bio = ssdfs_bdev_bio_alloc(GFP_NOFS, max_pages);
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -864,7 +873,7 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 			nr_iovecs -= i;
 			i = 0;
 
-			bio = ssdfs_bdev_bio_alloc(GFP_NOIO, max_pages);
+			bio = ssdfs_bdev_bio_alloc(GFP_NOFS, max_pages);
 			if (IS_ERR_OR_NULL(bio)) {
 				err = !bio ? -ERANGE : PTR_ERR(bio);
 				SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -921,8 +930,10 @@ static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
 	u32 erase_size = fsi->erasesize;
 	loff_t page_start, page_end;
 	u32 pages_count;
+	sector_t start_sector;
+	sector_t sectors_count;
 	u32 remainder;
-	int err;
+	int err = 0;
 
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
 		  sb, (unsigned long long)offset, len);
@@ -954,7 +965,22 @@ static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
 		return -ERANGE;
 	}
 
-	err = ssdfs_bdev_erase_request(sb, pages_count, offset);
+	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
+		err = ssdfs_bdev_erase_request(sb, pages_count, offset);
+		if (unlikely(err))
+			goto try_zeroout;
+	} else {
+try_zeroout:
+		start_sector = page_start <<
+					(PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
+		sectors_count = pages_count <<
+					(PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
+
+		err = blkdev_issue_zeroout(sb->s_bdev,
+					   start_sector, sectors_count,
+					   GFP_NOFS, 0);
+	}
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to erase: "
 			  "offset %llu, len %zu, err %d\n",
@@ -990,7 +1016,7 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	u32 remainder;
 	sector_t start_sector;
 	sector_t sectors_count;
-	int err;
+	int err = 0;
 
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
 		  sb, (unsigned long long)offset, len);
@@ -1025,8 +1051,19 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	start_sector = page_start << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
 	sectors_count = pages_count << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
 
-	err = blkdev_issue_discard(sb->s_bdev, start_sector, sectors_count,
-				   GFP_NOIO, 0);
+	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
+		err = blkdev_issue_discard(sb->s_bdev,
+					   start_sector, sectors_count,
+					   GFP_NOFS, 0);
+		if (unlikely(err))
+			goto try_zeroout;
+	} else {
+try_zeroout:
+		err = blkdev_issue_zeroout(sb->s_bdev,
+					   start_sector, sectors_count,
+					   GFP_NOFS, 0);
+	}
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to discard: "
 			  "start_sector %llu, sectors_count %llu, "

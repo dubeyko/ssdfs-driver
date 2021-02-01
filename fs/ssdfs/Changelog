@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.85 [January 31, 2021]
+    (*) Fix bugs in new mount logic (step 8).
+
 v.3.84 [January 15, 2021]
     (*) Fix bugs in extents tree functionality (step 5).
 

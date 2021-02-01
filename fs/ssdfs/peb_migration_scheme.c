@@ -637,6 +637,12 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 		req->place.start.blk_index = (u16)logical_blk;
 		req->place.len = 1;
 
+		req->extent.ino = U64_MAX;
+		req->extent.logical_offset = U64_MAX;
+		req->extent.data_bytes = 0;
+
+		req->result.processed_blks = 0;
+
 		err = ssdfs_peb_copy_pre_alloc_page(pebc, logical_blk, req);
 		if (err == -ENODATA) {
 			/* pre-allocated page hasn't content */

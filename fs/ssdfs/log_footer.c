@@ -154,7 +154,6 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 	if (remainder) {
 		SSDFS_DBG("dev_size %llu is unaligned on page_size %u\n",
 			  dev_size, page_size);
-		return false;
 	}
 
 	if (free_pages > pages_count) {

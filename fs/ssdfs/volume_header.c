@@ -177,16 +177,25 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 			u64 leb_id = le64_to_cpu(vh->sb_pebs[i][j].leb_id);
 			u64 peb_id = le64_to_cpu(vh->sb_pebs[i][j].peb_id);
 
+			SSDFS_DBG("i %d, j %d, LEB %llu, PEB %llu\n",
+				  i, j, leb_id, peb_id);
+
 			for (k = 0; k < array_index; k++) {
 				if (leb_id == leb_array[k]) {
-					SSDFS_DBG("corrupted LEB number %llu\n",
-						  leb_id);
+					SSDFS_DBG("corrupted LEB number: "
+						  "leb_id %llu, "
+						  "leb_array[%d] %llu\n",
+						  leb_id, k,
+						  leb_array[k]);
 					return false;
 				}
 
 				if (peb_id == peb_array[k]) {
-					SSDFS_DBG("corrupted PEB number %llu\n",
-						  peb_id);
+					SSDFS_DBG("corrupted PEB number: "
+						  "peb_id %llu, "
+						  "peb_array[%d] %llu\n",
+						  peb_id, k,
+						  peb_array[k]);
 					return false;
 				}
 			}
@@ -430,7 +439,6 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 	if (remainder) {
 		SSDFS_DBG("dev_size %llu is unaligned on page_size %u\n",
 			  dev_size, page_size);
-		return false;
 	}
 
 	if (free_pages > pages_count) {

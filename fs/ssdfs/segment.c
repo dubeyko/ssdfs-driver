@@ -517,6 +517,9 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_CREATED);
 	wake_up_all(&si->object_queue);
 
+	SSDFS_DBG("segment %llu has been created\n",
+		  seg);
+
 	return 0;
 
 destroy_seg_obj:
@@ -3097,9 +3100,11 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "logical_blk %u, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  si->seg_id,
 		  req->extent.ino, req->extent.logical_offset,
+		  req->place.start.blk_index,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
 

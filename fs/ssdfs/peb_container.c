@@ -1714,6 +1714,9 @@ start_container_threads:
 	}
 
 finish_init_peb_container:
+	SSDFS_DBG("PEB has been created: "
+		  "seg %llu, peb_index %u\n",
+		  seg, peb_index);
 	return 0;
 
 fail_create_peb_objects:
