@@ -99,6 +99,7 @@ struct ssdfs_found_protected_pebs {
  * @found: found PEBs' details
  * @err: result of the search
  * @state: recovery thread's state
+ * @pebs_per_volume: PEBs number per volume
  * @last_vh: buffer for last valid volume header
  * @sbi: superblock info
  * @sbi_backup: backup copy of superblock info
@@ -112,6 +113,7 @@ struct ssdfs_recovery_env {
 
 	int err;
 	atomic_t state;
+	u64 pebs_per_volume;
 
 	struct ssdfs_volume_header last_vh;
 	struct ssdfs_sb_info sbi;
@@ -254,15 +256,23 @@ u64 SSDFS_RECOVERY_LOW_OFF(struct ssdfs_recovery_env *env)
 static inline
 u64 SSDFS_RECOVERY_UPPER_OFF(struct ssdfs_recovery_env *env)
 {
+	u64 calculated_peb;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || !env->fsi || !env->found);
+	BUG_ON(env->pebs_per_volume == 0);
+	BUG_ON(env->pebs_per_volume >= U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (env->found->search_phase) {
 	case SSDFS_RECOVERY_FAST_SEARCH:
-		return env->found->middle_offset +
-			    ((SSDFS_MAPTBL_PROTECTION_STEP - 1) *
-				env->fsi->erasesize);
+		calculated_peb = div_u64(env->found->middle_offset,
+					 env->fsi->erasesize);
+		calculated_peb += SSDFS_MAPTBL_PROTECTION_STEP - 1;
+		if (calculated_peb >= env->pebs_per_volume)
+			calculated_peb = env->pebs_per_volume - 1;
+
+		return calculated_peb * env->fsi->erasesize;
 
 	case SSDFS_RECOVERY_SLOW_SEARCH:
 	case SSDFS_RECOVERY_FIRST_SLOW_TRY:

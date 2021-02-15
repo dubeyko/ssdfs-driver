@@ -471,6 +471,24 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 				  peb_id);
 			goto finish_search;
 		} else {
+			u64 new_leb_id;
+			u64 new_peb_id;
+
+			new_leb_id =
+				SSDFS_MAIN_SB_LEB(SSDFS_VH(env->sbi.vh_buf),
+						  SSDFS_CUR_SB_SEG);
+			new_peb_id =
+				SSDFS_MAIN_SB_PEB(SSDFS_VH(env->sbi.vh_buf),
+						  SSDFS_CUR_SB_SEG);
+
+			if (new_leb_id != leb_id || new_peb_id != peb_id) {
+				err = -ENODATA;
+				SSDFS_DBG("SB segment not found: "
+					  "peb %llu\n",
+					  peb_id);
+				goto finish_search;
+			}
+
 			env->sbi.last_log.leb_id = leb_id;
 			env->sbi.last_log.peb_id = peb_id;
 			env->sbi.last_log.page_offset = 0;
@@ -543,6 +561,21 @@ int ssdfs_check_cur_main_sb_peb(struct ssdfs_recovery_env *env)
 			  peb_id);
 		goto finish_check;
 	} else {
+		u64 new_leb_id;
+		u64 new_peb_id;
+
+		vh = SSDFS_VH(env->sbi.vh_buf);
+		new_leb_id = SSDFS_MAIN_SB_LEB(vh, SSDFS_CUR_SB_SEG);
+		new_peb_id = SSDFS_MAIN_SB_PEB(vh, SSDFS_CUR_SB_SEG);
+
+		if (new_leb_id != leb_id || new_peb_id != peb_id) {
+			err = -ENODATA;
+			SSDFS_DBG("SB segment not found: "
+				  "peb %llu\n",
+				  peb_id);
+			goto finish_check;
+		}
+
 		env->sbi.last_log.leb_id = leb_id;
 		env->sbi.last_log.peb_id = peb_id;
 		env->sbi.last_log.page_offset = 0;
@@ -601,6 +634,21 @@ int ssdfs_check_cur_copy_sb_peb(struct ssdfs_recovery_env *env)
 			  peb_id);
 		goto finish_check;
 	} else {
+		u64 new_leb_id;
+		u64 new_peb_id;
+
+		vh = SSDFS_VH(env->sbi.vh_buf);
+		new_leb_id = SSDFS_COPY_SB_LEB(vh, SSDFS_CUR_SB_SEG);
+		new_peb_id = SSDFS_COPY_SB_PEB(vh, SSDFS_CUR_SB_SEG);
+
+		if (new_leb_id != leb_id || new_peb_id != peb_id) {
+			err = -ENODATA;
+			SSDFS_DBG("SB segment not found: "
+				  "peb %llu\n",
+				  peb_id);
+			goto finish_check;
+		}
+
 		env->sbi.last_log.leb_id = leb_id;
 		env->sbi.last_log.peb_id = peb_id;
 		env->sbi.last_log.page_offset = 0;

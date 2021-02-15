@@ -6274,6 +6274,8 @@ finish_mapping:
 		}
 	}
 
+	SSDFS_DBG("leb_id %llu, pebs_count %llu\n",
+		  leb_id, tbl->pebs_count);
 	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
 		  "state %#x, consistency %#x; "
 		  "RELATION_INDEX: peb_id %llu, type %#x, "

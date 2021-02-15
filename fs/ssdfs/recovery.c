@@ -1800,6 +1800,7 @@ finish_read_maptbl_cache:
 
 static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 					   struct ssdfs_volume_header *vh,
+					   u64 pebs_per_volume,
 					   struct ssdfs_recovery_env *env)
 {
 	int err;
@@ -1813,6 +1814,7 @@ static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 	env->found = NULL;
 	env->err = 0;
 	env->fsi = fsi;
+	env->pebs_per_volume = pebs_per_volume;
 
 	atomic_set(&env->state, SSDFS_RECOVERY_UNKNOWN_STATE);
 
@@ -2010,7 +2012,7 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 			  lower_peb_id, upper_peb_id, last_cno_peb_id);
 
 		if (lower_peb_id >= U64_MAX) {
-			SSDFS_ERR("ignore search in fragment: "
+			SSDFS_DBG("ignore search in fragment: "
 				  "found (start_peb %llu, pebs_count %u), "
 				  "start_peb %llu, pebs_count %u, "
 				  "lower %llu, upper %llu, "
@@ -2025,7 +2027,7 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 			return -ENODATA;
 		} else if (lower_peb_id == env->found->start_peb &&
 			   upper_peb_id >= U64_MAX) {
-			SSDFS_ERR("ignore search in fragment: "
+			SSDFS_DBG("ignore search in fragment: "
 				  "found (start_peb %llu, pebs_count %u), "
 				  "start_peb %llu, pebs_count %u, "
 				  "lower %llu, upper %llu, "
@@ -2204,7 +2206,8 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	}
 
 	for (i = 0; i < threads_count; i++) {
-		err = ssdfs_init_recovery_environment(fsi, vh, &array[i]);
+		err = ssdfs_init_recovery_environment(fsi, vh,
+					pebs_per_volume, &array[i]);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare sb info: err %d\n", err);
 

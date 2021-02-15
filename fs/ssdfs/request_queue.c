@@ -559,7 +559,10 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	WARN_ON(atomic_dec_return(&req->private.refs_count) < 0);
+	if (atomic_dec_return(&req->private.refs_count) < 0) {
+		SSDFS_DBG("request's reference count %d\n",
+			  atomic_read(&req->private.refs_count));
+	}
 }
 
 /*
