@@ -1824,17 +1824,19 @@ finish_check_src_bmap:
 		goto finish_pre_allocate;
 	}
 
-	if (range->len > atomic_read(&bmap->free_logical_blks)) {
-		err = -ERANGE;
-		SSDFS_ERR("range %u > free_logical_blks %d\n",
-			  range->len,
-			  atomic_read(&bmap->free_logical_blks));
-		goto finish_pre_allocate;
-	}
+	if (!is_migrating) {
+		if (range->len > atomic_read(&bmap->free_logical_blks)) {
+			err = -ERANGE;
+			SSDFS_ERR("range %u > free_logical_blks %d\n",
+				  range->len,
+				  atomic_read(&bmap->free_logical_blks));
+			goto finish_pre_allocate;
+		}
 
-	atomic_sub(range->len, &bmap->free_logical_blks);
-	atomic_add(range->len, &bmap->valid_logical_blks);
-	atomic_add(range->len, &bmap->parent->valid_logical_blks);
+		atomic_sub(range->len, &bmap->free_logical_blks);
+		atomic_add(range->len, &bmap->valid_logical_blks);
+		atomic_add(range->len, &bmap->parent->valid_logical_blks);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
@@ -2015,7 +2017,7 @@ init_failed:
 		break;
 
 	default:
-		SSDFS_WARN("invlaid buffers_state %#x\n",
+		SSDFS_WARN("invalid buffers_state %#x\n",
 			   atomic_read(&bmap->buffers_state));
 		return -ERANGE;
 	}
@@ -2110,17 +2112,19 @@ finish_check_src_bmap:
 		goto finish_allocate;
 	}
 
-	if (range->len > atomic_read(&bmap->free_logical_blks)) {
-		err = -ERANGE;
-		SSDFS_ERR("range %u > free_logical_blks %d\n",
-			  range->len,
-			  atomic_read(&bmap->free_logical_blks));
-		goto finish_allocate;
-	}
+	if (!is_migrating) {
+		if (range->len > atomic_read(&bmap->free_logical_blks)) {
+			err = -ERANGE;
+			SSDFS_ERR("range %u > free_logical_blks %d\n",
+				  range->len,
+				  atomic_read(&bmap->free_logical_blks));
+			goto finish_allocate;
+		}
 
-	atomic_sub(range->len, &bmap->free_logical_blks);
-	atomic_add(range->len, &bmap->valid_logical_blks);
-	atomic_add(range->len, &bmap->parent->valid_logical_blks);
+		atomic_sub(range->len, &bmap->free_logical_blks);
+		atomic_add(range->len, &bmap->valid_logical_blks);
+		atomic_add(range->len, &bmap->parent->valid_logical_blks);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "

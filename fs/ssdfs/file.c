@@ -1567,11 +1567,14 @@ int ssdfs_writepage_wrapper(struct page *page,
 			    ssdfs_writepagefn writepage)
 {
 	struct inode *inode = page->mapping->host;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
 	loff_t i_size =  i_size_read(inode);
 	pgoff_t end_index = i_size >> PAGE_SHIFT;
 	int len = i_size & (PAGE_SIZE - 1);
+	loff_t cur_blk;
+	bool is_new_blk = false;
 	int err = 0;
 
 	SSDFS_DBG("ino %lu, page_index %llu, "
@@ -1594,6 +1597,21 @@ int ssdfs_writepage_wrapper(struct page *page,
 	if (index > end_index || (index == end_index && !len)) {
 		err = 0;
 		goto finish_write_page;
+	}
+
+	cur_blk = (index << PAGE_SHIFT) >> fsi->log_pagesize;
+
+	SSDFS_DBG("cur_blk %llu\n", (u64)cur_blk);
+
+	is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
+							   inode);
+
+	SSDFS_DBG("cur_blk %llu, is_new_blk %#x\n",
+		  (u64)cur_blk, is_new_blk);
+
+	if (is_new_blk) {
+		if (!need_add_block(page))
+			set_page_new(page);
 	}
 
 	/* Is the page fully inside @i_size? */
@@ -1901,6 +1919,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	pgoff_t index = pos >> PAGE_SHIFT;
 	unsigned blks = 0;
 	loff_t start_blk, end_blk, cur_blk;
+	u64 last_blk = U64_MAX;
 	u64 free_pages = 0;
 	bool is_new_blk = false;
 	int err = 0;
@@ -1929,13 +1948,18 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	start_blk = pos >> fsi->log_pagesize;
 	end_blk = (pos + len) >> fsi->log_pagesize;
 
+	if (i_size_read(inode) > 0)
+		last_blk = (i_size_read(inode) - 1) >> fsi->log_pagesize;
+
 	SSDFS_DBG("start_blk %llu, end_blk %llu\n",
 		  (u64)start_blk, (u64)end_blk);
 
 	cur_blk = start_blk;
 	do {
-		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
-								   inode);
+		if (last_blk >= U64_MAX)
+			is_new_blk = true;
+		else
+			is_new_blk = cur_blk > last_blk;
 
 		SSDFS_DBG("cur_blk %llu, is_new_blk %#x, blks %u\n",
 			  (u64)cur_blk, is_new_blk, blks);
@@ -1966,9 +1990,6 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 				SSDFS_DBG("volume hasn't free space\n");
 				return err;
 			}
-
-			if (!need_add_block(page))
-				set_page_new(page);
 		}
 
 		cur_blk++;

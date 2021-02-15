@@ -156,6 +156,7 @@ enum {
  * @pebs_count: count of PEBs in segment
  * @partial_init_end: wait of partial init ending
  * @full_init_end: wait of full init ending
+ * @wait_queue: wait queue of blk2off table
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_blk2off_table {
@@ -181,6 +182,7 @@ struct ssdfs_blk2off_table {
 
 	struct completion partial_init_end;
 	struct completion full_init_end;
+	wait_queue_head_t wait_queue;
 
 	struct ssdfs_fs_info *fsi;
 };

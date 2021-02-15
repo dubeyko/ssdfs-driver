@@ -474,6 +474,7 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	ptr->type = type;
 
 	init_rwsem(&ptr->translation_lock);
+	init_waitqueue_head(&ptr->wait_queue);
 
 	ptr->init_cno = U64_MAX;
 	ptr->used_logical_blks = 0;
@@ -4252,7 +4253,8 @@ int ssdfs_blk2off_table_get_used_logical_blks(struct ssdfs_blk2off_table *tbl,
  *
  * %-ERANGE     - internal logic error.
  * %-ENODATA    - table doesn't contain logical block or corresponding ID.
- * %-ENOENT     - table's fragment for requested logical block not initialized
+ * %-ENOENT     - table's fragment for requested logical block not initialized.
+ * %-EBUSY      - logical block hasn't ID yet.
  */
 static
 int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
@@ -4295,9 +4297,9 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 	memcpy(pos, &table->lblk2off[logical_blk], off_pos_size);
 
 	if (pos->id == U16_MAX) {
-		SSDFS_ERR("logical block %u hasn't ID yet\n",
+		SSDFS_DBG("logical block %u hasn't ID yet\n",
 			  logical_blk);
-		return -ENODATA;
+		return -EBUSY;
 	}
 
 	if (pos->peb_index >= table->pebs_count) {
@@ -4399,6 +4401,23 @@ int ssdfs_blk2off_table_check_fragment_desc(struct ssdfs_blk2off_table *table,
 	return 0;
 }
 
+bool has_logical_block_id_assigned(struct ssdfs_blk2off_table *table,
+				   u16 logical_blk)
+{
+	unsigned long *lbmap = NULL;
+	u16 capacity;
+	bool has_assigned = false;
+
+	down_read(&table->translation_lock);
+	lbmap = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
+	capacity = table->lblk2off_capacity;
+	has_assigned = !ssdfs_blk2off_table_bmap_vacant(lbmap, capacity,
+							logical_blk);
+	up_read(&table->translation_lock);
+
+	return has_assigned;
+}
+
 /*
  * ssdfs_blk2off_table_convert() - convert logical block into offset
  * @table: pointer on table object
@@ -4480,7 +4499,27 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 
 	err = ssdfs_blk2off_table_get_checked_position(table, logical_blk,
 							&pos);
-	if (unlikely(err)) {
+	if (err == -EBUSY) {
+		SSDFS_DBG("unable to get checked position: logical_blk %u\n",
+		          logical_blk);
+
+		up_read(&table->translation_lock);
+		wait_event_interruptible_timeout(table->wait_queue,
+				has_logical_block_id_assigned(table,
+							logical_blk),
+				SSDFS_DEFAULT_TIMEOUT);
+		down_read(&table->translation_lock);
+
+		err = ssdfs_blk2off_table_get_checked_position(table,
+								logical_blk,
+								&pos);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get checked offset's position: "
+				  "logical_block %u, err %d\n",
+				  logical_blk, err);
+			goto finish_translation;
+		}
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get checked offset's position: "
 			  "logical_block %u, err %d\n",
 			  logical_blk, err);
@@ -5218,6 +5257,8 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 	up_write(&fragment->lock);
 	up_read(&table->translation_lock);
 
+	wake_up_all(&table->wait_queue);
+
 	return 0;
 
 finish_fragment_modification:
@@ -5225,6 +5266,8 @@ finish_fragment_modification:
 
 finish_table_modification:
 	up_write(&table->translation_lock);
+
+	wake_up_all(&table->wait_queue);
 
 	return err;
 }
@@ -5714,6 +5757,8 @@ finish_freeing:
 		SSDFS_DBG("extent (start %u, len %u) has been freed\n",
 			  extent->start_lblk, extent->len);
 	}
+
+	wake_up_all(&table->wait_queue);
 
 	return err;
 }

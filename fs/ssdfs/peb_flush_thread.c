@@ -308,6 +308,15 @@ int ssdfs_peb_estimate_blk_desc_tbl_bytes(u16 log_pages,
 	reserved_bytes += blk_desc_tbl_hdr_size;
 	reserved_bytes += blk_desc_size * items_number;
 
+	SSDFS_DBG("log_pages %u, log_start_page %u, "
+		  "pages_per_peb %u, items_number %u, "
+		  "blk_desc_tbl_hdr_size %zu, blk_desc_size %zu, "
+		  "reserved_bytes %d\n",
+		  log_pages, log_start_page,
+		  pages_per_peb, items_number,
+		  blk_desc_tbl_hdr_size, blk_desc_size,
+		  reserved_bytes);
+
 	return reserved_bytes;
 }
 
@@ -1038,6 +1047,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	u16 free_data_pages;
 	u16 reserved_pages;
 	int phys_pages = 0;
+	int log_strategy;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1103,6 +1113,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	} else if (fsi->pagesize < PAGE_SIZE)
 		phys_pages <<= PAGE_SHIFT - fsi->log_pagesize;
 
+	log_strategy = is_log_partial(pebi);
 	free_data_pages = pebi->current_log.free_data_pages;
 	reserved_pages = pebi->current_log.reserved_pages;
 
@@ -1112,13 +1123,32 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		 */
 	} else if (phys_pages == (free_data_pages + 1) &&
 		   reserved_pages == 2) {
-		pebi->current_log.free_data_pages++;
-		pebi->current_log.reserved_pages--;
+		switch (log_strategy) {
+		case SSDFS_START_FULL_LOG:
+		case SSDFS_FINISH_FULL_LOG:
+			SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
+				  phys_pages,
+				  pebi->current_log.free_data_pages);
+			return -ENOSPC;
 
-		SSDFS_DBG("use footer page for data: "
-			  "free_data_pages %u, reserved_pages %u\n",
-			  pebi->current_log.free_data_pages,
-			  pebi->current_log.reserved_pages);
+		case SSDFS_START_PARTIAL_LOG:
+		case SSDFS_CONTINUE_PARTIAL_LOG:
+		case SSDFS_FINISH_PARTIAL_LOG:
+			pebi->current_log.free_data_pages++;
+			pebi->current_log.reserved_pages--;
+
+			SSDFS_DBG("use footer page for data: "
+				  "free_data_pages %u, reserved_pages %u\n",
+				  pebi->current_log.free_data_pages,
+				  pebi->current_log.reserved_pages);
+			break;
+
+		default:
+			SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
+				  phys_pages,
+				  pebi->current_log.free_data_pages);
+			return -ENOSPC;
+		}
 	} else {
 		SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
 			  phys_pages,
@@ -4826,8 +4856,14 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 	case SSDFS_MIGRATE_RANGE:
 		err = ssdfs_peb_update_extent(pebi, req);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to update extent: "
+		if (err == -EAGAIN) {
+			SSDFS_DBG("unable to migrate extent: "
+				  "seg %llu, peb %llu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to migrate extent: "
 				  "seg %llu, peb %llu, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id, err);
@@ -4836,7 +4872,13 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 	case SSDFS_MIGRATE_PRE_ALLOC_PAGE:
 		err = ssdfs_peb_pre_allocate_block(pebi, req);
-		if (unlikely(err)) {
+		if (err == -EAGAIN) {
+			SSDFS_DBG("unable to migrate pre-alloc page: "
+				  "seg %llu, peb %llu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to migrate pre-alloc page: "
 				  "seg %llu, peb %llu, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
@@ -4846,7 +4888,13 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 	case SSDFS_MIGRATE_FRAGMENT:
 		err = ssdfs_peb_update_block(pebi, req);
-		if (unlikely(err)) {
+		if (err == -EAGAIN) {
+			SSDFS_DBG("unable to migrate fragment: "
+				  "seg %llu, peb %llu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to migrate fragment: "
 				  "seg %llu, peb %llu, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
@@ -4912,6 +4960,62 @@ bool is_full_log_ready(struct ssdfs_peb_info *pebi)
 		  pebi->current_log.free_data_pages);
 
 	return pebi->current_log.free_data_pages == 0;
+}
+
+/*
+ * should_partial_log_being_commited() - check that it's time to commit
+ * @pebi: pointer on PEB object
+ */
+static inline
+bool should_partial_log_being_commited(struct ssdfs_peb_info *pebi)
+{
+	u16 free_data_pages;
+	u16 min_partial_log_pages;
+	int log_strategy;
+	bool time_to_commit = false;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	free_data_pages = pebi->current_log.free_data_pages;
+	min_partial_log_pages = ssdfs_peb_estimate_min_partial_log_pages(pebi);
+
+	log_strategy = is_log_partial(pebi);
+
+	SSDFS_DBG("seg %llu, peb %llu, log_strategy %#x, "
+		  "free_data_pages %u, min_partial_log_pages %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, log_strategy,
+		  free_data_pages, min_partial_log_pages);
+
+	switch (log_strategy) {
+	case SSDFS_START_FULL_LOG:
+	case SSDFS_START_PARTIAL_LOG:
+		if (free_data_pages <= min_partial_log_pages) {
+			time_to_commit = true;
+		} else {
+			time_to_commit = false;
+		}
+		break;
+
+	case SSDFS_CONTINUE_PARTIAL_LOG:
+	case SSDFS_FINISH_PARTIAL_LOG:
+	case SSDFS_FINISH_FULL_LOG:
+		/* do nothing */
+		time_to_commit = false;
+		break;
+
+	default:
+		SSDFS_CRIT("unexpected log strategy %#x\n",
+			   log_strategy);
+		time_to_commit = false;
+		break;
+	}
+
+	SSDFS_DBG("time_to_commit %#x\n", time_to_commit);
+
+	return time_to_commit;
 }
 
 /*
@@ -7625,10 +7729,12 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("seg %llu, peb %llu, log_strategy %#x, "
+		  "current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u, "
 		  "current_log.free_data_pages %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  log_strategy,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset,
 		  pebi->current_log.free_data_pages);
@@ -7674,8 +7780,10 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 		break;
 	}
 
-	SSDFS_DBG("pebi->current_log.start_page %u\n",
-		  pebi->current_log.start_page);
+	SSDFS_DBG("pebi->current_log.start_page %u, "
+		  "current_log.free_data_pages %u\n",
+		  pebi->current_log.start_page,
+		  pebi->current_log.free_data_pages);
 }
 
 /*
@@ -8337,10 +8445,12 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		 * There is no space for log footer.
 		 * So, full log will be without footer.
 		 */
+		SSDFS_DBG("There is no space for log footer.\n");
+
 		flags = SSDFS_LOG_IS_PARTIAL |
 			SSDFS_LOG_HAS_PARTIAL_HEADER;
 		log_strategy = SSDFS_FINISH_PARTIAL_LOG;
-	} else if ((pebi->log_pages - cur_page_offset) <= 1) {
+	} else if ((pebi->log_pages - cur_page_offset) == 1) {
 		cur_hdr_desc = &plh_desc[SSDFS_LOG_FOOTER_INDEX];
 		flags = SSDFS_PARTIAL_LOG_FOOTER | SSDFS_ENDING_LOG_FOOTER;
 		err = ssdfs_peb_store_log_footer(pebi, flags, cur_hdr_desc,
@@ -8363,18 +8473,13 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 			SSDFS_LOG_HAS_PARTIAL_HEADER |
 			SSDFS_LOG_HAS_FOOTER;
 		log_strategy = SSDFS_FINISH_PARTIAL_LOG;
-	} else if ((pebi->log_pages - cur_page_offset) <= 2) {
+	} else {
 		/*
 		 * It is possible to add another log.
 		 */
 		flags = SSDFS_LOG_IS_PARTIAL |
 			SSDFS_LOG_HAS_PARTIAL_HEADER;
 		log_strategy = SSDFS_CONTINUE_PARTIAL_LOG;
-	} else {
-		err = -ERANGE;
-		SSDFS_ERR("invalid offset: cur_page %lu, write_offset %u\n",
-			  cur_page, write_offset);
-		goto finish_commit_log;
 	}
 
 	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
@@ -8455,6 +8560,7 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 	u32 flags;
 	size_t desc_size = sizeof(struct ssdfs_metadata_descriptor);
 	pgoff_t cur_page = pebi->current_log.start_page;
+	pgoff_t cur_page_offset;
 	u32 write_offset = 0;
 	bool log_has_data = false;
 	int err = 0;
@@ -8507,6 +8613,11 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+
+	cur_page_offset = cur_page % pebi->log_pages;
+	if (cur_page_offset == 0) {
+		SSDFS_WARN("There is no space for log footer.\n");
+	}
 
 	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
 	flags = 0;
@@ -10152,7 +10263,13 @@ finish_process_free_space_absence:
 		if (is_peb_exhausted) {
 			ssdfs_unlock_current_peb(pebc);
 
-			if (is_ssdfs_maptbl_under_flush(fsi)) {
+			if (is_ssdfs_maptbl_under_flush(fsi) &&
+			    pebc->peb_type == SSDFS_MAPTBL_DATA_PEB_TYPE) {
+				/*
+				 * Continue logic for user data.
+				 */
+				SSDFS_DBG("ignore mapping table flush for user data\n");
+			} else if (is_ssdfs_maptbl_under_flush(fsi)) {
 				if (have_flush_requests(pebc)) {
 					SSDFS_ERR("maptbl is flushing: "
 						  "unprocessed requests: "
@@ -10539,6 +10656,10 @@ process_flush_requests:
 				skip_finish_flush_request = false;
 				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 				goto finish_create_request_processing;
+			} else if (should_partial_log_being_commited(pebi)) {
+				skip_finish_flush_request = false;
+				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+				goto finish_create_request_processing;
 			} else {
 				ssdfs_finish_flush_request(pebc, req,
 							   wait_queue, err);
@@ -10656,6 +10777,10 @@ finish_create_request_processing:
 			thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			goto finish_update_request_processing;
 		} else if (is_full_log_ready(pebi)) {
+			skip_finish_flush_request = false;
+			thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+			goto finish_update_request_processing;
+		} else if (should_partial_log_being_commited(pebi)) {
 			skip_finish_flush_request = false;
 			thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			goto finish_update_request_processing;
@@ -11025,6 +11150,11 @@ make_log_commit:
 			peb_has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
 			ssdfs_peb_current_log_unlock(pebi);
 			ssdfs_unlock_current_peb(pebc);
+
+			SSDFS_DBG("free_space1 %u, free_space2 %u, "
+				  "free_data_pages %u, peb_has_dirty_pages %#x\n",
+				  free_space1, free_space2,
+				  free_data_pages, peb_has_dirty_pages);
 
 			if (!peb_has_dirty_pages) {
 				SSDFS_DBG("PEB has no dirty pages: "

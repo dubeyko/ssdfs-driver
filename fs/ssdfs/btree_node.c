@@ -1860,6 +1860,12 @@ int ssdfs_btree_init_node_items_area(struct ssdfs_btree_node *node,
 		node->items_area.end_hash = U64_MAX;
 	}
 
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "items_count %u, items_capacity %u\n",
+		  start_hash, end_hash,
+		  node->items_area.items_count,
+		  node->items_area.items_capacity);
+
 	return 0;
 }
 
@@ -8657,9 +8663,11 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
+		  "search (start_hash %llx, end_hash %llx), "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
+		  start_hash, end_hash,
 		  search->request.start.hash, search->request.end.hash,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
@@ -8673,9 +8681,11 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 					   start_hash, end_hash)) {
 	case 0:
 		/* ranges have intersection */
+		SSDFS_DBG("ranges have intersection\n");
 		break;
 
 	case -1: /* range1 < range2 */
+		SSDFS_DBG("range1 < range2\n");
 		if (have_enough_space) {
 			search->result.state =
 				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
@@ -8713,6 +8723,7 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 		return -ENODATA;
 
 	case 1: /* range1 > range2 */
+		SSDFS_DBG("range1 > range2\n");
 		if (have_enough_space) {
 			search->result.state =
 				SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
@@ -11485,8 +11496,12 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	lower_index = 0;
 	lower_bound = le64_to_cpu(lookup_table[lower_index]);
 
+	SSDFS_DBG("lower_index %d, lower_bound %llu\n",
+		  lower_index, lower_bound);
+
 	if (lower_bound >= U64_MAX) {
 		err = -ENODATA;
+		*lookup_index = lower_index;
 		goto finish_index_search;
 	} else if (hash < lower_bound) {
 		err = -ENODATA;
@@ -11505,6 +11520,9 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	upper_index = table_capacity - 1;
 	upper_bound = le64_to_cpu(lookup_table[upper_index]);
 
+	SSDFS_DBG("upper_index %d, upper_bound %llu\n",
+		  upper_index, upper_bound);
+
 	if (upper_bound >= U64_MAX) {
 		/*
 		 * continue to search
@@ -11517,6 +11535,8 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		goto finish_index_search;
 	} else if (hash > upper_bound) {
 		err = 0;
+		SSDFS_DBG("hash %llx > upper_bound %llx\n",
+			  hash, upper_bound);
 		*lookup_index = upper_index;
 		goto finish_index_search;
 	}
@@ -11573,6 +11593,8 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 	*lookup_index = lower_index;
 
 finish_index_search:
+	SSDFS_DBG("lookup_index %u\n", *lookup_index);
+
 	if (err == -EEXIST) {
 		/* index found */
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11650,6 +11672,12 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 	area_size = node->items_area.area_size;
 	items_count = node->items_area.items_count;
 	up_read(&node->header_lock);
+
+	if (items_count == 0) {
+		SSDFS_DBG("node_id %u is empty\n",
+			  node->node_id);
+		return -ENODATA;
+	}
 
 	found_index = U16_MAX;
 	index = __ssdfs_convert_lookup2item_index(lookup_index,
@@ -11731,10 +11759,26 @@ try_search_item:
 
 		wake_up_all(&node->wait_queue);
 
-		if (unlikely(err))
+		if (err == -EAGAIN)
+			continue;
+		else if (unlikely(err))
 			goto finish_extract_range;
 		else if (found_index != U16_MAX)
 			break;
+	}
+
+	if (err == -EAGAIN) {
+		if (found_index >= U16_MAX) {
+			SSDFS_ERR("fail to find index\n");
+			goto finish_extract_range;
+		} else if (found_index == items_count) {
+			err = 0;
+			found_index = items_count - 1;
+		} else {
+			err = -ERANGE;
+			SSDFS_ERR("fail to find index\n");
+			goto finish_extract_range;
+		}
 	}
 
 	err = prepare_buffer(search, found_index,
@@ -11842,10 +11886,11 @@ finish_extract_range:
 		schedule();
 		finish_wait(&node->wait_queue, &wait);
 		goto try_search_item;
-	} else if (err == -ENODATA) {
+	} else if (err == -ENODATA || err == -EAGAIN) {
 		/*
 		 * do nothing
 		 */
+		search->result.err = err;
 	} else if (unlikely(err)) {
 		search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
 		search->result.err = err;
