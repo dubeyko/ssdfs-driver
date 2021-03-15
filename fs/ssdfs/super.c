@@ -51,6 +51,7 @@
 #include "xattr_tree.h"
 #include "xattr.h"
 #include "acl.h"
+#include "testing.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -2029,6 +2030,9 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct inode *root_i;
 	u64 fs_feature_compat;
 	int i;
+#ifdef CONFIG_SSDFS_TESTING
+	u64 testing_flags = 0;
+#endif /* CONFIG_SSDFS_TESTING */
 	int err = 0;
 
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
@@ -2276,6 +2280,12 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	SSDFS_INFO("%s has been mounted on device %s\n",
 		   SSDFS_VERSION, fs_info->devops->device_name(sb));
 
+#ifdef CONFIG_SSDFS_TESTING
+	//testing_flags = SSDFS_ENABLE_EXTENTS_TREE_TESTING;
+
+	ssdfs_do_testing(fs_info, testing_flags);
+#endif /* CONFIG_SSDFS_TESTING */
+
 	return 0;
 
 stop_gc_pre_dirty_seg_thread:
@@ -2511,16 +2521,6 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_leaks();
 
-	if (ssdfs_inode_cachep)
-		kmem_cache_shrink(ssdfs_inode_cachep);
-	ssdfs_shrink_seg_req_obj_cache();
-	ssdfs_shrink_btree_search_obj_cache();
-	ssdfs_shrink_free_ino_desc_cache();
-	ssdfs_shrink_btree_node_obj_cache();
-	ssdfs_shrink_seg_obj_cache();
-	ssdfs_shrink_extent_info_cache();
-	ssdfs_shrink_peb_mapping_info_cache();
-	ssdfs_shrink_blk2off_frag_obj_cache();
 }
 
 static struct dentry *ssdfs_mount(struct file_system_type *fs_type,

@@ -4381,14 +4381,82 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 
 	node->node_ops = &ssdfs_dentries_btree_node_ops;
 
-	switch (atomic_read(&node->items_area.state)) {
-	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
-		/* expected state */
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_INDEX_NODE:
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_AREA_ABSENT:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_BTREE_LEAF_NODE:
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_AREA_ABSENT:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
 		break;
 
 	default:
-		SSDFS_ERR("invalid items area's state %#x\n",
-			  atomic_read(&node->items_area.state));
+		SSDFS_WARN("invalid node type %#x\n",
+			   atomic_read(&node->type));
 		return -ERANGE;
 	}
 

@@ -65,7 +65,8 @@ struct ssdfs_btree_search_request {
 #define SSDFS_BTREE_SEARCH_HAS_VALID_COUNT		(1 << 1)
 #define SSDFS_BTREE_SEARCH_HAS_VALID_NAME		(1 << 2)
 #define SSDFS_BTREE_SEARCH_HAS_VALID_INO		(1 << 3)
-#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0xF
+#define SSDFS_BTREE_SEARCH_NOT_INVALIDATE		(1 << 4)
+#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1F
 	u32 flags;
 
 	struct ssdfs_btree_search_hash start;

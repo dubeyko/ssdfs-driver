@@ -3117,6 +3117,13 @@ int ssdfs_insert_translation_extent(struct ssdfs_blk2off_found_range *found,
 	}
 
 	if (i < *extent_count) {
+#ifdef CONFIG_SSDFS_DEBUG
+		if (((i + 1) + (*extent_count - i)) > capacity) {
+			SSDFS_WARN("value is out capacity\n");
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		memmove(&array[i + 1], &array[i],
 			(*extent_count - i) * extent_size);
 
@@ -5976,6 +5983,9 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		kunmap_atomic(kaddr1);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		SetPageLRU(page);
+		SetPageActive(page);
+
 		pagevec_add(&blk->pvec, page);
 	}
 
@@ -6254,7 +6264,7 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 						u16 peb_index)
 {
 	struct ssdfs_migrating_block *blk = NULL;
-	int i;
+	int i, j;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
@@ -6286,6 +6296,18 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 		if (blk->state == SSDFS_LBLOCK_UNDER_COMMIT) {
 			SSDFS_DBG("reverting migration state: blk %d\n",
 				  i);
+
+			for (j = 0; j < pagevec_count(&blk->pvec); j++) {
+				struct page *page = blk->pvec.pages[j];
+
+				if (!page)
+					continue;
+
+				ssdfs_lock_page(page);
+				ClearPageLRU(page);
+				ClearPageActive(page);
+				ssdfs_unlock_page(page);
+			}
 
 			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
 			ssdfs_blk2off_pagevec_release(&blk->pvec);

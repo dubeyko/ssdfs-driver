@@ -736,6 +736,9 @@ int ssdfs_btree_node_allocate_content_space(struct ssdfs_btree_node *node,
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
+		SetPageLRU(page);
+		SetPageActive(page);
+
 		pagevec_add(&node->content.pvec, page);
 	}
 
@@ -853,8 +856,21 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 			SSDFS_WARN("node is locked under destruction\n");
 		}
 
-		if (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE)
-			ssdfs_btree_node_pagevec_release(&node->content.pvec);
+		if (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE) {
+			struct pagevec *pvec = &node->content.pvec;
+
+			for (i = 0; i < pagevec_count(pvec); i++) {
+				struct page *page = pvec->pages[i];
+
+				if (!page)
+					continue;
+
+				ClearPageLRU(page);
+				ClearPageActive(page);
+			}
+
+			ssdfs_btree_node_pagevec_release(pvec);
+		}
 		break;
 
 	default:
@@ -1073,8 +1089,23 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		struct page *page = pvec->pages[i];
+
+		if (!page)
+			continue;
+
+		ssdfs_lock_page(page);
+		ClearPageLRU(page);
+		ClearPageActive(page);
+		ssdfs_unlock_page(page);
+	}
+
 	ssdfs_btree_node_pagevec_release(pvec);
+
 	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
+		SetPageLRU(req->result.pvec.pages[i]);
+		SetPageActive(req->result.pvec.pages[i]);
 		pagevec_add(pvec, req->result.pvec.pages[i]);
 		ssdfs_btree_node_account_page(req->result.pvec.pages[i]);
 		ssdfs_request_unlock_and_remove_page(req, i);
@@ -3767,6 +3798,13 @@ int ssdfs_btree_node_grow_index_area(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u, new_size %u\n",
 		  node->node_id, new_size);
 
+	if (new_size > node->node_size) {
+		SSDFS_ERR("invalid new size: "
+			  "new_size %u, node_size %u\n",
+			  new_size, node->node_size);
+		return -ERANGE;
+	}
+
 	index_size = node->index_area.index_size;
 	index_count = node->index_area.index_count;
 	index_capacity = node->index_area.index_capacity;
@@ -3797,7 +3835,11 @@ int ssdfs_btree_node_grow_index_area(struct ssdfs_btree_node *node,
 
 	offset1 = node->items_area.offset;
 	offset2 = node->index_area.offset;
-	if ((offset1 - offset2) != new_size) {
+
+	if (new_size == node->node_size) {
+		node->index_area.index_capacity =
+			(new_size - node->index_area.offset) / index_size;
+	} else if ((offset1 - offset2) != new_size) {
 		SSDFS_ERR("unable to resize the index area: "
 			  "items_area.offset %u, index_area.offset %u, "
 			  "new_size %u\n",
@@ -3805,12 +3847,13 @@ int ssdfs_btree_node_grow_index_area(struct ssdfs_btree_node *node,
 			  node->index_area.offset,
 			  new_size);
 		return -ERANGE;
-	}
+	} else
+		node->index_area.index_capacity = new_size / index_size;
 
 	down_read(&node->bmap_array.lock);
 	offset1 = node->bmap_array.item_start_bit;
 	offset2 = node->bmap_array.index_start_bit;
-	if ((offset1 - offset2) < (new_size / index_size))
+	if ((offset1 - offset2) < node->index_area.index_capacity)
 		err = -ERANGE;
 	up_read(&node->bmap_array.lock);
 
@@ -3824,8 +3867,10 @@ int ssdfs_btree_node_grow_index_area(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	node->index_area.area_size = new_size;
-	node->index_area.index_capacity = new_size / index_size;
+	if (new_size == node->node_size)
+		node->index_area.area_size = new_size - node->index_area.offset;
+	else
+		node->index_area.area_size = new_size;
 
 	SSDFS_DBG("items_area: offset %u, area_size %u, "
 		  "free_space %u, capacity %u; "
@@ -3880,7 +3925,12 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 
 	offset = node->index_area.offset;
 	area_size = node->index_area.area_size;
-	if ((offset + area_size) != node->items_area.offset) {
+
+	if ((offset + area_size) == node->node_size) {
+		/*
+		 * Continue logic
+		 */
+	} else if ((offset + area_size) != node->items_area.offset) {
 		SSDFS_ERR("invalid index area: "
 			  "index_area.offset %u, "
 			  "index_area.area_size %u, "
@@ -3902,7 +3952,7 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	if (((u32)index_size * index_capacity) != area_size) {
+	if (((u32)index_size * index_capacity) > area_size) {
 		SSDFS_ERR("invalid index area: "
 			  "index_size %u, index_capacity %u, "
 			  "area_size %u\n",
@@ -3914,15 +3964,18 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 
 	offset = node->items_area.offset;
 	area_size = node->items_area.area_size;
-	if ((offset + area_size) != node->node_size) {
-		SSDFS_ERR("invalid items area: "
-			  "items_area.offset %u, "
-			  "items_area.area_size %u, "
-			  "node_size %u\n",
-			  node->items_area.offset,
-			  node->items_area.area_size,
-			  node->node_size);
-		return -ERANGE;
+
+	if (area_size > 0) {
+		if ((offset + area_size) != node->node_size) {
+			SSDFS_ERR("invalid items area: "
+				  "items_area.offset %u, "
+				  "items_area.area_size %u, "
+				  "node_size %u\n",
+				  node->items_area.offset,
+				  node->items_area.area_size,
+				  node->node_size);
+			return -ERANGE;
+		}
 	}
 
 	items_count = node->items_area.items_count;
@@ -3937,16 +3990,18 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	average_item_size = area_size / items_capacity;
-	if (average_item_size < node->items_area.item_size ||
-	    average_item_size > node->items_area.max_item_size) {
-		SSDFS_ERR("invalid items area: "
-			  "average_item_size %u, "
-			  "item_size %u, max_item_size %u\n",
-			  average_item_size,
-			  node->items_area.item_size,
-			  node->items_area.max_item_size);
-		return -ERANGE;
+	if (items_capacity > 0) {
+		average_item_size = area_size / items_capacity;
+		if (average_item_size < node->items_area.item_size ||
+		    average_item_size > node->items_area.max_item_size) {
+			SSDFS_ERR("invalid items area: "
+				  "average_item_size %u, "
+				  "item_size %u, max_item_size %u\n",
+				  average_item_size,
+				  node->items_area.item_size,
+				  node->items_area.max_item_size);
+			return -ERANGE;
+		}
 	}
 
 	down_read(&node->bmap_array.lock);
@@ -4187,7 +4242,10 @@ int ssdfs_btree_node_resize_index_area(struct ssdfs_btree_node *node,
 	} else if (new_size > node->index_area.area_size) {
 		/* grow index area */
 
-		if ((new_size - area_size) >= node->items_area.area_size) {
+		if (new_size == node->node_size) {
+			/* eliminate items area */
+			new_items_area_size = 0;
+		} else if ((new_size - area_size) > node->items_area.area_size) {
 			err = -ENOSPC;
 			SSDFS_DBG("unable to resize items area: "
 				  "new_size %u, index_area_size %u, "
@@ -4196,10 +4254,10 @@ int ssdfs_btree_node_resize_index_area(struct ssdfs_btree_node *node,
 				  node->index_area.area_size,
 				  node->items_area.area_size);
 			goto finish_resize_operation;
+		} else {
+			new_items_area_size = node->items_area.area_size;
+			new_items_area_size -= new_size - area_size;
 		}
-
-		new_items_area_size = node->items_area.area_size;
-		new_items_area_size -= new_size - area_size;
 
 		err = node->node_ops->resize_items_area(node,
 							new_items_area_size);
@@ -5260,6 +5318,11 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 			goto finish_search;
 		}
 
+		SSDFS_DBG("search_hash %llx, hash %llx, "
+			  "hash_index %u, range_start %u, range_end %u\n",
+			  search_hash, hash, hash_index,
+			  range_start, range_end);
+
 		if (search_hash < hash) {
 			if (hash_index == range_start) {
 				err = -ENOENT;
@@ -5683,6 +5746,21 @@ int __ssdfs_btree_common_node_extract_index(struct ssdfs_btree_node *node,
 	memcpy(ptr, (u8 *)kaddr + page_off,
 		sizeof(struct ssdfs_btree_index_key));
 	kunmap_atomic(kaddr);
+
+	if (ptr->node_type <= SSDFS_BTREE_NODE_UNKNOWN_TYPE ||
+	    ptr->node_type >= SSDFS_BTREE_NODE_TYPE_MAX) {
+		SSDFS_ERR("page_index %u, page_off %u\n",
+			  page_index, page_off);
+		SSDFS_ERR("FOUND_INDEX: node_id %u, node_type %#x, "
+			  "height %u, flags %#x, hash %llx, "
+			  "seg_id %llu, logical_blk %u, len %u\n",
+			  le32_to_cpu(ptr->node_id),
+			  ptr->node_type, ptr->height, ptr->flags,
+			  le64_to_cpu(ptr->index.hash),
+			  le64_to_cpu(ptr->index.extent.seg_id),
+			  le32_to_cpu(ptr->index.extent.logical_blk),
+			  le32_to_cpu(ptr->index.extent.len));
+	}
 
 	return 0;
 }
@@ -6137,6 +6215,9 @@ bool can_add_new_index(struct ssdfs_btree_node *node)
 		can_add = count < capacity;
 	up_read(&node->header_lock);
 
+	SSDFS_DBG("count %u, capacity %u, can_add %#x, err %d\n",
+		  count, capacity, can_add, err);
+
 	if (unlikely(err)) {
 		SSDFS_WARN("count %u > capacity %u\n",
 			   count, capacity);
@@ -6301,6 +6382,8 @@ int __ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 		sizeof(struct ssdfs_btree_index_key));
 	kunmap_atomic(kaddr);
 
+	SSDFS_DBG("page_index %u, page_off %u\n",
+		  page_index, page_off);
 	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  le32_to_cpu(ptr->node_id),
@@ -6340,6 +6423,7 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 	u32 page_off;
 	u16 cur_pos = position;
 	u8 index_size;
+	bool is_valid_index_in_buffer = false;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6380,6 +6464,13 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 	do {
 		u32 rest_capacity;
 		u32 moving_count;
+		u32 moving_bytes;
+
+		if (cur_pos > node->index_area.index_count) {
+			SSDFS_ERR("cur_pos %u, index_area.index_count %u\n",
+				  cur_pos, node->index_area.index_count);
+			return -ERANGE;
+		}
 
 		err = ssdfs_define_memory_page(node, &node->index_area,
 						cur_pos,
@@ -6406,31 +6497,61 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 
 		moving_count = node->index_area.index_count - cur_pos;
 		moving_count = min_t(u32, moving_count, rest_capacity);
+		moving_bytes = moving_count * index_size;
 
-		if (moving_count == 0) {
-			SSDFS_WARN("moving_count == 0\n");
+		SSDFS_DBG("page_index %u, page_off %u, cur_pos %u, "
+			  "moving_count %u, rest_capacity %u\n",
+			  page_index, page_off, cur_pos,
+			  moving_count, rest_capacity);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((page_off + index_size) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "page_off %u, index_size %u\n",
+				   page_off, index_size);
 			return -ERANGE;
 		}
+
+		if ((page_off + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "page_off %u, moving_bytes %u\n",
+				   page_off, moving_bytes);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 
 		page = node->content.pvec.pages[page_index];
 		kaddr = kmap_atomic(page);
 
-		if (moving_count == rest_capacity) {
-			memcpy(&buffer[1],
-				(u8 *)kaddr + (PAGE_SIZE - index_size),
-				index_size);
-		}
+		if (moving_count == 0) {
+			memcpy((u8 *)kaddr + page_off, &buffer[0], index_size);
+			is_valid_index_in_buffer = false;
+			cur_pos++;
+		} else {
+			if (moving_count == rest_capacity) {
+				memcpy(&buffer[1],
+					(u8 *)kaddr + (PAGE_SIZE - index_size),
+					index_size);
+				is_valid_index_in_buffer = true;
+			}
 
-		memmove((u8 *)kaddr + page_off + index_size,
-			(u8 *)kaddr + page_off,
-			moving_count * index_size);
-		memcpy((u8 *)kaddr + page_off, &buffer[0], index_size);
+			memmove((u8 *)kaddr + page_off + index_size,
+				(u8 *)kaddr + page_off,
+				moving_bytes);
+			memcpy((u8 *)kaddr + page_off, &buffer[0], index_size);
+
+			if (is_valid_index_in_buffer)
+				memcpy(&buffer[0], &buffer[1], index_size);
+
+			cur_pos += moving_count;
+		}
 
 		kunmap_atomic(kaddr);
 
-		memcpy(&buffer[0], &buffer[1], index_size);
-		cur_pos += moving_count;
-	} while ((cur_pos + 1) < node->index_area.index_count);
+		SSDFS_DBG("cur_pos %u, index_area.index_count %u\n",
+			  cur_pos, node->index_area.index_count);
+	} while (is_valid_index_in_buffer);
 
 	return 0;
 }
@@ -7335,6 +7456,7 @@ int ssdfs_btree_common_node_remove_index(struct ssdfs_btree_node *node,
 	do {
 		u32 rest_capacity;
 		u32 moving_count;
+		u32 moving_bytes;
 
 		err = ssdfs_define_memory_page(node, &node->index_area,
 						cur_pos,
@@ -7361,6 +7483,23 @@ int ssdfs_btree_common_node_remove_index(struct ssdfs_btree_node *node,
 
 		moving_count = node->index_area.index_count - (cur_pos + 1);
 		moving_count = min_t(u32, moving_count, rest_capacity);
+		moving_bytes = moving_count * index_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((page_off + index_size) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "page_off %u, index_size %u\n",
+				   page_off, index_size);
+			return -ERANGE;
+		}
+
+		if ((page_off + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "page_off %u, moving_bytes %u\n",
+				   page_off, moving_bytes);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (moving_count == 0) {
 			SSDFS_WARN("moving_count == 0\n");
@@ -7399,6 +7538,13 @@ int ssdfs_btree_common_node_remove_index(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(page_index >= U32_MAX);
 			BUG_ON(page_off >= U32_MAX);
+
+			if ((page_off + index_size) > PAGE_SIZE) {
+				SSDFS_WARN("invalid offset: "
+					   "page_off %u, index_size %u\n",
+					   page_off, index_size);
+				return -ERANGE;
+			}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			page = node->content.pvec.pages[page_index];
@@ -10542,6 +10688,16 @@ int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 		goto finish_move_items_range;
 	}
 
+	switch (src->tree->type) {
+	case SSDFS_EXTENTS_BTREE:
+		search->request.flags |= SSDFS_BTREE_SEARCH_NOT_INVALIDATE;
+		break;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
 	search->request.type = SSDFS_BTREE_SEARCH_DELETE_RANGE;
 
 	err = src->node_ops->delete_range(src, search);
@@ -11759,6 +11915,12 @@ try_search_item:
 
 		wake_up_all(&node->wait_queue);
 
+		SSDFS_DBG("requested (start_hash %llx, end_hash %llx), "
+			  "start_hash %llx, end_hash %llx, "
+			  "index %u, found_index %u, err %d\n",
+			  search->request.start.hash, search->request.end.hash,
+			  start_hash, end_hash, index, found_index, err);
+
 		if (err == -EAGAIN)
 			continue;
 		else if (unlikely(err))
@@ -12023,6 +12185,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		u32 offset_diff;
 		u32 index_diff;
 		int moving_items;
+		u32 moving_bytes;
 
 		item_offset2 = (u32)dst_index * item_size;
 		if (item_offset2 >= area_size) {
@@ -12110,6 +12273,8 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
+		moving_bytes = moving_items * item_size;
+
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(moving_items >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -12147,6 +12312,22 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		SSDFS_DBG("items_offset1 %u, item_offset2 %u\n",
 			  item_offset1, item_offset2);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((item_offset1 + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset1 %u, moving_bytes %u\n",
+				   item_offset1, moving_bytes);
+			return -ERANGE;
+		}
+
+		if ((item_offset2 + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset2 %u, moving_bytes %u\n",
+				   item_offset2, moving_bytes);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
@@ -12154,7 +12335,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			kaddr2 = kmap_atomic(page2);
 			memmove((u8 *)kaddr2 + item_offset2,
 				(u8 *)kaddr1 + item_offset1,
-				moving_items * item_size);
+				moving_bytes);
 			kunmap_atomic(kaddr1);
 			kunmap_atomic(kaddr2);
 		} else {
@@ -12162,7 +12343,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			kaddr1 = kmap_atomic(page1);
 			memmove((u8 *)kaddr1 + item_offset2,
 				(u8 *)kaddr1 + item_offset1,
-				moving_items * item_size);
+				moving_bytes);
 			kunmap_atomic(kaddr1);
 		}
 
@@ -12359,6 +12540,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 	do {
 		u32 range_len1, range_len2;
 		u32 moving_items;
+		u32 moving_bytes;
 
 		if (moved_items >= range_len) {
 			SSDFS_ERR("moved_items %u >= range_len %u\n",
@@ -12443,10 +12625,28 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
+		moving_bytes = moving_items * item_size;
+
 		SSDFS_DBG("page_index1 %d, item_offset1 %u, "
 			  "page_index2 %d, item_offset2 %u\n",
 			  page_index1, item_offset1,
 			  page_index2, item_offset2);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((item_offset1 + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset1 %u, moving_bytes %u\n",
+				   item_offset1, moving_bytes);
+			return -ERANGE;
+		}
+
+		if ((item_offset2 + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset2 %u, moving_bytes %u\n",
+				   item_offset2, moving_bytes);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
@@ -12455,7 +12655,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			kaddr2 = kmap_atomic(page2);
 			memmove((u8 *)kaddr2 + item_offset2,
 				(u8 *)kaddr1 + item_offset1,
-				moving_items * item_size);
+				moving_bytes);
 			kunmap_atomic(kaddr1);
 			kunmap_atomic(kaddr2);
 		} else {
@@ -12463,7 +12663,7 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 			kaddr1 = kmap_atomic(page1);
 			memmove((u8 *)kaddr1 + item_offset2,
 				(u8 *)kaddr1 + item_offset1,
-				moving_items * item_size);
+				moving_bytes);
 			kunmap_atomic(kaddr1);
 		}
 
@@ -12721,6 +12921,22 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 		if (page_index2 > 0)
 			range_offset2 %= page_index2 * PAGE_SIZE;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((range_offset1 + moving_range) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "range_offset1 %u, moving_range %u\n",
+				   range_offset1, moving_range);
+			return -ERANGE;
+		}
+
+		if ((range_offset2 + moving_range) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "range_offset2 %u, moving_range %u\n",
+				   range_offset2, moving_range);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
@@ -12901,6 +13117,22 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((range_offset1 + moving_range) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "range_offset1 %u, moving_range %u\n",
+				   range_offset1, moving_range);
+			return -ERANGE;
+		}
+
+		if ((range_offset2 + moving_range) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "range_offset2 %u, moving_range %u\n",
+				   range_offset2, moving_range);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
@@ -13010,7 +13242,7 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	start_index = search->result.start_index;
-	range_len = search->request.count;
+	range_len = search->result.count;
 
 	SSDFS_DBG("items %u, start_index %u, range_len %u\n",
 		  items, start_index, range_len);
@@ -13037,6 +13269,7 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 
 	do {
 		u32 copying_items;
+		u32 copying_bytes;
 		u32 vacant_positions;
 
 		SSDFS_DBG("start_index %u, src_index %d, dst_index %d\n",
@@ -13100,6 +13333,8 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 		BUG_ON(copying_items >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		copying_bytes = copying_items * item_size;
+
 		item_offset2 = (u32)dst_index * item_size;
 		if (item_offset2 >= search->result.buf_size) {
 			SSDFS_ERR("item_offset %u >= buf_size %zu\n",
@@ -13111,11 +13346,29 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			  "item_offset2 %u\n",
 			  copying_items, item_offset1, item_offset2);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((item_offset1 + copying_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset1 %u, copying_bytes %u\n",
+				   item_offset1, copying_bytes);
+			return -ERANGE;
+		}
+
+		if ((item_offset2 + copying_bytes) > search->result.buf_size) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset2 %u, copying_bytes %u, "
+				   "result.buf_size %zu\n",
+				   item_offset2, copying_bytes,
+				   search->result.buf_size);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		page = node->content.pvec.pages[page_index];
 		kaddr = kmap_atomic(page);
 		memmove((u8 *)kaddr + item_offset1,
 			(u8 *)search->result.buf + item_offset2,
-			copying_items * item_size);
+			copying_bytes);
 		kunmap_atomic(kaddr);
 
 		src_index += copying_items;
@@ -13571,6 +13824,11 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 	u32 diff_size;
 	u16 start_index, range_len;
 	u32 shift;
+	unsigned long index_start_bit;
+	unsigned long item_start_bit;
+	unsigned long bits_count;
+	u16 index_capacity;
+	u16 items_capacity;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -14035,6 +14293,38 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 		SSDFS_DBG("no necessity to resize: "
 			  "new_size %u, items_size %u\n",
 			  new_size, items_size);
+		goto finish_area_resize;
+	}
+
+	index_capacity = node->index_area.index_capacity;
+	items_capacity = node->items_area.items_capacity;
+	index_start_bit = node->bmap_array.index_start_bit;
+
+	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
+	bits_count = node->bmap_array.bits_count;
+
+	if ((index_start_bit + index_capacity) > bits_count) {
+		err = -ERANGE;
+		atomic_set(&node->state,
+				SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("invalid shift: "
+			  "index_start_bit %lu, index_capacity %u, "
+			  "bits_count %lu\n",
+			  index_start_bit, index_capacity, bits_count);
+		goto finish_area_resize;
+	}
+
+	node->bmap_array.item_start_bit = index_start_bit + index_capacity;
+	item_start_bit = node->bmap_array.item_start_bit;
+
+	if ((item_start_bit + items_capacity) > bits_count) {
+		err = -ERANGE;
+		atomic_set(&node->state,
+				SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("invalid shift: "
+			  "item_start_bit %lu, items_capacity %u, "
+			  "bits_count %lu\n",
+			  item_start_bit, items_capacity, bits_count);
 		goto finish_area_resize;
 	}
 

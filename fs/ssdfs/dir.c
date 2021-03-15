@@ -1678,6 +1678,7 @@ static
 bool is_invalid_dentry(struct ssdfs_dir_entry *dentry)
 {
 	u8 name_len;
+	bool is_invalid = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!dentry);
@@ -1698,44 +1699,61 @@ bool is_invalid_dentry(struct ssdfs_dir_entry *dentry)
 		break;
 
 	default:
+		is_invalid = true;
 		SSDFS_ERR("invalid dentry type %#x\n",
 			  dentry->dentry_type);
-		return true;
+		goto finish_check;
 	}
 
 	if (dentry->file_type <= SSDFS_FT_UNKNOWN ||
 	    dentry->file_type >= SSDFS_FT_MAX) {
+		is_invalid = true;
 		SSDFS_ERR("invalid file type %#x\n",
 			  dentry->file_type);
-		return true;
+		goto finish_check;
 	}
 
 	if (dentry->flags & ~SSDFS_DENTRY_FLAGS_MASK) {
+		is_invalid = true;
 		SSDFS_ERR("invalid set of flags %#x\n",
 			  dentry->flags);
-		return true;
+		goto finish_check;
 	}
 
 	name_len = dentry->name_len;
 
 	if (name_len > SSDFS_MAX_NAME_LEN) {
+		is_invalid = true;
 		SSDFS_ERR("invalid name_len %u\n",
 			  name_len);
-		return true;
+		goto finish_check;
 	}
 
 	if (le64_to_cpu(dentry->hash_code) >= U64_MAX) {
+		is_invalid = true;
 		SSDFS_ERR("invalid hash_code\n");
-		return true;
+		goto finish_check;
 	}
 
 	if (le64_to_cpu(dentry->ino) >= U32_MAX) {
+		is_invalid = true;
 		SSDFS_ERR("ino %llu is too huge\n",
 			  le64_to_cpu(dentry->ino));
-		return true;
+		goto finish_check;
 	}
 
-	return false;
+finish_check:
+	if (is_invalid) {
+		SSDFS_ERR("dentry_type %#x, file_type %#x, "
+			  "flags %#x, name_len %u, "
+			  "hash_code %llx, ino %llu\n",
+			  dentry->dentry_type, dentry->file_type,
+			  dentry->flags, dentry->name_len,
+			  le64_to_cpu(dentry->hash_code),
+			  le64_to_cpu(dentry->ino));
+	}
+
+	return is_invalid;
 }
 
 /*

@@ -2993,6 +2993,15 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 			return -EINVAL;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((byte_offset + init_size) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "byte_offset %u, init_size %zu\n",
+				   byte_offset, init_size);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		kaddr = kmap_atomic(blk_bmap->storage.pvec.pages[page_index]);
 		memset((u8 *)kaddr + byte_offset, byte_value, init_size);
 		kunmap_atomic(kaddr);
@@ -3005,13 +3014,22 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 			return -EINVAL;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if ((byte_offset + init_size) > blk_bmap->bytes_count) {
+			SSDFS_WARN("invalid offset: "
+				   "byte_offset %u, init_size %zu\n",
+				   byte_offset, init_size);
+			return -ERANGE;
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		kaddr = blk_bmap->storage.buf;
 		memset((u8 *)kaddr + byte_offset, byte_value, init_size);
 		break;
 
 	default:
 		SSDFS_ERR("unexpected state %#x\n",
-				blk_bmap->storage.state);
+			  blk_bmap->storage.state);
 		return -ERANGE;
 	}
 

@@ -302,6 +302,16 @@ void ssdfs_free_page(struct page *page)
 		SSDFS_WARN("page %p is still locked\n",
 			   page);
 	}
+
+	if (PageLRU(page)) {
+		SSDFS_WARN("page %p is still LRU\n",
+			   page);
+	}
+
+	if (PageActive(page)) {
+		SSDFS_WARN("page %p is still active\n",
+			   page);
+	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	ssdfs_put_page(page);
@@ -349,6 +359,16 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 		if (PageLocked(page)) {
 			SSDFS_WARN("page %p is still locked\n",
+				   page);
+		}
+
+		if (PageLRU(page)) {
+			SSDFS_WARN("page %p is still LRU\n",
+				   page);
+		}
+
+		if (PageActive(page)) {
+			SSDFS_WARN("page %p is still active\n",
 				   page);
 		}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */

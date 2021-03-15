@@ -329,6 +329,8 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+	SSDFS_DBG("page_index %ld, flags %#lx\n",
+		  page->index, page->flags);
 }
 
 /*
@@ -479,6 +481,9 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 		goto finish_add_segment;
 	}
 
+	SetPageLRU(page);
+	SetPageActive(page);
+
 	ssdfs_account_locked_page(page);
 
 	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
@@ -495,6 +500,8 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+	SSDFS_DBG("page_index %ld, flags %#lx\n",
+		  page->index, page->flags);
 
 finish_add_segment:
 	inode_unlock(fsi->segs_tree_inode);

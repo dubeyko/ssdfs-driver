@@ -440,8 +440,6 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 		spin_lock(&tree->nodes_lock);
 	}
 	spin_unlock(&tree->nodes_lock);
-
-	memset(tree, 0, sizeof(struct ssdfs_btree));
 }
 
 /*
@@ -1243,6 +1241,9 @@ int ssdfs_btree_define_new_node_type(struct ssdfs_btree *tree,
 			else
 				return SSDFS_BTREE_INDEX_NODE;
 
+		case SSDFS_BTREE_PARENT2LEAF_HEIGHT:
+			return SSDFS_BTREE_LEAF_NODE;
+
 		default:
 			return SSDFS_BTREE_INDEX_NODE;
 		}
@@ -1833,7 +1834,7 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 	int parent_type;
 	u16 found_index = U16_MAX;
 	u32 node_id;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !parent);
@@ -1928,6 +1929,9 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 
 	node_id = le32_to_cpu(index_key.node_id);
 
+	SSDFS_DBG("node_id %u, node_type %#x\n",
+		  node_id, index_key.node_type);
+
 	err = ssdfs_btree_radix_tree_find(tree, node_id, &child);
 	if (err == -ENOENT) {
 		child = __ssdfs_btree_read_node(tree, parent,
@@ -1947,13 +1951,22 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 			  (u64)node_id, err);
 		goto finish_child_search;
 	} else if (!child) {
-		err = -ERANGE;
+		child = ERR_PTR(-ERANGE);
 		SSDFS_WARN("empty node pointer\n");
 		goto finish_child_search;
 	}
 
 finish_child_search:
 	up_read(&parent->full_lock);
+
+	if (err) {
+		SSDFS_ERR("node_id %u, upper_hash %llx\n",
+			  parent->node_id, upper_hash);
+		SSDFS_ERR("index_area: index_count %u, index_capacity %u, "
+			  "start_hash %llx, end_hash %llx\n",
+			  area.index_count, area.index_capacity,
+			  area.start_hash, area.end_hash);
+	}
 
 	return child;
 }
@@ -2988,6 +3001,13 @@ check_found_node:
 	}
 
 finish_search_leaf_node:
+	SSDFS_DBG("node descriptor: "
+		   "node_state %#x, node_id %llu, "
+		   "height %u\n",
+		   search->node.state,
+		   (u64)search->node.id,
+		   search->node.height);
+
 	return err;
 }
 
@@ -3520,7 +3540,8 @@ bool node_needs_in_additional_check(int err,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
- * %-ENODATA    - nothing can be done.
+ * %-ENODATA    - item can be added.
+ * %-ENOENT     - no space for a new item.
  */
 static
 int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
@@ -3576,8 +3597,10 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE)
-		return -ENODATA;
+	if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE) {
+		SSDFS_DBG("parent is root node\n");
+		return -ENOENT;
+	}
 
 	state = atomic_read(&node->items_area.state);
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
@@ -3607,25 +3630,6 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 		return -ERANGE;
 	}
 
-	if (search->request.start.hash < start_hash) {
-		if (search->request.end.hash < start_hash) {
-			SSDFS_DBG("request (start_hash %llx, end_hash %llx), "
-				  "area (start_hash %llx, end_hash %llx)\n",
-				  search->request.start.hash,
-				  search->request.end.hash,
-				  start_hash, end_hash);
-			return -ENODATA;
-		} else {
-			SSDFS_ERR("invalid request: "
-				  "request (start_hash %llx, end_hash %llx), "
-				  "area (start_hash %llx, end_hash %llx)\n",
-				  search->request.start.hash,
-				  search->request.end.hash,
-				  start_hash, end_hash);
-			return -ERANGE;
-		}
-	}
-
 	if (items_count > items_capacity) {
 		SSDFS_ERR("corrupted items area: "
 			  "items_count %u, items_capacity %u\n",
@@ -3652,7 +3656,8 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	case SSDFS_BTREE_ROOT_NODE:
 	case SSDFS_BTREE_INDEX_NODE:
 		/* nothing can be done */
-		return -ENODATA;
+		SSDFS_DBG("node is root or index\n");
+		return -ENOENT;
 
 	case SSDFS_BTREE_HYBRID_NODE:
 		/* it needs to check the node's state */
@@ -3688,7 +3693,7 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	if (!(flags & SSDFS_BTREE_NODE_HAS_ITEMS_AREA)) {
 		SSDFS_WARN("hybrid node %u hasn't items area\n",
 			   node->node_id);
-		return -ENODATA;
+		return -ENOENT;
 	}
 
 	ssdfs_btree_search_define_child_node(search, node);
@@ -3705,7 +3710,70 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 		return err;
 	}
 
-	return 0;
+	down_read(&node->header_lock);
+	items_count = node->items_area.items_count;
+	items_capacity = node->items_area.items_capacity;
+	start_hash = node->items_area.start_hash;
+	end_hash = node->items_area.end_hash;
+	up_read(&node->header_lock);
+
+	free_items = items_capacity - items_count;
+
+	if (free_items == 0) {
+		SSDFS_DBG("node %u is exhausted: free_items %u, "
+			   "items_count %u, items_capacity %u\n",
+			   node->node_id,
+			   free_items, items_count, items_capacity);
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		return -ENOENT;
+	}
+
+	if (items_count == 0) {
+		SSDFS_DBG("node %u is empty: free_items %u, "
+			   "items_count %u, items_capacity %u\n",
+			   node->node_id,
+			   free_items, items_count, items_capacity);
+		goto finish_node_check;
+	}
+
+	if (search->request.start.hash < start_hash) {
+		if (search->request.end.hash < start_hash) {
+			SSDFS_DBG("request (start_hash %llx, end_hash %llx), "
+				  "area (start_hash %llx, end_hash %llx)\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  start_hash, end_hash);
+			goto finish_node_check;
+		} else {
+			SSDFS_ERR("invalid request: "
+				  "request (start_hash %llx, end_hash %llx), "
+				  "area (start_hash %llx, end_hash %llx)\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  start_hash, end_hash);
+			return -ERANGE;
+		}
+	}
+
+finish_node_check:
+	search->node.state = SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC;
+	search->result.state = SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+	search->result.err = -ENODATA;
+
+	if (items_count == 0)
+		search->result.start_index = 0;
+	else
+		search->result.start_index = items_count;
+
+	search->result.count = search->request.count;
+	search->result.search_cno = ssdfs_current_cno(tree->fsi->sb);
+
+	SSDFS_DBG("node_id %u, items_count %u, items_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->node_id, items_count, items_capacity,
+		  start_hash, end_hash);
+
+	return -ENODATA;
 }
 
 /*
@@ -3791,8 +3859,33 @@ try_next_search:
 		/* try to find an item */
 	} else if (err == -ENOENT) {
 		err = -ENODATA;
+		search->result.err = -ENODATA;
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
 		SSDFS_DBG("index node was found\n");
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+			err = ssdfs_btree_switch_on_hybrid_parent_node(tree,
+									search);
+			if (err == -ENODATA)
+				goto finish_search_item;
+			else if (err == -ENOENT) {
+				err = -ENODATA;
+				goto finish_search_item;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to switch on parent node: "
+					  "err %d\n", err);
+			} else {
+				err = -ENODATA;
+				goto finish_search_item;
+			}
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
 		goto finish_search_item;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find leaf node: err %d\n",
@@ -3804,16 +3897,22 @@ try_next_search:
 try_another_node:
 		err = ssdfs_btree_node_find_item(search);
 		if (node_needs_in_additional_check(err, search)) {
+			search->result.err = -ENODATA;
 			err = ssdfs_btree_switch_on_hybrid_parent_node(tree,
 									search);
 			if (err == -ENODATA)
 				goto finish_search_item;
-			else if (unlikely(err)) {
+			else if (err == -ENOENT) {
+				err = -ENODATA;
+				goto finish_search_item;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to switch on parent node: "
 					  "err %d\n", err);
 				goto finish_search_item;
-			} else
-				goto try_another_node;
+			} else {
+				err = -ENODATA;
+				goto finish_search_item;
+			}
 		} else if (err == -EACCES) {
 			struct ssdfs_btree_node *node = search->node.child;
 
@@ -3856,6 +3955,7 @@ try_find_item_again:
 	if (err == -EAGAIN) {
 		err = 0;
 		search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
+		SSDFS_DBG("try next search\n");
 		goto try_next_search;
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("unable to find item: "
@@ -3879,6 +3979,8 @@ try_find_item_again:
 	}
 
 finish_search_item:
+	SSDFS_DBG("search->result.state %#x, err %d\n",
+		  search->result.state, err);
 	return err;
 }
 
@@ -3998,8 +4100,32 @@ try_next_search:
 		/* try to find an item */
 	} else if (err == -ENOENT) {
 		err = -ENODATA;
+		search->result.err = -ENODATA;
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
 		SSDFS_DBG("index node was found\n");
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+			err = ssdfs_btree_switch_on_hybrid_parent_node(tree,
+									search);
+			if (err == -ENODATA) {
+				/*
+				 * do nothing
+				 */
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to switch on parent node: "
+					  "err %d\n", err);
+			} else {
+				/* finish search */
+				err = -ENODATA;
+			}
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
 		goto finish_search_range;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find leaf node: err %d\n",
@@ -4012,6 +4138,7 @@ try_another_node:
 		err = ssdfs_btree_node_find_range(search);
 
 		if (node_needs_in_additional_check(err, search)) {
+			search->result.err = -ENODATA;
 			err = ssdfs_btree_switch_on_hybrid_parent_node(tree,
 									search);
 			if (err == -ENODATA)
@@ -4020,8 +4147,11 @@ try_another_node:
 				SSDFS_ERR("fail to switch on parent node: "
 					  "err %d\n", err);
 				goto finish_search_range;
-			} else
-				goto try_another_node;
+			} else {
+				/* finish search */
+				err = -ENODATA;
+				goto finish_search_range;
+			}
 		} else if (err == -EACCES) {
 			struct ssdfs_btree_node *node = search->node.child;
 
@@ -4559,6 +4689,7 @@ try_find_item:
 			err = 0;
 			switch (search->result.state) {
 			case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+			case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 				/* position in node was found */
 				break;
 			default:

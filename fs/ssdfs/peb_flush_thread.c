@@ -9813,6 +9813,12 @@ void ssdfs_peb_check_update_queue(struct ssdfs_peb_container *pebc)
 }
 
 static inline
+bool is_ssdfs_peb_containing_user_data(struct ssdfs_peb_container *pebc)
+{
+	return pebc->peb_type == SSDFS_MAPTBL_DATA_PEB_TYPE;
+}
+
+static inline
 int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_segment_info *si = pebc->parent_si;
@@ -10263,14 +10269,14 @@ finish_process_free_space_absence:
 		if (is_peb_exhausted) {
 			ssdfs_unlock_current_peb(pebc);
 
-			if (is_ssdfs_maptbl_under_flush(fsi) &&
-			    pebc->peb_type == SSDFS_MAPTBL_DATA_PEB_TYPE) {
-				/*
-				 * Continue logic for user data.
-				 */
-				SSDFS_DBG("ignore mapping table flush for user data\n");
-			} else if (is_ssdfs_maptbl_under_flush(fsi)) {
-				if (have_flush_requests(pebc)) {
+			if (is_ssdfs_maptbl_under_flush(fsi)) {
+				if (is_ssdfs_peb_containing_user_data(pebc)) {
+					/*
+					 * Continue logic for user data.
+					 */
+					SSDFS_DBG("ignore mapping table's "
+						  "flush for user data\n");
+				} else if (have_flush_requests(pebc)) {
 					SSDFS_ERR("maptbl is flushing: "
 						  "unprocessed requests: "
 						  "seg %llu, peb %llu\n",

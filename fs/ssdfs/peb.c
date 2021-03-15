@@ -317,7 +317,6 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 			    u8 peb_migration_id)
 {
 	struct ssdfs_fs_info *fsi;
-	size_t pebi_size = sizeof(struct ssdfs_peb_info);
 	int peb_type;
 	int err;
 
@@ -441,7 +440,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	return 0;
 
 fail_conctruct_peb_obj:
-	memset(pebi, 0, pebi_size);
+	ssdfs_peb_object_destroy(pebi);
 	pebi->peb_id = U64_MAX;
 	pebi->pebc = pebc;
 	return err;

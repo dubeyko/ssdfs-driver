@@ -1481,6 +1481,85 @@ int ssdfs_inodes_btree_create_node(struct ssdfs_btree_node *node)
 
 	node->node_ops = &ssdfs_inodes_btree_node_ops;
 
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_INDEX_NODE:
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_AREA_ABSENT:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_INDEX_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_BTREE_LEAF_NODE:
+		switch (atomic_read(&node->index_area.state)) {
+		case SSDFS_BTREE_NODE_AREA_ABSENT:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid index area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+
+		switch (atomic_read(&node->items_area.state)) {
+		case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("invalid items area's state %#x\n",
+				  atomic_read(&node->items_area.state));
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_WARN("invalid node type %#x\n",
+			   atomic_read(&node->type));
+		return -ERANGE;
+	}
+
 	down_write(&node->header_lock);
 	down_write(&node->bmap_array.lock);
 
@@ -3412,15 +3491,19 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
 	search->result.start_index = start;
 	search->result.count = count;
+	search->result.buf_size = 0;
 
 	if (count > 1) {
+		size_t allocated_bytes = item_size * count;
+
 		err = ssdfs_btree_search_alloc_result_buf(search,
-							item_size * count);
+							  allocated_bytes);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to allocate memory for buffer\n");
 			goto finish_allocate_item;
 		}
 		search->result.items_in_buffer = count;
+		search->result.buf_size = allocated_bytes;
 	} else if (count == 1) {
 		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 		search->result.buf = &search->raw.inode;

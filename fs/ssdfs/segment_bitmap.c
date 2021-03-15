@@ -816,6 +816,9 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 			continue;
 		}
 
+		ClearPageLRU(page);
+		ClearPageActive(page);
+
 		page->mapping = NULL;
 
 		SSDFS_DBG("page %p, count %d\n",
@@ -1191,6 +1194,9 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		desc->state = state;
 		kunmap_atomic(hdr);
 	}
+
+	SetPageLRU(page);
+	SetPageActive(page);
 
 	ssdfs_seg_bmap_account_page(page);
 
@@ -4268,7 +4274,7 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 	u16 fragments_count;
 	u16 fragment_size;
 	pgoff_t fragment_index;
-	int err = 0, res;
+	int err = 0, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !seg);

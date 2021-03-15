@@ -108,11 +108,25 @@ void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache)
  */
 void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 {
+	int i;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("cache %p\n", cache);
+
+	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
+		struct page *page = cache->pvec.pages[i];
+
+		if (!page)
+			continue;
+
+		ssdfs_lock_page(page);
+		ClearPageLRU(page);
+		ClearPageActive(page);
+		ssdfs_unlock_page(page);
+	}
 
 	ssdfs_map_cache_pagevec_release(&cache->pvec);
 	ssdfs_peb_mapping_queue_remove_all(&cache->pm_queue);
@@ -1814,6 +1828,9 @@ int ssdfs_maptbl_cache_add_page(struct ssdfs_maptbl_cache *cache,
 			  page_index, item_index, err);
 		goto finish_add_page;
 	}
+
+	SetPageLRU(page);
+	SetPageActive(page);
 
 finish_add_page:
 	kunmap(page);

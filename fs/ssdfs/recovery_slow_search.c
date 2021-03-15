@@ -64,13 +64,12 @@ try_next_peb:
 
 	if (cur_main_sb_peb != env->sbi.last_log.peb_id &&
 	    cur_copy_sb_peb != env->sbi.last_log.peb_id) {
-		SSDFS_ERR("volume header is corrupted\n");
+		SSDFS_DBG("volume header is corrupted\n");
 		SSDFS_DBG("cur_main_sb_peb %llu, cur_copy_sb_peb %llu, "
 			  "read PEB %llu\n",
 			  cur_main_sb_peb, cur_copy_sb_peb,
 			  env->sbi.last_log.peb_id);
-		err = -EIO;
-		goto end_search;
+		goto continue_search;
 	}
 
 	if (cur_main_sb_peb == env->sbi.last_log.peb_id) {
@@ -84,16 +83,19 @@ try_next_peb:
 	err = ssdfs_check_next_sb_pebs_pair(env);
 	if (err == -E2BIG)
 		goto continue_search;
+	else if (err == -ENODATA || err == -ENOENT)
+		goto check_reserved_sb_pebs_pair;
 	else if (!err)
 		goto try_next_peb;
 
+check_reserved_sb_pebs_pair:
 	if (kthread_should_stop()) {
 		err = -ENODATA;
 		goto rollback_valid_vh;
 	}
 
 	err = ssdfs_check_reserved_sb_pebs_pair(env);
-	if (err == -E2BIG)
+	if (err == -E2BIG || err == -ENODATA || err == -ENOENT)
 		goto continue_search;
 	else if (!err)
 		goto try_next_peb;

@@ -63,6 +63,18 @@ config SSDFS_MEMORY_LEAKS_ACCOUNTING
 	  If you are going to check memory leaks in SSDFS driver then
 	  choose Y here. If unsure, say N.
 
+config SSDFS_TESTING
+	bool "SSDFS testing"
+	depends on SSDFS
+	select SSDFS_DEBUG
+	select SSDFS_MEMORY_LEAKS_ACCOUNTING
+	help
+	  This option enables testing infrastructure of SSDFS
+	  filesystem.
+
+	  If you are going to test SSDFS driver then choose Y here.
+	  If unsure, say N.
+
 config SSDFS_POSIX_ACL
 	bool "SSDFS POSIX Access Control Lists"
 	depends on SSDFS

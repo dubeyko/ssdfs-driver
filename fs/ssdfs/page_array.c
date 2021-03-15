@@ -468,6 +468,9 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 
 		array->pages[page_index] = page;
 		page->index = page_index;
+
+		SetPageLRU(page);
+		SetPageActive(page);
 	}
 
 	ssdfs_parray_account_page(page);
@@ -1358,6 +1361,9 @@ finish_delete_page:
 	if (unlikely(err))
 		return ERR_PTR(err);
 
+	ClearPageLRU(page);
+	ClearPageActive(page);
+
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %p, count %d\n",
@@ -1476,6 +1482,8 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 		if (page) {
 			ssdfs_lock_page(page);
+			ClearPageLRU(page);
+			ClearPageActive(page);
 			ClearPageUptodate(page);
 			ClearPagePrivate(page);
 			ssdfs_unlock_page(page);

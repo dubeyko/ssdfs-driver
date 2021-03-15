@@ -267,6 +267,11 @@ struct ssdfs_fs_info {
 	/* /sys/fs/<ssdfs>/<device>/segments */
 	struct kobject segments_kobj;
 	struct completion segments_kobj_unregister;
+
+#ifdef CONFIG_SSDFS_TESTING
+	struct address_space testing_pages;
+	struct inode *testing_inode;
+#endif /* CONFIG_SSDFS_TESTING */
 };
 
 #define SSDFS_FS_I(sb) \

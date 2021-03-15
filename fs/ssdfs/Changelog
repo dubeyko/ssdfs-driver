@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.88 [March 14, 2021]
+    (*) Fix bugs in extents tree functionality (step 7).
+
 v.3.87 [February 15, 2021]
     (*) Fix bugs in extents tree functionality (step 6).
 

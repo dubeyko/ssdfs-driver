@@ -1726,18 +1726,23 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 		}
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
 
+		kaddr = kmap(page);
 		err = ssdfs_unaligned_read_buffer(fsi, peb_id,
 						  read_off, kaddr, size);
+		kunmap(page);
+
 		if (unlikely(err)) {
+			ssdfs_unlock_page(page);
 			SSDFS_ERR("fail to read page: "
 				  "peb %llu, offset %u, size %zu, err %d\n",
 				  peb_id, read_off, size, err);
 			goto finish_read_maptbl_cache;
+		} else {
+			SetPageLRU(page);
+			SetPageActive(page);
 		}
 
-		kunmap(page);
 		ssdfs_unlock_page(page);
 
 		read_off += size;

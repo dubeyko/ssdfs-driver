@@ -932,6 +932,17 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 					goto fail_find_segment;
 			} else
 				goto fail_find_segment;
+		} else if (start != 0) {
+			res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+						0, fsi->nsegs, SSDFS_SEG_CLEAN,
+						SEG_TYPE2MASK(seg_type),
+						new_state,
+						&seg_id, &init_end);
+			if (res >= 0) {
+				/* Define segment state */
+				seg_state = res;
+			} else
+				goto fail_find_segment;
 		} else {
 fail_find_segment:
 			SSDFS_ERR("fail to find segment number: "

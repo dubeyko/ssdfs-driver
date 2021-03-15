@@ -41,3 +41,4 @@ ssdfs-$(CONFIG_SSDFS_ZLIB)		+= compr_zlib.o
 ssdfs-$(CONFIG_SSDFS_LZO)		+= compr_lzo.o
 ssdfs-$(CONFIG_SSDFS_MTD_DEVICE)	+= dev_mtd.o
 ssdfs-$(CONFIG_SSDFS_BLOCK_DEVICE)	+= dev_bdev.o
+ssdfs-$(CONFIG_SSDFS_TESTING)		+= testing.o
