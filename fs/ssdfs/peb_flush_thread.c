@@ -9559,12 +9559,10 @@ finish_get_current_log_state:
 		DEFINE_WAIT(wait);
 
 		err = 0;
-		prepare_to_wait(&pebc->parent_si->migration.wait,
-				&wait,
+		prepare_to_wait(&pebc->migration_wq, &wait,
 				TASK_UNINTERRUPTIBLE);
 		schedule();
-		finish_wait(&pebc->parent_si->migration.wait,
-			    &wait);
+		finish_wait(&pebc->migration_wq, &wait);
 		goto try_get_current_state;
 	} else if (unlikely(err))
 		state = SSDFS_LOG_UNKNOWN;

@@ -394,7 +394,6 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	}
 
 	atomic_set(&si->migration.migrating_pebs, 0);
-	init_waitqueue_head(&si->migration.wait);
 	spin_lock_init(&si->migration.lock);
 
 	destination = &si->migration.array[SSDFS_LAST_DESTINATION];
@@ -3938,6 +3937,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			  si->seg_id, err);
 		return err;
 	}
+
+	SSDFS_DBG("finished\n");
 
 	return 0;
 }

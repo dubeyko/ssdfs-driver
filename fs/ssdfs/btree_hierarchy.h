@@ -241,6 +241,8 @@ bool need_delete_node(struct ssdfs_btree_level *level)
 /* Btree hierarchy API */
 struct ssdfs_btree_hierarchy *
 ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree);
+void ssdfs_btree_hierarchy_init(struct ssdfs_btree *tree,
+				struct ssdfs_btree_hierarchy *hierarchy);
 void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy);
 
 bool need_update_parent_index_area(u64 start_hash,
@@ -274,6 +276,7 @@ int ssdfs_btree_prepare_add_index(struct ssdfs_btree_level *level,
 				  u64 start_hash, u64 end_hash,
 				  struct ssdfs_btree_node *node);
 
+void ssdfs_show_btree_hierarchy_object(struct ssdfs_btree_hierarchy *ptr);
 void ssdfs_debug_btree_hierarchy_object(struct ssdfs_btree_hierarchy *ptr);
 
 #endif /* _SSDFS_BTREE_HIERARCHY_H */

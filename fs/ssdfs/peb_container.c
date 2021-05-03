@@ -1477,6 +1477,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	atomic_set(&pebc->migration_phase, SSDFS_PEB_MIGRATION_STATUS_UNKNOWN);
 	atomic_set(&pebc->items_state, SSDFS_PEB_CONTAINER_EMPTY);
 	atomic_set(&pebc->shared_free_dst_blks, 0);
+	init_waitqueue_head(&pebc->migration_wq);
 	init_rwsem(&pebc->lock);
 	atomic_set(&pebc->dst_peb_refs, 0);
 
@@ -1920,6 +1921,7 @@ int ssdfs_peb_container_prepare_relation(struct ssdfs_peb_container *ptr)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
+	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
@@ -1952,10 +1954,12 @@ try_define_relation:
 	case SSDFS_OBSOLETE_DESTINATION: {
 			DEFINE_WAIT(wait);
 
-			prepare_to_wait(&si->migration.wait, &wait,
+			mutex_unlock(&ptr->migration_lock);
+			prepare_to_wait(&ptr->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
-			finish_wait(&si->migration.wait, &wait);
+			finish_wait(&ptr->migration_wq, &wait);
+			mutex_lock(&ptr->migration_lock);
 			goto try_define_relation;
 		}
 		break;
@@ -2408,6 +2412,7 @@ int ssdfs_peb_container_create_destination(struct ssdfs_peb_container *ptr)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
+	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
@@ -2513,10 +2518,13 @@ finish_check_destination:
 
 	if (err == -EAGAIN) {
 		DEFINE_WAIT(wait);
-		prepare_to_wait(&si->migration.wait, &wait,
+
+		mutex_unlock(&ptr->migration_lock);
+		prepare_to_wait(&ptr->migration_wq, &wait,
 				TASK_UNINTERRUPTIBLE);
 		schedule();
-		finish_wait(&si->migration.wait, &wait);
+		finish_wait(&ptr->migration_wq, &wait);
+		mutex_lock(&ptr->migration_lock);
 		err = 0;
 		goto try_start_preparation_again;
 	} else if (unlikely(err))
@@ -2707,6 +2715,8 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	};
 	spin_unlock(&mi->lock);
 
+	SSDFS_DBG("finished\n");
+
 	return 0;
 }
 
@@ -2843,6 +2853,7 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
+	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
@@ -2864,7 +2875,6 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-try_forget_source:
 	down_write(&ptr->lock);
 
 	migration_state = atomic_read(&ptr->migration_state);
@@ -2902,6 +2912,8 @@ try_forget_source:
  *       source PEB it needs to wake up all threads and to wait
  *       decreasing the dst_peb_refs counter.
  */
+
+	SSDFS_DBG("items_state %#x\n", items_state);
 
 	switch (items_state) {
 	case SSDFS_PEB1_DST_CONTAINER:
@@ -3046,17 +3058,19 @@ finish_forget_source:
 				  leb_id, err);
 			return err;
 		}
-	} else if (err == -ENODATA) { /* wait zeroing reference counter */
+	} else if (err == -ENODATA) {
 		wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
 
-		do {
+		while (atomic_read(&ptr->dst_peb_refs) > 1) {
 			DEFINE_WAIT(wait);
 
-			prepare_to_wait(&si->migration.wait, &wait,
+			mutex_unlock(&ptr->migration_lock);
+			prepare_to_wait(&ptr->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
-			finish_wait(&si->migration.wait, &wait);
-		} while (atomic_read(&ptr->dst_peb_refs) > 1);
+			finish_wait(&ptr->migration_wq, &wait);
+			mutex_lock(&ptr->migration_lock);
+		};
 
 		down_write(&ptr->lock);
 
@@ -3099,10 +3113,10 @@ finish_forget_source:
 			break;
 		};
 		spin_unlock(&mi->lock);
-
-		goto try_forget_source;
 	} else if (unlikely(err))
 		return err;
+
+	SSDFS_DBG("finished\n");
 
 	return 0;
 }
@@ -3214,6 +3228,8 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 finish_forget_relation:
 	up_write(&ptr->lock);
 
+	SSDFS_DBG("finished\n");
+
 	return err;
 }
 
@@ -3285,12 +3301,10 @@ try_get_current_peb:
 	case SSDFS_PEB_FINISHING_MIGRATION: {
 			DEFINE_WAIT(wait);
 
-			prepare_to_wait(&pebc->parent_si->migration.wait,
-					&wait,
+			prepare_to_wait(&pebc->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
-			finish_wait(&pebc->parent_si->migration.wait,
-				    &wait);
+			finish_wait(&pebc->migration_wq, &wait);
 			goto try_get_current_peb;
 		}
 		break;

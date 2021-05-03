@@ -2763,6 +2763,20 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		break;
 
 	case SSDFS_SEG_USED:
+		switch (new_state) {
+		case SSDFS_SEG_PRE_DIRTY:
+		case SSDFS_SEG_DIRTY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
 	case SSDFS_SEG_PRE_DIRTY:
 	case SSDFS_SEG_RESERVED:
 		switch (new_state) {

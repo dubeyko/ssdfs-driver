@@ -176,6 +176,8 @@ struct ssdfs_btree_node *
 ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 				    struct ssdfs_btree_node *parent,
 				    u64 hash);
+int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
+					   struct ssdfs_btree_node *parent);
 int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 			 struct ssdfs_btree_search *search);
 int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
@@ -201,6 +203,9 @@ int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
 int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
 				struct ssdfs_btree_inline_root_node *root);
 
+void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
+					 struct ssdfs_btree_node *parent);
+void ssdfs_check_btree_consistency(struct ssdfs_btree *tree);
 void ssdfs_debug_btree_object(struct ssdfs_btree *tree);
 
 #endif /* _SSDFS_BTREE_H */

@@ -305,6 +305,7 @@ int ssdfs_define_bmap_index(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!bmap_index || !peb_index);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
@@ -385,10 +386,15 @@ finish_define_bmap_index:
 		DEFINE_WAIT(wait);
 
 		err = 0;
-		prepare_to_wait(&si->migration.wait, &wait,
+
+		mutex_unlock(&pebc->migration_lock);
+		up_read(&pebc->lock);
+		prepare_to_wait(&pebc->migration_wq, &wait,
 				TASK_UNINTERRUPTIBLE);
 		schedule();
-		finish_wait(&si->migration.wait, &wait);
+		finish_wait(&pebc->migration_wq, &wait);
+		down_read(&pebc->lock);
+		mutex_lock(&pebc->migration_lock);
 		goto try_define_bmap_index;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
@@ -702,6 +708,7 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
 	BUG_ON(!pebc || !range);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_migration_id %u, "
@@ -977,10 +984,14 @@ finish_define_bmap_index:
 		DEFINE_WAIT(wait);
 
 		err = 0;
-		prepare_to_wait(&si->migration.wait, &wait,
+		mutex_unlock(&pebc->migration_lock);
+		up_read(&pebc->lock);
+		prepare_to_wait(&pebc->migration_wq, &wait,
 				TASK_UNINTERRUPTIBLE);
 		schedule();
-		finish_wait(&si->migration.wait, &wait);
+		finish_wait(&pebc->migration_wq, &wait);
+		down_read(&pebc->lock);
+		mutex_lock(&pebc->migration_lock);
 		goto try_define_bmap_index;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "

@@ -54,13 +54,11 @@ struct ssdfs_migration_destination {
 /*
  * struct ssdfs_segment_migration_info - migration info
  * @migrating_pebs: count of migrating PEBs
- * @wait: wait queue for relation creation
  * @lock: migration data lock
  * @array: destination descriptors
  */
 struct ssdfs_segment_migration_info {
 	atomic_t migrating_pebs;
-	wait_queue_head_t wait;
 
 	spinlock_t lock;
 	struct ssdfs_migration_destination array[SSDFS_DESTINATION_MAX];

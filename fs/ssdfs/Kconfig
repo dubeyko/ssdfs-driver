@@ -63,11 +63,21 @@ config SSDFS_MEMORY_LEAKS_ACCOUNTING
 	  If you are going to check memory leaks in SSDFS driver then
 	  choose Y here. If unsure, say N.
 
+config SSDFS_BTREE_CONSISTENCY_CHECK
+	bool "SSDFS btree consistency check"
+	depends on SSDFS
+	help
+	  This option enables checking the btree consistency.
+
+	  If you are going to check btree consistency in SSDFS driver then
+	  choose Y here. If unsure, say N.
+
 config SSDFS_TESTING
 	bool "SSDFS testing"
 	depends on SSDFS
 	select SSDFS_DEBUG
 	select SSDFS_MEMORY_LEAKS_ACCOUNTING
+	select SSDFS_BTREE_CONSISTENCY_CHECK
 	help
 	  This option enables testing infrastructure of SSDFS
 	  filesystem.

@@ -191,7 +191,6 @@ struct ssdfs_btree_node_content {
  * @pages_per_node: count of memory pages per node
  * @create_cno: create checkpoint
  * @node_id: node identification number
- * @parent_node: pointer on parent node
  * @tree: pointer on node's parent tree
  * @node_ops: btree's node operation specialization
  * @refs_count: reference counter
@@ -212,6 +211,7 @@ struct ssdfs_btree_node_content {
  * @hash_tbl_area: hash table's area descriptor
  * @descriptor_lock: node's descriptor lock
  * @update_cno: last update checkpoint
+ * @parent_node: pointer on parent node
  * @node_index: node's index (for using in search operations)
  * @extent: node's location
  * @seg: pointer on segment object
@@ -230,7 +230,6 @@ struct ssdfs_btree_node {
 	u64 create_cno;
 	u32 node_id;
 
-	struct ssdfs_btree_node *parent_node;
 	struct ssdfs_btree *tree;
 
 	/* btree's node operation specialization */
@@ -271,6 +270,7 @@ struct ssdfs_btree_node {
 	/* node's descriptor */
 	spinlock_t descriptor_lock;
 	u64 update_cno;
+	struct ssdfs_btree_node *parent_node;
 	struct ssdfs_btree_index_key node_index;
 	struct ssdfs_raw_extent extent;
 	struct ssdfs_segment_info *seg;
@@ -736,6 +736,7 @@ int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 				   u16 start_index,
 				   unsigned int range_len);
 
+void ssdfs_show_btree_node_info(struct ssdfs_btree_node *node);
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);
 
 #endif /* _SSDFS_BTREE_NODE_H */

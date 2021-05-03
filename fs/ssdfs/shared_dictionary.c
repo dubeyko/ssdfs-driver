@@ -1124,6 +1124,10 @@ int ssdfs_shared_dict_tree_add(struct ssdfs_shared_dict_btree_info *tree,
 
 	search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
 	err = ssdfs_btree_add_item(&tree->generic_tree, search);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add the name into the tree: "
 			  "err %d\n", err);
@@ -1557,6 +1561,8 @@ int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
+		node->bmap_array.item_start_bit =
+			node->bmap_array.index_start_bit + index_capacity;
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -2577,7 +2583,18 @@ int ssdfs_shared_dict_btree_add_node(struct ssdfs_btree_node *node)
 finish_add_node:
 	up_write(&node->header_lock);
 
-	return err;
+	if (err)
+		return err;
+
+	err = ssdfs_btree_update_parent_node_pointer(node->tree, node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to update parent pointer: "
+			  "node_id %u, err %d\n",
+			  node->node_id, err);
+		return err;
+	}
+
+	return 0;
 }
 
 
@@ -10606,8 +10623,6 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 		search->result.start_index = item_index;
 	}
 
-	if (item_index == 0)
-		return SSDFS_CORRECT_POSITION;
 
 	switch (search->result.name_state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
@@ -11290,8 +11305,6 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 		search->result.start_index = (u16)item_index;
 	}
 
-	if (item_index == 0)
-		return 0;
 
 	switch (search->result.name_state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
@@ -11379,6 +11392,7 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 	bool index_area_empty = false;
 	bool items_area_empty = false;
 	int parent_type = SSDFS_BTREE_LEAF_NODE;
+	spinlock_t *lock;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11518,7 +11532,11 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		parent = node;
 
 		do {
+			lock = &parent->descriptor_lock;
+			spin_lock(lock);
 			parent = parent->parent_node;
+			spin_unlock(lock);
+			lock = NULL;
 
 			if (!parent) {
 				SSDFS_ERR("node %u hasn't parent\n",

@@ -75,6 +75,8 @@ void ssdfs_compressors_exit(void);
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
 			ino_t *ino);
+int ssdfs_create(struct inode *dir, struct dentry *dentry,
+			umode_t mode, bool excl);
 
 /* file.c */
 int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync);

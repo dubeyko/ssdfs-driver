@@ -271,6 +271,7 @@ struct ssdfs_fs_info {
 #ifdef CONFIG_SSDFS_TESTING
 	struct address_space testing_pages;
 	struct inode *testing_inode;
+	bool do_fork_invalidation;
 #endif /* CONFIG_SSDFS_TESTING */
 };
 

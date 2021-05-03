@@ -221,11 +221,19 @@ void ssdfs_btree_search_init(struct ssdfs_btree_search *search)
 			ssdfs_btree_search_kfree(search->result.name);
 	}
 
+	if (search->node.parent) {
+		ssdfs_btree_node_put(search->node.parent);
+		search->node.parent = NULL;
+	}
+
+	if (search->node.child) {
+		ssdfs_btree_node_put(search->node.child);
+		search->node.child = NULL;
+	}
+
 	memset(search, 0, sizeof(struct ssdfs_btree_search));
 	search->request.type = SSDFS_BTREE_SEARCH_UNKNOWN_TYPE;
 	search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
-	search->node.parent = NULL;
-	search->node.child = NULL;
 	search->result.state = SSDFS_BTREE_SEARCH_UNKNOWN_RESULT;
 	search->result.err = 0;
 	search->result.buf = NULL;
@@ -469,9 +477,26 @@ void ssdfs_btree_search_define_child_node(struct ssdfs_btree_search *search,
 }
 
 /*
+ * ssdfs_btree_search_forget_child_node() - forget child node for the search
+ * @search: search object
+ */
+void ssdfs_btree_search_forget_child_node(struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->node.child) {
+		ssdfs_btree_node_put(search->node.child);
+		search->node.child = NULL;
+		search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
+	}
+}
+
+/*
  * ssdfs_btree_search_define_parent_node() - define parent node for the search
  * @search: search object
- * @child: child node object
+ * @parent: parent node object
  */
 void ssdfs_btree_search_define_parent_node(struct ssdfs_btree_search *search,
 					   struct ssdfs_btree_node *parent)
@@ -487,6 +512,23 @@ void ssdfs_btree_search_define_parent_node(struct ssdfs_btree_search *search,
 
 	if (search->node.parent)
 		ssdfs_btree_node_get(search->node.parent);
+}
+
+/*
+ * ssdfs_btree_search_forget_parent_node() - forget parent node for the search
+ * @search: search object
+ */
+void ssdfs_btree_search_forget_parent_node(struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->node.parent) {
+		ssdfs_btree_node_put(search->node.parent);
+		search->node.parent = NULL;
+		search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
+	}
 }
 
 /*

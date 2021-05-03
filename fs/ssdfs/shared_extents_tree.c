@@ -216,8 +216,19 @@ int ssdfs_shextree_add_pre_invalid_extent(struct ssdfs_shared_extents_tree *tree
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  tree, extent, seg_id, logical_blk, len);
 
+#ifdef CONFIG_SSDFS_TESTING
+	if (!tree->fsi->do_fork_invalidation) {
+		SSDFS_DBG("ignore extent: "
+			  "seg_id %llu, logical_blk %u, len %u\n",
+			  seg_id, logical_blk, len);
+		return 0;
+	}
+#endif /* CONFIG_SSDFS_TESTING */
+
 	if (seg_id == U64_MAX || logical_blk == U32_MAX || len == U32_MAX) {
-		SSDFS_ERR("invalid extent\n");
+		SSDFS_ERR("invalid extent: "
+			  "seg_id %llu, logical_blk %u, len %u\n",
+			  seg_id, logical_blk, len);
 		return -ERANGE;
 	}
 
@@ -288,9 +299,22 @@ int ssdfs_shextree_add_pre_invalid_fork(struct ssdfs_shared_extents_tree *tree,
 		return 0;
 	}
 
+	SSDFS_DBG("INVALIDATING FORK: "
+		  "start_offset %llu, blks_count %llu\n",
+		  le64_to_cpu(fork->start_offset),
+		  le64_to_cpu(fork->blks_count));
+
 	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; i++) {
 		struct ssdfs_raw_extent *ptr = &fork->extents[i];
 		u32 len = le32_to_cpu(ptr->len);
+		u64 seg_id = le64_to_cpu(ptr->seg_id);
+		u32 start_blk = le32_to_cpu(ptr->logical_blk);
+
+		SSDFS_DBG("INVALIDATING FORK: extent[%d]: "
+			  "seg_id %llu, start_blk %u, len %u\n",
+			  i, seg_id, start_blk, len);
+
+
 
 		err = ssdfs_shextree_add_pre_invalid_extent(tree, owner_ino,
 							    ptr);
@@ -302,6 +326,9 @@ int ssdfs_shextree_add_pre_invalid_fork(struct ssdfs_shared_extents_tree *tree,
 		}
 
 		processed_blks += len;
+
+		if (processed_blks >= blks_count)
+			break;
 	}
 
 	if (processed_blks != blks_count) {

@@ -368,7 +368,7 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
  * The ssdfs_create() is called by the open(2) and
  * creat(2) system calls.
  */
-static int ssdfs_create(struct inode *dir, struct dentry *dentry,
+int ssdfs_create(struct inode *dir, struct dentry *dentry,
 			umode_t mode, bool excl)
 {
 	struct inode *inode;
@@ -1372,6 +1372,7 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 	struct ssdfs_btree_index_key index_key;
 	u64 old_hash = U64_MAX;
 	int type;
+	spinlock_t *lock;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1461,13 +1462,6 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 								    &index_key);
 		}
 
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to extract index key: "
-				  "index_position %u, err %d\n",
-				  found_pos, err);
-			goto finish_index_search;
-		}
-
 finish_index_search:
 		up_read(&parent->full_lock);
 
@@ -1482,7 +1476,11 @@ finish_index_search:
 			spin_unlock(&parent->descriptor_lock);
 
 			/* try next parent */
+			lock = &parent->descriptor_lock;
+			spin_lock(lock);
 			parent = parent->parent_node;
+			spin_unlock(lock);
+			lock = NULL;
 
 			if (!parent) {
 				err = -ERANGE;
@@ -1490,7 +1488,11 @@ finish_index_search:
 				goto finish_get_next_hash;
 			}
 		} else if (unlikely(err)) {
-			/* process error */
+			SSDFS_ERR("fail to extract index key: "
+				  "index_position %u, err %d\n",
+				  found_pos, err);
+			ssdfs_debug_show_btree_node_indexes(parent->tree,
+							    parent);
 			goto finish_get_next_hash;
 		} else {
 			/* next hash has been found */
@@ -2072,6 +2074,9 @@ finish_tree_processing:
 							search,
 							&start_hash);
 		up_read(&ii->lock);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
 
 		if (err == -ENOENT) {
 			err = 0;

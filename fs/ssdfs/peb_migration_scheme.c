@@ -137,10 +137,10 @@ check_migration_state:
 			DEFINE_WAIT(wait);
 
 			mutex_unlock(&pebc->migration_lock);
-			prepare_to_wait(&si->migration.wait, &wait,
+			prepare_to_wait(&pebc->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
-			finish_wait(&si->migration.wait, &wait);
+			finish_wait(&pebc->migration_wq, &wait);
 			mutex_lock(&pebc->migration_lock);
 			goto check_migration_state;
 		}
@@ -170,6 +170,8 @@ check_migration_state:
 
 start_migration_done:
 	mutex_unlock(&pebc->migration_lock);
+
+	wake_up_all(&pebc->migration_wq);
 
 	SSDFS_DBG("finished\n");
 
@@ -226,6 +228,7 @@ bool is_pebs_relation_alive(struct ssdfs_peb_container *pebc)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -260,10 +263,12 @@ try_define_items_state:
 		case SSDFS_PEB_RELATION_PREPARATION: {
 				DEFINE_WAIT(wait);
 
-				prepare_to_wait(&si->migration.wait, &wait,
+				mutex_unlock(&pebc->migration_lock);
+				prepare_to_wait(&pebc->migration_wq, &wait,
 						TASK_UNINTERRUPTIBLE);
 				schedule();
-				finish_wait(&si->migration.wait, &wait);
+				finish_wait(&pebc->migration_wq, &wait);
+				mutex_lock(&pebc->migration_lock);
 				goto try_define_items_state;
 			}
 			break;
@@ -987,6 +992,11 @@ check_migration_state:
 		goto finish_migration_done;
 
 	case SSDFS_PEB_UNDER_MIGRATION:
+		SSDFS_DBG("PEB is under migration: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+
 		pebi = pebc->dst_peb;
 		if (!pebi) {
 			err = -ERANGE;
@@ -1021,10 +1031,10 @@ check_migration_state:
 			DEFINE_WAIT(wait);
 
 			mutex_unlock(&pebc->migration_lock);
-			prepare_to_wait(&si->migration.wait, &wait,
+			prepare_to_wait(&pebc->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
-			finish_wait(&si->migration.wait, &wait);
+			finish_wait(&pebc->migration_wq, &wait);
 			mutex_lock(&pebc->migration_lock);
 			goto check_migration_state;
 		}
@@ -1176,6 +1186,8 @@ finish_migration_done:
 	}
 
 	mutex_unlock(&pebc->migration_lock);
+
+	wake_up_all(&pebc->migration_wq);
 
 	SSDFS_DBG("finished\n");
 

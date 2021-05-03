@@ -2044,6 +2044,10 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!fs_info)
 		return -ENOMEM;
 
+#ifdef CONFIG_SSDFS_TESTING
+	fs_info->do_fork_invalidation = true;
+#endif /* CONFIG_SSDFS_TESTING */
+
 #ifdef CONFIG_SSDFS_MTD_DEVICE
 	fs_info->mtd = sb->s_mtd;
 	fs_info->devops = &ssdfs_mtd_devops;
@@ -2281,7 +2285,9 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		   SSDFS_VERSION, fs_info->devops->device_name(sb));
 
 #ifdef CONFIG_SSDFS_TESTING
-	//testing_flags = SSDFS_ENABLE_EXTENTS_TREE_TESTING;
+	testing_flags = 0;
+//	testing_flags |= SSDFS_ENABLE_EXTENTS_TREE_TESTING;
+//	testing_flags |= SSDFS_ENABLE_DENTRIES_TREE_TESTING;
 
 	ssdfs_do_testing(fs_info, testing_flags);
 #endif /* CONFIG_SSDFS_TESTING */

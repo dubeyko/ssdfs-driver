@@ -2541,6 +2541,9 @@ invalidate_blob_generic_xattr:
 
 finish_add_generic_xattr:
 		up_read(&tree->lock);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
 		break;
 
 	default:
@@ -2993,6 +2996,10 @@ finish_change_inline_xattr:
 
 finish_change_generic_xattr:
 		up_read(&tree->lock);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
+
 		break;
 
 	default:
@@ -3186,7 +3193,6 @@ int ssdfs_xattrs_tree_delete_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 
 	if (tree->inline_count == 0) {
 		SSDFS_DBG("tree is empty now\n");
-		return -ENOENT;
 	}
 
 	return 0;
@@ -3493,16 +3499,6 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_xattrs_btree_info *tree)
 		goto finish_process_range;
 	}
 
-	search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;
-
-	err = ssdfs_btree_delete_node(&tree->buffer.tree, search);
-	if (unlikely(err)) {
-		SSDFS_WARN("fail to delete node %u\n",
-			   search->node.id);
-		atomic_set(&tree->state, SSDFS_XATTR_BTREE_CORRUPTED);
-		goto finish_process_range;
-	}
-
 	err = ssdfs_btree_destroy_node_range(&tree->buffer.tree,
 					     0);
 	if (unlikely(err)) {
@@ -3656,6 +3652,9 @@ finish_delete_inline_xattr:
 
 finish_delete_generic_xattr:
 		up_read(&tree->lock);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
 
 		if (!err && is_ssdfs_btree_empty(tree->generic_tree)) {
 			down_write(&tree->lock);
@@ -4682,6 +4681,8 @@ int ssdfs_xattrs_btree_create_node(struct ssdfs_btree_node *node)
 
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
+		node->bmap_array.item_start_bit =
+			node->bmap_array.index_start_bit + index_capacity;
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -5203,7 +5204,18 @@ int ssdfs_xattrs_btree_add_node(struct ssdfs_btree_node *node)
 finish_add_node:
 	up_write(&node->header_lock);
 
-	return err;
+	if (err)
+		return err;
+
+	err = ssdfs_btree_update_parent_node_pointer(node->tree, node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to update parent pointer: "
+			  "node_id %u, err %d\n",
+			  node->node_id, err);
+		return err;
+	}
+
+	return 0;
 }
 
 static
@@ -6412,8 +6424,6 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 		search->result.start_index = item_index;
 	}
 
-	if (item_index == 0)
-		return SSDFS_CORRECT_POSITION;
 
 	err = ssdfs_xattrs_btree_node_get_xattr(node, area,
 						item_index, &xattr);
@@ -6597,8 +6607,6 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 		search->result.start_index = (u16)item_index;
 	}
 
-	if (item_index == 0)
-		return 0;
 
 	req_flags = search->request.flags;
 
@@ -7842,6 +7850,7 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 	bool index_area_empty = false;
 	bool items_area_empty = false;
 	int parent_type = SSDFS_BTREE_LEAF_NODE;
+	spinlock_t *lock;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7947,7 +7956,11 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		parent = node;
 
 		do {
+			lock = &parent->descriptor_lock;
+			spin_lock(lock);
 			parent = parent->parent_node;
+			spin_unlock(lock);
+			lock = NULL;
 
 			if (!parent) {
 				SSDFS_ERR("node %u hasn't parent\n",

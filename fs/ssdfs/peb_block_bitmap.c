@@ -3598,5 +3598,7 @@ unlock_src_bmap:
 finish_migration_stop:
 	up_write(&bmap->lock);
 
+	SSDFS_DBG("finished\n");
+
 	return err;
 }
