@@ -1420,17 +1420,20 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 
 		down_read(&parent->full_lock);
 
+		SSDFS_DBG("old_hash %llx\n", old_hash);
+
 		down_read(&parent->header_lock);
 		memcpy(&area, &parent->index_area,
 			sizeof(struct ssdfs_btree_node_index_area));
-		up_read(&parent->header_lock);
-
-		SSDFS_DBG("old_hash %llx\n", old_hash);
-
 		err = ssdfs_find_index_by_hash(parent, &area,
 						old_hash,
 						&found_pos);
-		if (unlikely(err)) {
+		up_read(&parent->header_lock);
+
+		if (err == -EEXIST) {
+			/* hash == found hash */
+			err = 0;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the index position: "
 				  "old_hash %llx, err %d\n",
 				  old_hash, err);

@@ -179,11 +179,12 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 	struct ssdfs_inode_info *ii;
 	u64 seg_id = 1;
 	u64 logical_blk = 0;
-	u64 logical_offset = 0;
+	s64 logical_offset = 0;
 	u64 threshold;
 	u32 extent_len = 1;
 	u64 per_1_percent = 0;
 	u64 message_threshold = 0;
+	u64 processed_bytes = 0;
 	int err = 0;
 
 	fsi->do_fork_invalidation = false;
@@ -209,13 +210,13 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 	for (logical_offset = 0; logical_offset < threshold;
 					logical_offset += PAGE_SIZE) {
 		SSDFS_DBG("ADD LOGICAL BLOCK: "
-			  "logical_offset %llu, seg_id %llu, "
+			  "logical_offset %lld, seg_id %llu, "
 			  "logical_blk %llu\n",
 			  logical_offset, seg_id, logical_blk);
 
 		if (logical_offset >= message_threshold) {
 			SSDFS_ERR("ADD LOGICAL BLOCK: %llu%%\n",
-				  div64_u64(logical_offset, per_1_percent));
+				  div64_u64((u64)logical_offset, per_1_percent));
 
 			message_threshold += per_1_percent;
 		}
@@ -250,12 +251,12 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 	for (logical_offset = 0; logical_offset < threshold;
 					logical_offset += PAGE_SIZE) {
 		SSDFS_DBG("CHECK LOGICAL BLOCK: "
-			  "logical_offset %llu\n",
+			  "logical_offset %lld\n",
 			  logical_offset);
 
 		if (logical_offset >= message_threshold) {
 			SSDFS_ERR("CHECK LOGICAL BLOCK: %llu%%\n",
-				  div64_u64(logical_offset, per_1_percent));
+				  div64_u64((u64)logical_offset, per_1_percent));
 
 			message_threshold += per_1_percent;
 		}
@@ -266,7 +267,7 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 							  fsi->testing_inode)) {
 			err = -ENOENT;
 			SSDFS_ERR("fail to find: "
-				  "logical_offset %llu, "
+				  "logical_offset %lld, "
 				  "logical_blk %llx\n",
 				  logical_offset,
 				  logical_blk);
@@ -277,22 +278,22 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 	SSDFS_ERR("CHECK LOGICAL BLOCK: %llu%%\n",
 		  div64_u64(threshold, per_1_percent));
 
-	message_threshold = threshold - per_1_percent;
+	message_threshold = per_1_percent;
 
 	SSDFS_ERR("TRUNCATE LOGICAL BLOCK: 0%%\n");
 
 	for (logical_offset = threshold - PAGE_SIZE;
-			logical_offset > 0; logical_offset -= PAGE_SIZE) {
+			logical_offset >= 0; logical_offset -= PAGE_SIZE,
+					     processed_bytes += PAGE_SIZE) {
 		SSDFS_DBG("TRUNCATE LOGICAL BLOCK: "
-			  "logical_offset %llu\n",
+			  "logical_offset %lld\n",
 			  logical_offset);
 
-		if (logical_offset <= message_threshold) {
+		if (processed_bytes >= message_threshold) {
 			SSDFS_ERR("TRUNCATE LOGICAL BLOCK: %llu%%\n",
-				  div64_u64(threshold - logical_offset,
-						per_1_percent));
+				  div64_u64(processed_bytes, per_1_percent));
 
-			message_threshold -= per_1_percent;
+			message_threshold += per_1_percent;
 		}
 
 		truncate_setsize(fsi->testing_inode, logical_offset);
@@ -309,8 +310,7 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 	}
 
 	SSDFS_ERR("TRUNCATE LOGICAL BLOCK: %llu%%\n",
-		  div64_u64(threshold - logical_offset,
-				per_1_percent));
+		  div64_u64(threshold, per_1_percent));
 
 destroy_tree:
 	ssdfs_extents_tree_destroy(ii);

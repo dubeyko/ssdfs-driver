@@ -1881,11 +1881,14 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 	down_read(&parent->header_lock);
 	memcpy(&area, &parent->index_area,
 		sizeof(struct ssdfs_btree_node_index_area));
-	up_read(&parent->header_lock);
-
 	err = ssdfs_find_index_by_hash(parent, &area, upper_hash,
 					&found_index);
-	if (err == -ENODATA) {
+	up_read(&parent->header_lock);
+
+	if (err == -EEXIST) {
+		/* hash == found hash */
+		err = 0;
+	} else if (err == -ENODATA) {
 		child = ERR_PTR(err);
 		SSDFS_DBG("unable to find an index: "
 			  "node_id %u, hash %llx\n",
@@ -2551,7 +2554,11 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	struct ssdfs_btree_hierarchy *hierarchy;
 	struct ssdfs_btree_level *level;
 	struct ssdfs_btree_node *node;
+	struct ssdfs_btree_node *parent_node;
 	int cur_height, tree_height;
+#define SSDFS_BTREE_MODIFICATION_PHASE_MAX	(3)
+	int phase_id;
+	spinlock_t *lock;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2608,7 +2615,15 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	err = ssdfs_btree_check_hierarchy_for_add(tree, search, hierarchy);
-	if (err == -EAGAIN) {
+
+	phase_id = 0;
+	while (err == -EAGAIN) {
+		if (phase_id > SSDFS_BTREE_MODIFICATION_PHASE_MAX) {
+			err = -ERANGE;
+			SSDFS_WARN("too many phases of modification\n");
+			goto finish_create_node;
+		}
+
 		err = ssdfs_btree_process_hierarchy_for_add_nolock(tree,
 								   search,
 								   hierarchy);
@@ -2618,7 +2633,33 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 			goto finish_create_node;
 		}
 
-		ssdfs_btree_hierarchy_init(tree, hierarchy);
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (IS_ERR_OR_NULL(hierarchy)) {
+			err = !hierarchy ? -ENOMEM : PTR_ERR(hierarchy);
+			SSDFS_ERR("fail to allocate tree levels' array: "
+				  "err %d\n", err);
+			goto finish_create_node;
+		}
+
+		/* correct parent node */
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		lock = &search->node.child->descriptor_lock;
+		spin_lock(lock);
+		parent_node = search->node.child->parent_node;
+		spin_unlock(lock);
+		lock = NULL;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!parent_node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_search_define_parent_node(search, parent_node);
 
 		err = ssdfs_btree_check_hierarchy_for_add(tree, search,
 							  hierarchy);
@@ -2627,7 +2668,11 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 				  "err %d\n", err);
 			goto finish_create_node;
 		}
-	} else if (unlikely(err)) {
+
+		phase_id++;
+	}
+
+	if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare information about hierarchy: "
 			  "err %d\n", err);
 		goto finish_create_node;
@@ -3102,6 +3147,16 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 			}
 			goto check_found_node;
 		}
+
+		down_read(&node->header_lock);
+		start_hash = node->index_area.start_hash;
+		end_hash = node->index_area.end_hash;
+		up_read(&node->header_lock);
+
+		SSDFS_DBG("node_id %u, start_hash %llx, "
+			  "end_hash %llx\n",
+			  node->node_id, start_hash,
+			  end_hash);
 
 		node_type = atomic_read(&node->type);
 		if (node_type == SSDFS_BTREE_HYBRID_NODE) {
@@ -4659,7 +4714,10 @@ finish_allocate_item:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -4777,7 +4835,10 @@ finish_allocate_range:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -5090,7 +5151,10 @@ finish_add_item:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -5328,7 +5392,10 @@ finish_add_range:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -5496,7 +5563,10 @@ finish_change_item:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -5661,7 +5731,10 @@ finish_delete_item:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -5842,7 +5915,10 @@ fail_delete_range:
 	up_read(&tree->lock);
 
 	ssdfs_debug_btree_object(tree);
+
+#ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
 	ssdfs_check_btree_consistency(tree);
+#endif /* CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK */
 
 	return err;
 }
@@ -6634,10 +6710,13 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 		if (!node1)
 			continue;
 
+		rcu_read_unlock();
+
 		ssdfs_debug_btree_check_indexes(tree, node1);
 
 		switch (atomic_read(&node1->type)) {
 		case SSDFS_BTREE_ROOT_NODE:
+			rcu_read_lock();
 			continue;
 
 		case SSDFS_BTREE_INDEX_NODE:
@@ -6695,6 +6774,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 				/*
 				 * empty node
 				 */
+				rcu_read_lock();
 				continue;
 			} else {
 				SSDFS_WARN("node_id %u, "
@@ -6711,6 +6791,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 			BUG();
 		}
 
+		rcu_read_lock();
 		radix_tree_for_each_slot(slot2, &tree->nodes, &iter2,
 					 SSDFS_BTREE_ROOT_NODE_ID) {
 			node2 = SSDFS_BTN(radix_tree_deref_slot(slot2));
@@ -6718,11 +6799,14 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 			if (!node2)
 				continue;
 
+			rcu_read_unlock();
+
 			is_exist = is_ssdfs_btree_node_items_area_exist(node2);
 
 			switch (atomic_read(&node2->type)) {
 			case SSDFS_BTREE_ROOT_NODE:
 			case SSDFS_BTREE_INDEX_NODE:
+				rcu_read_lock();
 				continue;
 
 			case SSDFS_BTREE_HYBRID_NODE:
@@ -6741,8 +6825,10 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 
 			node_id2 = node2->node_id;
 
-			if (node_id1 == node_id2)
+			if (node_id1 == node_id2) {
+				rcu_read_lock();
 				continue;
+			}
 
 			down_read(&node2->header_lock);
 			start_hash2 = node2->items_area.start_hash;
@@ -6755,6 +6841,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 					/*
 					 * empty node
 					 */
+					rcu_read_lock();
 					continue;
 				} else {
 					SSDFS_WARN("node_id %u, "
@@ -6792,7 +6879,11 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 				ssdfs_show_btree_node_info(node2);
 				BUG();
 			}
+
+			rcu_read_lock();
 		}
+
+		rcu_read_lock();
 	}
 	rcu_read_unlock();
 

@@ -995,9 +995,15 @@ void ssdfs_extents_tree_destroy(struct ssdfs_inode_info *ii)
 		break;
 
 	case SSDFS_EXTENTS_BTREE_DIRTY:
-		SSDFS_WARN("extents tree is dirty: "
-			   "ino %lu\n",
-			   ii->vfs_inode.i_ino);
+		if (atomic64_read(&tree->forks_count) > 0) {
+			SSDFS_WARN("extents tree is dirty: "
+				   "ino %lu\n",
+				   ii->vfs_inode.i_ino);
+		} else {
+			/* regular destroy */
+			atomic_set(&tree->state,
+				    SSDFS_EXTENTS_BTREE_UNKNOWN_STATE);
+		}
 		break;
 
 	default:
@@ -1282,7 +1288,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 	struct ssdfs_btree_search *search;
 	s64 forks_count, forks_capacity;
 	int private_flags;
-	u64 start_hash, end_hash;
+	u64 start_hash = 0, end_hash = 0;
+	u64 blks_count = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1360,6 +1367,8 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 	tree->generic_tree = &tree->buffer.tree;
 	tree->inline_forks = NULL;
 
+	atomic64_set(&tree->forks_count, 0);
+
 	err = ssdfs_btree_create(tree->fsi,
 				 tree->owner->vfs_inode.i_ino,
 				 &ssdfs_extents_btree_desc_ops,
@@ -1375,8 +1384,21 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 	if (forks_count > 1) {
 		end_hash =
 		    le64_to_cpu(inline_forks[forks_count - 1].start_offset);
-	} else
+		blks_count =
+		    le64_to_cpu(inline_forks[forks_count - 1].blks_count);
+	} else {
 		end_hash = start_hash;
+		blks_count = le64_to_cpu(inline_forks[0].blks_count);
+	}
+
+	if (blks_count == 0 || blks_count >= U64_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid blks_count %llu\n",
+			  blks_count);
+		goto destroy_generic_tree;
+	}
+
+	end_hash += blks_count - 1;
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -1486,6 +1508,7 @@ recover_inline_tree:
 		sizeof(struct ssdfs_raw_fork) * SSDFS_INLINE_FORKS_COUNT);
 	tree->inline_forks = tree->buffer.forks;
 	tree->generic_tree = NULL;
+	atomic64_set(&tree->forks_count, forks_count);
 	return err;
 }
 
@@ -3156,6 +3179,9 @@ int ssdfs_extents_tree_add_inline_fork(struct ssdfs_extents_btree_info *tree,
 	}
 
 	forks_count = atomic64_inc_return(&tree->forks_count);
+
+	SSDFS_DBG("forks_count %lld\n", forks_count);
+
 	if (forks_count > forks_capacity) {
 		SSDFS_WARN("forks_count is too much: "
 			   "count %lld, capacity %lld\n",
@@ -3266,7 +3292,10 @@ int ssdfs_extents_tree_add_fork(struct ssdfs_extents_btree_info *tree,
 		return err;
 	}
 
-	forks_count = atomic64_inc_return(&tree->forks_count);
+	forks_count = atomic64_read(&tree->forks_count);
+
+	SSDFS_DBG("forks_count %lld\n", forks_count);
+
 	if (forks_count >= S64_MAX) {
 		SSDFS_WARN("forks_count is too much\n");
 		atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_CORRUPTED);
@@ -3389,16 +3418,36 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	start_offset = le64_to_cpu(search->raw.fork.start_offset);
 	blks_count = le64_to_cpu(search->raw.fork.blks_count);
 
-	if (start_hash < start_offset ||
-	    start_hash >= (start_offset + blks_count)) {
-		SSDFS_ERR("corrupted fork: "
-			  "start_hash %llx, "
-			  "fork (start %llu, blks_count %llu)\n",
-			  start_hash, start_offset, blks_count);
-		return -ERANGE;
+	SSDFS_DBG("start_hash %llx, fork (start %llu, blks_count %llu)\n",
+		  start_hash, start_offset, blks_count);
+
+	switch (search->request.type) {
+	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
+		if ((start_offset + blks_count) != start_hash) {
+			SSDFS_ERR("invalid request: "
+				  "start_hash %llx, "
+				  "fork (start %llu, blks_count %llu)\n",
+				  start_hash, start_offset, blks_count);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		if (start_hash < start_offset ||
+		    start_hash >= (start_offset + blks_count)) {
+			SSDFS_ERR("corrupted fork: "
+				  "start_hash %llx, "
+				  "fork (start %llu, blks_count %llu)\n",
+				  start_hash, start_offset, blks_count);
+			return -ERANGE;
+		}
+		break;
 	}
 
 	forks_count = atomic64_read(&tree->forks_count);
+
+	SSDFS_DBG("BEFORE: forks_count %lld\n",
+		  atomic64_read(&tree->forks_count));
 
 	if (!tree->owner) {
 		SSDFS_ERR("empty owner inode\n");
@@ -3439,7 +3488,7 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
 
 	if (search->request.type == SSDFS_BTREE_SEARCH_INVALIDATE_TAIL) {
-		lower_bound = search->result.start_index;
+		lower_bound = search->result.start_index + 1;
 		upper_bound = forks_count - 1;
 
 		for (i = upper_bound; i >= lower_bound; i--) {
@@ -3453,6 +3502,9 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 				return -ERANGE;
 			} else
 				atomic64_dec(&tree->forks_count);
+
+			SSDFS_DBG("forks_count %lld\n",
+				  atomic64_read(&tree->forks_count));
 
 			blks_count = le64_to_cpu(cur->blks_count);
 			if (blks_count == 0 || blks_count >= U64_MAX) {
@@ -3513,6 +3565,9 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 			}
 		}
 	}
+
+	SSDFS_DBG("AFTER: forks_count %lld\n",
+		  atomic64_read(&tree->forks_count));
 
 	return 0;
 }
@@ -4413,7 +4468,7 @@ int ssdfs_truncate_extent_in_fork(u64 blk, u32 new_len,
 	if (blks_count == 0) {
 		cur_fork->blks_count = cpu_to_le64(0);
 
-		SSDFS_ERR("empty fork: blks_count %llu\n",
+		SSDFS_DBG("empty fork: blks_count %llu\n",
 			  blks_count);
 		return -ENODATA;
 	} else
@@ -4583,6 +4638,9 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 		} else
 			atomic64_dec(&tree->forks_count);
 
+		SSDFS_DBG("forks_count %lld\n",
+			  atomic64_read(&tree->forks_count));
+
 		blks_count = le64_to_cpu(fork1->blks_count);
 		if (blks_count == 0 || blks_count >= U64_MAX) {
 			memset(fork1, 0xFF, sizeof(struct ssdfs_raw_fork));
@@ -4655,7 +4713,10 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
 
-	forks_count = atomic64_dec_return(&tree->forks_count);
+	forks_count = atomic64_read(&tree->forks_count);
+
+	SSDFS_DBG("forks_count %lld\n", forks_count);
+
 	if (forks_count == 0) {
 		SSDFS_DBG("tree is empty now\n");
 	} else if (forks_count < 0) {
@@ -4784,7 +4845,9 @@ int ssdfs_extents_tree_delete_fork(struct ssdfs_extents_btree_info *tree,
 		return err;
 	}
 
-	forks_count = atomic64_dec_return(&tree->forks_count);
+	forks_count = atomic64_read(&tree->forks_count);
+
+	SSDFS_DBG("forks_count %lld\n", forks_count);
 
 	if (forks_count == 0) {
 		SSDFS_DBG("tree is empty now\n");
@@ -4798,343 +4861,6 @@ int ssdfs_extents_tree_delete_fork(struct ssdfs_extents_btree_info *tree,
 
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
 	return 0;
-}
-
-/*
- * ssdfs_extents_tree_truncate_extent() - truncate the extent in the tree
- * @tree: extent tree
- * @blk: logical block number
- * @new_len: new length of the extent
- * @search: search object
- *
- * This method tries to truncate the extent in the tree.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- * %-ENODATA    - extent doesn't exist in the tree.
- * %-ENOSPC     - invalid @new_len of the extent.
- * %-EFAULT     - fail to create the hole in the fork.
- */
-int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
-					u64 blk, u32 new_len,
-					struct ssdfs_btree_search *search)
-{
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_shared_extents_tree *shextree;
-	struct ssdfs_raw_fork fork;
-	u64 blks_count;
-	u64 hash;
-	ino_t ino;
-	bool need_invalidate_fork = true;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !tree->fsi || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("tree %p, search %p, blk %llu, new_len %u\n",
-		  tree, search, blk, new_len);
-
-	fsi = tree->fsi;
-	shextree = fsi->shextree;
-
-	if (!shextree) {
-		SSDFS_ERR("shared extents tree is absent\n");
-		return -ERANGE;
-	}
-
-	ino = tree->owner->vfs_inode.i_ino;
-
-	switch (atomic_read(&tree->state)) {
-	case SSDFS_EXTENTS_BTREE_CREATED:
-	case SSDFS_EXTENTS_BTREE_INITIALIZED:
-	case SSDFS_EXTENTS_BTREE_DIRTY:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid extent tree's state %#x\n",
-			  atomic_read(&tree->state));
-		return -ERANGE;
-	};
-
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-
-	if (need_initialize_extent_btree_search(blk, search)) {
-		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-		search->request.flags =
-			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
-			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-		search->request.start.hash = blk;
-		search->request.end.hash = blk;
-		search->request.count = 1;
-	}
-
-	switch (atomic_read(&tree->type)) {
-	case SSDFS_INLINE_FORKS_ARRAY:
-		down_write(&tree->lock);
-
-		err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
-		if (err == -ENODATA) {
-			switch (search->result.state) {
-			case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-				/* hole case -> continue truncation */
-				break;
-
-			case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
-				/* inflation case -> nothing has to be done */
-				err = 0;
-				goto finish_truncate_inline_fork;
-
-			default:
-				SSDFS_ERR("fail to find the inline fork: "
-					  "blk %llu, err %d\n",
-					  blk, err);
-				goto finish_truncate_inline_fork;
-			}
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find the inline fork: "
-				  "blk %llu, err %d\n",
-				  blk, err);
-			goto finish_truncate_inline_fork;
-		}
-
-		switch (search->result.state) {
-		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-			search->request.type =
-				SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
-			err = ssdfs_extents_tree_delete_inline_fork(tree,
-								   search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to delete fork: err %d\n", err);
-				goto finish_truncate_inline_fork;
-			}
-			break;
-
-		case SSDFS_BTREE_SEARCH_VALID_ITEM:
-			err = ssdfs_truncate_extent_in_fork(blk, new_len,
-							    search, &fork);
-			if (err == -ENODATA) {
-				/*
-				 * The truncating  fork is empty.
-				 */
-				need_invalidate_fork = false;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to change extent in fork: "
-					  "err %d\n",
-					  err);
-				goto finish_truncate_inline_fork;
-			}
-
-			if (err == -ENODATA) {
-				search->request.type =
-					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
-				err =
-				    ssdfs_extents_tree_delete_inline_fork(tree,
-									search);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to delete fork: "
-						  "err %d\n", err);
-					goto finish_truncate_inline_fork;
-				}
-			} else {
-				search->request.type =
-					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
-				err =
-				    ssdfs_extents_tree_change_inline_fork(tree,
-									search);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to change fork: "
-						  "err %d\n", err);
-					goto finish_truncate_inline_fork;
-				}
-			}
-
-			blks_count = le64_to_cpu(fork.blks_count);
-
-			if (blks_count == 0 || blks_count >= U64_MAX) {
-				/*
-				 * empty fork -> do nothing
-				 */
-			} else if (need_invalidate_fork) {
-				err =
-				    ssdfs_shextree_add_pre_invalid_fork(shextree,
-									ino,
-									&fork);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to pre-invalidate: "
-						  "(start_offset %llu, "
-						  "blks_count %llu), err %d\n",
-						le64_to_cpu(fork.start_offset),
-						le64_to_cpu(fork.blks_count),
-						err);
-					goto finish_truncate_inline_fork;
-				}
-			}
-			break;
-
-		default:
-			err = -ERANGE;
-			SSDFS_ERR("invalid result state %#x\n",
-				  search->result.state);
-			goto finish_truncate_inline_fork;
-		}
-
-finish_truncate_inline_fork:
-		up_write(&tree->lock);
-		break;
-
-	case SSDFS_PRIVATE_EXTENTS_BTREE:
-		down_read(&tree->lock);
-
-		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (err == -ENODATA) {
-			switch (search->result.state) {
-			case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-				/* hole case -> continue truncation */
-				break;
-
-			case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
-			case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
-				if (is_last_leaf_node_found(search)) {
-					/*
-					 * inflation case
-					 * nothing has to be done
-					 */
-					err = 0;
-					goto finish_truncate_generic_fork;
-				} else {
-					/*
-					 * hole case
-					 * continue truncation
-					 */
-				}
-				break;
-
-			default:
-				SSDFS_ERR("fail to find the fork: "
-					  "blk %llu, err %d\n",
-					  blk, err);
-				goto finish_truncate_generic_fork;
-			}
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find the fork: "
-				  "blk %llu, err %d\n",
-				  blk, err);
-			goto finish_truncate_generic_fork;
-		}
-
-		switch (search->result.state) {
-		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-			search->request.type =
-				SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
-			err = ssdfs_extents_tree_delete_fork(tree, search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to delete fork: err %d\n", err);
-				goto finish_truncate_generic_fork;
-			}
-			break;
-
-		case SSDFS_BTREE_SEARCH_VALID_ITEM:
-			err = ssdfs_truncate_extent_in_fork(blk, new_len,
-							    search, &fork);
-			if (err == -ENODATA) {
-				/*
-				 * The truncating fork is empty.
-				 */
-				need_invalidate_fork = false;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to change extent in fork: "
-					  "err %d\n", err);
-				goto finish_truncate_generic_fork;
-			}
-
-			if (err == -ENODATA) {
-				search->request.type =
-					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
-				err = ssdfs_extents_tree_delete_fork(tree,
-								     search);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to delete fork: "
-						  "err %d\n", err);
-					goto finish_truncate_generic_fork;
-				}
-			} else {
-				search->request.type =
-					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
-				err = ssdfs_extents_tree_change_fork(tree,
-								     search);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to change fork: "
-						  "err %d\n", err);
-					goto finish_truncate_generic_fork;
-				}
-			}
-
-			blks_count = le64_to_cpu(fork.blks_count);
-
-			if (blks_count == 0 || blks_count >= U64_MAX) {
-				/*
-				 * empty fork -> do nothing
-				 */
-			} else if (need_invalidate_fork) {
-				err =
-				 ssdfs_shextree_add_pre_invalid_fork(shextree,
-								     ino,
-								     &fork);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to pre-invalidate: "
-						  "(start_offset %llu, "
-						  "blks_count %llu), err %d\n",
-						le64_to_cpu(fork.start_offset),
-						le64_to_cpu(fork.blks_count),
-						err);
-					goto finish_truncate_generic_fork;
-				}
-			}
-			break;
-
-		default:
-			err = -ERANGE;
-			SSDFS_ERR("invalid result state %#x\n",
-				  search->result.state);
-			goto finish_truncate_generic_fork;
-		}
-
-finish_truncate_generic_fork:
-		up_read(&tree->lock);
-
-		ssdfs_btree_search_forget_parent_node(search);
-		ssdfs_btree_search_forget_child_node(search);
-
-		if (unlikely(err))
-			return err;
-
-		down_write(&tree->lock);
-		hash = blk + new_len;
-		err = ssdfs_btree_destroy_node_range(&tree->buffer.tree,
-						     hash);
-		up_write(&tree->lock);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to destroy nodes' range: err %d\n",
-				  err);
-		}
-		break;
-
-	default:
-		err = -ERANGE;
-		SSDFS_ERR("invalid extents tree type %#x\n",
-			  atomic_read(&tree->type));
-		break;
-	}
-
-	return err;
 }
 
 /*
@@ -5313,6 +5039,8 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 	struct ssdfs_btree_search *search;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	s64 forks_count, forks_capacity;
+	u64 start_hash = 0, end_hash = 0;
+	u64 blks_count = 0;
 	int private_flags;
 	int err = 0;
 
@@ -5449,13 +5177,31 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 		goto finish_process_range;
 	}
 
+	start_hash = le64_to_cpu(inline_forks[0].start_offset);
+	if (forks_count > 1) {
+		end_hash =
+		    le64_to_cpu(inline_forks[forks_count - 1].start_offset);
+		blks_count =
+		    le64_to_cpu(inline_forks[forks_count - 1].blks_count);
+	} else {
+		end_hash = start_hash;
+		blks_count = le64_to_cpu(inline_forks[0].blks_count);
+	}
+
+	if (blks_count == 0 || blks_count >= U64_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid blks_count %llu\n",
+			  blks_count);
+		goto finish_process_range;
+	}
+
+	end_hash += blks_count - 1;
+
 	search->request.type = SSDFS_BTREE_SEARCH_DELETE_RANGE;
 	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 				SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-	search->request.start.hash =
-		le64_to_cpu(inline_forks[0].start_offset);
-	search->request.end.hash =
-		le64_to_cpu(inline_forks[forks_count - 1].start_offset);
+	search->request.start.hash = start_hash;
+	search->request.end.hash = end_hash;
 	search->request.count = forks_count;
 
 	err = ssdfs_btree_delete_range(&tree->buffer.tree, search);
@@ -5498,12 +5244,355 @@ finish_process_range:
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
 	tree->inline_forks = tree->buffer.forks;
 
+	atomic64_set(&tree->forks_count, forks_count);
+
 	atomic_and(~SSDFS_INODE_HAS_EXTENTS_BTREE,
 		   &tree->owner->private_flags);
 	atomic_or(SSDFS_INODE_HAS_INLINE_EXTENTS,
 		  &tree->owner->private_flags);
 
 	return 0;
+}
+
+/*
+ * ssdfs_extents_tree_truncate_extent() - truncate the extent in the tree
+ * @tree: extent tree
+ * @blk: logical block number
+ * @new_len: new length of the extent
+ * @search: search object
+ *
+ * This method tries to truncate the extent in the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - extent doesn't exist in the tree.
+ * %-ENOSPC     - invalid @new_len of the extent.
+ * %-EFAULT     - fail to create the hole in the fork.
+ */
+int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
+					u64 blk, u32 new_len,
+					struct ssdfs_btree_search *search)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_shared_extents_tree *shextree;
+	struct ssdfs_raw_fork fork;
+	u64 blks_count;
+	ino_t ino;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !tree->fsi || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, search %p, blk %llu, new_len %u\n",
+		  tree, search, blk, new_len);
+
+	fsi = tree->fsi;
+	shextree = fsi->shextree;
+
+	if (!shextree) {
+		SSDFS_ERR("shared extents tree is absent\n");
+		return -ERANGE;
+	}
+
+	ino = tree->owner->vfs_inode.i_ino;
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_EXTENTS_BTREE_CREATED:
+	case SSDFS_EXTENTS_BTREE_INITIALIZED:
+	case SSDFS_EXTENTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid extent tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+
+	if (need_initialize_extent_btree_search(blk, search)) {
+		ssdfs_btree_search_init(search);
+		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+		search->request.start.hash = blk;
+		search->request.end.hash = blk;
+		search->request.count = 1;
+	}
+
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_FORKS_ARRAY:
+		down_write(&tree->lock);
+
+		err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
+		if (err == -ENODATA) {
+			switch (search->result.state) {
+			case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+				/* hole case -> continue truncation */
+				break;
+
+			case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+				/* inflation case -> nothing has to be done */
+				err = 0;
+				goto finish_truncate_inline_fork;
+
+			default:
+				SSDFS_ERR("fail to find the inline fork: "
+					  "blk %llu, err %d\n",
+					  blk, err);
+				goto finish_truncate_inline_fork;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find the inline fork: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_truncate_inline_fork;
+		}
+
+		switch (search->result.state) {
+		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+			search->request.type =
+				SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+			err = ssdfs_extents_tree_delete_inline_fork(tree,
+								   search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to delete fork: err %d\n", err);
+				goto finish_truncate_inline_fork;
+			}
+			break;
+
+		case SSDFS_BTREE_SEARCH_VALID_ITEM:
+			err = ssdfs_truncate_extent_in_fork(blk, new_len,
+							    search, &fork);
+			if (err == -ENODATA) {
+				/*
+				 * The truncating  fork is empty.
+				 */
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to change extent in fork: "
+					  "err %d\n",
+					  err);
+				goto finish_truncate_inline_fork;
+			}
+
+			if (err == -ENODATA) {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				err =
+				    ssdfs_extents_tree_delete_inline_fork(tree,
+									search);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete fork: "
+						  "err %d\n", err);
+					goto finish_truncate_inline_fork;
+				}
+			} else {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				err =
+				    ssdfs_extents_tree_change_inline_fork(tree,
+									search);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to change fork: "
+						  "err %d\n", err);
+					goto finish_truncate_inline_fork;
+				}
+			}
+
+			blks_count = le64_to_cpu(fork.blks_count);
+
+			if (blks_count == 0 || blks_count >= U64_MAX) {
+				/*
+				 * empty fork -> do nothing
+				 */
+			} else {
+				err =
+				    ssdfs_shextree_add_pre_invalid_fork(shextree,
+									ino,
+									&fork);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to pre-invalidate: "
+						  "(start_offset %llu, "
+						  "blks_count %llu), err %d\n",
+						le64_to_cpu(fork.start_offset),
+						le64_to_cpu(fork.blks_count),
+						err);
+					goto finish_truncate_inline_fork;
+				}
+			}
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid result state %#x\n",
+				  search->result.state);
+			goto finish_truncate_inline_fork;
+		}
+
+finish_truncate_inline_fork:
+		up_write(&tree->lock);
+		break;
+
+	case SSDFS_PRIVATE_EXTENTS_BTREE:
+		down_read(&tree->lock);
+
+		err = ssdfs_btree_find_item(tree->generic_tree, search);
+		if (err == -ENODATA) {
+			switch (search->result.state) {
+			case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+				/* hole case -> continue truncation */
+				break;
+
+			case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+			case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+				if (is_last_leaf_node_found(search)) {
+					/*
+					 * inflation case
+					 * nothing has to be done
+					 */
+					err = 0;
+					goto finish_truncate_generic_fork;
+				} else {
+					/*
+					 * hole case
+					 * continue truncation
+					 */
+				}
+				break;
+
+			default:
+				SSDFS_ERR("fail to find the fork: "
+					  "blk %llu, err %d\n",
+					  blk, err);
+				goto finish_truncate_generic_fork;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find the fork: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_truncate_generic_fork;
+		}
+
+		switch (search->result.state) {
+		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+			search->request.type =
+				SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+			err = ssdfs_extents_tree_delete_fork(tree, search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to delete fork: err %d\n", err);
+				goto finish_truncate_generic_fork;
+			}
+			break;
+
+		case SSDFS_BTREE_SEARCH_VALID_ITEM:
+			err = ssdfs_truncate_extent_in_fork(blk, new_len,
+							    search, &fork);
+			if (err == -ENODATA) {
+				/*
+				 * The truncating fork is empty.
+				 */
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to change extent in fork: "
+					  "err %d\n", err);
+				goto finish_truncate_generic_fork;
+			}
+
+			if (err == -ENODATA) {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				err = ssdfs_extents_tree_delete_fork(tree,
+								     search);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete fork: "
+						  "err %d\n", err);
+					goto finish_truncate_generic_fork;
+				}
+			} else {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				err = ssdfs_extents_tree_change_fork(tree,
+								     search);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to change fork: "
+						  "err %d\n", err);
+					goto finish_truncate_generic_fork;
+				}
+			}
+
+			blks_count = le64_to_cpu(fork.blks_count);
+
+			if (blks_count == 0 || blks_count >= U64_MAX) {
+				/*
+				 * empty fork -> do nothing
+				 */
+			} else {
+				err =
+				 ssdfs_shextree_add_pre_invalid_fork(shextree,
+								     ino,
+								     &fork);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to pre-invalidate: "
+						  "(start_offset %llu, "
+						  "blks_count %llu), err %d\n",
+						le64_to_cpu(fork.start_offset),
+						le64_to_cpu(fork.blks_count),
+						err);
+					goto finish_truncate_generic_fork;
+				}
+			}
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid result state %#x\n",
+				  search->result.state);
+			goto finish_truncate_generic_fork;
+		}
+
+finish_truncate_generic_fork:
+		up_read(&tree->lock);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
+
+		if (unlikely(err))
+			return err;
+
+		SSDFS_DBG("forks_count %lld\n",
+			  atomic64_read(&tree->forks_count));
+
+		if (!err && atomic64_read(&tree->forks_count) <= 1) {
+			down_write(&tree->lock);
+			err = ssdfs_migrate_generic2inline_tree(tree);
+			up_write(&tree->lock);
+
+			if (err == -ENOSPC) {
+				/* continue to use the generic tree */
+				err = 0;
+				SSDFS_DBG("unable to re-create inline tree\n");
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to re-create inline tree: "
+					  "err %d\n",
+					  err);
+			}
+		}
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid extents tree type %#x\n",
+			  atomic_read(&tree->type));
+		break;
+	}
+
+	return err;
 }
 
 /*
@@ -5688,6 +5777,9 @@ finish_delete_generic_extent:
 
 		ssdfs_btree_search_forget_parent_node(search);
 		ssdfs_btree_search_forget_child_node(search);
+
+		SSDFS_DBG("forks_count %lld\n",
+			  atomic64_read(&tree->forks_count));
 
 		if (!err && atomic64_read(&tree->forks_count) <= 1) {
 			down_write(&tree->lock);
@@ -5910,6 +6002,9 @@ int ssdfs_extents_tree_delete_all(struct ssdfs_extents_btree_info *tree)
 			atomic64_set(&tree->forks_count, 0);
 		up_write(&tree->lock);
 
+		SSDFS_DBG("forks_count %lld\n",
+			  atomic64_read(&tree->forks_count));
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete all inline forks: "
 				  "err %d\n",
@@ -5922,6 +6017,10 @@ int ssdfs_extents_tree_delete_all(struct ssdfs_extents_btree_info *tree)
 		err = ssdfs_btree_delete_all(tree->generic_tree);
 		if (!err) {
 			atomic64_set(&tree->forks_count, 0);
+
+			SSDFS_DBG("forks_count %lld\n",
+				  atomic64_read(&tree->forks_count));
+
 			err = ssdfs_migrate_generic2inline_tree(tree);
 			if (err == -ENOSPC) {
 				/* continue to use the generic tree */
@@ -6998,6 +7097,9 @@ finish_init_operation:
 
 	atomic64_add((u64)forks_count, &tree_info->forks_count);
 
+	SSDFS_DBG("forks_count %lld\n",
+		  atomic64_read(&tree_info->forks_count));
+
 finish_init_node:
 	up_write(&node->full_lock);
 
@@ -7114,7 +7216,7 @@ static
 int ssdfs_extents_btree_delete_node(struct ssdfs_btree_node *node)
 {
 	/* TODO: implement */
-	SSDFS_WARN("TODO: implement %s\n", __func__);
+	SSDFS_DBG("TODO: implement %s\n", __func__);
 	return 0;
 
 
@@ -9311,6 +9413,9 @@ finish_detect_affected_items:
 
 	atomic64_add(search->request.count, &etree->forks_count);
 
+	SSDFS_DBG("forks_count %lld\n",
+		  atomic64_read(&etree->forks_count));
+
 finish_items_area_correction:
 	up_write(&node->header_lock);
 
@@ -9933,11 +10038,14 @@ int ssdfs_define_first_invalid_index(struct ssdfs_btree_node *node,
 	down_read(&node->header_lock);
 	memcpy(&area, &node->index_area,
 		sizeof(struct ssdfs_btree_node_index_area));
-	up_read(&node->header_lock);
-
 	err = ssdfs_find_index_by_hash(node, &area, hash,
 					start_index);
-	if (err == -ENODATA) {
+	up_read(&node->header_lock);
+
+	if (err == -EEXIST) {
+		/* hash == found hash */
+		err = 0;
+	} else if (err == -ENODATA) {
 		err = -EAGAIN;
 		SSDFS_DBG("unable to find an index: "
 			  "node_id %u, hash %llx\n",
@@ -10148,7 +10256,6 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_btree_node *parent = NULL, *found = NULL;
 	struct ssdfs_extents_btree_node_header *hdr;
-	size_t item_size = sizeof(struct ssdfs_raw_fork);
 	bool items_area_empty = false;
 	bool is_hybrid = false;
 	bool has_index_area = false;
@@ -10212,19 +10319,6 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 
 	hdr = &node->raw.extents_header;
 	if (node->items_area.items_count == range_len) {
-		node->items_area.items_count =
-			node->items_area.items_count - range_len;
-		node->items_area.free_space =
-			node->items_area.area_size -
-				(node->items_area.items_count * item_size);
-		node->items_area.start_hash = U64_MAX;
-		node->items_area.end_hash = U64_MAX;
-		ssdfs_initialize_lookup_table(node);
-		hdr->forks_count = cpu_to_le32(0);
-		hdr->allocated_extents = cpu_to_le32(0);
-		hdr->valid_extents = cpu_to_le32(0);
-		hdr->blks_count = cpu_to_le64(0);
-		hdr->max_extent_blks = cpu_to_le32(0);
 		items_area_empty = true;
 	}
 
@@ -10988,6 +11082,7 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 	u16 range_len;
 	u16 shift_range_len = 0;
 	u16 locked_len = 0;
+	u32 deleted_space, free_space;
 	u64 start_hash = U64_MAX;
 	u64 end_hash = U64_MAX;
 	u64 old_hash;
@@ -11090,6 +11185,13 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 			  items_area.area_size);
 		return -EFAULT;
 	}
+
+	SSDFS_DBG("items_area: items_count %u, items_capacity %u, "
+		  "area_size %u, free_space %u\n",
+		  items_area.items_count,
+		  items_area.items_capacity,
+		  items_area.area_size,
+		  items_area.free_space);
 
 	if (items_area.free_space > items_area.area_size) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -11222,10 +11324,12 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 	if (err == -ENOENT) {
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
+		SSDFS_ERR("fail to lock items range\n");
 		return -ERANGE;
 	} else if (err == -ENODATA) {
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
+		SSDFS_ERR("fail to lock items range\n");
 		return -ERANGE;
 	} else if (unlikely(err))
 		BUG();
@@ -11233,8 +11337,11 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 finish_detect_affected_items:
 	downgrade_write(&node->full_lock);
 
-	if (unlikely(err))
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete range: err %d\n",
+			  err);
 		goto finish_delete_range;
+	}
 
 	if (range_len == items_area.items_count) {
 		/* items area is empty */
@@ -11269,8 +11376,9 @@ finish_detect_affected_items:
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set header dirty: err %d\n",
 				  err);
+			goto finish_delete_range;
 		}
-		goto finish_delete_range;
+		break;
 
 	default:
 		BUG();
@@ -11311,6 +11419,18 @@ finish_detect_affected_items:
 		node->items_area.items_count = 0;
 	else
 		node->items_area.items_count -= search->request.count;
+
+	deleted_space = (u32)search->request.count * item_size;
+	free_space = node->items_area.free_space;
+	if ((free_space + deleted_space) > node->items_area.area_size) {
+		err = -ERANGE;
+		SSDFS_ERR("deleted_space %u, free_space %u, area_size %u\n",
+			  deleted_space,
+			  node->items_area.free_space,
+			  node->items_area.area_size);
+		goto finish_items_area_correction;
+	}
+	node->items_area.free_space += deleted_space;
 
 	SSDFS_DBG("NEW STATE: node_id %u, "
 		  "items_count %u, free_space %u\n",
@@ -11447,6 +11567,9 @@ finish_detect_affected_items:
 	forks_diff = old_forks_count - forks_count;
 	atomic64_sub(forks_diff, &etree->forks_count);
 
+	SSDFS_DBG("forks_count %lld\n",
+		  atomic64_read(&etree->forks_count));
+
 	memcpy(&items_area, &node->items_area,
 		sizeof(struct ssdfs_btree_node_items_area));
 
@@ -11482,8 +11605,11 @@ finish_delete_range:
 	ssdfs_unlock_items_range(node, item_index, locked_len);
 	up_read(&node->full_lock);
 
-	if (unlikely(err))
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete range: err %d\n",
+			  err);
 		return err;
+	}
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -11552,6 +11678,7 @@ finish_delete_range:
 		if (search->request.count > range_len) {
 			search->request.start.hash = items_area.end_hash;
 			search->request.count -= range_len;
+			SSDFS_DBG("continue to delete range\n");
 			return -EAGAIN;
 		}
 	}

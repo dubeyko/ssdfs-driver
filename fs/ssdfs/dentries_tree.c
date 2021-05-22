@@ -1009,6 +1009,7 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len)
 	u32 hash32_lo, hash32_hi;
 	size_t copy_len;
 	u64 name_hash;
+	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!name);
@@ -1025,9 +1026,16 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len)
 	copy_len = min_t(size_t, len, (size_t)SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
 	hash32_lo = full_name_hash(NULL, name, copy_len);
 
-	if (len <= SSDFS_DENTRY_INLINE_NAME_MAX_LEN)
-		hash32_hi = 0;
-	else {
+	if (len <= SSDFS_DENTRY_INLINE_NAME_MAX_LEN) {
+		hash32_hi = len;
+
+		copy_len /= 2;
+		if (copy_len == 0)
+			copy_len = 1;
+
+		for (i = 0; i < copy_len; i++)
+			hash32_hi += (u8)name[i];
+	} else {
 		hash32_hi = full_name_hash(NULL,
 					name + SSDFS_DENTRY_INLINE_NAME_MAX_LEN,
 					len - copy_len);
@@ -7081,7 +7089,8 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	SSDFS_DBG("items_capacity %u, items_count %u\n",
 		  items_area.items_capacity,
 		  items_area.items_count);
-
+	SSDFS_DBG("items_area: start_hash %llx, end_hash %llx\n",
+		  items_area.start_hash, items_area.end_hash);
 	SSDFS_DBG("area_size %u, free_space %u\n",
 		  items_area.area_size,
 		  items_area.free_space);
@@ -7187,10 +7196,29 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 			 * expected state
 			 */
 		} else {
-			err = -ERANGE;
-			SSDFS_ERR("invalid range: cur_hash %llx, "
+			SSDFS_ERR("invalid range: item_index %u, "
+				  "cur_hash %llx, "
 				  "start_hash %llx, end_hash %llx\n",
-				  cur_hash, start_hash, end_hash);
+				  item_index, cur_hash,
+				  start_hash, end_hash);
+
+			for (i = 0; i < items_area.items_count; i++) {
+				err = ssdfs_dentries_btree_node_get_dentry(node,
+								   &items_area,
+								   i, &dentry);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to get dentry: "
+						  "err %d\n", err);
+					goto finish_detect_affected_items;
+				}
+
+				SSDFS_ERR("index %d, ino %llu, hash %llx\n",
+					  i,
+					  le64_to_cpu(dentry.ino),
+					  le64_to_cpu(dentry.hash_code));
+			}
+
+			err = -ERANGE;
 			goto finish_detect_affected_items;
 		}
 	}
@@ -7212,10 +7240,29 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 			 * expected state
 			 */
 		} else {
-			err = -ERANGE;
-			SSDFS_ERR("invalid range: cur_hash %llx, "
+			SSDFS_ERR("invalid range: item_index %u, "
+				  "cur_hash %llx, "
 				  "start_hash %llx, end_hash %llx\n",
-				  cur_hash, start_hash, end_hash);
+				  item_index, cur_hash,
+				  start_hash, end_hash);
+
+			for (i = 0; i < items_area.items_count; i++) {
+				err = ssdfs_dentries_btree_node_get_dentry(node,
+								   &items_area,
+								   i, &dentry);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to get dentry: "
+						  "err %d\n", err);
+					goto finish_detect_affected_items;
+				}
+
+				SSDFS_ERR("index %d, ino %llu, hash %llx\n",
+					  i,
+					  le64_to_cpu(dentry.ino),
+					  le64_to_cpu(dentry.hash_code));
+			}
+
+			err = -ERANGE;
 			goto finish_detect_affected_items;
 		}
 	}
@@ -7273,6 +7320,10 @@ finish_detect_affected_items:
 		goto finish_items_area_correction;
 	}
 
+	SSDFS_DBG("items_capacity %u, items_count %u\n",
+		  items_area.items_capacity,
+		  items_area.items_count);
+
 	used_space = (u32)search->request.count * item_size;
 	if (used_space > node->items_area.free_space) {
 		err = -ERANGE;
@@ -7308,11 +7359,16 @@ finish_detect_affected_items:
 		goto finish_items_area_correction;
 	}
 
-	SSDFS_DBG("node_id %u, start_hash %llx, end_hash %llx\n",
-		  node->node_id, start_hash, end_hash);
+	SSDFS_DBG("BEFORE: node_id %u, start_hash %llx, end_hash %llx\n",
+		  node->node_id,
+		  node->items_area.start_hash,
+		  node->items_area.end_hash);
 
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = end_hash;
+
+	SSDFS_DBG("AFTER: node_id %u, start_hash %llx, end_hash %llx\n",
+		  node->node_id, start_hash, end_hash);
 
 	err = ssdfs_correct_lookup_table(node, &node->items_area,
 					 item_index, dentries_count);
@@ -8638,10 +8694,16 @@ finish_detect_affected_items:
 		end_hash = le64_to_cpu(dentry.hash_code);
 	}
 
+	SSDFS_DBG("BEFORE: node_id %u, items_area.start_hash %llx, "
+		  "items_area.end_hash %llx\n",
+		  node->node_id,
+		  node->items_area.start_hash,
+		  node->items_area.end_hash);
+
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = end_hash;
 
-	SSDFS_DBG("node_id %u, items_area.start_hash %llx, "
+	SSDFS_DBG("AFTER: node_id %u, items_area.start_hash %llx, "
 		  "items_area.end_hash %llx\n",
 		  node->node_id,
 		  node->items_area.start_hash,

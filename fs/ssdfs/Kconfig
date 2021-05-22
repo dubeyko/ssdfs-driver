@@ -72,6 +72,17 @@ config SSDFS_BTREE_CONSISTENCY_CHECK
 	  If you are going to check btree consistency in SSDFS driver then
 	  choose Y here. If unsure, say N.
 
+config SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
+	bool "SSDFS btree strict consistency check"
+	depends on SSDFS
+	help
+	  This option enables checking the btree consistency
+	  after every btree's operation. This option could
+	  seriously degrades the file system performance.
+
+	  If you are going to check btree consistency in SSDFS driver then
+	  choose Y here. If unsure, say N.
+
 config SSDFS_TESTING
 	bool "SSDFS testing"
 	depends on SSDFS
