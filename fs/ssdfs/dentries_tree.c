@@ -1292,6 +1292,8 @@ ssdfs_dentries_tree_find_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
+	ssdfs_btree_search_free_result_buf(search);
+
 	dentries_count = atomic64_read(&tree->dentries_count);
 
 	if (dentries_count < 0) {
@@ -3950,8 +3952,7 @@ ssdfs_dentries_tree_extract_inline_range(struct ssdfs_dentries_btree_info *tree,
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
-			if (search->result.buf)
-				ssdfs_dentries_kfree(search->result.buf);
+			ssdfs_btree_search_free_result_buf(search);
 
 			search->result.buf = &search->raw.dentry;
 			search->result.buf_state =
@@ -5819,17 +5820,7 @@ int ssdfs_check_found_dentry(struct ssdfs_fs_info *fsi,
 			break;
 
 		default:
-			if (search->result.buf) {
-				switch (search->result.buf_state) {
-				case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
-					ssdfs_dentries_kfree(search->result.buf);
-					break;
-
-				default:
-					/* do nothing */
-					break;
-				}
-			}
+			ssdfs_btree_search_free_result_buf(search);
 
 			search->result.buf_state =
 				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
@@ -5889,6 +5880,8 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 		   found_index, start_hash, end_hash,
 		   items_count, item_size);
 
+	ssdfs_btree_search_free_result_buf(search);
+
 	if (start_hash == end_hash) {
 		/* use inline buffer */
 		found_dentries = 1;
@@ -5935,8 +5928,7 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 					sizeof(struct ssdfs_name_string));
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to allocate memory for buffer\n");
-			ssdfs_dentries_kfree(search->result.buf);
-			search->result.buf = NULL;
+			ssdfs_btree_search_free_result_buf(search);
 			return err;
 		}
 	}

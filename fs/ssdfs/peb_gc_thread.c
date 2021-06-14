@@ -111,6 +111,128 @@ struct ssdfs_thread_descriptor thread_desc[SSDFS_GC_THREAD_TYPE_MAX] = {
 };
 
 /*
+ * __ssdfs_peb_define_extent() - define extent for request
+ * @fsi: pointer on shared file system object
+ * @pebi: pointer on PEB object
+ * @desc_off: physical offset descriptor
+ * @desc_array: array of metadata descriptors
+ * @blk_desc: block descriptor
+ * @req: request
+ *
+ * This function tries to define extent for request.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - unable to extract the whole range.
+ */
+static
+int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
+			      struct ssdfs_peb_info *pebi,
+			      struct ssdfs_phys_offset_descriptor *desc_off,
+			      struct ssdfs_metadata_descriptor *desc_array,
+			      struct ssdfs_block_descriptor *blk_desc,
+			      struct ssdfs_segment_request *req)
+{
+	struct ssdfs_blk_state_offset *blk_state = NULL;
+	u8 peb_migration_id;
+	u16 log_start_page;
+	int area_index;
+	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	u32 area_offset;
+	u32 blk_desc_off;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pebi || !desc_off || !req);
+	BUG_ON(!desc_array || !blk_desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("peb %llu, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebi->peb_id,
+		  req->private.class, req->private.cmd, req->private.type);
+
+	peb_migration_id = desc_off->blk_state.peb_migration_id;
+
+	if (peb_migration_id != ssdfs_get_peb_migration_id_checked(pebi)) {
+		err = -ERANGE;
+		SSDFS_ERR("migration_id1 %u != migration_id2 %u\n",
+			  peb_migration_id,
+			  ssdfs_get_peb_migration_id(pebi));
+		goto finish_define_extent;
+	}
+
+	blk_state = &desc_off->blk_state;
+	log_start_page = le16_to_cpu(blk_state->log_start_page);
+
+	if (log_start_page >= fsi->pages_per_peb) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid log start page %u\n", log_start_page);
+		goto finish_define_extent;
+	}
+
+	err = ssdfs_peb_read_log_hdr_desc_array(pebi, log_start_page,
+						desc_array,
+						SSDFS_SEG_HDR_DESC_MAX);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read log's header desc array: "
+			  "peb %llu, log_start_page %u, err %d\n",
+			  pebi->peb_id, log_start_page, err);
+		goto finish_define_extent;
+	}
+
+	area_index = SSDFS_AREA_TYPE2INDEX(blk_state->log_area);
+
+	if (area_index >= SSDFS_SEG_HDR_DESC_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid area index %#x\n", area_index);
+		goto finish_define_extent;
+	}
+
+	area_offset = le32_to_cpu(desc_array[area_index].offset);
+	blk_desc_off = le32_to_cpu(blk_state->byte_offset);
+
+	err = ssdfs_unaligned_read_cache(pebi,
+					 area_offset + blk_desc_off,
+					 blk_desc_size,
+					 blk_desc);
+	if (err) {
+		err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
+						  area_offset + blk_desc_off,
+						  blk_desc, blk_desc_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read buffer: "
+				  "peb %llu, area_offset %u, byte_offset %u, "
+				  "buf_size %zu, err %d\n",
+				  pebi->peb_id, area_offset, blk_desc_off,
+				  blk_desc_size, err);
+			goto finish_define_extent;
+		}
+	}
+
+	if (req->extent.ino >= U64_MAX) {
+		req->extent.ino = le64_to_cpu(blk_desc->ino);
+		req->extent.logical_offset =
+			le32_to_cpu(blk_desc->logical_offset);
+		req->extent.logical_offset *= fsi->pagesize;
+	} else if (req->extent.ino != le64_to_cpu(blk_desc->ino)) {
+		err = -EAGAIN;
+		SSDFS_DBG("ino1 %llu != ino2 %llu\n",
+			  req->extent.ino,
+			  le64_to_cpu(blk_desc->ino));
+		goto finish_define_extent;
+	}
+
+	req->extent.data_bytes += fsi->pagesize;
+
+finish_define_extent:
+	return err;
+}
+
+/*
  * __ssdfs_peb_copy_page() - copy page from PEB into buffer
  * @pebc: pointer on PEB container
  * @desc_off: physical offset descriptor
@@ -131,16 +253,9 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 			  struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
-	struct ssdfs_blk_state_offset *blk_state = NULL;
 	struct ssdfs_peb_info *pebi = NULL;
-	u8 peb_migration_id;
-	u16 log_start_page;
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
 	struct ssdfs_block_descriptor blk_desc = {0};
-	int area_index;
-	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
-	u32 area_offset;
-	u32 blk_desc_off;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -154,7 +269,6 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		  req->private.class, req->private.cmd, req->private.type);
 
 	fsi = pebc->parent_si->fsi;
-	peb_migration_id = desc_off->blk_state.peb_migration_id;
 
 	down_read(&pebc->lock);
 
@@ -162,84 +276,21 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 
 	if (!pebi) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid peb_migration_id: "
-			  "src_peb %p, dst_peb %p, peb_migration_id %u\n",
-			  pebc->src_peb, pebc->dst_peb,
-			  peb_migration_id);
+		SSDFS_ERR("invalid source peb: "
+			  "src_peb %p, dst_peb %p\n",
+			  pebc->src_peb, pebc->dst_peb);
 		goto finish_copy_page;
 	}
 
-	if (peb_migration_id != ssdfs_get_peb_migration_id_checked(pebi)) {
-		err = -ERANGE;
-		SSDFS_ERR("migration_id1 %u != migration_id2 %u\n",
-			  peb_migration_id,
-			  ssdfs_get_peb_migration_id(pebi));
-		goto finish_copy_page;
-	}
-
-	blk_state = &desc_off->blk_state;
-	log_start_page = le16_to_cpu(blk_state->log_start_page);
-
-	if (log_start_page >= fsi->pages_per_peb) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid log start page %u\n", log_start_page);
-		goto finish_copy_page;
-	}
-
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi, log_start_page,
-						desc_array,
-						SSDFS_SEG_HDR_DESC_MAX);
+	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
+					desc_array, &blk_desc, req);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to read log's header desc array: "
-			  "seg %llu, peb %llu, log_start_page %u, err %d\n",
-			  pebc->parent_si->seg_id, pebi->peb_id,
-			  log_start_page, err);
+		SSDFS_ERR("fail to define extent: "
+			  "seg %llu, peb_index %u, peb %llu, err %d\n",
+			  pebc->parent_si->seg_id, pebc->peb_index,
+			  pebi->peb_id, err);
 		goto finish_copy_page;
 	}
-
-	area_index = SSDFS_AREA_TYPE2INDEX(blk_state->log_area);
-
-	if (area_index >= SSDFS_SEG_HDR_DESC_MAX) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid area index %#x\n", area_index);
-		goto finish_copy_page;
-	}
-
-	area_offset = le32_to_cpu(desc_array[area_index].offset);
-	blk_desc_off = le32_to_cpu(blk_state->byte_offset);
-
-	err = ssdfs_unaligned_read_cache(pebi,
-					 area_offset + blk_desc_off,
-					 blk_desc_size,
-					 &blk_desc);
-	if (err) {
-		err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
-						  area_offset + blk_desc_off,
-						  &blk_desc, blk_desc_size);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to read buffer: "
-				  "peb %llu, area_offset %u, byte_offset %u, "
-				  "buf_size %zu, err %d\n",
-				  pebi->peb_id, area_offset, blk_desc_off,
-				  blk_desc_size, err);
-			goto finish_copy_page;
-		}
-	}
-
-	if (req->extent.ino >= U64_MAX) {
-		req->extent.ino = le64_to_cpu(blk_desc.ino);
-		req->extent.logical_offset =
-			le32_to_cpu(blk_desc.logical_offset);
-		req->extent.logical_offset *= fsi->pagesize;
-	} else if (req->extent.ino != le64_to_cpu(blk_desc.ino)) {
-		err = -EAGAIN;
-		SSDFS_DBG("ino1 %llu != ino2 %llu\n",
-			  req->extent.ino,
-			  le64_to_cpu(blk_desc.ino));
-		goto finish_copy_page;
-	}
-
-	req->extent.data_bytes += fsi->pagesize;
 
 	err = ssdfs_request_add_allocated_page_locked(req);
 	if (unlikely(err)) {
@@ -259,6 +310,72 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	}
 
 finish_copy_page:
+	up_read(&pebc->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_peb_define_extent() - define extent for request
+ * @pebc: pointer on PEB container
+ * @desc_off: physical offset descriptor
+ * @req: request
+ *
+ * This function tries to define extent for request.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - unable to extract the whole range.
+ */
+static
+int ssdfs_peb_define_extent(struct ssdfs_peb_container *pebc,
+			    struct ssdfs_phys_offset_descriptor *desc_off,
+			    struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_info *pebi = NULL;
+	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
+	struct ssdfs_block_descriptor blk_desc = {0};
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+	BUG_ON(!desc_off || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  req->private.class, req->private.cmd, req->private.type);
+
+	fsi = pebc->parent_si->fsi;
+
+	down_read(&pebc->lock);
+
+	pebi = pebc->src_peb;
+
+	if (!pebi) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid source peb: "
+			  "src_peb %p, dst_peb %p\n",
+			  pebc->src_peb, pebc->dst_peb);
+		goto finish_define_extent;
+	}
+
+	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
+					desc_array, &blk_desc, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define extent: "
+			  "seg %llu, peb_index %u, peb %llu, err %d\n",
+			  pebc->parent_si->seg_id, pebc->peb_index,
+			  pebi->peb_id, err);
+		goto finish_define_extent;
+	}
+
+finish_define_extent:
 	up_read(&pebc->lock);
 
 	return err;
@@ -365,6 +482,11 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 			return err;
 		}
 	} else {
+		if (req->extent.logical_offset >= U64_MAX)
+			req->extent.logical_offset = 0;
+
+		req->extent.data_bytes += fsi->pagesize;
+
 		err = -ENODATA;
 		req->result.processed_blks = 1;
 		req->result.err = err;

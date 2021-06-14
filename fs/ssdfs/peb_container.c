@@ -75,6 +75,11 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 	SSDFS_DBG("blk_index %d, processed_blocks %d\n",
 		  blk_index, req->result.processed_blks);
 
+	if (pagevec_count(&req->result.pvec) == 0) {
+		SSDFS_DBG("pagevec is empty\n");
+		return;
+	}
+
 	BUG_ON(blk_index >= req->result.processed_blks);
 
 	pagesize = pebc->parent_si->fsi->pagesize;
@@ -1481,6 +1486,11 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	init_rwsem(&pebc->lock);
 	atomic_set(&pebc->dst_peb_refs, 0);
 
+	SSDFS_DBG("shared_free_dst_blks %d\n",
+		  atomic_read(&pebc->shared_free_dst_blks));
+	SSDFS_DBG("dst_peb_refs %d\n",
+		  atomic_read(&pebc->dst_peb_refs));
+
 	pebc->peb_type = peb_type;
 	if (peb_type >= SSDFS_MAPTBL_PEB_TYPE_MAX) {
 		SSDFS_ERR("invalid seg_type %#x\n", si->seg_type);
@@ -2050,6 +2060,8 @@ finish_define_relation:
 					  "err %d\n", err);
 				ptr->dst_peb = NULL;
 				atomic_dec(&relation->dst_peb_refs);
+				SSDFS_DBG("dst_peb_refs %d\n",
+					  atomic_read(&relation->dst_peb_refs));
 				return err;
 			}
 
@@ -2068,6 +2080,8 @@ finish_define_relation:
 				  leb_id, dst_peb_index, err);
 			ptr->dst_peb = NULL;
 			atomic_dec(&relation->dst_peb_refs);
+			SSDFS_DBG("dst_peb_refs %d\n",
+				  atomic_read(&relation->dst_peb_refs));
 			return err;
 		}
 
@@ -2304,6 +2318,9 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		atomic_set(&ptr->shared_free_dst_blks, (u16)free_blks);
+
+		SSDFS_DBG("shared_free_dst_blks %d\n",
+			  atomic_read(&ptr->shared_free_dst_blks));
 	} else {
 		if (ptr->peb_index >= si->blk_bmap.pebs_count) {
 			err = -ERANGE;
@@ -2680,6 +2697,12 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 		return err;
 	}
 
+	atomic_dec(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs);
+
+	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+	    ptr->dst_peb->peb_id,
+	    atomic_read(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs));
+
 	SSDFS_DBG("ssdfs_peb_container_move_dest2source: "
 		  "seg_id %llu, leb_id %llu\n",
 		  si->seg_id, leb_id);
@@ -2803,6 +2826,12 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 		return err;
 	}
 
+	atomic_dec(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs);
+
+	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
+	    ptr->dst_peb->peb_id,
+	    atomic_read(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs));
+
 	if (new_state == SSDFS_PEB_CONTAINER_EMPTY) {
 		err = ssdfs_peb_object_destroy(ptr->src_peb);
 		WARN_ON(err);
@@ -2811,12 +2840,6 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 		memset(ptr->src_peb, 0, sizeof(struct ssdfs_peb_info));
 	} else
 		ptr->dst_peb = NULL;
-
-	atomic_dec(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs);
-
-	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
-	    ptr->dst_peb->peb_id,
-	    atomic_read(&si->peb_array[ptr->dst_peb->peb_index].dst_peb_refs));
 
 	atomic_set(&ptr->items_state, new_state);
 	atomic_set(&ptr->migration_state, SSDFS_PEB_NOT_MIGRATING);
@@ -2934,7 +2957,7 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 			goto finish_forget_source;
 		}
 
-		WARN_ON(atomic_read(&ptr->shared_free_dst_blks) != 0);
+		WARN_ON(atomic_read(&ptr->shared_free_dst_blks) > 0);
 		break;
 
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -3060,6 +3083,9 @@ finish_forget_source:
 		}
 	} else if (err == -ENODATA) {
 		wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+
+		SSDFS_DBG("dst_peb_refs %d\n",
+			  atomic_read(&ptr->dst_peb_refs));
 
 		while (atomic_read(&ptr->dst_peb_refs) > 1) {
 			DEFINE_WAIT(wait);

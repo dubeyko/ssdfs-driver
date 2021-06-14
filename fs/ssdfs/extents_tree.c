@@ -2177,6 +2177,8 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 		return -ERANGE;
 	}
 
+	ssdfs_btree_search_free_result_buf(search);
+
 	forks_count = (u64)atomic64_read(&tree->forks_count);
 
 	if (forks_count < 0) {
@@ -2256,7 +2258,7 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(!search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
-			ssdfs_ext_tree_kfree(search->result.buf);
+			ssdfs_btree_search_free_result_buf(search);
 			search->result.buf_state =
 					SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 			search->result.buf = &search->raw.fork;
@@ -2941,7 +2943,7 @@ int ssdfs_prepare_empty_fork(u64 blk,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
-		ssdfs_ext_tree_kfree(search->result.buf);
+		ssdfs_btree_search_free_result_buf(search);
 		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 		search->result.buf = &search->raw.fork;
 		search->result.buf_size = sizeof(struct ssdfs_raw_fork);
@@ -7718,18 +7720,7 @@ int ssdfs_check_found_fork(struct ssdfs_fs_info *fsi,
 			break;
 
 		default:
-			if (search->result.buf) {
-				switch (search->result.buf_state) {
-				case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
-					ssdfs_ext_tree_kfree(search->result.buf);
-					break;
-
-				default:
-					/* do nothing */
-					break;
-				}
-			}
-
+			ssdfs_btree_search_free_result_buf(search);
 			search->result.buf_state =
 				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 			search->result.buf = NULL;
@@ -7755,17 +7746,7 @@ int ssdfs_check_found_fork(struct ssdfs_fs_info *fsi,
 			break;
 
 		default:
-			if (search->result.buf) {
-				switch (search->result.buf_state) {
-				case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
-					ssdfs_ext_tree_kfree(search->result.buf);
-					break;
-
-				default:
-					/* do nothing */
-					break;
-				}
-			}
+			ssdfs_btree_search_free_result_buf(search);
 
 			search->result.buf_state =
 				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
@@ -7869,6 +7850,8 @@ int ssdfs_prepare_forks_buffer(struct ssdfs_btree_search *search,
 		search->result.count = search->result.items_in_buffer;
 		return 0;
 	}
+
+	ssdfs_btree_search_free_result_buf(search);
 
 	if (start_hash <= search->request.end.hash &&
 	    search->request.end.hash <= end_hash) {

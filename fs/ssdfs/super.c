@@ -51,7 +51,6 @@
 #include "xattr_tree.h"
 #include "xattr.h"
 #include "acl.h"
-#include "testing.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -2030,9 +2029,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct inode *root_i;
 	u64 fs_feature_compat;
 	int i;
-#ifdef CONFIG_SSDFS_TESTING
-	u64 testing_flags = 0;
-#endif /* CONFIG_SSDFS_TESTING */
 	int err = 0;
 
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
@@ -2283,14 +2279,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	SSDFS_INFO("%s has been mounted on device %s\n",
 		   SSDFS_VERSION, fs_info->devops->device_name(sb));
-
-#ifdef CONFIG_SSDFS_TESTING
-	testing_flags = 0;
-//	testing_flags |= SSDFS_ENABLE_EXTENTS_TREE_TESTING;
-//	testing_flags |= SSDFS_ENABLE_DENTRIES_TREE_TESTING;
-
-	ssdfs_do_testing(fs_info, testing_flags);
-#endif /* CONFIG_SSDFS_TESTING */
 
 	return 0;
 

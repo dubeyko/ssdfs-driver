@@ -25,6 +25,8 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "testing.h"
+#include "ioctl.h"
 
 static int ssdfs_ioctl_getflags(struct file *file, void __user *arg)
 {
@@ -86,6 +88,18 @@ out_unlock_inode:
 	return err;
 }
 
+static int ssdfs_ioctl_do_testing(struct file *file, void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_testing_environment env;
+
+	if (copy_from_user(&env, arg, sizeof(env)))
+		return -EFAULT;
+
+	return ssdfs_do_testing(fsi, &env);
+}
+
 /*
  * The ssdfs_ioctl() is called by the ioctl(2) system call.
  */
@@ -98,6 +112,8 @@ long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return ssdfs_ioctl_getflags(file, argp);
 	case FS_IOC_SETFLAGS:
 		return ssdfs_ioctl_setflags(file, argp);
+	case SSDFS_IOC_DO_TESTING:
+		return ssdfs_ioctl_do_testing(file, argp);
 	}
 
 	return -ENOTTY;

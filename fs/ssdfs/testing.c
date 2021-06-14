@@ -126,7 +126,8 @@ static
 int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 					 u64 logical_offset,
 					 u64 seg_id,
-					 u64 logical_blk)
+					 u64 logical_blk,
+					 u32 page_size)
 {
 	struct ssdfs_segment_request *req;
 	ino_t ino;
@@ -148,7 +149,7 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 	ino = fsi->testing_inode->i_ino;
 
 	ssdfs_request_prepare_logical_extent(ino, (u64)logical_offset,
-					     PAGE_SIZE, 0, 0, req);
+					     page_size, 0, 0, req);
 
 	ssdfs_request_define_segment(seg_id, req);
 	ssdfs_request_define_volume_extent(logical_blk, 1, req);
@@ -163,7 +164,7 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 		goto free_request;
 	}
 
-	inode_add_bytes(fsi->testing_inode, PAGE_SIZE);
+	inode_add_bytes(fsi->testing_inode, page_size);
 
 free_request:
 	ssdfs_put_request(req);
@@ -174,13 +175,16 @@ finish_add_block:
 }
 
 static
-int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
+int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env)
 {
 	struct ssdfs_inode_info *ii;
 	u64 seg_id = 1;
 	u64 logical_blk = 0;
 	s64 logical_offset = 0;
-	u64 threshold;
+	u64 threshold = env->file_size_threshold;
+	u32 page_size = env->page_size;
+	u16 extent_len_max = env->extent_len_threshold;
 	u32 extent_len = 1;
 	u64 per_1_percent = 0;
 	u64 message_threshold = 0;
@@ -201,14 +205,13 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 		goto finish_testing;
 	}
 
-	threshold = (u64)1 * SSDFS_FILE_SIZE_MAX_TESTING_THRESHOLD;
 	per_1_percent = div_u64(threshold, 100);
 	message_threshold = per_1_percent;
 
 	SSDFS_ERR("ADD LOGICAL BLOCK: 0%%\n");
 
 	for (logical_offset = 0; logical_offset < threshold;
-					logical_offset += PAGE_SIZE) {
+					logical_offset += page_size) {
 		SSDFS_DBG("ADD LOGICAL BLOCK: "
 			  "logical_offset %lld, seg_id %llu, "
 			  "logical_blk %llu\n",
@@ -216,7 +219,7 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 
 		if (logical_offset >= message_threshold) {
 			SSDFS_ERR("ADD LOGICAL BLOCK: %llu%%\n",
-				  div64_u64((u64)logical_offset, per_1_percent));
+				  div64_u64(logical_offset, per_1_percent));
 
 			message_threshold += per_1_percent;
 		}
@@ -224,14 +227,15 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 		err = ssdfs_testing_extents_tree_add_block(fsi,
 							   logical_offset,
 							   seg_id,
-							   logical_blk);
+							   logical_blk,
+							   page_size);
 		if (err) {
 			SSDFS_ERR("fail to add logical block: "
 				  "err %d\n", err);
 			goto destroy_tree;
 		}
 
-		if (extent_len < SSDFS_EXTENT_LEN_TESTING_MAX) {
+		if (extent_len < extent_len_max) {
 			logical_blk++;
 			extent_len++;
 		} else {
@@ -249,19 +253,19 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 	SSDFS_ERR("CHECK LOGICAL BLOCK: 0%%\n");
 
 	for (logical_offset = 0; logical_offset < threshold;
-					logical_offset += PAGE_SIZE) {
+					logical_offset += page_size) {
 		SSDFS_DBG("CHECK LOGICAL BLOCK: "
 			  "logical_offset %lld\n",
 			  logical_offset);
 
 		if (logical_offset >= message_threshold) {
 			SSDFS_ERR("CHECK LOGICAL BLOCK: %llu%%\n",
-				  div64_u64((u64)logical_offset, per_1_percent));
+				  div64_u64(logical_offset, per_1_percent));
 
 			message_threshold += per_1_percent;
 		}
 
-		logical_blk = div_u64(logical_offset, PAGE_SIZE);
+		logical_blk = div_u64(logical_offset, page_size);
 
 		if (!ssdfs_extents_tree_has_logical_block(logical_blk,
 							  fsi->testing_inode)) {
@@ -282,9 +286,9 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi)
 
 	SSDFS_ERR("TRUNCATE LOGICAL BLOCK: 0%%\n");
 
-	for (logical_offset = threshold - PAGE_SIZE;
-			logical_offset >= 0; logical_offset -= PAGE_SIZE,
-					     processed_bytes += PAGE_SIZE) {
+	for (logical_offset = threshold - page_size;
+			logical_offset >= 0; logical_offset -= page_size,
+					     processed_bytes += page_size) {
 		SSDFS_DBG("TRUNCATE LOGICAL BLOCK: "
 			  "logical_offset %lld\n",
 			  logical_offset);
@@ -327,7 +331,7 @@ int ssdfs_testing_prepare_file_name(u64 file_index,
 {
 	memset(name_buf, 0, SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
 	*name_len = snprintf(name_buf, SSDFS_DENTRY_INLINE_NAME_MAX_LEN,
-			     "%llu.txt\n", file_index + 1);
+			     "%llu.txt", file_index + 1);
 
 	if (*name_len <= 0 || *name_len > SSDFS_DENTRY_INLINE_NAME_MAX_LEN) {
 		SSDFS_ERR("fail to prepare file name: "
@@ -362,10 +366,15 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
+	dentry_dir = d_find_alias(root_i);
+	if (!dentry_dir) {
+		SSDFS_ERR("fail to find root alias\n");
+		goto finish_add_file;
+	}
+
 	qstr_dname.name = name_buf;
 	qstr_dname.len = name_len;
-
-	dentry_dir = fsi->sb->s_root;
+	qstr_dname.hash = full_name_hash(dentry_dir, qstr_dname.name, qstr_dname.len);
 
 	dentry_inode = d_alloc(dentry_dir, &qstr_dname);
 	if (!dentry_inode) {
@@ -376,6 +385,10 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		goto finish_add_file;
 	}
 
+	SSDFS_DBG("hash %llx, parent %p\n",
+		  (u64)dentry_inode->d_name.hash,
+		  dentry_inode->d_parent);
+
 	err = ssdfs_create(root_i, dentry_inode, S_IFREG | S_IRWXU, false);
 	if (err) {
 		SSDFS_ERR("fail to create file: "
@@ -384,12 +397,21 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		goto finish_add_file;
 	}
 
+	d_drop(dentry_inode);
+	dput(dentry_inode);
+	iput(d_inode(dentry_inode));
+
+	dput(dentry_dir);
+
 	return 0;
 
 finish_add_file:
 	if (dentry_inode) {
 		d_drop(dentry_inode);
 		dput(dentry_inode);
+		iput(d_inode(dentry_inode));
+
+		dput(dentry_dir);
 	}
 
 	return err;
@@ -417,6 +439,9 @@ int ssdfs_testing_dentries_tree_check_file(struct ssdfs_fs_info *fsi,
 
 	qstr_dname.name = name_buf;
 	qstr_dname.len = name_len;
+	qstr_dname.hash = full_name_hash(fsi->sb->s_root,
+					 qstr_dname.name,
+					 qstr_dname.len);
 
 	err = ssdfs_inode_by_name(root_i,
 				  &qstr_dname, &ino);
@@ -437,6 +462,7 @@ int ssdfs_testing_dentries_tree_delete_file(struct ssdfs_fs_info *fsi,
 					    unsigned char *name_buf)
 {
 	struct qstr qstr_dname;
+	struct dentry *dir;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_btree_search *search;
 	size_t name_len = 0;
@@ -455,8 +481,21 @@ int ssdfs_testing_dentries_tree_delete_file(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
+	dir = d_find_alias(root_i);
+	if (!dir) {
+		SSDFS_ERR("fail to find root alias\n");
+		return -ENOENT;
+	}
+
 	qstr_dname.name = name_buf;
 	qstr_dname.len = name_len;
+	qstr_dname.hash = full_name_hash(dir, qstr_dname.name, qstr_dname.len);
+
+	name_hash = ssdfs_generate_name_hash((struct qstr *)&qstr_dname);
+	if (name_hash >= U64_MAX) {
+		SSDFS_ERR("invalid name hash\n");
+		return -ERANGE;
+	}
 
 	err = ssdfs_inode_by_name(root_i,
 				  &qstr_dname, &ino);
@@ -477,30 +516,25 @@ int ssdfs_testing_dentries_tree_delete_file(struct ssdfs_fs_info *fsi,
 	}
 
 	ssdfs_btree_search_init(search);
-
-	name_hash = ssdfs_generate_name_hash((struct qstr *)&qstr_dname);
-	if (name_hash >= U64_MAX) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid name hash\n");
-		goto dentry_is_not_available;
-	}
-
 	err = ssdfs_dentries_tree_delete(ii->dentries_tree,
 					 name_hash,
 					 ino,
 					 search);
+	ssdfs_btree_search_free(search);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete the dentry: "
 			  "name_hash %llx, ino %lu, err %d\n",
 			  name_hash, ino, err);
-		goto dentry_is_not_available;
 	}
-
-dentry_is_not_available:
-	ssdfs_btree_search_free(search);
 
 finish_delete_dentry:
 	up_read(&ii->lock);
+
+	dput(dir);
+
+	if (unlikely(err))
+		return err;
 
 	err = ssdfs_inodes_btree_delete(fsi->inodes_tree, ino);
 	if (err) {
@@ -513,7 +547,8 @@ finish_delete_dentry:
 }
 
 static
-int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi)
+int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
 {
 	struct inode *root_i;
 	struct ssdfs_inode_info *ii;
@@ -533,19 +568,7 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi)
 
 	ii = SSDFS_I(root_i);
 
-	ssdfs_dentries_tree_destroy(ii);
-
-	down_write(&ii->lock);
-	err = ssdfs_dentries_tree_create(fsi, ii);
-	up_write(&ii->lock);
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to create the dentries tree: "
-			  "err %d\n", err);
-		goto put_root_inode;
-	}
-
-	threshold = (u64)1 * SSDFS_FILE_NUMBER_MAX_TESTING_THRESHOLD;
+	threshold = env->files_number_threshold;
 	per_1_percent = div_u64(threshold, 100);
 	message_threshold = per_1_percent;
 
@@ -568,7 +591,7 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi)
 		if (err) {
 			SSDFS_ERR("fail to create file: "
 				  "err %d\n", err);
-			goto destroy_tree;
+			goto put_root_inode;
 		}
 	}
 
@@ -596,7 +619,7 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi)
 		if (err) {
 			SSDFS_ERR("fail to check file: "
 				  "err %d\n", err);
-			goto destroy_tree;
+			goto put_root_inode;
 		}
 	}
 
@@ -624,15 +647,12 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi)
 		if (err) {
 			SSDFS_ERR("fail to delete file: "
 				  "err %d\n", err);
-			goto destroy_tree;
+			goto put_root_inode;
 		}
 	}
 
 	SSDFS_ERR("DELETE FILE: %llu%%\n",
 		  div64_u64(threshold, per_1_percent));
-
-destroy_tree:
-	ssdfs_dentries_tree_destroy(ii);
 
 put_root_inode:
 	iput(root_i);
@@ -641,7 +661,8 @@ finish_testing:
 	return err;
 }
 
-int ssdfs_do_testing(struct ssdfs_fs_info *fsi, u64 flags)
+int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
+		     struct ssdfs_testing_environment *env)
 {
 	int err = 0;
 
@@ -657,20 +678,20 @@ int ssdfs_do_testing(struct ssdfs_fs_info *fsi, u64 flags)
 	ssdfs_testing_mapping_init(&fsi->testing_pages,
 				   fsi->testing_inode);
 
-	if (flags & SSDFS_ENABLE_EXTENTS_TREE_TESTING) {
+	if (env->subsystems & SSDFS_ENABLE_EXTENTS_TREE_TESTING) {
 		SSDFS_ERR("START EXTENTS TREE TESTING...\n");
 
-		err = ssdfs_do_extents_tree_testing(fsi);
+		err = ssdfs_do_extents_tree_testing(fsi, env);
 		if (err)
 			goto free_inode;
 
 		SSDFS_ERR("EXTENTS TREE TESTING FINISHED\n");
 	}
 
-	if (flags & SSDFS_ENABLE_DENTRIES_TREE_TESTING) {
+	if (env->subsystems & SSDFS_ENABLE_DENTRIES_TREE_TESTING) {
 		SSDFS_ERR("START DENTRIES TREE TESTING...\n");
 
-		err = ssdfs_do_dentries_tree_testing(fsi);
+		err = ssdfs_do_dentries_tree_testing(fsi, env);
 		if (err)
 			goto free_inode;
 

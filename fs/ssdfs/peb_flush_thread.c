@@ -4052,7 +4052,15 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 		  processed_blks, rest_bytes);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(logical_offset >= U32_MAX);
+	if (req->extent.logical_offset >= U64_MAX) {
+		SSDFS_ERR("seg %llu, peb %llu, logical_block %u, "
+			  "logical_offset %llu, "
+			  "processed_blks %d, rest_size %u\n",
+			  req->place.start.seg_id, pebi->peb_id,
+			  logical_block, logical_offset,
+			  processed_blks, rest_bytes);
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	len = req->extent.data_bytes;
@@ -4141,6 +4149,7 @@ int ssdfs_peb_pre_allocate_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(req->place.start.seg_id != pebi->pebc->parent_si->seg_id);
 	BUG_ON(req->place.start.blk_index >=
 		pebi->pebc->parent_si->fsi->pages_per_seg);
+
 	switch (req->private.class) {
 	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
 	case SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ:
@@ -4149,9 +4158,24 @@ int ssdfs_peb_pre_allocate_block(struct ssdfs_peb_info *pebi,
 		/* expected state */
 		break;
 	default:
+		SSDFS_ERR("unexpected request: "
+			  "req->private.class %#x\n",
+			  req->private.class);
 		BUG();
 	};
-	BUG_ON(req->private.cmd != SSDFS_CREATE_BLOCK);
+
+	switch (req->private.cmd) {
+	case SSDFS_CREATE_BLOCK:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request: "
+			  "req->private.cmd %#x\n",
+			  req->private.cmd);
+		BUG();
+	};
+
 	BUG_ON(req->private.type >= SSDFS_REQ_TYPE_MAX);
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
 	BUG_ON(req->extent.data_bytes > pebi->pebc->parent_si->fsi->pagesize);
@@ -4215,6 +4239,7 @@ int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 	BUG_ON(req->place.start.seg_id != pebi->pebc->parent_si->seg_id);
 	BUG_ON(req->place.start.blk_index >=
 		pebi->pebc->parent_si->fsi->pages_per_seg);
+
 	switch (req->private.class) {
 	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
 	case SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ:
@@ -4223,9 +4248,24 @@ int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 		/* expected state */
 		break;
 	default:
+		SSDFS_ERR("unexpected request: "
+			  "req->private.class %#x\n",
+			  req->private.class);
 		BUG();
 	};
-	BUG_ON(req->private.cmd != SSDFS_CREATE_EXTENT);
+
+	switch (req->private.cmd) {
+	case SSDFS_CREATE_EXTENT:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request: "
+			  "req->private.cmd %#x\n",
+			  req->private.cmd);
+		BUG();
+	};
+
 	BUG_ON(req->private.type >= SSDFS_REQ_TYPE_MAX);
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
 	BUG_ON((req->extent.data_bytes /
@@ -4256,10 +4296,12 @@ int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-allocate extent: "
-			  "seg %llu, logical_block %u, peb %llu, err %d\n",
+			  "seg %llu, logical_block %u, peb %llu, "
+			  "ino %llu, logical_offset %llu, err %d\n",
 			  req->place.start.seg_id,
 			  req->place.start.blk_index,
-			  pebi->peb_id, err);
+			  pebi->peb_id, req->extent.ino,
+			  req->extent.logical_offset, err);
 		return err;
 	}
 
@@ -4551,7 +4593,16 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	logical_offset /= fsi->pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(logical_offset >= U32_MAX);
+	if (req->extent.logical_offset >= U64_MAX) {
+		SSDFS_ERR("seg %llu, peb %llu, logical_block %u, "
+			  "logical_offset %llu, "
+			  "processed_blks %d\n",
+			  req->place.start.seg_id, pebi->peb_id,
+			  req->place.start.blk_index,
+			  logical_offset,
+			  req->result.processed_blks);
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	blk_desc_off = ssdfs_blk2off_table_convert(table, blk,
@@ -4776,6 +4827,206 @@ int ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 }
 
 /*
+ * ssdfs_peb_migrate_pre_allocated_block() - migrate pre-allocated block
+ * @pebi: pointer on PEB object
+ * @req: I/O request
+ *
+ * This function tries to update data block in PEB.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
+					  struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_blk2off_table *table;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_phys_offset_descriptor *blk_desc_off;
+	struct ssdfs_peb_phys_offset desc_off = {0};
+	u16 peb_index;
+	u16 logical_block;
+	int processed_blks;
+	u64 logical_offset;
+	struct ssdfs_block_bmap_range range;
+	int range_state;
+	int migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
+	u32 len;
+	u8 id;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !req);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(req->place.start.seg_id != pebi->pebc->parent_si->seg_id);
+	BUG_ON(req->place.start.blk_index >=
+		pebi->pebc->parent_si->fsi->pages_per_seg);
+
+	switch (req->private.class) {
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		/* expected state */
+		break;
+	default:
+		SSDFS_ERR("unexpected request: "
+			  "req->private.class %#x\n",
+			  req->private.class);
+		BUG();
+	};
+
+	switch (req->private.cmd) {
+	case SSDFS_MIGRATE_PRE_ALLOC_PAGE:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request: "
+			  "req->private.cmd %#x\n",
+			  req->private.cmd);
+		BUG();
+	};
+
+	BUG_ON(req->private.type >= SSDFS_REQ_TYPE_MAX);
+	BUG_ON(atomic_read(&req->private.refs_count) == 0);
+	BUG_ON(req->extent.data_bytes > pebi->pebc->parent_si->fsi->pagesize);
+	BUG_ON(req->result.processed_blks > 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	si = pebi->pebc->parent_si;
+	table = pebi->pebc->parent_si->blk2off_table;
+	seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
+	processed_blks = req->result.processed_blks;
+	logical_block = req->place.start.blk_index + processed_blks;
+	logical_offset = req->extent.logical_offset +
+				((u64)processed_blks * fsi->pagesize);
+	logical_offset /= fsi->pagesize;
+
+	SSDFS_DBG("seg %llu, peb %llu, logical_block %u, "
+		  "logical_offset %llu, "
+		  "processed_blks %d\n",
+		  req->place.start.seg_id, pebi->peb_id,
+		  logical_block, logical_offset,
+		  processed_blks);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (req->extent.logical_offset >= U64_MAX) {
+		SSDFS_ERR("seg %llu, peb %llu, logical_block %u, "
+			  "logical_offset %llu, "
+			  "processed_blks %d\n",
+			  req->place.start.seg_id, pebi->peb_id,
+			  logical_block, logical_offset,
+			  processed_blks);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	len = req->extent.data_bytes;
+	len -= req->result.processed_blks * si->fsi->pagesize;
+	len >>= fsi->log_pagesize;
+
+	blk_desc_off = ssdfs_blk2off_table_convert(table,
+						   logical_block,
+						   &peb_index,
+						   &migration_state);
+	if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
+		struct completion *end;
+		unsigned long res;
+
+		end = &table->full_init_end;
+
+		res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("blk2off init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		blk_desc_off = ssdfs_blk2off_table_convert(table,
+							   logical_block,
+							   &peb_index,
+							   &migration_state);
+	}
+
+	if (IS_ERR_OR_NULL(blk_desc_off)) {
+		err = (blk_desc_off == NULL ? -ERANGE : PTR_ERR(blk_desc_off));
+		SSDFS_ERR("fail to convert: "
+			  "logical_blk %u, err %d\n",
+			  logical_block, err);
+		return err;
+	}
+
+	if (migration_state == SSDFS_LBLOCK_UNDER_COMMIT) {
+		SSDFS_DBG("try again to add block: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id, logical_block,
+			  pebi->peb_id);
+		return -EAGAIN;
+	}
+
+	range.start = le16_to_cpu(blk_desc_off->page_desc.peb_page);
+	range.len = len;
+
+	SSDFS_DBG("range (start %u, len %u)\n",
+		  range.start, range.len);
+
+	range_state = SSDFS_BLK_PRE_ALLOCATED;
+
+	err = ssdfs_segment_blk_bmap_update_range(seg_blkbmap, pebi->pebc,
+				blk_desc_off->blk_state.peb_migration_id,
+				range_state, &range);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to update range: "
+			  "seg %llu, peb %llu, "
+			  "range (start %u, len %u), err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, range.start, range.len,
+			  err);
+		return err;
+	}
+
+	id = ssdfs_get_peb_migration_id_checked(pebi);
+	if (unlikely(id < 0)) {
+		SSDFS_ERR("invalid peb_migration_id: "
+			  "seg %llu, peb_id %llu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, id);
+		return id;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(id > U8_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	desc_off.peb_index = pebi->peb_index;
+	desc_off.peb_migration_id = id;
+	desc_off.peb_page = (u16)range.start;
+	desc_off.log_area = SSDFS_LOG_AREA_MAX;
+	desc_off.byte_offset = U32_MAX;
+
+	err = ssdfs_peb_store_block_descriptor_offset(pebi,
+						(u32)logical_offset,
+						logical_block,
+						&desc_off);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to store block descriptor offset: "
+			  "logical_block %u, logical_offset %llu, "
+			  "err %d\n",
+			  logical_block, logical_offset, err);
+		return err;
+	}
+
+	req->result.processed_blks += range.len;
+	return 0;
+}
+
+/*
  * ssdfs_process_update_request() - process update request
  * @pebi: pointer on PEB object
  * @req: request
@@ -4871,7 +5122,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		break;
 
 	case SSDFS_MIGRATE_PRE_ALLOC_PAGE:
-		err = ssdfs_peb_pre_allocate_block(pebi, req);
+		err = ssdfs_peb_migrate_pre_allocated_block(pebi, req);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("unable to migrate pre-alloc page: "
 				  "seg %llu, peb %llu\n",
@@ -5406,20 +5657,26 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 
 	frag_hdr->last_free_blk = cpu_to_le16((u16)desc->last_free_blk);
 
-	if (desc->metadata_blks > (pages_per_peb - desc->last_free_blk)) {
-		SSDFS_ERR("metadata_blks %u > used pages %u\n",
+	if ((desc->metadata_blks + desc->last_free_blk) > pages_per_peb) {
+		SSDFS_ERR("invalid descriptor state: "
+			  "metadata_blks %u, last_free_blk %u, "
+			  "pages_per_peb %u\n",
 			  desc->metadata_blks,
-			  (pages_per_peb - desc->last_free_blk));
+			  desc->last_free_blk,
+			  pages_per_peb);
 		err = -ERANGE;
 		goto fail_store_bmap_fragment;
 	}
 
 	frag_hdr->metadata_blks = cpu_to_le16((u16)desc->metadata_blks);
 
-	if (desc->invalid_blks > (pages_per_peb - desc->last_free_blk)) {
-		SSDFS_ERR("invalid_blks %u > used pages %u\n",
+	if ((desc->invalid_blks + desc->metadata_blks) > pages_per_peb) {
+		SSDFS_ERR("invalid descriptor state: "
+			  "invalid_blks %u, metadata_blks %u, "
+			  "pages_per_peb %u\n",
 			  desc->invalid_blks,
-			  (pages_per_peb - desc->last_free_blk));
+			  desc->metadata_blks,
+			  pages_per_peb);
 		err = -ERANGE;
 		goto fail_store_bmap_fragment;
 	}
@@ -6440,6 +6697,9 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 				  (pgoff_t)PAGEVEC_SIZE,
 				  (pgoff_t)(pages_count - page_index));
 		end = page_index + range_len - 1;
+
+		SSDFS_DBG("page_index %lu, pages_count %lu\n",
+			  page_index, pages_count);
 
 		err = ssdfs_page_array_lookup_range(smap, &page_index, end,
 						    SSDFS_DIRTY_PAGE_TAG,
@@ -8812,6 +9072,8 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			  err);
 	}
 
+	SSDFS_DBG("finished\n");
+
 	return err;
 }
 
@@ -10241,7 +10503,8 @@ finish_process_free_space_absence:
 			 * If no other commands in the queue
 			 * then ignore the log creation now.
 			 */
-			 SSDFS_DBG("Don't create log: COMMIT_LOG_NOW command: "
+			SSDFS_DBG("Don't create log: "
+				  "COMMIT_LOG_NOW command: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
@@ -10255,7 +10518,8 @@ finish_process_free_space_absence:
 			 * No necessity to create log
 			 * for START_MIGRATION_NOW command.
 			 */
-			 SSDFS_DBG("Don't create log: START_MIGRATION_NOW command: "
+			SSDFS_DBG("Don't create log: "
+				  "START_MIGRATION_NOW command: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
@@ -10749,21 +11013,35 @@ finish_create_request_processing:
 				ssdfs_finish_flush_request(pebc, req,
 							   wait_queue, err);
 				thread_state =
-					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+					SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 			} else if (have_flush_requests(pebc)) {
 				ssdfs_requests_queue_add_tail(&pebc->update_rq,
 								req);
 				req = NULL;
-				thread_state =
-					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+
+				state = atomic_read(&pebi->current_log.state);
+				if (state == SSDFS_LOG_COMMITTED) {
+					thread_state =
+					  SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+				} else {
+					thread_state =
+					  SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+				}
 			} else if (ssdfs_peb_has_dirty_pages(pebi) ||
 				   has_extent_been_invalidated) {
 				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			} else {
 				ssdfs_finish_flush_request(pebc, req,
 							   wait_queue, err);
-				thread_state =
-					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+
+				state = atomic_read(&pebi->current_log.state);
+				if (state == SSDFS_LOG_COMMITTED) {
+					thread_state =
+					  SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+				} else {
+					thread_state =
+					  SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+				}
 			}
 			goto finish_update_request_processing;
 
@@ -10801,7 +11079,9 @@ finish_update_request_processing:
 		if (thread_state == SSDFS_FLUSH_THREAD_COMMIT_LOG ||
 		    thread_state == SSDFS_FLUSH_THREAD_START_MIGRATION_NOW) {
 			goto next_partial_step;
-		} else
+		} else if (thread_state == SSDFS_FLUSH_THREAD_NEED_CREATE_LOG)
+			goto sleep_flush_thread;
+		else
 			goto repeat;
 		break;
 

@@ -6710,6 +6710,12 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 		if (!node1)
 			continue;
 
+		if (is_ssdfs_btree_node_pre_deleted(node1)) {
+			SSDFS_DBG("node %u has pre-deleted state\n",
+				  node1->node_id);
+			continue;
+		}
+
 		rcu_read_unlock();
 
 		ssdfs_debug_btree_check_indexes(tree, node1);
@@ -6730,6 +6736,7 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 
 			down_read(&node1->header_lock);
 			start_hash1 = node1->index_area.start_hash;
+			end_hash1 = node1->index_area.end_hash;
 			up_read(&node1->header_lock);
 			break;
 
@@ -6743,12 +6750,18 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 
 			down_read(&node1->header_lock);
 			start_hash1 = node1->items_area.start_hash;
+			end_hash1 = node1->items_area.end_hash;
 			up_read(&node1->header_lock);
 			break;
 
 		default:
 			BUG();
 		}
+
+		SSDFS_DBG("node %u, type %#x, "
+			  "start_hash %llx, end_hash %llx\n",
+			  node1->node_id, atomic_read(&node1->type),
+			  start_hash1, end_hash1);
 
 		err = ssdfs_btree_node_find_index_position(node1->parent_node,
 							   start_hash1,

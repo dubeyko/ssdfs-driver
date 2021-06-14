@@ -925,6 +925,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 				u32 *invalid_blks,
 				size_t *bytes_count)
 {
+	u32 used_pages;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -960,33 +961,56 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 		goto cleanup_snapshot_pagevec;
 	}
 
+	SSDFS_DBG("bytes_count %zu, items_count %zu, "
+		  "metadata_items %u, used_blks %u, invalid_blks %u, "
+		  "last_free_page %u\n",
+		  blk_bmap->bytes_count, blk_bmap->items_count,
+		  blk_bmap->metadata_items, blk_bmap->used_blks,
+		  blk_bmap->invalid_blks, *last_free_page);
+
+	if (*last_free_page >= blk_bmap->items_count) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid last_free_page: "
+			  "bytes_count %zu, items_count %zu, "
+			  "metadata_items %u, used_blks %u, invalid_blks %u, "
+			  "last_free_page %u\n",
+			  blk_bmap->bytes_count, blk_bmap->items_count,
+			  blk_bmap->metadata_items, blk_bmap->used_blks,
+			  blk_bmap->invalid_blks, *last_free_page);
+		goto cleanup_snapshot_pagevec;
+	}
+
 	*metadata_blks = blk_bmap->metadata_items;
 
 	if ((*metadata_blks + *last_free_page) > blk_bmap->items_count) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid values: "
-			  "metadata_blks %u, last_free_blk %u, "
-			  "items_count %zu\n",
-			  *metadata_blks, *last_free_page,
-			  blk_bmap->items_count);
+			  "bytes_count %zu, items_count %zu, "
+			  "metadata_items %u, used_blks %u, invalid_blks %u, "
+			  "last_free_page %u\n",
+			  blk_bmap->bytes_count, blk_bmap->items_count,
+			  blk_bmap->metadata_items, blk_bmap->used_blks,
+			  blk_bmap->invalid_blks, *last_free_page);
 		goto cleanup_snapshot_pagevec;
 	}
 
 	*invalid_blks = blk_bmap->invalid_blks;
+	*bytes_count = blk_bmap->bytes_count;
 
-	SSDFS_DBG("invalid_blks %u\n", *invalid_blks);
+	used_pages = blk_bmap->used_blks + blk_bmap->invalid_blks +
+			blk_bmap->metadata_items;
 
-	if ((*invalid_blks + *last_free_page) > blk_bmap->items_count) {
+	if (used_pages > blk_bmap->items_count) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid values: "
-			  "invalid_blks %u, last_free_blk %u, "
-			  "items_count %zu\n",
-			  *invalid_blks, *last_free_page,
-			  blk_bmap->items_count);
+			  "bytes_count %zu, items_count %zu, "
+			  "metadata_items %u, used_blks %u, invalid_blks %u, "
+			  "last_free_page %u\n",
+			  blk_bmap->bytes_count, blk_bmap->items_count,
+			  blk_bmap->metadata_items, blk_bmap->used_blks,
+			  blk_bmap->invalid_blks, *last_free_page);
 		goto cleanup_snapshot_pagevec;
 	}
-
-	*bytes_count = blk_bmap->bytes_count;
 
 	clear_block_bmap_dirty(blk_bmap);
 
@@ -4074,10 +4098,11 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	SSDFS_DBG("items_count %zu, used_blks %u, "
-		  "metadata_items %u\n",
+		  "metadata_items %u, invalid_blks %u\n",
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
-		  blk_bmap->metadata_items);
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4096,6 +4121,8 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		free_pages = (u16)err;
 		err = 0;
 	}
+
+	SSDFS_DBG("free_pages %d\n", free_pages);
 
 	if (len) {
 		u32 max_blk = blk_bmap->items_count - blk_bmap->metadata_items;

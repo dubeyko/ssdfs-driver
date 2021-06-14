@@ -13885,8 +13885,7 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
-			if (search->result.name)
-				ssdfs_dict_kfree(search->result.name);
+			ssdfs_btree_search_free_result_name(search);
 
 			search->result.name = &search->name;
 			search->result.name_state =

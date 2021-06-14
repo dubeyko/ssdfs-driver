@@ -3990,8 +3990,7 @@ ssdfs_xattrs_tree_extract_inline_range(struct ssdfs_xattrs_btree_info *tree,
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
-			if (search->result.buf)
-				ssdfs_xattr_kfree(search->result.buf);
+			ssdfs_btree_search_free_result_buf(search);
 
 			search->result.buf = &search->raw.xattr;
 			search->result.buf_state =
@@ -5898,8 +5897,7 @@ int ssdfs_prepare_xattrs_buffer(struct ssdfs_btree_search *search,
 					sizeof(struct ssdfs_name_string));
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to allocate memory for buffer\n");
-			ssdfs_xattr_kfree(search->result.buf);
-			search->result.buf = NULL;
+			ssdfs_btree_search_free_result_buf(search);
 			return err;
 		}
 	}

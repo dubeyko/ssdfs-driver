@@ -217,10 +217,12 @@ int ssdfs_shextree_add_pre_invalid_extent(struct ssdfs_shared_extents_tree *tree
 		  tree, extent, seg_id, logical_blk, len);
 
 #ifdef CONFIG_SSDFS_TESTING
-	if (!tree->fsi->do_fork_invalidation) {
+	if (!tree->fsi->do_fork_invalidation &&
+	    owner_ino == SSDFS_TESTING_INO) {
 		SSDFS_DBG("ignore extent: "
-			  "seg_id %llu, logical_blk %u, len %u\n",
-			  seg_id, logical_blk, len);
+			  "owner_ino %llu, seg_id %llu, "
+			  "logical_blk %u, len %u\n",
+			  owner_ino, seg_id, logical_blk, len);
 		return 0;
 	}
 #endif /* CONFIG_SSDFS_TESTING */
@@ -287,6 +289,17 @@ int ssdfs_shextree_add_pre_invalid_fork(struct ssdfs_shared_extents_tree *tree,
 		  "start_offset %llu, blks_count %llu\n",
 		  tree, fork, start_offset, blks_count);
 
+#ifdef CONFIG_SSDFS_TESTING
+	if (!tree->fsi->do_fork_invalidation &&
+	    owner_ino == SSDFS_TESTING_INO) {
+		SSDFS_DBG("ignore fork: "
+			  "owner_ino %llu, start_offset %llu, "
+			  "blks_count %llu\n",
+			  owner_ino, start_offset, blks_count);
+		return 0;
+	}
+#endif /* CONFIG_SSDFS_TESTING */
+
 	if (start_offset == U64_MAX || blks_count == U64_MAX) {
 		SSDFS_WARN("invalid fork: "
 			   "start_offset %llu, blks_count %llu\n",
@@ -313,8 +326,6 @@ int ssdfs_shextree_add_pre_invalid_fork(struct ssdfs_shared_extents_tree *tree,
 		SSDFS_DBG("INVALIDATING FORK: extent[%d]: "
 			  "seg_id %llu, start_blk %u, len %u\n",
 			  i, seg_id, start_blk, len);
-
-
 
 		err = ssdfs_shextree_add_pre_invalid_extent(tree, owner_ino,
 							    ptr);
@@ -392,6 +403,22 @@ int ssdfs_shextree_add_pre_invalid_index(struct ssdfs_shared_extents_tree *tree,
 		  tree, owner_ino, index_type,
 		  node_id, node_type, height, flags,
 		  hash, seg_id, logical_blk, len);
+
+#ifdef CONFIG_SSDFS_TESTING
+	if (!tree->fsi->do_fork_invalidation &&
+	    owner_ino == SSDFS_TESTING_INO) {
+		SSDFS_DBG("ignore index: "
+			  "owner_ino %llu, index_type %#x, "
+			  "node_id %u, node_type %#x, "
+			  "height %u, flags %#x, "
+			  "hash %llx, seg_id %llu, "
+			  "logical_blk %u, len %u\n",
+			  owner_ino, index_type,
+			  node_id, node_type, height, flags,
+			  hash, seg_id, logical_blk, len);
+		return 0;
+	}
+#endif /* CONFIG_SSDFS_TESTING */
 
 	switch (index_type) {
 	case SSDFS_EXTENT_INFO_INDEX_DESCRIPTOR:

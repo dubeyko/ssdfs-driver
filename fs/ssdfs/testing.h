@@ -16,22 +16,42 @@
 #include "common_bitmap.h"
 #include "request_queue.h"
 
-/* Enable tests */
+/*
+ * struct ssdfs_testing_environment - define testing environment
+ * @subsystems: enable testing particular subsystems
+ * @page_size: logical block size in bytes
+ *
+ * @files_number_threshold: maximum number of files
+ *
+ * @file_size_threshold: maximum size of file in bytes
+ * @extent_len_threshold: maximum extent length in logical blocks
+ */
+struct ssdfs_testing_environment {
+	u64 subsystems;
+	u32 page_size;
+
+	u64 files_number_threshold;
+
+	u64 file_size_threshold;
+	u16 extent_len_threshold;
+};
+
+/* Subsystem tests */
 #define SSDFS_ENABLE_EXTENTS_TREE_TESTING	(1 << 0)
 #define SSDFS_ENABLE_DENTRIES_TREE_TESTING	(1 << 1)
 
-#define SSDFS_FILE_SIZE_MAX_TESTING_THRESHOLD		(1073741824) // 1GB
-#define SSDFS_EXTENT_LEN_TESTING_MAX			(16)
-
-#define SSDFS_FILE_NUMBER_MAX_TESTING_THRESHOLD		(100000)
-
 #ifdef CONFIG_SSDFS_TESTING
-int ssdfs_do_testing(struct ssdfs_fs_info *fsi, u64 flags);
+int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
+		     struct ssdfs_testing_environment *env);
 #else
 static inline
-int ssdfs_do_testing(struct ssdfs_fs_info *fsi, u64 flags)
+int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
+		     struct ssdfs_testing_environment *env)
 {
-	return 0;
+	SSDFS_ERR("Testing is not supported. "
+		  "Please, enable CONFIG_SSDFS_TESTING option.\n");
+
+	return -EOPNOTSUPP;
 }
 #endif /* CONFIG_SSDFS_TESTING */
 

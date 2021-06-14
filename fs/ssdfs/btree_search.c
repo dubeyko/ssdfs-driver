@@ -179,23 +179,8 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 
 	search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
 
-	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
-	    search->result.buf) {
-		/* free allocated memory */
-		ssdfs_btree_search_kfree(search->result.buf);
-		search->result.buf = NULL;
-	}
-
-	search->result.buf_state = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-
-	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER &&
-	    search->result.name) {
-		/* free allocated memory */
-		ssdfs_btree_search_kfree(search->result.name);
-		search->result.name = NULL;
-	}
-
-	search->result.name = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+	ssdfs_btree_search_free_result_buf(search);
+	ssdfs_btree_search_free_result_name(search);
 
 	ssdfs_btree_search_cache_leaks_decrement(search);
 	kmem_cache_free(ssdfs_btree_search_obj_cachep, search);
@@ -211,15 +196,8 @@ void ssdfs_btree_search_init(struct ssdfs_btree_search *search)
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
-		if (search->result.buf)
-			ssdfs_btree_search_kfree(search->result.buf);
-	}
-
-	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
-		if (search->result.name)
-			ssdfs_btree_search_kfree(search->result.name);
-	}
+	ssdfs_btree_search_free_result_buf(search);
+	ssdfs_btree_search_free_result_name(search);
 
 	if (search->node.parent) {
 		ssdfs_btree_node_put(search->node.parent);
@@ -557,6 +535,26 @@ int ssdfs_btree_search_alloc_result_buf(struct ssdfs_btree_search *search,
 }
 
 /*
+ * ssdfs_btree_search_free_result_buf() - free result buffer
+ * @search: search object
+ */
+void ssdfs_btree_search_free_result_buf(struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
+		if (search->result.buf) {
+			ssdfs_btree_search_kfree(search->result.buf);
+			search->result.buf = NULL;
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+		}
+	}
+}
+
+/*
  * ssdfs_btree_search_alloc_result_name() - allocate result name
  * @search: search object
  * @string_size: name string size
@@ -580,6 +578,26 @@ int ssdfs_btree_search_alloc_result_name(struct ssdfs_btree_search *search,
 	search->result.name_state = SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
 	search->result.names_in_buffer = 0;
 	return 0;
+}
+
+/*
+ * ssdfs_btree_search_free_result_name() - free result name
+ * @search: search object
+ */
+void ssdfs_btree_search_free_result_name(struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
+		if (search->result.name) {
+			ssdfs_btree_search_kfree(search->result.name);
+			search->result.name = NULL;
+			search->result.name =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+		}
+	}
 }
 
 void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)

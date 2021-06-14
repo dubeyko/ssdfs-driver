@@ -2730,6 +2730,9 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
+		case SSDFS_SEG_USED:
+		case SSDFS_SEG_PRE_DIRTY:
+		case SSDFS_SEG_DIRTY:
 		case SSDFS_SEG_RESERVED:
 		case SSDFS_SEG_BAD:
 			/* expected state */
@@ -2748,6 +2751,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
 		switch (new_state) {
+		case SSDFS_SEG_CLEAN:
 		case SSDFS_SEG_USED:
 		case SSDFS_SEG_PRE_DIRTY:
 		case SSDFS_SEG_DIRTY:
@@ -2764,6 +2768,11 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 
 	case SSDFS_SEG_USED:
 		switch (new_state) {
+		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_LEAF_NODE_USING:
+		case SSDFS_SEG_HYBRID_NODE_USING:
+		case SSDFS_SEG_INDEX_NODE_USING:
 		case SSDFS_SEG_PRE_DIRTY:
 		case SSDFS_SEG_DIRTY:
 			/* expected state */
@@ -2778,6 +2787,25 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		break;
 
 	case SSDFS_SEG_PRE_DIRTY:
+		switch (new_state) {
+		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_LEAF_NODE_USING:
+		case SSDFS_SEG_HYBRID_NODE_USING:
+		case SSDFS_SEG_INDEX_NODE_USING:
+		case SSDFS_SEG_USED:
+		case SSDFS_SEG_DIRTY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
 	case SSDFS_SEG_RESERVED:
 		switch (new_state) {
 		case SSDFS_SEG_DIRTY:
@@ -2795,6 +2823,12 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	case SSDFS_SEG_DIRTY:
 		switch (new_state) {
 		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_LEAF_NODE_USING:
+		case SSDFS_SEG_HYBRID_NODE_USING:
+		case SSDFS_SEG_INDEX_NODE_USING:
+		case SSDFS_SEG_USED:
+		case SSDFS_SEG_PRE_DIRTY:
 			/* expected state */
 			break;
 

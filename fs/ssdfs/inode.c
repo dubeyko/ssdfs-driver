@@ -948,9 +948,16 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	err = ssdfs_inodes_btree_find(itree, ino, search);
 	if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_TESTING
+		err = 0;
+		SSDFS_DBG("fail to find inode: "
+			  "ino %lu, err %d\n",
+			  ino, err);
+#else
 		SSDFS_ERR("fail to find inode: "
 			  "ino %lu, err %d\n",
 			  ino, err);
+#endif /* CONFIG_SSDFS_TESTING */
 		goto free_search_object;
 	}
 

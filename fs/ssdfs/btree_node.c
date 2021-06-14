@@ -4489,6 +4489,7 @@ static
 int __ssdfs_lock_index_range(struct ssdfs_btree_node *node,
 				u16 start_index, u16 count)
 {
+	DEFINE_WAIT(wait);
 	struct ssdfs_state_bitmap *bmap;
 	unsigned long start_area;
 	unsigned long upper_bound;
@@ -4526,23 +4527,33 @@ int __ssdfs_lock_index_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+try_lock_area:
 	spin_lock(&bmap->lock);
+
 	for (; i < count; i++) {
 		err = bitmap_allocate_region(bmap->ptr,
 					     start_area + start_index + i, 0);
 		if (err)
 			break;
 	}
-	spin_unlock(&bmap->lock);
 
 	if (err == -EBUSY) {
-		spin_lock(&bmap->lock);
+		err = 0;
 		bitmap_clear(bmap->ptr, start_area + start_index, i);
-		spin_unlock(&bmap->lock);
-		SSDFS_DBG("locked state of item %u\n",
+		prepare_to_wait(&node->wait_queue, &wait,
+				TASK_UNINTERRUPTIBLE);
+
+		SSDFS_DBG("waiting unlocked state of item %u\n",
 			   start_index + i);
-		err = -ENODATA;
+
+		spin_unlock(&bmap->lock);
+
+		schedule();
+		finish_wait(&node->wait_queue, &wait);
+		goto try_lock_area;
 	}
+
+	spin_unlock(&bmap->lock);
 
 	return err;
 }
@@ -4882,23 +4893,17 @@ int ssdfs_get_index_key_hash(struct ssdfs_btree_node *node,
 
 	*hash = U64_MAX;
 
-try_get_hash:
 	for (*hash_index = index; *hash_index <= upper_index; ++(*hash_index)) {
 		err = ssdfs_lock_index_range(node, *hash_index, 1);
-		if (err == -ENODATA) {
-			/*
-			 * try the next index
-			 */
-			err = -EAGAIN;
-		} else if (unlikely(err)) {
+		if (unlikely(err)) {
 			SSDFS_ERR("fail to lock index %u, err %d\n",
 				  *hash_index, err);
 			break;
-		} else {
-			err = -EEXIST;
-			ptr = CUR_INDEX(kaddr, page_off, *hash_index);
-			*hash = le64_to_cpu(ptr->index.hash);
 		}
+
+		err = -EEXIST;
+		ptr = CUR_INDEX(kaddr, page_off, *hash_index);
+		*hash = le64_to_cpu(ptr->index.hash);
 
 		ssdfs_unlock_index_range(node, *hash_index, 1);
 
@@ -4909,17 +4914,6 @@ try_get_hash:
 			continue;
 		else if (unlikely(err))
 			break;
-	}
-
-	if (err == -EAGAIN && *hash_index > upper_index) {
-		DEFINE_WAIT(wait);
-
-		err = 0;
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
-		goto try_get_hash;
 	}
 
 	SSDFS_DBG("hash_index %u, hash %llx\n",
@@ -5354,7 +5348,7 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 						cur_index, upper_index,
 						&hash_index, &hash);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get hash: "
+			SSDFS_WARN("fail to get hash: "
 				  "cur_index %u, upper_index %u, err %d\n",
 				  cur_index, upper_index, err);
 			goto finish_search;
@@ -6248,7 +6242,7 @@ int ssdfs_btree_node_find_index(struct ssdfs_btree_search *search)
 			  node->node_id, search->request.start.hash);
 		goto finish_index_search;
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find an index: "
+		SSDFS_WARN("fail to find an index: "
 			  "node_id %u, hash %llx, err %d\n",
 			  node->node_id, search->request.start.hash,
 			  err);
@@ -11526,6 +11520,7 @@ int ssdfs_copy_item_in_buffer(struct ssdfs_btree_node *node,
 			      size_t item_size,
 			      struct ssdfs_btree_search *search)
 {
+	DEFINE_WAIT(wait);
 	struct ssdfs_state_bitmap *bmap;
 	u32 area_offset;
 	u32 area_size;
@@ -11567,7 +11562,6 @@ int ssdfs_copy_item_in_buffer(struct ssdfs_btree_node *node,
 	if (page_index > 0)
 		item_offset %= page_index * PAGE_SIZE;
 
-try_copy_item:
 	down_read(&node->full_lock);
 
 	if (page_index >= pagevec_count(&node->content.pvec)) {
@@ -11583,13 +11577,35 @@ try_copy_item:
 	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_LOCK_BMAP];
 
 	down_read(&node->bmap_array.lock);
+
+try_lock_area:
 	spin_lock(&bmap->lock);
+
 	err = bitmap_allocate_region(bmap->ptr, (unsigned int)index, 0);
+	if (err == -EBUSY) {
+		err = 0;
+		prepare_to_wait(&node->wait_queue, &wait,
+				TASK_UNINTERRUPTIBLE);
+
+		SSDFS_DBG("waiting unlocked state of item %u\n",
+			   index);
+
+		spin_unlock(&bmap->lock);
+
+		schedule();
+		finish_wait(&node->wait_queue, &wait);
+		goto try_lock_area;
+	}
+
 	spin_unlock(&bmap->lock);
+
 	up_read(&node->bmap_array.lock);
 
-	if (err == -EBUSY)
+	if (err) {
+		SSDFS_ERR("fail to lock: index %u, err %d\n",
+			  index, err);
 		goto finish_copy_item;
+	}
 
 	if (!search->result.buf) {
 		err = -ERANGE;
@@ -11606,7 +11622,7 @@ try_copy_item:
 			  "buf_size %zu\n",
 			  buf_offset, item_size,
 			  search->result.buf_size);
-		goto finish_copy_item;
+		goto unlock_area;
 	}
 
 	kaddr = kmap_atomic(page);
@@ -11617,6 +11633,7 @@ try_copy_item:
 
 	search->result.items_in_buffer++;
 
+unlock_area:
 	down_read(&node->bmap_array.lock);
 	spin_lock(&bmap->lock);
 	bitmap_clear(bmap->ptr, (unsigned int)index, 1);
@@ -11628,16 +11645,7 @@ try_copy_item:
 finish_copy_item:
 	up_read(&node->full_lock);
 
-	if (err == -EBUSY) {
-		DEFINE_WAIT(wait);
-
-		err = 0;
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
-		goto try_copy_item;
-	} else if (unlikely(err))
+	if (unlikely(err))
 		return err;
 
 	return 0;
@@ -11662,6 +11670,7 @@ finish_copy_item:
 int ssdfs_lock_items_range(struct ssdfs_btree_node *node,
 			   u16 start_index, u16 count)
 {
+	DEFINE_WAIT(wait);
 	struct ssdfs_state_bitmap *bmap;
 	unsigned long start_area;
 	int i = 0;
@@ -11691,23 +11700,33 @@ int ssdfs_lock_items_range(struct ssdfs_btree_node *node,
 		goto finish_lock;
 	}
 
+try_lock_area:
 	spin_lock(&bmap->lock);
+
 	for (; i < count; i++) {
 		err = bitmap_allocate_region(bmap->ptr,
 					     start_area + start_index + i, 0);
 		if (err)
 			break;
 	}
-	spin_unlock(&bmap->lock);
 
 	if (err == -EBUSY) {
-		spin_lock(&bmap->lock);
+		err = 0;
 		bitmap_clear(bmap->ptr, start_area + start_index, i);
-		spin_unlock(&bmap->lock);
-		SSDFS_DBG("locked state of item %u\n",
+		prepare_to_wait(&node->wait_queue, &wait,
+				TASK_UNINTERRUPTIBLE);
+
+		SSDFS_DBG("waiting unlocked state of item %u\n",
 			   start_index + i);
-		err = -ENODATA;
+
+		spin_unlock(&bmap->lock);
+
+		schedule();
+		finish_wait(&node->wait_queue, &wait);
+		goto try_lock_area;
 	}
+
+	spin_unlock(&bmap->lock);
 
 finish_lock:
 	up_read(&node->bmap_array.lock);
@@ -12437,6 +12456,7 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 				ssdfs_prepare_result_buffer prepare_buffer,
 				ssdfs_extract_found_item extract_item)
 {
+	DEFINE_WAIT(wait);
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_state_bitmap *bmap;
 	u16 index, found_index;
@@ -12493,7 +12513,6 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-try_search_item:
 	down_read(&node->full_lock);
 
 	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_LOCK_BMAP];
@@ -12535,15 +12554,37 @@ try_search_item:
 		page = node->content.pvec.pages[page_index];
 
 		down_read(&node->bmap_array.lock);
+
+try_lock_checking_item:
 		spin_lock(&bmap->lock);
+
 		start_index = node->bmap_array.item_start_bit + index;
 		err = bitmap_allocate_region(bmap->ptr,
 					     (unsigned int)start_index, 0);
+		if (err == -EBUSY) {
+			err = 0;
+			prepare_to_wait(&node->wait_queue, &wait,
+					TASK_UNINTERRUPTIBLE);
+
+			SSDFS_DBG("waiting unlocked state of item %lu\n",
+				   start_index);
+
+			spin_unlock(&bmap->lock);
+
+			schedule();
+			finish_wait(&node->wait_queue, &wait);
+			goto try_lock_checking_item;
+		}
+
 		spin_unlock(&bmap->lock);
+
 		up_read(&node->bmap_array.lock);
 
-		if (err == -EBUSY)
+		if (err) {
+			SSDFS_ERR("fail to lock: index %lu, err %d\n",
+				  start_index, err);
 			goto finish_extract_range;
+		}
 
 		kaddr = kmap_atomic(page);
 		err = check_item(fsi, search,
@@ -12640,21 +12681,51 @@ try_extract_range:
 		page = node->content.pvec.pages[page_index];
 
 		down_read(&node->bmap_array.lock);
+
+try_lock_extracting_item:
 		spin_lock(&bmap->lock);
+
 		start_index = node->bmap_array.item_start_bit + found_index;
 		err = bitmap_allocate_region(bmap->ptr,
 					     (unsigned int)start_index, 0);
+		if (err == -EBUSY) {
+			err = 0;
+			prepare_to_wait(&node->wait_queue, &wait,
+					TASK_UNINTERRUPTIBLE);
+
+			SSDFS_DBG("waiting unlocked state of item %lu\n",
+				   start_index);
+
+			spin_unlock(&bmap->lock);
+
+			schedule();
+			finish_wait(&node->wait_queue, &wait);
+			goto try_lock_extracting_item;
+		}
+
 		spin_unlock(&bmap->lock);
+
 		up_read(&node->bmap_array.lock);
 
-		if (err == -EBUSY)
+		if (err) {
+			SSDFS_ERR("fail to lock: index %lu, err %d\n",
+				  start_index, err);
 			goto finish_extract_range;
+		}
 
 		kaddr = kmap_atomic(page);
 		err = extract_item(fsi, search, item_size,
 				   (u8 *)kaddr + item_offset,
 				   &start_hash, &end_hash);
 		kunmap_atomic(kaddr);
+
+		down_read(&node->bmap_array.lock);
+		spin_lock(&bmap->lock);
+		bitmap_clear(bmap->ptr, (unsigned int)start_index, 1);
+		spin_unlock(&bmap->lock);
+		up_read(&node->bmap_array.lock);
+
+		wake_up_all(&node->wait_queue);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to extract item: "
@@ -12667,14 +12738,6 @@ try_extract_range:
 			  "end_hash %llx\n",
 			  found_index, start_hash, end_hash);
 
-		down_read(&node->bmap_array.lock);
-		spin_lock(&bmap->lock);
-		bitmap_clear(bmap->ptr, (unsigned int)start_index, 1);
-		spin_unlock(&bmap->lock);
-		up_read(&node->bmap_array.lock);
-
-		wake_up_all(&node->wait_queue);
-
 		if (search->request.end.hash <= end_hash)
 			break;
 	}
@@ -12685,16 +12748,7 @@ try_extract_range:
 finish_extract_range:
 	up_read(&node->full_lock);
 
-	if (err == -EBUSY) {
-		DEFINE_WAIT(wait);
-
-		err = 0;
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
-		goto try_search_item;
-	} else if (err == -ENODATA || err == -EAGAIN) {
+	if (err == -ENODATA || err == -EAGAIN) {
 		/*
 		 * do nothing
 		 */
@@ -14180,6 +14234,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 				     size_t item_size,
 				     struct ssdfs_btree_search *search)
 {
+	DEFINE_WAIT(wait);
 	struct ssdfs_btree *tree;
 	struct ssdfs_btree_node_items_area items_area;
 	struct ssdfs_state_bitmap *bmap;
@@ -14291,8 +14346,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		if (count == 1) {
-			if (search->result.buf)
-				ssdfs_btree_node_kfree(search->result.buf);
+			ssdfs_btree_search_free_result_buf(search);
 
 			switch (tree->type) {
 			case SSDFS_EXTENTS_BTREE:
@@ -14335,7 +14389,6 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 
 	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_LOCK_BMAP];
 
-try_extract_range:
 	down_read(&node->full_lock);
 
 	for (i = start_index; i < (start_index + count); i++) {
@@ -14384,15 +14437,37 @@ try_extract_range:
 		page = node->content.pvec.pages[page_index];
 
 		down_read(&node->bmap_array.lock);
+
+try_lock_item:
 		spin_lock(&bmap->lock);
+
 		cur_index = node->bmap_array.item_start_bit + i;
 		err = bitmap_allocate_region(bmap->ptr,
 					     (unsigned int)cur_index, 0);
+		if (err == -EBUSY) {
+			err = 0;
+			prepare_to_wait(&node->wait_queue, &wait,
+					TASK_UNINTERRUPTIBLE);
+
+			SSDFS_DBG("waiting unlocked state of item %lu\n",
+				  cur_index);
+
+			spin_unlock(&bmap->lock);
+
+			schedule();
+			finish_wait(&node->wait_queue, &wait);
+			goto try_lock_item;
+		}
+
 		spin_unlock(&bmap->lock);
+
 		up_read(&node->bmap_array.lock);
 
-		if (err == -EBUSY)
+		if (err) {
+			SSDFS_ERR("fail to lock: index %lu, err %d\n",
+				  cur_index, err);
 			goto finish_extract_range;
+		}
 
 		kaddr = kmap_atomic(page);
 		memcpy((u8 *)search->result.buf + calculated,
@@ -14414,16 +14489,7 @@ try_extract_range:
 finish_extract_range:
 	up_read(&node->full_lock);
 
-	if (err == -EBUSY) {
-		DEFINE_WAIT(wait);
-
-		err = 0;
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
-		goto try_extract_range;
-	} else if (err == -ENODATA) {
+	if (err == -ENODATA) {
 		/*
 		 * do nothing
 		 */

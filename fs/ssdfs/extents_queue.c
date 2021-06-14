@@ -174,6 +174,9 @@ void ssdfs_extents_queue_add_head(struct ssdfs_extents_queue *eq,
 	BUG_ON(!eq || !ei);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	SSDFS_DBG("type %#x, owner_ino %llu\n",
+		  ei->type, ei->owner_ino);
+
 	spin_lock(&eq->lock);
 	list_add(&ei->list, &eq->list);
 	spin_unlock(&eq->lock);
@@ -190,6 +193,9 @@ void ssdfs_extents_queue_add_tail(struct ssdfs_extents_queue *eq,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!eq || !ei);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("type %#x, owner_ino %llu\n",
+		  ei->type, ei->owner_ino);
 
 	spin_lock(&eq->lock);
 	list_add_tail(&ei->list, &eq->list);

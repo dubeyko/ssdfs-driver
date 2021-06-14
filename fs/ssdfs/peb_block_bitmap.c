@@ -488,6 +488,9 @@ fail_define_pages_count:
 				   &bmap->parent->valid_logical_blks);
 			atomic_sub(used_blks,
 				   &bmap->parent->free_logical_blks);
+
+			SSDFS_DBG("shared_free_dst_blks %d\n",
+				  atomic_read(&pebc->shared_free_dst_blks));
 		} else if (under_migration && has_ext_ptr) {
 			atomic_add(used_blks, &bmap->valid_logical_blks);
 			atomic_add(invalid_blks, &bmap->invalid_logical_blks);
@@ -1878,7 +1881,6 @@ finish_check_src_bmap:
 		shared_free_blks =
 			atomic_sub_return(range->len,
 					  &pebc->shared_free_dst_blks);
-
 		if (shared_free_blks < 0) {
 			SSDFS_DBG("range->len %u, shared_free_dst_blks %d\n",
 				   range->len,
@@ -2166,7 +2168,6 @@ finish_check_src_bmap:
 		shared_free_blks =
 			atomic_sub_return(range->len,
 					  &pebc->shared_free_dst_blks);
-
 		if (shared_free_blks < 0) {
 			SSDFS_DBG("range->len %u, shared_free_dst_blks %d\n",
 				   range->len,
@@ -2244,7 +2245,9 @@ int ssdfs_peb_blk_bmap_invalidate(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap || !range || !bmap->src);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("bmap %p, bmap_index %u, range (start %u, len %u)\n",
+	SSDFS_DBG("seg %llu, bmap %p, bmap_index %u, "
+		  "range (start %u, len %u)\n",
+		  bmap->parent->parent_si->seg_id,
 		  bmap, bmap_index, range->start, range->len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
@@ -2418,7 +2421,9 @@ init_failed:
 finish_invalidate:
 	up_read(&bmap->lock);
 
-	SSDFS_DBG("INVALIDATED: range (start %u, len %u), err %d\n",
+	SSDFS_DBG("INVALIDATED: seg %llu, "
+		  "range (start %u, len %u), err %d\n",
+		  bmap->parent->parent_si->seg_id,
 		  range->start, range->len, err);
 
 	return err;
@@ -2964,6 +2969,9 @@ init_failed:
 	atomic_set(&pebc->shared_free_dst_blks, invalid_blks);
 	atomic_add(invalid_blks, &bmap->parent->free_logical_blks);
 
+	SSDFS_DBG("shared_free_dst_blks %d\n",
+		  atomic_read(&pebc->shared_free_dst_blks));
+
 	used_blks = atomic_read(&bmap->valid_logical_blks);
 
 	err = ssdfs_block_bmap_get_free_pages(bmap->dst);
@@ -3399,7 +3407,6 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap)
 #ifdef CONFIG_SSDFS_DEBUG
 	int free_blks, used_blks, invalid_blks;
 #endif /* CONFIG_SSDFS_DEBUG */
-	int shared_free_dst_blks;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3580,14 +3587,11 @@ unlock_src_bmap:
 		err = -ERANGE;
 		goto finish_migration_stop;
 	}
+
+	SSDFS_DBG("shared_free_dst_blks %d, pages_per_peb %u\n",
+		  atomic_read(&pebc->shared_free_dst_blks),
+		  bmap->pages_per_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	shared_free_dst_blks = atomic_read(&pebc->shared_free_dst_blks);
-
-	if (shared_free_dst_blks > bmap->pages_per_peb) {
-		SSDFS_WARN("invalid shared_free_dst_blks %d\n",
-			   shared_free_dst_blks);
-	}
 
 	ssdfs_block_bmap_clear_dirty_state(bmap->src);
 

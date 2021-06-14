@@ -1322,16 +1322,26 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 
 	switch (seg_state) {
 	case SSDFS_SEG_CLEAN:
-		if (free_pages > 0 && free_pages != pages_per_seg) {
+		if (free_pages == pages_per_seg) {
+			/*
+			 * Do nothing.
+			 */
+		} else if (free_pages > 0) {
 			need_change_state = true;
-			new_seg_state = SEG_TYPE_TO_USING_STATE(si->seg_type);
-			if (new_seg_state < 0 ||
-			    new_seg_state == SSDFS_SEG_STATE_MAX) {
-				SSDFS_ERR("invalid seg_type %#x\n",
-					  si->seg_type);
-				return -ERANGE;
+
+			if (invalid_pages > 0) {
+				new_seg_state = SSDFS_SEG_PRE_DIRTY;
+			} else {
+				new_seg_state =
+					SEG_TYPE_TO_USING_STATE(si->seg_type);
+				if (new_seg_state < 0 ||
+				    new_seg_state == SSDFS_SEG_STATE_MAX) {
+					SSDFS_ERR("invalid seg_type %#x\n",
+						  si->seg_type);
+					return -ERANGE;
+				}
 			}
-		} else if (free_pages == 0) {
+		} else {
 			need_change_state = true;
 
 			if (invalid_pages == 0)
@@ -1347,7 +1357,21 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
-		if (free_pages == 0) {
+		if (free_pages == pages_per_seg) {
+			if (invalid_pages == 0 && used_logical_blks == 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_CLEAN;
+			} else {
+				SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
+					  free_pages, pages_per_seg);
+				return -ERANGE;
+			}
+		} else if (free_pages > 0) {
+			if (invalid_pages > 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_PRE_DIRTY;
+			}
+		} else {
 			need_change_state = true;
 
 			if (invalid_pages == 0)
@@ -1361,9 +1385,33 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 
 	case SSDFS_SEG_USED:
 		if (free_pages == pages_per_seg) {
-			SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
-				  free_pages, pages_per_seg);
-			return -ERANGE;
+			if (invalid_pages == 0 && used_logical_blks == 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_CLEAN;
+			} else {
+				SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
+					  free_pages, pages_per_seg);
+				return -ERANGE;
+			}
+		} else if (invalid_pages > 0) {
+			need_change_state = true;
+
+			if (used_logical_blks > 0) {
+				/* pre-dirty state */
+				new_seg_state = SSDFS_SEG_PRE_DIRTY;
+			} else if (free_pages > 0) {
+				SSDFS_ERR("invalid state: "
+					  "invalid_pages %d, "
+					  "free_pages %d, "
+					  "used_logical_blks %u\n",
+					  invalid_pages,
+					  free_pages,
+					  used_logical_blks);
+				return -ERANGE;
+			} else {
+				/* dirty state */
+				new_seg_state = SSDFS_SEG_DIRTY;
+			}
 		} else if (free_pages > 0) {
 			need_change_state = true;
 			new_seg_state = SEG_TYPE_TO_USING_STATE(si->seg_type);
@@ -1373,20 +1421,24 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 					  si->seg_type);
 				return -ERANGE;
 			}
-		} else if (invalid_pages > 0 && used_logical_blks > 0) {
-			need_change_state = true;
-			new_seg_state = SSDFS_SEG_PRE_DIRTY;
-		} else if (invalid_pages > 0 && used_logical_blks == 0) {
-			need_change_state = true;
-			new_seg_state = SSDFS_SEG_DIRTY;
 		}
 		break;
 
 	case SSDFS_SEG_PRE_DIRTY:
 		if (free_pages == pages_per_seg) {
-			SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
-				  free_pages, pages_per_seg);
-			return -ERANGE;
+			if (invalid_pages == 0 && used_logical_blks == 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_CLEAN;
+			} else {
+				SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
+					  free_pages, pages_per_seg);
+				return -ERANGE;
+			}
+		} else if (invalid_pages > 0) {
+			if (used_logical_blks == 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_DIRTY;
+			}
 		} else if (free_pages > 0) {
 			need_change_state = true;
 			new_seg_state = SEG_TYPE_TO_USING_STATE(si->seg_type);
@@ -1396,22 +1448,61 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 					  si->seg_type);
 				return -ERANGE;
 			}
-		} else if (invalid_pages > 0 && used_logical_blks == 0) {
-			need_change_state = true;
-			new_seg_state = SSDFS_SEG_DIRTY;
+		} else if (free_pages == 0 && invalid_pages == 0) {
+			if (used_logical_blks == 0) {
+				SSDFS_ERR("invalid state: "
+					  "invalid_pages %d, "
+					  "free_pages %d, "
+					  "used_logical_blks %u\n",
+					  invalid_pages,
+					  free_pages,
+					  used_logical_blks);
+				return -ERANGE;
+			} else {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_USED;
+			}
 		}
 		break;
 
 	case SSDFS_SEG_DIRTY:
 		if (free_pages == pages_per_seg) {
+			if (invalid_pages == 0 && used_logical_blks == 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_CLEAN;
+			} else {
+				SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
+					  free_pages, pages_per_seg);
+				return -ERANGE;
+			}
+		} else if (invalid_pages > 0) {
+			if (used_logical_blks > 0 || free_pages > 0) {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_PRE_DIRTY;
+			}
+		} else if (free_pages > 0) {
 			need_change_state = true;
-			new_seg_state = SSDFS_SEG_CLEAN;
-		} else {
-			SSDFS_ERR("free_pages %d, pages_per_seg %u, "
-				  "invalid_pages %d, used_logical_blks %u\n",
-				  free_pages, pages_per_seg,
-				  invalid_pages, used_logical_blks);
-			return -ERANGE;
+			new_seg_state = SEG_TYPE_TO_USING_STATE(si->seg_type);
+			if (new_seg_state < 0 ||
+			    new_seg_state == SSDFS_SEG_STATE_MAX) {
+				SSDFS_ERR("invalid seg_type %#x\n",
+					  si->seg_type);
+				return -ERANGE;
+			}
+		} else if (free_pages == 0 && invalid_pages == 0) {
+			if (used_logical_blks == 0) {
+				SSDFS_ERR("invalid state: "
+					  "invalid_pages %d, "
+					  "free_pages %d, "
+					  "used_logical_blks %u\n",
+					  invalid_pages,
+					  free_pages,
+					  used_logical_blks);
+				return -ERANGE;
+			} else {
+				need_change_state = true;
+				new_seg_state = SSDFS_SEG_USED;
+			}
 		}
 		break;
 
