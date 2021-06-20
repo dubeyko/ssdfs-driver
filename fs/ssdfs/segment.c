@@ -595,45 +595,50 @@ int SEG_TYPE2MASK(int seg_type)
 }
 
 /*
- * ssdfs_segment_correct_start_search_id() - correct start search ID
+ * ssdfs_segment_detect_search_range() - detect search range
  * @fsi: pointer on shared file system object
- * @seg_type: type of segment
- * @start_search_id: starting ID for segment search
+ * @start_seg: starting ID for segment search [in|out]
+ * @end_seg: ending ID for segment search [out]
  *
- * This method tries to correct starting search ID.
+ * This method tries to detect the search range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOENT     - unable to find valid range for search.
  */
 static
-u64 ssdfs_segment_correct_start_search_id(struct ssdfs_fs_info *fsi,
-					  int seg_type,
-					  u64 start_search_id)
+int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
+				      u64 *start_seg, u64 *end_seg)
 {
 	struct completion *init_end;
-	struct ssdfs_maptbl_peb_relation pebr;
-	struct ssdfs_maptbl_peb_descriptor *ptr;
-	u8 peb_type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
-	u64 leb_id;
-	u64 peb_id1, peb_id2;
-	u64 found_peb_id;
-	u64 calculated_seg_id = start_search_id;
-	int err;
+	u64 start_leb;
+	u64 end_leb;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi);
+	BUG_ON(!fsi || !start_seg || !end_seg);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, seg_type %#x, start_search_id %llu\n",
-		  fsi, seg_type, start_search_id);
+	SSDFS_DBG("fsi %p, start_search_id %llu\n",
+		  fsi, *start_seg);
 
-	if (start_search_id >= fsi->nsegs)
-		return 0;
+	if (*start_seg >= fsi->nsegs) {
+		SSDFS_DBG("start_seg %llu >= nsegs %llu\n",
+			  *start_seg, fsi->nsegs);
+		return -ENOENT;
+	}
 
-	leb_id = start_search_id * fsi->pebs_per_seg;
-	found_peb_id = leb_id;
-	peb_type = SEG2PEB_TYPE(seg_type);
+	start_leb = *start_seg * fsi->pebs_per_seg;
 
-	err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
-					   peb_type, &pebr,
-					   &init_end);
+	*start_seg = U64_MAX;
+	*end_seg = U64_MAX;
+
+	err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
+						  &end_leb, &init_end);
 	if (err == -EAGAIN) {
 		unsigned long res;
 
@@ -646,44 +651,243 @@ u64 ssdfs_segment_correct_start_search_id(struct ssdfs_fs_info *fsi,
 			goto finish_seg_id_correction;
 		}
 
-		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
-						   peb_type, &pebr,
-						   &init_end);
+		err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
+							  &end_leb, &init_end);
 	}
 
-	if (err == -ENODATA) {
-		SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
-			  leb_id);
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to find search range: leb_id %llu\n",
+			  start_leb);
 		goto finish_seg_id_correction;
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to convert LEB to PEB: "
-			  "leb_id %llu, peb_type %#x, err %d\n",
-			  leb_id, peb_type, err);
+		SSDFS_ERR("fail to find search range: "
+			  "leb_id %llu, err %d\n",
+			  start_leb, err);
 		goto finish_seg_id_correction;
 	}
 
-	ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
-	peb_id1 = ptr->peb_id;
-	ptr = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
-	peb_id2 = ptr->peb_id;
-
-	if (peb_id1 < U64_MAX)
-		found_peb_id = max_t(u64, peb_id1, found_peb_id);
-
-	if (peb_id2 < U64_MAX)
-		found_peb_id = max_t(u64, peb_id2, found_peb_id);
-
-	calculated_seg_id = found_peb_id / fsi->pebs_per_seg;
-	calculated_seg_id = max_t(u64, start_search_id, calculated_seg_id);
+	*start_seg = (start_leb + fsi->pebs_per_seg - 1) / fsi->pebs_per_seg;
+	*end_seg = (end_leb + fsi->pebs_per_seg - 1) / fsi->pebs_per_seg;
 
 finish_seg_id_correction:
-	if (calculated_seg_id < U64_MAX)
-		calculated_seg_id++;
+	SSDFS_DBG("start_seg %llu, end_seg %llu, err %d\n",
+		  *start_seg, *end_seg, err);
 
-	SSDFS_DBG("start_search_id %llu, calculated_seg_id %llu\n",
-		  start_search_id, calculated_seg_id);
+	return err;
+}
 
-	return calculated_seg_id;
+/*
+ * __ssdfs_find_new_segment() - find a new segment
+ * @fsi: pointer on shared file system object
+ * @seg_type: segment type
+ * @start_search_id: starting ID for segment search
+ * @seg_id: found segment ID [out]
+ * @seg_state: found segment state [out]
+ *
+ * This method tries to find a new segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOENT     - unable to find a new segment.
+ */
+static
+int __ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
+			     u64 start_search_id, u64 *seg_id,
+			     int *seg_state)
+{
+	int new_state;
+	u64 start_seg = start_search_id;
+	u64 end_seg = U64_MAX;
+	struct completion *init_end;
+	unsigned long rest;
+	int res;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !seg_id || !seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg_type %#x, start_search_id %llu\n",
+		  fsi, seg_type, start_search_id);
+
+	*seg_id = U64_MAX;
+	*seg_state = SSDFS_SEG_STATE_MAX;
+
+	switch (seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		new_state = SSDFS_SEG_DATA_USING;
+		break;
+
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+		new_state = SSDFS_SEG_LEAF_NODE_USING;
+		break;
+
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+		new_state = SSDFS_SEG_HYBRID_NODE_USING;
+		break;
+
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		new_state = SSDFS_SEG_INDEX_NODE_USING;
+		break;
+
+	default:
+		BUG();
+	};
+
+	err = ssdfs_segment_detect_search_range(fsi,
+						&start_seg,
+						&end_seg);
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to find fragment for search: "
+			  "start_seg %llu, end_seg %llu\n",
+			  start_seg, end_seg);
+		goto finish_search;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to define a search range: "
+			  "start_search_id %llu, err %d\n",
+			  start_search_id, err);
+		goto finish_search;
+	}
+
+	res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+					 start_seg, end_seg,
+					 SSDFS_SEG_CLEAN,
+					 SEG_TYPE2MASK(seg_type),
+					 new_state,
+					 seg_id, &init_end);
+	if (res >= 0) {
+		/* Define segment state */
+		*seg_state = res;
+	} else if (res == -EAGAIN) {
+		rest = wait_for_completion_timeout(init_end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (rest == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("segbmap init failed: "
+				  "err %d\n", err);
+			goto finish_search;
+		}
+
+		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+						 start_seg, end_seg,
+						 SSDFS_SEG_CLEAN,
+						 SEG_TYPE2MASK(seg_type),
+						 new_state,
+						 seg_id, &init_end);
+		if (res >= 0) {
+			/* Define segment state */
+			*seg_state = res;
+		} else if (res == -ENODATA) {
+			err = -ENOENT;
+			SSDFS_DBG("unable to find segment in range: "
+				  "start_seg %llu, end_seg %llu\n",
+				  start_seg, end_seg);
+			goto finish_search;
+		} else {
+			err = res;
+			SSDFS_ERR("fail to find segment in range: "
+				  "start_seg %llu, end_seg %llu, err %d\n",
+				  start_seg, end_seg, res);
+			goto finish_search;
+		}
+	} else if (res == -ENODATA) {
+		err = -ENOENT;
+		SSDFS_DBG("unable to find segment in range: "
+			  "start_seg %llu, end_seg %llu\n",
+			  start_seg, end_seg);
+		goto finish_search;
+	} else {
+		SSDFS_ERR("fail to find segment in range: "
+			  "start_seg %llu, end_seg %llu, err %d\n",
+			  start_seg, end_seg, res);
+		goto finish_search;
+	}
+
+finish_search:
+	if (err == -ENOENT)
+		*seg_id = end_seg;
+
+	return err;
+}
+
+/*
+ * ssdfs_find_new_segment() - find a new segment
+ * @fsi: pointer on shared file system object
+ * @seg_type: segment type
+ * @start_search_id: starting ID for segment search
+ * @seg_id: found segment ID [out]
+ * @seg_state: found segment state [out]
+ *
+ * This method tries to find a new segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - unable to find a new segment.
+ */
+static
+int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
+			   u64 start_search_id, u64 *seg_id,
+			   int *seg_state)
+{
+	u64 cur_id = start_search_id;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !seg_id || !seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, seg_type %#x, start_search_id %llu\n",
+		  fsi, seg_type, start_search_id);
+
+	while (cur_id < fsi->nsegs) {
+		err = __ssdfs_find_new_segment(fsi, seg_type, cur_id,
+						seg_id, seg_state);
+		if (err == -ENOENT) {
+			err = 0;
+			cur_id = *seg_id;
+			continue;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a new segment: "
+				  "cur_id %llu, err %d\n",
+				  cur_id, err);
+			return err;
+		} else {
+			SSDFS_DBG("found seg_id %llu\n", *seg_id);
+			return 0;
+		}
+	}
+
+	cur_id = 0;
+
+	while (cur_id < start_search_id) {
+		err = __ssdfs_find_new_segment(fsi, seg_type, cur_id,
+						seg_id, seg_state);
+		if (err == -ENOENT) {
+			err = 0;
+			cur_id = *seg_id;
+			continue;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a new segment: "
+				  "cur_id %llu, err %d\n",
+				  cur_id, err);
+			return err;
+		} else {
+			SSDFS_DBG("found seg_id %llu\n", *seg_id);
+			return 0;
+		}
+	}
+
+	SSDFS_DBG("no free space for a new segment\n");
+
+	return -ENOSPC;
 }
 
 /*
@@ -847,8 +1051,7 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 	int seg_state = SSDFS_SEG_STATE_MAX;
 	struct completion *init_end;
 	unsigned long rest;
-	u64 start = U64_MAX;
-	int err, res;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -863,91 +1066,18 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 		  fsi, seg_type, seg_id, start_search_id);
 
 	if (seg_id == U64_MAX) {
-		int new_state;
-
-		switch (seg_type) {
-		case SSDFS_USER_DATA_SEG_TYPE:
-			new_state = SSDFS_SEG_DATA_USING;
-			break;
-
-		case SSDFS_LEAF_NODE_SEG_TYPE:
-			new_state = SSDFS_SEG_LEAF_NODE_USING;
-			break;
-
-		case SSDFS_HYBRID_NODE_SEG_TYPE:
-			new_state = SSDFS_SEG_HYBRID_NODE_USING;
-			break;
-
-		case SSDFS_INDEX_NODE_SEG_TYPE:
-			new_state = SSDFS_SEG_INDEX_NODE_USING;
-			break;
-
-		default:
-			BUG();
-		};
-
-		start = ssdfs_segment_correct_start_search_id(fsi, seg_type,
-							      start_search_id);
-
-		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
-						 start, fsi->nsegs,
-						 SSDFS_SEG_CLEAN,
-						 SEG_TYPE2MASK(seg_type),
-						 new_state,
-						 &seg_id, &init_end);
-		if (res >= 0) {
-			/* Define segment state */
-			seg_state = res;
-		} else if (res == -EAGAIN) {
-			rest = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (rest == 0) {
-				err = -ERANGE;
-				SSDFS_ERR("segbmap init failed: "
-					  "err %d\n", err);
-				return ERR_PTR(err);
-			}
-
-			res = ssdfs_segbmap_find_and_set(fsi->segbmap,
-							start, fsi->nsegs,
-							SSDFS_SEG_CLEAN,
-							SEG_TYPE2MASK(seg_type),
-							new_state,
-							&seg_id, &init_end);
-			if (res >= 0) {
-				/* Define segment state */
-				seg_state = res;
-			} else if (start != 0) {
-				res = ssdfs_segbmap_find_and_set(fsi->segbmap,
-							0, fsi->nsegs,
-							SSDFS_SEG_CLEAN,
-							SEG_TYPE2MASK(seg_type),
-							new_state,
-							&seg_id, &init_end);
-				if (res >= 0) {
-					/* Define segment state */
-					seg_state = res;
-				} else
-					goto fail_find_segment;
-			} else
-				goto fail_find_segment;
-		} else if (start != 0) {
-			res = ssdfs_segbmap_find_and_set(fsi->segbmap,
-						0, fsi->nsegs, SSDFS_SEG_CLEAN,
-						SEG_TYPE2MASK(seg_type),
-						new_state,
-						&seg_id, &init_end);
-			if (res >= 0) {
-				/* Define segment state */
-				seg_state = res;
-			} else
-				goto fail_find_segment;
-		} else {
-fail_find_segment:
-			SSDFS_ERR("fail to find segment number: "
-				  "err %d\n",
-				  res);
-			return ERR_PTR(res);
+		err = ssdfs_find_new_segment(fsi, seg_type,
+					     start_search_id,
+					     &seg_id, &seg_state);
+		if (err == -ENOSPC) {
+			SSDFS_DBG("no free space for a new segment\n");
+			return ERR_PTR(err);
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a new segment: "
+				  "start_search_id %llu, "
+				  "seg_type %#x, err %d\n",
+				  start_search_id, seg_type, err);
+			return ERR_PTR(err);
 		}
 	}
 

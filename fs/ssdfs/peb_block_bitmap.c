@@ -706,7 +706,10 @@ int ssdfs_peb_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -808,7 +811,10 @@ int ssdfs_peb_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -876,7 +882,10 @@ int ssdfs_peb_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -945,7 +954,10 @@ int ssdfs_src_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1011,7 +1023,10 @@ int ssdfs_src_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1077,7 +1092,10 @@ int ssdfs_src_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1143,7 +1161,10 @@ int ssdfs_dst_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1209,7 +1230,10 @@ int ssdfs_dst_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1275,7 +1299,10 @@ int ssdfs_dst_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1352,7 +1379,10 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1541,7 +1571,10 @@ int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1693,7 +1726,10 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -1980,7 +2016,10 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -2259,7 +2298,10 @@ int ssdfs_peb_blk_bmap_invalidate(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -2479,7 +2521,10 @@ int ssdfs_peb_blk_bmap_update_range(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -2746,7 +2791,10 @@ int ssdfs_peb_blk_bmap_collect_garbage(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -2856,7 +2904,10 @@ int ssdfs_peb_blk_bmap_start_migration(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -3167,7 +3218,10 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 
@@ -3426,7 +3480,10 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap)
 			err = -ERANGE;
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
 			return err;
 		}
 

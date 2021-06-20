@@ -1009,6 +1009,8 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len)
 	u32 hash32_lo, hash32_hi;
 	size_t copy_len;
 	u64 name_hash;
+	u32 diff = 0;
+	u8 symbol1, symbol2;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1029,12 +1031,23 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len)
 	if (len <= SSDFS_DENTRY_INLINE_NAME_MAX_LEN) {
 		hash32_hi = len;
 
-		copy_len /= 2;
-		if (copy_len == 0)
-			copy_len = 1;
+		for (i = 1; i < len; i++) {
+			symbol1 = (u8)name[i - 1];
+			symbol2 = (u8)name[i];
+			diff = 0;
 
-		for (i = 0; i < copy_len; i++)
-			hash32_hi += (u8)name[i];
+			if (symbol1 > symbol2)
+				diff = symbol1 - symbol2;
+			else
+				diff = symbol2 - symbol1;
+
+			hash32_hi += diff * symbol1;
+
+			SSDFS_DBG("hash32_hi %x, symbol1 %x, "
+				  "symbol2 %x, index %d, diff %u\n",
+				  hash32_hi, symbol1, symbol2,
+				  i, diff);
+		}
 	} else {
 		hash32_hi = full_name_hash(NULL,
 					name + SSDFS_DENTRY_INLINE_NAME_MAX_LEN,

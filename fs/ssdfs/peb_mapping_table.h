@@ -38,6 +38,7 @@
  * @stripe_pages: count of memory pages in one stripe
  * @mapped_lebs: mapped LEBs count in the fragment
  * @migrating_lebs: migrating LEBs count in the fragment
+ * @reserved_pebs: count of reserved PEBs in fragment
  * @pre_erase_pebs: count of PEBs in pre-erase state per fragment
  * @recovering_pebs: count of recovering PEBs per fragment
  * @array: fragment's memory pages
@@ -65,6 +66,7 @@ struct ssdfs_maptbl_fragment_desc {
 
 	u32 mapped_lebs;
 	u32 migrating_lebs;
+	u32 reserved_pebs;
 	u32 pre_erase_pebs;
 	u32 recovering_pebs;
 
@@ -457,6 +459,10 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 			     u64 leb_id, u8 peb_type,
 			     struct ssdfs_maptbl_peb_relation *pebr,
 			     struct completion **end);
+int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
+					u64 *start_leb,
+					u64 *end_leb,
+					struct completion **end);
 int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 				  u64 leb_id, u8 peb_type,
 				  int peb_state,

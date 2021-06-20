@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.92 [June 20, 2021]
+    (*) Fix bugs in PEB mapping table.
+
 v.3.91 [June 13, 2021]
     (*) Fix bugs in btree functionality (step 3).
 
