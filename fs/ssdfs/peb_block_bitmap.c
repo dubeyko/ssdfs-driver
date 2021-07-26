@@ -481,13 +481,27 @@ fail_define_pages_count:
 			atomic_add(atomic_read(&bmap->free_logical_blks),
 				   &bmap->parent->free_logical_blks);
 		} else if (under_migration && has_relation) {
+			int current_free_blks =
+				atomic_read(&bmap->free_logical_blks);
+
+			if (used_blks > current_free_blks) {
+				SSDFS_DBG("used_blks %u > free_blks %d\n",
+					  used_blks, current_free_blks);
+				atomic_set(&bmap->free_logical_blks, 0);
+				atomic_set(&pebc->shared_free_dst_blks, 0);
+				atomic_sub(current_free_blks,
+					   &bmap->parent->free_logical_blks);
+			} else {
+				atomic_sub(used_blks, &bmap->free_logical_blks);
+				atomic_sub(used_blks,
+					   &pebc->shared_free_dst_blks);
+				atomic_sub(used_blks,
+					   &bmap->parent->free_logical_blks);
+			}
+
 			atomic_add(used_blks, &bmap->valid_logical_blks);
-			atomic_sub(used_blks, &bmap->free_logical_blks);
-			atomic_sub(used_blks, &pebc->shared_free_dst_blks);
 			atomic_add(used_blks,
 				   &bmap->parent->valid_logical_blks);
-			atomic_sub(used_blks,
-				   &bmap->parent->free_logical_blks);
 
 			SSDFS_DBG("shared_free_dst_blks %d\n",
 				  atomic_read(&pebc->shared_free_dst_blks));
@@ -695,7 +709,9 @@ int ssdfs_peb_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("peb_index %u\n", bmap->peb_index);
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  bmap->parent->parent_si->seg_id,
+		  bmap->peb_index);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -3204,9 +3220,10 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("bmap %p, peb_index %u, state %#x, "
-		  "range (start %u, len %u)\n",
+		  "new_range_state %#x, range (start %u, len %u)\n",
 		  bmap, bmap->peb_index,
 		  atomic_read(&bmap->state),
+		  new_range_state,
 		  range->start, range->len);
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
@@ -3321,11 +3338,18 @@ finish_process_source_bmap:
 		goto finish_migrate;
 	}
 
+	err = ssdfs_block_bmap_free_metadata_pages(dst, range->len);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to free metadata pages: err %d\n", err);
+		goto do_bmap_unlock;
+	}
+
 	if (new_range_state == SSDFS_BLK_PRE_ALLOCATED)
 		err = ssdfs_block_bmap_pre_allocate(dst, 0, NULL, range);
 	else
 		err = ssdfs_block_bmap_allocate(dst, 0, NULL, range);
 
+do_bmap_unlock:
 	ssdfs_block_bmap_unlock(dst);
 
 	if (unlikely(err)) {

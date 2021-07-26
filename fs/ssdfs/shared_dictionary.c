@@ -197,7 +197,9 @@ void ssdfs_name_info_init(int type, u64 hash,
 	copy_len = min_t(size_t, len, SSDFS_MAX_NAME_LEN);
 	ni->desc.name.len = copy_len;
 
-	memcpy(ni->desc.name.str_buf, str, copy_len);
+	ssdfs_memcpy(ni->desc.name.str_buf, 0, SSDFS_MAX_NAME_LEN,
+		     str, 0, len,
+		     copy_len);
 }
 
 /*
@@ -224,7 +226,10 @@ void ssdfs_node_index_init(int type, struct ssdfs_btree_index *index,
 #endif /* CONFIG_SSDFS_DEBUG */
 	ni->type = type;
 
-	memcpy(&ni->desc.index, index, sizeof(struct ssdfs_btree_index));
+	ssdfs_memcpy(&ni->desc.index,
+		     0, sizeof(struct ssdfs_btree_index),
+		     index, 0, sizeof(struct ssdfs_btree_index),
+		     sizeof(struct ssdfs_btree_index));
 }
 
 /******************************************************************************
@@ -547,8 +552,11 @@ int ssdfs_shared_dict_btree_init(struct ssdfs_fs_info *fsi)
 		goto finish_init;
 	}
 
-	memcpy(&root_node, &fsi->vs->shared_dict_btree.root_node,
-		sizeof(struct ssdfs_btree_inline_root_node));
+	ssdfs_memcpy(&root_node,
+		     0, sizeof(struct ssdfs_btree_inline_root_node),
+		     &fsi->vs->shared_dict_btree.root_node,
+		     0, sizeof(struct ssdfs_btree_inline_root_node),
+		     sizeof(struct ssdfs_btree_inline_root_node));
 
 	tree->generic_tree.create_cno = 0;
 	items_count = root_node.header.items_count;
@@ -884,8 +892,9 @@ try_check_state:
 		goto finish_get_name;
 	}
 
-	memcpy(name, search->result.name,
-		sizeof(struct ssdfs_name_string));
+	ssdfs_memcpy(name, 0, sizeof(struct ssdfs_name_string),
+		     search->result.name, 0, sizeof(struct ssdfs_name_string),
+		     sizeof(struct ssdfs_name_string));
 
 finish_get_name:
 	ssdfs_btree_search_free(search);
@@ -1287,8 +1296,11 @@ int ssdfs_shared_dict_btree_desc_flush(struct ssdfs_btree *tree)
 		return -ERANGE;
 	}
 
-	memcpy(&fsi->vs->shared_dict_btree.desc, &desc,
-		sizeof(struct ssdfs_btree_descriptor));
+	ssdfs_memcpy(&fsi->vs->shared_dict_btree.desc,
+		     0, sizeof(struct ssdfs_btree_descriptor),
+		     &desc,
+		     0, sizeof(struct ssdfs_btree_descriptor),
+		     sizeof(struct ssdfs_btree_descriptor));
 
 	return 0;
 }
@@ -2270,7 +2282,9 @@ int ssdfs_shared_dict_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_write(&node->header_lock);
 
-	memcpy(&node->raw.dict_header, hdr, hdr_size);
+	ssdfs_memcpy(&node->raw.dict_header, 0, hdr_size,
+		     hdr, 0, hdr_size,
+		     hdr_size);
 
 	err = ssdfs_btree_init_node(node, &hdr->node,
 				    hdr_size);
@@ -2816,8 +2830,9 @@ int ssdfs_shared_dict_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	memcpy(&dict_header, &node->raw.dict_header,
-		hdr_size);
+	ssdfs_memcpy(&dict_header, 0, hdr_size,
+		     &node->raw.dict_header, 0, hdr_size,
+		     hdr_size);
 
 	dict_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	dict_header.node.magic.key = cpu_to_le16(SSDFS_DICTIONARY_BNODE_MAGIC);
@@ -3020,7 +3035,9 @@ int ssdfs_shared_dict_btree_pre_flush_node(struct ssdfs_btree_node *node)
 		goto finish_shared_dict_header_preparation;
 	}
 
-	memcpy(&node->raw.dict_header, &dict_header, hdr_size);
+	ssdfs_memcpy(&node->raw.dict_header, 0, hdr_size,
+		     &dict_header, 0, hdr_size,
+		     hdr_size);
 
 	ssdfs_mark_hash_table_clean(node);
 	ssdfs_mark_lookup2_table_clean(node);
@@ -3039,8 +3056,10 @@ finish_shared_dict_header_preparation:
 
 	page = node->content.pvec.pages[0];
 	kaddr = kmap_atomic(page);
-	memcpy(kaddr, &dict_header,
-		sizeof(struct ssdfs_shared_dictionary_node_header));
+	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
+		     &dict_header,
+		     0, sizeof(struct ssdfs_shared_dictionary_node_header),
+		     sizeof(struct ssdfs_shared_dictionary_node_header));
 	kunmap_atomic(kaddr);
 
 finish_node_pre_flush:
@@ -3316,9 +3335,11 @@ int ssdfs_get_lookup1_table_search_key(struct ssdfs_btree_node *node,
 	}
 
 	lookup_table = node->raw.dict_header.lookup_table1;
-	memcpy(&value, &lookup_table[index],
-		sizeof(struct ssdfs_shdict_search_key));
-
+	ssdfs_memcpy(&value,
+		     0, sizeof(struct ssdfs_shdict_search_key),
+		     &lookup_table[index],
+		     0, sizeof(struct ssdfs_shdict_search_key),
+		     sizeof(struct ssdfs_shdict_search_key));
 	return 0;
 }
 
@@ -3351,6 +3372,7 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !desc);
@@ -3399,8 +3421,15 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 	page = node->content.pvec.pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	memcpy(desc, (u8 *)kaddr + item_offset, item_size);
+	err = ssdfs_memcpy(desc, 0, item_size,
+			   kaddr, item_offset, PAGE_SIZE,
+			   item_size);
 	kunmap_atomic(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -3434,8 +3463,11 @@ int ssdfs_get_lookup2_table_search_key(struct ssdfs_btree_node *node,
 	SSDFS_DBG("index %u\n", index);
 
 	down_read(&node->header_lock);
-	memcpy(&lookup_tbl_area, &node->lookup_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
 
 	return ssdfs_get_lookup2_descriptor(node, &lookup_tbl_area, index,
@@ -3471,6 +3503,7 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !desc);
@@ -3519,8 +3552,15 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 	page = node->content.pvec.pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	memcpy((u8 *)kaddr + item_offset, desc, item_size);
+	err = ssdfs_memcpy(kaddr, item_offset, PAGE_SIZE,
+			   desc, 0, item_size,
+			   item_size);
 	kunmap_atomic(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -3554,6 +3594,7 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !desc);
@@ -3602,8 +3643,15 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 	page = node->content.pvec.pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	memcpy(desc, (u8 *)kaddr + item_offset, item_size);
+	err = ssdfs_memcpy(desc, 0, item_size,
+			   kaddr, item_offset, PAGE_SIZE,
+			   item_size);
 	kunmap_atomic(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -3637,8 +3685,11 @@ int ssdfs_get_hash_table_search_key(struct ssdfs_btree_node *node,
 	SSDFS_DBG("index %u\n", index);
 
 	down_read(&node->header_lock);
-	memcpy(&hash_tbl_area, &node->hash_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
 
 	return ssdfs_get_hash_descriptor(node, &hash_tbl_area, index,
@@ -3674,6 +3725,7 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !desc);
@@ -3722,8 +3774,15 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 	page = node->content.pvec.pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	memcpy((u8 *)kaddr + item_offset, desc, item_size);
+	err = ssdfs_memcpy(kaddr, item_offset, PAGE_SIZE,
+			   desc, 0, item_size,
+			   item_size);
 	kunmap_atomic(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -3807,11 +3866,15 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 	res = key_compare(&key, &lower_bound);
 	if (res < 0) {
 		*found_index = lower_index;
-		memcpy(found_key, &lower_bound, key_size);
+		ssdfs_memcpy(found_key, 0, key_size,
+			     &lower_bound, 0, key_size,
+			     key_size);
 		return -ENODATA;
 	} else if (res == 0) {
 		*found_index = lower_index;
-		memcpy(found_key, &lower_bound, key_size);
+		ssdfs_memcpy(found_key, 0, key_size,
+			     &lower_bound, 0, key_size,
+			     key_size);
 		return -EEXIST;
 	}
 
@@ -3831,11 +3894,15 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 		res = key_compare(&key, &upper_bound);
 		if (res == 0) {
 			*found_index = upper_index;
-			memcpy(found_key, &upper_bound, key_size);
+			ssdfs_memcpy(found_key, 0, key_size,
+				     &upper_bound, 0, key_size,
+				     key_size);
 			return -EEXIST;
 		} else if (res > 0) {
 			*found_index = upper_index;
-			memcpy(found_key, &upper_bound, key_size);
+			ssdfs_memcpy(found_key, 0, key_size,
+				     &upper_bound, 0, key_size,
+				     key_size);
 			return 0;
 		}
 	}
@@ -3867,13 +3934,16 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 				upper_index = index;
 			else if (res == 0) {
 				*found_index = index;
-				memcpy(found_key, &lower_bound, key_size);
+				ssdfs_memcpy(found_key, 0, key_size,
+					     &lower_bound, 0, key_size,
+					     key_size);
 				return -EEXIST;
 			} else {
 				if (!is_valid(&upper_bound)) {
 					*found_index = index;
-					memcpy(found_key, &upper_bound,
-						key_size);
+					ssdfs_memcpy(found_key, 0, key_size,
+						     &upper_bound, 0, key_size,
+						     key_size);
 					return 0;
 				} else {
 					res = key_compare(&key, &upper_bound);
@@ -3881,8 +3951,11 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 						lower_index = index;
 					} else if (res == 0) {
 						*found_index = index + 1;
-						memcpy(found_key, &upper_bound,
-							key_size);
+						ssdfs_memcpy(found_key,
+							     0, key_size,
+							     &upper_bound,
+							     0, key_size,
+							     key_size);
 						return -EEXIST;
 					} else
 						lower_index = index + 1;
@@ -3898,8 +3971,9 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 	}
 
 	*found_index = lower_index;
-	memcpy(found_key, &lower_bound, key_size);
-
+	ssdfs_memcpy(found_key, 0, key_size,
+		     &lower_bound, 0, key_size,
+		     key_size);
 	return 0;
 }
 
@@ -3975,8 +4049,11 @@ int ssdfs_shared_dict_node_find_lookup1_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		search->result.name->lookup.index = *index;
-		memcpy(&search->result.name->lookup.desc, &found,
-			sizeof(struct ssdfs_shdict_ltbl1_item));
+		ssdfs_memcpy(&search->result.name->lookup.desc,
+			     0, sizeof(struct ssdfs_shdict_ltbl1_item),
+			     &found,
+			     0, sizeof(struct ssdfs_shdict_ltbl1_item),
+			     sizeof(struct ssdfs_shdict_ltbl1_item));
 		break;
 
 	default:
@@ -4010,6 +4087,8 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_shdict_search_key found;
 	struct ssdfs_shdict_ltbl2_item *ltbl2_item;
+	size_t ldesc_size = sizeof(struct ssdfs_lookup_descriptor);
+	size_t ltbl2_item_len = sizeof(struct ssdfs_shdict_ltbl2_item);
 	int table_size;
 	u16 found_items;
 	u16 i;
@@ -4085,16 +4164,26 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 				struct ssdfs_name_string *name;
 
 				name = &search->result.name[i];
-				memcpy(&name->lookup, &search->name.lookup,
-					sizeof(struct ssdfs_lookup_descriptor));
+				ssdfs_memcpy(&name->lookup,
+					     0, ldesc_size,
+					     &search->name.lookup,
+					     0, ldesc_size,
+					     ldesc_size);
+
 				name->strings_range.index = *index + i;
-				memcpy(&name->strings_range.desc, &found,
-					sizeof(struct ssdfs_shdict_ltbl2_item));
+				ssdfs_memcpy(&name->strings_range.desc,
+					     0, ltbl2_item_len,
+					     &found,
+					     0, ltbl2_item_len,
+					     ltbl2_item_len);
 			}
 		} else {
 			search->result.name->strings_range.index = *index;
-			memcpy(&search->result.name->strings_range.desc, &found,
-				sizeof(struct ssdfs_shdict_ltbl2_item));
+			ssdfs_memcpy(&search->result.name->strings_range.desc,
+				     0, ltbl2_item_len,
+				     &found,
+				     0, ltbl2_item_len,
+				     ltbl2_item_len);
 		}
 	}
 
@@ -4122,8 +4211,11 @@ finish_index_search:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		search->result.name->strings_range.index = *index;
-		memcpy(&search->result.name->strings_range.desc, &found,
-			sizeof(struct ssdfs_shdict_ltbl2_item));
+		ssdfs_memcpy(&search->result.name->strings_range.desc,
+			     0, ltbl2_item_len,
+			     &found,
+			     0, ltbl2_item_len,
+			     ltbl2_item_len);
 		break;
 
 	default:
@@ -4190,7 +4282,11 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 	}
 
 	prefix.index = *index;
-	memcpy(&prefix.desc, &found, sizeof(struct ssdfs_shdict_htbl_item));
+	ssdfs_memcpy(&prefix.desc,
+		     0, sizeof(struct ssdfs_shdict_htbl_item),
+		     &found,
+		     0, sizeof(struct ssdfs_shdict_htbl_item),
+		     sizeof(struct ssdfs_shdict_htbl_item));
 
 	err = ssdfs_shared_dict_node_find_index_nolock(node, search, table_size,
 					    ssdfs_convert_hash64_to_hash32_hi,
@@ -4239,17 +4335,26 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 
 		found_items = min_t(u32, found_items, (u32)table_size);
 
-		memcpy(&search->result.name->prefix, &prefix,
-			sizeof(struct ssdfs_string_descriptor));
+		ssdfs_memcpy(&search->result.name->prefix,
+			     0, sizeof(struct ssdfs_string_descriptor),
+			     &prefix,
+			     0, sizeof(struct ssdfs_string_descriptor),
+			     sizeof(struct ssdfs_string_descriptor));
 
 		search->result.name->right_name.index = *index;
-		memcpy(&search->result.name->right_name.desc, &found,
-			sizeof(struct ssdfs_shdict_htbl_item));
+		ssdfs_memcpy(&search->result.name->right_name.desc,
+			     0, sizeof(struct ssdfs_shdict_htbl_item),
+			     &found,
+			     0, sizeof(struct ssdfs_shdict_htbl_item),
+			     sizeof(struct ssdfs_shdict_htbl_item));
 
 		if (*index == 0) {
 			search->result.name->left_name.index = *index;
-			memcpy(&search->result.name->left_name.desc, &found,
-				sizeof(struct ssdfs_shdict_htbl_item));
+			ssdfs_memcpy(&search->result.name->left_name.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
 		} else {
 			search->result.name->left_name.index = *index - 1;
 
@@ -4262,8 +4367,11 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 				goto finish_index_search;
 			}
 
-			memcpy(&search->result.name->left_name.desc, &found,
-				sizeof(struct ssdfs_shdict_htbl_item));
+			ssdfs_memcpy(&search->result.name->left_name.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
 		}
 
 		for (i = 1; i < found_items; i++) {
@@ -4282,14 +4390,23 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 			}
 
 			name = &search->result.name[i];
-			memcpy(&name->prefix, &prefix,
-				sizeof(struct ssdfs_string_descriptor));
-			memcpy(&name->left_name,
-				&search->result.name[i - 1].right_name,
-				sizeof(struct ssdfs_string_descriptor));
+			ssdfs_memcpy(&name->prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     &prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     sizeof(struct ssdfs_string_descriptor));
+			ssdfs_memcpy(&name->left_name,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     &search->result.name[i - 1].right_name,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     sizeof(struct ssdfs_string_descriptor));
+
 			name->right_name.index = cur_index;
-			memcpy(&name->right_name.desc, &found,
-				sizeof(struct ssdfs_shdict_htbl_item));
+			ssdfs_memcpy(&name->right_name.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
 		}
 	} else if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4311,17 +4428,26 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 		BUG_ON(!search->result.name);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		memcpy(&search->result.name->prefix, &prefix,
-			sizeof(struct ssdfs_string_descriptor));
+		ssdfs_memcpy(&search->result.name->prefix,
+			     0, sizeof(struct ssdfs_string_descriptor),
+			     &prefix,
+			     0, sizeof(struct ssdfs_string_descriptor),
+			     sizeof(struct ssdfs_string_descriptor));
 
 		search->result.name->right_name.index = *index;
-		memcpy(&search->result.name->right_name.desc, &found,
-			sizeof(struct ssdfs_shdict_htbl_item));
+		ssdfs_memcpy(&search->result.name->right_name.desc,
+			     0, sizeof(struct ssdfs_shdict_htbl_item),
+			     &found,
+			     0, sizeof(struct ssdfs_shdict_htbl_item),
+			     sizeof(struct ssdfs_shdict_htbl_item));
 
 		if (*index == 0) {
 			search->result.name->left_name.index = *index;
-			memcpy(&search->result.name->left_name.desc, &found,
-				sizeof(struct ssdfs_shdict_htbl_item));
+			ssdfs_memcpy(&search->result.name->left_name.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
 		} else {
 			search->result.name->left_name.index = *index - 1;
 
@@ -4334,8 +4460,11 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 				goto finish_index_search;
 			}
 
-			memcpy(&search->result.name->left_name.desc, &found,
-				sizeof(struct ssdfs_shdict_htbl_item));
+			ssdfs_memcpy(&search->result.name->left_name.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
 		}
 	}
 
@@ -4373,6 +4502,7 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 	void *kaddr;
 	u32 copied_len = 0;
 	u32 cur_len;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !desc || !buf);
@@ -4431,9 +4561,15 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 				     (u32)PAGE_SIZE - item_offset);
 
 		kaddr = kmap_atomic(page);
-		memcpy(buf + copied_len,
-			(u8 *)kaddr + item_offset, cur_len);
+		err = ssdfs_memcpy(buf, copied_len, SSDFS_MAX_NAME_LEN,
+				   kaddr, item_offset, PAGE_SIZE,
+				   cur_len);
 		kunmap_atomic(kaddr);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: err %d\n", err);
+			return err;
+		}
 
 		copied_len += cur_len;
 	}
@@ -6212,6 +6348,7 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 	void *kaddr;
 	u32 copied_len = 0;
 	u32 cur_len;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !name);
@@ -6266,8 +6403,15 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 				     (u32)PAGE_SIZE - item_offset);
 
 		kaddr = kmap_atomic(page);
-		memcpy((u8 *)kaddr + item_offset, name + copied_len, cur_len);
+		err = ssdfs_memcpy(kaddr, item_offset, PAGE_SIZE,
+				   name, copied_len, name_len,
+				   cur_len);
 		kunmap_atomic(kaddr);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: err %d\n", err);
+			return err;
+		}
 
 		copied_len += cur_len;
 	};
@@ -7850,7 +7994,9 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	memcpy(&read_desc, &lookup1_tbl[calculated_index], item_size);
+	ssdfs_memcpy(&read_desc, 0, item_size,
+		     &lookup1_tbl[calculated_index], 0, item_size,
+		     item_size);
 
 	if (memcmp(found_desc, &read_desc, item_size) != 0) {
 		SSDFS_ERR("invalid lookup1 descriptors\n");
@@ -7865,14 +8011,18 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 	if (range_len < range_capacity)
 		le16_add_cpu(&read_desc.range_len, 1);
 
-	memcpy(&lookup1_tbl[calculated_index], &read_desc, item_size);
+	ssdfs_memcpy(&lookup1_tbl[calculated_index], 0, item_size,
+		     &read_desc, 0, item_size,
+		     item_size);
 
 	calculated_index += 1;
 	for (i = calculated_index + 1; i < items_count; i++) {
 		struct ssdfs_shdict_ltbl2_item lookup2_item;
 		u16 index_count;
 
-		memcpy(&read_desc, &lookup1_tbl[i], item_size);
+		ssdfs_memcpy(&read_desc, 0, item_size,
+			     &lookup1_tbl[i], 0, item_size,
+			     item_size);
 
 		start_index = le16_to_cpu(read_desc.start_index);
 		if (start_index >= U16_MAX) {
@@ -7932,7 +8082,9 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 
 		read_desc.range_len = cpu_to_le16(range_len);
 
-		memcpy(&lookup1_tbl[i], &read_desc, item_size);
+		ssdfs_memcpy(&lookup1_tbl[i], 0, item_size,
+			     &read_desc, 0, item_size,
+			     item_size);
 	}
 
 	err = ssdfs_set_node_header_dirty(node,
@@ -8033,9 +8185,13 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 		read_desc.start_index = cpu_to_le16(lookup2_index);
 		read_desc.range_len = cpu_to_le16(1);
 
-		memcpy(&lookup1_tbl[calculated_index], &read_desc, item_size);
+		ssdfs_memcpy(&lookup1_tbl[calculated_index], 0, item_size,
+			     &read_desc, 0, item_size,
+			     item_size);
 	} else {
-		memcpy(&read_desc, &lookup1_tbl[calculated_index], item_size);
+		ssdfs_memcpy(&read_desc, 0, item_size,
+			     &lookup1_tbl[calculated_index], 0, item_size,
+			     item_size);
 
 		start_index = le16_to_cpu(read_desc.start_index);
 		if (start_index >= U16_MAX) {
@@ -8088,7 +8244,9 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 
 		le16_add_cpu(&read_desc.range_len, 1);
 
-		memcpy(&lookup1_tbl[calculated_index], &read_desc, item_size);
+		ssdfs_memcpy(&lookup1_tbl[calculated_index], 0, item_size,
+			     &read_desc, 0, item_size,
+			     item_size);
 	}
 
 	le16_add_cpu(&node->raw.dict_header.lookup_table1_items, 1);
@@ -8776,8 +8934,12 @@ int ssdfs_create_prefix_for_left_name(struct ssdfs_btree_node *node,
 
 	ssdfs_mark_hash_table_dirty(node);
 
-	memcpy(&prefix->desc, &read_hdesc, hdesc_size);
-	memcpy(&left_name->desc, &read_hdesc, hdesc_size);
+	ssdfs_memcpy(&prefix->desc, 0, hdesc_size,
+		     &read_hdesc, 0, hdesc_size,
+		     hdesc_size);
+	ssdfs_memcpy(&left_name->desc, 0, hdesc_size,
+		     &read_hdesc, 0, hdesc_size,
+		     hdesc_size);
 
 	err = ssdfs_hash_table_insert_descriptor(node, search,
 						 (u8)(str_len - prefix_len),
@@ -8796,7 +8958,10 @@ int ssdfs_create_prefix_for_left_name(struct ssdfs_btree_node *node,
 		goto check_node_consistency;
 	}
 
-	memcpy(&left_name->desc, &read_hdesc, hdesc_size);
+	ssdfs_memcpy(&left_name->desc, 0, hdesc_size,
+		     &read_hdesc, 0, hdesc_size,
+		     hdesc_size);
+
 	left_name->index = prefix->index + 1;
 
 	err = ssdfs_get_lookup2_descriptor(node,
@@ -9104,9 +9269,13 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 
 	ssdfs_mark_hash_table_dirty(node);
 
-	memcpy(&prefix->desc, &read_hdesc, hdesc_size);
+	ssdfs_memcpy(&prefix->desc, 0, hdesc_size,
+		     &read_hdesc, 0, hdesc_size,
+		     hdesc_size);
 	prefix->index = right_name->index;
-	memcpy(&left_name->desc, &read_hdesc, hdesc_size);
+	ssdfs_memcpy(&left_name->desc, 0, hdesc_size,
+		     &read_hdesc, 0, hdesc_size,
+		     hdesc_size);
 	left_name->index = right_name->index;
 
 	read_hdesc.hash_hi = cpu_to_le32(hash_hi);
@@ -9124,7 +9293,9 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 		goto check_node_consistency;
 	}
 
-	memcpy(&right_name->desc, &read_hdesc, hdesc_size);
+	ssdfs_memcpy(&right_name->desc, 0, hdesc_size,
+		     &read_hdesc, 0, hdesc_size,
+		     hdesc_size);
 	right_name->index++;
 
 	err = ssdfs_get_lookup2_descriptor(node,
@@ -9170,7 +9341,9 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 
 	ssdfs_mark_lookup2_table_dirty(node);
 
-	memcpy(&strings_range->desc, &read_ldesc, l2desc_size);
+	ssdfs_memcpy(&strings_range->desc, 0, l2desc_size,
+		     &read_ldesc, 0, l2desc_size,
+		     l2desc_size);
 	strings_range->index++;
 
 	err = ssdfs_lookup1_table_insert_descriptor(node, search,
@@ -9963,12 +10136,21 @@ int __ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 
 	down_read(&node->header_lock);
 	index_area_size = node->index_area.area_size;
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
-	memcpy(&lookup_tbl_area, &node->lookup_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
-	memcpy(&hash_tbl_area, &node->hash_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
 
 	err = ssdfs_check_items_area(node, &items_area);
@@ -10414,7 +10596,9 @@ int is_lookup1_position_correct(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
 	lookup = &search->result.name->lookup;
-	memcpy(&req_key, &lookup->desc, key_size);
+	ssdfs_memcpy(&req_key, 0, key_size,
+		     &lookup->desc, 0, key_size,
+		     key_size);
 
 	err = ssdfs_get_lookup1_table_search_key(node, lookup->index,
 						 &found_key);
@@ -10474,7 +10658,9 @@ int is_lookup2_position_correct(struct ssdfs_btree_node *node,
 	lookup_tbl_area = &node->lookup_tbl_area;
 
 	strings_range = &search->result.name->strings_range;
-	memcpy(&req_key, &strings_range->desc, key_size);
+	ssdfs_memcpy(&req_key, 0, key_size,
+		     &strings_range->desc, 0, key_size,
+		     key_size);
 
 	err = ssdfs_get_lookup2_descriptor(node, lookup_tbl_area,
 					   strings_range->index,
@@ -10706,7 +10892,9 @@ int ssdfs_find_lookup1_position_from_left(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
 	lookup = &search->result.name->lookup;
-	memcpy(&req_key, &lookup->desc, key_size);
+	ssdfs_memcpy(&req_key, 0, key_size,
+		     &lookup->desc, 0, key_size,
+		     key_size);
 	memset(&found_key, 0xFF, key_size);
 
 	if (lookup->index == 0) {
@@ -10779,7 +10967,9 @@ int ssdfs_find_lookup2_position_from_left(struct ssdfs_btree_node *node,
 	lookup_tbl_area = &node->lookup_tbl_area;
 
 	strings_range = &search->result.name->strings_range;
-	memcpy(&req_key, &strings_range->desc, key_size);
+	ssdfs_memcpy(&req_key, 0, key_size,
+		     &strings_range->desc, 0, key_size,
+		     key_size);
 
 	if (strings_range->index == 0) {
 		SSDFS_DBG("unable to find a new index: "
@@ -11050,7 +11240,10 @@ int ssdfs_find_lookup1_position_from_right(struct ssdfs_btree_node *node,
 
 	lookup = &search->result.name->lookup;
 	table_size = le16_to_cpu(node->raw.dict_header.lookup_table1_items);
-	memcpy(&req_key, &lookup->desc, key_size);
+
+	ssdfs_memcpy(&req_key, 0, key_size,
+		     &lookup->desc, 0, key_size,
+		     key_size);
 
 	if (lookup->index >= table_size) {
 		SSDFS_DBG("unable to find a new index: "
@@ -11123,7 +11316,9 @@ int ssdfs_find_lookup2_position_from_right(struct ssdfs_btree_node *node,
 	table_size = lookup_tbl_area->index_count;
 
 	strings_range = &search->result.name->strings_range;
-	memcpy(&req_key, &strings_range->desc, key_size);
+	ssdfs_memcpy(&req_key, 0, key_size,
+		     &strings_range->desc, 0, key_size,
+		     key_size);
 
 	if (strings_range->index >= table_size) {
 		SSDFS_DBG("unable to find a new index: "
@@ -12187,7 +12382,9 @@ int ssdfs_save_found_l1desc(struct ssdfs_strings_range_descriptor *range,
 		return -ERANGE;
 	}
 
-	memcpy(&lookup->desc, &found, key_size);
+	ssdfs_memcpy(&lookup->desc, 0, key_size,
+		     &found, 0, key_size,
+		     key_size);
 	lookup->index = found_index;
 
 	return 0;
@@ -12275,7 +12472,9 @@ int __ssdfs_find_l1desc_for_l2desc(struct ssdfs_btree_node *node,
 	hash_lo2 = le32_to_cpu(lower_bound.name.hash_lo);
 
 	if (hash_lo1 < hash_lo2) {
-		memcpy(&lookup->desc, &lower_bound, key_size);
+		ssdfs_memcpy(&lookup->desc, 0, key_size,
+			     &lower_bound, 0, key_size,
+			     key_size);
 		lookup->index = (u16)lower_index;
 		return -ENODATA;
 	} else if (hash_lo1 == hash_lo2) {
@@ -12290,7 +12489,9 @@ int __ssdfs_find_l1desc_for_l2desc(struct ssdfs_btree_node *node,
 		} else
 			return 0;
 	} else {
-		memcpy(&lookup->desc, &lower_bound, key_size);
+		ssdfs_memcpy(&lookup->desc, 0, key_size,
+			     &lower_bound, 0, key_size,
+			     key_size);
 		lookup->index = (u16)lower_index;
 	}
 
@@ -12396,7 +12597,9 @@ int __ssdfs_find_l1desc_for_l2desc(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	memcpy(&lookup->desc, &lower_bound, key_size);
+	ssdfs_memcpy(&lookup->desc, 0, key_size,
+		     &lower_bound, 0, key_size,
+		     key_size);
 	lookup->index = (u16)lower_index;
 
 	return 0;
@@ -12540,8 +12743,11 @@ int ssdfs_shift_lookup1_table_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		memcpy(&lookup_table[lower_l1bound.index],
-			&lower_l1bound.desc, l1desc_size);
+		ssdfs_memcpy(&lookup_table[lower_l1bound.index],
+			     0, l1desc_size,
+			     &lower_l1bound.desc,
+			     0, l1desc_size,
+			     l1desc_size);
 	}
 
 	if (upper_l2bound->index < start_index2 ||
@@ -12564,8 +12770,11 @@ int ssdfs_shift_lookup1_table_range_left(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		memcpy(&lookup_table[upper_l1bound.index],
-			&upper_l1bound.desc, l1desc_size);
+		ssdfs_memcpy(&lookup_table[upper_l1bound.index],
+			     0, l1desc_size,
+			     &upper_l1bound.desc,
+			     0, l1desc_size,
+			     l1desc_size);
 	}
 
 	if (start_selected_index > end_selected_index) {
@@ -12694,11 +12903,15 @@ int __ssdfs_find_l2desc_for_hdesc(struct ssdfs_btree_node *node,
 	res = ssdfs_hash_index_compare(hash_index,
 					SSDFS_LTBL2_DESC(&lower_bound));
 	if (res < 0) {
-		memcpy(&range->desc, &lower_bound, key_size);
+		ssdfs_memcpy(&range->desc, 0, key_size,
+			     &lower_bound, 0, key_size,
+			     key_size);
 		range->index = (u16)lower_index;
 		return -ENODATA;
 	} else if (res == 0) {
-		memcpy(&range->desc, &lower_bound, key_size);
+		ssdfs_memcpy(&range->desc, 0, key_size,
+			     &lower_bound, 0, key_size,
+			     key_size);
 		range->index = (u16)lower_index;
 		return 0;
 	}
@@ -12720,11 +12933,15 @@ int __ssdfs_find_l2desc_for_hdesc(struct ssdfs_btree_node *node,
 		res = ssdfs_hash_index_compare(hash_index,
 					SSDFS_LTBL2_DESC(&upper_bound));
 		if (res == 0) {
-			memcpy(&range->desc, &upper_bound, key_size);
+			ssdfs_memcpy(&range->desc, 0, key_size,
+				     &upper_bound, 0, key_size,
+				     key_size);
 			range->index = (u16)upper_index;
 			return 0;
 		} else if (res > 0) {
-			memcpy(&range->desc, &upper_bound, key_size);
+			ssdfs_memcpy(&range->desc, 0, key_size,
+				     &upper_bound, 0, key_size,
+				     key_size);
 			range->index = (u16)upper_index;
 			return -ENODATA;
 		}
@@ -12759,7 +12976,9 @@ int __ssdfs_find_l2desc_for_hdesc(struct ssdfs_btree_node *node,
 			if (res < 0)
 				upper_index = index;
 			else if (res == 0) {
-				memcpy(&range->desc, &lower_bound, key_size);
+				ssdfs_memcpy(&range->desc, 0, key_size,
+					     &lower_bound, 0, key_size,
+					     key_size);
 				range->index = (u16)index;
 				return 0;
 			} else {
@@ -12772,9 +12991,11 @@ int __ssdfs_find_l2desc_for_hdesc(struct ssdfs_btree_node *node,
 					if (res < 0) {
 						lower_index = index;
 					} else if (res == 0) {
-						memcpy(&range->desc,
-							&upper_bound,
-							key_size);
+						ssdfs_memcpy(&range->desc,
+							     0, key_size,
+							     &upper_bound,
+							     0, key_size,
+							     key_size);
 						range->index = (u16)index + 1;
 						return 0;
 					} else
@@ -12790,7 +13011,9 @@ int __ssdfs_find_l2desc_for_hdesc(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	memcpy(&range->desc, &lower_bound, key_size);
+	ssdfs_memcpy(&range->desc, 0, key_size,
+		     &lower_bound, 0, key_size,
+		     key_size);
 	range->index = (u16)lower_index;
 
 	return 0;
@@ -13229,8 +13452,11 @@ int __ssdfs_shared_dict_btree_node_delete_range(struct ssdfs_btree_node *node,
 	}
 
 	down_read(&node->header_lock);
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
 	up_read(&node->header_lock);
 
 	err = ssdfs_check_items_area(node, &items_area);
@@ -13276,10 +13502,16 @@ int __ssdfs_shared_dict_btree_node_delete_range(struct ssdfs_btree_node *node,
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	memcpy(&lookup_tbl_area, &node->lookup_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
-	memcpy(&hash_tbl_area, &node->hash_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 
 	err = ssdfs_check_lookup2_table_area(node, &lookup_tbl_area);
 	if (unlikely(err)) {
@@ -13637,9 +13869,11 @@ do_hash_index_compare:
 	}
 
 	name->prefix.index = prefix_index;
-
-	memcpy(&name->strings_range, range,
-		sizeof(struct ssdfs_strings_range_descriptor));
+	ssdfs_memcpy(&name->strings_range,
+		     0, sizeof(struct ssdfs_strings_range_descriptor),
+		     range,
+		     0, sizeof(struct ssdfs_strings_range_descriptor),
+		     sizeof(struct ssdfs_strings_range_descriptor));
 
 	return 0;
 }
@@ -13761,8 +13995,11 @@ do_lookup2_index_compare:
 			goto do_lookup2_index_compare;
 	}
 
-	memcpy(&name->lookup, lookup,
-		sizeof(struct ssdfs_lookup_descriptor));
+	ssdfs_memcpy(&name->lookup,
+		     0, sizeof(struct ssdfs_lookup_descriptor),
+		     lookup,
+		     0, sizeof(struct ssdfs_lookup_descriptor),
+		     sizeof(struct ssdfs_lookup_descriptor));
 
 	return 0;
 }
@@ -13830,12 +14067,21 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 	}
 
 	down_read(&node->header_lock);
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
-	memcpy(&lookup_tbl_area, &node->lookup_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
-	memcpy(&hash_tbl_area, &node->hash_tbl_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->lookup_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->hash_tbl_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
 
 	if (items_area.items_capacity == 0 ||
@@ -13935,8 +14181,9 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 
 		case SSDFS_NAME_SUFFIX:
 		case SSDFS_FULL_NAME:
-			memcpy(&name->right_name.desc, &hash_desc,
-				hdesc_size);
+			ssdfs_memcpy(&name->right_name.desc, 0, hdesc_size,
+				     &hash_desc, 0, hdesc_size,
+				     hdesc_size);
 			name->right_name.index = hash_index;
 			name_index++;
 			break;

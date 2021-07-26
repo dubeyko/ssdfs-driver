@@ -626,6 +626,21 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 	SSDFS_ERR("CHECK FILE: %llu%%\n",
 		  div64_u64(threshold, per_1_percent));
 
+	SSDFS_ERR("FLUSH DENTRIES BTREE: starting...\n");
+
+	down_write(&ii->lock);
+	err = ssdfs_dentries_tree_flush(fsi, ii);
+	up_write(&ii->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to flush dentries tree: "
+			  "ino %lu, err %d\n",
+			  root_i->i_ino, err);
+		goto put_root_inode;
+	}
+
+	SSDFS_ERR("FLUSH DENTRIES BTREE: finished\n");
+
 	message_threshold = per_1_percent;
 
 	SSDFS_ERR("DELETE FILE: 0%%\n");

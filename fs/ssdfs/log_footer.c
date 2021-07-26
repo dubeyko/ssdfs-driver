@@ -735,30 +735,57 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 	vs->feature_compat_ro = cpu_to_le64(fsi->fs_feature_compat_ro);
 	vs->feature_incompat = cpu_to_le64(fsi->fs_feature_incompat);
 
-	memcpy(vs->uuid, fsi->vs->uuid, SSDFS_UUID_SIZE);
-	memcpy(vs->label, fsi->vs->label, SSDFS_VOLUME_LABEL_MAX);
-	memcpy(vs->cur_segs, cur_segs, size);
+	ssdfs_memcpy(vs->uuid, 0, SSDFS_UUID_SIZE,
+		     fsi->vs->uuid, 0, SSDFS_UUID_SIZE,
+		     SSDFS_UUID_SIZE);
+	ssdfs_memcpy(vs->label, 0, SSDFS_VOLUME_LABEL_MAX,
+		     fsi->vs->label, 0, SSDFS_VOLUME_LABEL_MAX,
+		     SSDFS_VOLUME_LABEL_MAX);
+	ssdfs_memcpy(vs->cur_segs, 0, size,
+		     cur_segs, 0, size,
+		     size);
 
 	vs->migration_threshold = cpu_to_le16(fsi->migration_threshold);
 
 	spin_unlock(&fsi->volume_state_lock);
 
-	memcpy(&vs->blkbmap, &fsi->vs->blkbmap,
-		sizeof(struct ssdfs_blk_bmap_options));
-	memcpy(&vs->blk2off_tbl, &fsi->vs->blk2off_tbl,
-		sizeof(struct ssdfs_blk2off_tbl_options));
-	memcpy(&vs->user_data, &fsi->vs->user_data,
-		sizeof(struct ssdfs_user_data_options));
+	ssdfs_memcpy(&vs->blkbmap,
+		     0, sizeof(struct ssdfs_blk_bmap_options),
+		     &fsi->vs->blkbmap,
+		     0, sizeof(struct ssdfs_blk_bmap_options),
+		     sizeof(struct ssdfs_blk_bmap_options));
+	ssdfs_memcpy(&vs->blk2off_tbl,
+		     0, sizeof(struct ssdfs_blk2off_tbl_options),
+		     &fsi->vs->blk2off_tbl,
+		     0, sizeof(struct ssdfs_blk2off_tbl_options),
+		     sizeof(struct ssdfs_blk2off_tbl_options));
 
-	memcpy(&vs->root_folder, &fsi->vs->root_folder,
-		sizeof(struct ssdfs_inode));
+	ssdfs_memcpy(&vs->user_data,
+		     0, sizeof(struct ssdfs_user_data_options),
+		     &fsi->vs->user_data,
+		     0, sizeof(struct ssdfs_user_data_options),
+		     sizeof(struct ssdfs_user_data_options));
+	ssdfs_memcpy(&vs->root_folder,
+		     0, sizeof(struct ssdfs_inode),
+		     &fsi->vs->root_folder,
+		     0, sizeof(struct ssdfs_inode),
+		     sizeof(struct ssdfs_inode));
 
-	memcpy(&vs->inodes_btree, &fsi->vs->inodes_btree,
-		sizeof(struct ssdfs_inodes_btree));
-	memcpy(&vs->shared_extents_btree, &fsi->vs->shared_extents_btree,
-		sizeof(struct ssdfs_shared_extents_btree));
-	memcpy(&vs->shared_dict_btree, &fsi->vs->shared_dict_btree,
-		sizeof(struct ssdfs_shared_dictionary_btree));
+	ssdfs_memcpy(&vs->inodes_btree,
+		     0, sizeof(struct ssdfs_inodes_btree),
+		     &fsi->vs->inodes_btree,
+		     0, sizeof(struct ssdfs_inodes_btree),
+		     sizeof(struct ssdfs_inodes_btree));
+	ssdfs_memcpy(&vs->shared_extents_btree,
+		     0, sizeof(struct ssdfs_shared_extents_btree),
+		     &fsi->vs->shared_extents_btree,
+		     0, sizeof(struct ssdfs_shared_extents_btree),
+		     sizeof(struct ssdfs_shared_extents_btree));
+	ssdfs_memcpy(&vs->shared_dict_btree,
+		     0, sizeof(struct ssdfs_shared_dictionary_btree),
+		     &fsi->vs->shared_dict_btree,
+		     0, sizeof(struct ssdfs_shared_dictionary_btree),
+		     sizeof(struct ssdfs_shared_dictionary_btree));
 
 	return 0;
 }

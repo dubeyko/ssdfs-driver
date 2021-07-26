@@ -250,12 +250,12 @@ bool need_update_parent_index_area(u64 start_hash,
 int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 					struct ssdfs_btree_search *search,
 					struct ssdfs_btree_hierarchy *ptr);
-int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
-					struct ssdfs_btree_search *search,
-					struct ssdfs_btree_hierarchy *ptr);
 int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *ptr,
 					int cur_height,
 					struct ssdfs_btree_search *search);
+int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
+					struct ssdfs_btree_search *search,
+					struct ssdfs_btree_hierarchy *ptr);
 int ssdfs_btree_process_level_for_delete(struct ssdfs_btree_hierarchy *ptr,
 					 int cur_height,
 					 struct ssdfs_btree_search *search);

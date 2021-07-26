@@ -753,16 +753,31 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 	vh->inodes_seg_log_pages = cpu_to_le16(fsi->inodes_seg_log_pages);
 	vh->user_data_log_pages = cpu_to_le16(fsi->user_data_log_pages);
 
-	memcpy(&vh->segbmap, &fsi->vh->segbmap,
-		sizeof(struct ssdfs_segbmap_sb_header));
-	memcpy(&vh->maptbl, &fsi->vh->maptbl,
-		sizeof(struct ssdfs_maptbl_sb_header));
-	memcpy(&vh->dentries_btree, &fsi->vh->dentries_btree,
-		sizeof(struct ssdfs_dentries_btree_descriptor));
-	memcpy(&vh->extents_btree, &fsi->vh->extents_btree,
-		sizeof(struct ssdfs_extents_btree_descriptor));
-	memcpy(&vh->xattr_btree, &fsi->vh->xattr_btree,
-		sizeof(struct ssdfs_xattr_btree_descriptor));
+	ssdfs_memcpy(&vh->segbmap,
+		     0, sizeof(struct ssdfs_segbmap_sb_header),
+		     &fsi->vh->segbmap,
+		     0, sizeof(struct ssdfs_segbmap_sb_header),
+		     sizeof(struct ssdfs_segbmap_sb_header));
+	ssdfs_memcpy(&vh->maptbl,
+		     0, sizeof(struct ssdfs_maptbl_sb_header),
+		     &fsi->vh->maptbl,
+		     0, sizeof(struct ssdfs_maptbl_sb_header),
+		     sizeof(struct ssdfs_maptbl_sb_header));
+	ssdfs_memcpy(&vh->dentries_btree,
+		     0, sizeof(struct ssdfs_dentries_btree_descriptor),
+		     &fsi->vh->dentries_btree,
+		     0, sizeof(struct ssdfs_dentries_btree_descriptor),
+		     sizeof(struct ssdfs_dentries_btree_descriptor));
+	ssdfs_memcpy(&vh->extents_btree,
+		     0, sizeof(struct ssdfs_extents_btree_descriptor),
+		     &fsi->vh->extents_btree,
+		     0, sizeof(struct ssdfs_extents_btree_descriptor),
+		     sizeof(struct ssdfs_extents_btree_descriptor));
+	ssdfs_memcpy(&vh->xattr_btree,
+		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
+		     &fsi->vh->xattr_btree,
+		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
+		     sizeof(struct ssdfs_xattr_btree_descriptor));
 }
 
 /*
@@ -955,15 +970,27 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->nsegs = cpu_to_le64(fsi->nsegs);
 	mutex_unlock(&fsi->resize_mutex);
 
-	memcpy(&hdr->root_folder, &fsi->vs->root_folder,
-		sizeof(struct ssdfs_inode));
+	ssdfs_memcpy(&hdr->root_folder,
+		     0, sizeof(struct ssdfs_inode),
+		     &fsi->vs->root_folder,
+		     0, sizeof(struct ssdfs_inode),
+		     sizeof(struct ssdfs_inode));
 
-	memcpy(&hdr->inodes_btree, &fsi->vs->inodes_btree,
-		sizeof(struct ssdfs_inodes_btree));
-	memcpy(&hdr->shared_extents_btree, &fsi->vs->shared_extents_btree,
-		sizeof(struct ssdfs_shared_extents_btree));
-	memcpy(&hdr->shared_dict_btree, &fsi->vs->shared_dict_btree,
-		sizeof(struct ssdfs_shared_dictionary_btree));
+	ssdfs_memcpy(&hdr->inodes_btree,
+		     0, sizeof(struct ssdfs_inodes_btree),
+		     &fsi->vs->inodes_btree,
+		     0, sizeof(struct ssdfs_inodes_btree),
+		     sizeof(struct ssdfs_inodes_btree));
+	ssdfs_memcpy(&hdr->shared_extents_btree,
+		     0, sizeof(struct ssdfs_shared_extents_btree),
+		     &fsi->vs->shared_extents_btree,
+		     0, sizeof(struct ssdfs_shared_extents_btree),
+		     sizeof(struct ssdfs_shared_extents_btree));
+	ssdfs_memcpy(&hdr->shared_dict_btree,
+		     0, sizeof(struct ssdfs_shared_dictionary_btree),
+		     &fsi->vs->shared_dict_btree,
+		     0, sizeof(struct ssdfs_shared_dictionary_btree),
+		     sizeof(struct ssdfs_shared_dictionary_btree));
 
 	hdr->sequence_id = sequence_id;
 

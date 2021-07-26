@@ -43,6 +43,17 @@ config SSDFS_DEBUG
 	  If you are going to debug SSDFS driver then choose Y here.
 	  If unsure, say N.
 
+config SSDFS_TRACK_API_CALL
+	bool "SSDFS API calls tracking"
+	depends on SSDFS
+	help
+	  This option enables output from the key subsystems' fucntions.
+	  The main goal of this option is providing the vision of
+	  file system activity.
+
+	  If you are going to debug SSDFS driver then choose Y here.
+	  If unsure, say N.
+
 config SSDFS_MEMORY_LEAKS_ACCOUNTING
 	bool "SSDFS memory leaks accounting"
 	depends on SSDFS

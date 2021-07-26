@@ -226,12 +226,17 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 		return -ENOMEM;
 	}
 
-	memcpy(&fsi->segs_tree->dentries_btree, &fsi->vh->dentries_btree,
-		dentries_desc_size);
-	memcpy(&fsi->segs_tree->extents_btree, &fsi->vh->extents_btree,
-		extents_desc_size);
-	memcpy(&fsi->segs_tree->xattr_btree, &fsi->vh->xattr_btree,
-		xattr_desc_size);
+	ssdfs_memcpy(&fsi->segs_tree->dentries_btree,
+		     0, dentries_desc_size,
+		     &fsi->vh->dentries_btree,
+		     0, dentries_desc_size,
+		     dentries_desc_size);
+	ssdfs_memcpy(&fsi->segs_tree->extents_btree, 0, extents_desc_size,
+		     &fsi->vh->extents_btree, 0, extents_desc_size,
+		     extents_desc_size);
+	ssdfs_memcpy(&fsi->segs_tree->xattr_btree, 0, xattr_desc_size,
+		     &fsi->vh->xattr_btree, 0, xattr_desc_size,
+		     xattr_desc_size);
 
 	err = ssdfs_create_segment_tree_inode(fsi);
 	if (unlikely(err)) {
@@ -480,9 +485,6 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 			  page_index);
 		goto finish_add_segment;
 	}
-
-	SetPageLRU(page);
-	SetPageActive(page);
 
 	ssdfs_account_locked_page(page);
 

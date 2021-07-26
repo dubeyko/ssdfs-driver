@@ -506,7 +506,9 @@ int ssdfs_recovery_try_slow_search(struct ssdfs_recovery_env *env)
 			  protected_peb->peb.peb_id);
 		goto finish_search;
 	} else {
-		memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+		ssdfs_memcpy(&env->last_vh, 0, vh_size,
+			     env->sbi.vh_buf, 0, vh_size,
+			     vh_size);
 		ssdfs_backup_sb_info2(env);
 	}
 

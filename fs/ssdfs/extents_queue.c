@@ -375,8 +375,11 @@ void ssdfs_extent_info_init(int type, void *ptr, u64 owner_ino,
 	case SSDFS_EXTENT_INFO_RAW_EXTENT:
 		ei->type = type;
 		ei->owner_ino = owner_ino;
-		memcpy(&ei->raw.extent, ptr,
-			sizeof(struct ssdfs_raw_extent));
+		ssdfs_memcpy(&ei->raw.extent,
+			     0, sizeof(struct ssdfs_raw_extent),
+			     ptr,
+			     0, sizeof(struct ssdfs_raw_extent),
+			     sizeof(struct ssdfs_raw_extent));
 		break;
 
 	case SSDFS_EXTENT_INFO_INDEX_DESCRIPTOR:
@@ -385,8 +388,11 @@ void ssdfs_extent_info_init(int type, void *ptr, u64 owner_ino,
 	case SSDFS_EXTENT_INFO_XATTR_INDEX_DESCRIPTOR:
 		ei->type = type;
 		ei->owner_ino = owner_ino;
-		memcpy(&ei->raw.index, ptr,
-			sizeof(struct ssdfs_btree_index_key));
+		ssdfs_memcpy(&ei->raw.index,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     ptr,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     sizeof(struct ssdfs_btree_index_key));
 		break;
 
 	default:
@@ -639,7 +645,10 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 
 	kaddr = kmap_atomic(page);
 
-	memcpy(hdr, kaddr, hdr_size);
+	ssdfs_memcpy(hdr, 0, hdr_size,
+		     kaddr, 0, PAGE_SIZE,
+		     hdr_size);
+
 	if (!is_csum_valid(&hdr_ptr->check, hdr_ptr, hdr_size)) {
 		err = -EIO;
 		SSDFS_ERR("invalid checksum: node_id %u\n",
@@ -916,7 +925,9 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 
 	kaddr = kmap(page);
 
-	memcpy(&hdr, kaddr, sizeof(struct ssdfs_btree_node_header));
+	ssdfs_memcpy(&hdr, 0, sizeof(struct ssdfs_btree_node_header),
+		     kaddr, 0, PAGE_SIZE,
+		     sizeof(struct ssdfs_btree_node_header));
 
 	hdr_ptr = (struct ssdfs_extents_btree_node_header *)kaddr;
 	parent_ino = le64_to_cpu(hdr_ptr->parent_ino);
@@ -1215,7 +1226,9 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 
 	kaddr = kmap(page);
 
-	memcpy(&hdr, kaddr, sizeof(struct ssdfs_btree_node_header));
+	ssdfs_memcpy(&hdr, 0, sizeof(struct ssdfs_btree_node_header),
+		     kaddr, 0, PAGE_SIZE,
+		     sizeof(struct ssdfs_btree_node_header));
 
 	hdr_ptr = (struct ssdfs_xattrs_btree_node_header *)kaddr;
 	parent_ino = le64_to_cpu(hdr_ptr->parent_ino);

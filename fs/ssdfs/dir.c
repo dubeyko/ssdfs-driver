@@ -1423,8 +1423,11 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 		SSDFS_DBG("old_hash %llx\n", old_hash);
 
 		down_read(&parent->header_lock);
-		memcpy(&area, &parent->index_area,
-			sizeof(struct ssdfs_btree_node_index_area));
+		ssdfs_memcpy(&area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     &parent->index_area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     sizeof(struct ssdfs_btree_node_index_area));
 		err = ssdfs_find_index_by_hash(parent, &area,
 						old_hash,
 						&found_pos);

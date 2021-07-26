@@ -105,12 +105,21 @@ int ssdfs_peb_start_migration(struct ssdfs_peb_container *pebc)
 	BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, peb_type %#x, "
+		  "migration_state %#x, items_state %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->items_state));
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "migration_state %#x, items_state %#x\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  atomic_read(&pebc->migration_state),
 		  atomic_read(&pebc->items_state));
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 	si = pebc->parent_si;
@@ -173,7 +182,11 @@ start_migration_done:
 
 	wake_up_all(&pebc->migration_wq);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -488,7 +501,11 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 		return -EINVAL;
 	}
 
-	memcpy(&copy_range, range, sizeof(struct ssdfs_block_bmap_range));
+	ssdfs_memcpy(&copy_range,
+		     0, sizeof(struct ssdfs_block_bmap_range),
+		     range,
+		     0, sizeof(struct ssdfs_block_bmap_range),
+		     sizeof(struct ssdfs_block_bmap_range));
 
 repeat_valid_blocks_processing:
 	req = ssdfs_request_alloc();
@@ -796,6 +813,17 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, peb_type %#x, "
+		  "migration_state %#x, migration_phase %#x, "
+		  "items_state %#x, range_len %u, blk_type %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->migration_phase),
+		  atomic_read(&pebc->items_state),
+		  range_len, blk_type);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "migration_state %#x, migration_phase %#x, "
 		  "items_state %#x, range_len %u, blk_type %#x\n",
@@ -805,6 +833,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		  atomic_read(&pebc->migration_phase),
 		  atomic_read(&pebc->items_state),
 		  range_len, blk_type);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (range_len == 0) {
 		SSDFS_ERR("invalid range_len %u\n", range_len);
@@ -844,7 +873,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 	switch (atomic_read(&pebc->migration_phase)) {
 	case SSDFS_SRC_PEB_NOT_EXHAUSTED:
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("SRC PEB is not exausted\n");
+#else
 		SSDFS_DBG("SRC PEB is not exausted\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 		return -ENODATA;
 
 	case SSDFS_DST_PEB_RECEIVES_DATA:
@@ -878,6 +911,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 		if (err == -ENODATA) {
 			/* no valid blocks */
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+			SSDFS_ERR("no valid blocks\n");
+#else
+			SSDFS_DBG("no valid blocks\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to collect garbage: "
@@ -926,9 +964,17 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 			BUG();
 		}
 	} else {
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("unable to find blocks for migration\n");
+#else
 		SSDFS_DBG("unable to find blocks for migration\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 		return -ENODATA;
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -954,12 +1000,21 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, peb_type %#x, "
+		  "migration_state %#x, items_state %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->items_state));
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "migration_state %#x, items_state %#x\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  atomic_read(&pebc->migration_state),
 		  atomic_read(&pebc->items_state));
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	si = pebc->parent_si;
 	fsi = pebc->parent_si->fsi;
@@ -1189,7 +1244,11 @@ finish_migration_done:
 
 	wake_up_all(&pebc->migration_wq);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

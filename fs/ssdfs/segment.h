@@ -484,5 +484,8 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 			   u64 seg_id, int seg_state,
 			   u16 seg_type, u16 log_pages,
 			   u8 create_threads);
+int ssdfs_segment_change_state(struct ssdfs_segment_info *si);
+int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
+				      u64 *start_seg, u64 *end_seg);
 
 #endif /* _SSDFS_SEGMENT_H */

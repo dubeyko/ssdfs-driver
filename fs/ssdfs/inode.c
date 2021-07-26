@@ -319,7 +319,12 @@ static int ssdfs_read_inode(struct inode *inode)
 	ssdfs_set_inode_flags(inode);
 	ii->name_hash = le64_to_cpu(raw_inode->hash_code);
 	ii->name_len = le16_to_cpu(raw_inode->name_len);
-	memcpy(&ii->raw_inode, raw_inode, sizeof(struct ssdfs_inode));
+
+	ssdfs_memcpy(&ii->raw_inode,
+		     0, sizeof(struct ssdfs_inode),
+		     raw_inode,
+		     0, sizeof(struct ssdfs_inode),
+		     sizeof(struct ssdfs_inode));
 
 	if (S_ISREG(inode->i_mode)) {
 		if (private_flags & ~SSDFS_IFREG_PRIVATE_FLAG_MASK) {
@@ -923,9 +928,15 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
-	memcpy(&dentries_btree, &fsi->vh->dentries_btree, dentries_desc_size);
-	memcpy(&extents_btree, &fsi->vh->extents_btree, extents_desc_size);
-	memcpy(&xattr_btree, &fsi->vh->xattr_btree, xattr_desc_size);
+	ssdfs_memcpy(&dentries_btree, 0, dentries_desc_size,
+		     &fsi->vh->dentries_btree, 0, dentries_desc_size,
+		     dentries_desc_size);
+	ssdfs_memcpy(&extents_btree, 0, extents_desc_size,
+		     &fsi->vh->extents_btree, 0, extents_desc_size,
+		     extents_desc_size);
+	ssdfs_memcpy(&xattr_btree, 0, xattr_desc_size,
+		     &fsi->vh->xattr_btree, 0, xattr_desc_size,
+		     xattr_desc_size);
 	up_read(&fsi->volume_sem);
 
 	if (raw_inode_size != sizeof(struct ssdfs_inode)) {
@@ -976,8 +987,11 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 		if (memcmp(&extents_btree, &ii->extents_tree->desc,
 						extents_desc_size) != 0) {
-			memcpy(&extents_btree, &ii->extents_tree->desc,
-				extents_desc_size);
+			ssdfs_memcpy(&extents_btree,
+				     0, extents_desc_size,
+				     &ii->extents_tree->desc,
+				     0, extents_desc_size,
+				     extents_desc_size);
 			has_save_extents_desc = true;
 		} else
 			has_save_extents_desc = false;
@@ -992,8 +1006,11 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 		if (memcmp(&dentries_btree, &ii->dentries_tree->desc,
 						dentries_desc_size) != 0) {
-			memcpy(&dentries_btree, &ii->dentries_tree->desc,
-				dentries_desc_size);
+			ssdfs_memcpy(&dentries_btree,
+				     0, dentries_desc_size,
+				     &ii->dentries_tree->desc,
+				     0, dentries_desc_size,
+				     dentries_desc_size);
 			has_save_dentries_desc = true;
 		} else
 			has_save_dentries_desc = false;
@@ -1010,8 +1027,11 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 		if (memcmp(&xattr_btree, &ii->xattrs_tree->desc,
 						xattr_desc_size) != 0) {
-			memcpy(&xattr_btree, &ii->xattrs_tree->desc,
-				xattr_desc_size);
+			ssdfs_memcpy(&xattr_btree,
+				     0, xattr_desc_size,
+				     &ii->xattrs_tree->desc,
+				     0, xattr_desc_size,
+				     xattr_desc_size);
 			has_save_xattrs_desc = true;
 		} else
 			has_save_xattrs_desc = false;
@@ -1062,7 +1082,9 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 			   search->result.items_in_buffer);
 	}
 
-	memcpy(search->result.buf, ri, raw_inode_size);
+	ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
+		     ri, 0, raw_inode_size,
+		     raw_inode_size);
 
 finish_write_inode:
 	up_write(&ii->lock);
@@ -1073,12 +1095,21 @@ finish_write_inode:
 	if (has_save_dentries_desc || has_save_extents_desc ||
 						has_save_xattrs_desc) {
 		down_write(&fsi->volume_sem);
-		memcpy(&fsi->vh->dentries_btree, &dentries_btree,
-						dentries_desc_size);
-		memcpy(&fsi->vh->extents_btree, &extents_btree,
-						extents_desc_size);
-		memcpy(&fsi->vh->xattr_btree, &xattr_btree,
-						xattr_desc_size);
+		ssdfs_memcpy(&fsi->vh->dentries_btree,
+			     0, dentries_desc_size,
+			     &dentries_btree,
+			     0, dentries_desc_size,
+			     dentries_desc_size);
+		ssdfs_memcpy(&fsi->vh->extents_btree,
+			     0, extents_desc_size,
+			     &extents_btree,
+			     0, extents_desc_size,
+			     extents_desc_size);
+		ssdfs_memcpy(&fsi->vh->xattr_btree,
+			     0, xattr_desc_size,
+			     &xattr_btree,
+			     0, xattr_desc_size,
+			     xattr_desc_size);
 		up_write(&fsi->volume_sem);
 	}
 

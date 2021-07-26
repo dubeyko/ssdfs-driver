@@ -210,8 +210,11 @@ int ssdfs_xattrs_tree_create(struct ssdfs_fs_info *fsi,
 	memset(&ptr->root_buffer, 0xFF,
 		sizeof(struct ssdfs_btree_inline_root_node));
 	ptr->root = NULL;
-	memcpy(&ptr->desc, &fsi->segs_tree->xattr_btree,
-		sizeof(struct ssdfs_xattr_btree_descriptor));
+	ssdfs_memcpy(&ptr->desc,
+		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
+		     &fsi->segs_tree->xattr_btree,
+		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
+		     sizeof(struct ssdfs_xattr_btree_descriptor));
 	ptr->owner = ii;
 	ptr->fsi = fsi;
 
@@ -378,7 +381,9 @@ int ssdfs_xattrs_tree_init(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	memcpy(&raw_inode, &ii->raw_inode, sizeof(struct ssdfs_inode));
+	ssdfs_memcpy(&raw_inode, 0, sizeof(struct ssdfs_inode),
+		     &ii->raw_inode, 0, sizeof(struct ssdfs_inode),
+		     sizeof(struct ssdfs_inode));
 
 	flags = le16_to_cpu(raw_inode.private_flags);
 
@@ -459,8 +464,12 @@ int ssdfs_xattrs_tree_init(struct ssdfs_fs_info *fsi,
 		}
 
 		tree->root = &tree->root_buffer;
-		memcpy(tree->root, root_node,
-			sizeof(struct ssdfs_btree_inline_root_node));
+
+		ssdfs_memcpy(tree->root,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     root_node,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     sizeof(struct ssdfs_btree_inline_root_node));
 
 		atomic_set(&tree->type, SSDFS_PRIVATE_XATTR_BTREE);
 		atomic_set(&tree->state, SSDFS_XATTR_BTREE_INITIALIZED);
@@ -488,9 +497,11 @@ fail_create_generic_tree:
 				  capacity);
 			goto finish_tree_init;
 		} else if (capacity == SSDFS_DEFAULT_INLINE_XATTR_COUNT) {
-			memcpy(tree->inline_xattrs,
-				&raw_inode.internal[0].area2.inline_xattr,
-				xattr_size);
+			ssdfs_memcpy(tree->inline_xattrs,
+				     0, xattr_size,
+				     &raw_inode.internal[0].area2.inline_xattr,
+				     0, xattr_size,
+				     xattr_size);
 			atomic_set(&tree->type, SSDFS_INLINE_XATTR);
 
 			hash = le64_to_cpu(tree->inline_xattrs[0].name_hash);
@@ -597,9 +608,11 @@ int ssdfs_xattrs_tree_flush(struct ssdfs_fs_info *fsi,
 			goto finish_xattrs_tree_flush;
 		}
 
-		memcpy(&ii->raw_inode.internal[0].area2.inline_xattr,
-			tree->inline_xattrs,
-			xattr_size);
+		ssdfs_memcpy(&ii->raw_inode.internal[0].area2.inline_xattr,
+			     0, xattr_size,
+			     tree->inline_xattrs,
+			     0, xattr_size,
+			     xattr_size);
 		atomic_or(SSDFS_INODE_HAS_INLINE_XATTR,
 			  &ii->private_flags);
 		break;
@@ -634,9 +647,11 @@ int ssdfs_xattrs_tree_flush(struct ssdfs_fs_info *fsi,
 			goto finish_xattrs_tree_flush;
 		}
 
-		memcpy(&ii->raw_inode.internal[0].area2.xattr_root,
-			tree->root,
-			sizeof(struct ssdfs_btree_inline_root_node));
+		ssdfs_memcpy(&ii->raw_inode.internal[0].area2.xattr_root,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     tree->root,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     sizeof(struct ssdfs_btree_inline_root_node));
 
 		atomic_or(SSDFS_INODE_HAS_XATTR_BTREE,
 			  &ii->private_flags);
@@ -998,8 +1013,11 @@ int ssdfs_xattrs_tree_find_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 			return -ERANGE;
 		}
 
-		memcpy(&search->raw.xattr.header, xattr,
-			sizeof(struct ssdfs_xattr_entry));
+		ssdfs_memcpy(&search->raw.xattr.header,
+			     0, sizeof(struct ssdfs_xattr_entry),
+			     xattr,
+			     0, sizeof(struct ssdfs_xattr_entry),
+			     sizeof(struct ssdfs_xattr_entry));
 
 		search->result.err = 0;
 		search->result.start_index = (u16)i;
@@ -1516,15 +1534,28 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
 
-		kaddr = kmap_atomic(page);
 		cur_len = min_t(size_t, PAGE_SIZE,
 				size - copied_data);
-		memcpy(kaddr, (u8 *)value + copied_data, cur_len);
-		copied_data += cur_len;
+
+		kaddr = kmap_atomic(page);
+		err = ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
+				   value, copied_data, size,
+				   cur_len);
 		kunmap_atomic(kaddr);
 
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: err %d\n", err);
+			goto finish_copy;
+		}
+
+		copied_data += cur_len;
+
+finish_copy:
 		ssdfs_put_page(page);
 		ssdfs_unlock_page(page);
+
+		if (unlikely(err))
+			goto finish_save_external_blob;
 
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
@@ -1745,22 +1776,32 @@ int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 	xattr->header.name_flags = name_flags;
 
 	inline_len = min_t(size_t, inline_len, SSDFS_XATTR_INLINE_NAME_MAX_LEN);
-	memcpy(xattr->header.inline_string, inline_name, inline_len);
+
+	ssdfs_memcpy(xattr->header.inline_string,
+		     0, SSDFS_XATTR_INLINE_NAME_MAX_LEN,
+		     inline_name,
+		     0, SSDFS_XATTR_INLINE_NAME_MAX_LEN,
+		     inline_len);
 
 	xattr->header.blob_len = cpu_to_le16((u16)size);
 	xattr->header.blob_type = blob_type;
 	xattr->header.blob_flags = blob_flags;
 
 	if (blob_flags & SSDFS_XATTR_HAS_EXTERNAL_BLOB) {
-		memcpy(&xattr->header.blob.descriptor,
-			&extent, sizeof(struct ssdfs_blob_extent));
+		ssdfs_memcpy(&xattr->header.blob.descriptor,
+			     0, sizeof(struct ssdfs_blob_extent),
+			     &extent,
+			     0, sizeof(struct ssdfs_blob_extent),
+			     sizeof(struct ssdfs_blob_extent));
 	} else if (size > SSDFS_XATTR_INLINE_BLOB_MAX_LEN) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid size %zu\n", size);
 		goto invalidate_blob;
 	} else {
-		memcpy(xattr->header.blob.inline_value.bytes,
-			value, size);
+		ssdfs_memcpy(xattr->header.blob.inline_value.bytes,
+			     0, SSDFS_XATTR_INLINE_BLOB_MAX_LEN,
+			     value, 0, size,
+			     size);
 	}
 
 invalidate_blob:
@@ -1791,9 +1832,11 @@ int ssdfs_xattrs_tree_add_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 					struct ssdfs_btree_search *search)
 {
 	struct ssdfs_xattr_entry *cur;
+	size_t entry_size = sizeof(struct ssdfs_xattr_entry);
 	int private_flags;
 	u64 hash1, hash2;
 	u16 start_index;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
@@ -1901,9 +1944,9 @@ int ssdfs_xattrs_tree_add_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 		}
 
 		cur = &tree->inline_xattrs[start_index];
-
-		memcpy(cur, &search->raw.xattr.header,
-			sizeof(struct ssdfs_xattr_entry));
+		ssdfs_memcpy(cur, 0, entry_size,
+			     &search->raw.xattr.header, 0, entry_size,
+			     entry_size);
 	} else {
 		if (start_index >= tree->inline_count) {
 			SSDFS_ERR("start_index %u >= inline_count %u\n",
@@ -1922,21 +1965,28 @@ int ssdfs_xattrs_tree_add_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 		}
 
 		if ((start_index + 1) <= tree->inline_count) {
-			memmove(&tree->inline_xattrs[start_index + 1],
-				cur,
-				(tree->inline_count - start_index) *
-					sizeof(struct ssdfs_xattr_entry));
-			memcpy(cur, &search->raw.xattr.header,
-				sizeof(struct ssdfs_xattr_entry));
+			err = ssdfs_memmove(tree->inline_xattrs,
+					    (start_index + 1) * entry_size,
+					    tree->inline_capacity * entry_size,
+					    cur, 0, entry_size,
+					    (tree->inline_count - start_index) *
+						entry_size);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to move: err %d\n", err);
+				return err;
+			}
 
+			ssdfs_memcpy(cur, 0, entry_size,
+				     &search->raw.xattr.header, 0, entry_size,
+				     entry_size);
 			hash1 = le64_to_cpu(cur->name_hash);
 
 			cur = &tree->inline_xattrs[start_index + 1];
-
 			hash2 = le64_to_cpu(cur->name_hash);
 		} else {
-			memcpy(cur, &search->raw.xattr.header,
-				sizeof(struct ssdfs_xattr_entry));
+			ssdfs_memcpy(cur, 0, entry_size,
+				     &search->raw.xattr.header, 0, entry_size,
+				     entry_size);
 
 			if (start_index > 0) {
 				hash2 = le64_to_cpu(cur->name_hash);
@@ -2174,7 +2224,10 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_xattrs_btree_info *tree)
 	} else if (tree->inline_capacity == 1) {
 		/* use the buffer on stack */
 		xattrs = &xattr_buf;
-		memcpy(xattrs, tree->inline_xattrs, buf_size);
+
+		ssdfs_memcpy(xattrs, 0, buf_size,
+			     tree->inline_xattrs, 0, buf_size,
+			     buf_size);
 	} else {
 		xattrs = ssdfs_xattr_kmalloc(buf_size, GFP_KERNEL);
 		if (!xattrs) {
@@ -2183,7 +2236,9 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_xattrs_btree_info *tree)
 			return -ENOMEM;
 		}
 
-		memcpy(xattrs, tree->inline_xattrs, buf_size);
+		ssdfs_memcpy(xattrs, 0, buf_size,
+			     tree->inline_xattrs, 0, buf_size,
+			     buf_size);
 		ssdfs_xattr_kfree(tree->inline_xattrs);
 	}
 
@@ -2263,14 +2318,19 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_xattrs_btree_info *tree)
 		search->result.buf_size = sizeof(struct ssdfs_xattr_entry);
 		search->result.items_in_buffer = tree->inline_count;
 		search->result.buf = &search->raw.xattr;
-		memcpy(&search->raw.xattr, xattrs, search->result.buf_size);
+		ssdfs_memcpy(&search->raw.xattr, 0, search->result.buf_size,
+			     xattrs, 0, search->result.buf_size,
+			     search->result.buf_size);
 	} else {
 		err = ssdfs_btree_search_alloc_result_buf(search, buf_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to allocate memory for buffer\n");
 			goto finish_add_range;
 		}
-		memcpy(search->result.buf, xattrs, search->result.buf_size);
+
+		ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
+			     xattrs, 0, search->result.buf_size,
+			     search->result.buf_size);
 		search->result.items_in_buffer = tree->inline_count;
 	}
 
@@ -2313,7 +2373,9 @@ destroy_generic_tree:
 	ssdfs_btree_destroy(&tree->buffer.tree);
 
 recover_inline_tree:
-	memcpy(tree->inline_xattrs, xattrs, buf_size);
+	ssdfs_memcpy(tree->inline_xattrs, 0, buf_size,
+		     xattrs, 0, buf_size,
+		     buf_size);
 	tree->generic_tree = NULL;
 
 	if (tree->inline_capacity > 1)
@@ -2754,8 +2816,10 @@ int ssdfs_xattrs_tree_change_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 	}
 
 	cur2 = &tree->inline_xattrs[start_index];
-	memcpy(cur2, &search->raw.xattr.header,
-		sizeof(struct ssdfs_xattr_entry));
+	ssdfs_memcpy(cur2, 0, sizeof(struct ssdfs_xattr_entry),
+		     &search->raw.xattr.header,
+		     0, sizeof(struct ssdfs_xattr_entry),
+		     sizeof(struct ssdfs_xattr_entry));
 	atomic_set(&tree->state, SSDFS_XATTR_BTREE_DIRTY);
 
 	return 0;
@@ -3034,7 +3098,8 @@ int ssdfs_xattrs_tree_delete_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_raw_xattr *cur;
-	struct ssdfs_xattr_entry *xattr1, *xattr2;
+	struct ssdfs_xattr_entry *xattr1;
+	size_t entry_size = sizeof(struct ssdfs_xattr_entry);
 	u64 hash1, hash2;
 	u16 index;
 	int err;
@@ -3168,12 +3233,18 @@ int ssdfs_xattrs_tree_delete_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 	}
 
 	if ((index + 1) < tree->inline_count) {
-		xattr1 = &tree->inline_xattrs[index];
-		xattr2 = &tree->inline_xattrs[index + 1];
-
-		memmove(xattr1, xattr2,
-			(tree->inline_count - index) *
-			sizeof(struct ssdfs_xattr_entry));
+		err = ssdfs_memmove(tree->inline_xattrs,
+				    index * entry_size,
+				    tree->inline_capacity * entry_size,
+				    tree->inline_xattrs,
+				    (index + 1) * entry_size,
+				    tree->inline_capacity * entry_size,
+				    (tree->inline_count - index) *
+					entry_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move: err %d\n", err);
+			return err;
+		}
 	}
 
 	index = (u16)(tree->inline_count - 1);
@@ -3432,7 +3503,9 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_xattrs_btree_info *tree)
 		xattrs = &xattr_buf;
 		found_range = search->result.items_in_buffer;
 		buf_size = xattr_size;
-		memcpy(xattrs, search->result.buf, xattr_size);
+		ssdfs_memcpy(xattrs, 0, xattr_size,
+			     search->result.buf, 0, search->result.buf_size,
+			     xattr_size);
 		break;
 
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
@@ -3461,7 +3534,9 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_xattrs_btree_info *tree)
 			goto finish_process_range;
 		}
 
-		memcpy(xattrs, search->result.buf, buf_size);
+		ssdfs_memcpy(xattrs, 0, buf_size,
+			     search->result.buf, 0, search->result.buf_size,
+			     buf_size);
 		break;
 
 	default:
@@ -3520,7 +3595,9 @@ finish_process_range:
 	ssdfs_btree_destroy(&tree->buffer.tree);
 
 	if (buf_size == xattr_size) {
-		memcpy(&tree->buffer.xattr, xattrs, xattr_size);
+		ssdfs_memcpy(&tree->buffer.xattr, 0, xattr_size,
+			     xattrs, 0, xattr_size,
+			     xattr_size);
 		tree->inline_xattrs = &tree->buffer.xattr;
 		atomic_set(&tree->type, SSDFS_INLINE_XATTR);
 	} else {
@@ -3921,7 +3998,6 @@ ssdfs_xattrs_tree_extract_inline_range(struct ssdfs_xattrs_btree_info *tree,
 					u16 start_index, u16 count,
 					struct ssdfs_btree_search *search)
 {
-	struct ssdfs_xattr_entry *src, *dst;
 	size_t xattr_size = sizeof(struct ssdfs_xattr_entry);
 	u16 inline_count;
 	size_t buf_size;
@@ -4018,10 +4094,17 @@ ssdfs_xattrs_tree_extract_inline_range(struct ssdfs_xattrs_btree_info *tree,
 	}
 
 	for (i = start_index; i < (start_index + count); i++) {
-		src = &tree->inline_xattrs[i];
-		dst = (struct ssdfs_xattr_entry *)(search->result.buf +
-						    (i * xattr_size));
-		memcpy(dst, src, xattr_size);
+		err = ssdfs_memcpy(search->result.buf,
+				   i * xattr_size, search->result.buf_size,
+				   tree->inline_xattrs,
+				   i * xattr_size,
+				   tree->inline_capacity * xattr_size,
+				   xattr_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: err %d\n", err);
+			return err;
+		}
+
 		search->result.items_in_buffer++;
 		search->result.count++;
 	}
@@ -4213,6 +4296,7 @@ int ssdfs_xattrs_btree_desc_flush(struct ssdfs_btree *tree)
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_xattrs_btree_info *tree_info = NULL;
 	struct ssdfs_btree_descriptor desc;
+	size_t desc_size = sizeof(struct ssdfs_btree_descriptor);
 	size_t xattr_size = sizeof(struct ssdfs_xattr_entry);
 	u32 erasesize;
 	u32 node_size;
@@ -4238,7 +4322,7 @@ int ssdfs_xattrs_btree_desc_flush(struct ssdfs_btree *tree)
 					 buffer.tree);
 	}
 
-	memset(&desc, 0xFF, sizeof(struct ssdfs_btree_descriptor));
+	memset(&desc, 0xFF, desc_size);
 
 	desc.magic = cpu_to_le32(SSDFS_XATTR_BTREE_MAGIC);
 	desc.item_size = cpu_to_le16(xattr_size);
@@ -4273,9 +4357,9 @@ int ssdfs_xattrs_btree_desc_flush(struct ssdfs_btree *tree)
 		return -ERANGE;
 	}
 
-	memcpy(&tree_info->desc.desc, &desc,
-		sizeof(struct ssdfs_btree_descriptor));
-
+	ssdfs_memcpy(&tree_info->desc.desc, 0, desc_size,
+		     &desc, 0, desc_size,
+		     desc_size);
 	return 0;
 }
 
@@ -4353,9 +4437,11 @@ int ssdfs_xattrs_btree_create_root_node(struct ssdfs_fs_info *fsi,
 		}
 
 		raw_inode = &tree_info->owner->raw_inode;
-		memcpy(&tmp_buffer,
-			&raw_inode->internal[0].area2.xattr_root,
-			sizeof(struct ssdfs_btree_inline_root_node));
+		ssdfs_memcpy(&tmp_buffer,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     &raw_inode->internal[0].area2.xattr_root,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     sizeof(struct ssdfs_btree_inline_root_node));
 	} else {
 		switch (atomic_read(&tree_info->type)) {
 		case SSDFS_INLINE_XATTR:
@@ -4380,8 +4466,11 @@ int ssdfs_xattrs_btree_create_root_node(struct ssdfs_fs_info *fsi,
 				cpu_to_le32(SSDFS_BTREE_ROOT_NODE_ID);
 	}
 
-	memcpy(&tree_info->root_buffer, &tmp_buffer,
-		sizeof(struct ssdfs_btree_inline_root_node));
+	ssdfs_memcpy(&tree_info->root_buffer,
+		     0, sizeof(struct ssdfs_btree_inline_root_node),
+		     &tmp_buffer,
+		     0, sizeof(struct ssdfs_btree_inline_root_node),
+		     sizeof(struct ssdfs_btree_inline_root_node));
 	tree_info->root = &tree_info->root_buffer;
 	err = ssdfs_btree_create_root_node(node, tree_info->root);
 
@@ -4534,13 +4623,19 @@ int ssdfs_xattrs_btree_flush_root_node(struct ssdfs_btree_node *node)
 		}
 
 		ssdfs_btree_flush_root_node(node, tree_info->root);
-		memcpy(&tmp_buffer, tree_info->root,
-			sizeof(struct ssdfs_btree_inline_root_node));
+
+		ssdfs_memcpy(&tmp_buffer,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     tree_info->root,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     sizeof(struct ssdfs_btree_inline_root_node));
 
 		raw_inode = &tree_info->owner->raw_inode;
-		memcpy(&raw_inode->internal[0].area2.xattr_root,
-			&tmp_buffer,
-			sizeof(struct ssdfs_btree_inline_root_node));
+		ssdfs_memcpy(&raw_inode->internal[0].area2.xattr_root,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     &tmp_buffer,
+			     0, sizeof(struct ssdfs_btree_inline_root_node),
+			     sizeof(struct ssdfs_btree_inline_root_node));
 	} else {
 		err = -ERANGE;
 		SSDFS_ERR("xattrs tree is inline xattrs array\n");
@@ -4949,7 +5044,9 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_write(&node->header_lock);
 
-	memcpy(&node->raw.xattrs_header, hdr, hdr_size);
+	ssdfs_memcpy(&node->raw.xattrs_header, 0, hdr_size,
+		     hdr, 0, hdr_size,
+		     hdr_size);
 
 	err = ssdfs_btree_init_node(node, &hdr->node,
 				    hdr_size);
@@ -4987,36 +5084,49 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
-	if (item_size == 0 || node_size % item_size) {
-		err = -EIO;
-		SSDFS_ERR("invalid size: item_size %u, node_size %u\n",
-			  item_size, node_size);
-		goto finish_header_init;
-	}
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_ROOT_NODE:
+	case SSDFS_BTREE_INDEX_NODE:
+		/* do nothing */
+		break;
 
-	if (item_size != sizeof(struct ssdfs_xattr_entry)) {
-		err = -EIO;
-		SSDFS_ERR("invalid item_size: "
-			  "size %u, expected size %zu\n",
-			  item_size,
-			  sizeof(struct ssdfs_xattr_entry));
-		goto finish_header_init;
-	}
+	case SSDFS_BTREE_HYBRID_NODE:
+	case SSDFS_BTREE_LEAF_NODE:
+		if (item_size == 0 || node_size % item_size) {
+			err = -EIO;
+			SSDFS_ERR("invalid size: item_size %u, node_size %u\n",
+				  item_size, node_size);
+			goto finish_header_init;
+		}
 
-	if (items_capacity == 0 ||
-	    items_capacity > (node_size / item_size)) {
-		err = -EIO;
-		SSDFS_ERR("invalid items_capacity %u\n",
-			  items_capacity);
-		goto finish_header_init;
-	}
+		if (item_size != sizeof(struct ssdfs_xattr_entry)) {
+			err = -EIO;
+			SSDFS_ERR("invalid item_size: "
+				  "size %u, expected size %zu\n",
+				  item_size,
+				  sizeof(struct ssdfs_xattr_entry));
+			goto finish_header_init;
+		}
 
-	if (xattrs_count > items_capacity) {
-		err = -EIO;
-		SSDFS_ERR("items_capacity %u != xattrs_count %u\n",
-			  items_capacity,
-			  xattrs_count);
-		goto finish_header_init;
+		if (items_capacity == 0 ||
+		    items_capacity > (node_size / item_size)) {
+			err = -EIO;
+			SSDFS_ERR("invalid items_capacity %u\n",
+				  items_capacity);
+			goto finish_header_init;
+		}
+
+		if (xattrs_count > items_capacity) {
+			err = -EIO;
+			SSDFS_ERR("items_capacity %u != xattrs_count %u\n",
+				  items_capacity,
+				  xattrs_count);
+			goto finish_header_init;
+		}
+		break;
+
+	default:
+		BUG();
 	}
 
 	calculated_used_space = hdr_size;
@@ -5335,7 +5445,9 @@ int ssdfs_xattrs_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	memcpy(&xattrs_header, &node->raw.xattrs_header, hdr_size);
+	ssdfs_memcpy(&xattrs_header, 0, hdr_size,
+		     &node->raw.xattrs_header, 0, hdr_size,
+		     hdr_size);
 
 	xattrs_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	xattrs_header.node.magic.key = cpu_to_le16(SSDFS_XATTR_BNODE_MAGIC);
@@ -5399,7 +5511,9 @@ int ssdfs_xattrs_btree_pre_flush_node(struct ssdfs_btree_node *node)
 		goto finish_xattrs_header_preparation;
 	}
 
-	memcpy(&node->raw.xattrs_header, &xattrs_header, hdr_size);
+	ssdfs_memcpy(&node->raw.xattrs_header, 0, hdr_size,
+		     &xattrs_header, 0, hdr_size,
+		     hdr_size);
 
 finish_xattrs_header_preparation:
 	up_write(&node->header_lock);
@@ -5415,8 +5529,10 @@ finish_xattrs_header_preparation:
 
 	page = node->content.pvec.pages[0];
 	kaddr = kmap_atomic(page);
-	memcpy(kaddr, &xattrs_header,
-		sizeof(struct ssdfs_xattrs_btree_node_header));
+	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
+		     &xattrs_header,
+		     0, sizeof(struct ssdfs_xattrs_btree_node_header),
+		     sizeof(struct ssdfs_xattrs_btree_node_header));
 	kunmap_atomic(kaddr);
 
 finish_node_pre_flush:
@@ -5794,8 +5910,11 @@ int ssdfs_check_found_xattr(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	memcpy(&search->raw.xattr.header, xattr,
-		sizeof(struct ssdfs_xattr_entry));
+	ssdfs_memcpy(&search->raw.xattr.header,
+		     0, sizeof(struct ssdfs_xattr_entry),
+		     xattr,
+		     0, sizeof(struct ssdfs_xattr_entry),
+		     sizeof(struct ssdfs_xattr_entry));
 
 	ssdfs_get_xattrs_hash_range(kaddr, start_hash, end_hash);
 
@@ -5932,7 +6051,6 @@ int ssdfs_extract_found_xattr(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_shared_dict_btree_info *dict;
 	struct ssdfs_xattr_entry *xattr;
-	struct ssdfs_raw_xattr *buf;
 	size_t buf_size = sizeof(struct ssdfs_raw_xattr);
 	struct ssdfs_name_string *name;
 	size_t name_size = sizeof(struct ssdfs_name_string);
@@ -5967,12 +6085,19 @@ int ssdfs_extract_found_xattr(struct ssdfs_fs_info *fsi,
 	BUG_ON(!search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	buf = (struct ssdfs_raw_xattr *)((u8 *)search->result.buf +
-						calculated);
 	xattr = (struct ssdfs_xattr_entry *)kaddr;
 
 	ssdfs_get_xattrs_hash_range(xattr, start_hash, end_hash);
-	memcpy(buf, xattr, item_size);
+
+	err = ssdfs_memcpy(search->result.buf,
+			   calculated, search->result.buf_size,
+			   xattr, 0, item_size,
+			   item_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
 	search->result.items_in_buffer++;
 
 	flags = xattr->name_flags;
@@ -6278,12 +6403,12 @@ int __ssdfs_xattrs_btree_node_get_xattr(struct pagevec *pvec,
 					u16 item_index,
 					struct ssdfs_xattr_entry *xattr)
 {
-	struct ssdfs_xattr_entry *found_xattr;
 	size_t item_size = sizeof(struct ssdfs_xattr_entry);
 	u32 item_offset;
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec || !xattr);
@@ -6322,9 +6447,15 @@ int __ssdfs_xattrs_btree_node_get_xattr(struct pagevec *pvec,
 	page = pvec->pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	found_xattr = (struct ssdfs_xattr_entry *)((u8 *)kaddr + item_offset);
-	memcpy(xattr, found_xattr, item_size);
+	err = ssdfs_memcpy(xattr, 0, item_size,
+			   kaddr, item_offset, PAGE_SIZE,
+			   item_size);
 	kunmap_atomic(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d, err\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -6830,8 +6961,11 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 			     buffer.tree);
 
 	down_read(&node->header_lock);
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
 	old_hash = node->items_area.start_hash;
 	up_read(&node->header_lock);
 
@@ -7143,8 +7277,11 @@ finish_insert_item:
 			struct ssdfs_btree_index_key key;
 
 			spin_lock(&node->descriptor_lock);
-			memcpy(&key, &node->node_index,
-				sizeof(struct ssdfs_btree_index_key));
+			ssdfs_memcpy(&key,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     &node->node_index,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     sizeof(struct ssdfs_btree_index_key));
 			spin_unlock(&node->descriptor_lock);
 
 			key.index.hash = cpu_to_le64(start_hash);
@@ -7165,10 +7302,16 @@ finish_insert_item:
 			struct ssdfs_btree_index_key old_key, new_key;
 
 			spin_lock(&node->descriptor_lock);
-			memcpy(&old_key, &node->node_index,
-				sizeof(struct ssdfs_btree_index_key));
-			memcpy(&new_key, &node->node_index,
-				sizeof(struct ssdfs_btree_index_key));
+			ssdfs_memcpy(&old_key,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     &node->node_index,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     sizeof(struct ssdfs_btree_index_key));
+			ssdfs_memcpy(&new_key,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     &node->node_index,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     sizeof(struct ssdfs_btree_index_key));
 			spin_unlock(&node->descriptor_lock);
 
 			old_key.index.hash = cpu_to_le64(old_hash);
@@ -7541,8 +7684,11 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 	}
 
 	down_read(&node->header_lock);
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
 	up_read(&node->header_lock);
 
 	if (items_area.items_capacity == 0 ||
@@ -8160,8 +8306,11 @@ int __ssdfs_xattrs_btree_node_delete_range(struct ssdfs_btree_node *node,
 	}
 
 	down_read(&node->header_lock);
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
 	old_hash = node->items_area.start_hash;
 	up_read(&node->header_lock);
 
@@ -8475,8 +8624,11 @@ finish_detect_affected_items:
 		}
 	}
 
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
 
 	err = ssdfs_set_node_header_dirty(node, items_area.items_capacity);
 	if (unlikely(err)) {
@@ -8548,10 +8700,16 @@ finish_delete_range:
 			struct ssdfs_btree_index_key old_key, new_key;
 
 			spin_lock(&node->descriptor_lock);
-			memcpy(&old_key, &node->node_index,
-				sizeof(struct ssdfs_btree_index_key));
-			memcpy(&new_key, &node->node_index,
-				sizeof(struct ssdfs_btree_index_key));
+			ssdfs_memcpy(&old_key,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     &node->node_index,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     sizeof(struct ssdfs_btree_index_key));
+			ssdfs_memcpy(&new_key,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     &node->node_index,
+				     0, sizeof(struct ssdfs_btree_index_key),
+				     sizeof(struct ssdfs_btree_index_key));
 			spin_unlock(&node->descriptor_lock);
 
 			old_key.index.hash = cpu_to_le64(old_hash);

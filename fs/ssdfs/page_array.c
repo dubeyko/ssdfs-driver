@@ -279,24 +279,26 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 		return -ERANGE;
 	}
 
+	down_write(&array->lock);
+
 	old_capacity = atomic_read(&array->pages_capacity);
 
 	if (capacity < old_capacity) {
+		err = -EINVAL;
 		SSDFS_ERR("unable to shrink: "
 			  "capacity %d, pages_capacity %d\n",
 			  capacity,
 			  old_capacity);
-		return -EINVAL;
+		goto finish_reinit;
 	}
 
 	if (capacity == old_capacity) {
+		err = 0;
 		SSDFS_WARN("capacity %d == pages_capacity %d\n",
 			   capacity,
 			   old_capacity);
-		return 0;
+		goto finish_reinit;
 	}
-
-	down_write(&array->lock);
 
 	atomic_set(&array->pages_capacity, capacity);
 
@@ -328,8 +330,15 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 		memset(addr[i], 0xFF, bmap_bytes);
 	}
 
-	memcpy(pages, array->pages,
-		sizeof(struct page *) * old_capacity);
+	err = ssdfs_memcpy(pages,
+			   0, sizeof(struct page *) * capacity,
+			   array->pages,
+			   0, sizeof(struct page *) * old_capacity,
+			   sizeof(struct page *) * old_capacity);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		goto finish_reinit;
+	}
 
 	ssdfs_parray_kfree(array->pages);
 	array->pages = pages;
@@ -338,7 +347,9 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 		void *tmp_addr = NULL;
 
 		spin_lock(&array->bmap[i].lock);
-		memcpy(addr[i], array->bmap[i].ptr, array->bmap_bytes);
+		ssdfs_memcpy(addr[i], 0, bmap_bytes,
+			     array->bmap[i].ptr, 0, array->bmap_bytes,
+			     array->bmap_bytes);
 		tmp_addr = array->bmap[i].ptr;
 		array->bmap[i].ptr = addr[i];
 		addr[i] = NULL;
@@ -468,9 +479,6 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 
 		array->pages[page_index] = page;
 		page->index = page_index;
-
-		SetPageLRU(page);
-		SetPageActive(page);
 	}
 
 	ssdfs_parray_account_page(page);
@@ -1361,9 +1369,6 @@ finish_delete_page:
 	if (unlikely(err))
 		return ERR_PTR(err);
 
-	ClearPageLRU(page);
-	ClearPageActive(page);
-
 	ssdfs_put_page(page);
 
 	SSDFS_DBG("page %p, count %d\n",
@@ -1482,8 +1487,6 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 		if (page) {
 			ssdfs_lock_page(page);
-			ClearPageLRU(page);
-			ClearPageActive(page);
 			ClearPageUptodate(page);
 			ClearPagePrivate(page);
 			ssdfs_unlock_page(page);

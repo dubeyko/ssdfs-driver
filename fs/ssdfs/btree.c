@@ -299,9 +299,15 @@ int ssdfs_btree_create(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !desc_ops || !tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, owner_ino %llu, "
+		  "desc_ops %p, btree_ops %p, tree %p\n",
+		  fsi, owner_ino, desc_ops, btree_ops, tree);
+#else
 	SSDFS_DBG("fsi %p, owner_ino %llu, "
 		  "desc_ops %p, btree_ops %p, tree %p\n",
 		  fsi, owner_ino, desc_ops, btree_ops, tree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	atomic_set(&tree->state, SSDFS_BTREE_UNKNOWN_STATE);
 
@@ -372,6 +378,11 @@ finish_root_node_creation:
 	}
 
 	atomic_set(&tree->state, SSDFS_BTREE_CREATED);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 }
 
@@ -392,8 +403,13 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x\n",
+		  tree, tree->type, tree_state);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x\n",
 		  tree, tree->type, tree_state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -446,6 +462,10 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 		spin_lock(&tree->nodes_lock);
 	}
 	spin_unlock(&tree->nodes_lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -937,8 +957,13 @@ int ssdfs_btree_flush(struct ssdfs_btree *tree)
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x\n",
+		  tree, tree->type, tree_state);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x\n",
 		  tree, tree->type, tree_state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -969,6 +994,10 @@ int ssdfs_btree_flush(struct ssdfs_btree *tree)
 		SSDFS_ERR("fail to flush btree: err %d\n",
 			  err);
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -1381,8 +1410,11 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	node->extent.seg_id = cpu_to_le64(seg_id);
 	node->extent.logical_blk = cpu_to_le32(extent.start_lblk);
 	node->extent.len = cpu_to_le32(extent.len);
-	memcpy(&node->node_index.index.extent, &node->extent,
-		sizeof(struct ssdfs_raw_extent));
+	ssdfs_memcpy(&node->node_index.index.extent,
+		     0, sizeof(struct ssdfs_raw_extent),
+		     &node->extent,
+		     0, sizeof(struct ssdfs_raw_extent),
+		     sizeof(struct ssdfs_raw_extent));
 	spin_unlock(&node->descriptor_lock);
 
 	SSDFS_DBG("tree_type %#x, node_id %u, node_type %#x, "
@@ -1656,8 +1688,11 @@ __ssdfs_btree_read_node(struct ssdfs_btree *tree,
 		  le32_to_cpu(node_index->index.extent.len));
 
 	spin_lock(&ptr->descriptor_lock);
-	memcpy(&ptr->node_index, node_index,
-		sizeof(struct ssdfs_btree_index_key));
+	ssdfs_memcpy(&ptr->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
 	spin_unlock(&ptr->descriptor_lock);
 
 try_find_node:
@@ -1879,8 +1914,11 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 	}
 
 	down_read(&parent->header_lock);
-	memcpy(&area, &parent->index_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &parent->index_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	err = ssdfs_find_index_by_hash(parent, &area, upper_hash,
 					&found_index);
 	up_read(&parent->header_lock);
@@ -2283,8 +2321,11 @@ int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
 	down_read(&parent->full_lock);
 
 	down_read(&parent->header_lock);
-	memcpy(&area, &parent->index_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &parent->index_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&parent->header_lock);
 
 	for (i = 0; i < area.index_count; i++) {
@@ -2324,8 +2365,8 @@ int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
 		err = ssdfs_btree_radix_tree_find(tree, node_id, &child);
 
 		if (!child) {
-			SSDFS_WARN("empty node pointer\n");
-			return -ERANGE;
+			SSDFS_DBG("empty node pointer: "
+				  "node_id %u\n", node_id);
 		}
 
 		if (!err) {
@@ -2527,6 +2568,7 @@ int ssdfs_btree_process_hierarchy_for_add_nolock(struct ssdfs_btree *tree,
 	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
 
 finish_create_node:
+	SSDFS_DBG("finished\n");
 	return err;
 }
 
@@ -2775,6 +2817,7 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 {
 	struct ssdfs_btree_node *node = NULL, *parent_node = NULL;
 	struct ssdfs_btree_node_index_area area;
+	size_t desc_len = sizeof(struct ssdfs_btree_node_index_area);
 	struct ssdfs_btree_index_key index_key;
 	u64 start_hash = U64_MAX, end_hash = U64_MAX;
 	u64 search_hash;
@@ -2896,8 +2939,9 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 							    &index_key);
 		} else {
 			down_read(&node->header_lock);
-			memcpy(&area, &node->index_area,
-				sizeof(struct ssdfs_btree_node_index_area));
+			ssdfs_memcpy(&area, 0, desc_len,
+				     &node->index_area, 0, desc_len,
+				     desc_len);
 			up_read(&node->header_lock);
 
 			err = __ssdfs_btree_common_node_extract_index(node,
@@ -2946,8 +2990,11 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 		ssdfs_btree_search_define_parent_node(search, parent_node);
 		ssdfs_btree_search_define_child_node(search, node);
 
-		memcpy(&search->node.found_index, &index_key,
-			sizeof(struct ssdfs_btree_index_key));
+		ssdfs_memcpy(&search->node.found_index,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     &index_key,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     sizeof(struct ssdfs_btree_index_key));
 
 		err = ssdfs_btree_node_convert_index2id(tree, search);
 		if (unlikely(err)) {
@@ -3495,6 +3542,8 @@ int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
 			  err);
 	}
 
+	SSDFS_DBG("finished\n");
+
 	ssdfs_debug_btree_object(tree);
 	ssdfs_check_btree_consistency(tree);
 
@@ -4038,8 +4087,11 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	ssdfs_btree_search_define_parent_node(search, node->parent_node);
 	spin_unlock(&node->descriptor_lock);
 
-	memcpy(&search->node.found_index, &node->node_index,
-		sizeof(struct ssdfs_btree_index_key));
+	ssdfs_memcpy(&search->node.found_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     &node->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
 
 	err = ssdfs_btree_node_convert_index2id(tree, search);
 	if (unlikely(err)) {
@@ -4627,6 +4679,15 @@ int ssdfs_btree_allocate_item(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -4634,6 +4695,7 @@ int ssdfs_btree_allocate_item(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -4713,6 +4775,10 @@ try_allocate_item:
 finish_allocate_item:
 	up_read(&tree->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_object(tree);
 
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
@@ -4748,6 +4814,15 @@ int ssdfs_btree_allocate_range(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -4755,6 +4830,7 @@ int ssdfs_btree_allocate_range(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -4833,6 +4909,10 @@ try_allocate_range:
 
 finish_allocate_range:
 	up_read(&tree->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	ssdfs_debug_btree_object(tree);
 
@@ -4948,6 +5028,15 @@ int ssdfs_btree_add_item(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -4955,6 +5044,7 @@ int ssdfs_btree_add_item(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -5150,6 +5240,10 @@ finish_update_parent:
 finish_add_item:
 	up_read(&tree->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_object(tree);
 
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
@@ -5187,6 +5281,15 @@ int ssdfs_btree_add_range(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -5194,6 +5297,7 @@ int ssdfs_btree_add_range(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -5391,6 +5495,10 @@ finish_update_parent:
 finish_add_range:
 	up_read(&tree->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_object(tree);
 
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
@@ -5428,6 +5536,15 @@ int ssdfs_btree_change_item(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -5435,6 +5552,7 @@ int ssdfs_btree_change_item(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -5562,6 +5680,10 @@ finish_update_parent:
 finish_change_item:
 	up_read(&tree->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_object(tree);
 
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
@@ -5598,6 +5720,15 @@ int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -5605,6 +5736,7 @@ int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -5730,6 +5862,10 @@ finish_update_parent:
 finish_delete_item:
 	up_read(&tree->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_object(tree);
 
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
@@ -5767,6 +5903,15 @@ int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 
 	tree_state = atomic_read(&tree->state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, type %#x, state %#x, "
+		  "request->type %#x, request->flags %#x, "
+		  "start_hash %llx, end_hash %llx\n",
+		  tree, tree->type, tree_state,
+		  search->request.type, search->request.flags,
+		  search->request.start.hash,
+		  search->request.end.hash);
+#else
 	SSDFS_DBG("tree %p, type %#x, state %#x, "
 		  "request->type %#x, request->flags %#x, "
 		  "start_hash %llx, end_hash %llx\n",
@@ -5774,6 +5919,7 @@ int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
@@ -5914,6 +6060,10 @@ finish_update_parent:
 fail_delete_range:
 	up_read(&tree->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_object(tree);
 
 #ifdef CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
@@ -5946,7 +6096,11 @@ int ssdfs_btree_delete_all(struct ssdfs_btree *tree)
 	BUG_ON(!tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p\n", tree);
+#else
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -6347,6 +6501,10 @@ int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
 	struct ssdfs_btree_node *node;
 	u16 items_count;
 	int height;
+	size_t ids_array_size = sizeof(__le32) *
+				SSDFS_BTREE_ROOT_NODE_INDEX_COUNT;
+	size_t indexes_size = sizeof(struct ssdfs_btree_index) *
+				SSDFS_BTREE_ROOT_NODE_INDEX_COUNT;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6396,12 +6554,14 @@ int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
 	root->header.items_count = cpu_to_le16(items_count);
 	root->header.flags = (u8)atomic_read(&node->flags);
 	root->header.type = (u8)atomic_read(&node->type);
-	memcpy(root->header.node_ids,
-		node->raw.root_node.header.node_ids,
-		sizeof(__le32) * SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
-	memcpy(root->indexes, node->raw.root_node.indexes,
-		sizeof(struct ssdfs_btree_index) *
-		SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
+	ssdfs_memcpy(root->header.node_ids,
+		     0, ids_array_size,
+		     node->raw.root_node.header.node_ids,
+		     0, ids_array_size,
+		     ids_array_size);
+	ssdfs_memcpy(root->indexes, 0, indexes_size,
+		     node->raw.root_node.indexes, 0, indexes_size,
+		     indexes_size);
 	up_read(&node->header_lock);
 
 	spin_lock(&node->tree->nodes_lock);
@@ -6444,8 +6604,11 @@ void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
 	down_read(&parent->full_lock);
 
 	down_read(&parent->header_lock);
-	memcpy(&area, &parent->index_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &parent->index_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&parent->header_lock);
 
 	for (i = 0; i < area.index_count; i++) {
@@ -6537,8 +6700,11 @@ void ssdfs_debug_btree_check_indexes(struct ssdfs_btree *tree,
 	down_read(&parent->full_lock);
 
 	down_read(&parent->header_lock);
-	memcpy(&area, &parent->index_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &parent->index_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&parent->header_lock);
 
 	node_id1 = parent->node_id;

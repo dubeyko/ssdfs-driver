@@ -115,6 +115,8 @@ static int ssdfs_none_compress(struct list_head *ws_ptr,
 				unsigned char *cdata_out,
 				size_t *srclen, size_t *destlen)
 {
+	int err;
+
 	SSDFS_DBG("data_in %p, cdata_out %p, srclen %p, destlen %p\n",
 		  data_in, cdata_out, srclen, destlen);
 
@@ -124,7 +126,14 @@ static int ssdfs_none_compress(struct list_head *ws_ptr,
 		return -E2BIG;
 	}
 
-	memcpy(cdata_out, data_in, *srclen);
+	err = ssdfs_memcpy(cdata_out, 0, PAGE_SIZE,
+			   data_in, 0, PAGE_SIZE,
+			   *srclen);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
 	*destlen = *srclen;
 	return 0;
 }

@@ -539,6 +539,14 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		ssdfs_current_segment_unlock(object);
 
 		if (err == -ENOSPC) {
+			err = ssdfs_segment_change_state(si);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change segment's state: "
+					  "seg %llu, err %d\n",
+					  seg, err);
+				goto destroy_cur_segs;
+			}
+
 			SSDFS_DBG("current segment is absent\n");
 			ssdfs_segment_put_object(si);
 		} else if (unlikely(err)) {

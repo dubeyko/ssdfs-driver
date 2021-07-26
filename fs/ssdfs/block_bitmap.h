@@ -99,6 +99,12 @@ u32 SSDFS_FIRST_CACHED_BLOCK(struct ssdfs_last_bmap_search *search)
 	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	u32 blks_per_page = PAGE_SIZE / blks_per_byte;
 
+	SSDFS_DBG("page_index %d, offset %u, "
+		  "blks_per_byte %u, blks_per_page %u\n",
+		  search->page_index,
+		  search->offset,
+		  blks_per_byte, blks_per_page);
+
 	return (search->page_index * blks_per_page) +
 		(search->offset * blks_per_byte);
 }

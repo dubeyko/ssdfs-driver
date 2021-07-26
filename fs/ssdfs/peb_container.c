@@ -2355,9 +2355,11 @@ finish_prepare_destination:
 		  ssdfs_peb_get_invalid_pages(ptr));
 
 	spin_lock(&si->migration.lock);
-	memcpy(&si->migration.array[SSDFS_LAST_DESTINATION],
-		&si->migration.array[SSDFS_CREATING_DESTINATION],
-		sizeof(struct ssdfs_migration_destination));
+	ssdfs_memcpy(&si->migration.array[SSDFS_LAST_DESTINATION],
+		     0, sizeof(struct ssdfs_migration_destination),
+		     &si->migration.array[SSDFS_CREATING_DESTINATION],
+		     0, sizeof(struct ssdfs_migration_destination),
+		     sizeof(struct ssdfs_migration_destination));
 	destination = &si->migration.array[SSDFS_LAST_DESTINATION];
 	destination->state = SSDFS_VALID_DESTINATION;
 	memset(&si->migration.array[SSDFS_CREATING_DESTINATION],

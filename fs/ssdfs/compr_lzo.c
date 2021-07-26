@@ -203,7 +203,9 @@ static int ssdfs_lzo_compress(struct list_head *ws,
 		goto failed_compress;
 	}
 
-	memcpy(cdata_out, workspace->cbuf, compress_size);
+	ssdfs_memcpy(cdata_out, 0, *destlen,
+		     workspace->cbuf, 0, lzo1x_worst_compress(PAGE_SIZE),
+		     compress_size);
 	*destlen = compress_size;
 
 	SSDFS_DBG("compress has succeded: srclen %zu, destlen %zu\n",

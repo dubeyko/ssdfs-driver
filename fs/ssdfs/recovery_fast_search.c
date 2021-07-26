@@ -303,7 +303,9 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 
 				env->found->lower_offset = lower_off;
 
-				memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+				ssdfs_memcpy(&env->last_vh, 0, vh_size,
+					     env->sbi.vh_buf, 0, vh_size,
+					     vh_size);
 				ssdfs_backup_sb_info2(env);
 
 				SSDFS_DBG("FOUND: lower_peb %llu, "
@@ -327,7 +329,9 @@ define_last_cno_peb:
 				ssdfs_store_protected_peb_info(env,
 						SSDFS_LAST_CNO_PEB_INDEX,
 						lower_peb);
-				memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+				ssdfs_memcpy(&env->last_vh, 0, vh_size,
+					     env->sbi.vh_buf, 0, vh_size,
+					     vh_size);
 				ssdfs_backup_sb_info2(env);
 				last_cno = cno;
 
@@ -340,7 +344,9 @@ define_last_cno_peb:
 				ssdfs_store_protected_peb_info(env,
 						SSDFS_LAST_CNO_PEB_INDEX,
 						lower_peb);
-				memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+				ssdfs_memcpy(&env->last_vh, 0, vh_size,
+					     env->sbi.vh_buf, 0, vh_size,
+					     vh_size);
 				ssdfs_backup_sb_info2(env);
 				last_cno = cno;
 
@@ -421,7 +427,9 @@ int ssdfs_read_sb_peb_checked(struct ssdfs_recovery_env *env,
 			  peb_id);
 		goto finish_check;
 	} else {
-		memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+		ssdfs_memcpy(&env->last_vh, 0, vh_size,
+			     env->sbi.vh_buf, 0, vh_size,
+			     vh_size);
 		ssdfs_backup_sb_info2(env);
 		goto finish_check;
 	}
@@ -828,7 +836,9 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 			return -E2BIG;
 		}
 	} else {
-		memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+		ssdfs_memcpy(&env->last_vh, 0, vh_size,
+			     env->sbi.vh_buf, 0, vh_size,
+			     vh_size);
 		ssdfs_backup_sb_info2(env);
 		cno = le64_to_cpu(SSDFS_SEG_HDR(env->sbi.vh_buf)->cno);
 		ptr->cno = cno;

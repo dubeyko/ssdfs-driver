@@ -150,6 +150,7 @@ void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)
 {
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	size_t footer_size = sizeof(struct ssdfs_log_footer);
+	size_t extent_size = sizeof(struct ssdfs_peb_extent);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -170,17 +171,24 @@ void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->state));
 
-	memcpy(fsi->sbi_backup.vh_buf, fsi->sbi.vh_buf, hdr_size);
-	memcpy(fsi->sbi_backup.vs_buf, fsi->sbi.vs_buf, footer_size);
-	memcpy(&fsi->sbi_backup.last_log, &fsi->sbi.last_log,
-		sizeof(struct ssdfs_peb_extent));
+	ssdfs_memcpy(fsi->sbi_backup.vh_buf, 0, hdr_size,
+		     fsi->sbi.vh_buf, 0, hdr_size,
+		     hdr_size);
+	ssdfs_memcpy(fsi->sbi_backup.vs_buf, 0, footer_size,
+		     fsi->sbi.vs_buf, 0, footer_size,
+		     footer_size);
+	ssdfs_memcpy(&fsi->sbi_backup.last_log, 0, extent_size,
+		     &fsi->sbi.last_log, 0, extent_size,
+		     extent_size);
 }
 
 void ssdfs_copy_sb_info(struct ssdfs_fs_info *fsi,
 			struct ssdfs_recovery_env *env)
 {
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	size_t vhdr_size = sizeof(struct ssdfs_volume_header);
 	size_t footer_size = sizeof(struct ssdfs_log_footer);
+	size_t extent_size = sizeof(struct ssdfs_peb_extent);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -204,22 +212,34 @@ void ssdfs_copy_sb_info(struct ssdfs_fs_info *fsi,
 		  le64_to_cpu(SSDFS_VS(env->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(env->sbi.vs_buf)->state));
 
-	memcpy(fsi->sbi.vh_buf, env->sbi.vh_buf, hdr_size);
-	memcpy(fsi->sbi.vs_buf, env->sbi.vs_buf, footer_size);
-	memcpy(&fsi->sbi.last_log, &env->sbi.last_log,
-		sizeof(struct ssdfs_peb_extent));
-	memcpy(fsi->sbi_backup.vh_buf, env->sbi_backup.vh_buf, hdr_size);
-	memcpy(fsi->sbi_backup.vs_buf, env->sbi_backup.vs_buf, footer_size);
-	memcpy(&fsi->sbi_backup.last_log, &env->sbi_backup.last_log,
-		sizeof(struct ssdfs_peb_extent));
-	memcpy(&fsi->last_vh, &env->last_vh,
-		sizeof(struct ssdfs_volume_header));
+	ssdfs_memcpy(fsi->sbi.vh_buf, 0, hdr_size,
+		     env->sbi.vh_buf, 0, hdr_size,
+		     hdr_size);
+	ssdfs_memcpy(fsi->sbi.vs_buf, 0, footer_size,
+		     env->sbi.vs_buf, 0, footer_size,
+		     footer_size);
+	ssdfs_memcpy(&fsi->sbi.last_log, 0, extent_size,
+		     &env->sbi.last_log, 0, extent_size,
+		     extent_size);
+	ssdfs_memcpy(fsi->sbi_backup.vh_buf, 0, hdr_size,
+		     env->sbi_backup.vh_buf, 0, hdr_size,
+		     hdr_size);
+	ssdfs_memcpy(fsi->sbi_backup.vs_buf, 0, footer_size,
+		     env->sbi_backup.vs_buf, 0, footer_size,
+		     footer_size);
+	ssdfs_memcpy(&fsi->sbi_backup.last_log, 0, extent_size,
+		     &env->sbi_backup.last_log, 0, extent_size,
+		     extent_size);
+	ssdfs_memcpy(&fsi->last_vh, 0, vhdr_size,
+		     &env->last_vh, 0, vhdr_size,
+		     vhdr_size);
 }
 
 void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 {
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	size_t footer_size = sizeof(struct ssdfs_log_footer);
+	size_t extent_size = sizeof(struct ssdfs_peb_extent);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -240,10 +260,15 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->state));
 
-	memcpy(fsi->sbi.vh_buf, fsi->sbi_backup.vh_buf, hdr_size);
-	memcpy(fsi->sbi.vs_buf, fsi->sbi_backup.vs_buf, footer_size);
-	memcpy(&fsi->sbi.last_log, &fsi->sbi_backup.last_log,
-		sizeof(struct ssdfs_peb_extent));
+	ssdfs_memcpy(fsi->sbi.vh_buf, 0, hdr_size,
+		     fsi->sbi_backup.vh_buf, 0, hdr_size,
+		     hdr_size);
+	ssdfs_memcpy(fsi->sbi.vs_buf, 0, footer_size,
+		     fsi->sbi_backup.vs_buf, 0, footer_size,
+		     footer_size);
+	ssdfs_memcpy(&fsi->sbi.last_log, 0, extent_size,
+		     &fsi->sbi_backup.last_log, 0, extent_size,
+		     extent_size);
 
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
@@ -651,7 +676,9 @@ static int ssdfs_find_any_valid_sb_segment(struct ssdfs_fs_info *fsi,
 		(SSDFS_SB_SEG_COPY_MAX * sizeof(u64)));
 
 try_next_volume_portion:
-	memcpy(&fsi->last_vh, fsi->sbi.vh_buf, vh_size);
+	ssdfs_memcpy(&fsi->last_vh, 0, vh_size,
+		     fsi->sbi.vh_buf, 0, vh_size,
+		     vh_size);
 	last_cno = le64_to_cpu(SSDFS_SEG_HDR(fsi->sbi.vh_buf)->cno);
 
 try_again:
@@ -739,7 +766,9 @@ try_again:
 	}
 
 	if (err) {
-		memcpy(fsi->sbi.vh_buf, &fsi->last_vh, vh_size);
+		ssdfs_memcpy(fsi->sbi.vh_buf, 0, vh_size,
+			     &fsi->last_vh, 0, vh_size,
+			     vh_size);
 		goto try_again;
 	}
 
@@ -1549,8 +1578,12 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->fs_feature_compat_ro = le64_to_cpu(fsi->vs->feature_compat_ro);
 	fsi->fs_feature_incompat = le64_to_cpu(fsi->vs->feature_incompat);
 
-	memcpy(fsi->fs_uuid, fsi->vs->uuid, SSDFS_UUID_SIZE);
-	memcpy(fsi->fs_label, fsi->vs->label, SSDFS_VOLUME_LABEL_MAX);
+	ssdfs_memcpy(fsi->fs_uuid, 0, SSDFS_UUID_SIZE,
+		     fsi->vs->uuid, 0, SSDFS_UUID_SIZE,
+		     SSDFS_UUID_SIZE);
+	ssdfs_memcpy(fsi->fs_label, 0, SSDFS_VOLUME_LABEL_MAX,
+		     fsi->vs->label, 0, SSDFS_VOLUME_LABEL_MAX,
+		     SSDFS_VOLUME_LABEL_MAX);
 
 	fsi->migration_threshold = le16_to_cpu(fsi->vs->migration_threshold);
 	if (fsi->migration_threshold == 0 ||
@@ -1738,9 +1771,6 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 				  "peb %llu, offset %u, size %zu, err %d\n",
 				  peb_id, read_off, size, err);
 			goto finish_read_maptbl_cache;
-		} else {
-			SetPageLRU(page);
-			SetPageActive(page);
 		}
 
 		ssdfs_unlock_page(page);

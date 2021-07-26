@@ -853,7 +853,9 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	bytes_count = sizeof(struct ssdfs_meta_area_extent);
 	bytes_count *= SSDFS_MAPTBL_RESERVED_EXTENTS;
 	bytes_count *= SSDFS_MAPTBL_SEG_COPY_MAX;
-	memcpy(ptr->extents, fsi->vh->maptbl.extents, bytes_count);
+	ssdfs_memcpy(ptr->extents, 0, bytes_count,
+		     fsi->vh->maptbl.extents, 0, bytes_count,
+		     bytes_count);
 
 	mutex_init(&ptr->bmap_lock);
 	bmap_bytes = ptr->fragments_count + BITS_PER_LONG - 1;
@@ -1715,7 +1717,9 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 	bytes_count = sizeof(struct ssdfs_meta_area_extent);
 	bytes_count *= SSDFS_MAPTBL_RESERVED_EXTENTS;
 	bytes_count *= SSDFS_MAPTBL_SEG_COPY_MAX;
-	memcpy(hdr->extents, tbl->fsi->vh->maptbl.extents, bytes_count);
+	ssdfs_memcpy(hdr->extents, 0, bytes_count,
+		     tbl->fsi->vh->maptbl.extents, 0, bytes_count,
+		     bytes_count);
 }
 
 /*
@@ -1809,7 +1813,9 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	kaddr2 = kmap_atomic(dpage);
-	memcpy(kaddr2, kaddr1, PAGE_SIZE);
+	ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
+		     kaddr1, 0, PAGE_SIZE,
+		     PAGE_SIZE);
 	kunmap_atomic(kaddr2);
 
 	SetPageUptodate(dpage);
@@ -1852,7 +1858,9 @@ void ssdfs_maptbl_replicate_dirty_page(struct ssdfs_segment_request *req1,
 
 	kaddr1 = kmap_atomic(spage);
 	kaddr2 = kmap_atomic(dpage);
-	memcpy(kaddr2, kaddr1, PAGE_SIZE);
+	ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
+		     kaddr1, 0, PAGE_SIZE,
+		     PAGE_SIZE);
 	kunmap_atomic(kaddr1);
 	kunmap_atomic(kaddr2);
 
@@ -2333,8 +2341,11 @@ define_update_area:
 	}
 
 	if (has_backup) {
-		memcpy(&req2->place, &req1->place,
-			sizeof(struct ssdfs_volume_extent));
+		ssdfs_memcpy(&req2->place,
+			     0, sizeof(struct ssdfs_volume_extent),
+			     &req1->place,
+			     0, sizeof(struct ssdfs_volume_extent),
+			     sizeof(struct ssdfs_volume_extent));
 	}
 
 	si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
@@ -2882,8 +2893,11 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		if (has_backup) {
-			memcpy(&req2->place, &req1->place,
-				sizeof(struct ssdfs_volume_extent));
+			ssdfs_memcpy(&req2->place,
+				     0, sizeof(struct ssdfs_volume_extent),
+				     &req1->place,
+				     0, sizeof(struct ssdfs_volume_extent),
+				     sizeof(struct ssdfs_volume_extent));
 		}
 
 		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
@@ -3210,8 +3224,11 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		if (has_backup) {
-			memcpy(&req2->place, &req1->place,
-				sizeof(struct ssdfs_volume_extent));
+			ssdfs_memcpy(&req2->place,
+				     0, sizeof(struct ssdfs_volume_extent),
+				     &req1->place,
+				     0, sizeof(struct ssdfs_volume_extent),
+				     sizeof(struct ssdfs_volume_extent));
 		}
 
 		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
@@ -3649,7 +3666,11 @@ int ssdfs_maptbl_get_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		goto finish_page_processing;
 	}
 
-	memcpy(peb_desc, ptr, sizeof(struct ssdfs_peb_descriptor));
+	ssdfs_memcpy(peb_desc,
+		     0, sizeof(struct ssdfs_peb_descriptor),
+		     ptr,
+		     0, sizeof(struct ssdfs_peb_descriptor),
+		     sizeof(struct ssdfs_peb_descriptor));
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
@@ -3826,7 +3847,11 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		goto finish_page_processing;
 	}
 
-	memcpy(leb_desc, ptr, sizeof(struct ssdfs_leb_descriptor));
+	ssdfs_memcpy(leb_desc,
+		     0, sizeof(struct ssdfs_leb_descriptor),
+		     ptr,
+		     0, sizeof(struct ssdfs_leb_descriptor),
+		     sizeof(struct ssdfs_leb_descriptor));
 
 finish_page_processing:
 	kunmap_atomic(kaddr);
@@ -5261,7 +5286,9 @@ finish_conversion:
 				return err;
 			} else {
 				/* use the cached value */
-				memcpy(pebr, &cached_pebr, peb_relation_size);
+				ssdfs_memcpy(pebr, 0, peb_relation_size,
+					     &cached_pebr, 0, peb_relation_size,
+					     peb_relation_size);
 			}
 		}
 	} else if (err == -EAGAIN && should_cache_peb_info(peb_type)) {
@@ -5450,57 +5477,69 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_maptbl_fragment_desc *desc,
 				    struct ssdfs_peb_table_fragment_header *hdr)
 {
 	unsigned long *bmap;
-	int migrating_lebs_pct;
-	int reserved_pebs_pct;
-	int pct_diff;
+	u32 expected2migrate;
 	u16 pebs_count;
-	u16 unused_pebs_diff;
 	u16 reserved_pebs;
 	u16 used_pebs;
+	u16 unused_pebs;
+	u16 new_reservation;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !hdr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("desc %p, hdr %p\n", desc, hdr);
-	SSDFS_DBG("mapped_lebs %u, migrating_lebs %u\n",
-		  desc->mapped_lebs, desc->migrating_lebs);
-
-	migrating_lebs_pct = (desc->migrating_lebs * 100) / desc->mapped_lebs;
-
 	pebs_count = le16_to_cpu(hdr->pebs_count);
 	reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
 
+	SSDFS_DBG("desc %p, hdr %p\n", desc, hdr);
+	SSDFS_DBG("mapped_lebs %u, migrating_lebs %u, "
+		  "pebs_count %u, reserved_pebs %u\n",
+		  desc->mapped_lebs, desc->migrating_lebs,
+		  pebs_count, reserved_pebs);
+
+	expected2migrate = (desc->mapped_lebs - desc->migrating_lebs);
+	expected2migrate /= desc->stripe_pages;
+
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
 	used_pebs = bitmap_weight(bmap, pebs_count);
+	unused_pebs = pebs_count - used_pebs;
 
-	if (used_pebs == 0)
-		used_pebs = 1;
-
-	reserved_pebs_pct = (reserved_pebs * 100) / used_pebs;
-
-	if (reserved_pebs_pct <= migrating_lebs_pct) {
-		SSDFS_DBG("reserved_pebs_pct %d <= migrating_lebs_pct %d\n",
-			  reserved_pebs_pct, migrating_lebs_pct);
-		return -ENOSPC;
+	if (reserved_pebs > unused_pebs) {
+		SSDFS_ERR("reserved_pebs %u > unused_pebs %u\n",
+			  reserved_pebs, unused_pebs);
+		return -ERANGE;
 	}
 
-	pct_diff = (reserved_pebs_pct - migrating_lebs_pct) / 2;
-	unused_pebs_diff = (reserved_pebs * pct_diff) / 100;
+	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
+		  "expected2migrate %u\n",
+		  pebs_count, used_pebs,
+		  unused_pebs, expected2migrate);
 
-	if (unused_pebs_diff == 0) {
-		SSDFS_DBG("reserved_pebs %u, pct_diff %d\n",
-			  reserved_pebs, pct_diff);
-		return -ENOSPC;
+	if (unused_pebs > reserved_pebs) {
+		SSDFS_DBG("no necessity to decrease: "
+			  "unused_pebs %u, reserved_pebs %u\n",
+			  unused_pebs, reserved_pebs);
+		return 0;
 	}
 
-	le16_add_cpu(&hdr->reserved_pebs, 0 - unused_pebs_diff);
-	desc->reserved_pebs -= unused_pebs_diff;
+	new_reservation = max_t(u16, expected2migrate,
+				(unused_pebs * 20) / 100);
 
-	SSDFS_DBG("hdr->reserved_pebs %u\n",
-		  le16_to_cpu(hdr->reserved_pebs));
+	if (reserved_pebs > new_reservation) {
+		hdr->reserved_pebs = cpu_to_le16(new_reservation);
+		desc->reserved_pebs -= reserved_pebs - new_reservation;
 
-	return 0;
+		SSDFS_DBG("reserved_pebs %u, new_reservation %u, "
+			  "desc->reserved_pebs %u\n",
+			  reserved_pebs, new_reservation,
+			  desc->reserved_pebs);
+
+		return 0;
+	}
+
+	SSDFS_DBG("unable to decrease reserved PEBs\n");
+
+	return -ENOSPC;
 }
 
 /*
@@ -6247,11 +6286,20 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (!can_be_mapped_leb2peb(tbl, fdesc, leb_id)) {
-		err = -ENOENT;
-		SSDFS_DBG("unable to map leb_id %llu: "
-			  "value is out of threshold\n",
-			  leb_id);
-		goto finish_page_processing;
+		err = ssdfs_maptbl_decrease_reserved_pebs(fdesc, hdr);
+		if (err == -ENOSPC) {
+			err = -ENOENT;
+			SSDFS_DBG("unable to decrease reserved_pebs %u\n",
+				  le16_to_cpu(hdr->reserved_pebs));
+			SSDFS_DBG("unable to map leb_id %llu: "
+				  "value is out of threshold\n",
+				  leb_id);
+			goto finish_page_processing;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to decrease reserved_pebs: err %d\n",
+				  err);
+			goto finish_page_processing;
+		}
 	}
 
 	if (!has_fragment_unused_pebs(hdr)) {
@@ -6426,8 +6474,13 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !pebr || !end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, leb_id %llu, pebr %p, init_end %p\n",
+		  fsi, leb_id, pebr, end);
+#else
 	SSDFS_DBG("fsi %p, leb_id %llu, pebr %p, init_end %p\n",
 		  fsi, leb_id, pebr, end);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*end = NULL;
 	memset(pebr, 0xFF, sizeof(struct ssdfs_maptbl_peb_relation));
@@ -6547,6 +6600,23 @@ finish_mapping:
 		}
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("leb_id %llu, pebs_count %llu\n",
+		  leb_id, tbl->pebs_count);
+	SSDFS_ERR("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("leb_id %llu, pebs_count %llu\n",
 		  leb_id, tbl->pebs_count);
 	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
@@ -6561,9 +6631,169 @@ finish_mapping:
 		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
 		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
 		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
-
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_find_pebtbl_page() - find next page of PEB table
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
+ * @cur_index: current page index
+ * @start_index: page index in the start of searching
+ *
+ * This method tries to find a next page of PEB table.
+ */
+static
+pgoff_t ssdfs_maptbl_find_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
+				      struct ssdfs_maptbl_fragment_desc *fdesc,
+				      pgoff_t cur_index,
+				      pgoff_t start_index)
+{
+	pgoff_t index;
+	u32 pebtbl_pages, fragment_pages;
+
+	SSDFS_DBG("maptbl %p, fdesc %p, cur_index %lu, start_index %lu\n",
+		  tbl, fdesc, cur_index, start_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !fdesc);
+	BUG_ON((tbl->stripes_per_fragment * fdesc->stripe_pages) < cur_index);
+	BUG_ON((tbl->stripes_per_fragment * fdesc->stripe_pages) < start_index);
+	BUG_ON(cur_index < fdesc->lebtbl_pages);
+	BUG_ON(start_index < fdesc->lebtbl_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pebtbl_pages = tbl->stripes_per_fragment * fdesc->stripe_pages;
+	fragment_pages = (u32)fdesc->lebtbl_pages + pebtbl_pages;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(cur_index >= fragment_pages);
+	BUG_ON(start_index >= fragment_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	index = cur_index + fdesc->stripe_pages;
+
+	SSDFS_DBG("pebtbl_pages %u, fragment_pages %u, "
+		  "fdesc->stripe_pages %u, cur_index %lu, "
+		  "index %lu\n",
+		  pebtbl_pages, fragment_pages,
+		  fdesc->stripe_pages, cur_index,
+		  index);
+
+	if (index >= fragment_pages)
+		index = ULONG_MAX;
+
+	return index;
+}
+
+/*
+ * ssdfs_maptbl_try_decrease_reserved_pebs() - try decrease reserved PEBs
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
+ *
+ * This method tries to decrease number of reserved PEBs.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EACCES     - fragment is recovering.
+ * %-ENOENT     - unable to decrease the number of reserved PEBs.
+ * %-ERANGE     - internal error.
+ */
+static int
+ssdfs_maptbl_try_decrease_reserved_pebs(struct ssdfs_peb_mapping_table *tbl,
+				    struct ssdfs_maptbl_fragment_desc *fdesc)
+{
+	pgoff_t start_page;
+	pgoff_t page_index;
+	struct page *page;
+	void *kaddr;
+	struct ssdfs_peb_table_fragment_header *hdr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !fdesc);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+	BUG_ON(!rwsem_is_locked(&fdesc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("start_leb %llu, end_leb %llu\n",
+		  fdesc->start_leb,
+		  fdesc->start_leb + fdesc->lebs_count);
+
+	start_page = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
+						     fdesc->start_leb,
+						     U16_MAX);
+	if (start_page == ULONG_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to define PEB table's page_index: "
+			  "start_peb_id %llu\n", fdesc->start_leb);
+		goto finish_fragment_change;
+	}
+
+	page_index = start_page;
+
+try_next_page:
+	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
+		SSDFS_ERR("fail to find page: page_index %lu\n",
+			  page_index);
+		goto finish_fragment_change;
+	}
+
+	kaddr = kmap(page);
+
+	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
+
+	if (is_pebtbl_stripe_recovering(hdr)) {
+		err = -EACCES;
+		SSDFS_DBG("unable to decrease reserved_pebs: "
+			  "stripe %u is under recovering\n",
+			  le16_to_cpu(hdr->stripe_id));
+		goto finish_page_processing;
+	}
+
+	err = ssdfs_maptbl_decrease_reserved_pebs(fdesc, hdr);
+	if (err == -ENOSPC) {
+		err = -ENOENT;
+		SSDFS_DBG("unable to decrease reserved_pebs %u\n",
+			  le16_to_cpu(hdr->reserved_pebs));
+		goto finish_page_processing;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to decrease reserved_pebs: err %d\n",
+			  err);
+		goto finish_page_processing;
+	}
+
+	SSDFS_DBG("mapped_lebs %u, migrating_lebs %u, "
+		  "reserved_pebs %u, pre_erase_pebs %u, "
+		  "recovering_pebs %u\n",
+		  fdesc->mapped_lebs, fdesc->migrating_lebs,
+		  fdesc->reserved_pebs, fdesc->pre_erase_pebs,
+		  fdesc->recovering_pebs);
+
+finish_page_processing:
+	kunmap(page);
+
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	if (err == -EACCES || err == -ENOENT) {
+		page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
+							   page_index,
+							   start_page);
+		if (page_index == ULONG_MAX)
+			goto finish_fragment_change;
+		else
+			goto try_next_page;
+	}
+
+finish_fragment_change:
 	return err;
 }
 
@@ -6661,9 +6891,27 @@ int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
 		}
 
 		down_read(&fdesc->lock);
+
 		found_start_leb = fdesc->start_leb;
 		found_end_leb = fdesc->start_leb + fdesc->lebs_count;
 		is_found = can_be_mapped_leb2peb(tbl, fdesc, found_start_leb);
+
+		if (!is_found) {
+			err = ssdfs_maptbl_try_decrease_reserved_pebs(tbl,
+								      fdesc);
+			if (err == -ENOENT) {
+				SSDFS_DBG("unable to decrease reserved pebs\n");
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to decrease reserved pebs: "
+					  "err %d\n", err);
+				goto finish_fragment_processing;
+			}
+
+			is_found = can_be_mapped_leb2peb(tbl, fdesc,
+							 found_start_leb);
+		}
+
+finish_fragment_processing:
 		up_read(&fdesc->lock);
 
 		*start_leb = max_t(u64, start_search_leb, found_start_leb);
@@ -6675,6 +6923,7 @@ int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
 				  *start_leb, *end_leb);
 			break;
 		} else {
+			err = -ENOENT;
 			SSDFS_DBG("fragment %d (leb_id %llu) is exhausted\n",
 				  i, found_start_leb);
 		}
@@ -6857,9 +7106,15 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	int consistency;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, leb_id %llu, peb_type %#x, "
+		  "peb_state %#x, init_end %p\n",
+		  fsi, leb_id, peb_type, peb_state, end);
+#else
 	SSDFS_DBG("fsi %p, leb_id %llu, peb_type %#x, "
 		  "peb_state %#x, init_end %p\n",
 		  fsi, leb_id, peb_type, peb_state, end);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !end);
@@ -7113,7 +7368,11 @@ finish_change_state:
 		}
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -7413,58 +7672,6 @@ bool has_fragment_reserved_pebs(struct ssdfs_peb_table_fragment_header *hdr)
 }
 
 /*
- * ssdfs_maptbl_find_pebtbl_page() - find next page of PEB table
- * @tbl: pointer on mapping table object
- * @fdesc: fragment descriptor
- * @cur_index: current page index
- * @start_index: page index in the start of searching
- *
- * This method tries to find a next page of PEB table.
- */
-static
-pgoff_t ssdfs_maptbl_find_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
-				      struct ssdfs_maptbl_fragment_desc *fdesc,
-				      pgoff_t cur_index,
-				      pgoff_t start_index)
-{
-	pgoff_t index;
-	u32 pebtbl_pages, fragment_pages;
-
-	SSDFS_DBG("maptbl %p, fdesc %p, cur_index %lu, start_index %lu\n",
-		  tbl, fdesc, cur_index, start_index);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tbl || !fdesc);
-	BUG_ON((tbl->stripes_per_fragment * fdesc->stripe_pages) < cur_index);
-	BUG_ON((tbl->stripes_per_fragment * fdesc->stripe_pages) < start_index);
-	BUG_ON(cur_index < fdesc->lebtbl_pages);
-	BUG_ON(start_index < fdesc->lebtbl_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	pebtbl_pages = tbl->stripes_per_fragment * fdesc->stripe_pages;
-	fragment_pages = (u32)fdesc->lebtbl_pages + pebtbl_pages;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(cur_index >= fragment_pages);
-	BUG_ON(start_index >= fragment_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	index = cur_index + fdesc->stripe_pages;
-
-	SSDFS_DBG("pebtbl_pages %u, fragment_pages %u, "
-		  "fdesc->stripe_pages %u, cur_index %lu, "
-		  "index %lu\n",
-		  pebtbl_pages, fragment_pages,
-		  fdesc->stripe_pages, cur_index,
-		  index);
-
-	if (index >= fragment_pages)
-		index = ULONG_MAX;
-
-	return index;
-}
-
-/*
  * ssdfs_maptbl_select_pebtbl_page() - select page of PEB table
  * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
@@ -7528,6 +7735,16 @@ try_next_page:
 	is_recovering = is_pebtbl_stripe_recovering(hdr);
 
 	has_reserved_pebs = has_fragment_reserved_pebs(hdr);
+
+	SSDFS_DBG("page %p, count %d, page_index %lu\n",
+		  page, page_ref_count(page), page_index);
+	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
+		  "reserved_pebs %u, is_recovering %#x, "
+		  "has_reserved_pebs %#x\n",
+		  pebs_count, used_pebs, unused_pebs,
+		  reserved_pebs, is_recovering,
+		  has_reserved_pebs);
+
 	if (!has_reserved_pebs) {
 		err = ssdfs_maptbl_increase_reserved_pebs(fdesc, hdr);
 		if (!err) {
@@ -7541,27 +7758,25 @@ try_next_page:
 	ssdfs_put_page(page);
 
 	if (err == -ENOSPC) {
-		page_index = ULONG_MAX;
 		SSDFS_DBG("unable to find PEB table page: "
-			  "leb_id %llu\n",
-			  leb_id);
-		goto finish_select_pebtbl_page;
+			  "leb_id %llu, page_index %lu\n",
+			  leb_id, page_index);
+
+		page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
+							   page_index,
+							   start_page);
+		if (page_index == ULONG_MAX)
+			goto use_first_valid_page;
+		else {
+			err = 0;
+			goto try_next_page;
+		}
 	} else if (unlikely(err)) {
 		page_index = ULONG_MAX;
 		SSDFS_ERR("fail to increase reserved pebs: "
 			  "err %d\n", err);
 		goto finish_select_pebtbl_page;
 	}
-
-	SSDFS_DBG("page %p, count %d, page_index %lu\n",
-		  page, page_ref_count(page), page_index);
-
-	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
-		  "reserved_pebs %u, is_recovering %#x, "
-		  "has_reserved_pebs %#x\n",
-		  pebs_count, used_pebs, unused_pebs,
-		  reserved_pebs, is_recovering,
-		  has_reserved_pebs);
 
 	if (is_recovering) {
 		page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
@@ -7840,8 +8055,13 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !pebr || !end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, leb_id %llu, pebr %p, init_end %p\n",
+		  fsi, leb_id, pebr, end);
+#else
 	SSDFS_DBG("fsi %p, leb_id %llu, pebr %p, init_end %p\n",
 		  fsi, leb_id, pebr, end);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tbl = fsi->maptbl;
 	cache = &tbl->fsi->maptbl_cache;
@@ -8032,7 +8252,11 @@ finish_add_migrating_peb:
 		}
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -8073,8 +8297,13 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, leb_id %llu, init_end %p\n",
+		  fsi, leb_id, end);
+#else
 	SSDFS_DBG("fsi %p, leb_id %llu, init_end %p\n",
 		  fsi, leb_id, end);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tbl = fsi->maptbl;
 	cache = &tbl->fsi->maptbl_cache;
@@ -8291,7 +8520,11 @@ finish_exclude_migrating_peb:
 		}
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

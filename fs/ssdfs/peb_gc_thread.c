@@ -282,6 +282,12 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		goto finish_copy_page;
 	}
 
+	if (pagevec_space(&req->result.pvec) == 0) {
+		err = -EAGAIN;
+		SSDFS_DBG("request's pagevec is full\n");
+		goto finish_copy_page;
+	}
+
 	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
 					desc_array, &blk_desc, req);
 	if (unlikely(err)) {
@@ -2122,9 +2128,10 @@ repeat:
 				break;
 
 			default:
-				SSDFS_DBG("LEB %llu is not dirty\n",
-					  cur_leb_id);
-				continue;
+				SSDFS_DBG("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb_id, pebd->state);
+				goto check_next_segment;
 			}
 
 			if (!should_continue_processing(mandatory_ops))
@@ -2192,9 +2199,10 @@ try_set_pre_erase_state:
 				break;
 
 			default:
-				SSDFS_DBG("LEB %llu is not dirty\n",
-					  cur_leb_id);
-				continue;
+				SSDFS_DBG("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb_id, pebd->state);
+				goto check_next_segment;
 			}
 
 			err = ssdfs_maptbl_prepare_pre_erase_state(fsi,

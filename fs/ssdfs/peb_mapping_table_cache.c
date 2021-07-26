@@ -116,18 +116,6 @@ void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 
 	SSDFS_DBG("cache %p\n", cache);
 
-	for (i = 0; i < pagevec_count(&cache->pvec); i++) {
-		struct page *page = cache->pvec.pages[i];
-
-		if (!page)
-			continue;
-
-		ssdfs_lock_page(page);
-		ClearPageLRU(page);
-		ClearPageActive(page);
-		ssdfs_unlock_page(page);
-	}
-
 	ssdfs_map_cache_pagevec_release(&cache->pvec);
 	ssdfs_peb_mapping_queue_remove_all(&cache->pm_queue);
 }
@@ -319,6 +307,7 @@ int ssdfs_peb_state_area_size(struct ssdfs_maptbl_cache_header *hdr)
 /*
  * PEB_STATE_AREA() - get pointer on PEB state area
  * @kaddr: pointer on fragment's beginning
+ * @area_offset: PEB state area's offset
  *
  * This method tries to prepare pointer on the
  * PEB state area in the fragment.
@@ -330,7 +319,7 @@ int ssdfs_peb_state_area_size(struct ssdfs_maptbl_cache_header *hdr)
  * %-ERANGE    - corrupted PEB state area.
  */
 static inline
-void *PEB_STATE_AREA(void *kaddr)
+void *PEB_STATE_AREA(void *kaddr, u32 *area_offset)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
 	size_t hdr_size = sizeof(struct ssdfs_maptbl_cache_header);
@@ -340,7 +329,12 @@ void *PEB_STATE_AREA(void *kaddr)
 	__le32 *magic = NULL;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!kaddr || !area_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
+	*area_offset = U32_MAX;
 
 	err = __ssdfs_maptbl_cache_area_size(hdr,
 					     &leb2peb_area_size,
@@ -353,6 +347,17 @@ void *PEB_STATE_AREA(void *kaddr)
 		return ERR_PTR(err);
 	}
 
+	if ((hdr_size + leb2peb_area_size + peb_state_area_size) > PAGE_SIZE) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid state: "
+			  "hdr_size %zu, leb2peb_area_size %zu, "
+			  "peb_state_area_size %zu\n",
+			  hdr_size, leb2peb_area_size,
+			  peb_state_area_size);
+		return ERR_PTR(err);
+	}
+
+	*area_offset = hdr_size + leb2peb_area_size;
 	start = (u8 *)kaddr + hdr_size + leb2peb_area_size;
 	magic = (__le32 *)start;
 
@@ -368,6 +373,7 @@ void *PEB_STATE_AREA(void *kaddr)
 /*
  * FIRST_PEB_STATE() - get pointer on first PEB state
  * @kaddr: pointer on fragment's beginning
+ * @area_offset: PEB state area's offset
  *
  * This method tries to prepare pointer on the first
  * PEB state in the fragment.
@@ -379,11 +385,12 @@ void *PEB_STATE_AREA(void *kaddr)
  * %-ERANGE    - corrupted PEB state area.
  */
 static inline
-struct ssdfs_maptbl_cache_peb_state *FIRST_PEB_STATE(void *kaddr)
+struct ssdfs_maptbl_cache_peb_state *FIRST_PEB_STATE(void *kaddr,
+						     u32 *area_offset)
 {
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	size_t magic_size = peb_state_size;
-	void *start = PEB_STATE_AREA(kaddr);
+	void *start = PEB_STATE_AREA(kaddr, area_offset);
 
 	if (IS_ERR_OR_NULL(start))
 		return (struct ssdfs_maptbl_cache_peb_state *)start;
@@ -635,8 +642,9 @@ int ssdfs_find_result_pair(struct ssdfs_maptbl_cache_header *hdr,
 		cur_item->page_index = sequence_id;
 		cur_item->item_index = lo_limit;
 		cur_pair = start_pair + lo_limit;
-		memcpy(&cur_item->found, cur_pair, pair_size);
-
+		ssdfs_memcpy(&cur_item->found, 0, pair_size,
+			     cur_pair, 0, pair_size,
+			     pair_size);
 		peb_index = SSDFS_MAPTBL_RELATION_INDEX;
 		cur_item = &res->pebs[peb_index];
 		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
@@ -651,7 +659,9 @@ int ssdfs_find_result_pair(struct ssdfs_maptbl_cache_header *hdr,
 		cur_item->page_index = sequence_id;
 		cur_item->item_index = up_limit;
 		cur_pair = start_pair + up_limit;
-		memcpy(&cur_item->found, cur_pair, pair_size);
+		ssdfs_memcpy(&cur_item->found, 0, pair_size,
+			     cur_pair, 0, pair_size,
+			     pair_size);
 		break;
 
 	case SSDFS_MAPTBL_RELATION_INDEX:
@@ -664,7 +674,9 @@ int ssdfs_find_result_pair(struct ssdfs_maptbl_cache_header *hdr,
 		cur_item->page_index = sequence_id;
 		cur_item->item_index = lo_limit;
 		cur_pair = start_pair + lo_limit;
-		memcpy(&cur_item->found, cur_pair, pair_size);
+		ssdfs_memcpy(&cur_item->found, 0, pair_size,
+			     cur_pair, 0, pair_size,
+			     pair_size);
 		break;
 
 	default:
@@ -778,7 +790,9 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 		cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
 		cur_item->page_index = sequence_id;
 		cur_item->item_index = 0;
-		memcpy(&cur_item->found, start_pair, pair_size);
+		ssdfs_memcpy(&cur_item->found, 0, pair_size,
+			     start_pair, 0, pair_size,
+			     pair_size);
 		return -EFAULT;
 	}
 
@@ -791,8 +805,9 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 			cur_item->state = SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
 			cur_item->page_index = sequence_id;
 			cur_item->item_index = items_count;
-			memcpy(&cur_item->found,
-				start_pair + items_count, pair_size);
+			ssdfs_memcpy(&cur_item->found, 0, pair_size,
+				     start_pair + items_count, 0, pair_size,
+				     pair_size);
 			return -ENODATA;
 		}
 	}
@@ -840,7 +855,9 @@ int __ssdfs_maptbl_cache_find_leb(void *kaddr,
 					SSDFS_MAPTBL_CACHE_ITEM_ABSENT;
 				cur_item->page_index = sequence_id;
 				cur_item->item_index = cur_index;
-				memcpy(&cur_item->found, cur_pair, pair_size);
+				ssdfs_memcpy(&cur_item->found, 0, pair_size,
+					     cur_pair, 0, pair_size,
+					     pair_size);
 				return -EFAULT;
 			}
 
@@ -898,7 +915,9 @@ continue_straight_search:
 				cur_index++;
 				cur_pair = start_pair + cur_index;
 				cur_item->item_index = cur_index;
-				memcpy(&cur_item->found, cur_pair, pair_size);
+				ssdfs_memcpy(&cur_item->found, 0, pair_size,
+					     cur_pair, 0, pair_size,
+					     pair_size);
 				return -EFAULT;
 			}
 
@@ -994,6 +1013,7 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 	struct ssdfs_maptbl_cache_peb_state *start = NULL;
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
+	u32 area_offset = U32_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1025,7 +1045,7 @@ int ssdfs_maptbl_cache_get_peb_state(void *kaddr, u16 item_index,
 		return -EINVAL;
 	}
 
-	start = FIRST_PEB_STATE(kaddr);
+	start = FIRST_PEB_STATE(kaddr, &area_offset);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("PEB STATE START\n");
@@ -1376,10 +1396,11 @@ int ssdfs_maptbl_cache_convert_leb2peb(struct ssdfs_maptbl_cache *cache,
 
 	switch (pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency) {
 	case SSDFS_PEB_STATE_PRE_DELETED:
-		memcpy(&pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX],
-			&pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX],
-			sizeof(struct ssdfs_maptbl_peb_descriptor));
-
+		ssdfs_memcpy(&pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX],
+			     0, sizeof(struct ssdfs_maptbl_peb_descriptor),
+			     &pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX],
+			     0, sizeof(struct ssdfs_maptbl_peb_descriptor),
+			     sizeof(struct ssdfs_maptbl_peb_descriptor));
 		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id = U64_MAX;
 		pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].shared_peb_index =
 									U8_MAX;
@@ -1481,6 +1502,7 @@ int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	size_t diff_count;
 	int area_size;
+	u32 area_offset = U32_MAX;
 	size_t bytes_count, new_bytes_count;
 	int err;
 
@@ -1504,8 +1526,7 @@ int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
 		return -ERANGE;
 	}
 
-	area = PEB_STATE_AREA(kaddr);
-
+	area = PEB_STATE_AREA(kaddr, &area_offset);
 	if (IS_ERR_OR_NULL(area)) {
 		err = !area ? PTR_ERR(area) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
@@ -1539,7 +1560,14 @@ int ssdfs_shift_right_peb_state_area(void *kaddr, size_t shift)
 		return -ERANGE;
 	}
 
-	memmove((u8 *)area + shift, area, area_size);
+	err = ssdfs_memmove(area, shift, PAGE_SIZE - area_offset,
+			    area, 0, PAGE_SIZE - area_offset,
+			    area_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
+
 	hdr->bytes_count = cpu_to_le16((u16)new_bytes_count);
 
 	return 0;
@@ -1571,6 +1599,7 @@ int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
 	size_t threshold_size = hdr_size + magic_size;
 	size_t diff_count;
 	int area_size;
+	u32 area_offset = U32_MAX;
 	size_t bytes_count;
 	size_t calculated;
 	size_t new_bytes_count;
@@ -1596,7 +1625,7 @@ int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
 		return -ERANGE;
 	}
 
-	area = PEB_STATE_AREA(kaddr);
+	area = PEB_STATE_AREA(kaddr, &area_offset);
 
 	if (IS_ERR_OR_NULL(area)) {
 		err = !area ? PTR_ERR(area) : -ERANGE;
@@ -1648,7 +1677,22 @@ int ssdfs_shift_left_peb_state_area(void *kaddr, size_t shift)
 		return -ERANGE;
 	}
 
-	memmove((u8 *)area - shift, area, area_size);
+	if ((threshold_size + shift) >= area_offset) {
+		SSDFS_ERR("invalid shift: "
+			  "threshold_size %zu, shift %zu, "
+			  "area_offset %u\n",
+			  threshold_size, shift, area_offset);
+		return -ERANGE;
+	}
+
+	err = ssdfs_memmove((u8 *)area - shift, 0, PAGE_SIZE - area_offset,
+			    area, 0, PAGE_SIZE - area_offset,
+			    area_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
+
 	hdr->bytes_count = cpu_to_le16((u16)new_bytes_count);
 
 	return 0;
@@ -1682,6 +1726,7 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 	struct ssdfs_maptbl_cache_peb_state *dest_state;
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
+	u32 area_offset = U32_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1713,9 +1758,11 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 	dest_pair = LEB2PEB_PAIR_AREA(kaddr);
 	dest_pair += item_index;
 
-	memcpy(dest_pair, src_pair, pair_size);
+	ssdfs_memcpy(dest_pair, 0, pair_size,
+		     src_pair, 0, pair_size,
+		     pair_size);
 
-	dest_state = FIRST_PEB_STATE(kaddr);
+	dest_state = FIRST_PEB_STATE(kaddr, &area_offset);
 	if (IS_ERR_OR_NULL(dest_state)) {
 		err = !dest_state ? PTR_ERR(dest_state) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
@@ -1725,7 +1772,9 @@ int ssdfs_maptbl_cache_add_leb(void *kaddr, u16 item_index,
 
 	dest_state += item_index;
 
-	memcpy(dest_state, src_state, peb_state_size);
+	ssdfs_memcpy(dest_state, 0, peb_state_size,
+		     src_state, 0, peb_state_size,
+		     peb_state_size);
 
 	items_count++;
 	hdr->items_count = cpu_to_le16(items_count);
@@ -1829,9 +1878,6 @@ int ssdfs_maptbl_cache_add_page(struct ssdfs_maptbl_cache *cache,
 		goto finish_add_page;
 	}
 
-	SetPageLRU(page);
-	SetPageActive(page);
-
 finish_add_page:
 	kunmap(page);
 	ssdfs_unlock_page(page);
@@ -1893,6 +1939,7 @@ int ssdfs_maptbl_cache_get_last_item(void *kaddr,
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
+	u32 area_offset = U32_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1913,9 +1960,12 @@ int ssdfs_maptbl_cache_get_last_item(void *kaddr,
 
 	found_pair = LEB2PEB_PAIR_AREA(kaddr);
 	found_pair += items_count - 1;
-	memcpy(pair, found_pair, pair_size);
 
-	found_state = FIRST_PEB_STATE(kaddr);
+	ssdfs_memcpy(pair, 0, pair_size,
+		     found_pair, 0, pair_size,
+		     pair_size);
+
+	found_state = FIRST_PEB_STATE(kaddr, &area_offset);
 	if (IS_ERR_OR_NULL(found_state)) {
 		err = !found_state ? PTR_ERR(found_state) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
@@ -1924,7 +1974,9 @@ int ssdfs_maptbl_cache_get_last_item(void *kaddr,
 	}
 
 	found_state += items_count - 1;
-	memcpy(state, found_state, peb_state_size);
+	ssdfs_memcpy(state, 0, peb_state_size,
+		     found_state, 0, peb_state_size,
+		     peb_state_size);
 
 	return 0;
 }
@@ -1949,63 +2001,9 @@ int ssdfs_maptbl_cache_move_right_leb2peb_pairs(void *kaddr,
 						u16 item_index)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
-	struct ssdfs_leb2peb_pair *src, *dst;
+	struct ssdfs_leb2peb_pair *area;
+	size_t hdr_size = sizeof(struct ssdfs_maptbl_cache_header);
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
-	u16 items_count;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("kaddr %p, item_index %u\n",
-		  kaddr, item_index);
-
-	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
-
-	items_count = le16_to_cpu(hdr->items_count);
-
-	if (items_count == 0) {
-		SSDFS_ERR("empty maptbl cache page\n");
-		return -ERANGE;
-	}
-
-	if (item_index >= items_count) {
-		SSDFS_ERR("item_index %u > items_count %u\n",
-			  item_index, items_count);
-		return -EINVAL;
-	}
-
-	src = LEB2PEB_PAIR_AREA(kaddr);
-	src += item_index;
-	dst = src + 1;
-
-	memmove(dst, src, (items_count - item_index) * pair_size);
-
-	return 0;
-}
-
-/*
- * ssdfs_maptbl_cache_move_right_peb_states() - move PEB states
- * @kaddr: pointer on maptbl cache's fragment
- * @item_index: starting index
- *
- * This method tries to move PEB states to the right
- * starting from @item_index.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- */
-static
-int ssdfs_maptbl_cache_move_right_peb_states(void *kaddr,
-					     u16 item_index)
-{
-	struct ssdfs_maptbl_cache_header *hdr;
-	struct ssdfs_maptbl_cache_peb_state *src, *dst;
-	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
 	int err;
 
@@ -2031,18 +2029,89 @@ int ssdfs_maptbl_cache_move_right_peb_states(void *kaddr,
 		return -EINVAL;
 	}
 
-	src = FIRST_PEB_STATE(kaddr);
-	if (IS_ERR_OR_NULL(src)) {
-		err = !src ? PTR_ERR(src) : -ERANGE;
+	area = LEB2PEB_PAIR_AREA(kaddr);
+	err = ssdfs_memmove(area,
+			    (item_index + 1) * pair_size,
+			    PAGE_SIZE - hdr_size,
+			    area,
+			    item_index * pair_size,
+			    PAGE_SIZE - hdr_size,
+			    (items_count - item_index) * pair_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_maptbl_cache_move_right_peb_states() - move PEB states
+ * @kaddr: pointer on maptbl cache's fragment
+ * @item_index: starting index
+ *
+ * This method tries to move PEB states to the right
+ * starting from @item_index.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_maptbl_cache_move_right_peb_states(void *kaddr,
+					     u16 item_index)
+{
+	struct ssdfs_maptbl_cache_header *hdr;
+	struct ssdfs_maptbl_cache_peb_state *area;
+	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
+	u16 items_count;
+	u32 area_offset = U32_MAX;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("kaddr %p, item_index %u\n",
+		  kaddr, item_index);
+
+	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
+
+	items_count = le16_to_cpu(hdr->items_count);
+
+	if (items_count == 0) {
+		SSDFS_ERR("empty maptbl cache page\n");
+		return -ERANGE;
+	}
+
+	if (item_index >= items_count) {
+		SSDFS_ERR("item_index %u > items_count %u\n",
+			  item_index, items_count);
+		return -EINVAL;
+	}
+
+	area = FIRST_PEB_STATE(kaddr, &area_offset);
+	if (IS_ERR_OR_NULL(area)) {
+		err = !area ? PTR_ERR(area) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
 			  "err %d\n", err);
 		return err;
 	}
 
-	src += item_index;
-	dst = src + 1;
-
-	memmove(dst, src, (items_count - item_index) * peb_state_size);
+	err = ssdfs_memmove(area,
+			    (item_index + 1) * peb_state_size,
+			    PAGE_SIZE - area_offset,
+			    area,
+			    item_index * peb_state_size,
+			    PAGE_SIZE - area_offset,
+			    (items_count - item_index) * peb_state_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -2075,6 +2144,7 @@ int __ssdfs_maptbl_cache_insert_leb(void *kaddr, u16 item_index,
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
+	u32 area_offset = U32_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2102,9 +2172,11 @@ int __ssdfs_maptbl_cache_insert_leb(void *kaddr, u16 item_index,
 	dst_pair = LEB2PEB_PAIR_AREA(kaddr);
 	dst_pair += item_index;
 
-	memcpy(dst_pair, pair, pair_size);
+	ssdfs_memcpy(dst_pair, 0, pair_size,
+		     pair, 0, pair_size,
+		     pair_size);
 
-	dst_state = FIRST_PEB_STATE(kaddr);
+	dst_state = FIRST_PEB_STATE(kaddr, &area_offset);
 	if (IS_ERR_OR_NULL(dst_state)) {
 		err = !dst_state ? PTR_ERR(dst_state) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
@@ -2114,7 +2186,9 @@ int __ssdfs_maptbl_cache_insert_leb(void *kaddr, u16 item_index,
 
 	dst_state += item_index;
 
-	memcpy(dst_state, state, peb_state_size);
+	ssdfs_memcpy(dst_state, 0, peb_state_size,
+		     state, 0, peb_state_size,
+		     peb_state_size);
 
 	items_count++;
 	hdr->items_count = cpu_to_le16(items_count);
@@ -2156,6 +2230,7 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 	void *kaddr;
 	u16 items_count;
 	size_t size;
+	u32 area_offset = U32_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2205,7 +2280,7 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 	cur_pair += items_count - 1;
 	memset(cur_pair, 0xFF, pair_size);
 
-	cur_state = FIRST_PEB_STATE(kaddr);
+	cur_state = FIRST_PEB_STATE(kaddr, &area_offset);
 	if (IS_ERR_OR_NULL(cur_state)) {
 		err = !cur_state ? PTR_ERR(cur_state) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
@@ -2222,7 +2297,7 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 		memmove(cur_state, cur_state + 1, size);
 	}
 
-	cur_state = FIRST_PEB_STATE(kaddr);
+	cur_state = FIRST_PEB_STATE(kaddr, &area_offset);
 	cur_state += items_count - 1;
 	memset(cur_state, 0xFF, sizeof(struct ssdfs_maptbl_cache_peb_state));
 
@@ -2430,8 +2505,12 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 		return err;
 	}
 
-	memcpy(&cur_pair, pair, pair_size);
-	memcpy(&cur_state, state, peb_state_size);
+	ssdfs_memcpy(&cur_pair, 0, pair_size,
+		     pair, 0, pair_size,
+		     pair_size);
+	ssdfs_memcpy(&cur_state, 0, peb_state_size,
+		     state, 0, peb_state_size,
+		     peb_state_size);
 
 	memset(&saved_pair, 0xFF, pair_size);
 	memset(&saved_state, 0xFF, peb_state_size);
@@ -2532,8 +2611,12 @@ finish_page_modification:
 		item_index = 0;
 
 		if (need_move_item) {
-			memcpy(&cur_pair, &saved_pair, pair_size);
-			memcpy(&cur_state, &saved_state, peb_state_size);
+			ssdfs_memcpy(&cur_pair, 0, pair_size,
+				     &saved_pair, 0, pair_size,
+				     pair_size);
+			ssdfs_memcpy(&cur_state, 0, peb_state_size,
+				     &saved_state, 0, peb_state_size,
+				     peb_state_size);
 		}
 	}
 
@@ -3844,6 +3927,7 @@ int ssdfs_maptbl_cache_get_first_item(void *kaddr,
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
 	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
+	u32 area_offset = U32_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3863,9 +3947,11 @@ int ssdfs_maptbl_cache_get_first_item(void *kaddr,
 	}
 
 	found_pair = LEB2PEB_PAIR_AREA(kaddr);
-	memcpy(pair, found_pair, pair_size);
+	ssdfs_memcpy(pair, 0, pair_size,
+		     found_pair, 0, pair_size,
+		     pair_size);
 
-	found_state = FIRST_PEB_STATE(kaddr);
+	found_state = FIRST_PEB_STATE(kaddr, &area_offset);
 	if (IS_ERR_OR_NULL(found_state)) {
 		err = !found_state ? PTR_ERR(found_state) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
@@ -3873,7 +3959,9 @@ int ssdfs_maptbl_cache_get_first_item(void *kaddr,
 		return err;
 	}
 
-	memcpy(state, found_state, peb_state_size);
+	ssdfs_memcpy(state, 0, peb_state_size,
+		     found_state, 0, peb_state_size,
+		     peb_state_size);
 
 	return 0;
 }
@@ -3898,69 +3986,9 @@ int ssdfs_maptbl_cache_move_left_leb2peb_pairs(void *kaddr,
 						u16 item_index)
 {
 	struct ssdfs_maptbl_cache_header *hdr;
-	struct ssdfs_leb2peb_pair *src, *dst;
+	struct ssdfs_leb2peb_pair *area;
+	size_t hdr_size = sizeof(struct ssdfs_maptbl_cache_header);
 	size_t pair_size = sizeof(struct ssdfs_leb2peb_pair);
-	u16 items_count;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("kaddr %p, item_index %u\n",
-		  kaddr, item_index);
-
-	if (item_index == 0) {
-		SSDFS_DBG("do nothing: item_index %u\n",
-			  item_index);
-		return 0;
-	}
-
-	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
-
-	items_count = le16_to_cpu(hdr->items_count);
-
-	if (items_count == 0) {
-		SSDFS_ERR("empty maptbl cache page\n");
-		return -ERANGE;
-	}
-
-	if (item_index >= items_count) {
-		SSDFS_ERR("item_index %u > items_count %u\n",
-			  item_index, items_count);
-		return -EINVAL;
-	}
-
-	src = LEB2PEB_PAIR_AREA(kaddr);
-	src += item_index;
-	dst = src - 1;
-
-	memmove(dst, src, (items_count - item_index) * pair_size);
-
-	return 0;
-}
-
-/*
- * ssdfs_maptbl_cache_move_left_peb_states() - move PEB states
- * @kaddr: pointer on maptbl cache's fragment
- * @item_index: starting index
- *
- * This method tries to move the PEB states on one position
- * to the left starting from @item_index.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- */
-static
-int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
-					     u16 item_index)
-{
-	struct ssdfs_maptbl_cache_header *hdr;
-	struct ssdfs_maptbl_cache_peb_state *src, *dst;
-	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
 	u16 items_count;
 	int err;
 
@@ -3992,18 +4020,95 @@ int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
 		return -EINVAL;
 	}
 
-	src = FIRST_PEB_STATE(kaddr);
-	if (IS_ERR_OR_NULL(src)) {
-		err = !src ? PTR_ERR(src) : -ERANGE;
+	area = LEB2PEB_PAIR_AREA(kaddr);
+	err = ssdfs_memmove(area,
+			    (item_index - 1) * pair_size,
+			    PAGE_SIZE - hdr_size,
+			    area,
+			    item_index * pair_size,
+			    PAGE_SIZE - hdr_size,
+			    (items_count - item_index) * pair_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_maptbl_cache_move_left_peb_states() - move PEB states
+ * @kaddr: pointer on maptbl cache's fragment
+ * @item_index: starting index
+ *
+ * This method tries to move the PEB states on one position
+ * to the left starting from @item_index.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
+					     u16 item_index)
+{
+	struct ssdfs_maptbl_cache_header *hdr;
+	struct ssdfs_maptbl_cache_peb_state *area;
+	size_t peb_state_size = sizeof(struct ssdfs_maptbl_cache_peb_state);
+	u16 items_count;
+	u32 area_offset = U32_MAX;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("kaddr %p, item_index %u\n",
+		  kaddr, item_index);
+
+	if (item_index == 0) {
+		SSDFS_DBG("do nothing: item_index %u\n",
+			  item_index);
+		return 0;
+	}
+
+	hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
+
+	items_count = le16_to_cpu(hdr->items_count);
+
+	if (items_count == 0) {
+		SSDFS_ERR("empty maptbl cache page\n");
+		return -ERANGE;
+	}
+
+	if (item_index >= items_count) {
+		SSDFS_ERR("item_index %u > items_count %u\n",
+			  item_index, items_count);
+		return -EINVAL;
+	}
+
+	area = FIRST_PEB_STATE(kaddr, &area_offset);
+	if (IS_ERR_OR_NULL(area)) {
+		err = !area ? PTR_ERR(area) : -ERANGE;
 		SSDFS_ERR("fail to get the PEB state area: "
 			  "err %d\n", err);
 		return err;
 	}
 
-	src += item_index;
-	dst = src - 1;
-
-	memmove(dst, src, (items_count - item_index) * peb_state_size);
+	err = ssdfs_memmove(area,
+			    (item_index - 1) * peb_state_size,
+			    PAGE_SIZE - area_offset,
+			    area,
+			    item_index * peb_state_size,
+			    PAGE_SIZE - area_offset,
+			    (items_count - item_index) * peb_state_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -4139,8 +4244,9 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 					  "item_index %u, err %d\n",
 					  item_index, err);
 			} else {
-				memcpy(&saved_state, found_state,
-					peb_state_size);
+				ssdfs_memcpy(&saved_state, 0, peb_state_size,
+					     found_state, 0, peb_state_size,
+					     peb_state_size);
 			}
 
 			/* it is expected existence of the item */

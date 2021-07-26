@@ -221,8 +221,10 @@ struct page *ssdfs_alloc_page(gfp_t gfp_mask)
 
 	ssdfs_get_page(page);
 
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("page %p, count %d, "
+		  "flags %#lx, page_index %lu\n",
+		  page, page_ref_count(page),
+		  page->flags, page_index(page));
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_inc(&ssdfs_allocated_pages);
@@ -302,16 +304,6 @@ void ssdfs_free_page(struct page *page)
 		SSDFS_WARN("page %p is still locked\n",
 			   page);
 	}
-
-	if (PageLRU(page)) {
-		SSDFS_WARN("page %p is still LRU\n",
-			   page);
-	}
-
-	if (PageActive(page)) {
-		SSDFS_WARN("page %p is still active\n",
-			   page);
-	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	ssdfs_put_page(page);
@@ -334,8 +326,10 @@ void ssdfs_free_page(struct page *page)
 
 	__free_pages(page, 0);
 
-	SSDFS_DBG("page %p, count %d, flags %#lx\n",
-		  page, page_ref_count(page), page->flags);
+	SSDFS_DBG("page %p, count %d, "
+		  "flags %#lx, page_index %lu\n",
+		  page, page_ref_count(page),
+		  page->flags, page_index(page));
 }
 
 static inline
@@ -361,16 +355,6 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 			SSDFS_WARN("page %p is still locked\n",
 				   page);
 		}
-
-		if (PageLRU(page)) {
-			SSDFS_WARN("page %p is still LRU\n",
-				   page);
-		}
-
-		if (PageActive(page)) {
-			SSDFS_WARN("page %p is still active\n",
-				   page);
-		}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 		ssdfs_put_page(page);
@@ -391,6 +375,11 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 			  page,
 			  atomic64_read(&ssdfs_allocated_pages));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
+		SSDFS_DBG("page %p, count %d, "
+			  "flags %#lx, page_index %lu\n",
+			  page, page_ref_count(page),
+			  page->flags, page_index(page));
 	}
 
 	pagevec_release(pvec);
@@ -875,6 +864,70 @@ bool can_be_merged_into_extent(struct page *page1, struct page *page2)
 	return has_identical_type && has_identical_ino && (diff_index == 1);
 }
 
+static inline
+int ssdfs_memcpy(void *dst, u32 dst_off, u32 dst_size,
+		 const void *src, u32 src_off, u32 src_size,
+		 u32 copy_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((src_off + copy_size) > src_size) {
+		SSDFS_ERR("fail to copy: "
+			  "src_off %u, copy_size %u, src_size %u\n",
+			  src_off, copy_size, src_size);
+		return -ERANGE;
+	}
+
+	if ((dst_off + copy_size) > dst_size) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_off %u, copy_size %u, dst_size %u\n",
+			  dst_off, copy_size, dst_size);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("dst %p, dst_off %u, dst_size %u, "
+		  "src %p, src_off %u, src_size %u, "
+		  "copy_size %u\n",
+		  dst, dst_off, dst_size,
+		  src, src_off, src_size,
+		  copy_size);
+
+	memcpy((u8 *)dst + dst_off, (u8 *)src + src_off, copy_size);
+	return 0;
+}
+
+static inline
+int ssdfs_memmove(void *dst, u32 dst_off, u32 dst_size,
+		  const void *src, u32 src_off, u32 src_size,
+		  u32 move_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((src_off + move_size) > src_size) {
+		SSDFS_ERR("fail to move: "
+			  "src_off %u, move_size %u, src_size %u\n",
+			  src_off, move_size, src_size);
+		return -ERANGE;
+	}
+
+	if ((dst_off + move_size) > dst_size) {
+		SSDFS_ERR("fail to move: "
+			  "dst_off %u, move_size %u, dst_size %u\n",
+			  dst_off, move_size, dst_size);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("dst %p, dst_off %u, dst_size %u, "
+		  "src %p, src_off %u, src_size %u, "
+		  "move_size %u\n",
+		  dst, dst_off, dst_size,
+		  src, src_off, src_size,
+		  move_size);
+
+	memmove((u8 *)dst + dst_off, (u8 *)src + src_off, move_size);
+	return 0;
+}
+
 #define SSDFS_FSI(ptr) \
 	((struct ssdfs_fs_info *)(ptr))
 #define SSDFS_BLKT(ptr) \
@@ -889,10 +942,8 @@ bool can_be_merged_into_extent(struct page *page1, struct page *page2)
 	((struct ssdfs_segment_tree_node_header *)(ptr))
 
 #define SSDFS_SEG2PEB(fsi, seg) \
-	((u64)seg << (SSDFS_FSI(fsi)->log_segsize - \
-			SSDFS_FSI(fsi)->log_erasesize))
+	((u64)seg * fsi->pebs_per_seg)
 #define SSDFS_PEB2SEG(fsi, peb) \
-	((u64)peb >> (SSDFS_FSI(fsi)->log_segsize - \
-			SSDFS_FSI(fsi)->log_erasesize))
+	((u64)div_u64(peb, fsi->pebs_per_seg))
 
 #endif /* _SSDFS_INLINE_H */

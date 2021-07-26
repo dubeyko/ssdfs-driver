@@ -222,8 +222,13 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	if (!si)
 		return 0;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("obj_state %#x\n",
+		  atomic_read(&si->obj_state));
+#else
 	SSDFS_DBG("obj_state %#x\n",
 		  atomic_read(&si->obj_state));
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (atomic_read(&si->obj_state)) {
 	case SSDFS_SEG_OBJECT_UNDER_CREATION:
@@ -292,6 +297,10 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 
 	ssdfs_segment_free_object(si);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -353,9 +362,15 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, seg %llu, seg_state %#x, log_pages %u, "
+		  "create_threads %u\n",
+		  fsi, seg, seg_state, log_pages, create_threads);
+#else
 	SSDFS_DBG("fsi %p, seg %llu, seg_state %#x, log_pages %u, "
 		  "create_threads %u\n",
 		  fsi, seg, seg_state, log_pages, create_threads);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (seg >= fsi->nsegs) {
 		SSDFS_ERR("requested seg %llu >= nsegs %llu\n",
@@ -516,8 +531,13 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_CREATED);
 	wake_up_all(&si->object_queue);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("segment %llu has been created\n",
+		  seg);
+#else
 	SSDFS_DBG("segment %llu has been created\n",
 		  seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 
@@ -610,7 +630,6 @@ int SEG_TYPE2MASK(int seg_type)
  * %-ERANGE     - internal error.
  * %-ENOENT     - unable to find valid range for search.
  */
-static
 int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 				      u64 *start_seg, u64 *end_seg)
 {
@@ -1383,7 +1402,6 @@ int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si)
  * ssdfs_segment_change_state() - change segment state
  * @si: pointer on segment object
  */
-static
 int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 {
 	struct ssdfs_segment_bmap *segbmap;
@@ -1405,8 +1423,13 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 
 	seg_id = si->seg_id;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("si %p, seg_id %llu\n",
+		  si, seg_id);
+#else
 	SSDFS_DBG("si %p, seg_id %llu\n",
 		  si, seg_id);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	blk2off_tbl = si->blk2off_table;
 	segbmap = si->fsi->segbmap;
@@ -1645,8 +1668,19 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 		break;
 	}
 
-	if (!need_change_state)
+	SSDFS_DBG("old_state %#x, new_state %#x, "
+		  "need_change_state %#x, free_pages %d, "
+		  "invalid_pages %d, used_logical_blks %u\n",
+		  seg_state, new_seg_state,
+		  need_change_state, free_pages,
+		  invalid_pages, used_logical_blks);
+
+	if (!need_change_state) {
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("no need to change state\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 		return 0;
+	}
 
 	err = ssdfs_segbmap_change_state(segbmap, seg_id,
 					 new_seg_state, &init_end);
@@ -1679,6 +1713,10 @@ fail_change_state:
 		SSDFS_WARN("old_seg_state %#x != seg_state %#x\n",
 			   old_seg_state, seg_state);
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -1713,6 +1751,8 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
+	case SSDFS_SEG_USED:
+	case SSDFS_SEG_PRE_DIRTY:
 		err = ssdfs_segment_change_state(si);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change segment's state: "
@@ -1722,8 +1762,6 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 		}
 		break;
 
-	case SSDFS_SEG_USED:
-	case SSDFS_SEG_PRE_DIRTY:
 	case SSDFS_SEG_DIRTY:
 	case SSDFS_SEG_BAD:
 	case SSDFS_SEG_RESERVED:
@@ -1769,11 +1807,19 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 	BUG_ON(!cur_seg || !req || !seg_id || !extent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#else
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*seg_id = U64_MAX;
 
@@ -1892,6 +1938,10 @@ add_new_current_segment:
 finish_add_block:
 	ssdfs_current_segment_unlock(cur_seg);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	if (err) {
 		SSDFS_ERR("fail to add block: "
 			  "ino %llu, logical_offset %llu, err %d\n",
@@ -1934,11 +1984,19 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 	BUG_ON(!cur_seg || !req || !seg_id || !extent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#else
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = cur_seg->fsi;
 	*seg_id = U64_MAX;
@@ -2074,6 +2132,10 @@ add_new_current_segment:
 
 finish_add_extent:
 	ssdfs_current_segment_unlock(cur_seg);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (err) {
 		SSDFS_ERR("fail to add extent: "
@@ -3157,12 +3219,21 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	BUG_ON(!si || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#else
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  si->seg_id,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	table = si->blk2off_table;
 	logical_blk = req->place.start.blk_index;
@@ -3216,6 +3287,10 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 
 	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -3330,6 +3405,16 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	BUG_ON(!si || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, ino %llu, logical_offset %llu, "
+		  "logical_blk %u, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  req->extent.ino, req->extent.logical_offset,
+		  req->place.start.blk_index,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#else
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "logical_blk %u, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -3338,6 +3423,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 		  req->place.start.blk_index,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	table = si->blk2off_table;
 	blk = req->place.start.blk_index;
@@ -3416,6 +3502,10 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 
 	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -4030,8 +4120,13 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 	BUG_ON(!si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("si %p, seg %llu, start_off %u, blks_count %u\n",
+		  si, si->seg_id, start_off, blks_count);
+#else
 	SSDFS_DBG("si %p, seg %llu, start_off %u, blks_count %u\n",
 		  si, si->seg_id, start_off, blks_count);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	blk2off_tbl = si->blk2off_table;
 
@@ -4159,7 +4254,11 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }

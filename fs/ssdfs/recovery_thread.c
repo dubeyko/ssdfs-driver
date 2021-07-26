@@ -50,10 +50,17 @@ void ssdfs_backup_sb_info2(struct ssdfs_recovery_env *env)
 		  le64_to_cpu(SSDFS_VS(env->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(env->sbi.vs_buf)->state));
 
-	memcpy(env->sbi_backup.vh_buf, env->sbi.vh_buf, hdr_size);
-	memcpy(env->sbi_backup.vs_buf, env->sbi.vs_buf, footer_size);
-	memcpy(&env->sbi_backup.last_log, &env->sbi.last_log,
-		sizeof(struct ssdfs_peb_extent));
+	ssdfs_memcpy(env->sbi_backup.vh_buf, 0, hdr_size,
+		     env->sbi.vh_buf, 0, hdr_size,
+		     hdr_size);
+	ssdfs_memcpy(env->sbi_backup.vs_buf, 0, footer_size,
+		     env->sbi.vs_buf, 0, footer_size,
+		     footer_size);
+	ssdfs_memcpy(&env->sbi_backup.last_log,
+		     0, sizeof(struct ssdfs_peb_extent),
+		     &env->sbi.last_log,
+		     0, sizeof(struct ssdfs_peb_extent),
+		     sizeof(struct ssdfs_peb_extent));
 
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
@@ -93,10 +100,17 @@ void ssdfs_restore_sb_info2(struct ssdfs_recovery_env *env)
 		  le64_to_cpu(SSDFS_VS(env->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(env->sbi.vs_buf)->state));
 
-	memcpy(env->sbi.vh_buf, env->sbi_backup.vh_buf, hdr_size);
-	memcpy(env->sbi.vs_buf, env->sbi_backup.vs_buf, footer_size);
-	memcpy(&env->sbi.last_log, &env->sbi_backup.last_log,
-		sizeof(struct ssdfs_peb_extent));
+	ssdfs_memcpy(env->sbi.vh_buf, 0, hdr_size,
+		     env->sbi_backup.vh_buf, 0, hdr_size,
+		     hdr_size);
+	ssdfs_memcpy(env->sbi.vs_buf, 0, footer_size,
+		     env->sbi_backup.vs_buf, 0, footer_size,
+		     footer_size);
+	ssdfs_memcpy(&env->sbi.last_log,
+		     0, sizeof(struct ssdfs_peb_extent),
+		     &env->sbi_backup.last_log,
+		     0, sizeof(struct ssdfs_peb_extent),
+		     sizeof(struct ssdfs_peb_extent));
 
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
@@ -302,7 +316,9 @@ int ssdfs_find_any_valid_sb_segment2(struct ssdfs_recovery_env *env,
 		(SSDFS_SB_SEG_COPY_MAX * sizeof(u64)));
 
 try_next_volume_portion:
-	memcpy(&env->last_vh, env->sbi.vh_buf, vh_size);
+	ssdfs_memcpy(&env->last_vh, 0, vh_size,
+		     env->sbi.vh_buf, 0, vh_size,
+		     vh_size);
 	last_cno = le64_to_cpu(SSDFS_SEG_HDR(env->sbi.vh_buf)->cno);
 
 try_again:
@@ -425,7 +441,9 @@ try_again:
 	}
 
 	if (err) {
-		memcpy(env->sbi.vh_buf, &env->last_vh, vh_size);
+		ssdfs_memcpy(env->sbi.vh_buf, 0, vh_size,
+			     &env->last_vh, 0, vh_size,
+			     vh_size);
 		goto try_again;
 	}
 

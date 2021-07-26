@@ -477,8 +477,15 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 					  (size_t)(len - *read_bytes));
 
 		kaddr = kmap_atomic(page);
-		memcpy(buf + *read_bytes, (u8 *)kaddr + page_off, read_len);
+		err = ssdfs_memcpy(buf, *read_bytes, len,
+				   kaddr, page_off, PAGE_SIZE,
+				   read_len);
 		kunmap_atomic(kaddr);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: err %d\n", err);
+			goto finish_bdev_read_pvec;
+		}
 
 		*read_bytes += read_len;
 		cur_offset += read_len;

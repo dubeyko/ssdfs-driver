@@ -343,9 +343,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_USER_REGULAR_NAME:
 			prefix_len =
 				strlen(SSDFS_NS_PREFIX[SSDFS_USER_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_USER_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_USER_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -353,9 +355,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_TRUSTED_REGULAR_NAME:
 			prefix_len =
 				strlen(SSDFS_NS_PREFIX[SSDFS_TRUSTED_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_TRUSTED_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_TRUSTED_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -363,9 +367,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_SYSTEM_REGULAR_NAME:
 			prefix_len =
 				strlen(SSDFS_NS_PREFIX[SSDFS_SYSTEM_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_SYSTEM_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_SYSTEM_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -373,9 +379,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_SECURITY_REGULAR_NAME:
 			prefix_len =
 			    strlen(SSDFS_NS_PREFIX[SSDFS_SECURITY_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_SECURITY_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_SECURITY_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -386,9 +394,10 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 			return -EIO;
 		}
 
-		memcpy((u8 *)buffer + offset,
-			search->name.str,
-			search->name.len);
+		err = ssdfs_memcpy(buffer, offset, size,
+				   search->name.str, 0, SSDFS_MAX_NAME_LEN,
+				   search->name.len);
+		BUG_ON(unlikely(err != 0));
 
 		offset += search->name.len;
 		copied += search->name.len;
@@ -401,9 +410,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_USER_INLINE_NAME:
 			prefix_len =
 				strlen(SSDFS_NS_PREFIX[SSDFS_USER_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_USER_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_USER_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -411,9 +422,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_TRUSTED_INLINE_NAME:
 			prefix_len =
 				strlen(SSDFS_NS_PREFIX[SSDFS_TRUSTED_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_TRUSTED_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_TRUSTED_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -421,9 +434,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_SYSTEM_INLINE_NAME:
 			prefix_len =
 				strlen(SSDFS_NS_PREFIX[SSDFS_SYSTEM_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_SYSTEM_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_SYSTEM_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
+			BUG_ON(unlikely(err != 0));
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -431,9 +446,10 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 		case SSDFS_XATTR_SECURITY_INLINE_NAME:
 			prefix_len =
 			    strlen(SSDFS_NS_PREFIX[SSDFS_SECURITY_NS_INDEX]);
-			memcpy((u8 *)buffer + offset,
-				SSDFS_NS_PREFIX[SSDFS_SECURITY_NS_INDEX],
-				prefix_len);
+			err = ssdfs_memcpy(buffer, offset, size,
+				     SSDFS_NS_PREFIX[SSDFS_SECURITY_NS_INDEX],
+				     0, prefix_len,
+				     prefix_len);
 			offset += prefix_len;
 			copied += prefix_len;
 			break;
@@ -452,9 +468,11 @@ ssize_t ssdfs_copy_name2buffer(struct ssdfs_shared_dict_btree_info *dict,
 
 		name_len = xattr->name_len - copied;
 
-		memcpy((u8 *)buffer + offset,
-			xattr->inline_string,
-			name_len);
+		err = ssdfs_memcpy(buffer, offset, size,
+				   xattr->inline_string,
+				   0, SSDFS_XATTR_INLINE_NAME_MAX_LEN,
+				   name_len);
+		BUG_ON(unlikely(err != 0));
 
 		offset += name_len;
 		copied += name_len;
@@ -772,8 +790,10 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 				goto xattr_is_not_available;
 
 			/* return value of attribute */
-			memcpy(value, search->result.buf,
-				search->result.buf_size);
+			ssdfs_memcpy(value, 0, size,
+				     search->result.buf,
+				     0, search->result.buf_size,
+				     search->result.buf_size);
 		}
 
 		err = search->result.buf_size;

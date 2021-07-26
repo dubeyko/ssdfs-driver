@@ -1371,8 +1371,11 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 							    &index_key);
 	} else {
 		down_read(&node->header_lock);
-		memcpy(&area, &node->index_area,
-			sizeof(struct ssdfs_btree_node_index_area));
+		ssdfs_memcpy(&area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     &node->index_area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     sizeof(struct ssdfs_btree_node_index_area));
 		up_read(&node->header_lock);
 
 		err = __ssdfs_btree_common_node_extract_index(node, &area,
@@ -2052,8 +2055,11 @@ ssdfs_check_capability_move_indexes_to_sibling(struct ssdfs_btree_level *level)
 							    &index_key);
 	} else {
 		down_read(&node->header_lock);
-		memcpy(&area, &node->index_area,
-			sizeof(struct ssdfs_btree_node_index_area));
+		ssdfs_memcpy(&area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     &node->index_area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     sizeof(struct ssdfs_btree_node_index_area));
 		up_read(&node->header_lock);
 
 		err = __ssdfs_btree_common_node_extract_index(node, &area,
@@ -5326,8 +5332,13 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, search %p, hierarchy %p\n",
+		  tree, search, hierarchy);
+#else
 	SSDFS_DBG("tree %p, search %p, hierarchy %p\n",
 		  tree, search, hierarchy);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree_height = atomic_read(&tree->height);
 	if (tree_height <= 0) {
@@ -5534,6 +5545,10 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 			break;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_btree_hierarchy_object(hierarchy);
 
 	return res;
@@ -5616,9 +5631,11 @@ int ssdfs_btree_check_level_for_delete(struct ssdfs_btree *tree,
 				SSDFS_BTREE_AREA_OP_REQUESTED;
 
 		spin_lock(&child_node->descriptor_lock);
-		memcpy(&parent->index_area.delete.node_index,
-			&child_node->node_index,
-			sizeof(struct ssdfs_btree_index_key));
+		ssdfs_memcpy(&parent->index_area.delete.node_index,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     &child_node->node_index,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     sizeof(struct ssdfs_btree_index_key));
 		spin_unlock(&child_node->descriptor_lock);
 
 		down_read(&parent_node->header_lock);
@@ -5725,8 +5742,13 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, search %p, hierarchy %p\n",
+		  tree, search, hierarchy);
+#else
 	SSDFS_DBG("tree %p, search %p, hierarchy %p\n",
 		  tree, search, hierarchy);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree_height = atomic_read(&tree->height);
 	if (tree_height == 0) {
@@ -5831,6 +5853,10 @@ int ssdfs_btree_check_hierarchy_for_delete(struct ssdfs_btree *tree,
 			return err;
 		}
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -5952,8 +5978,13 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, search %p, hierarchy %p\n",
+		  tree, search, hierarchy);
+#else
 	SSDFS_DBG("tree %p, search %p, hierarchy %p\n",
 		  tree, search, hierarchy);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	tree_height = atomic_read(&tree->height);
 	if (tree_height == 0) {
@@ -6066,6 +6097,10 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 			return err;
 		}
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -8162,18 +8197,25 @@ int __ssdfs_btree_update_index(struct ssdfs_btree_node *parent_node,
 		return -ERANGE;
 	}
 
-	spin_lock(&child_node->descriptor_lock);
-
-	memcpy(&old_key, &child_node->node_index,
-		sizeof(struct ssdfs_btree_index_key));
-
 	if (parent_type == SSDFS_BTREE_HYBRID_NODE &&
 	    child_type == SSDFS_BTREE_HYBRID_NODE &&
 	    parent_node == child_node) {
 		down_read(&parent_node->header_lock);
 		old_hash = parent_node->items_area.start_hash;
 		up_read(&parent_node->header_lock);
+	}
 
+	spin_lock(&child_node->descriptor_lock);
+
+	ssdfs_memcpy(&old_key,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     &child_node->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
+
+	if (parent_type == SSDFS_BTREE_HYBRID_NODE &&
+	    child_type == SSDFS_BTREE_HYBRID_NODE &&
+	    parent_node == child_node) {
 		if (old_hash == U64_MAX) {
 			err = -ERANGE;
 			SSDFS_WARN("invalid old hash\n");
@@ -8183,14 +8225,22 @@ int __ssdfs_btree_update_index(struct ssdfs_btree_node *parent_node,
 		old_key.index.hash = cpu_to_le64(old_hash);
 	}
 
-	memcpy(&child_node->node_index.index.extent,
-		&child_node->extent,
-		sizeof(struct ssdfs_raw_extent));
-	memcpy(&new_key, &child_node->node_index,
-		sizeof(struct ssdfs_btree_index_key));
+	ssdfs_memcpy(&child_node->node_index.index.extent,
+		     0, sizeof(struct ssdfs_raw_extent),
+		     &child_node->extent,
+		     0, sizeof(struct ssdfs_raw_extent),
+		     sizeof(struct ssdfs_raw_extent));
+	ssdfs_memcpy(&new_key,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     &child_node->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
 	new_key.index.hash = cpu_to_le64(start_hash);
-	memcpy(&child_node->node_index, &new_key,
-		sizeof(struct ssdfs_btree_index_key));
+	ssdfs_memcpy(&child_node->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     &new_key,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
 
 finish_update_index:
 	spin_unlock(&child_node->descriptor_lock);
@@ -8333,11 +8383,16 @@ int __ssdfs_btree_add_index(struct ssdfs_btree_node *parent_node,
 		child_node->node_index.index.hash =
 				    cpu_to_le64(start_hash);
 	}
-	memcpy(&child_node->node_index.index.extent,
-		&child_node->extent,
-		sizeof(struct ssdfs_raw_extent));
-	memcpy(&key, &child_node->node_index,
-		sizeof(struct ssdfs_btree_index_key));
+	ssdfs_memcpy(&child_node->node_index.index.extent,
+		     0, sizeof(struct ssdfs_raw_extent),
+		     &child_node->extent,
+		     0, sizeof(struct ssdfs_raw_extent),
+		     sizeof(struct ssdfs_raw_extent));
+	ssdfs_memcpy(&key,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     &child_node->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
 	spin_unlock(&child_node->descriptor_lock);
 
 	SSDFS_DBG("node_id %u, node_type %#x, "

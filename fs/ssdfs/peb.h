@@ -255,12 +255,19 @@ static inline
 u32 ssdfs_peb_correct_area_write_offset(u32 write_offset, u32 data_size)
 {
 	u32 page_index1, page_index2;
+	u32 new_write_offset = write_offset + data_size;
 
 	page_index1 = write_offset / PAGE_SIZE;
-	page_index2 = (write_offset + data_size) / PAGE_SIZE;
+	page_index2 = new_write_offset / PAGE_SIZE;
 
-	if (page_index1 != page_index2)
-		return page_index2 * PAGE_SIZE;
+	if (page_index1 != page_index2) {
+		u32 calculated_write_offset = page_index2 * PAGE_SIZE;
+
+		if (new_write_offset == calculated_write_offset)
+			return write_offset;
+		else
+			return calculated_write_offset;
+	}
 
 	return write_offset;
 }

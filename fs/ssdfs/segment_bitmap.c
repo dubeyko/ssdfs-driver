@@ -549,7 +549,11 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
+#else
 	SSDFS_DBG("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	kaddr = ssdfs_seg_bmap_kzalloc(segbmap_obj_size, GFP_KERNEL);
 	if (!kaddr) {
@@ -746,7 +750,11 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto destroy_seg_objects;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("DONE: create segment bitmap\n");
+#else
 	SSDFS_DBG("DONE: create segment bitmap\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 
@@ -788,7 +796,11 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("segbmap %p\n", fsi->segbmap);
+#else
 	SSDFS_DBG("segbmap %p\n", fsi->segbmap);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!fsi->segbmap)
 		return;
@@ -816,9 +828,6 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 			continue;
 		}
 
-		ClearPageLRU(page);
-		ClearPageActive(page);
-
 		page->mapping = NULL;
 
 		SSDFS_DBG("page %p, count %d\n",
@@ -842,6 +851,10 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	iput(fsi->segbmap_inode);
 	ssdfs_seg_bmap_kfree(fsi->segbmap);
 	fsi->segbmap = NULL;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -1114,11 +1127,19 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		state >= SSDFS_SEGBMAP_FRAG_DIRTY);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb_index %u, "
+		  "sequence_id %u, page %p, "
+		  "state %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  sequence_id, page, state);
+#else
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "sequence_id %u, page %p, "
 		  "state %#x\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  sequence_id, page, state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 
@@ -1195,15 +1216,16 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		kunmap_atomic(hdr);
 	}
 
-	SetPageLRU(page);
-	SetPageActive(page);
-
 	ssdfs_seg_bmap_account_page(page);
 
 unlock_search_lock:
 	complete_all(&desc->init_end);
 	up_write(&segbmap->search_lock);
 	inode_unlock_shared(pebc->parent_si->fsi->segbmap_inode);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -1389,7 +1411,9 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 	}
 
 	kaddr2 = kmap_atomic(dpage);
-	memcpy(kaddr2, kaddr1, PAGE_SIZE);
+	ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
+		     kaddr1, 0, PAGE_SIZE,
+		     PAGE_SIZE);
 	kunmap_atomic(kaddr2);
 
 	SetPageUptodate(dpage);
@@ -1443,7 +1467,9 @@ void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_request *req1,
 	kaddr1 = kmap_atomic(spage);
 
 	kaddr2 = kmap_atomic(dpage);
-	memcpy(kaddr2, kaddr1, PAGE_SIZE);
+	ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
+		     kaddr1, 0, PAGE_SIZE,
+		     PAGE_SIZE);
 	kunmap_atomic(kaddr1);
 
 	hdr = SSDFS_SBMP_FRAG_HDR(kaddr2);
@@ -1661,8 +1687,11 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 		}
 
 		if (has_backup) {
-			memcpy(&req2->place, &req1->place,
-				sizeof(struct ssdfs_volume_extent));
+			ssdfs_memcpy(&req2->place,
+				     0, sizeof(struct ssdfs_volume_extent),
+				     &req1->place,
+				     0, sizeof(struct ssdfs_volume_extent),
+				     sizeof(struct ssdfs_volume_extent));
 		}
 
 		si = segbmap->segs[seg_index][SSDFS_MAIN_SEGBMAP_SEG];
@@ -1984,6 +2013,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 	struct ssdfs_segment_info *si;
 	struct page *page;
 	void *kaddr;
+	size_t extent_size = sizeof(struct ssdfs_volume_extent);
 	u64 ino = SSDFS_SEG_BMAP_INO;
 	bool has_backup;
 	u64 offset;
@@ -2079,8 +2109,9 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 								     0, 0, 0,
 								     req2);
 
-				memcpy(&req2->place, &req1->place,
-					sizeof(struct ssdfs_volume_extent));
+				ssdfs_memcpy(&req2->place, 0, extent_size,
+					     &req1->place, 0, extent_size,
+					     extent_size);
 
 				copy_id = SSDFS_COPY_SEGBMAP_SEG;
 				si = segbmap->segs[seg_index][copy_id];
@@ -2289,8 +2320,13 @@ int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap)
 	BUG_ON(!segbmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("segbmap %p\n",
+		  segbmap);
+#else
 	SSDFS_DBG("segbmap %p\n",
 		  segbmap);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	inode_lock_shared(segbmap->fsi->segbmap_inode);
 	down_read(&segbmap->resize_lock);
@@ -2376,6 +2412,12 @@ int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap)
 finish_segbmap_flush:
 	up_read(&segbmap->resize_lock);
 	inode_unlock_shared(segbmap->fsi->segbmap_inode);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -2671,6 +2713,12 @@ int ssdfs_segbmap_set_state_in_byte(u8 *byte_ptr, u32 byte_item,
 		SSDFS_ERR("invalid old_state %#x\n",
 			  *old_state);
 		return -ERANGE;
+	}
+
+	if (*old_state == new_state) {
+		SSDFS_DBG("old_state %#x == new_state %#x\n",
+			  *old_state, new_state);
+		return -EEXIST;
 	}
 
 	value = new_state & SSDFS_SEG_STATE_MASK;
@@ -3078,16 +3126,21 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 	}
 	kunmap_atomic(kaddr);
 
-	if (unlikely(err)) {
+	if (err == -EEXIST) {
+		err = 0;
+		SetPageUptodate(page);
+		SSDFS_DBG("old_state %#x == new_state %#x\n",
+			  old_state, new_state);
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to set state: "
 			  "seg %llu, new_state %#x, err %d\n",
 			  seg, new_state, err);
 		goto free_page;
+	} else {
+		SetPageUptodate(page);
+		if (!PageDirty(page))
+			__set_page_dirty_nobuffers(page);
 	}
-
-	SetPageUptodate(page);
-	if (!PageDirty(page))
-		__set_page_dirty_nobuffers(page);
 
 free_page:
 	ssdfs_unlock_page(page);
@@ -3131,8 +3184,13 @@ int ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 	BUG_ON(!segbmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("segbmap %p, seg %llu, new_state %#x\n",
+		  segbmap, seg, new_state);
+#else
 	SSDFS_DBG("segbmap %p, seg %llu, new_state %#x\n",
 		  segbmap, seg, new_state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*end = NULL;
 
@@ -3177,6 +3235,10 @@ int ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 finish_segment_check:
 	up_read(&segbmap->resize_lock);
 	inode_unlock_shared(segbmap->fsi->segbmap_inode);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -4358,9 +4420,15 @@ int ssdfs_segbmap_find_and_set(struct ssdfs_segment_bmap *segbmap,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("segbmap %p, start %llu, max %llu, "
+		  "state %#x, mask %#x, new_state %#x, seg %p\n",
+		  segbmap, start, max, state, mask, new_state, seg);
+#else
 	SSDFS_DBG("segbmap %p, start %llu, max %llu, "
 		  "state %#x, mask %#x, new_state %#x, seg %p\n",
 		  segbmap, start, max, state, mask, new_state, seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*end = NULL;
 
@@ -4449,6 +4517,10 @@ finish_search_preparation:
 	up_read(&segbmap->resize_lock);
 	inode_unlock_shared(segbmap->fsi->segbmap_inode);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	if (unlikely(err))
 		return err;
 
@@ -4503,9 +4575,15 @@ int ssdfs_segbmap_reserve_clean_segment(struct ssdfs_segment_bmap *segbmap,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("segbmap %p, start %llu, max %llu, "
+		  "seg %p\n",
+		  segbmap, start, max, seg);
+#else
 	SSDFS_DBG("segbmap %p, start %llu, max %llu, "
 		  "seg %p\n",
 		  segbmap, start, max, seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*end = NULL;
 
@@ -4576,7 +4654,11 @@ finish_segment_check:
 	up_read(&segbmap->resize_lock);
 	inode_unlock_shared(segbmap->fsi->segbmap_inode);
 
-	SSDFS_DBG("seg %llu, err %d\n", *seg, err);
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: seg %llu, err %d\n", *seg, err);
+#else
+	SSDFS_DBG("finished: seg %llu, err %d\n", *seg, err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

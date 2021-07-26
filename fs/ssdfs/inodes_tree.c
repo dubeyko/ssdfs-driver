@@ -483,7 +483,11 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p\n", fsi);
+#else
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	ptr = ssdfs_ino_tree_kzalloc(sizeof(struct ssdfs_inodes_btree_info),
 				     GFP_KERNEL);
@@ -528,7 +532,10 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 		  ptr->free_inodes,
 		  ptr->inodes_capacity);
 
-	memcpy(&ptr->root_folder, &fsi->vs->root_folder, raw_inode_size);
+	ssdfs_memcpy(&ptr->root_folder, 0, raw_inode_size,
+		     &fsi->vs->root_folder, 0, raw_inode_size,
+		     raw_inode_size);
+
 	if (!is_raw_inode_checksum_correct(fsi,
 					   &ptr->root_folder,
 					   raw_inode_size)) {
@@ -638,8 +645,9 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 				   search->result.items_in_buffer);
 		}
 
-		memcpy(search->result.buf, &ptr->root_folder,
-			raw_inode_size);
+		ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
+			     &ptr->root_folder, 0, raw_inode_size,
+			     raw_inode_size);
 
 		err = ssdfs_inodes_btree_change(ptr, ino, search);
 		if (unlikely(err)) {
@@ -688,7 +696,11 @@ free_search_object:
 		}
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("DONE: create inodes btree\n");
+#else
 	SSDFS_DBG("DONE: create inodes btree\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 
@@ -710,7 +722,11 @@ void ssdfs_inodes_btree_destroy(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p\n", fsi->inodes_tree);
+#else
 	SSDFS_DBG("tree %p\n", fsi->inodes_tree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!fsi->inodes_tree)
 		return;
@@ -723,6 +739,10 @@ void ssdfs_inodes_btree_destroy(struct ssdfs_fs_info *fsi)
 
 	ssdfs_ino_tree_kfree(fsi->inodes_tree);
 	fsi->inodes_tree = NULL;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -752,7 +772,11 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 	BUG_ON(!tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p\n", tree);
+#else
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = tree->generic_tree.fsi;
 
@@ -768,8 +792,11 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 	}
 
 	spin_lock(&tree->lock);
-	memcpy(&fsi->vs->root_folder, &tree->root_folder,
-		sizeof(struct ssdfs_inode));
+	ssdfs_memcpy(&fsi->vs->root_folder,
+		     0, sizeof(struct ssdfs_inode),
+		     &tree->root_folder,
+		     0, sizeof(struct ssdfs_inode),
+		     sizeof(struct ssdfs_inode));
 	upper_allocated_ino = tree->upper_allocated_ino;
 	allocated_inodes = tree->allocated_inodes;
 	free_inodes = tree->free_inodes;
@@ -796,6 +823,12 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 	fsi->vs->inodes_btree.nodes_count = cpu_to_le32(nodes_count);
 	fsi->vs->inodes_btree.upper_allocated_ino =
 				cpu_to_le64(upper_allocated_ino);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	ssdfs_debug_inodes_btree_object(fsi->inodes_tree);
 
@@ -880,8 +913,13 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 	BUG_ON(!tree || !ino || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, ino %p, search %p\n",
+		  tree, ino, search);
+#else
 	SSDFS_DBG("tree %p, ino %p, search %p\n",
 		  tree, ino, search);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*ino = ULONG_MAX;
 
@@ -966,6 +1004,10 @@ finish_inode_allocation:
 	ssdfs_btree_search_forget_parent_node(search);
 	ssdfs_btree_search_forget_child_node(search);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -994,8 +1036,13 @@ int ssdfs_inodes_btree_change(struct ssdfs_inodes_btree_info *tree,
 	BUG_ON(!tree || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, ino %lu, search %p\n",
+		  tree, ino, search);
+#else
 	SSDFS_DBG("tree %p, ino %lu, search %p\n",
 		  tree, ino, search);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
 
@@ -1023,10 +1070,17 @@ int ssdfs_inodes_btree_change(struct ssdfs_inodes_btree_info *tree,
 
 	if (ino == SSDFS_ROOT_INO) {
 		spin_lock(&tree->lock);
-		memcpy(&tree->root_folder, search->result.buf,
-			sizeof(struct ssdfs_inode));
+		ssdfs_memcpy(&tree->root_folder,
+			     0, sizeof(struct ssdfs_inode),
+			     search->result.buf,
+			     0, search->result.buf_size,
+			     sizeof(struct ssdfs_inode));
 		spin_unlock(&tree->lock);
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -1059,8 +1113,13 @@ int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
 	BUG_ON(!tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, ino %lu, count %u\n",
+		  tree, ino, count);
+#else
 	SSDFS_DBG("tree %p, ino %lu, count %u\n",
 		  tree, ino, count);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (count == 0) {
 		SSDFS_WARN("count == 0\n");
@@ -1132,6 +1191,10 @@ int ssdfs_inodes_btree_delete_range(struct ssdfs_inodes_btree_info *tree,
 
 finish_delete_inodes_range:
 	ssdfs_btree_search_free(search);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -1309,8 +1372,11 @@ int ssdfs_inodes_btree_desc_flush(struct ssdfs_btree *tree)
 		return -ERANGE;
 	}
 
-	memcpy(&fsi->vs->inodes_btree.desc, &desc,
-		sizeof(struct ssdfs_btree_descriptor));
+	ssdfs_memcpy(&fsi->vs->inodes_btree.desc,
+		     0, sizeof(struct ssdfs_btree_descriptor),
+		     &desc,
+		     0, sizeof(struct ssdfs_btree_descriptor),
+		     sizeof(struct ssdfs_btree_descriptor));
 
 	return 0;
 }
@@ -1863,8 +1929,11 @@ int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 		  node->node_id, atomic_read(&node->state));
 
 	down_read(&node->header_lock);
-	memcpy(&index_area, &node->index_area,
-		sizeof(struct ssdfs_btree_node_index_area));
+	ssdfs_memcpy(&index_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     &node->index_area,
+		     0, sizeof(struct ssdfs_btree_node_index_area),
+		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
 
 	item_size = node->tree->item_size;
@@ -1952,7 +2021,9 @@ int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 		}
 
 		prev_hash = start_hash;
-		memcpy(&prev_index, &index, index_size);
+		ssdfs_memcpy(&prev_index, 0, index_size,
+			     &index, 0, index_size,
+			     index_size);
 
 		for (i = 1; i < index_area.index_count; i++) {
 			err = ssdfs_btree_node_get_index(&node->content.pvec,
@@ -1994,7 +2065,9 @@ int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 			}
 
 			prev_hash = start_hash;
-			memcpy(&prev_index, &index, index_size);
+			ssdfs_memcpy(&prev_index, 0, index_size,
+				     &index, 0, index_size,
+				     index_size);
 		}
 	}
 
@@ -2103,7 +2176,9 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_write(&node->header_lock);
 
-	memcpy(&node->raw.inodes_header, hdr, hdr_size);
+	ssdfs_memcpy(&node->raw.inodes_header, 0, hdr_size,
+		     hdr, 0, hdr_size,
+		     hdr_size);
 
 	err = ssdfs_btree_init_node(node, &hdr->node,
 				    hdr_size);
@@ -2300,8 +2375,11 @@ finish_header_init:
 	ssdfs_btree_node_init_bmaps(node, addr);
 
 	spin_lock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
-	memcpy(node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].ptr,
-		hdr->bmap, bmap_bytes);
+	ssdfs_memcpy(node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].ptr,
+		     0, bmap_bytes,
+		     hdr->bmap,
+		     0, bmap_bytes,
+		     bmap_bytes);
 	spin_unlock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
 
 	start = node->bmap_array.item_start_bit;
@@ -2508,8 +2586,11 @@ int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
 		spin_lock(&node->descriptor_lock);
-		memcpy(&new_key, &node->node_index,
-			sizeof(struct ssdfs_btree_index_key));
+		ssdfs_memcpy(&new_key,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     &node->node_index,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     sizeof(struct ssdfs_btree_index_key));
 		spin_unlock(&node->descriptor_lock);
 
 		new_key.index.hash = cpu_to_le64(start_hash);
@@ -2788,8 +2869,11 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	memcpy(&inodes_header, &node->raw.inodes_header,
-		sizeof(struct ssdfs_inodes_btree_node_header));
+	ssdfs_memcpy(&inodes_header,
+		     0, sizeof(struct ssdfs_inodes_btree_node_header),
+		     &node->raw.inodes_header,
+		     0, sizeof(struct ssdfs_inodes_btree_node_header),
+		     sizeof(struct ssdfs_inodes_btree_node_header));
 
 	inodes_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	inodes_header.node.magic.key = cpu_to_le16(SSDFS_INODES_BNODE_MAGIC);
@@ -2812,9 +2896,11 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_read(&node->bmap_array.lock);
 	bmap_bytes = node->bmap_array.bmap_bytes;
 	spin_lock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
-	memcpy(inodes_header.bmap,
-		node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].ptr,
-		bmap_bytes);
+	ssdfs_memcpy(inodes_header.bmap,
+		     0, bmap_bytes,
+		     node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].ptr,
+		     0, bmap_bytes,
+		     bmap_bytes);
 	spin_unlock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
 	up_read(&node->bmap_array.lock);
 
@@ -2828,8 +2914,11 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 		goto finish_inodes_header_preparation;
 	}
 
-	memcpy(&node->raw.inodes_header, &inodes_header,
-		sizeof(struct ssdfs_inodes_btree_node_header));
+	ssdfs_memcpy(&node->raw.inodes_header,
+		     0, sizeof(struct ssdfs_inodes_btree_node_header),
+		     &inodes_header,
+		     0, sizeof(struct ssdfs_inodes_btree_node_header),
+		     sizeof(struct ssdfs_inodes_btree_node_header));
 
 finish_inodes_header_preparation:
 	up_write(&node->header_lock);
@@ -2845,8 +2934,11 @@ finish_inodes_header_preparation:
 
 	page = node->content.pvec.pages[0];
 	kaddr = kmap_atomic(page);
-	memcpy(kaddr, &inodes_header,
-		sizeof(struct ssdfs_inodes_btree_node_header));
+	ssdfs_memcpy(kaddr,
+		     0, PAGE_SIZE,
+		     &inodes_header,
+		     0, sizeof(struct ssdfs_inodes_btree_node_header),
+		     sizeof(struct ssdfs_inodes_btree_node_header));
 	kunmap_atomic(kaddr);
 
 finish_node_pre_flush:
@@ -3309,6 +3401,7 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
@@ -3365,20 +3458,22 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 
 	buf_offset = buf_index * item_size;
 
-	if ((buf_offset + item_size) > search->result.buf_size) {
-		SSDFS_ERR("fail to copy item: "
-			  "buf_offset %u, item_size %zu, "
-			  "buf_size %zu\n",
-			  buf_offset, item_size,
-			  search->result.buf_size);
-		return -ERANGE;
-	}
-
 	kaddr = kmap_atomic(page);
-	memcpy((u8 *)kaddr + item_offset,
-		(u8 *)search->result.buf + buf_offset,
-		item_size);
+	err = ssdfs_memcpy(kaddr,
+			   item_offset, PAGE_SIZE,
+			   search->result.buf,
+			   buf_offset, search->result.buf_size,
+			   item_size);
 	kunmap_atomic(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy item: "
+			  "buf_offset %u, item_offset %u, "
+			  "item_size %zu, buf_size %zu\n",
+			  buf_offset, item_offset,
+			  item_size, search->result.buf_size);
+		return err;
+	}
 
 	return 0;
 }
@@ -3578,7 +3673,9 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP];
 	bmap_bytes = node->bmap_array.bmap_bytes;
 	spin_lock(&bmap->lock);
-	memcpy(hdr->bmap, bmap->ptr, bmap_bytes);
+	ssdfs_memcpy(hdr->bmap, 0, bmap_bytes,
+		     bmap->ptr, 0, bmap_bytes,
+		     bmap_bytes);
 	spin_unlock(&bmap->lock);
 	up_read(&node->bmap_array.lock);
 	node->items_area.items_count += count;
@@ -3962,8 +4059,11 @@ int __ssdfs_inodes_btree_node_insert_range(struct ssdfs_btree_node *node,
 	itree = (struct ssdfs_inodes_btree_info *)node->tree;
 
 	down_read(&node->header_lock);
-	memcpy(&items_area, &node->items_area,
-		sizeof(struct ssdfs_btree_node_items_area));
+	ssdfs_memcpy(&items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     &node->items_area,
+		     0, sizeof(struct ssdfs_btree_node_items_area),
+		     sizeof(struct ssdfs_btree_node_items_area));
 	up_read(&node->header_lock);
 
 	if (items_area.items_capacity == 0 ||
@@ -4158,8 +4258,11 @@ finish_insert_item:
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
 		spin_lock(&node->descriptor_lock);
-		memcpy(&key, &node->node_index,
-			sizeof(struct ssdfs_btree_index_key));
+		ssdfs_memcpy(&key,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     &node->node_index,
+			     0, sizeof(struct ssdfs_btree_index_key),
+			     sizeof(struct ssdfs_btree_index_key));
 		spin_unlock(&node->descriptor_lock);
 
 		key.index.hash = cpu_to_le64(search->request.start.hash);
@@ -4638,7 +4741,9 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP];
 	bmap_bytes = node->bmap_array.bmap_bytes;
 	spin_lock(&bmap->lock);
-	memcpy(hdr->bmap, bmap->ptr, bmap_bytes);
+	ssdfs_memcpy(hdr->bmap, 0, bmap_bytes,
+		     bmap->ptr, 0, bmap_bytes,
+		     bmap_bytes);
 	spin_unlock(&bmap->lock);
 	up_read(&node->bmap_array.lock);
 	node->items_area.items_count -= search->result.count;
