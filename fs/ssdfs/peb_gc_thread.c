@@ -336,6 +336,7 @@ finish_copy_page:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to extract the whole range.
  */
+#ifdef CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
 static
 int ssdfs_peb_define_extent(struct ssdfs_peb_container *pebc,
 			    struct ssdfs_phys_offset_descriptor *desc_off,
@@ -386,6 +387,7 @@ finish_define_extent:
 
 	return err;
 }
+#endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
  * ssdfs_peb_copy_pre_alloc_page() - copy pre-alloc page into buffer

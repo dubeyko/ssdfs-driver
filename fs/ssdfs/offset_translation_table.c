@@ -1216,6 +1216,75 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 	return 0;
 }
 
+static
+int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
+				 u32 offset, u32 size,
+				 void *buf)
+{
+	struct page *page;
+	void *kaddr;
+	u32 page_off;
+	u32 bytes_off;
+	size_t read_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pvec || !buf);
+
+	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
+		  pvec, offset, size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		size_t iter_read_bytes;
+		size_t cur_off;
+
+		bytes_off = offset + read_bytes;
+		page_off = bytes_off / PAGE_SIZE;
+		cur_off = bytes_off % PAGE_SIZE;
+
+		iter_read_bytes = min_t(size_t,
+					(size_t)(size - read_bytes),
+					(size_t)(PAGE_SIZE - cur_off));
+
+		if (page_off >= pagevec_count(pvec)) {
+			SSDFS_ERR("invalid page index %u: "
+				  "offset %zu, pagevec_count %u\n",
+				  page_off, cur_off,
+				  pagevec_count(pvec));
+			return -EINVAL;
+		}
+
+		page = pvec->pages[page_off];
+
+		ssdfs_lock_page(page);
+		kaddr = kmap_atomic(page);
+		err = ssdfs_memcpy(buf, read_bytes, size,
+				   kaddr, cur_off, PAGE_SIZE,
+				   iter_read_bytes);
+		kunmap_atomic(kaddr);
+		ssdfs_unlock_page(page);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "read_bytes %zu, offset %zu, "
+				  "iter_read_bytes %zu, err %d\n",
+				  read_bytes, cur_off,
+				  iter_read_bytes, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		read_bytes += iter_read_bytes;
+	} while (read_bytes < size);
+
+	return 0;
+}
+
 /*
  * ssdfs_get_fragment_header() - get fragment header
  * @portion: initialization environment [in | out]
@@ -1224,46 +1293,19 @@ static
 int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
 {
 	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
-	struct page *page;
-	void *kaddr;
-	int page_index;
-	u32 page_off;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !portion->source);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("source %p, offset %u\n",
 		  portion->source, portion->pot_hdr_off);
-
-	page_index = portion->pot_hdr_off >> PAGE_SHIFT;
-	page_off = portion->pot_hdr_off;
-	if (portion->pot_hdr_off >= PAGE_SIZE)
-		page_off = portion->pot_hdr_off % PAGE_SIZE;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(page_off > (PAGE_SIZE - hdr_size));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (page_index >= pagevec_count(portion->source)) {
-		SSDFS_ERR("invalid page index %d: "
-			  "offset %u, pagevec_count %u\n",
-			  page_index, page_off,
-			  pagevec_count(portion->source));
-		return -EINVAL;
-	}
-
-	page = portion->source->pages[page_index];
-
-	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(&portion->pot_hdr, 0, hdr_size,
-			   kaddr, page_off, PAGE_SIZE,
-			   hdr_size);
-	kunmap_atomic(kaddr);
-	ssdfs_unlock_page(page);
-
+	err = ssdfs_unaligned_read_pagevec(portion->source,
+					   portion->pot_hdr_off,
+					   hdr_size,
+					   &portion->pot_hdr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -1398,6 +1440,10 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 
 		page = portion->source->pages[page_index];
 
+		SSDFS_DBG("read_bytes %u, fragment->buf_size %zu, "
+			  "page_off %u, size %u\n",
+			  read_bytes, fragment->buf_size, page_off, page_off);
+
 		ssdfs_lock_page(page);
 		kaddr = kmap_atomic(page);
 		err = ssdfs_memcpy(fragment->buf,
@@ -1415,6 +1461,11 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 		read_bytes += size;
 		fragment_size -= size;
 		portion->pot_hdr_off += size;
+
+		SSDFS_DBG("read_bytes %u, fragment_size %zu, "
+			  "pot_hdr_off %u\n",
+			  read_bytes, fragment_size,
+			  portion->pot_hdr_off);
 
 		page_index = portion->pot_hdr_off >> PAGE_SHIFT;
 		if (portion->pot_hdr_off >= PAGE_SIZE)
@@ -1549,6 +1600,7 @@ int ssdfs_check_translation_extent(struct ssdfs_translation_extent *extent,
  *
  * %-EINVAL     - invalid input.
  * %-EIO        - corrupted translation extent.
+ * %-EAGAIN     - extent is partially processed in the fragment.
  */
 static
 int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
@@ -1564,10 +1616,12 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	u16 pos_array_items;
 	u16 start_id;
 	u16 id_count;
+	u16 id_diff;
 	u32 logical_blk;
 	u16 offset_id;
 	u16 len;
 	int phys_off_index;
+	bool is_partially_processed = false;
 	int i;
 	int err;
 
@@ -1595,29 +1649,16 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	start_id = le16_to_cpu(portion->pot_hdr.start_id);
 	id_count = le16_to_cpu(portion->pot_hdr.id_count);
 
+	SSDFS_DBG("start_id %u, id_count %u\n",
+		  start_id, id_count);
+
 	extent = &portion->extent_array[*extent_index];
-	logical_blk = le16_to_cpu(extent->logical_blk);
-	offset_id = le16_to_cpu(extent->offset_id);
-	len = le16_to_cpu(extent->len);
-
-	SSDFS_DBG("logical_blk %u, offset_id %u, len %u, "
-		  "sequence_id %u, state %#x\n",
-		  logical_blk, offset_id, len,
-		  extent->sequence_id, extent->state);
-
-	pos_array_items = portion->capacity - logical_blk;
-
-	if (pos_array_items < len) {
-		SSDFS_ERR("array_items %u < len %u\n",
-			  pos_array_items, len);
-		return -EINVAL;
-	}
 
 	err = ssdfs_check_translation_extent(extent, portion->capacity,
 					     *extent_index);
 	if (err) {
 		SSDFS_ERR("invalid translation extent: "
-			  "sequence_id %u, err %d\n",
+			  "index %u, err %d\n",
 			  *extent_index, err);
 		return err;
 	}
@@ -1628,16 +1669,57 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		return -EIO;
 	}
 
-	if (start_id > offset_id) {
-		SSDFS_ERR("start_id %u > offset_id %u\n",
-			  start_id, offset_id);
+	logical_blk = le16_to_cpu(extent->logical_blk);
+	offset_id = le16_to_cpu(extent->offset_id);
+	len = le16_to_cpu(extent->len);
+
+	SSDFS_DBG("logical_blk %u, offset_id %u, len %u, "
+		  "sequence_id %u, state %#x\n",
+		  logical_blk, offset_id, len,
+		  extent->sequence_id, extent->state);
+
+	if ((start_id + id_count) < offset_id) {
+		SSDFS_ERR("start_id %u + id_count %u < offset_id %u\n",
+			  start_id, id_count, offset_id);
 		return -EIO;
-	} else if ((offset_id + len) > (start_id + id_count)) {
-		SSDFS_ERR("offset_id %u + len %u > "
-			  "start_id %u + id_count %u\n",
+	}
+
+	if ((offset_id + len) <= start_id) {
+		SSDFS_ERR("offset_id %u + len %u <= start_id %u\n",
+			  offset_id, len, start_id);
+		return -EIO;
+	}
+
+	if (offset_id < start_id) {
+		SSDFS_DBG("offset_id %u, len %u, "
+			  "start_id %u,id_count %u\n",
 			  offset_id, len,
 			  start_id, id_count);
-		return -EIO;
+
+		id_diff = start_id - offset_id;
+		offset_id += id_diff;
+		logical_blk += id_diff;
+		len -= id_diff;
+	}
+
+	if ((offset_id + len) > (start_id + id_count)) {
+		SSDFS_DBG("offset_id %u, len %u, "
+			  "start_id %u,id_count %u\n",
+			  offset_id, len,
+			  start_id, id_count);
+
+		is_partially_processed = true;
+
+		/* correct lenght */
+		len = (start_id + id_count) - offset_id;
+	}
+
+	pos_array_items = portion->capacity - logical_blk;
+
+	if (pos_array_items < len) {
+		SSDFS_ERR("array_items %u < len %u\n",
+			  pos_array_items, len);
+		return -EINVAL;
 	}
 
 	if (id_count > atomic_read(&frag->id_count)) {
@@ -1722,6 +1804,12 @@ finish_process_fragment:
 		  portion->bmap,
 		  portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
 		  portion->capacity);
+
+	if (is_partially_processed) {
+		SSDFS_DBG("extent has been processed partially: "
+			  "index %u\n", *extent_index);
+		return -EAGAIN;
+	}
 
 	return 0;
 }
@@ -1857,7 +1945,7 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 	u16 start_id;
 	u16 id_count;
 	int state;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !portion->table || !portion->source);
@@ -1916,13 +2004,6 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		}
 
 		if (state != SSDFS_LOGICAL_BLK_FREE) {
-			if (offset_id < start_id) {
-				err = -ERANGE;
-				SSDFS_ERR("offset_id %u < start_id %u\n",
-					  offset_id, start_id);
-				return err;
-			}
-
 			if (offset_id >= (start_id + id_count))
 				break;
 		}
@@ -1930,7 +2011,11 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		if (state == SSDFS_LOGICAL_BLK_USED) {
 			err = ssdfs_process_used_translation_extent(portion,
 								extent_index);
-			if (unlikely(err)) {
+			if (err == -EAGAIN) {
+				SSDFS_DBG("extent has been processed partially: "
+					  "sequence_id %u, err %d\n",
+					  *extent_index, err);
+			} else if (unlikely(err)) {
 				SSDFS_ERR("invalid translation extent: "
 					  "sequence_id %u, err %d\n",
 					  *extent_index, err);
@@ -1948,7 +2033,11 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		} else
 			BUG();
 
-		++*extent_index;
+		if (err == -EAGAIN) {
+			/* don't increment extent index */
+			break;
+		} else
+			++*extent_index;
 	} while (*extent_index < portion->extents_count);
 
 	pos_array_bytes = portion->capacity * pos_size;
@@ -1957,31 +2046,29 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		     pos_array_bytes);
 
 	if (portion->table->init_cno == U64_MAX ||
-	    portion->cno > portion->table->init_cno) {
+	    portion->cno >= portion->table->init_cno) {
 		u16 peb_index = portion->peb_index;
-
-		portion->table->init_cno = portion->cno;
-		portion->table->used_logical_blks =
-			le16_to_cpu(portion->pot_hdr.used_logical_blks);
-		portion->table->free_logical_blks =
-			le16_to_cpu(portion->pot_hdr.free_logical_blks);
-		portion->table->last_allocated_blk =
-			le16_to_cpu(portion->pot_hdr.last_allocated_blk);
+		u16 sequence_id = le16_to_cpu(portion->pot_hdr.sequence_id);
 
 		sequence = portion->table->peb[peb_index].sequence;
-		ssdfs_sequence_array_set_last_id(sequence,
-				le16_to_cpu(portion->pot_hdr.sequence_id));
-	}
 
-	portion->pot_hdr_off = le16_to_cpu(portion->pot_hdr.next_fragment_off);
-	if (portion->pot_hdr_off == U16_MAX && portion->fragments_count > 1) {
-		SSDFS_ERR("corrupted table\n");
-		return -EIO;
+		if (is_ssdfs_sequence_array_last_id_invalid(sequence) ||
+		    ssdfs_sequence_array_last_id(sequence) <= sequence_id) {
+			portion->table->init_cno = portion->cno;
+			portion->table->used_logical_blks =
+				le16_to_cpu(portion->pot_hdr.used_logical_blks);
+			portion->table->free_logical_blks =
+				le16_to_cpu(portion->pot_hdr.free_logical_blks);
+			portion->table->last_allocated_blk =
+				le16_to_cpu(portion->pot_hdr.last_allocated_blk);
+
+			ssdfs_sequence_array_set_last_id(sequence, sequence_id);
+		}
 	}
 
 	atomic_inc(&portion->table->peb[portion->peb_index].fragment_count);
 
-	return 0;
+	return err;
 }
 
 /*
@@ -2035,16 +2122,14 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 		return -ERANGE;
 	}
 
-	if (count == 1) {
-		state = atomic_cmpxchg(&table->peb[peb_index].state,
-					SSDFS_BLK2OFF_TABLE_CREATED,
-					SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
-		if (state <= SSDFS_BLK2OFF_TABLE_UNDEFINED ||
-		    state > SSDFS_BLK2OFF_TABLE_PARTIAL_INIT) {
-			SSDFS_WARN("unexpected state %#x\n",
-				   state);
-			return -ERANGE;
-		}
+	state = atomic_cmpxchg(&table->peb[peb_index].state,
+				SSDFS_BLK2OFF_TABLE_CREATED,
+				SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
+	if (state <= SSDFS_BLK2OFF_TABLE_UNDEFINED ||
+	    state > SSDFS_BLK2OFF_TABLE_PARTIAL_INIT) {
+		SSDFS_WARN("unexpected state %#x\n",
+			   state);
+		return -ERANGE;
 	}
 
 	if (init_bits > 0) {
@@ -2256,7 +2341,12 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	for (i = 0; i < portion.fragments_count; i++) {
 		err = ssdfs_blk2off_fragment_init(&portion,
 						  &extent_index);
-		if (err == -EEXIST) {
+		if (err == -EAGAIN) {
+			SSDFS_DBG("continue to process extent: "
+				  "fragment %d, extent_index %d\n",
+				  i, extent_index);
+			continue;
+		} else if (err == -EEXIST) {
 			SSDFS_DBG("fragment has been initiliazed already: "
 				  "fragment_index %d, extent_index %d\n",
 				  i, extent_index);
@@ -3275,7 +3365,7 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 {
 	unsigned long start = 0;
 	int i;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sp || !array || !extent_count);
@@ -3523,6 +3613,10 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	byte_size = sizeof(struct ssdfs_phys_offset_table_header);
 	byte_size += id_count * sizeof(struct ssdfs_phys_offset_descriptor);
 	fragment->hdr->byte_size = cpu_to_le32(byte_size);
+
+	SSDFS_DBG("fragment: start_id %u, id_count %u\n",
+		  le16_to_cpu(fragment->hdr->start_id),
+		  le16_to_cpu(fragment->hdr->id_count));
 
 	fragment->hdr->peb_index = cpu_to_le16(peb_index);
 	fragment->hdr->sequence_id = cpu_to_le16(fragment->sequence_id);
@@ -3984,8 +4078,8 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		BUG_ON(written_bytes > fragment_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		page = ssdfs_page_array_get_page_locked(&pebi->cache,
-							*cur_page);
+		page = ssdfs_page_array_grab_page(&pebi->cache,
+						  *cur_page);
 		if (IS_ERR_OR_NULL(page)) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to get cache page: index %lu\n",
@@ -4946,16 +5040,35 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 
 	if (!ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
 					     logical_blk)) {
-		if (pos->sequence_id != *last_sequence_id) {
-			SSDFS_WARN("sequence_id %u != last_sequence_id %d\n",
+		if (pos->sequence_id == *last_sequence_id) {
+			pos->cno = ssdfs_current_cno(table->fsi->sb);
+			pos->peb_index = peb_index;
+			id = pos->id;
+			offset_index = pos->offset_index;
+		} else if (pos->sequence_id < *last_sequence_id) {
+			offset_index =
+				atomic_inc_return(&fragment->id_count) - 1;
+			id = fragment->start_id + offset_index;
+
+			if (!is_id_valid_for_assignment(table, fragment, id)) {
+				SSDFS_DBG("id %d cannot be assign "
+					  "for fragment %d\n",
+					  id, *last_sequence_id);
+				atomic_dec(&fragment->id_count);
+				return -ENOSPC;
+			}
+
+			pos->cno = ssdfs_current_cno(table->fsi->sb);
+			pos->id = (u16)id;
+			pos->peb_index = peb_index;
+			pos->sequence_id = *last_sequence_id;
+			pos->offset_index = offset_index;
+		} else if (pos->sequence_id > *last_sequence_id) {
+			SSDFS_WARN("sequence_id %u > last_sequence_id %d\n",
 				  pos->sequence_id,
 				  *last_sequence_id);
+			return -ERANGE;
 		}
-
-		pos->cno = ssdfs_current_cno(table->fsi->sb);
-		pos->peb_index = peb_index;
-		id = pos->id;
-		offset_index = pos->offset_index;
 	} else {
 		offset_index = atomic_inc_return(&fragment->id_count) - 1;
 		id = fragment->start_id + offset_index;
@@ -6370,7 +6483,7 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 						u16 peb_index)
 {
 	struct ssdfs_migrating_block *blk = NULL;
-	int i, j;
+	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);

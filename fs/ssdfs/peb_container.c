@@ -3516,8 +3516,9 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("peb_index %u, peb_migration_id %u, "
+	SSDFS_DBG("seg %llu, peb_index %u, peb_migration_id %u, "
 		  "logical_offset %u, logical_blk %u, peb_page %u\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index,
 		  desc->blk_state.peb_migration_id,
 		  le32_to_cpu(desc->page_desc.logical_offset),

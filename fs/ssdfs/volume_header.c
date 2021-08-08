@@ -923,7 +923,7 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
  * @hdr: partial log's header [out]
  */
 int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
-					u8 sequence_id,
+					int sequence_id,
 					u32 log_pages,
 					u16 seg_type,
 					u32 pl_flags,
@@ -932,7 +932,7 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	u16 data_size = sizeof(struct ssdfs_partial_log_header);
 	int err;
 
-	SSDFS_DBG("fsi %p, hdr %p, sequence_id %u, "
+	SSDFS_DBG("fsi %p, hdr %p, sequence_id %d, "
 		  "log_pages %u, seg_type %#x, pl_flags %#x\n",
 		  fsi, hdr, sequence_id, log_pages, seg_type, pl_flags);
 
@@ -992,7 +992,7 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 		     0, sizeof(struct ssdfs_shared_dictionary_btree),
 		     sizeof(struct ssdfs_shared_dictionary_btree));
 
-	hdr->sequence_id = sequence_id;
+	hdr->sequence_id = cpu_to_le32(sequence_id);
 
 	hdr->log_pagesize = fsi->log_pagesize;
 	hdr->log_erasesize = fsi->log_erasesize;

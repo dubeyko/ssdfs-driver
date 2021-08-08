@@ -108,8 +108,6 @@ void ssdfs_maptbl_cache_init(struct ssdfs_maptbl_cache *cache)
  */
 void ssdfs_maptbl_cache_destroy(struct ssdfs_maptbl_cache *cache)
 {
-	int i;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -3981,6 +3979,7 @@ int ssdfs_maptbl_cache_get_first_item(void *kaddr,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
+#ifdef CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
 static
 int ssdfs_maptbl_cache_move_left_leb2peb_pairs(void *kaddr,
 						u16 item_index)
@@ -4035,6 +4034,7 @@ int ssdfs_maptbl_cache_move_left_leb2peb_pairs(void *kaddr,
 
 	return 0;
 }
+#endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
  * ssdfs_maptbl_cache_move_left_peb_states() - move PEB states
@@ -4051,6 +4051,7 @@ int ssdfs_maptbl_cache_move_left_leb2peb_pairs(void *kaddr,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
+#ifdef CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
 static
 int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
 					     u16 item_index)
@@ -4112,6 +4113,7 @@ int ssdfs_maptbl_cache_move_left_peb_states(void *kaddr,
 
 	return 0;
 }
+#endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
  * ssdfs_maptbl_cache_forget_leb2peb_nolock() - exclude LEB/PEB pair from cache

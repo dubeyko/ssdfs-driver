@@ -2502,8 +2502,6 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("sb %p\n", sb);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-SSDFS_ERR("stop threads...\n");
-
 	err = ssdfs_stop_gc_thread(fsi, SSDFS_SEG_USING_GC_THREAD);
 	if (err) {
 		SSDFS_ERR("fail to stop GC using seg thread: "

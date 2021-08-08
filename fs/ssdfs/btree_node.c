@@ -4522,6 +4522,7 @@ finish_set_dirty_index:
  *
  * This method tries to clear the state of index range as dirty.
  */
+#ifdef CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
 static
 void ssdfs_clear_dirty_index_range_state(struct ssdfs_btree_node *node,
 					 u16 start_index, u16 count)
@@ -4551,6 +4552,7 @@ void ssdfs_clear_dirty_index_range_state(struct ssdfs_btree_node *node,
 
 	up_read(&node->bmap_array.lock);
 }
+#endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
  * __ssdfs_lock_index_range() - lock index range

@@ -726,8 +726,10 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 	reserved_pages = pebi->current_log.reserved_pages;
 	sequence_id = atomic_read(&pebi->current_log.sequence_id);
 
-	SSDFS_DBG("log_pages %u, free_data_pages %u, sequence_id %d\n",
-		  log_pages, free_data_pages, sequence_id);
+	SSDFS_DBG("log_pages %u, free_data_pages %u, "
+		  "reserved_pages %u, sequence_id %d\n",
+		  log_pages, free_data_pages,
+		  reserved_pages, sequence_id);
 
 	if (free_data_pages == 0) {
 		if (sequence_id > 0)
@@ -755,6 +757,14 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 		u32 available_pages = free_data_pages + reserved_pages;
 
 		if (available_pages <= min_partial_log_pages) {
+			if (sequence_id > 0)
+				return SSDFS_FINISH_PARTIAL_LOG;
+			else
+				return SSDFS_FINISH_FULL_LOG;
+		} else if (free_data_pages < min_partial_log_pages) {
+			/*
+			 * Next partial log cannot be created
+			 */
 			if (sequence_id > 0)
 				return SSDFS_FINISH_PARTIAL_LOG;
 			else
@@ -4582,6 +4592,7 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
  *
  * %-ERANGE     - internal error.
  */
+#ifdef CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
 static
 int ssdfs_peb_read_from_offset(struct ssdfs_peb_info *pebi,
 			       struct ssdfs_phys_offset_descriptor *off,
@@ -4656,6 +4667,7 @@ int ssdfs_peb_read_from_offset(struct ssdfs_peb_info *pebi,
 
 	return 0;
 }
+#endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
  * ssdfs_peb_update_block() - update data block
@@ -6955,6 +6967,11 @@ finish_current_copy:
 			if ((dst_off + copy_len) >= PAGE_SIZE)
 				++(*cur_page);
 
+			SSDFS_DBG("read_bytes %u, area_size %u, "
+				  "write_offset %u, copy_len %u, rest_len %u\n",
+				  read_bytes, area_size,
+				  *write_offset, copy_len, rest_len);
+
 			if (read_bytes == area_size) {
 				err = ssdfs_page_array_clear_dirty_page(smap,
 								page_index + i);
@@ -7832,12 +7849,15 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 		unsigned i;
 		u32 page_start_off, write_size;
 		loff_t iter_write_offset;
-		u32 pagevec_capacity = PAGEVEC_SIZE * PAGE_SIZE;
+		u32 pagevec_bytes;
 		pgoff_t written_pages = 0;
 
 		index = pebi->current_log.start_page + flushed_pages;
 		end = (pgoff_t)pebi->current_log.start_page + pebi->log_pages;
-		end = min_t(pgoff_t, end, (pgoff_t)(index + PAGEVEC_SIZE - 1));
+		end = min_t(pgoff_t, end, (pgoff_t)(index + PAGEVEC_SIZE));
+
+		SSDFS_DBG("index %lu, end %lu\n",
+			  index, end);
 
 		err = ssdfs_page_array_lookup_range(&pebi->cache,
 						    &index, end,
@@ -7854,8 +7874,10 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 		page_start_off = log_start_off + written_bytes;
 		page_start_off %= PAGE_SIZE;
 
+		pagevec_bytes = (u32)pagevec_count(&pvec) * PAGE_SIZE;
+
 		write_size = min_t(u32,
-				   pagevec_capacity - page_start_off,
+				   pagevec_bytes - page_start_off,
 				   log_bytes - written_bytes);
 
 		if ((written_bytes + write_size) > log_bytes) {
@@ -7887,6 +7909,10 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 
 		iter_write_offset = peb_offset + log_start_off;
 		iter_write_offset += written_bytes;
+
+		SSDFS_DBG("iter_write_offset %llu, write_size %u, "
+			  "page_start_off %u\n",
+			  iter_write_offset, write_size, page_start_off);
 
 		err = fsi->devops->writepages(fsi->sb, iter_write_offset,
 						&pvec,
@@ -7934,7 +7960,7 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 		}
 
 		written_bytes += write_size;
-		flushed_pages += written_pages - 1;
+		flushed_pages += written_pages;
 
 		pagevec_reinit(&pvec);
 		cond_resched();
@@ -8144,12 +8170,14 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("seg %llu, peb %llu, log_strategy %#x, "
 		  "current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u, "
-		  "current_log.free_data_pages %u\n",
+		  "current_log.free_data_pages %u, "
+		  "sequence_id %d\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  log_strategy,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset,
-		  pebi->current_log.free_data_pages);
+		  pebi->current_log.free_data_pages,
+		  atomic_read(&pebi->current_log.sequence_id));
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -8193,9 +8221,11 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 	}
 
 	SSDFS_DBG("pebi->current_log.start_page %u, "
-		  "current_log.free_data_pages %u\n",
+		  "current_log.free_data_pages %u, "
+		  "sequence_id %d\n",
 		  pebi->current_log.start_page,
-		  pebi->current_log.free_data_pages);
+		  pebi->current_log.free_data_pages,
+		  atomic_read(&pebi->current_log.sequence_id));
 }
 
 /*
@@ -8257,7 +8287,7 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	seg_type = pebi->pebc->parent_si->seg_type;
 
 	sequence_id = atomic_read(&pebi->current_log.sequence_id);
-	if (sequence_id < 0 || sequence_id >= U8_MAX) {
+	if (sequence_id < 0 || sequence_id >= INT_MAX) {
 		SSDFS_ERR("invalid sequence_id %d\n", sequence_id);
 		return -ERANGE;
 	}
@@ -8288,7 +8318,7 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 		     array_bytes);
 
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
-							  (u8)sequence_id,
+							  sequence_id,
 							  log_pages,
 							  seg_type, flags,
 							  pl_hdr);
@@ -8403,7 +8433,7 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	sequence_id = atomic_read(&pebi->current_log.sequence_id);
-	if (sequence_id < 0 || sequence_id >= U8_MAX) {
+	if (sequence_id < 0 || sequence_id >= INT_MAX) {
 		SSDFS_ERR("invalid sequence_id %d\n", sequence_id);
 		return -ERANGE;
 	}
@@ -8428,7 +8458,7 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 		     array_bytes);
 
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
-							  (u8)sequence_id,
+							  sequence_id,
 							  log_pages,
 							  seg_type,
 							  flags | seg_flags,

@@ -799,9 +799,6 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	size_t state_desc_size = sizeof(struct ssdfs_block_state_descriptor);
 	u32 area_offset;
-	u32 page_off;
-	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -813,35 +810,28 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 	area_offset = le32_to_cpu(area_desc->offset);
-	page_off = area_offset >> PAGE_SHIFT;
 
-	SSDFS_DBG("seg %llu, peb %llu, "
-		  "area_offset %u, page_index %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  area_offset, page_off);
+	SSDFS_DBG("seg %llu, peb %llu, area_offset %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, area_offset);
 
-	page = ssdfs_peb_read_page_locked(pebi, page_off);
-	if (IS_ERR_OR_NULL(page)) {
-		SSDFS_ERR("fail to read locked page: index %u\n",
-			  page_off);
-		return -ERANGE;
+	err = ssdfs_unaligned_read_cache(pebi,
+					 area_offset,
+					 state_desc_size,
+					 desc);
+	if (err) {
+		err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
+						  area_offset,
+						  desc, state_desc_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read buffer: "
+				  "peb %llu, area_offset %u, "
+				  "buf_size %zu, err %d\n",
+				  pebi->peb_id, area_offset,
+				  state_desc_size, err);
+			return err;
+		}
 	}
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(desc, 0, state_desc_size,
-			   kaddr, area_offset % PAGE_SIZE, PAGE_SIZE,
-			   state_desc_size);
-	kunmap_atomic(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		return err;
-	}
-
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
 
 	if (desc->chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
 		SSDFS_ERR("chain header magic invalid\n");
@@ -2632,7 +2622,6 @@ int ssdfs_peb_get_log_pages_count(struct ssdfs_fs_info *fsi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	/* BUG_ON(fsi->pages_per_peb % log_pages); */
 	if (fsi->pages_per_peb % log_pages) {
 		SSDFS_WARN("fsi->pages_per_peb %u, log_pages %u\n",
 			   fsi->pages_per_peb, log_pages);
@@ -4596,7 +4585,7 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 	u32 bytes_count;
 	u16 new_log_start_page;
 	u64 cno;
-	u8 sequence_id = 0;
+	int sequence_id = 0;
 	int i;
 	int err = 0;
 
@@ -4693,10 +4682,10 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 		sequence_id = 0;
 	} else {
 		pl_hdr = SSDFS_PLH(env->log_hdr);
-		sequence_id = pl_hdr->sequence_id;
+		sequence_id = le32_to_cpu(pl_hdr->sequence_id);
 	}
 
-	BUG_ON(sequence_id >= U8_MAX);
+	BUG_ON((sequence_id + 1) >= INT_MAX);
 
 	SSDFS_DBG("new_log_start_page %u\n", new_log_start_page);
 

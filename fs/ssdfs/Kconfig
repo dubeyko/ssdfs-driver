@@ -107,6 +107,16 @@ config SSDFS_TESTING
 	  If you are going to test SSDFS driver then choose Y here.
 	  If unsure, say N.
 
+config SSDFS_UNDER_DEVELOPMENT_FUNC
+	bool "SSDFS under development functionality"
+	depends on SSDFS
+	help
+	  This option enables functionality that is under
+	  development yet.
+
+	  If you are going to check under development functionality
+	  in SSDFS driver then choose Y here. If unsure, say N.
+
 config SSDFS_POSIX_ACL
 	bool "SSDFS POSIX Access Control Lists"
 	depends on SSDFS

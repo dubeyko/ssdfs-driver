@@ -228,7 +228,7 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 					    u32 seg_flags,
 					    struct ssdfs_segment_header *hdr);
 int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
-					u8 sequence_id,
+					int sequence_id,
 					u32 log_pages,
 					u16 seg_type,
 					u32 flags,

@@ -527,8 +527,12 @@ fail_define_pages_count:
 		}
 
 		SSDFS_DBG("SRC: seg_id %llu, peb_index %u, cno %llu, "
+			  "free_blks %d, valid_blks %d, invalid_blks %d, "
 			  "parent (used_blks %d, free_blks %d, invalid_blks %d)\n",
 			  si->seg_id, bmap->peb_index, cno,
+			  atomic_read(&bmap->free_logical_blks),
+			  atomic_read(&bmap->valid_logical_blks),
+			  atomic_read(&bmap->invalid_logical_blks),
 			  atomic_read(&bmap->parent->valid_logical_blks),
 			  atomic_read(&bmap->parent->free_logical_blks),
 			  atomic_read(&bmap->parent->invalid_logical_blks));
@@ -561,8 +565,12 @@ fail_define_pages_count:
 		}
 
 		SSDFS_DBG("DST: seg_id %llu, peb_index %u, cno %llu, "
+			  "free_blks %d, valid_blks %d, invalid_blks %d, "
 			  "parent (used_blks %d, free_blks %d, invalid_blks %d)\n",
 			  si->seg_id, bmap->peb_index, cno,
+			  atomic_read(&bmap->free_logical_blks),
+			  atomic_read(&bmap->valid_logical_blks),
+			  atomic_read(&bmap->invalid_logical_blks),
 			  atomic_read(&bmap->parent->valid_logical_blks),
 			  atomic_read(&bmap->parent->free_logical_blks),
 			  atomic_read(&bmap->parent->invalid_logical_blks));
@@ -1378,9 +1386,10 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("bmap %p, bmap_index %u, count %u, "
+	SSDFS_DBG("seg %llu, bmap %p, bmap_index %u, count %u, "
 		  "free_logical_blks %u, valid_logical_blks %u, "
 		  "invalid_logical_blks %u\n",
+		  bmap->parent->parent_si->seg_id,
 		  bmap, bmap_index, count,
 		  atomic_read(&bmap->free_logical_blks),
 		  atomic_read(&bmap->valid_logical_blks),
@@ -1570,9 +1579,10 @@ int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("bmap %p, bmap_index %u, count %u, "
+	SSDFS_DBG("seg %llu, bmap %p, bmap_index %u, count %u, "
 		  "free_logical_blks %u, valid_logical_blks %u, "
 		  "invalid_logical_blks %u\n",
+		  bmap->parent->parent_si->seg_id,
 		  bmap, bmap_index, count,
 		  atomic_read(&bmap->free_logical_blks),
 		  atomic_read(&bmap->valid_logical_blks),
@@ -2350,6 +2360,14 @@ init_failed:
 			   atomic_read(&bmap->buffers_state));
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u, pages_per_peb %u, "
+		  "is_migrating %#x\n",
+		  atomic_read(&bmap->free_logical_blks),
+		  atomic_read(&bmap->valid_logical_blks),
+		  atomic_read(&bmap->invalid_logical_blks),
+		  bmap->pages_per_peb, is_migrating);
 
 	down_read(&bmap->lock);
 

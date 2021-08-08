@@ -1514,6 +1514,7 @@ check_leaf_node_state:
  *
  * %-ERANGE     - internal error.
  */
+#ifdef CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
 static
 int ssdfs_prepare_empty_btree_for_add(struct ssdfs_btree *tree,
 				      struct ssdfs_btree_search *search,
@@ -1600,6 +1601,7 @@ int ssdfs_prepare_empty_btree_for_add(struct ssdfs_btree *tree,
 
 	return 0;
 }
+#endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
  * __ssdfs_btree_read_node() - create and initialize the node
@@ -6651,11 +6653,11 @@ finish_index_processing:
 #endif /* CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK */
 }
 
+#ifdef CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK
 static
 void ssdfs_debug_btree_check_indexes(struct ssdfs_btree *tree,
 				     struct ssdfs_btree_node *parent)
 {
-#ifdef CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK
 	struct ssdfs_btree_node *child = NULL;
 	struct ssdfs_btree_node_index_area area;
 	struct ssdfs_btree_index_key index_key;
@@ -6845,8 +6847,8 @@ void ssdfs_debug_btree_check_indexes(struct ssdfs_btree *tree,
 
 finish_index_processing:
 	up_read(&parent->full_lock);
-#endif /* CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK */
 }
+#endif /* CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK */
 
 void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 {

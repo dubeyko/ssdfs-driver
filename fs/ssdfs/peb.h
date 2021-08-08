@@ -359,7 +359,7 @@ static inline
 void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 				u16 free_pages,
 				u16 start_page,
-				u8 sequence_id)
+				int sequence_id)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
