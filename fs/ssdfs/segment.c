@@ -223,9 +223,17 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 		return 0;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, seg_state %#x, log_pages %u, "
+		  "create_threads %u\n",
+		  si->seg_id, atomic_read(&si->seg_state),
+		  si->log_pages, si->create_threads);
 	SSDFS_ERR("obj_state %#x\n",
 		  atomic_read(&si->obj_state));
 #else
+	SSDFS_DBG("seg %llu, seg_state %#x, log_pages %u, "
+		  "create_threads %u\n",
+		  si->seg_id, atomic_read(&si->seg_state),
+		  si->log_pages, si->create_threads);
 	SSDFS_DBG("obj_state %#x\n",
 		  atomic_read(&si->obj_state));
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
@@ -241,11 +249,6 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 			   atomic_read(&si->obj_state));
 		break;
 	}
-
-	SSDFS_DBG("seg %llu, seg_state %#x, log_pages %u, "
-		  "create_threads %u\n",
-		  si->seg_id, atomic_read(&si->seg_state),
-		  si->log_pages, si->create_threads);
 
 	refs_count = atomic_read(&si->refs_count);
 
@@ -652,10 +655,6 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 	}
 
 	start_leb = *start_seg * fsi->pebs_per_seg;
-
-	*start_seg = U64_MAX;
-	*end_seg = U64_MAX;
-
 	err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
 						  &end_leb, &init_end);
 	if (err == -EAGAIN) {
@@ -670,15 +669,20 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 			goto finish_seg_id_correction;
 		}
 
+		start_leb = *start_seg * fsi->pebs_per_seg;
 		err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
 							  &end_leb, &init_end);
 	}
 
 	if (err == -ENOENT) {
+		*start_seg = U64_MAX;
+		*end_seg = U64_MAX;
 		SSDFS_DBG("unable to find search range: leb_id %llu\n",
 			  start_leb);
 		goto finish_seg_id_correction;
 	} else if (unlikely(err)) {
+		*start_seg = U64_MAX;
+		*end_seg = U64_MAX;
 		SSDFS_ERR("fail to find search range: "
 			  "leb_id %llu, err %d\n",
 			  start_leb, err);
@@ -1857,20 +1861,26 @@ add_new_current_segment:
 	} else {
 		si = cur_seg->real_seg;
 
-		if (ssdfs_segment_blk_bmap_get_free_pages(&si->blk_bmap) == 0) {
-			SSDFS_DBG("segment %llu hasn't free pages\n",
-				  cur_seg->real_seg->seg_id);
+		err = ssdfs_segment_blk_bmap_reserve_block(&si->blk_bmap);
+		if (err == -E2BIG) {
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  si->seg_id);
 
 			err = ssdfs_current_segment_change_state(cur_seg);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to change segment state: "
 					  "seg %llu, err %d\n",
-					  cur_seg->real_seg->seg_id, err);
+					  si->seg_id, err);
 				goto finish_add_block;
 			}
 
 			ssdfs_current_segment_remove(cur_seg);
 			goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve logical block: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_add_block;
 		} else {
 			struct ssdfs_blk2off_table *table;
 			struct ssdfs_requests_queue *create_rq;
@@ -1914,9 +1924,6 @@ add_new_current_segment:
 			extent->len = 1;
 
 			ssdfs_request_define_volume_extent(blk, 1, req);
-
-			atomic_dec(&si->blk_bmap.free_logical_blks);
-			atomic_inc(&si->blk_bmap.valid_logical_blks);
 
 			err = ssdfs_current_segment_change_state(cur_seg);
 			if (unlikely(err)) {
@@ -2045,14 +2052,11 @@ add_new_current_segment:
 		blk_bmap = &si->blk_bmap;
 		blks_count = extent_bytes >> fsi->log_pagesize;
 
-		if (atomic_read(&blk_bmap->free_logical_blks) < blks_count) {
-			SSDFS_DBG("segment %llu hasn't enough free pages: "
-				  "free_pages %u, requested_pages %u\n",
-				  si->seg_id,
-				  atomic_read(&blk_bmap->free_logical_blks),
-				  blks_count);
-
-			atomic_set(&blk_bmap->free_logical_blks, 0);
+		err = ssdfs_segment_blk_bmap_reserve_extent(&si->blk_bmap,
+							    blks_count);
+		if (err == -E2BIG) {
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
 
 			err = ssdfs_current_segment_change_state(cur_seg);
 			if (unlikely(err)) {
@@ -2064,6 +2068,11 @@ add_new_current_segment:
 
 			ssdfs_current_segment_remove(cur_seg);
 			goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve logical extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_add_extent;
 		} else {
 			struct ssdfs_blk2off_table *table;
 			struct ssdfs_requests_queue *create_rq;
@@ -2107,13 +2116,6 @@ add_new_current_segment:
 
 			ssdfs_request_define_volume_extent(extent->start_lblk,
 							   extent->len, req);
-
-			if (atomic_sub_return(extent->len,
-					&blk_bmap->free_logical_blks) < 0) {
-				err = -ERANGE;
-				SSDFS_WARN("invalid free pages management\n");
-				goto finish_add_extent;
-			}
 
 			err = ssdfs_current_segment_change_state(cur_seg);
 			if (unlikely(err)) {
@@ -4220,8 +4222,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		}
 
 		SSDFS_DBG("valid_blks %d, invalid_blks %d\n",
-			  atomic_read(&si->blk_bmap.valid_logical_blks),
-			  atomic_read(&si->blk_bmap.invalid_logical_blks));
+			  atomic_read(&si->blk_bmap.seg_valid_blks),
+			  atomic_read(&si->blk_bmap.seg_invalid_blks));
 
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {

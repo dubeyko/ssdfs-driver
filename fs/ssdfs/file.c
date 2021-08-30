@@ -31,6 +31,7 @@
 #include "btree_search.h"
 #include "btree_node.h"
 #include "btree.h"
+#include "inodes_tree.h"
 #include "extents_tree.h"
 #include "xattr.h"
 #include "acl.h"
@@ -102,6 +103,83 @@ enum {
 	SSDFS_CURRENT_THREAD_READ,
 	SSDFS_DELEGATE_TO_READ_THREAD,
 };
+
+static inline
+bool can_file_be_inline(struct inode *inode, loff_t new_size)
+{
+	size_t capacity = ssdfs_inode_inline_file_capacity(inode);
+
+	if (capacity == 0)
+		return false;
+
+	if (capacity < new_size)
+		return false;
+
+	return true;
+}
+
+static inline
+size_t ssdfs_inode_size_threshold(void)
+{
+	return sizeof(struct ssdfs_inode) -
+			offsetof(struct ssdfs_inode, internal);
+}
+
+int ssdfs_allocate_inline_file_buffer(struct inode *inode)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	size_t threshold = ssdfs_inode_size_threshold();
+	size_t inline_capacity;
+
+	if (ii->inline_file)
+		return 0;
+
+	inline_capacity = ssdfs_inode_inline_file_capacity(inode);
+
+	SSDFS_DBG("inline_capacity %zu, threshold %zu\n",
+		  inline_capacity, threshold);
+
+	if (inline_capacity < threshold) {
+		SSDFS_ERR("inline_capacity %zu < threshold %zu\n",
+			  inline_capacity, threshold);
+		return -ERANGE;
+	} else if (inline_capacity == threshold) {
+		ii->inline_file = ii->raw_inode.internal;
+	} else {
+		ii->inline_file =
+			ssdfs_file_kzalloc(inline_capacity, GFP_KERNEL);
+		if (!ii->inline_file) {
+			SSDFS_ERR("fail to allocate inline buffer: "
+				  "ino %lu, inline_capacity %zu\n",
+				  inode->i_ino, inline_capacity);
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
+void ssdfs_destroy_inline_file_buffer(struct inode *inode)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	size_t threshold = ssdfs_inode_size_threshold();
+	size_t inline_capacity;
+
+	if (!ii->inline_file)
+		return;
+
+	inline_capacity = ssdfs_inode_inline_file_capacity(inode);
+
+	SSDFS_DBG("inline_capacity %zu, threshold %zu\n",
+		  inline_capacity, threshold);
+
+	if (inline_capacity <= threshold) {
+		ii->inline_file = NULL;
+	} else {
+		ssdfs_file_kfree(ii->inline_file);
+		ii->inline_file = NULL;
+	}
+}
 
 /*
  * ssdfs_read_block_async() - read block async
@@ -286,6 +364,8 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 			  int read_mode)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(file_inode(file)->i_sb);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	ino_t ino = file_inode(file)->i_ino;
 	pgoff_t index = page_index(page);
 	struct ssdfs_segment_request *req;
@@ -313,6 +393,43 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 	if (logical_offset >= file_size) {
 		/* Reading beyond inode */
+		SetPageUptodate(page);
+		ClearPageError(page);
+		flush_dcache_page(page);
+		return 0;
+	}
+
+	if (is_ssdfs_file_inline(ii)) {
+		size_t inline_capacity =
+				ssdfs_inode_inline_file_capacity(inode);
+
+		SSDFS_DBG("inline_capacity %zu, file_size %llu\n",
+			  inline_capacity, file_size);
+
+		if (file_size > inline_capacity) {
+			ClearPageUptodate(page);
+			ClearPagePrivate(page);
+			SetPageError(page);
+			SSDFS_ERR("file_size %llu is greater capacity %zu\n",
+				  file_size, inline_capacity);
+			return -E2BIG;
+		}
+
+		kaddr = kmap_atomic(page);
+		err = ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
+				   ii->inline_file, 0, inline_capacity,
+				   data_bytes);
+		kunmap_atomic(kaddr);
+
+		if (unlikely(err)) {
+			ClearPageUptodate(page);
+			ClearPagePrivate(page);
+			SetPageError(page);
+			SSDFS_ERR("fail to copy file's content: "
+				  "err %d\n", err);
+			return err;
+		}
+
 		SetPageUptodate(page);
 		ClearPageError(page);
 		flush_dcache_page(page);
@@ -684,6 +801,8 @@ static
 int ssdfs_readpages(struct file *file, struct address_space *mapping,
 		    struct list_head *pages, unsigned nr_pages)
 {
+	struct inode *inode = file_inode(file);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct ssdfs_readahead_env env;
 	unsigned i;
 	int res;
@@ -691,6 +810,11 @@ int ssdfs_readpages(struct file *file, struct address_space *mapping,
 
 	SSDFS_DBG("ino %lu, nr_pages %u\n",
 		  file_inode(file)->i_ino, nr_pages);
+
+	if (is_ssdfs_file_inline(ii)) {
+		/* do nothing */
+		return 0;
+	}
 
 	env.file = file;
 	env.count = 0;
@@ -915,7 +1039,7 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 							 &seg_id,
 							 &extent);
 		if (!err) {
-			err = ssdfs_extents_tree_add_block(inode, *req);
+			err = ssdfs_extents_tree_add_extent(inode, *req);
 			if (err) {
 				SSDFS_ERR("fail to add extent: "
 					  "ino %lu, page_index %llu, "
@@ -1007,7 +1131,7 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 							&seg_id,
 							&extent);
 		if (!err) {
-			err = ssdfs_extents_tree_add_block(inode, *req);
+			err = ssdfs_extents_tree_add_extent(inode, *req);
 			if (!err)
 				inode_add_bytes(inode, fsi->pagesize);
 		}
@@ -1093,7 +1217,7 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 		if (!err) {
 			u32 extent_bytes = data_bytes;
 
-			err = ssdfs_extents_tree_add_block(inode, *req);
+			err = ssdfs_extents_tree_add_extent(inode, *req);
 			if (err) {
 				SSDFS_ERR("fail to add extent: "
 					  "ino %lu, page_index %llu, "
@@ -1194,7 +1318,7 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 		if (!err) {
 			u32 extent_bytes = data_bytes;
 
-			err = ssdfs_extents_tree_add_block(inode, *req);
+			err = ssdfs_extents_tree_add_extent(inode, *req);
 			if (err) {
 				SSDFS_ERR("fail to add extent: "
 					  "ino %lu, page_index %llu, "
@@ -1298,6 +1422,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		set_page_writeback(page);
+		ssdfs_clear_dirty_page(page);
 	}
 
 	if (wbc->sync_mode == WB_SYNC_NONE) {
@@ -1314,6 +1439,12 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 				  ino, err);
 				goto fail_issue_write_request;
 		}
+
+		/*
+		 * Async request is completely managed by flush thread.
+		 * Forget request because next request will be allocated.
+		 */
+		*req = NULL;
 	} else if (wbc->sync_mode == WB_SYNC_ALL) {
 		if (req_type == SSDFS_BLOCK_BASED_REQUEST)
 			err = ssdfs_issue_sync_block_write_request(wbc, req);
@@ -1359,10 +1490,7 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			clear_page_new(page);
-			ClearPageUptodate(page);
-			ClearPagePrivate(page);
-			ClearPageMappedToDisk(page);
-			ClearPageError(page);
+			SetPageUptodate(page);
 			ssdfs_clear_dirty_page(page);
 
 			ssdfs_unlock_page(page);
@@ -1371,37 +1499,35 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 
 		ssdfs_put_request(*req);
 		ssdfs_request_free(*req);
+		*req = NULL;
 	} else
 		BUG();
 
 	return 0;
 
 fail_issue_write_request:
-	for (i = 0; i < pagevec_count(&(*req)->result.pvec); i++) {
-		page = (*req)->result.pvec.pages[i];
+	if (wbc->sync_mode == WB_SYNC_ALL) {
+		for (i = 0; i < pagevec_count(&(*req)->result.pvec); i++) {
+			page = (*req)->result.pvec.pages[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
+			BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (!PageLocked(page)) {
-			SSDFS_WARN("page %p, PageLocked %#x\n",
-				   page, PageLocked(page));
-			ssdfs_lock_page(page);
+			if (!PageLocked(page)) {
+				SSDFS_WARN("page %p, PageLocked %#x\n",
+					   page, PageLocked(page));
+				ssdfs_lock_page(page);
+			}
+
+			clear_page_new(page);
+			SetPageUptodate(page);
+			ClearPageDirty(page);
+
+			ssdfs_unlock_page(page);
+			end_page_writeback(page);
 		}
 
-		clear_page_new(page);
-		ClearPageUptodate(page);
-		ClearPagePrivate(page);
-		ClearPageMappedToDisk(page);
-		ClearPageError(page);
-		ssdfs_clear_dirty_page(page);
-
-		ssdfs_unlock_page(page);
-		end_page_writeback(page);
-	}
-
-	if (wbc->sync_mode == WB_SYNC_ALL) {
 		ssdfs_put_request(*req);
 		ssdfs_request_free(*req);
 	}
@@ -1568,9 +1694,10 @@ int ssdfs_writepage_wrapper(struct page *page,
 {
 	struct inode *inode = page->mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
-	loff_t i_size =  i_size_read(inode);
+	loff_t i_size = i_size_read(inode);
 	pgoff_t end_index = i_size >> PAGE_SHIFT;
 	int len = i_size & (PAGE_SIZE - 1);
 	loff_t cur_blk;
@@ -1599,18 +1726,56 @@ int ssdfs_writepage_wrapper(struct page *page,
 		goto finish_write_page;
 	}
 
+	if (is_ssdfs_file_inline(ii)) {
+		void *kaddr;
+		size_t inline_capacity =
+				ssdfs_inode_inline_file_capacity(inode);
+
+		if (len > inline_capacity) {
+			err = -ENOSPC;
+			SSDFS_ERR("len %d is greater capacity %zu\n",
+				  len, inline_capacity);
+			goto discard_page;
+		}
+
+		set_page_writeback(page);
+
+		kaddr = kmap_atomic(page);
+		err = ssdfs_memcpy(ii->inline_file, 0, inline_capacity,
+				   kaddr, 0, PAGE_SIZE,
+				   len);
+		kunmap_atomic(kaddr);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy file's content: "
+				  "err %d\n", err);
+			goto discard_page;
+		}
+
+		inode_add_bytes(inode, len);
+
+		clear_page_new(page);
+		SetPageUptodate(page);
+		ClearPageDirty(page);
+
+		ssdfs_unlock_page(page);
+		end_page_writeback(page);
+
+		return 0;
+	}
+
 	cur_blk = (index << PAGE_SHIFT) >> fsi->log_pagesize;
 
 	SSDFS_DBG("cur_blk %llu\n", (u64)cur_blk);
 
-	is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
-							   inode);
+	if (!need_add_block(page)) {
+		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
+								   inode);
 
-	SSDFS_DBG("cur_blk %llu, is_new_blk %#x\n",
-		  (u64)cur_blk, is_new_blk);
+		SSDFS_DBG("cur_blk %llu, is_new_blk %#x\n",
+			  (u64)cur_blk, is_new_blk);
 
-	if (is_new_blk) {
-		if (!need_add_block(page))
+		if (is_new_blk)
 			set_page_new(page);
 	}
 
@@ -1650,15 +1815,10 @@ int ssdfs_writepage_wrapper(struct page *page,
 
 	return 0;
 
-discard_page:
-	ClearPageUptodate(page);
-	ClearPagePrivate(page);
-	ClearPageMappedToDisk(page);
-	ssdfs_clear_dirty_page(page);
-
 finish_write_page:
 	ssdfs_unlock_page(page);
 
+discard_page:
 	return err;
 }
 
@@ -1698,25 +1858,29 @@ int ssdfs_writepages(struct address_space *mapping,
 		     struct writeback_control *wbc)
 {
 	struct inode *inode = mapping->host;
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	ino_t ino = inode->i_ino;
 	struct ssdfs_segment_request *req = NULL;
 	struct pagevec pvec;
 	int nr_pages;
-	pgoff_t uninitialized_var(writeback_index);
-	pgoff_t index;
+	pgoff_t index = 0;
 	pgoff_t end;		/* Inclusive */
-	pgoff_t done_index;
-	int cycled;
+	pgoff_t done_index = 0;
 	int range_whole = 0;
 	int tag;
+	int i;
 	int done = 0;
 	int ret = 0;
 
 	SSDFS_DBG("ino %lu, nr_to_write %lu, "
-		  "range_start %llu, range_end %llu\n",
+		  "range_start %llu, range_end %llu, "
+		  "writeback_index %llu, "
+		  "wbc->range_cyclic %#x\n",
 		  ino, wbc->nr_to_write,
 		  (u64)wbc->range_start,
-		  (u64)wbc->range_end);
+		  (u64)wbc->range_end,
+		  (u64)mapping->writeback_index,
+		  wbc->range_cyclic);
 
 	/*
 	 * No pages to write?
@@ -1727,35 +1891,24 @@ int ssdfs_writepages(struct address_space *mapping,
 	pagevec_init(&pvec);
 
 	if (wbc->range_cyclic) {
-		writeback_index = mapping->writeback_index; /* prev offset */
-		index = writeback_index;
-		if (index == 0)
-			cycled = 1;
-		else
-			cycled = 0;
+		index = mapping->writeback_index; /* prev offset */
 		end = -1;
 	} else {
 		index = wbc->range_start >> PAGE_SHIFT;
 		end = wbc->range_end >> PAGE_SHIFT;
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
-		cycled = 1; /* ignore range_cyclic tests */
 	}
 
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
+	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages) {
 		tag = PAGECACHE_TAG_TOWRITE;
-	else
-		tag = PAGECACHE_TAG_DIRTY;
-
-retry:
-	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag_pages_for_writeback(mapping, index, end);
+	} else
+		tag = PAGECACHE_TAG_DIRTY;
 
 	done_index = index;
 
 	while (!done && (index <= end)) {
-		int i;
-
 		nr_pages = (int)min_t(pgoff_t, end - index,
 					(pgoff_t)PAGEVEC_SIZE-1) + 1;
 
@@ -1792,7 +1945,7 @@ retry:
 				break;
 			}
 
-			done_index = page->index;
+			done_index = page->index + 1;
 
 			ssdfs_lock_page(page);
 
@@ -1876,30 +2029,77 @@ continue_unlock:
 			}
 		}
 
+		if (!is_ssdfs_file_inline(ii)) {
+			ret = ssdfs_issue_write_request(wbc, &req,
+						SSDFS_EXTENT_BASED_REQUEST);
+			if (ret < 0) {
+				SSDFS_ERR("ino %lu, nr_to_write %lu, "
+					  "range_start %llu, range_end %llu, "
+					  "writeback_index %llu, "
+					  "wbc->range_cyclic %#x, "
+					  "index %llu, end %llu, "
+					  "done_index %llu\n",
+					  ino, wbc->nr_to_write,
+					  (u64)wbc->range_start,
+					  (u64)wbc->range_end,
+					  (u64)mapping->writeback_index,
+					  wbc->range_cyclic,
+					  (u64)index, (u64)end,
+					  (u64)done_index);
+
+				for (i = 0; i < pagevec_count(&pvec); i++) {
+					struct page *page;
+
+					page = pvec.pages[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+					BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+					SSDFS_ERR("page %p, index %d, "
+						  "page->index %ld, "
+						  "PageLocked %#x, "
+						  "PageDirty %#x, "
+						  "PageWriteback %#x\n",
+						  page, i, page->index,
+						  PageLocked(page),
+						  PageDirty(page),
+						  PageWriteback(page));
+				}
+
+				goto out_writepages;
+			}
+		}
+
+		index = done_index;
+
+		SSDFS_DBG("index %llu, end %llu, nr_to_write %lu\n",
+			  (u64)index, (u64)end, wbc->nr_to_write);
+
 		pagevec_reinit(&pvec);
 		cond_resched();
 	};
 
-	ret = ssdfs_issue_write_request(wbc, &req, SSDFS_EXTENT_BASED_REQUEST);
-	if (ret < 0)
-		goto out_writepages;
+	/*
+	 * If we hit the last page and there is more work to be done: wrap
+	 * back the index back to the start of the file for the next
+	 * time we are called.
+	 */
+	if (wbc->range_cyclic && !done)
+		done_index = 0;
 
-	if (!cycled && !done) {
-		/*
-		 * range_cyclic:
-		 * We hit the last page and there is more work to be done: wrap
-		 * back to the start of the file
-		 */
-		cycled = 1;
-		index = 0;
-		end = writeback_index - 1;
-		goto retry;
-	}
-
+out_writepages:
 	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
 		mapping->writeback_index = done_index;
 
-out_writepages:
+	SSDFS_DBG("ino %lu, nr_to_write %lu, "
+		  "range_start %llu, range_end %llu, "
+		  "writeback_index %llu\n",
+		  ino, wbc->nr_to_write,
+		  (u64)wbc->range_start,
+		  (u64)wbc->range_end,
+		  (u64)mapping->writeback_index);
+
 	return ret;
 }
 
@@ -1915,6 +2115,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct page *page;
 	pgoff_t index = pos >> PAGE_SHIFT;
 	unsigned blks = 0;
@@ -1945,55 +2146,83 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 
 	ssdfs_account_locked_page(page);
 
-	start_blk = pos >> fsi->log_pagesize;
-	end_blk = (pos + len) >> fsi->log_pagesize;
-
-	if (i_size_read(inode) > 0)
-		last_blk = (i_size_read(inode) - 1) >> fsi->log_pagesize;
-
-	SSDFS_DBG("start_blk %llu, end_blk %llu\n",
-		  (u64)start_blk, (u64)end_blk);
-
-	cur_blk = start_blk;
-	do {
-		if (last_blk >= U64_MAX)
-			is_new_blk = true;
-		else
-			is_new_blk = cur_blk > last_blk;
-
-		SSDFS_DBG("cur_blk %llu, is_new_blk %#x, blks %u\n",
-			  (u64)cur_blk, is_new_blk, blks);
-
-		if (is_new_blk) {
-			spin_lock(&fsi->volume_state_lock);
-			if (fsi->free_pages > 0) {
-				fsi->free_pages--;
-				free_pages = fsi->free_pages;
-				blks++;
-			} else
-				err = -ENOSPC;
-			spin_unlock(&fsi->volume_state_lock);
-
-			SSDFS_DBG("free_pages %llu, blks %u\n",
-				  free_pages, blks);
-
-			if (err) {
-				spin_lock(&fsi->volume_state_lock);
-				fsi->free_pages += blks;
-				spin_unlock(&fsi->volume_state_lock);
-
-				ssdfs_unlock_page(page);
-				ssdfs_put_page(page);
-
-				SSDFS_DBG("page %p, count %d\n",
-					  page, page_ref_count(page));
-				SSDFS_DBG("volume hasn't free space\n");
-				return err;
+	if (can_file_be_inline(inode, pos + len)) {
+		if (!ii->inline_file) {
+			err = ssdfs_allocate_inline_file_buffer(inode);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to allocate inline buffer\n");
+				goto try_regular_write;
 			}
+
+			/*
+			 * TODO: pre-fetch file's content in buffer
+			 *       (if inode size > 256 bytes)
+			 */
 		}
 
-		cur_blk++;
-	} while (cur_blk < end_blk);
+		atomic_or(SSDFS_INODE_HAS_INLINE_FILE,
+			  &SSDFS_I(inode)->private_flags);
+	} else {
+try_regular_write:
+		atomic_and(~SSDFS_INODE_HAS_INLINE_FILE,
+			   &SSDFS_I(inode)->private_flags);
+
+		start_blk = pos >> fsi->log_pagesize;
+		end_blk = (pos + len) >> fsi->log_pagesize;
+
+		if (i_size_read(inode) > 0) {
+			last_blk = (i_size_read(inode) - 1) >>
+						fsi->log_pagesize;
+		}
+
+		SSDFS_DBG("start_blk %llu, end_blk %llu, last_blk %llu\n",
+			  (u64)start_blk, (u64)end_blk,
+			  (u64)last_blk);
+
+		cur_blk = start_blk;
+		do {
+			if (last_blk >= U64_MAX)
+				is_new_blk = true;
+			else
+				is_new_blk = cur_blk > last_blk;
+
+			SSDFS_DBG("cur_blk %llu, is_new_blk %#x, blks %u\n",
+				  (u64)cur_blk, is_new_blk, blks);
+
+			if (is_new_blk) {
+				if (!need_add_block(page))
+					set_page_new(page);
+
+				spin_lock(&fsi->volume_state_lock);
+				if (fsi->free_pages > 0) {
+					fsi->free_pages--;
+					free_pages = fsi->free_pages;
+					blks++;
+				} else
+					err = -ENOSPC;
+				spin_unlock(&fsi->volume_state_lock);
+
+				SSDFS_DBG("free_pages %llu, blks %u\n",
+					  free_pages, blks);
+
+				if (err) {
+					spin_lock(&fsi->volume_state_lock);
+					fsi->free_pages += blks;
+					spin_unlock(&fsi->volume_state_lock);
+
+					ssdfs_unlock_page(page);
+					ssdfs_put_page(page);
+
+					SSDFS_DBG("page %p, count %d\n",
+						  page, page_ref_count(page));
+					SSDFS_DBG("volume hasn't free space\n");
+					return err;
+				}
+			}
+
+			cur_blk++;
+		} while (cur_blk < end_blk);
+	}
 
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));

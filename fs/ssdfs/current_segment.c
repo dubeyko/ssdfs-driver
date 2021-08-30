@@ -234,7 +234,7 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 		  si->seg_id, max_free_pages->value, max_free_pages->pos);
 
 	if (!need_select_flush_threads(atomic_read(&si->seg_state)) ||
-	    atomic_read(&si->blk_bmap.free_logical_blks) == 0) {
+	    atomic_read(&si->blk_bmap.seg_free_blks) == 0) {
 		SSDFS_DBG("segment %llu can't be used as current: \n",
 			  si->seg_id);
 		return -ENOSPC;

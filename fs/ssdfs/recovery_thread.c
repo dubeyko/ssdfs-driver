@@ -409,7 +409,6 @@ try_again:
 			continue;
 		}
 
-
 		err = ssdfs_read_checked_sb_info3(env, peb_id, 0);
 		if (err) {
 			SSDFS_DBG("peb_id %llu is corrupted: err %d\n",
@@ -479,6 +478,7 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 #endif /* CONFIG_SSDFS_DEBUG */
 	struct ssdfs_peb_extent checking_page;
+	u16 sb_seg_log_pages;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -494,6 +494,9 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 		  env, env->sbi.vh_buf,
 		  leb_id, peb_id);
 
+	sb_seg_log_pages =
+		le16_to_cpu(SSDFS_VH(env->sbi.vh_buf)->sb_seg_log_pages);
+
 	if (!env->fsi->devops->can_write_page) {
 		SSDFS_CRIT("fail to find latest valid sb info: "
 			   "can_write_page is not supported\n");
@@ -508,7 +511,7 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 
 	checking_page.leb_id = leb_id;
 	checking_page.peb_id = peb_id;
-	checking_page.page_offset = env->fsi->pages_per_peb - 2;
+	checking_page.page_offset = env->fsi->pages_per_peb - sb_seg_log_pages;
 	checking_page.pages_count = 1;
 
 	err = ssdfs_can_write_sb_log(env->fsi->sb, &checking_page);

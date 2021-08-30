@@ -20,6 +20,8 @@
 #ifndef _SSDFS_DENTRIES_TREE_H
 #define _SSDFS_DENTRIES_TREE_H
 
+#define SSDFS_INLINE_DENTRIES_COUNT	(2 * SSDFS_INLINE_DENTRIES_PER_AREA)
+
 /*
  * struct ssdfs_dentries_btree_info - dentries btree info
  * @type: dentries btree type
@@ -55,7 +57,6 @@ struct ssdfs_dentries_btree_info {
 	struct ssdfs_dir_entry *inline_dentries;
 	union {
 		struct ssdfs_btree tree;
-#define SSDFS_INLINE_DENTRIES_COUNT	(2 * SSDFS_INLINE_DENTRIES_PER_AREA)
 		struct ssdfs_dir_entry dentries[SSDFS_INLINE_DENTRIES_COUNT];
 	} buffer;
 	struct ssdfs_btree_inline_root_node *root;
@@ -83,6 +84,23 @@ enum {
 	SSDFS_DENTRIES_BTREE_CORRUPTED,
 	SSDFS_DENTRIES_BTREE_STATE_MAX
 };
+
+/*
+ * Inline methods
+ */
+static inline
+size_t ssdfs_inline_dentries_size(void)
+{
+	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
+	return dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
+}
+
+static inline
+size_t ssdfs_area_dentries_size(void)
+{
+	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
+	return dentry_size * SSDFS_INLINE_DENTRIES_PER_AREA;
+}
 
 /*
  * Dentries tree API

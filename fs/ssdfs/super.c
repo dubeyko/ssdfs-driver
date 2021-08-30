@@ -167,6 +167,7 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 	ii->extents_tree = NULL;
 	ii->dentries_tree = NULL;
 	ii->xattrs_tree = NULL;
+	ii->inline_file = NULL;
 	memset(&ii->raw_inode, 0, sizeof(struct ssdfs_inode));
 
 	return &ii->vfs_inode;
@@ -187,6 +188,9 @@ static void ssdfs_i_callback(struct rcu_head *head)
 
 	if (ii->xattrs_tree)
 		ssdfs_xattrs_tree_destroy(ii);
+
+	if (ii->inline_file)
+		ssdfs_destroy_inline_file_buffer(inode);
 
 	ssdfs_super_cache_leaks_decrement(ii);
 	kmem_cache_free(ssdfs_inode_cachep, ii);
@@ -1547,6 +1551,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	offset += peb_offset;
+
+	SSDFS_DBG("offset %llu\n", offset);
+
 	err = fsi->devops->writepage(sb, offset, page, 0, hdr_size);
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
@@ -1590,6 +1597,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		SetPageDirty(payload_page);
 		ssdfs_unlock_page(payload_page);
 
+		SSDFS_DBG("offset %llu\n", offset);
+
 		err = fsi->devops->writepage(sb, offset, payload_page,
 					     0, PAGE_SIZE);
 		if (err) {
@@ -1627,6 +1636,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	SetPageUptodate(page);
 	SetPageDirty(page);
 	ssdfs_unlock_page(page);
+
+	SSDFS_DBG("offset %llu\n", offset);
 
 	err = fsi->devops->writepage(sb, offset, page, 0, footer_size);
 	if (err) {
@@ -1837,6 +1848,9 @@ free_payload_buffer:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	offset += peb_offset;
+
+	SSDFS_DBG("offset %llu\n", offset);
+
 	err = fsi->devops->writepage(sb, offset, page, 0,
 				     hdr_size + payload_size);
 	if (err) {
@@ -1871,6 +1885,8 @@ free_payload_buffer:
 	SetPageUptodate(page);
 	SetPageDirty(page);
 	ssdfs_unlock_page(page);
+
+	SSDFS_DBG("offset %llu\n", offset);
 
 	err = fsi->devops->writepage(sb, offset, page, 0, footer_size);
 	if (err) {
@@ -1919,6 +1935,9 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 
 	inline_capacity = PAGE_SIZE - hdr_size;
 	payload_size = ssdfs_sb_payload_size(&payload->maptbl_cache.pvec);
+
+	SSDFS_DBG("inline_capacity %u, payload_size %u\n",
+		  inline_capacity, payload_size);
 
 	if (payload_size > inline_capacity)
 		err = __ssdfs_commit_sb_log(sb, last_sb_log, payload);
@@ -2213,13 +2232,21 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_fs_info = fs_info;
 	atomic64_set(&fs_info->flush_reqs, 0);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("parse options started...\n");
+#else
 	SSDFS_DBG("parse options started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_parse_options(fs_info, data);
 	if (err)
 		goto free_erase_page;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("gather superblock info started...\n");
+#else
 	SSDFS_DBG("gather superblock info started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_gather_superblock_info(fs_info, silent);
 	if (err)
@@ -2229,7 +2256,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_feature_compat = fs_info->fs_feature_compat;
 	spin_unlock(&fs_info->volume_state_lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create device group started...\n");
+#else
 	SSDFS_DBG("create device group started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_sysfs_create_device_group(sb);
 	if (err)
@@ -2243,7 +2274,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_xattr = ssdfs_xattr_handlers;
 	set_posix_acl_flag(sb);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create segment tree started...\n");
+#else
 	SSDFS_DBG("create segment tree started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_segment_tree_create(fs_info);
@@ -2251,7 +2286,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (err)
 		goto destroy_sysfs_device_group;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create mapping table started...\n");
+#else
 	SSDFS_DBG("create mapping table started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
@@ -2265,7 +2304,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_segments_tree;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create segment bitmap started...\n");
+#else
 	SSDFS_DBG("create segment bitmap started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
@@ -2279,7 +2322,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_maptbl;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create current segment array started...\n");
+#else
 	SSDFS_DBG("create current segment array started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_current_segment_array_create(fs_info);
@@ -2287,7 +2334,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (err)
 		goto destroy_segbmap;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create shared extents tree started...\n");
+#else
 	SSDFS_DBG("create shared extents tree started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	down_write(&fs_info->volume_sem);
 	err = ssdfs_shextree_create(fs_info);
@@ -2295,7 +2346,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (err)
 		goto destroy_current_segment_array;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create shared dictionary started...\n");
+#else
 	SSDFS_DBG("create shared dictionary started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (fs_feature_compat & SSDFS_HAS_SHARED_DICT_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
@@ -2319,7 +2374,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_shextree;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create inodes btree started...\n");
+#else
 	SSDFS_DBG("create inodes btree started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
 		down_write(&fs_info->volume_sem);
@@ -2333,7 +2392,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_shdictree;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("getting root inode...\n");
+#else
 	SSDFS_DBG("getting root inode...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	root_i = ssdfs_iget(sb, SSDFS_ROOT_INO);
 	if (IS_ERR(root_i)) {
@@ -2342,7 +2405,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto destroy_inodes_btree;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("d_make_root()\n");
+#else
 	SSDFS_DBG("d_make_root()\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	sb->s_root = d_make_root(root_i);
 	if (!sb->s_root) {
@@ -2350,7 +2417,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto put_root_inode;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("starting GC threads...\n");
+#else
 	SSDFS_DBG("starting GC threads...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
 		init_waitqueue_head(&fs_info->gc_wait_queue[i]);
@@ -2502,6 +2573,12 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("sb %p\n", sb);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("STOP THREADS...\n");
+#else
+	SSDFS_DBG("STOP THREADS...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	err = ssdfs_stop_gc_thread(fsi, SSDFS_SEG_USING_GC_THREAD);
 	if (err) {
 		SSDFS_ERR("fail to stop GC using seg thread: "
@@ -2539,6 +2616,12 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	pagevec_init(&payload.maptbl_cache.pvec);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("Destroy shared extents tree...\n");
+#else
+	SSDFS_DBG("Destroy shared extents tree...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	/* TODO: flush shared extents tree */
 	ssdfs_shextree_destroy(fsi);
 
@@ -2552,6 +2635,12 @@ static void ssdfs_put_super(struct super_block *sb)
 				  err);
 		}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush inodes b-tree...\n");
+#else
+		SSDFS_DBG("Flush inodes b-tree...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 		if (fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
 			err = ssdfs_inodes_btree_flush(fsi->inodes_tree);
 			if (err) {
@@ -2559,6 +2648,12 @@ static void ssdfs_put_super(struct super_block *sb)
 					  "err %d\n", err);
 			}
 		}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush shared dictionary b-tree...\n");
+#else
+		SSDFS_DBG("Flush shared dictionary b-tree...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 		if (fs_feature_compat & SSDFS_HAS_SHARED_DICT_COMPAT_FLAG) {
 			err = ssdfs_shared_dict_btree_flush(fsi->shdictree);
@@ -2568,6 +2663,12 @@ static void ssdfs_put_super(struct super_block *sb)
 			}
 		}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush segment bitmap...\n");
+#else
+		SSDFS_DBG("Flush segment bitmap...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 		if (fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
 			err = ssdfs_segbmap_flush(fsi->segbmap);
 			if (err) {
@@ -2576,6 +2677,12 @@ static void ssdfs_put_super(struct super_block *sb)
 			}
 		}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush PEB mapping table...\n");
+#else
+		SSDFS_DBG("Flush PEB mapping table...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 		if (fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
 			err = ssdfs_maptbl_flush(fsi->maptbl);
 			if (err) {
@@ -2583,6 +2690,12 @@ static void ssdfs_put_super(struct super_block *sb)
 					  "err %d\n", err);
 			}
 		}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Commit superblock...\n");
+#else
+		SSDFS_DBG("Commit superblock...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 		if (can_commit_super) {
 			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
@@ -2621,6 +2734,12 @@ static void ssdfs_put_super(struct super_block *sb)
 					  "err %d\n", err);
 			}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+			SSDFS_ERR("Commit superblock...\n");
+#else
+			SSDFS_DBG("Commit superblock...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 			if (!err) {
 				err = ssdfs_commit_super(sb, SSDFS_ERROR_FS,
 							 &last_sb_log,
@@ -2635,6 +2754,12 @@ static void ssdfs_put_super(struct super_block *sb)
 			}
 		}
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("Starting destroy the metadata structures...\n");
+#else
+	SSDFS_DBG("Starting destroy the metadata structures...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
@@ -2666,6 +2791,11 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_leaks();
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("All metadata structures have been destroyed...\n");
+#else
+	SSDFS_DBG("All metadata structures have been destroyed...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 static struct dentry *ssdfs_mount(struct file_system_type *fs_type,

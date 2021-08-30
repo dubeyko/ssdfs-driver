@@ -70,6 +70,7 @@ static inline __u32 ssdfs_mask_flags(umode_t mode, __u32 flags)
  * struct ssdfs_inode_info - in-core inode
  * @vfs_inode: VFS inode object
  * @birthtime: creation time
+ * @raw_inode_size: raw inode size in bytes
  * @private_flags: inode's private flags
  * @lock: inode lock
  * @parent_ino: parent inode ID
@@ -79,11 +80,13 @@ static inline __u32 ssdfs_mask_flags(umode_t mode, __u32 flags)
  * @extents_tree: extents btree
  * @dentries_tree: dentries btree
  * @xattrs_tree: extended attributes tree
+ * @inline_file: inline file buffer
  * @raw_inode: raw inode
  */
 struct ssdfs_inode_info {
 	struct inode vfs_inode;
 	struct timespec64 birthtime;
+	u16 raw_inode_size;
 
 	atomic_t private_flags;
 
@@ -95,6 +98,7 @@ struct ssdfs_inode_info {
 	struct ssdfs_extents_btree_info *extents_tree;
 	struct ssdfs_dentries_btree_info *dentries_tree;
 	struct ssdfs_xattrs_btree_info *xattrs_tree;
+	void *inline_file;
 	struct ssdfs_inode raw_inode;
 };
 

@@ -2,7 +2,7 @@
 /*
  * SSDFS -- SSD-oriented File System.
  *
- * fs/ssdfs/segment_bitmap.c - bitmap of segments implementation.
+ * fs/ssdfs/segment_bitmap.c - segment bitmap implementation.
  *
  * Copyright (c) 2014-2021 HGST, a Western Digital Company.
  *              http://www.hgst.com/

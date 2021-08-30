@@ -110,6 +110,7 @@ struct ssdfs_device_ops {
  * @pages_per_seg: pages per segment
  * @fs_ctime: volume create timestamp (mkfs phase)
  * @fs_cno: volume create checkpoint
+ * @raw_inode_size: raw inode size in bytes
  * @mount_opts: mount options
  * @volume_sem: volume semaphore
  * @last_vh: buffer for last valid volume header
@@ -185,6 +186,7 @@ struct ssdfs_fs_info {
 	u32 pages_per_seg;
 	u64 fs_ctime;
 	u64 fs_cno;
+	u16 raw_inode_size;
 
 	unsigned long mount_opts;
 

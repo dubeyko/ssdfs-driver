@@ -151,9 +151,10 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	bmap->pages_per_peb = fsi->pages_per_peb;
 	bmap->pages_per_seg = fsi->pages_per_seg;
 
-	atomic_set(&bmap->valid_logical_blks, 0);
-	atomic_set(&bmap->invalid_logical_blks, 0);
-	atomic_set(&bmap->free_logical_blks, 0);
+	spin_lock_init(&bmap->modification_lock);
+	atomic_set(&bmap->seg_valid_blks, 0);
+	atomic_set(&bmap->seg_invalid_blks, 0);
+	atomic_set(&bmap->seg_free_blks, 0);
 
 	bmap->pebs_count = si->pebs_count;
 
@@ -205,9 +206,9 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 		  ptr->parent_si->seg_id,
 		  atomic_read(&ptr->state));
 
-	atomic_set(&ptr->valid_logical_blks, 0);
-	atomic_set(&ptr->invalid_logical_blks, 0);
-	atomic_set(&ptr->free_logical_blks, 0);
+	atomic_set(&ptr->seg_valid_blks, 0);
+	atomic_set(&ptr->seg_invalid_blks, 0);
+	atomic_set(&ptr->seg_free_blks, 0);
 
 	for (i = 0; i < ptr->pebs_count; i++)
 		ssdfs_peb_blk_bmap_destroy(&ptr->peb[i]);
@@ -441,9 +442,9 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 		  pebc->peb_index, count);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
-		  atomic_read(&ptr->free_logical_blks),
-		  atomic_read(&ptr->valid_logical_blks),
-		  atomic_read(&ptr->invalid_logical_blks),
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -536,6 +537,93 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 }
 
 /*
+ * ssdfs_segment_blk_bmap_reserve_extent() - reserve free extent
+ * @ptr: segment block bitmap object
+ * @count: number of logical blocks
+ *
+ * This function tries to reserve some number of free blocks.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-E2BIG      - segment hasn't enough free space.
+ */
+int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
+					  u16 count)
+{
+	int free_blks;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si);
+
+	SSDFS_DBG("seg_id %llu\n",
+		  ptr->parent_si->seg_id);
+	SSDFS_DBG("BEFORE: free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
+		  ptr->pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&ptr->state));
+		return -ERANGE;
+	}
+
+	spin_lock(&ptr->modification_lock);
+
+	free_blks = atomic_read(&ptr->seg_free_blks);
+
+	if (free_blks < count) {
+		err = -E2BIG;
+		SSDFS_DBG("segment %llu hasn't enough free pages: "
+			  "free_pages %u, requested_pages %u\n",
+			  ptr->parent_si->seg_id, free_blks, count);
+
+		atomic_set(&ptr->seg_free_blks, 0);
+	} else {
+		atomic_sub(count, &ptr->seg_free_blks);
+	}
+
+	spin_unlock(&ptr->modification_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("AFTER: free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
+		  ptr->pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * ssdfs_segment_blk_bmap_reserve_block() - reserve free block
+ * @ptr: segment block bitmap object
+ * @count: number of logical blocks
+ *
+ * This function tries to reserve a free block.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-E2BIG      - segment hasn't enough free space.
+ */
+int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
+{
+	return ssdfs_segment_blk_bmap_reserve_extent(ptr, 1);
+}
+
+/*
  * ssdfs_segment_blk_bmap_pre_allocate() - pre-allocate range of blocks
  * @ptr: segment block bitmap object
  * @pebc: pointer on PEB container
@@ -571,9 +659,9 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 		  pebc->peb_index);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
-		  atomic_read(&ptr->free_logical_blks),
-		  atomic_read(&ptr->valid_logical_blks),
-		  atomic_read(&ptr->invalid_logical_blks),
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -639,9 +727,9 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 		  pebc->peb_index);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
-		  atomic_read(&ptr->free_logical_blks),
-		  atomic_read(&ptr->valid_logical_blks),
-		  atomic_read(&ptr->invalid_logical_blks),
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {

@@ -21,6 +21,7 @@
 #include <linux/rwsem.h>
 #include <linux/slab.h>
 #include <linux/pagevec.h>
+#include <linux/delay.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -2417,6 +2418,10 @@ finish_fragment_update:
 			err = -ERANGE;
 			SSDFS_ERR("invalid fragment state %#x\n", state);
 		}
+
+		SSDFS_DBG("fragment_index %u, state %#x\n",
+			  fragment_index,
+			  atomic_read(&fdesc->state));
 	} else {
 		for (j = 0; j < pagevec_count(&pvec); j++) {
 			ssdfs_put_page(pvec.pages[j]);
@@ -2507,6 +2512,9 @@ int ssdfs_maptbl_flush_dirty_fragments(struct ssdfs_peb_mapping_table *tbl)
 	int size;
 	unsigned long *found;
 	u32 start_fragment;
+#ifdef CONFIG_SSDFS_DEBUG
+	size_t bytes_count;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2521,6 +2529,13 @@ int ssdfs_maptbl_flush_dirty_fragments(struct ssdfs_peb_mapping_table *tbl)
 	mutex_lock(&tbl->bmap_lock);
 
 	bmap = tbl->dirty_bmap;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	bytes_count = tbl->fragments_count + BITS_PER_LONG - 1;
+	bytes_count /= BITS_PER_BYTE;
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				tbl->dirty_bmap, bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	size = tbl->fragments_count;
 	err = ssdfs_find_first_dirty_fragment(bmap, size, &found);
@@ -3088,6 +3103,10 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 					  state);
 				goto finish_fragment_processing;;
 			}
+
+			SSDFS_DBG("fragment_index %u, state %#x\n",
+				  i,
+				  atomic_read(&fdesc->state));
 			break;
 
 		default:
@@ -4876,19 +4895,22 @@ void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 				     u64 leb_id)
 {
 	u32 fragment_index;
+#ifdef CONFIG_SSDFS_DEBUG
+	size_t bytes_count;
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !fdesc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
-
 	fragment_index = FRAGMENT_INDEX(tbl, leb_id);
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, "
-		  "fdesc %p, fragment_index %u\n",
+		  "fdesc %p, fragment_index %u, "
+		  "start_leb %llu, lebs_count %u\n",
 		  tbl, leb_id,
-		  fdesc, fragment_index);
+		  fdesc, fragment_index,
+		  fdesc->start_leb, fdesc->lebs_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(fragment_index == U32_MAX);
@@ -4896,8 +4918,19 @@ void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	mutex_lock(&tbl->bmap_lock);
+#ifdef CONFIG_SSDFS_DEBUG
+	bytes_count = tbl->fragments_count + BITS_PER_LONG - 1;
+	bytes_count /= BITS_PER_BYTE;
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			tbl->dirty_bmap, bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+	atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 	bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 	mutex_unlock(&tbl->bmap_lock);
+
+	SSDFS_DBG("fragment_index %u, state %#x\n",
+		  fragment_index,
+		  atomic_read(&fdesc->state));
 }
 
 /*
@@ -5747,6 +5780,28 @@ try_next_index:
 			step /= 2;
 	}
 
+	if (*found >= ULONG_MAX) {
+		index = bitmap_find_next_zero_area(bmap,
+						   max, 0,
+						   1, 0);
+		if (index < max) {
+			desc = GET_PEB_DESCRIPTOR(hdr, (u16)index);
+			if (IS_ERR_OR_NULL(desc)) {
+				err = IS_ERR(desc) ? PTR_ERR(desc) : -ERANGE;
+				SSDFS_ERR("fail to get peb_descriptor: "
+					  "index %lu, err %d\n",
+					  index, err);
+				return err;
+			}
+
+			if (desc->state != SSDFS_MAPTBL_BAD_PEB_STATE) {
+				found_cycles = le32_to_cpu(desc->erase_cycles);
+				*threshold = found_cycles;
+				*found = index;
+			}
+		}
+	}
+
 finish_search:
 	SSDFS_DBG("found %lu, threshold %u\n",
 		  *found, *threshold);
@@ -5826,6 +5881,9 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 		if (desc->state != SSDFS_MAPTBL_BAD_PEB_STATE) {
 			u32 found_cycles = le32_to_cpu(desc->erase_cycles);
 
+			SSDFS_DBG("index %lu, found_cycles %u, threshold %u\n",
+				  index, found_cycles, threshold);
+
 			if (found_cycles <= threshold) {
 				*found = index;
 				SSDFS_DBG("found: index %lu, "
@@ -5870,6 +5928,7 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 				 unsigned long *found, u32 *erase_cycles)
 {
 	u32 threshold = U32_MAX;
+	unsigned long found_for_threshold;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5896,6 +5955,7 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 	}
 
 	*erase_cycles = threshold;
+	found_for_threshold = *found;
 
 	err = __ssdfs_maptbl_find_unused_peb(hdr, start, max,
 					     threshold, found);
@@ -5906,7 +5966,44 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 	}
 
 	if (err == -ENODATA) {
-		SSDFS_DBG("unable to find unused PEB\n");
+		struct ssdfs_peb_descriptor *desc;
+		unsigned long *bmap;
+		u64 start_peb;
+		u16 pebs_count;
+		u16 reserved_pebs;
+		u16 last_selected_peb;
+		unsigned long used_pebs;
+		u32 found_cycles;
+		int i;
+
+		SSDFS_DBG("unable to find unused PEB: "
+			  "found_for_threshold %lu, threshold %u\n",
+			  found_for_threshold, threshold);
+
+		bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
+		start_peb = le64_to_cpu(hdr->start_peb);
+		pebs_count = le16_to_cpu(hdr->pebs_count);
+		reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
+		last_selected_peb = le16_to_cpu(hdr->last_selected_peb);
+		used_pebs = bitmap_weight(bmap, pebs_count);
+
+		SSDFS_DBG("hdr %p, start_peb %llu, pebs_count %u, "
+			  "last_selected_peb %u, "
+			  "reserved_pebs %u, used_pebs %lu\n",
+			  hdr, start_peb, pebs_count, last_selected_peb,
+			  reserved_pebs, used_pebs);
+
+		for (i = 0; i < max; i++) {
+			desc = GET_PEB_DESCRIPTOR(hdr, (u16)i);
+			if (IS_ERR_OR_NULL(desc))
+				continue;
+
+			found_cycles = le32_to_cpu(desc->erase_cycles);
+
+			SSDFS_DBG("index %d, found_cycles %u\n",
+				  i, found_cycles);
+		}
+
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find unused PEB: err %d\n", err);
@@ -6900,6 +6997,7 @@ int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
 			err = ssdfs_maptbl_try_decrease_reserved_pebs(tbl,
 								      fdesc);
 			if (err == -ENOENT) {
+				err = 0;
 				SSDFS_DBG("unable to decrease reserved pebs\n");
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to decrease reserved pebs: "

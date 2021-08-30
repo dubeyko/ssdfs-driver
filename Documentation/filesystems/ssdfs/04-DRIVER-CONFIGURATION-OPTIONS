@@ -1,0 +1,71 @@
+
+================================================================================
+*                         Driver Configuration Options                         *
+================================================================================
+
+CONFIG_SSDFS_DEBUG
+	  This option enables additional pre-condition and post-condition
+	  checking in functions. The main goal of this option is providing
+	  environment for debugging code in SSDFS driver and excluding
+	  debug checking from end-users' kernel build. This option enables
+	  debug output by means of pr_debug() from all files too. You can
+	  disable debug output from any file via the 'dynamic_debug/control'
+	  file. Please, see Documentation/dynamic-debug-howto.txt for
+	  additional information.
+
+CONFIG_SSDFS_TRACK_API_CALL
+	  This option enables output from the key subsystems' fucntions.
+	  The main goal of this option is providing the vision of
+	  file system activity.
+
+CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	  This option enables accounting of memory allocation
+	  (kmalloc, kzalloc, kcalloc, kmem_cache_alloc, alloc_page)
+	  by means of incrementing a global counters and deallocation
+	  (kfree, kmem_cache_free, free_page) by means decrementing
+	  the same global counters. Also, there are special global counters
+	  that tracking the number of locked/unlocked memory pages.
+	  However, global counters have an unpleasant side effect.
+	  If there are several mounted SSDFS partitions in the system
+	  then memory leaks accounting subsystem is miscalculating
+	  the number of memory leaks and triggers false alarms.
+	  It makes sense to use the memory leaks accounting subsystem
+	  only for single mounted SSDFS partition in the system.
+
+CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK
+	  This option enables checking the btree consistency.
+
+CONFIG_SSDFS_BTREE_STRICT_CONSISTENCY_CHECK
+	  This option enables checking the btree consistency
+	  after every btree's operation. This option could
+	  seriously degrades the file system performance.
+
+CONFIG_SSDFS_TESTING
+	  This option enables testing infrastructure of SSDFS
+	  filesystem.
+
+CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC
+	  This option enables functionality that is under
+	  development yet.
+
+CONFIG_SSDFS_POSIX_ACL
+	  This option enables POSIX Access Control Lists support.
+	  POSIX Access Control Lists (ACLs) support permissions for users and
+	  groups beyond the owner/group/world scheme.
+	  To learn more about Access Control Lists, visit the POSIX ACLs for
+	  Linux website <http://acl.bestbits.at/>.
+
+CONFIG_SSDFS_ZLIB
+	  This option enables ZLIB compression support.
+	  Zlib is designed to be a free, general-purpose, legally unencumbered,
+	  lossless data-compression library for use on virtually any computer
+	  hardware and operating system. It offers a good trade-off between
+	  compression achieved and the amount of CPU time and memory necessary
+	  to compress and decompress. See <http://www.gzip.org/zlib/> for
+	  further information.
+
+CONFIG_SSDFS_LZO
+	  This option enables LZO compression support.
+	  The minilzo-based compression. Generally works better than Zlib.
+	  LZO compression is mainly aimed at embedded systems with slower
+	  CPUs where the overheads of zlib are too high.

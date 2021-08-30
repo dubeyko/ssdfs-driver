@@ -79,6 +79,8 @@ int ssdfs_create(struct inode *dir, struct dentry *dentry,
 			umode_t mode, bool excl);
 
 /* file.c */
+int ssdfs_allocate_inline_file_buffer(struct inode *inode);
+void ssdfs_destroy_inline_file_buffer(struct inode *inode);
 int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync);
 
 /* fs_error.c */

@@ -3393,11 +3393,14 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
-	if (found_end <= found_start || found_end > blk_bmap->items_count) {
+	if (found_end <= found_start) {
 		SSDFS_ERR("invalid found (start %u, end %u), items count %zu\n",
 			  found_start, found_end, blk_bmap->items_count);
 		return -EINVAL;
 	}
+
+	if (found_end > blk_bmap->items_count)
+		found_end = blk_bmap->items_count;
 
 	range->start = found_start;
 	range->len = min_t(u32, len, found_end - found_start);
@@ -3666,7 +3669,7 @@ bool ssdfs_block_bmap_test_range(struct ssdfs_block_bmap *blk_bmap,
 					  range->start + range->len,
 					  blk_state, &found);
 	if (unlikely(err)) {
-		SSDFS_DBG("fail to find range: err %d\n", err);
+		SSDFS_DBG("unable to find range: err %d\n", err);
 		return false;
 	}
 

@@ -1,0 +1,1651 @@
+
+================================================================================
+*                           SSDFS On-Disk Layout                               *
+================================================================================
+
+<TODO: describe in details>
+
+
+               [*** Segment Concept ***]
+
+Segment is the cornerstone concept of any Log-structured File System (LFS).
+This notion (segment concept) points out the reality of presence of Physical
+Erase Blocks (PEB) on the storage device (SSD) side. Generally speaking, segment
+can be imagined like a portion of storage device that includes one or several
+erase blocks. The erase block is very important item of any NAND-based storage
+device because it is the unit of the erase operation. Finally, any SSDFS file
+systems volume can be imagined like a sequence of segments.
+
+      ----------------------------------------------------------------
+      |   SEGMENT #1    |   SEGMENT #2    | ****** |   SEGMENT #N    |
+      ----------------------------------------------------------------
+      ----------------------------------------------------------------
+      | PEB #1 | PEB #2 | PEB #3 | PEB #4 | ****** | ****** | PEB #N |
+      ----------------------------------------------------------------
+
+               [*** Logical Segment Concept ***]
+
+Generally speaking, segment would represent the real physical unit(s)
+(for example, one or several PEBs are identified by LBAs on the storage
+device). However, SSDFS operates by logical segments. The logical segment is
+the unit that is always located on some offset from the volume’s beginning
+for the whole lifetime of file system volume. Segment is capable to include a
+variable number of PEBs. However, SSDFS file system’s volume includes a fixed
+number of segments with identical size after the definition of segment size
+(during a file system volume creation). Very important goal of the segment
+concept is the capability to execute the erase operation for the whole segment.
+However, segment is the aggregation of several PEBs in the case of SSDFS file
+system. It means that such segment construction provides the opportunity to
+execute the erase operation on the basis of particular PEB(s) inside of
+the same segment. Finally, the aggregation of several PEBs inside of one
+segment has several goals: (1) exploitation of operation parallelism for
+different PEBs inside of the segment, (2) capability to execute the partial
+erase operation on the PEB basis instead of the whole segment, (3) capability
+to use a RAID-like or erasure coding scheme inside of the segment,
+(4) capability to select a proper segment size for a particular workload.
+
+               [*** Logical Extent Concept ***]
+
+Usually, segment is associated with a PEB (flash-oriented file system) or
+with a LBA (flash-friendly file system). However, segment is the pure logical
+entity without the strict relation with PEB or LBA in the case of SSDFS file
+system. Generally speaking, the segment is simply some portion of the file
+system volume is always located on some offset from the volumes beginning.
+The nature of SSDFS file system’s segment has the goal to implement a logical
+extent concept. This concept implies that logical extent (segment ID +
+logical block + length) is always located in the same logical position inside
+of the same segment. Generally speaking, the goal of logical extent is to
+exclude the necessity to update the metadata about a logical block’s position
+in the case of data migration from the initial PEB into another one
+(in the case of update or GC operation, for example). The logical extent
+concept is the technique of resolving the write amplification issue for the
+case of LFS file system. It means that any metadata structure keeping a logical
+extent doesn’t need in updating the logical extent value in the case of data
+migration between the PEBs because the logical extent remains the same until
+the data is living in the same segment.
+
+/*
+ * struct ssdfs_raw_extent - raw (on-disk) extent
+ * @seg_id: segment number
+ * @logical_blk: logical block number
+ * @len: count of blocks in extent
+ */
+struct ssdfs_raw_extent {
+/* 0x0000 */
+	__le64 seg_id;
+	__le32 logical_blk;
+	__le32 len;
+
+/* 0x0010 */
+} __packed;
+
+               [*** Log Concept ***]
+
+Log is the fundamental basic structure of SSDFS file system. Any user data or
+metadata are stored in the log of SSDFS file system’s volume. Generally
+speaking, the log concept tries to achieve the several very important goals:
+(1) replication of critical metadata structures that characterize a file
+system volume, (2) creation the opportunity to recover the log’s payload
+(user data or metadata) on the basis of log’s metadata even if all other
+logs are corrupted, (3) localization of block bitmap by scope of one PEB,
+(4) implementation the concept of an offsets translation table,
+(5) implementation the concept of main, diff updates, and journal areas.
+
+PEB is a sequence of logs. It is defined log pages count at the moment of first
+log creation in a PEB. The value of log pages count is fixed value for a PEB.
+Namely, it means that log's header contains knowledge about fixed value of log
+pages count. This knowledge provides opportunity for easy getting the header of
+a next log. But, really, a log can be full or partial. Full log contains fixed
+count of log pages, namely. But synchronous nature of flush requests can require
+the creation of log with lesser count of pages in it. Such log is the partial
+log. Anyway, fixed value of log pages should be kept. It means that fixed value
+of log pages count can be distributed between partial logs. Such "virtual" log
+that contains several "real" partial logs is aggregated log. The aggregated log
+contains fixed count of log pages at whole.
+
+It is possible to imagine the log like a container that includes a header,
+a payload, and a footer. The responsibility of header is the identification
+of file system type and the log’s beginning because the header is capable
+to play the role of file system’s superblock. Any PEB could contain one or
+several logs and end-user is able to define the size of the log. Moreover,
+various segment types are able to have the different log’s size. However,
+mount type, unmount operation, segment type, or workload type could result
+in the necessity to commit the log without enough data in the log’s
+payload. As a result, it needs to distinguish full and partial logs.
+The full log has to contain such number of logical blocks (or NAND flash
+pages) that were defined by end-user for this particular segment type during
+the file system volume creation. Every full log contains the segment header,
+payload, and footer.
+
+   -----------------------------         -----------------------------
+   |            Log #1         |   ***   |            Log #N         |
+   -----------------------------         -----------------------------
+   | Header | Payload | Footer |   ***   | Header | Payload | Footer |
+   -----------------------------         -----------------------------
+
+               [*** Segment Header ***]
+
+/*
+ * struct ssdfs_volume_header - static part of superblock
+ * @magic: magic signature + revision
+ * @check: metadata checksum
+ * @log_pagesize: log2(page size)
+ * @log_erasesize: log2(erase block size)
+ * @log_segsize: log2(segment size)
+ * @log_pebs_per_seg: log2(erase blocks per segment)
+ * @reserved: reserved
+ * @create_time: volume create timestamp (mkfs phase)
+ * @create_cno: volume create checkpoint
+ * @sb_pebs: array of prev, cur and next superblock's PEB numbers
+ * @segbmap: superblock's segment bitmap header
+ * @maptbl: superblock's mapping table header
+ * @sb_seg_log_pages: full log size in sb segment (pages count)
+ * @segbmap_log_pages: full log size in segbmap segment (pages count)
+ * @maptbl_log_pages: full log size in maptbl segment (pages count)
+ * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
+ * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
+ * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
+ * @user_data_log_pages: full log size in user data segment (pages count)
+ * @dentries_btree: descriptor of all dentries btrees
+ * @extents_btree: descriptor of all extents btrees
+ * @xattr_btree: descriptor of all extended attributes btrees
+ */
+struct ssdfs_volume_header {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	struct ssdfs_metadata_check check;
+
+/* 0x0010 */
+	__le8 log_pagesize;
+	__le8 log_erasesize;
+	__le8 log_segsize;
+	__le8 log_pebs_per_seg;
+	__le8 reserved1[4];
+
+/* 0x0018 */
+	__le64 create_time;
+	__le64 create_cno;
+	__le64 reserved2;
+
+/* 0x0030 */
+#define VH_LIMIT1	SSDFS_SB_CHAIN_MAX
+#define VH_LIMIT2	SSDFS_SB_SEG_COPY_MAX
+	struct ssdfs_leb2peb_pair sb_pebs[VH_LIMIT1][VH_LIMIT2];
+
+/* 0x00B0 */
+	struct ssdfs_segbmap_sb_header segbmap;
+
+/* 0x0140 */
+	struct ssdfs_maptbl_sb_header maptbl;
+
+/* 0x01D0 */
+	__le16 sb_seg_log_pages;
+	__le16 segbmap_log_pages;
+	__le16 maptbl_log_pages;
+	__le16 lnodes_seg_log_pages;
+	__le16 hnodes_seg_log_pages;
+	__le16 inodes_seg_log_pages;
+	__le16 user_data_log_pages;
+	__le16 reserved3;
+
+/* 0x01E0 */
+	struct ssdfs_dentries_btree_descriptor dentries_btree;
+
+/* 0x0200 */
+	struct ssdfs_extents_btree_descriptor extents_btree;
+
+/* 0x0220 */
+	struct ssdfs_xattr_btree_descriptor xattr_btree;
+
+/* 0x0240 */
+	__le8 reserved4[0x1C0];
+
+/* 0x0400 */
+} __packed;
+
+/*
+ * struct ssdfs_segment_header - header of segment
+ * @volume_hdr: copy of static part of superblock
+ * @timestamp: creation timestamp
+ * @cno: segment starting checkpoint
+ * @log_pages: size of log (partial segment) in pages count
+ * @seg_type: type of segment
+ * @seg_flags: flags of segment
+ * @desc_array: array of segment's metadata descriptors
+ * @peb_migration_id: identification number of PEB in migration sequence
+ * @payload: space for segment header's payload
+ */
+struct ssdfs_segment_header {
+/* 0x0000 */
+	struct ssdfs_volume_header volume_hdr;
+
+/* 0x0400 */
+	__le64 timestamp;
+	__le64 cno;
+
+/* 0x0410 */
+	__le16 log_pages;
+	__le16 seg_type;
+	__le32 seg_flags;
+
+/* 0x0418 */
+	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
+
+/* 0x0498 */
+#define SSDFS_PEB_UNKNOWN_MIGRATION_ID		(0)
+#define SSDFS_PEB_MIGRATION_ID_START		(1)
+#define SSDFS_PEB_MIGRATION_ID_MAX		(U8_MAX)
+	__le8 peb_migration_id[SSDFS_MIGRATING_PEBS_CHAIN];
+
+/* 0x49A */
+	__le8 payload[0x366];
+
+/* 0x0800 */
+} __packed;
+
+700C0000  66 44 73 53 48 53 01 04  00 08 01 00 30 f7 61 f0  |fDsSHS......0.a.|
+700C0010  0c 11 11 00 ff ff ff ff  00 de 63 45 d6 5b 9e 16  |..........cE.[..|
+700C0020  00 00 00 00 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C0030  e4 01 01 00 00 00 00 00  8b 02 01 00 00 00 00 00  |................|
+700C0040  e5 01 01 00 00 00 00 00  8c 02 01 00 00 00 00 00  |................|
+700C0050  95 05 01 00 00 00 00 00  2d 06 01 00 00 00 00 00  |........-.......|
+700C0060  96 05 01 00 00 00 00 00  2e 06 01 00 00 00 00 00  |................|
+700C0070  53 09 01 00 00 00 00 00  10 0a 01 00 00 00 00 00  |S...............|
+700C0080  54 09 01 00 00 00 00 00  11 0a 01 00 00 00 00 00  |T...............|
+700C0090  26 fe 00 00 00 00 00 00  a8 fe 00 00 00 00 00 00  |&...............|
+700C00A0  27 fe 00 00 00 00 00 00  a9 fe 00 00 00 00 00 00  |'...............|
+700C00B0  13 00 13 00 13 00 00 10  ff 29 01 00 00 00 01 00  |.........)......|
+700C00C0  07 00 00 00 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C00D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C00E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C00F0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0100  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0110  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0120  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0130  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0140  a1 00 00 00 00 30 00 00  ff ff ff ff ff ff ff ff  |.....0..........|
+700C0150  fd 53 02 00 00 00 00 00  fd 53 02 00 00 00 00 00  |.S.......S......|
+700C0160  01 00 01 00 00 00 00 00  b8 03 b8 03 dc 01 02 00  |................|
+700C0170  08 00 00 00 00 00 00 00  a1 00 00 00 01 00 00 00  |................|
+700C0180  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0190  ff ff ff ff ff ff ff ff  ff ff ff ff 00 00 ff ff  |................|
+700C01A0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C01B0  ff ff ff ff ff ff ff ff  ff ff ff ff 00 00 ff ff  |................|
+700C01C0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C01D0  03 00 20 00 08 00 20 00  20 00 20 00 20 00 ff ff  |.. ... . . . ...|
+700C01E0  74 42 65 44 01 00 02 0d  02 20 20 00 20 00 00 01  |tBeD.....  . ...|
+700C01F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0200  74 42 78 45 01 00 03 0d  02 20 20 00 40 00 00 01  |tBxE.....  .@...|
+700C0210  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0220  74 42 41 45 01 00 05 0d  02 20 20 00 40 00 00 01  |tBAE.....  .@...|
+700C0230  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0240  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0250  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0260  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0270  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0280  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0290  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C02A0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C02B0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C02C0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C02D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C02E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C02F0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0300  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0310  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0320  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0330  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0340  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0350  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0360  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0370  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0380  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0390  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C03A0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C03B0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C03C0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C03D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C03E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C03F0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0400  ab c9 17 a6 42 68 9e 16  b7 c4 a8 eb 21 0c 00 00  |....Bh......!...|
+700C0410  20 00 05 00 2b 07 00 00  9a 04 00 00 80 00 00 00  | ...+...........|
+700C0420  10 00 01 00 45 ee 3f 90  1a 05 00 00 98 00 00 00  |....E.?.........|
+700C0430  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0440  00 00 00 00 00 00 00 00  f2 07 00 00 ca 1d 00 00  |................|
+700C0450  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0460  00 00 00 00 00 00 00 00  b2 05 00 00 40 02 00 00  |............@...|
+700C0470  00 01 01 00 4f 9e 60 fd  00 00 00 00 00 00 00 00  |....O.`.........|
+700C0480  00 00 00 00 00 00 00 00  00 30 00 00 00 04 00 00  |.........0......|
+700C0490  00 04 01 00 81 6d e2 50  20 21 66 44 73 53 4d 42  |.....m.P !fDsSMB|
+700C04A0  01 04 02 00 80 00 00 00  02 01 00 00 00 00 05 00  |................|
+700C04B0  01 00 01 00 00 00 00 00  00 00 08 00 00 00 08 00  |................|
+700C04C0  00 00 01 00 10 00 63 04  00 00 40 00 00 00 08 00  |......c...@.....|
+700C04D0  08 00 d6 43 71 1d 00 66  01 01 f3 0f 00 00 00 00  |...Cq..f........|
+700C04E0  00 00 00 00 01 00 05 00  00 00 12 00 05 00 05 00  |................|
+700C04F0  00 00 08 00 00 00 08 00  00 00 01 00 10 00 63 04  |..............c.|
+700C0500  00 00 78 00 00 00 08 00  08 00 a9 cc d7 93 00 66  |..x............f|
+700C0510  01 01 ae fa ff ff 0f 00  00 00 66 44 73 53 74 54  |..........fDsStT|
+700C0520  01 04 20 00 01 00 80 1a  49 df 18 00 02 00 28 00  |.. .....I.....(.|
+700C0530  01 00 02 00 d3 06 04 00  00 02 00 00 d7 06 01 00  |................|
+700C0540  01 02 d3 06 05 00 70 00  00 00 00 00 a1 01 01 00  |......p.........|
+700C0550  01 00 48 54 4f 50 58 fa  21 17 12 00 0e 00 11 00  |..HTOPX.!.......|
+700C0560  ff ff 08 00 00 00 02 00  02 00 00 00 00 21 00 01  |.............!..|
+700C0570  00 00 09 00 00 00 03 00  03 00 00 00 00 21 40 01  |.............!@.|
+700C0580  00 00 0a 00 00 00 04 00  04 00 00 00 00 21 80 01  |.............!..|
+700C0590  00 00 0b 00 00 00 05 00  05 00 00 00 00 21 c0 01  |.............!..|
+700C05A0  00 00 02 00 00 00 00 00  00 00 00 00 00 21 00 02  |.............!..|
+700C05B0  00 00 40 01 00 00 40 01  00 00 01 00 10 00 63 03  |..@...@.......c.|
+700C05C0  00 00 00 00 00 00 40 01  40 01 00 00 00 00 00 66  |......@.@......f|
+700C05D0  05 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C05E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C05F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0600  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0610  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0620  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0630  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0640  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0650  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0660  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0670  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0680  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C0690  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C06A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C06B0  00 00 10 00 00 00 00 00  00 00 08 00 00 00 00 00  |................|
+700C06C0  02 00 00 00 02 21 00 00  00 00 ff ff ff ff ff ff  |.....!..........|
+700C06D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C06E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C06F0  ff ff 10 00 00 00 00 00  00 00 09 00 00 00 00 00  |................|
+700C0700  03 00 00 00 02 21 b5 07  00 00 ff ff ff ff ff ff  |.....!..........|
+700C0710  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0720  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0730  ff ff 10 00 00 00 00 00  00 00 0a 00 00 00 00 00  |................|
+700C0740  04 00 00 00 02 21 85 0e  00 00 ff ff ff ff ff ff  |.....!..........|
+700C0750  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0760  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C0770  ff ff 10 00 00 00 00 00  00 00 0b 00 00 00 00 00  |................|
+700C0780  05 00 00 00 02 21 30 16  00 00 ff ff ff ff ff ff  |.....!0.........|
+700C0790  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C07A0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C07B0  ff ff ea 02 00 00 00 00  00 00 02 00 00 00 00 00  |................|
+700C07C0  00 00 00 00 02 21 e7 1c  00 00 ff ff ff ff ff ff  |.....!..........|
+700C07D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C07E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C07F0  ff ff 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+
+MAGIC: fDsS HS
+VERSION: v.1.4
+PAGE: 4096 bytes
+PEB: 131072 bytes
+PEBS_PER_SEGMENT: 1
+SEGMENT: 131072 bytes
+CREATION_TIME: Tue Aug 24 14:38:11 2021
+
+CREATION_CHECKPOINT: 0
+
+CURRENT_SUPERBLOCK_SEGMENT: MAIN: LEB 66020, PEB 66187; COPY: LEB 66021, PEB 66188
+NEXT_SUPERBLOCK_SEGMENT: MAIN: LEB 66965, PEB 67117; COPY: LEB 66966, PEB 67118
+RESERVED_SUPERBLOCK_SEGMENT: MAIN: LEB 67923, PEB 68112; COPY: LEB 67924, PEB 68113
+PREVIOUS_SUPERBLOCK_SEGMENT: MAIN: LEB 65062, PEB 65192; COPY: LEB 65063, PEB 65193
+
+SB_SEGMENT_LOG_PAGES: 3
+SEGBMAP_LOG_PAGES: 32
+MAPTBL_LOG_PAGES: 8
+USER_DATA_LOG_PAGES: 32
+
+LOG_CREATION_TIME: Tue Aug 24 18:25:50 2021
+
+LOG_CREATION_CHECKPOINT: 13339827160247
+LOG_PAGES: 32
+SEG_TYPE: SSDFS_LEAF_NODE_SEG_TYPE
+SEG_FLAGS: SEG_HDR_HAS_BLK_BMAP SEG_HDR_HAS_OFFSET_TABLE LOG_HAS_WARM_PAYLOAD LOG_HAS_BLK_DESC_CHAIN LOG_IS_PARTIAL LOG_HAS_PARTIAL_HEADER PARTIAL_HEADER_INSTEAD_FOOTER
+BLOCK_BITMAP: offset 1178, size 128
+OFFSETS_TABLE: offset 1306, size 152
+COLD_PAYLOAD_AREA: offset 0, size 0
+WARM_PAYLOAD_AREA: offset 2034, size 7626
+HOT_PAYLOAD_AREA: offset 0, size 0
+BLOCK_DESCRIPTOR_AREA: offset 1458, size 576
+MAPTBL_CACHE_AREA: offset 0, size 0
+LOG_FOOTER: offset 12288, size 1024
+
+PREV_MIGRATING_PEB: migration_id 32
+CUR_MIGRATING_PEB: migration_id 33
+
+SEGMENT BITMAP HEADER:
+FRAGMENTS_COUNT: 19
+FRAGMENTS_PER_SEGMENT: 19
+FRAGMENTS_PER_PEB: 19
+FRAGMENTS_SIZE: 4096 bytes
+BYTES_COUNT: 76287 bytes
+SEGMENTS_COUNT: 1
+SEGMENT BITMAP FLAGS: NONE
+SEGMENT BITMAP SEGMENTS:
+SEG[0][MAIN]: 7; SEG[0][COPY]: 18446744073709551615
+SEG[1][MAIN]: 18446744073709551615; SEG[1][COPY]: 18446744073709551615
+SEG[2][MAIN]: 18446744073709551615; SEG[2][COPY]: 18446744073709551615
+SEG[3][MAIN]: 18446744073709551615; SEG[3][COPY]: 18446744073709551615
+SEG[4][MAIN]: 18446744073709551615; SEG[4][COPY]: 18446744073709551615
+SEG[5][MAIN]: 18446744073709551615; SEG[5][COPY]: 18446744073709551615
+SEG[6][MAIN]: 18446744073709551615; SEG[6][COPY]: 18446744073709551615
+SEG[7][MAIN]: 18446744073709551615; SEG[7][COPY]: 18446744073709551615
+
+MAPPING TABLE HEADER:
+FRAGMENTS_COUNT: 161
+FRAGMENT_BYTES: 12288
+LAST_PEB_RECOVER_CNO: 18446744073709551615
+LEBS_COUNT: 152573
+PEBS_COUNT: 152573
+FRAGMENTS_PER_SEGMENT: 1
+FRAGMENTS_PER_PEB: 1
+PRE_ERASE_PEBS: 0
+LEBS_PER_FRAGMENT: 952
+PEBS_PER_FRAGMENT: 952
+PEBS_PER_STRIPE: 476
+STRIPES_PER_FRAGMENT: 2
+MAPPING TABLE FLAGS: NONE
+MAPPING TABLE EXTENTS:
+extent[0][MAIN]: start_id 8, len 161, SSDFS_SEG_EXTENT_TYPE, flags 0
+extent[0][COPY]: start_id 18446744073709551615, len 4294967295, UNKNOWN_EXTENT_TYPE, flags 0xffff
+extent[1][MAIN]: start_id 18446744073709551615, len 4294967295, SSDFS_EMPTY_EXTENT_TYPE, flags 0xffff
+extent[1][COPY]: start_id 18446744073709551615, len 4294967295, UNKNOWN_EXTENT_TYPE, flags 0xffff
+extent[2][MAIN]: start_id 18446744073709551615, len 4294967295, SSDFS_EMPTY_EXTENT_TYPE, flags 0xffff
+extent[2][COPY]: start_id 18446744073709551615, len 4294967295, UNKNOWN_EXTENT_TYPE, flags 0xffff
+
+DENTRIES B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBeD
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_DENTRIES_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 32 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+
+EXTENTS B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBxE
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_EXTENTS_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 64 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+
+XATTRS B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBAE
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_XATTR_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 64 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+
+               [*** Partial Log Header ***]
+
+/*
+ * struct ssdfs_partial_log_header - header of partial log
+ * @magic: magic signature + revision
+ * @check: metadata checksum
+ * @timestamp: writing timestamp
+ * @cno: writing checkpoint
+ * @log_pages: size of log in pages count
+ * @seg_type: type of segment
+ * @pl_flags: flags of log
+ * @log_bytes: payload size in bytes
+ * @flags: volume flags
+ * @desc_array: array of log's metadata descriptors
+ * @nsegs: segments count
+ * @free_pages: free pages count
+ * @root_folder: copy of root folder's inode
+ * @inodes_btree: inodes btree root
+ * @shared_extents_btree: shared extents btree root
+ * @shared_dict_btree: shared dictionary btree root
+ * @sequence_id: index of partial log in the sequence
+ * @log_pagesize: log2(page size)
+ * @log_erasesize: log2(erase block size)
+ * @log_segsize: log2(segment size)
+ * @log_pebs_per_seg: log2(erase blocks per segment)
+ *
+ * This header is used when the full log needs to be built from several
+ * partial logs. The header represents the combination of the most
+ * essential fields of segment header and log footer. The first partial
+ * log starts from the segment header and partial log header. The next
+ * every partial log starts from the partial log header. Only the latest
+ * log ends with the log footer.
+ */
+struct ssdfs_partial_log_header {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	struct ssdfs_metadata_check check;
+
+/* 0x0010 */
+	__le64 timestamp;
+	__le64 cno;
+
+/* 0x0020 */
+	__le16 log_pages;
+	__le16 seg_type;
+	__le32 pl_flags;
+
+/* 0x0028 */
+	__le32 log_bytes;
+	__le32 flags;
+
+/* 0x0030 */
+	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
+
+/* 0x00B0 */
+	__le64 nsegs;
+	__le64 free_pages;
+
+/* 0x00C0 */
+	struct ssdfs_inode root_folder;
+
+/* 0x01C0 */
+	struct ssdfs_inodes_btree inodes_btree;
+
+/* 0x0240 */
+	struct ssdfs_shared_extents_btree shared_extents_btree;
+
+/* 0x02C0 */
+	struct ssdfs_shared_dictionary_btree shared_dict_btree;
+
+/* 0x0340 */
+	__le32 sequence_id;
+	__le8 log_pagesize;
+	__le8 log_erasesize;
+	__le8 log_segsize;
+	__le8 log_pebs_per_seg;
+	__le8 reserved[0x8];
+
+/* 0x0350 */
+	__le8 payload[0xB0];
+
+/* 0x0400 */
+} __packed;
+
+700C4000  66 44 73 53 48 50 01 04  00 04 01 00 f4 c9 a8 63  |fDsSHP.........c|
+700C4010  34 b5 84 be 4b 68 9e 16  be d6 af ce 2a 0c 00 00  |4...Kh......*...|
+700C4020  03 00 05 00 2b 03 00 00  00 30 00 00 00 00 00 00  |....+....0......|
+700C4030  50 43 00 00 80 00 00 00  10 00 01 00 45 ee 3f 90  |PC..........E.?.|
+700C4040  d0 43 00 00 b0 00 00 00  00 00 00 00 00 00 00 00  |.C..............|
+700C4050  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C4060  40 47 00 00 c7 27 00 00  00 00 00 00 00 00 00 00  |@G...'..........|
+700C4070  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C4080  80 44 00 00 c0 02 00 00  00 01 01 00 4b 11 ca 38  |.D..........K..8|
+700C4090  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C40A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C40B0  fd 53 02 00 00 00 00 00  5d a7 3c 00 00 00 00 00  |.S......].<.....|
+700C40C0  69 64 ed 41 00 00 00 00  00 00 00 00 00 00 00 00  |id.A............|
+700C40D0  c3 66 25 61 00 00 00 00  40 9c 25 61 00 00 00 00  |.f%a....@.%a....|
+700C40E0  40 9c 25 61 00 00 00 00  c3 66 25 61 00 00 00 00  |@.%a.....f%a....|
+700C40F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C4100  00 00 00 00 00 00 00 00  00 10 00 00 00 00 00 00  |................|
+700C4110  01 00 00 00 00 00 00 00  10 00 00 00 00 00 00 00  |................|
+700C4120  02 00 00 00 4e 6f d9 b1  10 00 00 00 00 00 00 00  |....No..........|
+700C4130  00 00 00 00 00 00 00 00  00 00 08 00 68 10 06 00  |............h...|
+700C4140  03 01 00 01 13 00 00 00  03 00 00 00 ff ff ff ff  |................|
+700C4150  b8 12 00 00 fc d4 06 00  53 23 00 00 00 00 00 00  |........S#......|
+700C4160  02 00 00 00 02 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C4170  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4180  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C4190  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C41A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C41B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+700C41C0  74 42 6e 49 00 00 01 0d  02 20 20 00 00 01 00 01  |tBnI.....  .....|
+700C41D0  db 0d 00 00 00 00 00 00  03 00 00 00 00 00 00 00  |................|
+700C41E0  de 0d 00 00 00 00 00 00  64 00 00 00 75 00 00 00  |........d...u...|
+700C41F0  da 0d 00 00 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C4200  04 01 00 01 74 00 00 00  11 00 00 00 ff ff ff ff  |....t...........|
+700C4210  00 00 00 00 00 00 00 00  ac 0f 00 00 00 00 00 00  |................|
+700C4220  00 00 00 00 02 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C4230  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4240  74 42 45 53 01 00 04 0d  02 20 20 00 40 00 00 01  |tBES.....  .@...|
+700C4250  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4260  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4270  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4280  00 00 00 01 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C4290  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C42A0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C42B0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C42C0  63 69 44 53 01 00 07 0d  02 20 20 00 ff 00 00 01  |ciDS.....  .....|
+700C42D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C42E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C42F0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4300  00 00 00 01 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+700C4310  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4320  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4330  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+700C4340  01 00 00 00 0c 11 11 00  ff ff ff ff ff ff ff ff  |................|
+700C4350  66 44 73 53 4d 42 01 04  02 00 80 00 00 00 02 01  |fDsSMB..........|
+700C4360  00 00 00 00 05 00 01 00  08 00 00 00 00 00 00 00  |................|
+700C4370  08 00 00 00 08 00 00 00  01 00 10 00 63 04 00 00  |............c...|
+700C4380  40 00 00 00 08 00 08 00  40 6c a0 2e 00 66 01 01  |@.......@l...f..|
+700C4390  ff ff 00 00 00 00 00 00  00 00 01 00 05 00 00 00  |................|
+700C43A0  12 00 05 00 08 00 00 00  08 00 00 00 08 00 00 00  |................|
+700C43B0  01 00 10 00 63 04 00 00  78 00 00 00 08 00 08 00  |....c...x.......|
+700C43C0  e4 2b 48 34 00 66 01 01  aa aa ff ff 0f 00 00 00  |.+H4.f..........|
+700C43D0  66 44 73 53 74 54 01 04  20 00 01 00 6b 11 d9 53  |fDsStT.. ...k..S|
+700C43E0  18 00 01 00 20 00 01 00  01 00 d8 06 07 00 00 02  |.... ...........|
+700C43F0  d8 06 07 00 90 00 00 00  00 00 a2 01 01 00 01 00  |................|
+
+PARTIAL LOG HEADER:
+MAGIC: fDsS HP
+VERSION: v.1.4
+METADATA CHECK:
+BYTES: 1024
+METADATA CHECK FLAGS: SSDFS_CRC32
+CHECKSUM: 0x63a8c9f4
+SEQUENCE_ID: 1
+PAGE: 4096 bytes
+PEB: 131072 bytes
+PEBS_PER_SEGMENT: 1
+SEGMENT: 131072 bytes
+SEGMENT NUMBERS: 152573
+FREE PAGES: 3975005
+LOG_CREATION_TIME: Tue Aug 24 18:26:29 2021
+
+CHECKPOINT: 13377995790014
+LOG_PAGES: 3
+SEG_TYPE: SSDFS_LEAF_NODE_SEG_TYPE
+VOLUME STATE FLAGS: NONE
+LOG BYTES: 12288 bytes
+PARTIAL HEADER FLAGS: SEG_HDR_HAS_BLK_BMAP SEG_HDR_HAS_OFFSET_TABLE LOG_HAS_WARM_PAYLOAD LOG_HAS_BLK_DESC_CHAIN LOG_IS_PARTIAL LOG_HAS_PARTIAL_HEADER
+BLOCK_BITMAP: offset 17232, size 128
+OFFSETS_TABLE: offset 17360, size 176
+COLD_PAYLOAD_AREA: offset 0, size 0
+WARM_PAYLOAD_AREA: offset 18240, size 10183
+HOT_PAYLOAD_AREA: offset 0, size 0
+BLOCK_DESCRIPTOR_AREA: offset 17536, size 704
+MAPTBL_CACHE_AREA: offset 0, size 0
+LOG_FOOTER: offset 0, size 0
+
+ROOT FOLDER:
+RAW INODE:
+MAGIC: id
+MODE: 0x41ed
+FLAGS: 0
+UID: 0
+GID: 0
+ACCESS TIME: 1629841091
+ACCESS TIME NSEC: 0
+CHANGE TIME: 1629854784
+CHANGE TIME NSEC: 0
+MODIFICATION TIME: 1629854784
+MODIFICATION TIME NSEC: 0
+BIRTH TIME: 1629841091
+BIRTH TIME NSEC: 0
+FILE VERSION (NFS): 0
+FILE SIZE: 4096 bytes
+BLOCKS: 1
+PARENT_INO: 16
+LINKS COUNT: 2
+CHECKSUM: 0xb1d96f4e
+INODE ID: 16
+FILE NAME HASH CODE: 0
+NAME LENGTH: 0
+INODE PRIVATE FLAGS: SSDFS_INODE_HAS_DENTRIES_BTREE
+COUNT OF (FORKS/DENTRIES): 397416
+
+INODES B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBnI
+B-TREE FLAGS: NONE
+B-TREE TYPE: SSDFS_INODES_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 256 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+ALLOCATED INODES: 3547
+FREE INODES: 3
+INODES CAPACITY: 3550
+LEAF NODES: 100
+NODES COUNT: 117
+UPPER_ALLOCATED_INO: 3546
+BTREE INLINE ROOT NODE:
+BTREE HEIGHT: 4
+ROOT NODE's ITEMS_COUNT: 1
+ROOT NODE FLAGS: NONE
+NODE TYPE: SSDFS_BTREE_ROOT_NODE
+UPPER NODE ID: 116
+NODE_ID: left 17, right 4294967295
+BTREE INDEX: #0
+HASH: 0
+SEGMENT ID: 4012
+LOGICAL BLOCK: 0
+LENGTH: 2
+BTREE INDEX: #1
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+
+SHARED EXTENTS B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBES
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_SHARED_EXTENTS_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 64 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+BTREE INLINE ROOT NODE:
+BTREE HEIGHT: 0
+ROOT NODE's ITEMS_COUNT: 0
+ROOT NODE FLAGS: NONE
+NODE TYPE: SSDFS_BTREE_ROOT_NODE
+UPPER NODE ID: 0
+NODE_ID: left 4294967295, right 4294967295
+BTREE INDEX: #0
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+BTREE INDEX: #1
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+
+SHARED DICTIONARY B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: ciDS
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_SHARED_DICTIONARY_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 255 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+BTREE INLINE ROOT NODE:
+BTREE HEIGHT: 0
+ROOT NODE's ITEMS_COUNT: 0
+ROOT NODE FLAGS: NONE
+NODE TYPE: SSDFS_BTREE_ROOT_NODE
+UPPER NODE ID: 0
+NODE_ID: left 4294967295, right 4294967295
+BTREE INDEX: #0
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+BTREE INDEX: #1
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+
+               [*** Log Footer ***]
+
+/*
+ * struct ssdfs_volume_state - changeable part of superblock
+ * @magic: magic signature + revision
+ * @check: metadata checksum
+ * @nsegs: segments count
+ * @free_pages: free pages count
+ * @timestamp: write timestamp
+ * @cno: write checkpoint
+ * @flags: volume flags
+ * @state: file system state
+ * @errors: behaviour when detecting errors
+ * @feature_compat: compatible feature set
+ * @feature_compat_ro: read-only compatible feature set
+ * @feature_incompat: incompatible feature set
+ * @uuid: 128-bit uuid for volume
+ * @label: volume name
+ * @cur_segs: array of current segment numbers
+ * @migration_threshold: default value of destination PEBs in migration
+ * @blkbmap: block bitmap options
+ * @blk2off_tbl: offset translation table options
+ * @user_data: user data options
+ * @root_folder: copy of root folder's inode
+ * @inodes_btree: inodes btree root
+ * @shared_extents_btree: shared extents btree root
+ * @shared_dict_btree: shared dictionary btree root
+ */
+struct ssdfs_volume_state {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	struct ssdfs_metadata_check check;
+
+/* 0x0010 */
+	__le64 nsegs;
+	__le64 free_pages;
+
+/* 0x0020 */
+	__le64 timestamp;
+	__le64 cno;
+
+/* 0x0030 */
+#define SSDFS_HAS_INLINE_INODES_TREE		(1 << 0)
+#define SSDFS_VOLUME_STATE_FLAGS_MASK		0x1
+	__le32 flags;
+	__le16 state;
+	__le16 errors;
+
+/* 0x0038 */
+	__le64 feature_compat;
+	__le64 feature_compat_ro;
+	__le64 feature_incompat;
+
+/* 0x0050 */
+	__le8 uuid[SSDFS_UUID_SIZE];
+	char label[SSDFS_VOLUME_LABEL_MAX];
+
+/* 0x0070 */
+	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
+
+/* 0x0090 */
+	__le16 migration_threshold;
+	__le16 reserved1;
+
+/* 0x0094 */
+	struct ssdfs_blk_bmap_options blkbmap;
+	struct ssdfs_blk2off_tbl_options blk2off_tbl;
+
+/* 0x009C */
+	struct ssdfs_user_data_options user_data;
+
+/* 0x00A4 */
+	__le8 reserved2[0xC];
+
+/* 0x00B0 */
+	struct ssdfs_inode root_folder;
+
+/* 0x01B0 */
+	__le8 reserved3[0x50];
+
+/* 0x0200 */
+	struct ssdfs_inodes_btree inodes_btree;
+
+/* 0x0280 */
+	struct ssdfs_shared_extents_btree shared_extents_btree;
+
+/* 0x0300 */
+	struct ssdfs_shared_dictionary_btree shared_dict_btree;
+
+/* 0x0380 */
+	__le8 reserved4[0x80];
+
+/* 0x0400 */
+} __packed;
+
+/*
+ * struct ssdfs_log_footer - footer of partial log
+ * @volume_state: changeable part of superblock
+ * @timestamp: writing timestamp
+ * @cno: writing checkpoint
+ * @log_bytes: payload size in bytes
+ * @log_flags: flags of log
+ * @reserved1: reserved field
+ * @desc_array: array of footer's metadata descriptors
+ * @payload: space for log footer's payload
+ */
+struct ssdfs_log_footer {
+/* 0x0000 */
+	struct ssdfs_volume_state volume_state;
+
+/* 0x0400 */
+	__le64 timestamp;
+	__le64 cno;
+
+/* 0x0410 */
+	__le32 log_bytes;
+	__le32 log_flags;
+	__le64 reserved1;
+
+/* 0x0420 */
+	struct ssdfs_metadata_descriptor desc_array[SSDFS_LOG_FOOTER_DESC_MAX];
+
+/* 0x0440 */
+	__le8 payload[0x3C0];
+
+/* 0x0800 */
+} __packed;
+
+22A542000  66 44 73 53 46 4c 01 04  00 08 01 00 64 24 80 9d  |fDsSFL......d$..|
+22A542010  fd 53 02 00 00 00 00 00  26 d3 3b 00 00 00 00 00  |.S......&.;.....|
+22A542020  aa dc 44 de 11 69 9e 16  f1 d7 b4 da ed 0c 00 00  |..D..i..........|
+22A542030  00 00 00 00 01 00 01 00  37 00 00 00 00 00 00 00  |........7.......|
+22A542040  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542050  9f 9e d4 fd d4 db 4a 9d  bf c8 8a 12 62 30 59 80  |......J.....b0Y.|
+22A542060  30 30 30 31 00 00 00 00  00 00 00 00 00 00 00 00  |0001............|
+22A542070  0d 1c 01 00 00 00 00 00  ec 1b 01 00 00 00 00 00  |................|
+22A542080  ad a7 00 00 00 00 00 00  ac 0f 00 00 00 00 00 00  |................|
+22A542090  01 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5420A0  01 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5420B0  69 64 ed 41 00 00 00 00  00 00 00 00 00 00 00 00  |id.A............|
+22A5420C0  c3 66 25 61 00 00 00 00  21 9f 25 61 00 00 00 00  |.f%a....!.%a....|
+22A5420D0  21 9f 25 61 00 00 00 00  c3 66 25 61 00 00 00 00  |!.%a.....f%a....|
+22A5420E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5420F0  00 00 00 00 00 00 00 00  00 10 00 00 00 00 00 00  |................|
+22A542100  01 00 00 00 00 00 00 00  10 00 00 00 00 00 00 00  |................|
+22A542110  02 00 00 00 de bb fa a1  10 00 00 00 00 00 00 00  |................|
+22A542120  00 00 00 00 00 00 00 00  00 00 08 00 5b 8d 06 00  |............[...|
+22A542130  03 01 00 01 14 00 00 00  03 00 00 00 ff ff ff ff  |................|
+22A542140  b8 12 00 00 fc d4 06 00  53 23 00 00 00 00 00 00  |........S#......|
+22A542150  02 00 00 00 02 00 00 00  ff ff ff ff ff ff ff ff  |................|
+22A542160  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542170  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542180  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542190  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5421A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5421B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5421C0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5421D0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5421E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5421F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542200  74 42 6e 49 00 00 01 0d  02 20 20 00 00 01 00 01  |tBnI.....  .....|
+22A542210  b7 0e 00 00 00 00 00 00  1e 00 00 00 00 00 00 00  |................|
+22A542220  d5 0e 00 00 00 00 00 00  6b 00 00 00 7d 00 00 00  |........k...}...|
+22A542230  b6 0e 00 00 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+22A542240  04 01 00 01 7c 00 00 00  11 00 00 00 ff ff ff ff  |....|...........|
+22A542250  00 00 00 00 00 00 00 00  ac 0f 00 00 00 00 00 00  |................|
+22A542260  00 00 00 00 02 00 00 00  ff ff ff ff ff ff ff ff  |................|
+22A542270  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542280  74 42 45 53 01 00 04 0d  02 20 20 00 40 00 00 01  |tBES.....  .@...|
+22A542290  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A5422A0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A5422B0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A5422C0  00 00 00 01 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+22A5422D0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A5422E0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A5422F0  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542300  63 69 44 53 01 00 07 0d  02 20 20 00 ff 00 00 01  |ciDS.....  .....|
+22A542310  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542320  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542330  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542340  00 00 00 01 00 00 00 00  ff ff ff ff ff ff ff ff  |................|
+22A542350  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542360  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542370  ff ff ff ff ff ff ff ff  ff ff ff ff ff ff ff ff  |................|
+22A542380  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542390  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5423A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5423B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5423C0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5423D0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5423E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5423F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542400  aa dc 44 de 11 69 9e 16  f1 d7 b4 da ed 0c 00 00  |..D..i..........|
+22A542410  00 30 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |.0..............|
+22A542420  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542430  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542440  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542450  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542460  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542470  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542480  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542490  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5424A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5424B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5424C0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5424D0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5424E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5424F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542500  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542510  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542520  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542530  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542540  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542550  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542560  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542570  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542580  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542590  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5425A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5425B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5425C0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5425D0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5425E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5425F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542600  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542610  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542620  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542630  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542640  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542650  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542660  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542670  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542680  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542690  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5426A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5426B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5426C0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5426D0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5426E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5426F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542700  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542710  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542720  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542730  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542740  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542750  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542760  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542770  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542780  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A542790  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5427A0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5427B0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5427C0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5427D0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5427E0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+22A5427F0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+
+LOG FOOTER:
+MAGIC: fDsS FL
+VERSION: v.1.4
+METADATA CHECK:
+BYTES: 2048
+METADATA CHECK FLAGS: SSDFS_CRC32
+CHECKSUM: 0x9d802464
+SEGMENT NUMBERS: 152573
+FREE PAGES: 3920678
+LOG_CREATION_TIME: Tue Aug 24 18:40:40 2021
+
+CHECKPOINT: 14215716067313
+VOLUME STATE FLAGS: NONE
+FS STATE: SSDFS_VALID_FS
+BEHAVIOR: SSDFS_ERRORS_CONTINUE
+FEATURE_COMPATIBLE FLAGS: SSDFS_HAS_SEGBMAP_COMPAT_FLAG SSDFS_HAS_MAPTBL_COMPAT_FLAG SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG SSDFS_HAS_SHARED_DICT_COMPAT_FLAG SSDFS_HAS_INODES_TREE_COMPAT_FLAG
+FEATURE_COMPATIBLE_RO FLAGS: NONE
+FEATURE_INCOMPATIBLE FLAGS: NONE
+UUID: 9f9ed4fd-d4db-4a9d-bfc8-8a1262305980
+LABEL: 0001
+CUR_DATA_SEG: 72717
+CUR_LNODE_SEG: 72684
+CUR_HNODE_SEG: 42925
+CUR_CUR_IDXNODE_SEG: 4012
+MIGRATION THRESHOLD: 1
+BLOCK BITMAP OPTIONS:
+FLAGS: NONE
+COMPRESSION: SSDFS_BLK_BMAP_NOCOMPR_TYPE
+BLK2OFF TABLE OPTIONS:
+FLAGS: NONE
+COMPRESSION: SSDFS_BLK2OFF_TBL_NOCOMPR_TYPE
+USER DATA OPTIONS:
+FLAGS: NONE
+COMPRESSION: SSDFS_USER_DATA_NOCOMPR_TYPE
+MIGRATION THRESHOLD: 1
+
+ROOT FOLDER:
+RAW INODE:
+MAGIC: id
+MODE: 0x41ed
+FLAGS: 0
+UID: 0
+GID: 0
+ACCESS TIME: 1629841091
+ACCESS TIME NSEC: 0
+CHANGE TIME: 1629855521
+CHANGE TIME NSEC: 0
+MODIFICATION TIME: 1629855521
+MODIFICATION TIME NSEC: 0
+BIRTH TIME: 1629841091
+BIRTH TIME NSEC: 0
+FILE VERSION (NFS): 0
+FILE SIZE: 4096 bytes
+BLOCKS: 1
+PARENT_INO: 16
+LINKS COUNT: 2
+CHECKSUM: 0xa1fabbde
+INODE ID: 16
+FILE NAME HASH CODE: 0
+NAME LENGTH: 0
+INODE PRIVATE FLAGS: SSDFS_INODE_HAS_DENTRIES_BTREE
+COUNT OF (FORKS/DENTRIES): 429403
+
+INODES B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBnI
+B-TREE FLAGS: NONE
+B-TREE TYPE: SSDFS_INODES_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 256 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+ALLOCATED INODES: 3767
+FREE INODES: 30
+INODES CAPACITY: 3797
+LEAF NODES: 107
+NODES COUNT: 125
+UPPER_ALLOCATED_INO: 3766
+BTREE INLINE ROOT NODE:
+BTREE HEIGHT: 4
+ROOT NODE's ITEMS_COUNT: 1
+ROOT NODE FLAGS: NONE
+NODE TYPE: SSDFS_BTREE_ROOT_NODE
+UPPER NODE ID: 124
+NODE_ID: left 17, right 4294967295
+BTREE INDEX: #0
+HASH: 0
+SEGMENT ID: 4012
+LOGICAL BLOCK: 0
+LENGTH: 2
+BTREE INDEX: #1
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+
+SHARED EXTENTS B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: tBES
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_SHARED_EXTENTS_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 64 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+BTREE INLINE ROOT NODE:
+BTREE HEIGHT: 0
+ROOT NODE's ITEMS_COUNT: 0
+ROOT NODE FLAGS: NONE
+NODE TYPE: SSDFS_BTREE_ROOT_NODE
+UPPER NODE ID: 0
+NODE_ID: left 4294967295, right 4294967295
+BTREE INDEX: #0
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+BTREE INDEX: #1
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+
+SHARED DICTIONARY B-TREE HEADER:
+B-TREE HEADER:
+MAGIC: ciDS
+B-TREE FLAGS: SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE
+B-TREE TYPE: SSDFS_SHARED_DICTIONARY_BTREE
+NODE_SIZE: 8192 bytes
+PAGES_PER_NODE: 2
+NODE_PTR_SIZE: 32 bytes
+INDEX_SIZE: 32 bytes
+ITEM_SIZE: 255 bytes
+INDEX_AREA_MIN_SIZE: 256 bytes
+BTREE INLINE ROOT NODE:
+BTREE HEIGHT: 0
+ROOT NODE's ITEMS_COUNT: 0
+ROOT NODE FLAGS: NONE
+NODE TYPE: SSDFS_BTREE_ROOT_NODE
+UPPER NODE ID: 0
+NODE_ID: left 4294967295, right 4294967295
+BTREE INDEX: #0
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+BTREE INDEX: #1
+HASH: 18446744073709551615
+SEGMENT ID: 18446744073709551615
+LOGICAL BLOCK: 4294967295
+LENGTH: 4294967295
+
+TIMESTAMP: Tue Aug 24 18:40:40 2021
+
+CHECKPOINT: 14215716067313
+LOG BYTES: 12288 bytes
+LOG FOOTER FLAGS: NONE
+BLOCK_BITMAP: offset 0, size 0
+OFFSETS_TABLE: offset 0, size 0
+
+               [*** BLOCK BITMAP STRUCTURE ***]
+
+One of the very important log’s metadata structure is a block bitmap. Usually,
+a file system uses the block bitmap as a single metadata structure for the whole
+volume. The responsibility of block bitmap is to track the state of logical
+blocks (free or used). As a result, the block bitmap is frequently accessed and
+modified metadata structure. However, this compact and efficient metadata
+structure cannot be used in traditional way for the case of LFS file system
+by virtue of: (1) frequent updates of the block bitmap is able to increase
+the write amplification, (2) logical block of LFS file system needs in more
+states (free, used, invalid), (3) the volume capacity could change because of
+necessity to track the presence of bad erase blocks.
+
+SSDFS file system introduces the PEB-based block bitmap because of proven
+efficiency and compactness of this metadata structure. First of all, the block
+bitmap tracks such states of logical block: (1) free, (2) used,
+(3) pre-allocated, (4) invalid. The free state means that logical block
+is ready for allocation and write operation. Oppositely, the used state means
+that the logical block was allocated and the write operation has taken place
+for this logical block. The invalid state represents the case when the update
+or GC operation invalidates (makes not actual) the state of a logical block in
+one PEB and to store the actual state into another one. And, finally,
+the pre-allocated state can be used for representing the case when several
+fragments of different logical blocks can be stored into one NAND flash page
+(for example, in the case of compression or delta-encoding).
+
+Block bitmap is the PEB-based metadata structure in the case of SSDFS file
+system. The goals of such approach are: (1) opportunity to access/modify block
+bitmaps of different PEBs without the necessity to use any synchronization
+primitives, (2) capability to lose the bad erase blocks without the necessity
+to rebuild the block bitmap, (3) capability to allocate the logical blocks and
+to execute GC operations concurrently for different PEBs in the same segment
+or for the file system’s volume at whole, (4) opportunity to track the state of
+logical blocks only inside the log’s payload. Every log keeps the actual state
+of the block bitmap for the case of some timestamp. It means that previous
+PEB’s logs play the role of block bitmap’s checkpoints or snapshots.
+As a result, it is possible to use the block bitmaps of previous logs in the
+case of corruption of particular PEB’s log. If some LEB is under active
+migration then every log of the destination PEB has to store block bitmap
+as source PEB as destination PEB because migration could be executed in
+several phases.
+
+Block bitmap possible sizes:
+
+===================================================================
+|  Page  |    PEB   |                 BLOCK BITMAP                |
+|        |          |==============================================
+|        |          |  Items  |  Size in bytes  |  Size in pages  |
+===================================================================
+|  512   |  128 KB  |   256   |       64        |                 |
+|        |  256 KB  |   512   |      128        |                 |
+|        |    1 MB  |  2048   |      512        |        1        |
+|        |    2 MB  |  4096   |     1024        |        2        |
+|        |    4 MB  |  8192   |     2048        |        4        |
+|        |    8 MB  | 16384   |     4096        |        8        |
+===================================================================
+|  1 KB  |  128 KB  |   128   |       32        |                 |
+|        |  256 KB  |   256   |       64        |                 |
+|        |    1 MB  |  1024   |      256        |                 |
+|        |    2 MB  |  2048   |      512        |                 |
+|        |    4 MB  |  4096   |     1024        |        1        |
+|        |    8 MB  |  8192   |     2048        |        2        |
+===================================================================
+|  2 KB  |  128 KB  |    64   |       16        |                 |
+|        |  256 KB  |   128   |       32        |                 |
+|        |    1 MB  |   512   |      128        |                 |
+|        |    2 MB  |  1024   |      256        |                 |
+|        |    4 MB  |  2048   |      512        |                 |
+|        |    8 MB  |  4096   |     1024        |                 |
+===================================================================
+|  4 KB  |  128 KB  |    32   |        8        |                 |
+|        |  256 KB  |    64   |       16        |                 |
+|        |    1 MB  |   256   |       64        |                 |
+|        |    2 MB  |   512   |      128        |                 |
+|        |    4 MB  |  1024   |      256        |                 |
+|        |    8 MB  |  2048   |      512        |                 |
+===================================================================
+|  8 KB  |  128 KB  |    16   |        4        |                 |
+|        |  256 KB  |    32   |        8        |                 |
+|        |    1 MB  |   128   |       32        |                 |
+|        |    2 MB  |   256   |       64        |                 |
+|        |    4 MB  |   512   |      128        |                 |
+|        |    8 MB  |  1024   |      256        |                 |
+===================================================================
+| 16 KB  |  128 KB  |     8   |        2        |                 |
+|        |  256 KB  |    16   |        4        |                 |
+|        |    1 MB  |    64   |       16        |                 |
+|        |    2 MB  |   128   |       32        |                 |
+|        |    4 MB  |   256   |       64        |                 |
+|        |    8 MB  |   512   |      128        |                 |
+===================================================================
+| 32 KB  |  128 KB  |     4   |        1        |                 |
+|        |  256 KB  |     8   |        2        |                 |
+|        |    1 MB  |    32   |        8        |                 |
+|        |    2 MB  |    64   |       16        |                 |
+|        |    4 MB  |   128   |       32        |                 |
+|        |    8 MB  |   256   |       64        |                 |
+===================================================================
+| 64 KB  |  128 KB  |     2   |        1        |                 |
+|        |  256 KB  |     4   |        1        |                 |
+|        |    1 MB  |    16   |        4        |                 |
+|        |    2 MB  |    32   |        8        |                 |
+|        |    4 MB  |    64   |       16        |                 |
+|        |    8 MB  |   128   |       32        |                 |
+===================================================================
+
+/*
+ * struct ssdfs_block_bitmap_header - header of segment's block bitmap
+ * @magic: magic signature and flags
+ * @fragments_count: count of block bitmap's fragments
+ * @bytes_count: count of bytes in fragments' sequence
+ * @flags: block bitmap's flags
+ * @type: type of block bitmap
+ */
+struct ssdfs_block_bitmap_header {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	__le16 fragments_count;
+	__le32 bytes_count;
+
+#define SSDFS_BLK_BMAP_BACKUP		(1 << 0)
+#define SSDFS_BLK_BMAP_COMPRESSED	(1 << 1)
+#define SSDFS_BLK_BMAP_FLAG_MASK	0x3
+	__le8 flags;
+
+#define SSDFS_BLK_BMAP_UNCOMPRESSED_BLOB	(0)
+#define SSDFS_BLK_BMAP_ZLIB_BLOB		(1)
+#define SSDFS_BLK_BMAP_LZO_BLOB			(2)
+#define SSDFS_BLK_BMAP_TYPE_MAX			(SSDFS_BLK_BMAP_LZO_BLOB + 1)
+	__le8 type;
+
+/* 0x0010 */
+} __packed;
+
+/*
+ * struct ssdfs_block_bitmap_fragment - block bitmap's fragment header
+ * @peb_index: PEB's index
+ * @sequence_id: ID of block bitmap's fragment in the sequence
+ * @flags: fragment's flags
+ * @type: fragment type
+ * @last_free_blk: last logical free block
+ * @metadata_blks: count of physical pages are used by metadata
+ * @invalid_blks: count of invalid blocks
+ * @chain_hdr: descriptor of block bitmap's fragments' chain
+ */
+struct ssdfs_block_bitmap_fragment {
+/* 0x0000 */
+	__le16 peb_index;
+	__le16 sequence_id;
+
+#define SSDFS_MIGRATING_BLK_BMAP	(1 << 0)
+#define SSDFS_PEB_HAS_EXT_PTR		(1 << 1)
+#define SSDFS_PEB_HAS_RELATION		(1 << 2)
+#define SSDFS_FRAG_BLK_BMAP_FLAG_MASK	0x7
+	__le16 flags;
+
+#define SSDFS_SRC_BLK_BMAP		(0)
+#define SSDFS_DST_BLK_BMAP		(1)
+#define SSDFS_FRAG_BLK_BMAP_TYPE_MAX	(SSDFS_DST_BLK_BMAP + 1)
+	__le16 type;
+
+/* 0x0008 */
+	__le16 last_free_blk;
+	__le16 metadata_blks;
+	__le16 invalid_blks;
+	__le16 reserved2;
+
+/* 0x0010 */
+	struct ssdfs_fragments_chain_header chain_hdr;
+
+/* 0x0020 */
+} __packed;
+
+23DEA049A  66 44 73 53 4d 42 01 04  02 00 80 00 00 00 02 01  |fDsSMB..........|
+23DEA04AA  00 00 00 00 05 00 01 00  01 00 00 00 00 00 00 00  |................|
+23DEA04BA  08 00 00 00 08 00 00 00  01 00 10 00 63 04 00 00  |............c...|
+23DEA04CA  40 00 00 00 08 00 08 00  5e 6b e4 1d 00 66 01 01  |@.......^k...f..|
+23DEA04DA  03 00 00 00 00 00 00 0c  00 00 01 00 05 00 00 00  |................|
+23DEA04EA  1d 00 00 00 01 00 00 00  08 00 00 00 08 00 00 00  |................|
+23DEA04FA  01 00 10 00 63 04 00 00  78 00 00 00 08 00 08 00  |....c...x.......|
+23DEA050A  4a 9e 1a a6 00 66 01 01  fe ff ff ff ff ff ff 03  |J....f..........|
+
+BLOCK BITMAP:
+MAGIC: fDsS MB
+VERSION: v.1.4
+FRAGMENTS_COUNT: 2
+BYTES_COUNT: 128 bytes
+BLOCK BITMAP FLAGS: SSDFS_BLK_BMAP_COMPRESSED
+BLOCK BITMAP TYPE: SSDFS_BLK_BMAP_ZLIB_BLOB
+
+BLOCK BITMAP FRAGMENT: #0
+PEB_INDEX: 0
+SEQUENCE_ID: 0
+FRAGMENT FLAGS: SSDFS_MIGRATING_BLK_BMAP SSDFS_PEB_HAS_RELATION
+FRAGMENT TYPE: SSDFS_DST_BLK_BMAP
+LAST_FREE_BLK: 1
+METADATA_BLKS: 0
+INVALID_BLKS: 0
+CHAIN HEADER:
+COMPRESSED BYTES: 8 bytes
+UNCOMPRESSED BYTES: 8 bytes
+FRAGMENTS COUNT: 1
+DESC_SIZE: 16 bytes
+MAGIC: c
+CHAIN TYPE: SSDFS_BLK_BMAP_CHAIN_HDR
+CHAIN FLAGS: NONE
+
+FRAGMENT_INDEX: #0
+FRAGMENT HEADER:
+OFFSET: 64 bytes
+COMPRESSED_SIZE: 8 bytes
+UNCOMPRESSED_SIZE: 8 bytes
+CHECKSUM: 0x1de46b5e
+SEQUENCE_ID: 0
+MAGIC: f
+FRAGMENT TYPE: SSDFS_FRAGMENT_UNCOMPR_BLOB
+FRAGMENT FLAGS: SSDFS_FRAGMENT_HAS_CSUM
+RAW DATA:
+00000000  03 00 00 00 00 00 00 0c                           |........        |
+
+BLOCK BITMAP FRAGMENT: #1
+PEB_INDEX: 0
+SEQUENCE_ID: 1
+FRAGMENT FLAGS: SSDFS_MIGRATING_BLK_BMAP SSDFS_PEB_HAS_RELATION
+FRAGMENT TYPE: SSDFS_SRC_BLK_BMAP
+LAST_FREE_BLK: 29
+METADATA_BLKS: 0
+INVALID_BLKS: 1
+CHAIN HEADER:
+COMPRESSED BYTES: 8 bytes
+UNCOMPRESSED BYTES: 8 bytes
+FRAGMENTS COUNT: 1
+DESC_SIZE: 16 bytes
+MAGIC: c
+CHAIN TYPE: SSDFS_BLK_BMAP_CHAIN_HDR
+CHAIN FLAGS: NONE
+
+FRAGMENT_INDEX: #0
+FRAGMENT HEADER:
+OFFSET: 120 bytes
+COMPRESSED_SIZE: 8 bytes
+UNCOMPRESSED_SIZE: 8 bytes
+CHECKSUM: 0xa61a9e4a
+SEQUENCE_ID: 0
+MAGIC: f
+FRAGMENT TYPE: SSDFS_FRAGMENT_UNCOMPR_BLOB
+FRAGMENT FLAGS: SSDFS_FRAGMENT_HAS_CSUM
+RAW DATA:
+00000000  fe ff ff ff ff ff ff 03                           |........        |
+
+               [*** OFFSETS TRANSLATION TABLE STRUCTURE ***]
+
+Any subsystem of SSDFS file system’s driver that needs to store user data or
+metadata treats the segment like a sequence of logical blocks.
+Generally speaking, the goal of such approach is to provide the opportunity
+to access the stored data by means of segment ID and logical block number
+without the knowledge what PEB keeps the actual state of data for the requested
+logical block. The SSDFS file system uses an offsets translation table for
+implementation this approach. Generally speaking, offsets translation table
+looks like a sequence of fragments and every fragment is stored in the
+particular log. The fragment keeps a portion of the table that associates a
+logical block number with a descriptor is keeping the offset to the data in
+the log’s payload. As a result, if someone would like to retrieve the actual
+state of data then it needs to find the latest record in the sequence of
+fragments of offsets translation table for the requested logical block number.
+The found record will identify the PEB, log index, and byte offset to the
+actual state of data in the log’s payload.
+
+Generally speaking, the offsets translation table includes several metadata
+structures inside of the log: (1) logical block table, (2) block descriptor
+table, (3) payload area. The logical block table represents an array of
+descriptors where the logical block number can be used as the index.
+Every descriptor of logical block table keeps: (1) logical offset from the
+beginning of file or metadata structure, (2) PEB page number that identifies
+an index of logical block in the block bitmap, (3) log’s area that identifies
+metadata area or payload is keeping the content of logical block, (4) byte
+offset from the area’s beginning till the data portion. Finally, the
+descriptor of logical block table could point out directly in the payload
+(for example, in the case of full plain logical block) or into the block
+descriptor table. Every record of block descriptor table keeps the inode ID
+and several descriptors on logical block’s states in the payload area(s).
+The goal of keeping the several descriptors on logical block’s states in one
+record of block descriptor table is to provide the capability to represent
+the several sequential modifications of a logical block or the various
+delta-encoded fragments of the same logical block. Finally, the payload
+could keep the plain full logical block or compressed (delta-encoded)
+fragment with associated checkpoint and parent snapshot IDs. It needs
+to point out that the checkpoint and parent snapshot IDs can be extracted
+from the segment header for the case of plain full logical block. Generally
+speaking, the knowledge of logical offset from file’s beginning, inode ID,
+checkpoint ID, and parent snapshot ID provides the capability to recover
+the stored data from the log’s payload on the basis of log’s metadata only.
+
+
+
+
+               [*** PHYSICAL ERASE BLOCK (PEB) STRUCTURE ***]
+
+
+
+
+
+The segment header keeps:
+(1) the copy of volume header info;
+(2) timestamp and checkpoint of log creation;
+(3) log pages count info;
+(4) segment type and segment flags info;
+(5) array of log's areas descriptors.
+
+The log header's array of log's areas descriptors describes offset and size of:
+(1) block bitmap;
+(2) segment's offsets translation table;
+(3) cold payload (main) area;
+(4) warm payload (diff updates) area;
+(5) hot payload (journal) area;
+(6) block descriptors chain;
+(7) log footer.
+
+Area descriptor in segment header describes the begin and size
+of payload area. The payload area begins from fragments chain header.
+
+struct ssdfs_fragments_chain_header {
+/* 0x0000 */
+	__le32 compr_bytes;
+	__le32 uncompr_bytes;
+
+/* 0x0008 */
+	__le16 fragments_count;
+	__le16 desc_size;
+
+/* 0x000C */
+	__le8 magic;
+	__le8 type;
+	__le16 flags;
+
+/* 0x0010 */
+} __packed;
+
+This header describes:
+(1) whole size of a zone in bytes;
+(2) count of items in the chain;
+(3) size of item's descriptor in bytes.
+
+The payload area begins from fragments chain header then it follows pairs
+of block state descriptor with data fragment. Data fragment is compressed block
+data or diff update of block. Block state descriptor is placed before data
+fragment.
+
+struct ssdfs_block_state_descriptor {
+/* 0x0000 */
+	__le64 cno;
+	__le64 parent_snapshot;
+
+/* 0x0010 */
+	struct ssdfs_fragments_chain_header chain_hdr;
+
+/* 0x0020 */
+} __packed;
+
+Block state descriptor describes:
+(1) checkpoint of fragment;
+(2) parent snapshot of fragment;
+(3) following fragments' chain.
+
+The block descriptors chain area begins from fragments chain header then
+it follows the sequence of block descriptors. This sequence of block
+descriptors can be ordered on the basis of inode ID + logical offset inside
+of file.
+
+struct ssdfs_block_descriptor {
+/* 0x0000 */
+	struct {
+		__le32 state_off;
+	} __packed main_area;
+
+/* 0x0004 */
+	struct {
+		__le32 state_off;
+		__le32 prev_desc_off;
+	} __packed diffs_area;
+
+/* 0x000C */
+	struct {
+		__le32 state_off[4];
+		__le32 prev_desc_off;
+	} __packed journal_area;
+
+/* 0x0020 */
+	__le64 ino;
+	__le64 logical_offset;
+
+/* 0x0030 */
+} __packed;
+
+Every block descriptor can describe:
+(1) offset in bytes of block state descriptor in cold payload (main) area
+    from segment's beginning;
+(2) offset in bytes of block state descriptor in warm payload (diff updates)
+    area from segment's beginning;
+(3) offset in bytes of previous block descriptor for warm payload (diff updates)
+    area from segment's beginning;
+(4) array of offsets (4 items) of block state descriptors in hot payload
+    (journal) area from segment's beginning;
+(5) offset in bytes of previous block descriptor for hot payload (journal)
+    area from segment's beginning;
+(6) inode identification number that owns this block;
+(7) logical offset of block from file's beginning.
+
+The goal of offset on previous block descriptor is to keep the knowledge about
+previous attempts to update a block during log construction. Namely, block
+descriptor can keep 4 offsets for Journal area and one offset for Diff Updates
+area. If some block will update more frequently during log construction then
+it needs to keep knowledge about previous updates. But it doesn't mean that
+it needs to use previous updates for actual block state construction. Firstly,
+small updates are stored in Journal Area. If we have gathered four small updates
+in Journal Area then it needs to merge these small updates and to save in Diff
+Updates Area. But if small updates were saved in Journal Area earlier during
+log creation then it needs to save the knowledge about these updates by means
+of offset on previous block descriptor.
+
+Keeping inode ID and logical offset in block descriptor has two principal goals.
+At first, it provides ground for reconstruction of files' content from the
+scratch on the basis of PEB's internal metadata. Finally, reconstruction tool
+can restore files' content by means of passing of all valid PEBs and building
+inodes ID table and block tables for every inode ID. Second goal is to provide
+more rich information basis for GC activity and subtle GC policies.
+
+Final player on PEB's areas is segment offsets translation table. This table
+is simple array of offsets from segment's beginning to last actual place of
+logical block's descriptor. Index of item in this table is number of logical
+block.
+
+
+

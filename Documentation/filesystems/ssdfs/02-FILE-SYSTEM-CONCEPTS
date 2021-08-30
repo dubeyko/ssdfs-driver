@@ -1,0 +1,34 @@
+
+================================================================================
+*                        SSDFS File System Concepts                            *
+================================================================================
+
+
+                       [*** SEGMENT ARCHITECTURE ***]
+
+SSDFS file system volume is aggregation of segments. Each segment contains one
+or several PEBs (Physical Erase Block). File system's metadata and user data
+are stored in partial logs of segment.
+
+Partial logs of segment are written in stripped manner into different PEBs.
+For example, we have 4 PEBs in segment. Then, it is possible
+to distribute partial logs of segment in likewise way:
+
+PEB#0: log#0, log#4, log#8, log#12
+PEB#1: log#1, log#5, log#9, log#13
+PEB#2: log#2, log#6, log#10, log#14
+PEB#3: log#3, log#7, log#11, log#15
+
+As a result, if we have PEBs on different dies then
+parallel flush threads will work efficiently during flushing
+sequential segment's partial logs in parallel.
+
+Every PEB object has several threads (read, flush and GC threads).
+We need in flush thread only for newly allocated segment.
+When we read some segment in "using" state from the volume then
+it needs to start read and flush threads. It needs
+to start read, flush and GC threads for segments in "used" and
+"pre-dirty" states. The flush thread will be used for blocks
+update activity, the GC thread will be used for migration of
+valid blocks. And, finally, we need to start GC thread only for
+segments in "dirty" states.

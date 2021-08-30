@@ -34,9 +34,10 @@ enum {
  * @state: PEB container's block bitmap's state
  * @peb_index: PEB index in array
  * @pages_per_peb: pages per physical erase block
- * @valid_logical_blks: PEB container's valid logical blocks count
- * @invalid_logical_blks: PEB container's invalid logical blocks count
- * @free_logical_blks: PEB container's free logical blocks count
+ * @modification_lock: lock for modification operations
+ * @peb_valid_blks: PEB container's valid logical blocks count
+ * @peb_invalid_blks: PEB container's invalid logical blocks count
+ * @peb_free_blks: PEB container's free logical blocks count
  * @buffers_state: buffers state
  * @lock: buffers lock
  * @init_cno: initialization checkpoint
@@ -52,9 +53,10 @@ struct ssdfs_peb_blk_bmap {
 	u16 peb_index;
 	u32 pages_per_peb;
 
-	atomic_t valid_logical_blks;
-	atomic_t invalid_logical_blks;
-	atomic_t free_logical_blks;
+	spinlock_t modification_lock;
+	atomic_t peb_valid_blks;
+	atomic_t peb_invalid_blks;
+	atomic_t peb_free_blks;
 
 	atomic_t buffers_state;
 	struct rw_semaphore lock;

@@ -928,6 +928,32 @@ int ssdfs_memmove(void *dst, u32 dst_off, u32 dst_size,
 	return 0;
 }
 
+static inline
+bool is_ssdfs_file_inline(struct ssdfs_inode_info *ii)
+{
+	return atomic_read(&ii->private_flags) & SSDFS_INODE_HAS_INLINE_FILE;
+}
+
+static inline
+size_t ssdfs_inode_inline_file_capacity(struct inode *inode)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	size_t raw_inode_size;
+	size_t metadata_len;
+
+	raw_inode_size = ii->raw_inode_size;
+	metadata_len = offsetof(struct ssdfs_inode, internal);
+
+	if (raw_inode_size <= metadata_len) {
+		SSDFS_ERR("corrupted raw inode: "
+			  "raw_inode_size %zu, metadata_len %zu\n",
+			  raw_inode_size, metadata_len);
+		return 0;
+	}
+
+	return raw_inode_size - metadata_len;
+}
+
 #define SSDFS_FSI(ptr) \
 	((struct ssdfs_fs_info *)(ptr))
 #define SSDFS_BLKT(ptr) \

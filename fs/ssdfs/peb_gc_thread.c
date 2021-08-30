@@ -148,12 +148,24 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !desc_off || !req);
 	BUG_ON(!desc_array || !blk_desc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebi->peb_id,
 		  req->private.class, req->private.cmd, req->private.type);
+
+	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
+		  "processed_blks %d, logical_block %u, data_bytes %u, "
+		  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
+		  req->extent.ino, req->place.start.seg_id,
+		  pebi->peb_id,
+		  req->extent.logical_offset,
+		  req->result.processed_blks,
+		  req->place.start.blk_index,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot,
+		  req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	peb_migration_id = desc_off->blk_state.peb_migration_id;
 
@@ -220,9 +232,52 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		req->extent.logical_offset *= fsi->pagesize;
 	} else if (req->extent.ino != le64_to_cpu(blk_desc->ino)) {
 		err = -EAGAIN;
-		SSDFS_DBG("ino1 %llu != ino2 %llu\n",
-			  req->extent.ino,
-			  le64_to_cpu(blk_desc->ino));
+
+		SSDFS_DBG("OFFSET DESCRIPTOR: "
+			  "logical_offset %u, logical_blk %u, "
+			  "peb_page %u, log_start_page %u, "
+			  "log_area %u, peb_migration_id %u, "
+			  "byte_offset %u\n",
+			  le32_to_cpu(desc_off->page_desc.logical_offset),
+			  le16_to_cpu(desc_off->page_desc.logical_blk),
+			  le16_to_cpu(desc_off->page_desc.peb_page),
+			  le16_to_cpu(desc_off->blk_state.log_start_page),
+			  desc_off->blk_state.log_area,
+			  desc_off->blk_state.peb_migration_id,
+			  le32_to_cpu(desc_off->blk_state.byte_offset));
+
+		SSDFS_DBG("BLOCK DECRIPTOR: "
+			  "ino %llu, logical_offset %u, "
+			  "peb_index %u, peb_page %u, "
+			  "log_start_page %u, "
+			  "log_area %u, peb_migration_id %u, "
+			  "byte_offset %u\n",
+			  le64_to_cpu(blk_desc->ino),
+			  le32_to_cpu(blk_desc->logical_offset),
+			  le16_to_cpu(blk_desc->peb_index),
+			  le16_to_cpu(blk_desc->peb_page),
+			  le16_to_cpu(blk_desc->state[0].log_start_page),
+			  blk_desc->state[0].log_area,
+			  blk_desc->state[0].peb_migration_id,
+			  le32_to_cpu(blk_desc->state[0].byte_offset));
+
+		SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
+			  "processed_blks %d, logical_block %u, data_bytes %u, "
+			  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
+			  req->extent.ino, req->place.start.seg_id,
+			  pebi->peb_id,
+			  req->extent.logical_offset,
+			  req->result.processed_blks,
+			  req->place.start.blk_index,
+			  req->extent.data_bytes, req->extent.cno,
+			  req->extent.parent_snapshot,
+			  req->private.cmd, req->private.type);
+
+		SSDFS_DBG("ino1 %llu != ino2 %llu, peb %llu\n",
+			   req->extent.ino,
+			   le64_to_cpu(blk_desc->ino),
+			   pebi->peb_id);
+
 		goto finish_define_extent;
 	}
 
@@ -290,7 +345,10 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 
 	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
 					desc_array, &blk_desc, req);
-	if (unlikely(err)) {
+	if (err == -EAGAIN) {
+		SSDFS_DBG("unable to add block of another inode\n");
+		goto finish_copy_page;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define extent: "
 			  "seg %llu, peb_index %u, peb %llu, err %d\n",
 			  pebc->parent_si->seg_id, pebc->peb_index,
@@ -374,7 +432,10 @@ int ssdfs_peb_define_extent(struct ssdfs_peb_container *pebc,
 
 	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
 					desc_array, &blk_desc, req);
-	if (unlikely(err)) {
+	if (err == -EAGAIN) {
+		SSDFS_DBG("unable to add block of another inode\n");
+		goto finish_define_extent;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define extent: "
 			  "seg %llu, peb_index %u, peb %llu, err %d\n",
 			  pebc->parent_si->seg_id, pebc->peb_index,
@@ -472,7 +533,10 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 
 	if (has_data) {
 		err = __ssdfs_peb_copy_page(pebc, desc_off, req);
-		if (unlikely(err)) {
+		if (err == -EAGAIN) {
+			SSDFS_DBG("unable to add block of another inode\n");
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy page: "
 				  "logical_blk %u, err %d\n",
 				  logical_blk, err);
@@ -1272,7 +1336,10 @@ void ssdfs_gc_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 
 			refs_count =
 				atomic_read(&pair->req->private.refs_count);
-			WARN_ON(refs_count != 0);
+			if (refs_count != 0) {
+				SSDFS_WARN("unexpected refs_count %d\n",
+					   refs_count);
+			}
 
 			ssdfs_request_free(pair->req);
 		} else {

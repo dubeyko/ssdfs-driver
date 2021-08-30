@@ -1,0 +1,193 @@
+
+================================================================================
+*                     SSDFS -- SSD-oriented File System                        *
+================================================================================
+
+The architecture of file system has been designed to be the LFS file system
+that can:
+(1) exclude the GC overhead,
+(2) prolong NAND flash devices lifetime,
+(3) achieve a good performance balance even if the NAND flash device's lifetime
+    is a priority.
+
+The fundamental concepts of SSDFS:
+
+[LOGICAL SEGMENT]
+
+Logical segment is always located at the same position of the volume.
+And file system volume can be imagined like a sequence of logical segments
+on the fixed positions. As a result, every logical block can be described by
+logical extent {segment_id, block_index_inside_segment, length}. It means that
+metadata information about position of logical block on the volume never needs
+to be updated because it will always live at the same logical segment even after
+update (COW policy). This concept completely excludes block mapping metadata
+structure updates that could result in decreasing the write amplification factor.
+Because, COW policy requires frequent updates of block mapping metadata structure.
+
+[LOGICAL ERASE BLOCK]
+
+Initially, logical segment is an empty container that is capable to contain one
+or several erase blocks. Logical erase block can be mapped into any “physical”
+erase block. “Physical” erase block means a contiguous sequence of LBAs are aligned
+on erase block size. There is mapping table that manages the association of logical
+erase blocks (LEB) into “physical” erase blocks (PEB). The goal of LEB and mapping
+table is to implement the logical extent concept. The goal to have several LEBs
+into one segment is to improve performance of I/O operations. Because, PEBs in the
+segment can be located into different NAND dies on the device and can be accessed
+through different device’s channels.
+
+[SEGMENT TYPE]
+
+There are several segment types on the volume (superblock, mapping  table,
+segment bitmap, b-tree node, user data). The goal of various segment types is
+to make PEB’s “temperature” more predictable and to compact/aggregate several
+pieces of data into one NAND page. For example, several small files, several
+compressed logical blocks, or several compressed b-tree nodes can be aggregated
+into one NAND page. It means that several pieces of data can be aggregated into
+one write/read (I/O) request and it is the way to decrease the write amplification
+factor. To make PEB’s “temperature" more predictable implies that aggregation of
+the same type of data into one segment can make more stable/predictable average
+number of update/read I/O requests for the same segment type. As a result, it could
+decrease GC activity and to decrease the write amplification factor.
+
+[LOG]
+
+Log is the central part of techniques to manage the write amplification factor.
+Every PEB contains one log or sequence of logs. The goal of log is to aggregate
+several pieces of data into one NAND page to decrease the write amplification factor.
+For example, several small files or several compressed logical blocks can be
+aggregated into one NAND page. An offset transaction table is the metadata structure
+that converts the logical block ID (LBA) into the offset inside of the log where
+a piece of data is stored. Log is split on several areas (diff-on-write area,
+journal area, main area) with the goal to store the data of different nature.
+For example, main area could store not compressed logical block, journal area
+could aggregate small files or compressed logical blocks into one NAND page, and
+diff-on-write area could aggregate small updates of different logical blocks into
+one NAND page. The different area types have goal to distinguish “temperature” of
+data and to average the “temperature” of area. For example, diff-on-write area could
+be more hot than journal area. As a result, it is possible to expect that, for example,
+diff-on-write area could be completely invalidated by regular updates of some logical
+blocks without necessity to use any GC activity.
+
+[MIGRATION SCHEME]
+
+Migration scheme is the central technique to implement the logical extent concept
+and to exclude the necessity in GC activity. If some PEB is exhausted by logs
+(no free space) then it needs to start the migration for this PEB. Because it is used
+compression and compaction schemes for the metadata and user data then real data volume
+is using only portion of the PEB’s space. It means that it is possible to reserve
+another PEB in mapping table with the goal to associate two PEBs for migration
+process (exhausted PEB is the source and clean PEB is the destination). Every update
+of some logical block results in storing new state in the destination PEB and
+invalidation of logical block in the exhausted one. Generally speaking, it means that
+regular I/O operations are capable to completely invalidate the exhausted PEB for
+the case of “hot" data. Finally, invalidated PEB can be erased and to marked as clean
+and available for new write operations. Another important point that even after migration
+the logical block is still living in the same segment. And it doesn’t need to update
+metadata in block mapping metadata structure because logical extent has actual state.
+The offset translation table are keeping the actual position of logical block
+in the PEB space.
+
+[MIGRATION STIMULATION]
+
+However, not every PEB can migrate completely under pressure of regular I/O operations
+(for example, in the case of “warm” or “cold” data). So, SSDFS is using the migration
+stimulation technique as complementary to migration scheme. It means that if some LEB
+is under migration then a flush thread is checking the opportunity to add some
+additional content into the log under commit. If flush thread has received a request
+to commit some log then it has the content of updated logical blocks that have been
+requested to be updated. However, it is possible that available content cannot fill
+a whole NAND page completely (for example, it can use only 2 KB). And if there are some
+valid logical blocks in the exhausted PEB then it is possible to compress and to add
+the content of such logical block into the log under commit. Finally, every log commit
+can be resulted by migration additional logical blocks from exhausted PEB into new one.
+As a result, regular update (I/O) operations can completely invalidate the exhausted
+PEB without the necessity in GC activity at all. The important point here that compaction
+technique can decrease the amount of write requests. And exclusion of GC activity
+results in decreasing of I/O operations are initiated by GC. It is possible to state
+that migration scheme and migration stimulation techniques are capable to significantly
+decrease the write amplification factor.
+
+[GC]
+
+SSDFS has several GC threads but the goal of these threads is to check the state of
+segments, to stimulate the slow migration process, and to destroy already not in
+use the in-core segment objects. There is segment bitmap metadata structure that is
+tracking the state of segments (clean, using, used, pre-dirty, dirty). Every GC thread
+is dedicated to check the segments in similar state (for example, pre-dirty).
+Sometimes, PEB migration process could start and then to be stuck for some time
+because of absence of update requests for this particular PEB under migration.
+The goal of GC threads is to find such PEBs and to stimulate migration of valid
+blocks from exhausted PEB to clean one. But the number of GC initiated I/O requests
+could be pretty negligible because GC selects the segments that have no consumers
+right now. Migration scheme and migration stimulation could manage around 90% of the
+all necessary migration and cleaning operations.
+
+[COLD DATA]
+
+SSDFS never moves the PEBs with cold data. It means that if some PEB with data is
+not under migration and doesn’t receive the update requests then SSDFS leaves such
+PEBs untouched. Because, FTL could manage error-correction and moving erase blocks
+with cold data in the background inside of NAND flash device. Such technique could
+be considered like another approach to decrease the write amplification factor.
+
+[B-TREE]
+
+Migration scheme and logical extent concept provide the way to use the b-trees.
+The inodes tree, dentries trees, and extents trees are implemented as b-trees.
+And this is important technique to decrease the write amplification factor.
+First of all, b-tree provides the way to exclude the metadata reservation because
+it is possible to add the metadata space on b-tree’s node basis. Additionally,
+SSDFS is using three type of nodes: (1) leaf node, (2) hybrid node, (3) index node.
+The hybrid node includes as metadata records as index records that are the metadata
+about another nodes in the tree. So, the hybrid node is the way to decrease the number
+of nodes for the case of small b-trees. As a result, it can decrease the write
+amplification factor and decrease the NAND flash wearing that could result in
+prolongation of NAND flash device lifetime.
+
+[PURE LFS]
+
+SSDFS is pure LFS file system without any in-place update areas. It follows
+COW policy in any areas of the volume. Even superblocks are stored into dedicated
+segment as a sequence. Moreover, every header of the log contains copy of superblock
+that can be considered like a reliability technique. It is possible to use two
+different techniques of placing superblock segments on the volume. These segments
+could live in designated set of segments or could be distributed through the space
+of the volume. However, the designated set of segments could guarantee the predictable
+mount time and to decrease the read disturbance.
+
+[INLINE TECHNIQUES]
+
+SSDFS is trying to use inline techniques as much as possible. For example, small inodes
+tree can be kept in the superblock at first. Small dentries and extents tree can be kept
+in the inode as inline metadata. Small file’s content can be stored into inode as inline
+data. It means that it doesn’t need to allocate dedicated logical block for small metadata
+or user data. So, such inline techniques are able to combine several metadata
+(and user data) pieces into one I/O request and to decrease write amplification factor.
+
+[MINIMUM RESERVATIONS]
+
+There are two metadata structures (mapping table and segment bitmap) that require
+reservation on the volume. These metadata structures’ size is defined by volume size
+and erase block, segment sizes. So, as a result, these metadata structures describe
+the current state of the volume. But the rest metadata (inodes tree, dentries trees,
+xattr trees, and so on) are represented by b-trees and it doesn’t need to be reserved
+beforehand. So, it can be allocated by nodes in the case when old ones are exhausted.
+Finally, NAND flash device doesn’t need to keep the reserved metadata space that,
+currently, contains nothing. As a result, FTL doesn’t need to manage this NAND pages
+and it could decrease NAND flash wearing. So, it could be considered like technique
+to prolong NAND flash device’s lifetime.
+
+[MULTI-THREADED ARCHITECTURE]
+
+SSDFS is based on multi-threaded approach. It means that there are dedicated threads
+for some tasks. For example, there is special thread that is sending TRIM or erase
+operation requests for invalidated PEBs in the background. Another dedicated thread
+is doing the extents trees invalidation in the background. Also, there are several
+GC threads (in the background) that are tracking the necessity to stimulate migration
+in segments and to destroy the in-core segment objects in the case of absence of
+consumers of these segments. But this technique is directed to manage
+the performance mostly.
+
+[1] www.ssdfs.org
+[2] https://arxiv.org/abs/1907.11825

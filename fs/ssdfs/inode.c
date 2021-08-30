@@ -293,6 +293,7 @@ static int ssdfs_read_inode(struct inode *inode)
 
 	ii->birthtime.tv_sec = le64_to_cpu(raw_inode->birthtime);
 	ii->birthtime.tv_nsec = le32_to_cpu(raw_inode->birthtime_nsec);
+	ii->raw_inode_size = fsi->raw_inode_size;
 
 	inode->i_generation = (u32)le64_to_cpu(raw_inode->generation);
 
@@ -334,9 +335,17 @@ static int ssdfs_read_inode(struct inode *inode)
 			goto unlock_mutable_fields;
 		}
 
-		if (private_flags & SSDFS_INODE_HAS_INLINE_FILE) {
-			/* TODO: prepare inline file */
-			BUG();
+		if (is_ssdfs_file_inline(ii)) {
+			err = ssdfs_allocate_inline_file_buffer(inode);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to allocate inline buffer\n");
+				goto unlock_mutable_fields;
+			}
+
+			/*
+			 * TODO: pre-fetch file's content in buffer
+			 *       (if inode size > 256 bytes)
+			 */
 		} else if (private_flags & SSDFS_INODE_HAS_INLINE_EXTENTS ||
 			   private_flags & SSDFS_INODE_HAS_EXTENTS_BTREE) {
 			err = ssdfs_extents_tree_create(fsi, ii);
@@ -518,6 +527,7 @@ static void ssdfs_init_inode(struct inode *dir,
 	inode->i_ino = ino;
 	ii->parent_ino = dir->i_ino;
 	ii->birthtime = current_time(inode);
+	ii->raw_inode_size = fsi->raw_inode_size;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = ii->birthtime;
 	inode_init_owner(inode, dir, mode);
 	ii->flags =
@@ -663,6 +673,7 @@ int ssdfs_getattr(const struct path *path, struct kstat *stat,
 
 static int ssdfs_truncate(struct inode *inode)
 {
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	int err;
 
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
@@ -674,17 +685,39 @@ static int ssdfs_truncate(struct inode *inode)
 	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
 		return -EPERM;
 
-/* TODO: inline file */
+	if (is_ssdfs_file_inline(ii)) {
+		loff_t newsize = i_size_read(inode);
+		size_t inline_capacity =
+				ssdfs_inode_inline_file_capacity(inode);
 
-	err = ssdfs_extents_tree_truncate(inode);
-	if (err == -ENOENT) {
-		err = 0;
-		SSDFS_DBG("extents tree is absent\n");
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to truncate extents tree: "
-			  "err %d\n",
-			  err);
-		return err;
+		if (newsize > inline_capacity) {
+			SSDFS_ERR("newsize %llu > inline_capacity %zu\n",
+				  (u64)newsize, inline_capacity);
+			return -E2BIG;
+		} else if (newsize == inline_capacity) {
+			/* do nothing */
+			SSDFS_DBG("newsize %llu == inline_capacity %zu\n",
+				  (u64)newsize, inline_capacity);
+		} else {
+			loff_t size = inline_capacity - newsize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!ii->inline_file);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			memset((u8 *)ii->inline_file + newsize, 0, size);
+		}
+	} else {
+		err = ssdfs_extents_tree_truncate(inode);
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("extents tree is absent\n");
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to truncate extents tree: "
+				  "err %d\n",
+				  err);
+			return err;
+		}
 	}
 
 	inode->i_mtime = inode->i_ctime = current_time(inode);

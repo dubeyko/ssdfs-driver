@@ -665,7 +665,10 @@ ssdfs_commit_queue_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 
 			refs_count =
 				atomic_read(&cur_pair->req->private.refs_count);
-			WARN_ON(refs_count != 0);
+			if (refs_count != 0) {
+				SSDFS_WARN("unexpected refs_count %d\n",
+					   refs_count);
+			}
 
 			ssdfs_request_free(cur_pair->req);
 			cur_pair->req = NULL;
@@ -1505,7 +1508,7 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_extents_btree_info *tree)
 			SSDFS_ERR("fail to allocate memory for buffer\n");
 			goto finish_add_range;
 		}
-		ssdfs_memcpy(&search->raw.fork, 0, search->result.buf_size,
+		ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
 			     inline_forks, 0, search->result.buf_size,
 			     search->result.buf_size);
 		search->result.items_in_buffer = (u16)forks_count;
@@ -2017,11 +2020,11 @@ bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode)
 }
 
 /*
- * ssdfs_extents_tree_add_block() - add block into extents tree
+ * ssdfs_extents_tree_add_extent() - add extent into extents tree
  * @inode: pointer on VFS inode
  * @req: pointer on segment request [in]
  *
- * This method tries to add a logical block into extents tree.
+ * This method tries to add an extent into extents tree.
  *
  * RETURN:
  * [success]
@@ -2031,8 +2034,8 @@ bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode)
  * %-ENOSPC     - extents tree is unable to add requested block(s).
  * %-EEXIST     - extent exists in the tree.
  */
-int ssdfs_extents_tree_add_block(struct inode *inode,
-				 struct ssdfs_segment_request *req)
+int ssdfs_extents_tree_add_extent(struct inode *inode,
+				  struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_inode_info *ii;
@@ -2096,8 +2099,8 @@ int ssdfs_extents_tree_add_block(struct inode *inode,
 	}
 
 	ssdfs_btree_search_init(search);
-	err = ssdfs_extents_tree_add_extent(tree, requested_blk,
-					    &extent, search);
+	err = __ssdfs_extents_tree_add_extent(tree, requested_blk,
+					       &extent, search);
 	ssdfs_btree_search_free(search);
 
 	if (unlikely(err)) {
@@ -2329,6 +2332,7 @@ int ssdfs_extents_tree_find_inline_fork(struct ssdfs_extents_btree_info *tree,
 		search->result.err = 0;
 		search->result.start_index = (u16)i;
 		search->result.count = 1;
+		search->request.count = 1;
 		search->result.search_cno = ssdfs_current_cno(tree->fsi->sb);
 
 		switch (search->result.buf_state) {
@@ -3819,7 +3823,7 @@ int ssdfs_extents_tree_change_fork(struct ssdfs_extents_btree_info *tree,
 }
 
 /*
- * ssdfs_extents_tree_add_extent() - add extent into the tree
+ * __ssdfs_extents_tree_add_extent() - add extent into the tree
  * @tree: extents tree
  * @blk: logical block number
  * @extent: new extent
@@ -3835,15 +3839,16 @@ int ssdfs_extents_tree_change_fork(struct ssdfs_extents_btree_info *tree,
  * %-ERANGE     - internal error.
  * %-EEXIST     - extent exists in the tree.
  */
-int ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
-				  u64 blk,
-				  struct ssdfs_raw_extent *extent,
-				  struct ssdfs_btree_search *search)
+int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
+				    u64 blk,
+				    struct ssdfs_raw_extent *extent,
+				    struct ssdfs_btree_search *search)
 {
 	struct ssdfs_inode_info *ii;
 	s64 forks_count;
 	u32 init_flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 			 SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	u32 len;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3860,14 +3865,22 @@ int ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 	down_write(&tree->lock);
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	len = le32_to_cpu(extent->len);
+
+	if (len == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("empty extent\n");
+		goto finish_add_extent;
+	}
 
 	if (need_initialize_extent_btree_search(blk, search)) {
 		ssdfs_btree_search_init(search);
 		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 		search->request.flags = init_flags;
 		search->request.start.hash = blk;
-		search->request.end.hash = blk;
-		search->request.count = 1;
+		search->request.end.hash = blk + len - 1;
+		/* no information about forks count */
+		search->request.count = 0;
 	}
 
 	ssdfs_debug_btree_search_object(search);
@@ -3956,7 +3969,7 @@ add_new_inline_fork:
 						SSDFS_BTREE_SEARCH_FIND_ITEM;
 					search->request.flags = init_flags;
 					search->request.start.hash = blk;
-					search->request.end.hash = blk;
+					search->request.end.hash = blk + len - 1;
 					search->request.count = 1;
 					goto try_to_add_into_generic_tree;
 				}
@@ -7951,7 +7964,8 @@ int ssdfs_check_found_fork(struct ssdfs_fs_info *fsi,
 			break;
 		}
 	} else if (*end_hash < search->request.start.hash) {
-		/* do nothing */
+		err = -EAGAIN;
+		*found_index = item_index + 1;
 	} else if (*start_hash > search->request.start.hash &&
 		   *end_hash < search->request.end.hash) {
 		err = -ERANGE;
@@ -8269,8 +8283,7 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.count == 0 ||
-	    search->request.count > items_capacity) {
+	if (search->request.count > items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "count %u, items_capacity %u\n",
 			  search->request.count,
@@ -8349,6 +8362,7 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 
 	res = ssdfs_extract_range_by_lookup_index(node, lookup_index,
 						  search);
+	search->request.count = search->result.count;
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
 	ssdfs_debug_btree_search_object(search);
@@ -8412,16 +8426,6 @@ int ssdfs_extents_btree_node_find_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
-
-	if (search->request.count != 1 ||
-	    search->request.start.hash != search->request.end.hash) {
-		SSDFS_ERR("invalid request state: "
-			  "count %d, start_hash %llx, end_hash %llx\n",
-			  search->request.count,
-			  search->request.start.hash,
-			  search->request.end.hash);
-		return -ERANGE;
-	}
 
 	return ssdfs_extents_btree_node_find_range(node, search);
 }

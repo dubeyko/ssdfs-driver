@@ -991,6 +991,9 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 	search->result.state = SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
 	search->result.start_index = range->area.start_index;
 
+	SSDFS_DBG("ino %llu, start_index %u\n",
+		  (u64)*ino, (u32)search->result.start_index);
+
 	err = ssdfs_btree_allocate_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate item: ino %llu, err %d\n",
@@ -3616,6 +3619,9 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	search->result.start_index = start;
 	search->result.count = count;
 	search->result.buf_size = 0;
+
+	SSDFS_DBG("search->result.start_index %u\n",
+		  (u32)search->result.start_index);
 
 	if (count > 1) {
 		size_t allocated_bytes = item_size * count;

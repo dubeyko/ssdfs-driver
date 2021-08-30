@@ -154,7 +154,7 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 	ssdfs_request_define_segment(seg_id, req);
 	ssdfs_request_define_volume_extent(logical_blk, 1, req);
 
-	err = ssdfs_extents_tree_add_block(fsi->testing_inode, req);
+	err = ssdfs_extents_tree_add_extent(fsi->testing_inode, req);
 	if (err) {
 		SSDFS_ERR("fail to add extent: "
 			  "ino %lu, logical_offset %llu, "

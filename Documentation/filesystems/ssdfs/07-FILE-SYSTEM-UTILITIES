@@ -1,0 +1,186 @@
+
+================================================================================
+*                              SSDFS utilities                                 *
+================================================================================
+
+A. mkfs.ssdfs
+-------------
+
+mkfs.ssdfs: ssdfs-utils v.3.09: create volume of SSDFS file system
+
+Usage: mkfs.ssdfs <options> [<device> | <image-file>]
+Options:
+
+     Block bitmap options:
+     [-B|--blkbmap has_copy, compression=(none|zlib|lzo)]
+
+     Compression type support:
+     [-C|--compression (none|zlib|lzo)]
+
+     NAND dies count:
+     [-D|--nand-dies count]
+
+     Show debug output:
+     [-d|--debug]
+
+     Erase size of target device:
+     [-e|--erasesize size] (128KB|256KB|512KB|2MB|8MB).
+
+     Force overwrite of existing filesystem:
+     [-f|--force]
+
+     Display help message and exit:
+     [-h|--help]
+
+     Inode size in bytes:
+     [-i|--inode_size size] (265B|512B|1KB|2KB|4KB).
+
+     Do not erase device by mkfs:
+     [-K|--not-erase-device]
+
+     Set a volume label:
+     [-L|--label]
+
+     PEB mapping table options:
+     [-M|--maptbl has_copy,
+                  stripes_per_fragment=value,
+                  fragments_per_peb=value,
+                  log_pages=value,
+                  migration_threshold=value,
+                  reserved_pebs_per_fragment=percentage,
+                  compression=(none|zlib|lzo)]
+
+     Max amount of migration PEBs for segment:
+     [-m|--migration-threshold]
+
+     Offsets table options:
+     [-O|--offsets_table has_copy,
+                         compression=(none|zlib|lzo)]
+
+     Page size of target device:
+     [-p|--pagesize size] (4KB|8KB|16KB|32KB).
+
+     Quiet execution (useful for scripts):
+     [-q|--quiet]
+
+     Segment bitmap options:
+     [-S|--segbmap has_copy,
+                   segs_per_chain=value,
+                   fragments_per_peb=value,
+                   log_pages=value,
+                   migration_threshold=value,
+                   compression=(none|zlib|lzo)]
+
+     Segment size of target device:
+     [-s|--segsize size] (128KB|256KB|512KB|2MB|8MB|16MB|32MB|64MB|...).
+
+     Btrees' options:
+     [-T|--btree node_size=value,
+                 min_index_area_size=value,
+                 leaf_node_log_pages=value,
+                 hybrid_node_log_pages=value,
+                 index_node_log_pages=value]
+
+     User data segment options:
+     [-U|--user_data_segment log_pages=value,
+                             migration_threshold=value,
+                             compression=(none|zlib|lzo)]
+
+     Print version and exit:
+     [-V|--version]
+
+B. fsck.ssdfs
+-------------
+
+fsck.ssdfs - volume checking utility.
+
+C. dumpfs.ssdfs
+---------------
+
+dump.ssdfs: ssdfs-utils v.3.09: dump volume of SSDFS file system
+
+Usage: dump.ssdfs <options> [<device> | <image-file>]
+Options:
+
+     Show debug output:
+     [-d|--debug]
+
+     Show key volume's details:
+     [-g|--granularity]
+
+     Display help message and exit:
+     [-h|--help]
+
+     Define output folder:
+     [-o|--output-folder]
+
+     Show PEB dump:
+     [-p|--peb id=value,
+               peb_count=value,
+               size=value,
+               log_index=value,
+               log_count=value,
+               log_size=value,
+               parse_header,
+               parse_log_footer,
+               parse_block_bitmap,
+               parse_blk2off_table,
+               parse_block_state_area,
+               parse_all,raw_dump]
+
+     Quiet execution (useful for scripts):
+     [-q|--quiet]
+
+     Show raw dump:
+     [-r|--raw-dump show,
+                    offset=value,
+                    size=value]
+
+     Print version and exit:
+     [-V|--version]
+
+D. tunefs.ssdfs
+---------------
+
+tunefs.ssdfs - volume tuning utility.
+
+E. snap.ssdfs
+-------------
+
+snap.ssdfs - snapshot management utility.
+
+F. resizefs.ssdfs
+-----------------
+
+resizefs.ssdfs - volume resizing utility.
+
+G. test.ssdfs
+-------------
+
+test.ssdfs: ssdfs-utils v.3.09: test SSDFS file system
+
+Usage: test.ssdfs <options> [<device> | <image-file>]
+Options:
+
+     Test all subsystems:
+     [-a|--all]
+
+     Define extent related thresholds:
+     [-e|--extent max_len=value]
+
+     Define file related thresholds:
+     [-f|--file max_count=value,
+                max_size=value]
+
+     Display help message and exit:
+     [-h|--help]
+
+     Page size of target device:
+     [-p|--pagesize size] (4096|8192|16384|32768 bytes).
+
+     Define testing subsystems:
+     [-s|--subsystem dentries_tree,
+                     extents_tree]
+
+     Print version and exit:
+     [-V|--version]

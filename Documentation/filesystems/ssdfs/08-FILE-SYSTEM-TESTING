@@ -1,0 +1,27 @@
+
+================================================================================
+*                           Testing opportunities                              *
+================================================================================
+
+A. Mounting SSDFS Images using a Loop Device
+--------------------------------------------
+
+The process requires the following steps:
+1. Load loop, block2mtd, and ssdfs modules
+
+    modprobe loop
+    modprobe block2mtd
+    modprobe ssdfs
+
+2. Create a loop device
+
+    losetup /dev/loop0 /<path>/<image-file>
+
+3. Set the block2mtd parameters for the loop device
+
+    mknod /tmp/mtdblock0 b 31 0
+    echo "/dev/loop0" > /sys/module/block2mtd/parameters/block2mtd
+
+4. Mount the SSDFS image
+
+    mount -t ssdfs /dev/mtdblock0 /mnt/ssdfs/

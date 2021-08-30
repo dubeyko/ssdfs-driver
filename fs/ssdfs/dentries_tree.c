@@ -326,11 +326,6 @@ int ssdfs_dentries_tree_init(struct ssdfs_fs_info *fsi,
 	struct ssdfs_btree_node *node;
 	struct ssdfs_dentries_btree_info *tree;
 	struct ssdfs_btree_inline_root_node *root_node;
-	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size =
-			dentry_size * SSDFS_INLINE_DENTRIES_PER_AREA;
-	size_t area_dentries_size =
-			dentry_size * SSDFS_INLINE_DENTRIES_PER_AREA;
 	u16 flags;
 	int err = 0;
 
@@ -487,10 +482,10 @@ fail_create_generic_tree:
 			goto finish_tree_init;
 		} else {
 			ssdfs_memcpy(tree->inline_dentries,
-				     0, inline_dentries_size,
+				     0, ssdfs_inline_dentries_size(),
 				     &raw_inode.internal[0].area1,
-				     0, area_dentries_size,
-				     area_dentries_size);
+				     0, ssdfs_area_dentries_size(),
+				     ssdfs_area_dentries_size());
 		}
 
 		atomic_set(&tree->type, SSDFS_INLINE_DENTRIES_ARRAY);
@@ -509,10 +504,10 @@ fail_create_generic_tree:
 			goto finish_tree_init;
 		} else {
 			ssdfs_memcpy(tree->inline_dentries,
-				     0, inline_dentries_size,
+				     0, ssdfs_inline_dentries_size(),
 				     &raw_inode.internal,
-				     0, inline_dentries_size,
-				     inline_dentries_size);
+				     0, ssdfs_inline_dentries_size(),
+				     ssdfs_inline_dentries_size());
 		}
 
 		for (i = 0; i < dentries_count; i++) {
@@ -584,7 +579,6 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 	struct ssdfs_dir_entry *cur;
 	struct ssdfs_btree_search *search;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
 	size_t dentries_bytes;
 	s64 dentries_count, dentries_capacity;
 	int private_flags;
@@ -659,11 +653,11 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 	BUG_ON(!tree->inline_dentries || tree->generic_tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	memset(dentries, 0xFF, inline_dentries_size);
+	memset(dentries, 0xFF, ssdfs_inline_dentries_size());
 
 	dentries_bytes = dentry_size * dentries_capacity;
-	ssdfs_memcpy(dentries, 0, inline_dentries_size,
-		     tree->inline_dentries, 0, inline_dentries_size,
+	ssdfs_memcpy(dentries, 0, ssdfs_inline_dentries_size(),
+		     tree->inline_dentries, 0, ssdfs_inline_dentries_size(),
 		     dentries_bytes);
 
 	atomic64_sub(dentries_count, &tree->dentries_count);
@@ -757,7 +751,7 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		search->result.items_in_buffer = dentries_count;
 		search->result.buf = &search->raw.dentry;
 		ssdfs_memcpy(&search->raw.dentry, 0, dentry_size,
-			     dentries, 0, inline_dentries_size,
+			     dentries, 0, ssdfs_inline_dentries_size(),
 			     search->result.buf_size);
 	} else {
 		err = ssdfs_btree_search_alloc_result_buf(search,
@@ -768,7 +762,7 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		}
 
 		ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
-			     dentries, 0, inline_dentries_size,
+			     dentries, 0, ssdfs_inline_dentries_size(),
 			     search->result.buf_size);
 		search->result.items_in_buffer = (u16)dentries_count;
 	}
@@ -819,9 +813,9 @@ recover_inline_tree:
 		cur->dentry_type = SSDFS_INLINE_DENTRY;
 	}
 
-	ssdfs_memcpy(tree->buffer.dentries, 0, inline_dentries_size,
-		     dentries, 0, inline_dentries_size,
-		     inline_dentries_size);
+	ssdfs_memcpy(tree->buffer.dentries, 0, ssdfs_inline_dentries_size(),
+		     dentries, 0, ssdfs_inline_dentries_size(),
+		     ssdfs_inline_dentries_size());
 
 	tree->inline_dentries = tree->buffer.dentries;
 	tree->generic_tree = NULL;
@@ -849,10 +843,6 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_dentries_btree_info *tree;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size *
-					SSDFS_INLINE_DENTRIES_COUNT;
-	size_t area_dentries_size = dentry_size *
-					SSDFS_INLINE_DENTRIES_PER_AREA;
 	int flags;
 	u64 dentries_count;
 	int err = 0;
@@ -926,29 +916,29 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 
 			if (flags & SSDFS_INODE_HAS_XATTR_BTREE) {
 				memset(&ii->raw_inode.internal[0].area1, 0xFF,
-					area_dentries_size);
+					ssdfs_area_dentries_size());
 			} else {
 				memset(&ii->raw_inode.internal, 0xFF,
-					inline_dentries_size);
+					ssdfs_inline_dentries_size());
 			}
 		} else if (dentries_count <= SSDFS_INLINE_DENTRIES_PER_AREA) {
 			flags = atomic_read(&ii->private_flags);
 
 			if (flags & SSDFS_INODE_HAS_XATTR_BTREE) {
 				memset(&ii->raw_inode.internal[0].area1, 0xFF,
-					area_dentries_size);
+					ssdfs_area_dentries_size());
 				ssdfs_memcpy(&ii->raw_inode.internal[0].area1,
-					     0, area_dentries_size,
+					     0, ssdfs_area_dentries_size(),
 					     tree->inline_dentries,
-					     0, inline_dentries_size,
+					     0, ssdfs_inline_dentries_size(),
 					     dentries_count * dentry_size);
 			} else {
 				memset(&ii->raw_inode.internal, 0xFF,
-					inline_dentries_size);
+					ssdfs_inline_dentries_size());
 				ssdfs_memcpy(&ii->raw_inode.internal,
-					     0, inline_dentries_size,
+					     0, ssdfs_inline_dentries_size(),
 					     tree->inline_dentries,
-					     0, inline_dentries_size,
+					     0, ssdfs_inline_dentries_size(),
 					     dentries_count * dentry_size);
 			}
 		} else if (dentries_count <= SSDFS_INLINE_DENTRIES_COUNT) {
@@ -961,11 +951,11 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 					  ii->vfs_inode.i_ino);
 			} else {
 				memset(&ii->raw_inode.internal, 0xFF,
-					inline_dentries_size);
+					ssdfs_inline_dentries_size());
 				ssdfs_memcpy(&ii->raw_inode.internal,
-					     0, inline_dentries_size,
+					     0, ssdfs_inline_dentries_size(),
 					     tree->inline_dentries,
-					     0, inline_dentries_size,
+					     0, ssdfs_inline_dentries_size(),
 					     dentries_count * dentry_size);
 			}
 
@@ -1904,7 +1894,6 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 {
 	struct ssdfs_dir_entry *cur;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
 	s64 dentries_count, dentries_capacity;
 	int private_flags;
 	u64 hash1, hash2;
@@ -2041,10 +2030,10 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		if ((start_index + 1) <= dentries_count) {
 			err = ssdfs_memmove(tree->inline_dentries,
 					    (start_index + 1) * dentry_size,
-					    inline_dentries_size,
+					    ssdfs_inline_dentries_size(),
 					    tree->inline_dentries,
 					    start_index * dentry_size,
-					    inline_dentries_size,
+					    ssdfs_inline_dentries_size(),
 					    (dentries_count - start_index) *
 						dentry_size);
 			if (unlikely(err)) {
@@ -2618,7 +2607,6 @@ ssdfs_dentries_tree_change_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 {
 	struct ssdfs_dir_entry *cur;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
 	u64 hash1, hash2;
 	u64 ino1, ino2;
 	int private_flags;
@@ -2725,7 +2713,7 @@ ssdfs_dentries_tree_change_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 	}
 
 	ssdfs_memcpy(tree->inline_dentries,
-		     start_index * dentry_size, inline_dentries_size,
+		     start_index * dentry_size, ssdfs_inline_dentries_size(),
 		     &search->raw.dentry.header, 0, dentry_size,
 		     dentry_size);
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_DIRTY);
@@ -3060,7 +3048,6 @@ ssdfs_dentries_tree_delete_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 	struct ssdfs_raw_dentry *cur;
 	struct ssdfs_dir_entry *dentry1;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
 	u64 hash1, hash2;
 	u64 ino1, ino2;
 	s64 dentries_count;
@@ -3162,10 +3149,10 @@ ssdfs_dentries_tree_delete_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 	if ((index + 1) < dentries_count) {
 		err = ssdfs_memmove(tree->inline_dentries,
 				    index * dentry_size,
-				    inline_dentries_size,
+				    ssdfs_inline_dentries_size(),
 				    tree->inline_dentries,
 				    (index + 1) * dentry_size,
-				    inline_dentries_size,
+				    ssdfs_inline_dentries_size(),
 				    (dentries_count - index) * dentry_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move: err %d\n", err);
@@ -3494,7 +3481,6 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_dentries_btree_info *tree)
 	struct ssdfs_dir_entry *cur;
 	struct ssdfs_btree_search *search;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
 	s64 dentries_count, dentries_capacity;
 	s64 count;
 	u64 start_ino;
@@ -3565,7 +3551,7 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_dentries_btree_info *tree)
 	BUG_ON(tree->inline_dentries || !tree->generic_tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	memset(dentries, 0xFF, inline_dentries_size);
+	memset(dentries, 0xFF, ssdfs_inline_dentries_size());
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -3610,7 +3596,8 @@ try_extract_range:
 	switch (search->result.buf_state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 		err = ssdfs_memcpy(dentries,
-				   copied * dentry_size, inline_dentries_size,
+				   copied * dentry_size,
+				   ssdfs_inline_dentries_size(),
 				   &search->raw.dentry.header,
 				   0, dentry_size,
 				   dentry_size);
@@ -3628,7 +3615,8 @@ try_extract_range:
 		}
 
 		err = ssdfs_memcpy(dentries,
-				   copied * dentry_size, inline_dentries_size,
+				   copied * dentry_size,
+				   ssdfs_inline_dentries_size(),
 				   search->result.buf,
 				   0, search->result.buf_size,
 				   (u64)dentry_size * search->result.count);
@@ -3702,9 +3690,9 @@ finish_process_range:
 	}
 
 	ssdfs_memcpy(tree->buffer.dentries,
-		     0, inline_dentries_size,
+		     0, ssdfs_inline_dentries_size(),
 		     dentries,
-		     0, inline_dentries_size,
+		     0, ssdfs_inline_dentries_size(),
 		     dentry_size * dentries_count);
 
 	atomic_set(&tree->type, SSDFS_INLINE_DENTRIES_ARRAY);
@@ -4073,7 +4061,6 @@ ssdfs_dentries_tree_extract_inline_range(struct ssdfs_dentries_btree_info *tree,
 					 struct ssdfs_btree_search *search)
 {
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	size_t inline_dentries_size = dentry_size * SSDFS_INLINE_DENTRIES_COUNT;
 	u64 dentries_count;
 	size_t buf_size;
 	u16 i;
@@ -4163,7 +4150,8 @@ ssdfs_dentries_tree_extract_inline_range(struct ssdfs_dentries_btree_info *tree,
 		err = ssdfs_memcpy(search->result.buf,
 				   i * dentry_size, search->result.buf_size,
 				   tree->inline_dentries,
-				   i * dentry_size, inline_dentries_size,
+				   i * dentry_size,
+				   ssdfs_inline_dentries_size(),
 				   dentry_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);

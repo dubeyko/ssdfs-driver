@@ -578,7 +578,7 @@ int ssdfs_request_add_page(struct page *page,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (pagevec_space(&req->result.pvec) == 0) {
-		SSDFS_ERR("request's pagevec is full\n");
+		SSDFS_WARN("request's pagevec is full\n");
 		return -E2BIG;
 	}
 
@@ -604,7 +604,7 @@ ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req)
 		  pagevec_count(&req->result.pvec));
 
 	if (pagevec_space(&req->result.pvec) == 0) {
-		SSDFS_ERR("request's pagevec is full\n");
+		SSDFS_WARN("request's pagevec is full\n");
 		return ERR_PTR(-E2BIG);
 	}
 
@@ -723,19 +723,22 @@ void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
 			continue;
 		}
 
-		if (PageLocked(page))
-			ssdfs_unlock_page(page);
-		else {
-			SSDFS_WARN("page %d is not locked: "
-				   "cmd %#x, type %#x\n",
-				   i, req->private.cmd,
-				   req->private.type);
-		}
+		if (need_add_block(page))
+			clear_page_new(page);
 
 		if (PageWriteback(page))
 			end_page_writeback(page);
 		else {
 			SSDFS_WARN("page %d is not under writeback: "
+				   "cmd %#x, type %#x\n",
+				   i, req->private.cmd,
+				   req->private.type);
+		}
+
+		if (PageLocked(page))
+			ssdfs_unlock_page(page);
+		else {
+			SSDFS_WARN("page %d is not locked: "
 				   "cmd %#x, type %#x\n",
 				   i, req->private.cmd,
 				   req->private.type);

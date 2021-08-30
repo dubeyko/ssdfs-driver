@@ -1,0 +1,186 @@
+
+================================================================================
+*                             Driver Architecture                              *
+================================================================================
+
+(1) DOCUMENTATION:
+Documentation/filesystems/ssdfs/
+
+(2) DECLARATIONS:
+include/uapi/linux/ssdfs_fs.h         - SSDFS common declarations.
+include/linux/ssdfs_fs.h              - SSDFS on-disk structures and common
+                                        declarations.
+include/trace/events/ssdfs.h          - definition of tracepoints.
+fs/ssdfs/ssdfs_constants.h            - SSDFS constant declarations.
+fs/ssdfs/ssdfs_fs_info.h              - in-core fs information.
+fs/ssdfs/ssdfs.h                      - in-core declarations.
+fs/ssdfs/ssdfs_inline.h               - inline functions and macros.
+fs/ssdfs/ssdfs_inode_info.h           - SSDFS in-core inode declarations.
+fs/ssdfs/ssdfs_thread_info.h          - thread declarations.
+fs/ssdfs/common_bitmap.h              - shared declarations for all bitmaps.
+fs/ssdfs/version.h                    - SSDFS file system version.
+
+(3) IMPLEMENTATION:
+
+               [*** Mount logic implementation ***]
+
+fs/ssdfs/options.c                    - mount options parsing.
+fs/ssdfs/recovery.h                   - recovery logic declarations.
+fs/ssdfs/recovery.c                   - searching actual state and recovery
+                                        during mount operation.
+fs/ssdfs/recovery_fast_search.c       - fast superblock search.
+fs/ssdfs/recovery_slow_search.c       - slow superblock search.
+fs/ssdfs/recovery_thread.c            - recovery thread's logic.
+
+               [*** FS primitives implementation ***]
+
+fs/ssdfs/page_array.h                 - page array object declarations.
+fs/ssdfs/page_array.c                 - page array object's functionality.
+fs/ssdfs/request_queue.h              - request queue declarations.
+fs/ssdfs/request_queue.c              - request queue implementation.
+
+               [*** Segment concept implementation ***]
+
+fs/ssdfs/segment.h                    - segment concept declarations.
+fs/ssdfs/segment.c                    - segment concept related functionality.
+fs/ssdfs/segment_tree.h               - segment tree declarations.
+fs/ssdfs/segment_tree.c               - segment tree implementation.
+fs/ssdfs/current_segment.h            - current segment abstraction
+                                        declarations.
+fs/ssdfs/current_segment.c            - current segment abstraction
+                                        implementation.
+fs/ssdfs/offset_translation_table.h   - offset table declarations.
+fs/ssdfs/offset_translation_table.c   - offset translation table functionality.
+fs/ssdfs/sequence_array.h             - sequence array's declarations.
+fs/ssdfs/sequence_array.c             - sequence array implementation.
+
+               [*** PEB concept implementation ***]
+
+fs/ssdfs/peb.h                        - Physical Erase Block (PEB) object
+                                        declarations.
+fs/ssdfs/peb.c                        - Physical Erase Block (PEB) object's
+                                        functionality.
+fs/ssdfs/peb_flush_thread.c           - flush thread functionality.
+fs/ssdfs/peb_gc_thread.c              - GC thread functionality.
+fs/ssdfs/peb_read_thread.c            - read thread functionality.
+fs/ssdfs/log_footer.c                 - operations with log footer.
+fs/ssdfs/volume_header.c              - operations with volume header.
+
+               [*** PEB migration scheme implementation ***]
+
+fs/ssdfs/peb_container.h              - PEB container declarations.
+fs/ssdfs/peb_container.c              - PEB container implementation.
+fs/ssdfs/peb_migration_scheme.c       - implementation of PEBs' migration
+                                        scheme.
+
+               [*** PEB mapping table implementation ***]
+
+fs/ssdfs/peb_mapping_queue.h          - PEB mappings queue declarations.
+fs/ssdfs/peb_mapping_queue.c          - PEB mappings queue implementation.
+fs/ssdfs/peb_mapping_table.h          - PEB mapping table declarations.
+fs/ssdfs/peb_mapping_table.c          - PEB mapping table implementation.
+fs/ssdfs/peb_mapping_table_cache.h    - PEB mapping table cache declarations.
+fs/ssdfs/peb_mapping_table_cache.c    - PEB mapping table cache functionality.
+fs/ssdfs/peb_mapping_table_thread.c   - PEB mapping table thread functionality.
+
+               [*** Segment bitmap implementation ***]
+
+fs/ssdfs/segment_bitmap.h             - segment bitmap declarations.
+fs/ssdfs/segment_bitmap.c             - segment bitmap implementation.
+fs/ssdfs/segment_bitmap_tables.c      - declaration of segbmap's search tables.
+
+               [*** Block bitmap implementation ***]
+
+fs/ssdfs/block_bitmap.h               - block bitmap declarations.
+fs/ssdfs/block_bitmap.c               - block bitmap implementation.
+fs/ssdfs/block_bitmap_tables.c        - declaration of block bitmap's search
+                                        tables.
+fs/ssdfs/peb_block_bitmap.h           - PEB's block bitmap declarations.
+fs/ssdfs/peb_block_bitmap.c           - PEB's block bitmap implementation.
+fs/ssdfs/segment_block_bitmap.h       - segment's block bitmap declarations.
+fs/ssdfs/segment_block_bitmap.c       - segment's block bitmap implementation.
+
+               [*** B-tree implementation ***]
+
+fs/ssdfs/btree.h                      - btree declarations.
+fs/ssdfs/btree.c                      - generalized btree functionality
+                                        implementation.
+fs/ssdfs/btree_hierarchy.h            - btree hierarchy declarations.
+fs/ssdfs/btree_hierarchy.c            - btree hierarchy functionality
+                                        implementation.
+fs/ssdfs/btree_node.h                 - btree node declarations.
+fs/ssdfs/btree_node.c                 - generalized btree node implementation.
+fs/ssdfs/btree_search.h               - btree search object declarations.
+fs/ssdfs/btree_search.c               - btree search object functionality.
+fs/ssdfs/dentries_tree.h              - dentries btree declarations.
+fs/ssdfs/dentries_tree.c              - dentries btree implementation.
+fs/ssdfs/extents_queue.h              - extents queue declarations.
+fs/ssdfs/extents_queue.c              - extents queue implementation.
+fs/ssdfs/extents_tree.h               - extents tree declarations.
+fs/ssdfs/extents_tree.c               - extents tree functionality.
+fs/ssdfs/inodes_tree.h                - inodes btree declarations.
+fs/ssdfs/inodes_tree.c                - inodes btree implementation.
+fs/ssdfs/shared_dictionary.h          - shared dictionary btree declarations.
+fs/ssdfs/shared_dictionary.c          - shared dictionary btree implementation.
+fs/ssdfs/shared_dictionary_thread.c   - shared dictionary tree's thread
+                                        implementation.
+fs/ssdfs/shared_extents_tree.h        - shared extents tree declarations.
+fs/ssdfs/shared_extents_tree.c        - shared extents tree implementation.
+fs/ssdfs/shared_extents_tree_thread.c - shared extents tree's thread
+                                        implementation.
+
+               [*** xattr implementation ***]
+
+fs/ssdfs/acl.h                        - ACLs support declarations.
+fs/ssdfs/acl.c                        - ACLs support implementation.
+fs/ssdfs/xattr.h                      - extended attributes support
+                                        declarations.
+fs/ssdfs/xattr.c                      - extended attributes support
+                                        implementation.
+fs/ssdfs/xattr_security.c             - handler for storing security labels as
+                                        xattrs.
+fs/ssdfs/xattr_trusted.c              - handler for trusted extended attributes.
+fs/ssdfs/xattr_user.c                 - handler for extended user attributes.
+
+               [*** Compression support implementation ***]
+
+fs/ssdfs/compression.h                - compression/decompression support
+                                        declarations.
+fs/ssdfs/compression.c                - compression/decompression support
+                                        implementation.
+fs/ssdfs/compr_zlib.c                 - ZLIB compression support.
+fs/ssdfs/compr_lzo.c                  - LZO compression support.
+
+               [*** IOCTL support implementation ***]
+
+fs/ssdfs/ioctl.h                      - IOCTL related declaration.
+fs/ssdfs/ioctl.c                      - IOCTL operations.
+
+               [*** SYSFS support implementation ***]
+
+fs/ssdfs/sysfs.h                      - declaration of attributes are exported
+                                        in sysfs.
+fs/ssdfs/sysfs.c                      - implementation of sysfs support.
+
+               [*** VFS API implementation ***]
+
+fs/ssdfs/dir.c                        - directory related code.
+fs/ssdfs/file.c                       - file handling routines.
+fs/ssdfs/inode.c                      - inode handling routines.
+fs/ssdfs/super.c                      - module and superblock management.
+
+               [*** Read/Write primitives implementation ***]
+
+fs/ssdfs/dev_bdev.c                   - block device access code.
+fs/ssdfs/dev_mtd.c                    - MTD device access code.
+fs/ssdfs/readwrite.c                  - read/write primitive operations.
+
+               [*** FS errors management ***]
+
+fs/ssdfs/fs_error.c                   - logic for the case of file system
+                                        errors detection.
+
+               [*** Testing infrastructure implementation ***]
+
+fs/ssdfs/testing.h                    - testing infrastructure's declarations.
+fs/ssdfs/testing.c                    - testing infrastructure.

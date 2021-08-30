@@ -21,6 +21,7 @@
 #include <linux/slab.h>
 #include <linux/kthread.h>
 #include <linux/pagevec.h>
+#include <linux/delay.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -3876,6 +3877,16 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(req->place.start.seg_id != pebi->pebc->parent_si->seg_id);
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
+
+	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
+		  "processed_blks %d, logical_block %u, data_bytes %u, "
+		  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
+		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
+		  req->extent.logical_offset, req->result.processed_blks,
+		  req->place.start.blk_index,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot,
+		  req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -4179,6 +4190,16 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
 	WARN_ON(pagevec_count(&req->result.pvec) != 0);
+
+	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
+		  "processed_blks %d, logical_block %u, data_bytes %u, "
+		  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
+		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
+		  req->extent.logical_offset, req->result.processed_blks,
+		  req->place.start.blk_index,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot,
+		  req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -4719,7 +4740,6 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	}
 	BUG_ON(req->private.type >= SSDFS_REQ_TYPE_MAX);
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
 		  "processed_blks %d, logical_block %u, data_bytes %u, "
@@ -4730,6 +4750,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot,
 		  req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	table = pebi->pebc->parent_si->blk2off_table;
@@ -5042,6 +5063,16 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
 	BUG_ON(req->extent.data_bytes > pebi->pebc->parent_si->fsi->pagesize);
 	BUG_ON(req->result.processed_blks > 0);
+
+	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
+		  "processed_blks %d, logical_block %u, data_bytes %u, "
+		  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
+		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
+		  req->extent.logical_offset, req->result.processed_blks,
+		  req->place.start.blk_index,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot,
+		  req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -7337,6 +7368,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	u32 log_pages;
 	struct page *page;
 	u32 area_offset, area_size;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7379,6 +7411,42 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 		 */
 		log_pages += padding;
 		*write_offset = log_pages * fsi->pagesize;
+		area_offset = *write_offset - fsi->pagesize;
+
+		for (i = 0; i < padding; i++) {
+			void *kaddr;
+
+			page = ssdfs_page_array_grab_page(&pebi->cache,
+							  *cur_page);
+			if (IS_ERR_OR_NULL(page)) {
+				SSDFS_ERR("fail to get cache page: index %lu\n",
+					  *cur_page);
+				return -ENOMEM;
+			}
+
+			kaddr = kmap_atomic(page);
+			memset(kaddr, 0xFF, PAGE_SIZE);
+			kunmap_atomic(kaddr);
+
+			SetPagePrivate(page);
+			SetPageUptodate(page);
+
+			err = ssdfs_page_array_set_page_dirty(&pebi->cache,
+							      *cur_page);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to set page dirty: "
+					  "page_index %lu, err %d\n",
+					  *cur_page, err);
+			}
+
+			ssdfs_unlock_page(page);
+			ssdfs_put_page(page);
+
+			if (unlikely(err))
+				return err;
+
+			(*cur_page)++;
+		}
 	}
 
 	page = ssdfs_page_array_grab_page(&pebi->cache, *cur_page);
@@ -7446,9 +7514,6 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	pebi->current_log.seg_flags |= SSDFS_LOG_HAS_FOOTER;
 
 	(*cur_page)++;
-
-	if (padding > 0)
-		*cur_page += padding;
 
 	return 0;
 }
@@ -9590,23 +9655,33 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		BUG();
 	};
 
-	if (err) {
-		SSDFS_DBG("failure: req %p, err %d\n", req, err);
-		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
-	} else
-		atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
-
 	switch (req->private.type) {
 	case SSDFS_REQ_SYNC:
+		if (err) {
+			SSDFS_DBG("failure: req %p, err %d\n", req, err);
+			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+		} else
+			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
 		complete(&req->result.wait);
 		wake_up_all(&req->private.wait_queue);
 		break;
 
 	case SSDFS_REQ_ASYNC:
+		ssdfs_put_request(req);
+
+		if (err) {
+			SSDFS_DBG("failure: req %p, err %d\n", req, err);
+			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+		} else
+			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
 		complete(&req->result.wait);
 
-		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
+			SSDFS_DBG("start waiting: refs_count %d\n",
+				   atomic_read(&req->private.refs_count));
+
 			err = wait_event_killable_timeout(*wait,
 			    atomic_read(&req->private.refs_count) == 0,
 			    SSDFS_DEFAULT_TIMEOUT);
@@ -9621,10 +9696,20 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
+		ssdfs_put_request(req);
+
+		if (err) {
+			SSDFS_DBG("failure: req %p, err %d\n", req, err);
+			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+		} else
+			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
 		complete(&req->result.wait);
 
-		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
+			SSDFS_DBG("start waiting: refs_count %d\n",
+				   atomic_read(&req->private.refs_count));
+
 			err = wait_event_killable_timeout(*wait,
 			    atomic_read(&req->private.refs_count) == 0,
 			    SSDFS_DEFAULT_TIMEOUT);
@@ -9638,6 +9723,7 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		break;
 
 	default:
+		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
 		BUG();
 	};
 }

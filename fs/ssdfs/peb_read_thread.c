@@ -504,9 +504,6 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 	struct ssdfs_signature *magic = NULL;
 	struct ssdfs_segment_header *seg_hdr = NULL;
 	struct ssdfs_partial_log_header *plh_hdr = NULL;
-	size_t hdr_size = max_t(size_t,
-				sizeof(struct ssdfs_segment_header),
-				sizeof(struct ssdfs_partial_log_header));
 	size_t desc_size = sizeof(struct ssdfs_metadata_descriptor);
 	size_t array_bytes = array_size * desc_size;
 	u32 page_off;
@@ -529,7 +526,7 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 
 	page = ssdfs_page_array_get_page_locked(&pebi->cache, page_off);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
-		SSDFS_WARN("unable to get page: index %u\n",
+		SSDFS_DBG("unable to get page: index %u\n",
 			   page_off);
 
 		page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
@@ -542,14 +539,13 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 		kaddr = kmap(page);
 
 		err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
-						(page_off * PAGE_SIZE) +
-						hdr_size,
-						(u8 *)kaddr + hdr_size,
-						PAGE_SIZE - hdr_size,
+						(page_off * PAGE_SIZE),
+						(u8 *)kaddr,
+						PAGE_SIZE,
 						&read_bytes);
 		if (unlikely(err))
 			goto fail_copy_desc_array;
-		else if (unlikely(read_bytes != (PAGE_SIZE - hdr_size))) {
+		else if (unlikely(read_bytes != (PAGE_SIZE))) {
 			err = -ERANGE;
 			goto fail_copy_desc_array;
 		}

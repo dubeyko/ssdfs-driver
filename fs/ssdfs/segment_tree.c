@@ -373,6 +373,8 @@ void ssdfs_segment_tree_destroy_objects_in_array(struct ssdfs_fs_info *fsi,
 	}
 }
 
+#define SSDFS_MEM_PAGE_ARRAY_SIZE	(16)
+
 /*
  * ssdfs_segment_tree_destroy_segment_objects() - destroy all segment objects
  * @fsi: pointer on shared file system object
@@ -382,7 +384,6 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 {
 	pgoff_t start = 0;
 	size_t pages_count = 0;
-#define SSDFS_MEM_PAGE_ARRAY_SIZE	(16)
 	struct page *array[SSDFS_MEM_PAGE_ARRAY_SIZE] = {0};
 
 #ifdef CONFIG_SSDFS_DEBUG

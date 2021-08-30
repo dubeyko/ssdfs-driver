@@ -2126,7 +2126,7 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 				SSDFS_BLK2OFF_TABLE_CREATED,
 				SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
 	if (state <= SSDFS_BLK2OFF_TABLE_UNDEFINED ||
-	    state > SSDFS_BLK2OFF_TABLE_PARTIAL_INIT) {
+	    state > SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT) {
 		SSDFS_WARN("unexpected state %#x\n",
 			   state);
 		return -ERANGE;
@@ -2843,11 +2843,6 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 	SSDFS_DBG("last_allocated_blk %u\n",
 		  table->last_allocated_blk);
 
-	bitmap_xor(snapshot->bmap_copy,
-		   table->lbmap[SSDFS_LBMAP_INIT_INDEX],
-		   table->lbmap[SSDFS_LBMAP_STATE_INDEX],
-		   table->last_allocated_blk + 1);
-
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, bmap_copy %lx\n",
 		  *table->lbmap[SSDFS_LBMAP_INIT_INDEX],
 		  *table->lbmap[SSDFS_LBMAP_STATE_INDEX],
@@ -2987,6 +2982,11 @@ int ssdfs_find_changed_area(struct ssdfs_blk2off_table_snapshot *sp,
 	start = (unsigned long)min_t(u16, (u16)start, sp->capacity);
 
 	found->len = (u16)(start - found->start_lblk);
+
+	SSDFS_DBG("found_start %lu, found_end %lu, len %lu\n",
+		  (unsigned long)found->start_lblk,
+		  start,
+		  (unsigned long)found->len);
 
 	if (found->len == 0) {
 		SSDFS_ERR("found empty extent\n");
@@ -5459,6 +5459,11 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 	ssdfs_blk2off_table_bmap_set(lbmap, logical_blk);
 
 	downgrade_write(&table->translation_lock);
+
+	SSDFS_DBG("logical_blk %u, POS: cno %llu, id %u, "
+		  "peb_index %u, sequence_id %u, offset_index %u\n",
+		  logical_blk, pos.cno, pos.id, pos.peb_index,
+		  pos.sequence_id, pos.offset_index);
 
 	ssdfs_memcpy(&fragment->phys_offs[pos.offset_index],
 		     0, sizeof(struct ssdfs_phys_offset_descriptor),

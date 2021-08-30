@@ -240,7 +240,7 @@ static void ssdfs_peb_attr_release(struct kobject *kobj)
 						   struct ssdfs_peb_container,
 						   peb_kobj);
 	SSDFS_DBG("release peb %u group\n", pebc->peb_index);
-	complete(&pebc->peb_kobj_unregister);
+	complete_all(&pebc->peb_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_peb_attr_ops = {
@@ -322,7 +322,7 @@ static void ssdfs_pebs_attr_release(struct kobject *kobj)
 						     struct ssdfs_segment_info,
 						     pebs_kobj);
 	SSDFS_DBG("release pebs group: seg_id %llu\n", si->seg_id);
-	complete(&si->pebs_kobj_unregister);
+	complete_all(&si->pebs_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_pebs_attr_ops = {
@@ -446,7 +446,7 @@ static ssize_t ssdfs_seg_valid_pages_show(struct ssdfs_seg_attr *attr,
 					  char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%d\n",
-			atomic_read(&si->blk_bmap.valid_logical_blks));
+			atomic_read(&si->blk_bmap.seg_valid_blks));
 }
 
 static ssize_t ssdfs_seg_invalid_pages_show(struct ssdfs_seg_attr *attr,
@@ -454,7 +454,7 @@ static ssize_t ssdfs_seg_invalid_pages_show(struct ssdfs_seg_attr *attr,
 					    char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%d\n",
-			atomic_read(&si->blk_bmap.invalid_logical_blks));
+			atomic_read(&si->blk_bmap.seg_invalid_blks));
 }
 
 static ssize_t ssdfs_seg_free_pages_show(struct ssdfs_seg_attr *attr,
@@ -462,7 +462,7 @@ static ssize_t ssdfs_seg_free_pages_show(struct ssdfs_seg_attr *attr,
 					 char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%d\n",
-			atomic_read(&si->blk_bmap.free_logical_blks));
+			atomic_read(&si->blk_bmap.seg_free_blks));
 }
 
 static ssize_t ssdfs_seg_seg_state_show(struct ssdfs_seg_attr *attr,
@@ -557,7 +557,7 @@ static void ssdfs_seg_attr_release(struct kobject *kobj)
 						     struct ssdfs_segment_info,
 						     seg_kobj_buf);
 	SSDFS_DBG("release seg %llu group\n", si->seg_id);
-	complete(&si->seg_kobj_unregister);
+	complete_all(&si->seg_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_seg_attr_ops = {
@@ -779,7 +779,7 @@ static void ssdfs_segments_attr_release(struct kobject *kobj)
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 segments_kobj);
 	SSDFS_DBG("release segments group\n");
-	complete(&fsi->segments_kobj_unregister);
+	complete_all(&fsi->segments_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_segments_attr_ops = {
@@ -1074,7 +1074,7 @@ static void ssdfs_segbmap_attr_release(struct kobject *kobj)
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 segbmap_kobj);
 	SSDFS_DBG("release segbmap group\n");
-	complete(&fsi->segbmap_kobj_unregister);
+	complete_all(&fsi->segbmap_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_segbmap_attr_ops = {
@@ -1388,7 +1388,7 @@ static void ssdfs_maptbl_attr_release(struct kobject *kobj)
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 maptbl_kobj);
 	SSDFS_DBG("release maptbl group\n");
-	complete(&fsi->maptbl_kobj_unregister);
+	complete_all(&fsi->maptbl_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_maptbl_attr_ops = {
@@ -1804,7 +1804,7 @@ static void ssdfs_dev_attr_release(struct kobject *kobj)
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 dev_kobj);
 	SSDFS_DBG("release device group\n");
-	complete(&fsi->dev_kobj_unregister);
+	complete_all(&fsi->dev_kobj_unregister);
 }
 
 static const struct sysfs_ops ssdfs_dev_attr_ops = {

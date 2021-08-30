@@ -27,9 +27,10 @@
  * @state: segment block bitmap's state
  * @pages_per_peb: pages per physical erase block
  * @pages_per_seg: pages per segment
- * @valid_logical_blks: segment's valid logical blocks count
- * @invalid_logical_blks: segment's invalid logical blocks count
- * @free_logical_blks: segment's free logical blocks count
+ * @modification_lock: lock for modification operations
+ * @seg_valid_blks: segment's valid logical blocks count
+ * @seg_invalid_blks: segment's invalid logical blocks count
+ * @seg_free_blks: segment's free logical blocks count
  * @peb: array of PEB block bitmap objects
  * @pebs_count: PEBs count in segment
  * @parent_si: pointer on parent segment object
@@ -40,9 +41,10 @@ struct ssdfs_segment_blk_bmap {
 	u32 pages_per_peb;
 	u32 pages_per_seg;
 
-	atomic_t valid_logical_blks;
-	atomic_t invalid_logical_blks;
-	atomic_t free_logical_blks;
+	spinlock_t modification_lock;
+	atomic_t seg_valid_blks;
+	atomic_t seg_invalid_blks;
+	atomic_t seg_free_blks;
 
 	struct ssdfs_peb_blk_bmap *peb;
 	u16 pebs_count;
@@ -78,6 +80,9 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					  struct ssdfs_peb_container *pebc,
 					  u16 count);
+int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr);
+int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
+					  u16 count);
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 					struct ssdfs_peb_container *pebc,
 					u32 *len,
@@ -96,54 +101,96 @@ static inline
 int ssdfs_segment_blk_bmap_get_free_pages(struct ssdfs_segment_blk_bmap *ptr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
+	int free_blks;
+	int valid_blks;
+	int invalid_blks;
+	int calculated;
+
 	BUG_ON(!ptr);
+
+	free_blks = atomic_read(&ptr->seg_free_blks);
+	valid_blks = atomic_read(&ptr->seg_valid_blks);
+	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
+	calculated = free_blks + valid_blks + invalid_blks;
+
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
-		  atomic_read(&ptr->free_logical_blks),
-		  atomic_read(&ptr->valid_logical_blks),
-		  atomic_read(&ptr->invalid_logical_blks),
+		  free_blks, valid_blks, invalid_blks,
 		  ptr->pages_per_seg);
-	WARN_ON((atomic_read(&ptr->free_logical_blks) +
-		atomic_read(&ptr->valid_logical_blks) +
-		atomic_read(&ptr->invalid_logical_blks)) > ptr->pages_per_seg);
+
+	if (calculated > ptr->pages_per_seg) {
+		SSDFS_WARN("free_logical_blks %d, valid_logical_blks %d, "
+			   "invalid_logical_blks %d, calculated %d, "
+			   "pages_per_seg %u\n",
+			   free_blks, valid_blks, invalid_blks,
+			   calculated, ptr->pages_per_seg);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
-	return atomic_read(&ptr->free_logical_blks);
+	return atomic_read(&ptr->seg_free_blks);
 }
 
 static inline
 int ssdfs_segment_blk_bmap_get_used_pages(struct ssdfs_segment_blk_bmap *ptr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
+	int free_blks;
+	int valid_blks;
+	int invalid_blks;
+	int calculated;
+
 	BUG_ON(!ptr);
+
+	free_blks = atomic_read(&ptr->seg_free_blks);
+	valid_blks = atomic_read(&ptr->seg_valid_blks);
+	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
+	calculated = free_blks + valid_blks + invalid_blks;
+
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
-		  atomic_read(&ptr->free_logical_blks),
-		  atomic_read(&ptr->valid_logical_blks),
-		  atomic_read(&ptr->invalid_logical_blks),
+		  free_blks, valid_blks, invalid_blks,
 		  ptr->pages_per_seg);
-	WARN_ON((atomic_read(&ptr->free_logical_blks) +
-		atomic_read(&ptr->valid_logical_blks) +
-		atomic_read(&ptr->invalid_logical_blks)) > ptr->pages_per_seg);
+
+	if (calculated > ptr->pages_per_seg) {
+		SSDFS_WARN("free_logical_blks %d, valid_logical_blks %d, "
+			   "invalid_logical_blks %d, calculated %d, "
+			   "pages_per_seg %u\n",
+			   free_blks, valid_blks, invalid_blks,
+			   calculated, ptr->pages_per_seg);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
-	return atomic_read(&ptr->valid_logical_blks);
+	return atomic_read(&ptr->seg_valid_blks);
 }
 
 static inline
 int ssdfs_segment_blk_bmap_get_invalid_pages(struct ssdfs_segment_blk_bmap *ptr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
+	int free_blks;
+	int valid_blks;
+	int invalid_blks;
+	int calculated;
+
 	BUG_ON(!ptr);
+
+	free_blks = atomic_read(&ptr->seg_free_blks);
+	valid_blks = atomic_read(&ptr->seg_valid_blks);
+	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
+	calculated = free_blks + valid_blks + invalid_blks;
+
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
-		  atomic_read(&ptr->free_logical_blks),
-		  atomic_read(&ptr->valid_logical_blks),
-		  atomic_read(&ptr->invalid_logical_blks),
+		  free_blks, valid_blks, invalid_blks,
 		  ptr->pages_per_seg);
-	WARN_ON((atomic_read(&ptr->free_logical_blks) +
-		atomic_read(&ptr->valid_logical_blks) +
-		atomic_read(&ptr->invalid_logical_blks)) > ptr->pages_per_seg);
+
+	if (calculated > ptr->pages_per_seg) {
+		SSDFS_WARN("free_logical_blks %d, valid_logical_blks %d, "
+			   "invalid_logical_blks %d, calculated %d, "
+			   "pages_per_seg %u\n",
+			   free_blks, valid_blks, invalid_blks,
+			   calculated, ptr->pages_per_seg);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
-	return atomic_read(&ptr->invalid_logical_blks);
+	return atomic_read(&ptr->seg_invalid_blks);
 }
 
 #endif /* _SSDFS_SEGMENT_BLOCK_BITMAP_H */

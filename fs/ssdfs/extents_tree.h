@@ -116,8 +116,8 @@ int ssdfs_extents_tree_add_updated_seg_id(struct ssdfs_extents_btree_info *tree,
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req);
 bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode);
-int ssdfs_extents_tree_add_block(struct inode *inode,
-				 struct ssdfs_segment_request *req);
+int ssdfs_extents_tree_add_extent(struct inode *inode,
+				  struct ssdfs_segment_request *req);
 int ssdfs_extents_tree_truncate(struct inode *inode);
 
 /*
@@ -126,10 +126,10 @@ int ssdfs_extents_tree_truncate(struct inode *inode);
 int ssdfs_extents_tree_find_fork(struct ssdfs_extents_btree_info *tree,
 				 u64 blk,
 				 struct ssdfs_btree_search *search);
-int ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
-				  u64 blk,
-				  struct ssdfs_raw_extent *extent,
-				  struct ssdfs_btree_search *search);
+int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
+				     u64 blk,
+				     struct ssdfs_raw_extent *extent,
+				     struct ssdfs_btree_search *search);
 int ssdfs_extents_tree_change_extent(struct ssdfs_extents_btree_info *tree,
 				     u64 blk,
 				     struct ssdfs_raw_extent *extent,

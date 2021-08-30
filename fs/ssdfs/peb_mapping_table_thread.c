@@ -773,10 +773,14 @@ finish_fragment_correction:
 	up_write(&fdesc->lock);
 
 	if (!err) {
-		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 		mutex_lock(&tbl->bmap_lock);
+		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 		mutex_unlock(&tbl->bmap_lock);
+
+		SSDFS_DBG("fragment_index %u, state %#x\n",
+			  fragment_index,
+			  atomic_read(&fdesc->state));
 	}
 
 	return err;
@@ -1492,11 +1496,15 @@ finish_fragment_correction:
 	up_write(&fdesc->lock);
 
 	if (!err) {
-		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 		mutex_lock(&tbl->bmap_lock);
+		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 		mutex_unlock(&tbl->bmap_lock);
 		err = err2;
+
+		SSDFS_DBG("fragment_index %u, state %#x\n",
+			  fragment_index,
+			  atomic_read(&fdesc->state));
 	}
 
 	return err;
