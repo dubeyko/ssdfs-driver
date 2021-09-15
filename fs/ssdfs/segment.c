@@ -586,38 +586,6 @@ void ssdfs_segment_put_object(struct ssdfs_segment_info *si)
 }
 
 /*
- * SEG_TYPE2MASK() - convert segment type into search mask
- */
-static inline
-int SEG_TYPE2MASK(int seg_type)
-{
-	int mask;
-
-	switch (seg_type) {
-	case SSDFS_USER_DATA_SEG_TYPE:
-		mask = SSDFS_SEG_DATA_USING_STATE_FLAG;
-		break;
-
-	case SSDFS_LEAF_NODE_SEG_TYPE:
-		mask = SSDFS_SEG_LEAF_NODE_USING_STATE_FLAG;
-		break;
-
-	case SSDFS_HYBRID_NODE_SEG_TYPE:
-		mask = SSDFS_SEG_HYBRID_NODE_USING_STATE_FLAG;
-		break;
-
-	case SSDFS_INDEX_NODE_SEG_TYPE:
-		mask = SSDFS_SEG_INDEX_NODE_USING_STATE_FLAG;
-		break;
-
-	default:
-		BUG();
-	};
-
-	return mask;
-}
-
-/*
  * ssdfs_segment_detect_search_range() - detect search range
  * @fsi: pointer on shared file system object
  * @start_seg: starting ID for segment search [in|out]

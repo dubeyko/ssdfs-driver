@@ -1100,9 +1100,10 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("current_log.free_data_pages %u, "
+	SSDFS_DBG("peb %llu, current_log.free_data_pages %u, "
 		  "area_type %#x, area.write_offset %u, "
 		  "fragment_size %u\n",
+		  pebi->peb_id,
 		  pebi->current_log.free_data_pages,
 		  area_type,
 		  pebi->current_log.area[area_type].write_offset,
@@ -3628,6 +3629,15 @@ finish_copy:
 	off->log_area = area_type;
 	off->byte_offset = *write_offset;
 
+	SSDFS_DBG("seg_id %llu, peb_id %llu, "
+		  "peb_index %u, peb_page %u, "
+		  "log_area %#x, byte_offset %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  le16_to_cpu(off->peb_index),
+		  le16_to_cpu(off->peb_page),
+		  off->log_area,
+		  le32_to_cpu(off->byte_offset));
+
 	area->write_offset = *write_offset + blk_desc_size;
 
 	return 0;
@@ -3969,6 +3979,9 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 
 	data_off.peb_page = (u16)range.start;
 
+	SSDFS_DBG("logical_blk %u, peb_page %u\n",
+		  logical_block, range.start);
+
 	err = ssdfs_peb_store_block_descriptor(pebi, req, &data_off, &desc_off);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to store block descriptor: "
@@ -4273,6 +4286,9 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 
 		logical_block += i;
 		logical_offset += i;
+
+		SSDFS_DBG("logical_blk %u, peb_page %u\n",
+			  logical_block, range.start + i);
 
 		err = ssdfs_peb_store_block_descriptor_offset(pebi,
 							(u32)logical_offset,
@@ -4702,6 +4718,7 @@ int ssdfs_peb_read_from_offset(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - try again to update data block.
  */
 static
 int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
@@ -4805,12 +4822,69 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	if (migration_state == SSDFS_LBLOCK_UNDER_COMMIT) {
-		SSDFS_DBG("try again to add block: "
+	down_write(&table->translation_lock);
+
+	migration_state = ssdfs_blk2off_table_get_block_migration(table, blk,
+								  peb_index);
+	switch (migration_state) {
+	case SSDFS_LBLOCK_UNKNOWN_STATE:
+		err = -ENOENT;
+		/* logical block is not migrating */
+		break;
+
+	case SSDFS_LBLOCK_UNDER_MIGRATION:
+		switch (req->private.cmd) {
+		case SSDFS_MIGRATE_RANGE:
+		case SSDFS_MIGRATE_FRAGMENT:
+			err = 0;
+			/* continue logic */
+			break;
+
+		default:
+			err = ssdfs_blk2off_table_update_block_state(table,
+								     req);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to update block's state: "
+					  "seg %llu, logical_block %u, "
+					  "peb %llu, err %d\n",
+					  req->place.start.seg_id, blk,
+					  pebi->peb_id, err);
+			} else
+				err = -EEXIST;
+			break;
+		}
+		break;
+
+	case SSDFS_LBLOCK_UNDER_COMMIT:
+		err = -EAGAIN;
+		SSDFS_ERR("try again to update block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, blk, pebi->peb_id);
-		return -EAGAIN;
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("unexpected migration state: "
+			  "seg %llu, logical_block %u, "
+			  "peb %llu, migration_state %#x\n",
+			  req->place.start.seg_id, blk,
+			  pebi->peb_id, migration_state);
+		break;
 	}
+
+	up_write(&table->translation_lock);
+
+	if (err == -ENOENT) {
+		/* logical block is not migrating */
+		err = 0;
+	} else if (err == -EEXIST) {
+		SSDFS_DBG("migrating block has been updated in buffer: "
+			  "seg %llu, peb %llu, logical_block %u\n",
+			  req->place.start.seg_id, pebi->peb_id,
+			  blk);
+		return 0;
+	} else if (unlikely(err))
+		return err;
 
 	err = ssdfs_peb_reserve_block_descriptor(pebi, req);
 	if (err == -EAGAIN) {
@@ -4849,6 +4923,9 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		range_state = SSDFS_BLK_VALID;
 	else
 		range_state = SSDFS_BLK_PRE_ALLOCATED;
+
+	SSDFS_DBG("logical_blk %u, peb_page %u\n",
+		  blk, range.start);
 
 	err = ssdfs_segment_blk_bmap_update_range(seg_blkbmap, pebi->pebc,
 				blk_desc_off->blk_state.peb_migration_id,
@@ -5151,6 +5228,9 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 
 	range.start = le16_to_cpu(blk_desc_off->page_desc.peb_page);
 	range.len = len;
+
+	SSDFS_DBG("logical_blk %u, peb_page %u\n",
+		  logical_block, range.start);
 
 	SSDFS_DBG("range (start %u, len %u)\n",
 		  range.start, range.len);

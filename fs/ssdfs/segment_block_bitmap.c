@@ -652,7 +652,6 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  ptr->parent_si->seg_id,
@@ -663,6 +662,7 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
@@ -720,7 +720,6 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  ptr->parent_si->seg_id,
@@ -731,6 +730,7 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
@@ -1125,6 +1125,23 @@ finish_define_bmap_index:
 				  "err %d\n",
 				  range->start, range->len,
 				  range_state, err);
+			SSDFS_ERR("seg_id %llu, peb_index %u, "
+				  "peb_migration_id %u, "
+				  "range (start %u, len %u)\n",
+				  bmap->parent_si->seg_id,
+				  pebc->peb_index,
+				  peb_migration_id,
+				  range->start, range->len);
+			SSDFS_ERR("seg_id %llu, migration_state %#x, "
+				  "items_state %#x, "
+				  "peb_migration_id %u, src_migration_id %d, "
+				  "dst_migration_id %d, migration_phase %#x\n",
+				  si->seg_id, migration_state, items_state,
+				  peb_migration_id, src_migration_id,
+				  dst_migration_id, migration_phase);
+			SSDFS_ERR("seg_id %llu, need_migrate %#x, "
+				  "need_move %#x\n",
+				  si->seg_id, need_migrate, need_move);
 			return err;
 		}
 	} else if (need_move) {
@@ -1161,6 +1178,23 @@ finish_define_bmap_index:
 				  "err %d\n",
 				  range->start, range->len,
 				  range_state, err);
+			SSDFS_ERR("seg_id %llu, peb_index %u, "
+				  "peb_migration_id %u, "
+				  "range (start %u, len %u)\n",
+				  bmap->parent_si->seg_id,
+				  pebc->peb_index,
+				  peb_migration_id,
+				  range->start, range->len);
+			SSDFS_ERR("seg_id %llu, migration_state %#x, "
+				  "items_state %#x, "
+				  "peb_migration_id %u, src_migration_id %d, "
+				  "dst_migration_id %d, migration_phase %#x\n",
+				  si->seg_id, migration_state, items_state,
+				  peb_migration_id, src_migration_id,
+				  dst_migration_id, migration_phase);
+			SSDFS_ERR("seg_id %llu, need_migrate %#x, "
+				  "need_move %#x\n",
+				  si->seg_id, need_migrate, need_move);
 			return err;
 		}
 	} else {
@@ -1187,6 +1221,23 @@ finish_define_bmap_index:
 				  "err %d\n",
 				  range->start, range->len,
 				  range_state, err);
+			SSDFS_ERR("seg_id %llu, peb_index %u, "
+				  "peb_migration_id %u, "
+				  "range (start %u, len %u)\n",
+				  bmap->parent_si->seg_id,
+				  pebc->peb_index,
+				  peb_migration_id,
+				  range->start, range->len);
+			SSDFS_ERR("seg_id %llu, migration_state %#x, "
+				  "items_state %#x, "
+				  "peb_migration_id %u, src_migration_id %d, "
+				  "dst_migration_id %d, migration_phase %#x\n",
+				  si->seg_id, migration_state, items_state,
+				  peb_migration_id, src_migration_id,
+				  dst_migration_id, migration_phase);
+			SSDFS_ERR("seg_id %llu, need_migrate %#x, "
+				  "need_move %#x\n",
+				  si->seg_id, need_migrate, need_move);
 			return err;
 		}
 	}

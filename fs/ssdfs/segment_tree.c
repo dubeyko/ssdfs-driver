@@ -329,6 +329,8 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	kunmap(page);
 
+	ssdfs_clear_dirty_page(page);
+
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -383,6 +385,7 @@ static
 void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 {
 	pgoff_t start = 0;
+	pgoff_t end = -1;
 	size_t pages_count = 0;
 	struct page *array[SSDFS_MEM_PAGE_ARRAY_SIZE] = {0};
 
@@ -393,9 +396,11 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p\n", fsi);
 
 	do {
-		pages_count = find_get_pages(&fsi->segs_tree->pages, &start,
-					     SSDFS_MEM_PAGE_ARRAY_SIZE,
-					     &array[0]);
+		pages_count = find_get_pages_range_tag(&fsi->segs_tree->pages,
+					    &start, end,
+					    PAGECACHE_TAG_DIRTY,
+					    SSDFS_MEM_PAGE_ARRAY_SIZE,
+					    &array[0]);
 
 		SSDFS_DBG("start %lu, pages_count %zu\n",
 			  start, pages_count);
@@ -498,6 +503,11 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	} else
 		*(kaddr + object_index) = si;
 	kunmap_atomic(kaddr);
+
+	SetPageUptodate(page);
+	if (!PageDirty(page))
+		__set_page_dirty_nobuffers(page);
+
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -576,6 +586,11 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		*(kaddr + object_index) = NULL;
 	}
 	kunmap_atomic(kaddr);
+
+	SetPageUptodate(page);
+	if (!PageDirty(page))
+		__set_page_dirty_nobuffers(page);
+
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

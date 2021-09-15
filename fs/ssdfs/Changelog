@@ -3,6 +3,15 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.96 [September 14, 2021]
+    (*) Enhance testing logic:
+    (*) add block bitmap test-case.
+    (*) add offset translation table test-case.
+    (*) add PEB mapping table test-case.
+    (*) add segment bitmap test-case.
+    (*) add shared dictionary test-case.
+    (*) add xattr tree test-case.
+
 v.3.95 [August 29, 2021]
     (*) Implement inline files support.
 

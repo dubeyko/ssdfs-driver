@@ -121,6 +121,7 @@ struct ssdfs_maptbl_area {
  * @extents: metadata extents that describe mapping table location
  * @segs: array of pointers on segment objects
  * @segs_count: count of segment objects are used for mapping table
+ * @erase_op_state: state of erase operation
  * @pre_erase_pebs: count of PEBs in pre-erase state
  * @max_erase_ops: upper bound of erase operations for one iteration
  * @bmap_lock: dirty bitmap's lock
@@ -148,6 +149,7 @@ struct ssdfs_peb_mapping_table {
 	struct ssdfs_segment_info **segs[SSDFS_MAPTBL_SEG_COPY_MAX];
 	u16 segs_count;
 
+	atomic_t erase_op_state;
 	atomic_t pre_erase_pebs;
 	atomic_t max_erase_ops;
 	atomic64_t last_peb_recover_cno;
@@ -187,6 +189,14 @@ struct ssdfs_maptbl_peb_descriptor {
  */
 struct ssdfs_maptbl_peb_relation {
 	struct ssdfs_maptbl_peb_descriptor pebs[SSDFS_MAPTBL_RELATION_MAX];
+};
+
+/*
+ * Erase operation state
+ */
+enum {
+	SSDFS_MAPTBL_NO_ERASE,
+	SSDFS_MAPTBL_ERASE_IN_PROGRESS
 };
 
 /*
@@ -523,6 +533,17 @@ int ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 				      struct ssdfs_maptbl_area *area,
 				      u16 pages_count);
+
+#ifdef CONFIG_SSDFS_TESTING
+int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl);
+#else
+static inline
+int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl)
+{
+	SSDFS_ERR("function is not supported\n");
+	return -EOPNOTSUPP;
+}
+#endif /* CONFIG_SSDFS_TESTING */
 
 void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl);
 

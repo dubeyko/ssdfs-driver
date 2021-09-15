@@ -1773,7 +1773,6 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !range || !bmap->src);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
 		  bmap, bmap_index, len);
@@ -1783,6 +1782,7 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 		  atomic_read(&bmap->peb_valid_blks),
 		  atomic_read(&bmap->peb_invalid_blks),
 		  bmap->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -2067,7 +2067,6 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !range || !bmap->src);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
 		  bmap, bmap_index, len);
@@ -2077,6 +2076,7 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 		  atomic_read(&bmap->peb_valid_blks),
 		  atomic_read(&bmap->peb_invalid_blks),
 		  bmap->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -2357,12 +2357,12 @@ int ssdfs_peb_blk_bmap_invalidate(struct ssdfs_peb_blk_bmap *bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !range || !bmap->src);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, bmap %p, bmap_index %u, "
 		  "range (start %u, len %u)\n",
 		  bmap->parent->parent_si->seg_id,
 		  bmap, bmap_index, range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;
@@ -2589,7 +2589,6 @@ int ssdfs_peb_blk_bmap_update_range(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap || !range);
 	BUG_ON(!(new_range_state == SSDFS_BLK_PRE_ALLOCATED ||
 		 new_range_state == SSDFS_BLK_VALID));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("bmap %p, peb_index %u, state %#x, "
 		  "new_range_state %#x, "
@@ -2598,6 +2597,7 @@ int ssdfs_peb_blk_bmap_update_range(struct ssdfs_peb_blk_bmap *bmap,
 		  atomic_read(&bmap->state),
 		  new_range_state,
 		  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
 		unsigned long res;

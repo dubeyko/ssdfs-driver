@@ -364,6 +364,7 @@ finish_page_processing:
  *
  * %-EINVAL  - invalid input.
  * %-ERANGE  - internal error.
+ * %-ENOENT  - no dirty PEBs.
  */
 static
 int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
@@ -404,7 +405,7 @@ int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED ||
 	    state == SSDFS_MAPTBL_FRAG_CREATED) {
 		/* do nothing */
-		return 0;
+		return -ENOENT;
 	}
 
 	stripes_per_fragment = tbl->stripes_per_fragment;
@@ -416,6 +417,7 @@ int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	if (fdesc->pre_erase_pebs == 0) {
 		/* no dirty PEBs */
+		err = -ENOENT;
 		goto finish_gathering;
 	}
 
@@ -591,6 +593,8 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		goto finish_page_processing;
 	}
 
+	SSDFS_DBG("peb_id %llu, peb_index %u, state %#x\n",
+			  res->peb_id, res->peb_index, ptr->state);
 	SSDFS_DBG("erase_cycles %u, type %#x, "
 		  "state %#x, flags %#x, shared_peb_index %u\n",
 		  le32_to_cpu(ptr->erase_cycles),
@@ -1611,7 +1615,6 @@ int ssdfs_maptbl_correct_max_erase_ops(struct ssdfs_fs_info *fsi,
  * @tbl: mapping table object
  * @array: array of erase operation results
  */
-static
 int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_erase_result_array *array)
 {
@@ -1619,6 +1622,7 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	u32 fragments_count;
 	int max_erase_ops;
 	int erases_per_fragment;
+	int state = SSDFS_MAPTBL_NO_ERASE;
 	int i;
 	int err = 0;
 
@@ -1651,6 +1655,16 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_collect_dirty_pebs;
 	}
 
+	state = atomic_cmpxchg(&tbl->erase_op_state,
+				SSDFS_MAPTBL_NO_ERASE,
+				SSDFS_MAPTBL_ERASE_IN_PROGRESS);
+	if (state != SSDFS_MAPTBL_NO_ERASE) {
+		err = -EBUSY;
+		SSDFS_DBG("erase operation is in progress\n");
+		goto finish_collect_dirty_pebs;
+	} else
+		state = SSDFS_MAPTBL_ERASE_IN_PROGRESS;
+
 	fragments_count = tbl->fragments_count;
 	erases_per_fragment = max_erase_ops / fragments_count;
 	if (erases_per_fragment == 0)
@@ -1661,7 +1675,12 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	for (i = 0; i < fragments_count; i++) {
 		err = ssdfs_maptbl_collect_dirty_pebs(tbl, i,
 					erases_per_fragment, array);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("fragment %d has no dirty PEBs\n",
+				  i);
+			continue;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to collect dirty pebs: "
 				  "fragment_index %d, err %d\n",
 				  i, err);
@@ -1700,6 +1719,11 @@ finish_collect_dirty_pebs:
 	up_read(&tbl->tbl_lock);
 
 finish_dirty_pebs_processing:
+	if (state == SSDFS_MAPTBL_ERASE_IN_PROGRESS) {
+		state = SSDFS_MAPTBL_NO_ERASE;
+		atomic_set(&tbl->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
+	}
+
 	return err;
 }
 
@@ -2194,6 +2218,46 @@ bool has_maptbl_pre_erase_pebs(struct ssdfs_peb_mapping_table *tbl)
 	return atomic_read(&tbl->pre_erase_pebs) > 0;
 }
 
+#ifdef CONFIG_SSDFS_TESTING
+int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl)
+{
+	struct ssdfs_erase_result_array array = {NULL, 0, 0};
+	int err = 0;
+
+	down_read(&tbl->tbl_lock);
+	array.capacity = (u32)tbl->fragments_count *
+				SSDFS_ERASE_RESULTS_PER_FRAGMENT;
+	up_read(&tbl->tbl_lock);
+
+	array.size = 0;
+	array.ptr = ssdfs_map_thread_kcalloc(array.capacity,
+				  sizeof(struct ssdfs_erase_result),
+				  GFP_KERNEL);
+	if (!array.ptr) {
+		SSDFS_ERR("fail to allocate erase_results array\n");
+		return -ENOMEM;
+	}
+
+	if (has_maptbl_pre_erase_pebs(tbl)) {
+		err = ssdfs_maptbl_process_dirty_pebs(tbl, &array);
+		if (err == -EBUSY || err == -EAGAIN) {
+			err = 0;
+			goto finish_erase_dirty_pebs;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to process dirty PEBs: err %d\n",
+				  err);
+			goto finish_erase_dirty_pebs;
+		}
+	}
+
+finish_erase_dirty_pebs:
+	if (array.ptr)
+		ssdfs_map_thread_kfree(array.ptr);
+
+	return err;
+}
+#endif /* CONFIG_SSDFS_TESTING */
+
 #define MAPTBL_PTR(tbl) \
 	((struct ssdfs_peb_mapping_table *)(tbl))
 #define MAPTBL_THREAD_WAKE_CONDITION(tbl, cache) \
@@ -2265,6 +2329,12 @@ repeat:
 		complete_all(&tbl->thread.full_stop);
 		if (array.ptr)
 			ssdfs_map_thread_kfree(array.ptr);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("thread function had some issue: err %d\n",
+				  err);
+		}
+
 		return err;
 	}
 
@@ -2332,6 +2402,8 @@ repeat:
 		err = ssdfs_maptbl_process_dirty_pebs(tbl, &array);
 		if (err == -EBUSY || err == -EAGAIN) {
 			err = 0;
+			wait_event_interruptible_timeout(*wait_queue,
+					kthread_should_stop(), HZ);
 			goto sleep_maptbl_thread;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to process dirty PEBs: err %d\n",

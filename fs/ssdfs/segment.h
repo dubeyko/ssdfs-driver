@@ -269,6 +269,38 @@ int SEG_TYPE_TO_USING_STATE(u16 seg_type)
 }
 
 /*
+ * SEG_TYPE2MASK() - convert segment type into search mask
+ */
+static inline
+int SEG_TYPE2MASK(int seg_type)
+{
+	int mask;
+
+	switch (seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		mask = SSDFS_SEG_DATA_USING_STATE_FLAG;
+		break;
+
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+		mask = SSDFS_SEG_LEAF_NODE_USING_STATE_FLAG;
+		break;
+
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+		mask = SSDFS_SEG_HYBRID_NODE_USING_STATE_FLAG;
+		break;
+
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		mask = SSDFS_SEG_INDEX_NODE_USING_STATE_FLAG;
+		break;
+
+	default:
+		BUG();
+	};
+
+	return mask;
+}
+
+/*
  * Segment object's API
  */
 struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id);

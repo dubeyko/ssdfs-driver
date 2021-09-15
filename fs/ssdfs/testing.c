@@ -29,6 +29,9 @@
 #include "extents_tree.h"
 #include "dentries_tree.h"
 #include "inodes_tree.h"
+#include "peb_mapping_table.h"
+#include "shared_dictionary.h"
+#include "xattr_tree.h"
 #include "testing.h"
 
 static
@@ -182,9 +185,9 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi,
 	u64 seg_id = 1;
 	u64 logical_blk = 0;
 	s64 logical_offset = 0;
-	u64 threshold = env->file_size_threshold;
+	u64 threshold = env->extents_tree.file_size_threshold;
 	u32 page_size = env->page_size;
-	u16 extent_len_max = env->extent_len_threshold;
+	u16 extent_len_max = env->extents_tree.extent_len_threshold;
 	u32 extent_len = 1;
 	u64 per_1_percent = 0;
 	u64 message_threshold = 0;
@@ -568,7 +571,7 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 
 	ii = SSDFS_I(root_i);
 
-	threshold = env->files_number_threshold;
+	threshold = env->dentries_tree.files_number_threshold;
 	per_1_percent = div_u64(threshold, 100);
 	message_threshold = per_1_percent;
 
@@ -676,6 +679,2341 @@ finish_testing:
 	return err;
 }
 
+static
+int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_testing_environment *env,
+					struct ssdfs_block_bmap_range *range,
+					int blk_state)
+{
+	int free_blks;
+	int used_blks;
+	int invalid_blks;
+	int reserved_metadata_blks;
+	int calculated;
+	int err;
+
+	if (!ssdfs_block_bmap_test_range(bmap, range, blk_state)) {
+		SSDFS_ERR("invalid state: "
+			  "range (start %u, len %u), "
+			  "blk_state %#x\n",
+			  range->start, range->len, blk_state);
+		return -ERANGE;
+	}
+
+	err = ssdfs_block_bmap_get_free_pages(bmap);
+	if (unlikely(err < 0)) {
+		SSDFS_ERR("fail to get free pages: err %d\n", err);
+		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get free pages: err %d\n", err);
+		return -ERANGE;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_used_pages(bmap);
+	if (unlikely(err < 0)) {
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		return -ERANGE;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	err = ssdfs_block_bmap_get_invalid_pages(bmap);
+	if (unlikely(err < 0)) {
+		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
+		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
+		return -ERANGE;
+	} else {
+		invalid_blks = err;
+		err = 0;
+	}
+
+	reserved_metadata_blks = bmap->metadata_items;
+
+	calculated = free_blks + used_blks + invalid_blks;
+	calculated += reserved_metadata_blks;
+
+	if (calculated != env->block_bitmap.capacity) {
+		SSDFS_ERR("invalid state: "
+			  "calculated %d != capacity %u\n",
+			  calculated,
+			  env->block_bitmap.capacity);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_testing_block_bmap_pre_allocation(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_block_bmap_range range;
+	u32 len;
+	int err = 0;
+
+	SSDFS_ERR("BLOCK BMAP: try to pre-allocate %u blocks\n",
+		  env->block_bitmap.pre_alloc_blks_per_iteration);
+
+	if (env->block_bitmap.pre_alloc_blks_per_iteration >= U32_MAX) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid pre-alloc blocks %u\n",
+			  env->block_bitmap.pre_alloc_blks_per_iteration);
+		goto finish_check;
+	}
+
+	len = env->block_bitmap.pre_alloc_blks_per_iteration;
+	err = ssdfs_block_bmap_pre_allocate(bmap, 0, &len, &range);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to pre_allocate: err %d\n", err);
+		goto finish_check;
+	}
+
+	err = ssdfs_testing_check_block_bitmap_nolock(bmap, env, &range,
+						      SSDFS_BLK_PRE_ALLOCATED);
+	if (unlikely(err)) {
+		SSDFS_ERR("pre_allocation check failed: err %d\n", err);
+		goto finish_check;
+	}
+
+	SSDFS_ERR("BLOCK BMAP: range (start %u, len %u) "
+		  "has been pre-allocated\n",
+		  range.start, range.len);
+
+finish_check:
+	return err;
+}
+
+static
+int ssdfs_testing_block_bmap_allocation(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_block_bmap_range range;
+	u32 len;
+	int err = 0;
+
+	SSDFS_ERR("BLOCK BMAP: try to allocate %u blocks\n",
+		  env->block_bitmap.alloc_blks_per_iteration);
+
+	if (env->block_bitmap.alloc_blks_per_iteration >= U32_MAX) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid alloc blocks %u\n",
+			  env->block_bitmap.alloc_blks_per_iteration);
+		goto finish_check;
+	}
+
+	len = env->block_bitmap.alloc_blks_per_iteration;
+	err = ssdfs_block_bmap_allocate(bmap, 0, &len, &range);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate: err %d\n", err);
+		goto finish_check;
+	}
+
+	err = ssdfs_testing_check_block_bitmap_nolock(bmap, env, &range,
+						      SSDFS_BLK_VALID);
+	if (unlikely(err)) {
+		SSDFS_ERR("allocation check failed: err %d\n", err);
+		goto finish_check;
+	}
+
+	SSDFS_ERR("BLOCK BMAP: range (start %u, len %u) "
+		  "has been allocated\n",
+		  range.start, range.len);
+
+finish_check:
+	return err;
+}
+
+static
+int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_block_bmap_range range;
+	u32 capacity = env->block_bitmap.capacity;
+	u32 start;
+	u32 len;
+	u32 i;
+	int err = 0;
+
+	SSDFS_ERR("BLOCK BMAP: try to invalidate %u blocks\n",
+		  env->block_bitmap.invalidate_blks_per_iteration);
+
+	if (env->block_bitmap.invalidate_blks_per_iteration >= U32_MAX) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid request: "
+			  "invalidate_blks_per_iteration %u\n",
+			  env->block_bitmap.invalidate_blks_per_iteration);
+		goto finish_check;
+	}
+
+	start = 0;
+	len = env->block_bitmap.invalidate_blks_per_iteration;
+	range.start = U32_MAX;
+	range.len = 0;
+
+	while (len > 0) {
+		for (i = 0; i < len; i++) {
+			if (ssdfs_block_bmap_test_block(bmap, start + i,
+						    SSDFS_BLK_PRE_ALLOCATED)) {
+				if (range.start >= U32_MAX) {
+					range.start = start + i;
+					range.len = 1;
+				} else {
+					range.len++;
+				}
+			} else if (ssdfs_block_bmap_test_block(bmap, start + i,
+							    SSDFS_BLK_VALID)) {
+				if (range.start >= U32_MAX) {
+					range.start = start + i;
+					range.len = 1;
+				} else {
+					range.len++;
+				}
+			} else
+				break;
+		}
+
+		if (range.len == 0) {
+			start += len;
+			continue;
+		}
+
+		err = ssdfs_block_bmap_invalidate(bmap, &range);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to invalidate: err %d\n", err);
+			goto finish_check;
+		}
+
+		err = ssdfs_testing_check_block_bitmap_nolock(bmap, env,
+							    &range,
+							    SSDFS_BLK_INVALID);
+		if (unlikely(err)) {
+			SSDFS_ERR("invalidation check failed: err %d\n", err);
+			goto finish_check;
+		}
+
+		SSDFS_ERR("BLOCK BMAP: range (start %u, len %u) "
+			  "has been invalidated\n",
+			  range.start, range.len);
+
+		start = range.start + range.len;
+		len -= range.len;
+		range.start = U32_MAX;
+		range.len = 0;
+
+		if (start >= capacity)
+			break;
+	}
+
+finish_check:
+	return err;
+}
+
+static
+int ssdfs_testing_block_bmap_collect_garbage(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_block_bmap_range range1, range2;
+	u32 capacity = env->block_bitmap.capacity;
+	int used_blks;
+	u32 start1, start2;
+	int err = 0;
+
+	err = ssdfs_block_bmap_get_used_pages(bmap);
+	if (unlikely(err < 0)) {
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		return -ERANGE;
+	} else {
+		used_blks = err;
+		err = 0;
+	}
+
+	start1 = 0;
+	start2 = 0;
+	range1.start = U32_MAX;
+	range1.len = 0;
+	range2.start = U32_MAX;
+	range2.len = 0;
+
+	while (used_blks > 0) {
+		SSDFS_DBG("BLOCK BMAP: collect garbage: start1 %u\n",
+			  start1);
+
+		err = ssdfs_block_bmap_collect_garbage(bmap, start1, capacity,
+							SSDFS_BLK_PRE_ALLOCATED,
+							&range1);
+		if (err == -ENODATA) {
+			err = 0;
+			range1.start = U32_MAX;
+			range1.len = 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to collect garbage: err %d\n", err);
+			goto finish_check;
+		} else {
+			if (!ssdfs_block_bmap_test_range(bmap, &range1,
+						SSDFS_BLK_PRE_ALLOCATED)) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid state: "
+					  "range (start %u, len %u), "
+					  "blk_state %#x\n",
+					  range1.start, range1.len,
+					  SSDFS_BLK_PRE_ALLOCATED);
+				goto finish_check;
+			}
+
+			SSDFS_ERR("BLOCK BMAP: found pre_allocated "
+				  "range (start %u, len %u)\n",
+				  range1.start, range1.len);
+		}
+
+		SSDFS_DBG("BLOCK BMAP: collect garbage: start2 %u\n",
+			  start2);
+
+		err = ssdfs_block_bmap_collect_garbage(bmap, start2, capacity,
+							SSDFS_BLK_VALID,
+							&range2);
+		if (err == -ENODATA) {
+			err = 0;
+			range2.start = U32_MAX;
+			range2.len = 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to collect garbage: err %d\n", err);
+			goto finish_check;
+		} else {
+			if (!ssdfs_block_bmap_test_range(bmap, &range2,
+							SSDFS_BLK_VALID)) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid state: "
+					  "range (start %u, len %u), "
+					  "blk_state %#x\n",
+					  range2.start, range2.len,
+					  SSDFS_BLK_VALID);
+				goto finish_check;
+			}
+
+			SSDFS_ERR("BLOCK BMAP: found allocated "
+				  "range (start %u, len %u)\n",
+				  range2.start, range2.len);
+		}
+
+		if (range1.len > used_blks) {
+			err = -ERANGE;
+			SSDFS_ERR("range1.len %u > used_blks %d\n",
+				  range1.len, used_blks);
+			goto finish_check;
+		} else if (range1.len > 0) {
+			start1 = range1.start + range1.len;
+			used_blks -= range1.len;
+		}
+
+		if (range2.len > used_blks) {
+			err = -ERANGE;
+			SSDFS_ERR("range2.len %u > used_blks %d\n",
+				  range2.len, used_blks);
+			goto finish_check;
+		} else if (range2.len > 0) {
+			start2 = range2.start + range2.len;
+			used_blks -= range2.len;
+		}
+
+		SSDFS_DBG("BLOCK BMAP: start1 %u, start2 %u, used_blks %d\n",
+			  start1, start2, used_blks);
+
+		if (range1.len == 0 && range2.len == 0)
+			break;
+
+		range1.start = U32_MAX;
+		range1.len = 0;
+		range2.start = U32_MAX;
+		range2.len = 0;
+
+		if (start1 >= capacity && start2 >= capacity)
+			break;
+	};
+
+	if (used_blks > 0) {
+		err = -ERANGE;
+		SSDFS_ERR("collect garbage failed: used_blks %d\n",
+			  used_blks);
+		goto finish_check;
+	}
+
+finish_check:
+	return err;
+}
+
+static
+int ssdfs_do_block_bitmap_testing_iteration(struct ssdfs_fs_info *fsi,
+					struct ssdfs_block_bmap *bmap,
+					struct ssdfs_testing_environment *env)
+{
+	int err = 0;
+
+	err = ssdfs_block_bmap_lock(bmap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock bitmap: err %d\n", err);
+		goto finish_iteration;
+	}
+
+	if (env->block_bitmap.reserved_metadata_blks_per_iteration >= U16_MAX) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid metadata reservation %u\n",
+			env->block_bitmap.reserved_metadata_blks_per_iteration);
+		goto unlock_block_bitmap;
+	}
+
+	err = ssdfs_block_bmap_reserve_metadata_pages(bmap,
+			env->block_bitmap.reserved_metadata_blks_per_iteration);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to reserve metadata pages: err %d\n", err);
+		goto unlock_block_bitmap;
+	}
+
+	err = ssdfs_testing_block_bmap_pre_allocation(bmap, env);
+	if (unlikely(err)) {
+		SSDFS_ERR("pre_allocation check failed: err %d\n", err);
+		goto unlock_block_bitmap;
+	}
+
+	err = ssdfs_testing_block_bmap_allocation(bmap, env);
+	if (unlikely(err)) {
+		SSDFS_ERR("allocation check failed: err %d\n", err);
+		goto unlock_block_bitmap;
+	}
+
+	err = ssdfs_testing_block_bmap_invalidation(bmap, env);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalidation check failed: err %d\n", err);
+		goto unlock_block_bitmap;
+	}
+
+	err = ssdfs_testing_block_bmap_collect_garbage(bmap, env);
+	if (unlikely(err)) {
+		SSDFS_ERR("collect garbage check failed: err %d\n", err);
+		goto unlock_block_bitmap;
+	}
+
+unlock_block_bitmap:
+	ssdfs_block_bmap_unlock(bmap);
+
+finish_iteration:
+	return err;
+}
+
+static
+int ssdfs_do_block_bitmap_testing(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_block_bmap bmap;
+	int free_blks = 0;
+	int err = 0;
+
+	err = ssdfs_block_bmap_create(fsi, &bmap,
+				      env->block_bitmap.capacity,
+				      SSDFS_BLK_BMAP_CREATE,
+				      SSDFS_BLK_FREE);
+	if (err) {
+		SSDFS_ERR("fail to create file: "
+			  "err %d\n", err);
+		goto finish_block_bitmap_testing;
+	}
+
+	do {
+		err = ssdfs_block_bmap_lock(&bmap);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to lock bitmap: err %d\n", err);
+			goto destroy_block_bitmap;
+		}
+
+		err = ssdfs_block_bmap_get_free_pages(&bmap);
+		if (unlikely(err < 0)) {
+			SSDFS_ERR("fail to get free pages: err %d\n", err);
+			goto fail_define_free_pages_count;
+		} else if (unlikely(err >= U16_MAX)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get free pages: err %d\n", err);
+			goto fail_define_free_pages_count;
+		} else {
+			free_blks = err;
+			err = 0;
+		}
+
+		SSDFS_ERR("FREE BLOCKS: %d\n", free_blks);
+
+fail_define_free_pages_count:
+		ssdfs_block_bmap_unlock(&bmap);
+
+		if (unlikely(err))
+			goto destroy_block_bitmap;
+
+		if (free_blks <= 0)
+			break;
+
+		err = ssdfs_do_block_bitmap_testing_iteration(fsi, &bmap, env);
+		if (unlikely(err)) {
+			SSDFS_ERR("block bitmap testing iteration failed: "
+				  "free_blks %d, err %d\n",
+				  free_blks, err);
+			goto destroy_block_bitmap;
+		}
+	} while (free_blks > 0);
+
+	err = ssdfs_block_bmap_lock(&bmap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock bitmap: err %d\n", err);
+		goto destroy_block_bitmap;
+	}
+
+	err = ssdfs_block_bmap_clean(&bmap);
+	ssdfs_block_bmap_clear_dirty_state(&bmap);
+	ssdfs_block_bmap_unlock(&bmap);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to clean block bitmap: err %d\n",
+			  err);
+		goto destroy_block_bitmap;
+	}
+
+destroy_block_bitmap:
+	ssdfs_block_bmap_destroy(&bmap);
+
+finish_block_bitmap_testing:
+	return err;
+}
+
+static
+int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_blk2off_table *blk2off_tbl;
+	u32 capacity = env->blk2off_table.capacity;
+	u16 logical_blk;
+	s64 sequence_id;
+	struct completion *end;
+	unsigned long res;
+	int err = 0;
+
+	blk2off_tbl = ssdfs_blk2off_table_create(fsi, capacity,
+					SSDFS_SEG_OFF_TABLE,
+					SSDFS_BLK2OFF_OBJECT_COMPLETE_INIT);
+	if (!blk2off_tbl) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate memory for translation table\n");
+		goto finish_blk2off_table_testing;
+	}
+
+	logical_blk = 0;
+	while ((logical_blk + 1) < capacity) {
+		err = ssdfs_blk2off_table_allocate_block(blk2off_tbl,
+							 &logical_blk);
+		if (err == -EAGAIN) {
+			end = &blk2off_tbl->partial_init_end;
+			res = wait_for_completion_timeout(end,
+							SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("blk2off init failed: "
+					  "err %d\n", err);
+				goto destroy_blk2off_table;
+			}
+
+			err = ssdfs_blk2off_table_allocate_block(blk2off_tbl,
+								 &logical_blk);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to allocate logical block\n");
+			goto destroy_blk2off_table;
+		}
+
+		SSDFS_ERR("ALLOCATED: logical_blk %u, capacity %u\n",
+			  logical_blk, capacity);
+	}
+
+	for (logical_blk = 0; logical_blk < capacity; logical_blk++) {
+		struct ssdfs_phys_offset_descriptor blk_desc_off;
+
+		SSDFS_ERR("CHANGE OFFSET: logical_blk %u, capacity %u\n",
+			  logical_blk, capacity);
+
+		blk_desc_off.page_desc.logical_offset =
+					cpu_to_le32(logical_blk);
+		blk_desc_off.page_desc.logical_blk =
+					cpu_to_le16(logical_blk);
+		blk_desc_off.page_desc.peb_page =
+					cpu_to_le16(logical_blk);
+
+		blk_desc_off.blk_state.log_start_page =
+					cpu_to_le16(logical_blk);
+		blk_desc_off.blk_state.log_area = 0;
+		blk_desc_off.blk_state.peb_migration_id = 0;
+		blk_desc_off.blk_state.byte_offset =
+					cpu_to_le32(logical_blk * PAGE_SIZE);
+
+		err = ssdfs_blk2off_table_change_offset(blk2off_tbl,
+							logical_blk,
+							0,
+							&blk_desc_off);
+		if (err == -EAGAIN) {
+			end = &blk2off_tbl->full_init_end;
+
+			res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("blk2off init failed: "
+					  "err %d\n", err);
+				goto destroy_blk2off_table;
+			}
+
+			err = ssdfs_blk2off_table_change_offset(blk2off_tbl,
+								logical_blk,
+								0,
+								&blk_desc_off);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change offset: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			goto destroy_blk2off_table;
+		}
+	}
+
+	for (logical_blk = 0; logical_blk < capacity; logical_blk++) {
+		struct ssdfs_phys_offset_descriptor *ptr;
+		u16 peb_index;
+		int migration_state;
+		u32 logical_offset;
+		u16 blk;
+		u16 peb_page;
+		u16 log_start_page;
+		u8 log_area;
+		u8 peb_migration_id;
+		u32 byte_offset;
+		u32 calculated = logical_blk * PAGE_SIZE;
+
+		SSDFS_ERR("CHECK LOGICAL BLOCK: logical_blk %u, capacity %u\n",
+			  logical_blk, capacity);
+
+		ptr = ssdfs_blk2off_table_convert(blk2off_tbl,
+						  logical_blk,
+						  &peb_index,
+						  &migration_state);
+		if (IS_ERR(ptr) && PTR_ERR(ptr) == -EAGAIN) {
+			end = &blk2off_tbl->full_init_end;
+
+			res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("blk2off init failed: "
+					  "err %d\n", err);
+				goto destroy_blk2off_table;
+			}
+
+			ptr = ssdfs_blk2off_table_convert(blk2off_tbl,
+							  logical_blk,
+							  &peb_index,
+							  &migration_state);
+		}
+
+		if (IS_ERR_OR_NULL(ptr)) {
+			err = (ptr == NULL ? -ERANGE : PTR_ERR(ptr));
+			SSDFS_ERR("fail to convert: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			goto destroy_blk2off_table;
+		}
+
+		logical_offset = le32_to_cpu(ptr->page_desc.logical_offset);
+		if (logical_offset != logical_blk) {
+			err = -ERANGE;
+			SSDFS_ERR("logical_offset %u != logical_blk %u\n",
+				  logical_offset, logical_blk);
+			goto destroy_blk2off_table;
+		}
+
+		blk = le16_to_cpu(ptr->page_desc.logical_blk);
+		if (blk != logical_blk) {
+			err = -ERANGE;
+			SSDFS_ERR("blk %u != logical_blk %u\n",
+				  blk, logical_blk);
+			goto destroy_blk2off_table;
+		}
+
+		peb_page = le16_to_cpu(ptr->page_desc.peb_page);
+		if (peb_page != logical_blk) {
+			err = -ERANGE;
+			SSDFS_ERR("peb_page %u != logical_blk %u\n",
+				  peb_page, logical_blk);
+			goto destroy_blk2off_table;
+		}
+
+		log_start_page = le16_to_cpu(ptr->blk_state.log_start_page);
+		if (log_start_page != logical_blk) {
+			err = -ERANGE;
+			SSDFS_ERR("log_start_page %u != logical_blk %u\n",
+				  log_start_page, logical_blk);
+			goto destroy_blk2off_table;
+		}
+
+		log_area = ptr->blk_state.log_area;
+		if (log_area != 0) {
+			err = -ERANGE;
+			SSDFS_ERR("log_area %u != 0\n",
+				  log_area);
+			goto destroy_blk2off_table;
+		}
+
+		peb_migration_id = ptr->blk_state.peb_migration_id;
+		if (peb_migration_id != 0) {
+			err = -ERANGE;
+			SSDFS_ERR("peb_migration_id %u != 0\n",
+				  peb_migration_id);
+			goto destroy_blk2off_table;
+		}
+
+		byte_offset = le32_to_cpu(ptr->blk_state.byte_offset);
+		if (byte_offset != calculated) {
+			err = -ERANGE;
+			SSDFS_ERR("byte_offset %u != calculated %u\n",
+				  byte_offset, calculated);
+			goto destroy_blk2off_table;
+		}
+	}
+
+	for (logical_blk = 0; logical_blk < capacity; logical_blk++) {
+		SSDFS_ERR("FREE LOGICAL BLOCK: logical_blk %u, capacity %u\n",
+			  logical_blk, capacity);
+
+		err = ssdfs_blk2off_table_free_block(blk2off_tbl,
+						     0, logical_blk);
+		if (err == -EAGAIN) {
+			end = &blk2off_tbl->full_init_end;
+
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("blk2off init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_blk2off_table_free_block(blk2off_tbl,
+							     0, logical_blk);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to free logical block: "
+				  "blk %u, err %d\n",
+				  logical_blk, err);
+			goto destroy_blk2off_table;
+		}
+	}
+
+destroy_blk2off_table:
+	spin_lock(&blk2off_tbl->peb[0].sequence->lock);
+	sequence_id = blk2off_tbl->peb[0].sequence->last_allocated_id;
+	spin_unlock(&blk2off_tbl->peb[0].sequence->lock);
+
+	BUG_ON(sequence_id >= U16_MAX);
+
+	down_write(&blk2off_tbl->translation_lock);
+
+	for (; sequence_id >= 0; --sequence_id) {
+		err = ssdfs_blk2off_table_fragment_set_clean(blk2off_tbl, 0,
+							     (u16)sequence_id);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set fragment clean: "
+				  "sequence_id %llx, err %d\n",
+				  sequence_id, err);
+			goto finish_set_clean;
+		}
+	}
+
+finish_set_clean:
+	up_write(&blk2off_tbl->translation_lock);
+
+	ssdfs_blk2off_table_destroy(blk2off_tbl);
+
+finish_blk2off_table_testing:
+	return err;
+}
+
+static inline
+bool is_found_requested_peb_type(struct ssdfs_maptbl_peb_relation *pebr,
+				 u8 peb_type)
+{
+	return pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type == peb_type;
+}
+
+static
+int ssdfs_define_current_mapping_leb(struct ssdfs_fs_info *fsi,
+				     u64 *cur_leb)
+{
+	struct completion *init_end;
+	u64 end_leb;
+	int err;
+
+try_next_range:
+	if (SSDFS_PEB2SEG(fsi, *cur_leb) >= fsi->nsegs) {
+		return -ENOENT;
+	}
+
+	err = ssdfs_maptbl_recommend_search_range(fsi, cur_leb,
+						  &end_leb, &init_end);
+	if (err == -EAGAIN) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			return -ERANGE;
+		}
+
+		err = ssdfs_maptbl_recommend_search_range(fsi, cur_leb,
+							  &end_leb, &init_end);
+	}
+
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to find search range: leb_id %llu\n",
+			  *cur_leb);
+		*cur_leb = end_leb;
+		goto try_next_range;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find search range: "
+			  "leb_id %llu, err %d\n",
+			  *cur_leb, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_leb_mapping_testing(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_testing_environment *env,
+				 int iteration)
+{
+	struct completion *end;
+	struct ssdfs_maptbl_peb_relation pebr;
+	u64 cur_leb = iteration * env->mapping_table.peb_mappings_per_iteration;
+	int i;
+	int err;
+
+	for (i = 0; i < env->mapping_table.peb_mappings_per_iteration; i++) {
+		err = ssdfs_define_current_mapping_leb(fsi, &cur_leb);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find LEB for mapping\n");
+			return -ENOSPC;
+		}
+
+try_next_leb:
+		err = ssdfs_maptbl_map_leb2peb(fsi, cur_leb,
+						SSDFS_MAPTBL_DATA_PEB_TYPE,
+						&pebr, &end);
+		if (err == -EAGAIN) {
+			unsigned long res;
+
+			res = wait_for_completion_timeout(end,
+						  SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("maptbl init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_maptbl_map_leb2peb(fsi, cur_leb,
+						SSDFS_MAPTBL_DATA_PEB_TYPE,
+						&pebr, &end);
+		}
+
+		if (err == -EEXIST) {
+			err = 0;
+			cur_leb++;
+			goto try_next_leb;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to map LEB to PEB: "
+				  "leb_id %llu, err %d\n",
+				  cur_leb, err);
+			return err;
+		}
+
+		SSDFS_DBG("MAPPING TABLE: LEB %llu has been mapped\n",
+			  cur_leb);
+
+		cur_leb++;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   int iteration)
+{
+	struct completion *init_end;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *ptr1;
+	struct ssdfs_maptbl_peb_descriptor *ptr2;
+	u8 peb_type = SSDFS_MAPTBL_DATA_PEB_TYPE;
+	u64 cur_leb = 0;
+	int i;
+	unsigned long res;
+	int err;
+
+	for (i = 0; i < env->mapping_table.add_migrations_per_iteration; i++) {
+		do {
+			err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+							   peb_type, &pebr,
+							   &init_end);
+			if (err == -EAGAIN) {
+				res = wait_for_completion_timeout(init_end,
+							SSDFS_DEFAULT_TIMEOUT);
+				if (res == 0) {
+					err = -ERANGE;
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+								   peb_type,
+								   &pebr,
+								   &init_end);
+			}
+
+			if (err == -ENODATA) {
+				cur_leb++;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, peb_type %#x, err %d\n",
+					  cur_leb, peb_type, err);
+				return err;
+			}
+
+			ptr1 = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+			ptr2 = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
+
+			SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+				  "state %#x, consistency %#x; "
+				  "RELATION_INDEX: peb_id %llu, type %#x, "
+				  "state %#x, consistency %#x\n",
+				  ptr1->peb_id, ptr1->type,
+				  ptr1->state, ptr1->consistency,
+				  ptr2->peb_id, ptr2->type,
+				  ptr2->state, ptr2->consistency);
+
+			if (ptr1->state != SSDFS_MAPTBL_CLEAN_PEB_STATE ||
+			    ptr1->type != SSDFS_MAPTBL_DATA_PEB_TYPE) {
+				cur_leb++;
+				continue;
+			} else
+				break;
+		} while (SSDFS_PEB2SEG(fsi, cur_leb) < fsi->nsegs);
+
+		if (SSDFS_PEB2SEG(fsi, cur_leb) >= fsi->nsegs) {
+			return -ENOENT;
+		}
+
+		SSDFS_DBG("MAPPING TABLE: leb %llu starting to migrate\n",
+			  cur_leb);
+
+		err = ssdfs_maptbl_change_peb_state(fsi, cur_leb, peb_type,
+						SSDFS_MAPTBL_DIRTY_PEB_STATE,
+						&init_end);
+		if (err == -EAGAIN) {
+			res = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("maptbl init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_maptbl_change_peb_state(fsi,
+						cur_leb, peb_type,
+						SSDFS_MAPTBL_DIRTY_PEB_STATE,
+						&init_end);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change the PEB state: "
+				  "leb_id %llu, new_state %#x, err %d\n",
+				  cur_leb, SSDFS_MAPTBL_DIRTY_PEB_STATE, err);
+			return err;
+		}
+
+		err = ssdfs_maptbl_add_migration_peb(fsi, cur_leb, peb_type,
+						     &pebr, &init_end);
+		if (err == -EAGAIN) {
+			res = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("maptbl init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_maptbl_add_migration_peb(fsi, cur_leb,
+							     peb_type,
+							     &pebr, &init_end);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add migration PEB: "
+				  "leb_id %llu, peb_type %#x, "
+				  "err %d\n",
+				  cur_leb, peb_type, err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_finish_migration_testing(struct ssdfs_fs_info *fsi,
+				      struct ssdfs_testing_environment *env,
+				      int iteration)
+{
+	struct completion *init_end;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *ptr;
+	u8 peb_type = SSDFS_MAPTBL_DATA_PEB_TYPE;
+	u32 count = env->mapping_table.exclude_migrations_per_iteration;
+	u64 cur_leb = 0;
+	int i;
+	unsigned long res;
+	int err;
+
+	for (i = 0; i < count; i++) {
+		while (SSDFS_PEB2SEG(fsi, cur_leb) < fsi->nsegs) {
+			err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+							   peb_type, &pebr,
+							   &init_end);
+			if (err == -EAGAIN) {
+				res = wait_for_completion_timeout(init_end,
+							SSDFS_DEFAULT_TIMEOUT);
+				if (res == 0) {
+					err = -ERANGE;
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+								   peb_type,
+								   &pebr,
+								   &init_end);
+			}
+
+			if (err == -ENODATA) {
+				cur_leb++;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, peb_type %#x, err %d\n",
+					  cur_leb, peb_type, err);
+				return err;
+			}
+
+			ptr = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
+
+			switch (ptr->state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+				switch (ptr->type) {
+				case SSDFS_MAPTBL_DATA_PEB_TYPE:
+					goto finish_search;
+					break;
+
+				default:
+					cur_leb++;
+					break;
+				}
+				break;
+
+			default:
+				cur_leb++;
+				break;
+			}
+		};
+
+finish_search:
+		if (SSDFS_PEB2SEG(fsi, cur_leb) >= fsi->nsegs) {
+			return -ENOENT;
+		}
+
+		SSDFS_DBG("MAPPING TABLE: leb %llu has finished migration\n",
+			  cur_leb);
+
+		err = ssdfs_maptbl_exclude_migration_peb(fsi, cur_leb,
+							 peb_type,
+							 &init_end);
+		if (err == -EAGAIN) {
+			res = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("maptbl init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_maptbl_exclude_migration_peb(fsi, cur_leb,
+								 peb_type,
+								 &init_end);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to exclude migration PEB: "
+				  "leb_id %llu, peb_type %#x, err %d\n",
+				  cur_leb, peb_type, err);
+			return err;
+		}
+	}
+
+	ssdfs_maptbl_erase_dirty_pebs_now(fsi->maptbl);
+
+	return 0;
+}
+
+static
+int ssdfs_do_check_leb2peb_mapping(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
+{
+	struct completion *init_end;
+	struct ssdfs_maptbl_peb_relation pebr;
+	u8 peb_type = SSDFS_MAPTBL_DATA_PEB_TYPE;
+	u64 count = (u64)env->mapping_table.iterations_number *
+			env->mapping_table.peb_mappings_per_iteration;
+	u64 calculated = 0;
+	u64 cur_leb = 0;
+	unsigned long res;
+	int err;
+
+	do {
+		err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+						   peb_type, &pebr,
+						   &init_end);
+		if (err == -EAGAIN) {
+			res = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("maptbl init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
+							   peb_type,
+							   &pebr,
+							   &init_end);
+		}
+
+		if (err == -ENODATA) {
+			/* do nothing */
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to convert LEB to PEB: "
+				  "leb_id %llu, peb_type %#x, err %d\n",
+				  cur_leb, peb_type, err);
+			return err;
+		} else if (!is_found_requested_peb_type(&pebr, peb_type)) {
+			/* ignore the current LEB */
+			goto check_next_leb;
+		} else {
+			err = ssdfs_maptbl_change_peb_state(fsi,
+						cur_leb, peb_type,
+						SSDFS_MAPTBL_DIRTY_PEB_STATE,
+						&init_end);
+			if (err == -EAGAIN) {
+				res = wait_for_completion_timeout(init_end,
+							SSDFS_DEFAULT_TIMEOUT);
+				if (res == 0) {
+					err = -ERANGE;
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				err = ssdfs_maptbl_change_peb_state(fsi,
+						cur_leb, peb_type,
+						SSDFS_MAPTBL_DIRTY_PEB_STATE,
+						&init_end);
+			}
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change the PEB state: "
+					  "leb_id %llu, new_state %#x, "
+					  "err %d\n",
+					  cur_leb, SSDFS_MAPTBL_DIRTY_PEB_STATE,
+					  err);
+				return err;
+			}
+
+			err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								   cur_leb,
+								   peb_type,
+								   &init_end);
+			if (err == -EAGAIN) {
+				res = wait_for_completion_timeout(init_end,
+							SSDFS_DEFAULT_TIMEOUT);
+				if (res == 0) {
+					err = -ERANGE;
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								    cur_leb,
+								    peb_type,
+								    &init_end);
+			}
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare pre-erase state: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb, err);
+				return err;
+			}
+
+			ssdfs_maptbl_erase_dirty_pebs_now(fsi->maptbl);
+
+			calculated++;
+		}
+
+check_next_leb:
+		cur_leb++;
+	} while (SSDFS_PEB2SEG(fsi, cur_leb) < fsi->nsegs);
+
+	if (calculated != count) {
+		SSDFS_ERR("calculated %llu != count %llu\n",
+			  calculated, count);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_peb_mapping_table_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
+{
+	int i;
+	u64 mapped = 0;
+	u64 migrating = 0;
+	int err = 0;
+
+	SSDFS_ERR("START LEB2PEB mapping...\n");
+
+	for (i = 0; i < env->mapping_table.iterations_number; i++) {
+		err = ssdfs_do_leb_mapping_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("LEB2PEB mapping failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		mapped += env->mapping_table.peb_mappings_per_iteration;
+
+		SSDFS_ERR("MAPPED: lebs number %llu\n",
+			  mapped);
+
+		err = ssdfs_do_migration_add_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("add migration failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		migrating += env->mapping_table.add_migrations_per_iteration;
+
+		SSDFS_ERR("MIGRATING: lebs number %llu\n",
+			  migrating);
+
+		err = ssdfs_do_finish_migration_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("finish migration failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		migrating -= env->mapping_table.exclude_migrations_per_iteration;
+
+		SSDFS_ERR("MIGRATING (after finishing): lebs number %llu\n",
+			  migrating);
+	}
+
+	SSDFS_ERR("FINISH LEB2PEB mapping...\n");
+
+	SSDFS_ERR("CHECK LEB2PEB mapping...\n");
+
+	err = ssdfs_do_check_leb2peb_mapping(fsi, env);
+	if (err) {
+		SSDFS_ERR("Check LEB2PEB mapping failed: "
+			  "err %d\n",
+			  err);
+		return err;
+	}
+
+	SSDFS_ERR("CHECK LEB2PEB mapping: all LEBs has been checked\n");
+
+	return 0;
+}
+
+static
+int ssdfs_do_segment_using_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   int iteration)
+{
+	u32 count = env->segment_bitmap.using_segs_per_iteration;
+	int new_state = SSDFS_SEG_DATA_USING;
+	u64 start_seg = 0;
+	u64 end_seg = U64_MAX;
+	u64 found_seg;
+	int check_state;
+	struct completion *init_end;
+	unsigned long rest;
+	int res = 0;
+	u32 i;
+	int err;
+
+	for (i = 0; i < count; i++) {
+		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+						 start_seg, end_seg,
+						 SSDFS_SEG_CLEAN,
+						 SSDFS_SEG_CLEAN_STATE_FLAG,
+						 new_state,
+						 &found_seg, &init_end);
+		if (res >= 0) {
+			if (res != SSDFS_SEG_CLEAN) {
+				SSDFS_ERR("invalid segment state: "
+					  "seg %llu, state %#x, iter %u\n",
+					  found_seg, res, i);
+				return -ERANGE;
+			}
+
+			check_state = ssdfs_segbmap_check_state(fsi->segbmap,
+								found_seg,
+								new_state,
+								&init_end);
+			if (new_state != check_state) {
+				SSDFS_ERR("invalid segment state: "
+					  "seg %llu, state %#x, iter %u\n",
+					  found_seg, check_state, i);
+				return -ERANGE;
+			}
+		} else if (res == -EAGAIN) {
+			rest = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (rest == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("segbmap init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+						start_seg, end_seg,
+						SSDFS_SEG_CLEAN,
+						SSDFS_SEG_CLEAN_STATE_FLAG,
+						new_state,
+						&found_seg, &init_end);
+			if (res >= 0) {
+				if (res != SSDFS_SEG_CLEAN) {
+					SSDFS_ERR("invalid segment state: "
+						  "seg %llu, state %#x, "
+						  "iter %u\n",
+						  found_seg, res, i);
+					return -ERANGE;
+				}
+
+				check_state =
+					ssdfs_segbmap_check_state(fsi->segbmap,
+								  found_seg,
+								  new_state,
+								  &init_end);
+				if (new_state != check_state) {
+					SSDFS_ERR("invalid segment state: "
+						  "seg %llu, state %#x, "
+						  "iter %u\n",
+						  found_seg, check_state, i);
+					return -ERANGE;
+				}
+			} else if (res == -ENODATA) {
+				err = -ENOENT;
+				SSDFS_ERR("unable to find segment in range: "
+					  "start_seg %llu, end_seg %llu\n",
+					  start_seg, end_seg);
+				return err;
+			} else {
+				err = res;
+				SSDFS_ERR("fail to find segment in range: "
+					  "start_seg %llu, end_seg %llu, "
+					  "err %d\n",
+					  start_seg, end_seg, res);
+				return err;
+			}
+		} else if (res == -ENODATA) {
+			err = -ENOENT;
+			SSDFS_ERR("unable to find segment in range: "
+				  "start_seg %llu, end_seg %llu\n",
+				  start_seg, end_seg);
+			return err;
+		} else {
+			err = res;
+			SSDFS_ERR("fail to find segment in range: "
+				  "start_seg %llu, end_seg %llu, err %d\n",
+				 start_seg, end_seg, res);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_segment_state_testing(struct ssdfs_fs_info *fsi,
+				   u32 segs_per_iteration,
+				   int cur_state,
+				   int new_state)
+{
+	u64 cur_seg = 0;
+	u64 nsegs;
+	u32 count = segs_per_iteration;
+	int seg_state = SSDFS_SEG_STATE_MAX;
+	bool is_expected_state;
+	struct completion *init_end;
+	unsigned long rest;
+	int res;
+	u32 i;
+	int err;
+
+	mutex_lock(&fsi->resize_mutex);
+	nsegs = fsi->nsegs;
+	mutex_unlock(&fsi->resize_mutex);
+
+	for (i = 0; i < count; i++) {
+		while (cur_seg < nsegs) {
+			seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
+							    cur_seg, &init_end);
+			if (seg_state == -EAGAIN) {
+				rest = wait_for_completion_timeout(init_end,
+							SSDFS_DEFAULT_TIMEOUT);
+				if (rest == 0) {
+					err = -ERANGE;
+					SSDFS_ERR("segbmap init failed: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				seg_state =
+					ssdfs_segbmap_get_state(fsi->segbmap,
+								cur_seg,
+								&init_end);
+				if (seg_state < 0)
+					goto fail_define_seg_state;
+			} else if (seg_state < 0) {
+fail_define_seg_state:
+				SSDFS_ERR("fail to define segment state: "
+					  "seg %llu\n",
+					  cur_seg);
+				return seg_state;
+			} else if (seg_state == cur_state)
+				break;
+
+			cur_seg++;
+		}
+
+		if (cur_seg >= nsegs) {
+			SSDFS_ERR("cur_seg %llu >= nsegs %llu\n",
+				  cur_seg, nsegs);
+			return -ENOSPC;
+		}
+
+		err = ssdfs_segbmap_change_state(fsi->segbmap, cur_seg,
+						 new_state, &init_end);
+		if (err == -EAGAIN) {
+			res = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("segbmap init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_segbmap_change_state(fsi->segbmap, cur_seg,
+							 new_state, &init_end);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change segment state: "
+				  "seg %llu, state %#x, err %d\n",
+				  cur_seg, new_state, err);
+			return err;
+		}
+
+		is_expected_state = ssdfs_segbmap_check_state(fsi->segbmap,
+								cur_seg,
+								new_state,
+								&init_end);
+		if (!is_expected_state) {
+			SSDFS_ERR("invalid segment state: "
+				  "seg %llu\n",
+				  cur_seg);
+			return -ERANGE;
+		}
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_segment_used_testing(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env,
+				  int iteration)
+{
+	return ssdfs_do_segment_state_testing(fsi,
+			env->segment_bitmap.used_segs_per_iteration,
+			SSDFS_SEG_DATA_USING, SSDFS_SEG_USED);
+}
+
+static
+int ssdfs_do_segment_pre_dirty_testing(struct ssdfs_fs_info *fsi,
+				       struct ssdfs_testing_environment *env,
+				       int iteration)
+{
+	return ssdfs_do_segment_state_testing(fsi,
+			env->segment_bitmap.pre_dirty_segs_per_iteration,
+			SSDFS_SEG_USED, SSDFS_SEG_PRE_DIRTY);
+}
+
+static
+int ssdfs_do_segment_dirty_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   int iteration)
+{
+	return ssdfs_do_segment_state_testing(fsi,
+			env->segment_bitmap.dirty_segs_per_iteration,
+			SSDFS_SEG_PRE_DIRTY, SSDFS_SEG_DIRTY);
+}
+
+static
+int ssdfs_do_segment_clean_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   int iteration)
+{
+	return ssdfs_do_segment_state_testing(fsi,
+			env->segment_bitmap.cleaned_segs_per_iteration,
+			SSDFS_SEG_DIRTY, SSDFS_SEG_CLEAN);
+}
+
+static
+int ssdfs_check_segment_bitmap_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
+{
+	u64 cur_seg = 0;
+	u64 nsegs;
+	int seg_state = SSDFS_SEG_STATE_MAX;
+	struct completion *init_end;
+	unsigned long rest;
+	u64 clean_segs = 0;
+	u64 using_segs = 0;
+	u64 used_segs = 0;
+	u64 pre_dirty_segs = 0;
+	u64 dirty_segs = 0;
+	u64 calculated;
+	int err;
+
+	mutex_lock(&fsi->resize_mutex);
+	nsegs = fsi->nsegs;
+	mutex_unlock(&fsi->resize_mutex);
+
+	for (cur_seg = 0; cur_seg < nsegs; cur_seg++) {
+		seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
+						    cur_seg, &init_end);
+		if (seg_state == -EAGAIN) {
+			rest = wait_for_completion_timeout(init_end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (rest == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("segbmap init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
+							    cur_seg,
+							    &init_end);
+			if (seg_state < 0)
+				goto fail_define_seg_state;
+		} else if (seg_state < 0) {
+fail_define_seg_state:
+			SSDFS_ERR("fail to define segment state: "
+				  "seg %llu\n",
+				  cur_seg);
+			return seg_state;
+		}
+
+		switch (seg_state) {
+		case SSDFS_SEG_CLEAN:
+			clean_segs++;
+			break;
+
+		case SSDFS_SEG_DATA_USING:
+			using_segs++;
+			break;
+
+		case SSDFS_SEG_USED:
+			used_segs++;
+			break;
+
+		case SSDFS_SEG_PRE_DIRTY:
+			pre_dirty_segs++;
+			break;
+
+		case SSDFS_SEG_DIRTY:
+			dirty_segs++;
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+	}
+
+	SSDFS_ERR("CLEAN SEGS: %llu\n", clean_segs);
+	SSDFS_ERR("USING SEGS: %llu\n", using_segs);
+	SSDFS_ERR("USED SEGS: %llu\n", used_segs);
+	SSDFS_ERR("PRE-DIRTY SEGS: %llu\n", pre_dirty_segs);
+	SSDFS_ERR("DIRTY SEGS: %llu\n", dirty_segs);
+
+	calculated = clean_segs + using_segs +
+			used_segs + pre_dirty_segs + dirty_segs;
+
+	if (calculated > nsegs) {
+		SSDFS_ERR("calculated %llu > nsegs %llu\n",
+			  calculated, nsegs);
+		return -ERANGE;
+	}
+
+	SSDFS_ERR("calculated %llu, nsegs %llu\n",
+		  calculated, nsegs);
+
+	return 0;
+}
+
+static
+int ssdfs_do_segment_bitmap_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
+{
+	u64 using_segs = 0;
+	u64 used_segs = 0;
+	u64 pre_dirty_segs = 0;
+	u64 dirty_segs = 0;
+	u64 cleaned_segs = 0;
+	int i;
+	int err;
+
+	for (i = 0; i < env->segment_bitmap.iterations_number; i++) {
+		err = ssdfs_do_segment_using_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("mark segment as using failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		using_segs += env->segment_bitmap.using_segs_per_iteration;
+
+		SSDFS_ERR("USING SEGS: segs number %llu\n", using_segs);
+
+		err = ssdfs_do_segment_used_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("mark segment as used failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		used_segs += env->segment_bitmap.used_segs_per_iteration;
+
+		SSDFS_ERR("USED SEGS: segs number %llu\n", used_segs);
+
+		err = ssdfs_do_segment_pre_dirty_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("mark segment as pre-dirty failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		pre_dirty_segs +=
+			env->segment_bitmap.pre_dirty_segs_per_iteration;
+
+		SSDFS_ERR("PRE-DIRTY SEGS: segs number %llu\n", pre_dirty_segs);
+
+		err = ssdfs_do_segment_dirty_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("mark segment as dirty failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		dirty_segs += env->segment_bitmap.dirty_segs_per_iteration;
+
+		SSDFS_ERR("DIRTY SEGS: segs number %llu\n", dirty_segs);
+
+		err = ssdfs_do_segment_clean_testing(fsi, env, i);
+		if (err) {
+			SSDFS_ERR("mark segment as clean failed: "
+				  "iteration %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		cleaned_segs += env->segment_bitmap.cleaned_segs_per_iteration;
+
+		SSDFS_ERR("CLEANED SEGS: segs number %llu\n", cleaned_segs);
+	}
+
+	SSDFS_ERR("FINAL CHECK SEGMENT BITMAP\n");
+
+	err = ssdfs_check_segment_bitmap_testing(fsi, env);
+	if (err) {
+		SSDFS_ERR("segment bitmap check is failed: "
+			  "err %d\n",
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+unsigned char ssdfs_generate_next_symbol(unsigned char symbol,
+					 u32 step)
+{
+	unsigned char first = 'a';
+	unsigned char last = 'z';
+	u32 range_len = ((u8)last + 1) - (u8)first;
+	u32 next_symbol;
+
+	if (step > range_len)
+		step %= range_len;
+
+	next_symbol = (u32)symbol + step;
+
+	if (next_symbol > (u32)last)
+		next_symbol = (u32)first + (next_symbol - (u32)last);
+
+	return (unsigned char)next_symbol;
+}
+
+static
+unsigned char * ssdfs_generate_long_name(struct ssdfs_testing_environment *env,
+					 unsigned char *table,
+					 unsigned char *name_buf,
+					 u32 name_len,
+					 u32 step_factor)
+{
+	u32 i;
+
+	memset(name_buf, 0, SSDFS_MAX_NAME_LEN);
+
+	for (i = 0; i < name_len; i++) {
+		u32 step = (u32)1 + (i * step_factor);
+
+		table[i] = ssdfs_generate_next_symbol(table[i], step);
+		name_buf[i] = table[i];
+	}
+
+	return name_buf;
+}
+
+static
+int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
+				       struct ssdfs_testing_environment *env)
+{
+	unsigned char table[SSDFS_MAX_NAME_LEN];
+	unsigned char name[SSDFS_MAX_NAME_LEN];
+	u64 name_hash;
+	u32 i;
+	int err = 0;
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	for (i = 0; i < env->shared_dictionary.names_number; i++) {
+		struct qstr str =
+			QSTR_INIT(ssdfs_generate_long_name(env, table, name,
+					env->shared_dictionary.name_len,
+					env->shared_dictionary.step_factor),
+				  env->shared_dictionary.name_len);
+
+		name_hash = __ssdfs_generate_name_hash(name,
+					env->shared_dictionary.name_len);
+		if (name_hash == U64_MAX) {
+			SSDFS_ERR("fail to generate name hash\n");
+			return -ERANGE;
+		}
+
+		err = ssdfs_shared_dict_save_name(fsi->shdictree,
+						  name_hash,
+						  &str);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to store name: "
+				  "hash %llx, err %d\n",
+				  name_hash, err);
+			return err;
+		}
+	}
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	for (i = 0; i < env->shared_dictionary.names_number; i++) {
+		struct ssdfs_name_string found_name;
+
+		ssdfs_generate_long_name(env, table, name,
+					 env->shared_dictionary.name_len,
+					 env->shared_dictionary.step_factor);
+
+		name_hash = __ssdfs_generate_name_hash(name,
+					env->shared_dictionary.name_len);
+		if (name_hash == U64_MAX) {
+			SSDFS_ERR("fail to generate name hash\n");
+			return -ERANGE;
+		}
+
+		err = ssdfs_shared_dict_get_name(fsi->shdictree,
+						 name_hash,
+						 &found_name);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get name: "
+				  "hash %llx, err %d\n",
+				  name_hash, err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+static
+void ssdfs_testing_generate_blob(void *blob, u32 len, u64 pattern)
+{
+	u32 cur_len;
+	u32 i;
+
+	memset(blob, 0, len);
+
+	for (i = 0; i < len; i += sizeof(u64)) {
+		cur_len = min_t(u32, len - i, sizeof(u64));
+		memcpy((u8 *)blob + i, &pattern, cur_len);
+	}
+}
+
+static
+int ssdfs_testing_xattr_tree_add(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_testing_environment *env,
+				 unsigned char *table)
+{
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_btree_search *search;
+	unsigned char name[SSDFS_MAX_NAME_LEN];
+	ino_t ino;
+	void *blob = NULL;
+	int err = 0;
+
+	ii = SSDFS_I(fsi->testing_inode);
+	ino = ii->vfs_inode.i_ino;
+
+	down_read(&ii->lock);
+
+	ssdfs_generate_long_name(env, table, name,
+				 env->xattr_tree.name_len,
+				 env->xattr_tree.step_factor);
+
+	blob = kzalloc(env->xattr_tree.blob_len, GFP_KERNEL);
+	if (!blob) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate blob\n");
+		goto finish_add_xattr;
+	}
+
+	ssdfs_testing_generate_blob(blob,
+				    env->xattr_tree.blob_len,
+				    env->xattr_tree.blob_pattern);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto free_blob;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_xattrs_tree_add(ii->xattrs_tree,
+				    name, env->xattr_tree.name_len,
+				    blob, env->xattr_tree.blob_len,
+				    ii,
+				    search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create xattr: "
+			  "ino %lu, name %s, err %d\n",
+			  ino, name, err);
+		goto free_blob;
+	}
+
+free_blob:
+	kfree(blob);
+
+finish_add_xattr:
+	up_read(&ii->lock);
+
+	return err;
+}
+
+static
+int ssdfs_testing_xattr_tree_check(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   unsigned char *table)
+{
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_btree_search *search;
+	unsigned char name[SSDFS_MAX_NAME_LEN];
+	ino_t ino;
+	int err = 0;
+
+	ii = SSDFS_I(fsi->testing_inode);
+	ino = ii->vfs_inode.i_ino;
+
+	down_read(&ii->lock);
+
+	ssdfs_generate_long_name(env, table, name,
+				 env->xattr_tree.name_len,
+				 env->xattr_tree.step_factor);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_check_xattr;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_xattrs_tree_find(ii->xattrs_tree,
+				     name, env->xattr_tree.name_len,
+				    search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to check xattr: "
+			  "ino %lu, name %s, err %d\n",
+			  ino, name, err);
+		goto finish_check_xattr;
+	}
+
+finish_check_xattr:
+	up_read(&ii->lock);
+
+	return err;
+}
+
+static
+int ssdfs_testing_xattr_tree_resize_blob(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   unsigned char *table,
+				   u32 blob_len)
+{
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_btree_search *search;
+	unsigned char name[SSDFS_MAX_NAME_LEN];
+	ino_t ino;
+	void *blob = NULL;
+	u64 name_hash;
+	int err = 0;
+
+	ii = SSDFS_I(fsi->testing_inode);
+	ino = ii->vfs_inode.i_ino;
+
+	down_read(&ii->lock);
+
+	ssdfs_generate_long_name(env, table, name,
+				 env->xattr_tree.name_len,
+				 env->xattr_tree.step_factor);
+
+	blob = kzalloc(env->xattr_tree.blob_len, GFP_KERNEL);
+	if (!blob) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate blob\n");
+		goto finish_resize_xattr;
+	}
+
+	ssdfs_testing_generate_blob(blob,
+				    env->xattr_tree.blob_len,
+				    env->xattr_tree.blob_pattern);
+
+	name_hash = __ssdfs_generate_name_hash(name, env->xattr_tree.name_len);
+	if (name_hash == U64_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to generate name hash\n");
+		goto free_blob;
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto free_blob;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_xattrs_tree_change(ii->xattrs_tree,
+					name_hash,
+					name, env->xattr_tree.name_len,
+					blob, env->xattr_tree.blob_len,
+					search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change xattr: "
+			  "ino %lu, name %s, err %d\n",
+			  ino, name, err);
+		goto free_blob;
+	}
+
+free_blob:
+	kfree(blob);
+
+finish_resize_xattr:
+	up_read(&ii->lock);
+
+	return err;
+}
+
+static
+int ssdfs_testing_xattr_tree_increase_blob(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   unsigned char *table)
+{
+	return ssdfs_testing_xattr_tree_resize_blob(fsi, env, table,
+					env->xattr_tree.blob_len * 2);
+}
+
+static
+int ssdfs_testing_xattr_tree_shrink_blob(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   unsigned char *table)
+{
+	return ssdfs_testing_xattr_tree_resize_blob(fsi, env, table,
+					env->xattr_tree.blob_len / 2);
+}
+
+static
+int ssdfs_testing_xattr_tree_delete(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env,
+				   unsigned char *table)
+{
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_btree_search *search;
+	unsigned char name[SSDFS_MAX_NAME_LEN];
+	ino_t ino;
+	u64 name_hash;
+	int err = 0;
+
+	ii = SSDFS_I(fsi->testing_inode);
+	ino = ii->vfs_inode.i_ino;
+
+	down_read(&ii->lock);
+
+	ssdfs_generate_long_name(env, table, name,
+				 env->xattr_tree.name_len,
+				 env->xattr_tree.step_factor);
+
+	name_hash = __ssdfs_generate_name_hash(name, env->xattr_tree.name_len);
+	if (name_hash == U64_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to generate name hash\n");
+		goto finish_delete_xattr;
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_delete_xattr;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_xattrs_tree_delete(ii->xattrs_tree,
+					name_hash,
+					search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete xattr: "
+			  "ino %lu, name %s, err %d\n",
+			  ino, name, err);
+		goto finish_delete_xattr;
+	}
+
+finish_delete_xattr:
+	up_read(&ii->lock);
+
+	return err;
+}
+
+static
+int ssdfs_do_xattr_tree_testing(struct ssdfs_fs_info *fsi,
+				struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_inode_info *ii;
+	u64 threshold = env->xattr_tree.xattrs_number;
+	u64 per_1_percent = 0;
+	u64 message_threshold = 0;
+	unsigned char table[SSDFS_MAX_NAME_LEN];
+	u64 i;
+	int err = 0;
+
+	ii = SSDFS_I(fsi->testing_inode);
+
+	down_write(&ii->lock);
+	err = ssdfs_xattrs_tree_create(fsi, ii);
+	up_write(&ii->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create the xattr tree: "
+			  "err %d\n", err);
+		goto finish_testing;
+	}
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	per_1_percent = div_u64(threshold, 100);
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("ADD XATTRs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("ADD XATTRs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_add(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to add extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("ADD XATTRs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHECK XATTRs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("CHECK XATTRs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_check(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to check extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("CHECK XATTRs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("INCREASE XATTR BLOBs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("INCREASE XATTR BLOBs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_increase_blob(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to increase extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("INCREASE XATTR BLOBs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHECK XATTRs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("CHECK XATTRs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_check(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to check extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("CHECK XATTRs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("SHRINK XATTR BLOBs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("SHRINK XATTR BLOBs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_shrink_blob(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to shrink extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("SHRINK XATTR BLOBs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHECK XATTRs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("CHECK XATTRs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_check(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to check extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("CHECK XATTRs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	SSDFS_ERR("FLUSH XATTRS BTREE: starting...\n");
+
+	down_write(&ii->lock);
+	err = ssdfs_xattrs_tree_flush(fsi, ii);
+	up_write(&ii->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to flush xattrs tree: "
+			  "ino %lu, err %d\n",
+			  ii->vfs_inode.i_ino, err);
+		goto destroy_tree;
+	}
+
+	SSDFS_ERR("FLUSH XATTRS BTREE: finished\n");
+
+	memset(table, 'a', SSDFS_MAX_NAME_LEN);
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("DELETE XATTRs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("DELETE XATTRs: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_xattr_tree_delete(fsi, env, table);
+		if (err) {
+			SSDFS_ERR("fail to delete extended attribute: "
+				  "err %d\n", err);
+			goto destroy_tree;
+		}
+	}
+
+	SSDFS_ERR("DELETE XATTRs: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+destroy_tree:
+	ssdfs_xattrs_tree_destroy(ii);
+
+finish_testing:
+	return err;
+}
+
 int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 		     struct ssdfs_testing_environment *env)
 {
@@ -711,6 +3049,66 @@ int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 			goto free_inode;
 
 		SSDFS_ERR("DENTRIES TREE TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_BLOCK_BMAP_TESTING) {
+		SSDFS_ERR("START BLOCK BITMAP TESTING...\n");
+
+		err = ssdfs_do_block_bitmap_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("BLOCK BITMAP TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_BLK2OFF_TABLE_TESTING) {
+		SSDFS_ERR("START BLK2OFF TABLE TESTING...\n");
+
+		err = ssdfs_do_blk2off_table_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("BLK2OFF TABLE TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_PEB_MAPPING_TABLE_TESTING) {
+		SSDFS_ERR("START PEB MAPPING TABLE TESTING...\n");
+
+		err = ssdfs_do_peb_mapping_table_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("PEB MAPPING TABLE TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_SEGMENT_BITMAP_TESTING) {
+		SSDFS_ERR("START SEGMENT BITMAP TESTING...\n");
+
+		err = ssdfs_do_segment_bitmap_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("SEGMENT BITMAP TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_SHARED_DICTIONARY_TESTING) {
+		SSDFS_ERR("START SHARED DICTIONARY TESTING...\n");
+
+		err = ssdfs_do_shared_dictionary_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("SHARED DICTIONARY TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_XATTR_TREE_TESTING) {
+		SSDFS_ERR("START XATTR TREE TESTING...\n");
+
+		err = ssdfs_do_xattr_tree_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("XATTR TREE TESTING FINISHED\n");
 	}
 
 free_inode:

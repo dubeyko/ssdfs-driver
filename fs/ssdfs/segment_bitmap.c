@@ -2658,7 +2658,7 @@ int ssdfs_segbmap_check_state(struct ssdfs_segment_bmap *segbmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
-	BUG_ON(state <= SSDFS_SEG_CLEAN ||
+	BUG_ON(state < SSDFS_SEG_CLEAN ||
 		state >= SSDFS_SEG_STATE_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 

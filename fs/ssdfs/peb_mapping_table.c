@@ -836,6 +836,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	ptr->stripes_per_fragment =
 		le16_to_cpu(fsi->vh->maptbl.stripes_per_fragment);
 
+	atomic_set(&ptr->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
 	atomic_set(&ptr->pre_erase_pebs,
 		   le16_to_cpu(fsi->vh->maptbl.pre_erase_pebs));
 	/*

@@ -4435,6 +4435,7 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 	u16 items_capacity;
 	u64 start_hash;
 	u64 end_hash;
+	u64 found_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4493,24 +4494,31 @@ int ssdfs_inodes_btree_node_change_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	item_index = search->result.start_index;
-	if ((item_index + search->request.count) > items_capacity) {
+	err = ssdfs_btree_node_check_hash_range(node,
+						items_count,
+						items_capacity,
+						start_hash,
+						end_hash,
+						search);
+	if (err)
+		return err;
+
+	found_index = search->request.start.hash - start_hash;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(found_index >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if ((found_index + search->request.count) > items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "item_index %u, count %u, "
+			  "found_index %llu, count %u, "
 			  "items_capacity %u\n",
-			  item_index, search->request.count,
+			  found_index, search->request.count,
 			  items_capacity);
 		return -ERANGE;
 	}
 
-	if ((start_hash + item_index) != search->request.start.hash) {
-		SSDFS_WARN("node (start_hash %llx, index %u), "
-			   "request (start_hash %llx, end_hash %llx)\n",
-			   start_hash, item_index,
-			   search->request.start.hash,
-			   search->request.end.hash);
-		return -ERANGE;
-	}
+	item_index = (u16)found_index;
 
 	down_write(&node->full_lock);
 

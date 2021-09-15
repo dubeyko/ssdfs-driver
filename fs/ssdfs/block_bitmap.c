@@ -3613,7 +3613,7 @@ bool ssdfs_block_bmap_test_block(struct ssdfs_block_bmap *blk_bmap,
 	err = ssdfs_block_bmap_find_block(blk_bmap, blk, blk + 1, blk_state,
 					  &found);
 	if (err) {
-		SSDFS_ERR("fail to find block %u, state %#x, err %d\n",
+		SSDFS_DBG("fail to find block %u, state %#x, err %d\n",
 			  blk, blk_state, err);
 		return false;
 	}

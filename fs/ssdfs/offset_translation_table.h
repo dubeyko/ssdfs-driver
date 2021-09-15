@@ -260,37 +260,6 @@ size_t ssdfs_blk2off_table_bmap_bytes(size_t items_count)
 }
 
 static inline
-int ssdfs_show_fragment_details(void *ptr)
-{
-	struct ssdfs_phys_offset_table_fragment *fragment;
-
-	fragment = (struct ssdfs_phys_offset_table_fragment *)ptr;
-	if (!fragment) {
-		SSDFS_ERR("empty pointer on fragment\n");
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("fragment: "
-		  "start_id %u, sequence_id %u, "
-		  "id_count %d, state %#x, "
-		  "hdr %p, phys_offs %p, "
-		  "buf_size %zu\n",
-		  fragment->start_id,
-		  fragment->sequence_id,
-		  atomic_read(&fragment->id_count),
-		  atomic_read(&fragment->state),
-		  fragment->hdr,
-		  fragment->phys_offs,
-		  fragment->buf_size);
-
-	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				fragment->buf,
-				fragment->buf_size);
-
-	return 0;
-}
-
-static inline
 bool is_ssdfs_logical_block_migrating(int blk_state)
 {
 	bool is_migrating = false;
@@ -307,70 +276,6 @@ bool is_ssdfs_logical_block_migrating(int blk_state)
 	}
 
 	return is_migrating;
-}
-
-static inline
-void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	size_t bytes;
-	int i;
-
-	BUG_ON(!tbl);
-
-	SSDFS_DBG("flags %#x, state %#x, pages_per_peb %u, "
-		  "pages_per_seg %u, type %#x\n",
-		  atomic_read(&tbl->flags),
-		  atomic_read(&tbl->state),
-		  tbl->pages_per_peb,
-		  tbl->pages_per_seg,
-		  tbl->type);
-
-	SSDFS_DBG("init_cno %llu, used_logical_blks %u, "
-		  "free_logical_blks %u, last_allocated_blk %u\n",
-		  tbl->init_cno, tbl->used_logical_blks,
-		  tbl->free_logical_blks, tbl->last_allocated_blk);
-
-	bytes = ssdfs_blk2off_table_bmap_bytes(tbl->lblk2off_capacity);
-	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		unsigned long *bmap = tbl->lbmap[i];
-
-		SSDFS_DBG("lbmap: index %d, bmap %p\n", i, bmap);
-		if (bmap) {
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-						bmap, bytes);
-		}
-	}
-
-	SSDFS_DBG("lblk2off_capacity %u\n", tbl->lblk2off_capacity);
-
-	for (i = 0; i < tbl->lblk2off_capacity; i++) {
-		SSDFS_DBG("lbk2off: index %d, "
-			  "cno %llu, id %u, peb_index %u, "
-			  "sequence_id %u, offset_index %u\n",
-			  i, tbl->lblk2off[i].cno,
-			  tbl->lblk2off[i].id,
-			  tbl->lblk2off[i].peb_index,
-			  tbl->lblk2off[i].sequence_id,
-			  tbl->lblk2off[i].offset_index);
-	}
-
-	SSDFS_DBG("pebs_count %u\n", tbl->pebs_count);
-
-	for (i = 0; i < tbl->pebs_count; i++) {
-		struct ssdfs_phys_offset_table_array *peb = &tbl->peb[i];
-		int fragments_count = atomic_read(&peb->fragment_count);
-
-		SSDFS_DBG("peb: index %d, state %#x, "
-			  "fragment_count %d, last_sequence_id %lu\n",
-			  i, atomic_read(&peb->state),
-			  fragments_count,
-			  ssdfs_sequence_array_last_id(peb->sequence));
-
-		ssdfs_sequence_array_apply_for_all(peb->sequence,
-						ssdfs_show_fragment_details);
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /* Function prototypes */
@@ -451,16 +356,34 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 				    u16 peb_index,
 				    struct ssdfs_blk2off_range *extent);
 
+int ssdfs_blk2off_table_get_block_migration(struct ssdfs_blk2off_table *table,
+					    u16 logical_blk,
+					    u16 peb_index);
 int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 					    u16 logical_blk,
 					    u16 peb_index,
 					    struct ssdfs_segment_request *req);
 int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 					struct ssdfs_segment_request *req);
+int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
+					   struct ssdfs_segment_request *req);
 int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,
 					 u16 logical_blk,
 					 u16 peb_index);
 int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 						u16 peb_index);
+
+#ifdef CONFIG_SSDFS_TESTING
+int ssdfs_blk2off_table_fragment_set_clean(struct ssdfs_blk2off_table *table,
+					   u16 peb_index, u16 sequence_id);
+#else
+static inline
+int ssdfs_blk2off_table_fragment_set_clean(struct ssdfs_blk2off_table *table,
+					   u16 peb_index, u16 sequence_id)
+{
+	SSDFS_ERR("set fragment clean is not supported\n");
+	return -EOPNOTSUPP;
+}
+#endif /* CONFIG_SSDFS_TESTING */
 
 #endif /* _SSDFS_OFFSET_TRANSLATION_TABLE_H */
