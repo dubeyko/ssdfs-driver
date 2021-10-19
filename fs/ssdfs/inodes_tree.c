@@ -940,7 +940,11 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 		err = ssdfs_btree_add_node(&tree->generic_tree, search);
 		if (err == -EEXIST)
 			err = 0;
-		else if (unlikely(err)) {
+		else if (err == -ENOSPC) {
+			SSDFS_DBG("unable to add the node: err %d\n",
+				  err);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add the node: err %d\n",
 				  err);
 			return err;
@@ -3318,8 +3322,14 @@ int ssdfs_define_allocated_range(struct ssdfs_btree_search *search,
 	BUG_ON(!search || !start || !count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("start_hash %llx, end_hash %llx, flags %#x\n",
-		  start_hash, end_hash, search->request.flags);
+	SSDFS_DBG("node (id %u, start_hash %llx, "
+		  "end_hash %llx), "
+		  "request (start_hash %llx, "
+		  "end_hash %llx, flags %#x)\n",
+		  search->node.id, start_hash, end_hash,
+		  search->request.start.hash,
+		  search->request.end.hash,
+		  search->request.flags);
 
 	*start = ULONG_MAX;
 	*count = 0;
@@ -3529,9 +3539,6 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, start %u, count %u\n",
-		  node->node_id, start, count);
-
 	down_read(&node->header_lock);
 	item_size = node->items_area.item_size;
 	max_item_size = node->items_area.max_item_size;
@@ -3540,6 +3547,13 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 	start_hash = node->items_area.start_hash;
 	end_hash = node->items_area.end_hash;
 	up_read(&node->header_lock);
+
+	SSDFS_DBG("node_id %u, start %u, count %u, "
+		  "items_count %u, items_capacity %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->node_id, start, count,
+		  items_count, items_capacity,
+		  start_hash, end_hash);
 
 	if (items_capacity == 0 || items_capacity < items_count) {
 		SSDFS_ERR("invalid items accounting: "

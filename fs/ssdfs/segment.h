@@ -78,6 +78,9 @@ struct ssdfs_segment_migration_info {
  * @refs_count: counter of references on segment object
  * @object_queue: wait queue for segment creation/destruction
  * @create_rq: new page requests queue
+ * @pending_lock: lock of pending pages' counter
+ * @pending_new_user_data_pages: counter of pending new user data pages
+ * @invalidated_user_data_pages: counter of invalidated user data pages
  * @wait_queue: array of PEBs' wait queues
  * @blk_bmap: segment's block bitmap
  * @blk2off_table: offset translation table
@@ -115,6 +118,10 @@ struct ssdfs_segment_info {
 	 */
 	struct ssdfs_requests_queue create_rq;
 
+	spinlock_t pending_lock;
+	u32 pending_new_user_data_pages;
+	u32 invalidated_user_data_pages;
+
 	/* Threads' wait queues */
 	wait_queue_head_t wait_queue[SSDFS_PEB_THREAD_TYPE_MAX];
 
@@ -137,6 +144,7 @@ enum {
 	SSDFS_SEG_OBJECT_UNKNOWN_STATE,
 	SSDFS_SEG_OBJECT_UNDER_CREATION,
 	SSDFS_SEG_OBJECT_CREATED,
+	SSDFS_CURRENT_SEG_OBJECT,
 	SSDFS_SEG_OBJECT_FAILURE,
 	SSDFS_SEG_OBJECT_STATE_MAX
 };
@@ -160,6 +168,7 @@ bool is_ssdfs_segment_created(struct ssdfs_segment_info *si)
 
 	switch (atomic_read(&si->obj_state)) {
 	case SSDFS_SEG_OBJECT_CREATED:
+	case SSDFS_CURRENT_SEG_OBJECT:
 	case SSDFS_SEG_OBJECT_FAILURE:
 		is_created = true;
 		break;
@@ -298,6 +307,135 @@ int SEG_TYPE2MASK(int seg_type)
 	};
 
 	return mask;
+}
+
+static inline
+void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 flush_requests = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		spin_lock(&si->fsi->volume_state_lock);
+		si->fsi->flushing_user_data_requests++;
+		flush_requests = si->fsi->flushing_user_data_requests;
+		spin_unlock(&si->fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, flush_requests %llu\n",
+			  si->seg_id, flush_requests);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+}
+
+static inline
+void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si)
+{
+	u64 flush_requests = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		spin_lock(&si->fsi->volume_state_lock);
+		flush_requests = si->fsi->flushing_user_data_requests;
+		if (flush_requests > 0) {
+			si->fsi->flushing_user_data_requests--;
+			flush_requests = si->fsi->flushing_user_data_requests;
+		} else
+			err = -ERANGE;
+		spin_unlock(&si->fsi->volume_state_lock);
+
+		if (unlikely(err))
+			SSDFS_WARN("fail to decrement\n");
+
+		if (flush_requests == 0)
+			wake_up_all(&si->fsi->finish_user_data_flush_wq);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, flush_requests %llu\n",
+			  si->seg_id, flush_requests);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+}
+
+static inline
+bool is_user_data_pages_invalidated(struct ssdfs_segment_info *si)
+{
+	u64 invalidated = 0;
+
+	if (si->seg_type != SSDFS_USER_DATA_SEG_TYPE)
+		return false;
+
+	spin_lock(&si->pending_lock);
+	invalidated = si->invalidated_user_data_pages;
+	spin_unlock(&si->pending_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, invalidated %llu\n",
+		  si->seg_id, invalidated);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return invalidated > 0;
+}
+
+static inline
+void ssdfs_account_invalidated_user_data_pages(struct ssdfs_segment_info *si,
+						u32 count)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 invalidated = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+
+	SSDFS_DBG("si %p, count %u\n",
+		  si, count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		spin_lock(&si->pending_lock);
+		si->invalidated_user_data_pages += count;
+		invalidated = si->invalidated_user_data_pages;
+		spin_unlock(&si->pending_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, invalidated %llu\n",
+			  si->seg_id, invalidated);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+}
+
+static inline
+void ssdfs_forget_invalidated_user_data_pages(struct ssdfs_segment_info *si)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 invalidated = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		spin_lock(&si->pending_lock);
+		invalidated = si->invalidated_user_data_pages;
+		si->invalidated_user_data_pages = 0;
+		spin_unlock(&si->pending_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, invalidated %llu\n",
+			  si->seg_id, invalidated);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 }
 
 /*

@@ -188,6 +188,7 @@ void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
 	switch (atomic_read(&si->obj_state)) {
 	case SSDFS_SEG_OBJECT_UNDER_CREATION:
 	case SSDFS_SEG_OBJECT_CREATED:
+	case SSDFS_CURRENT_SEG_OBJECT:
 		/* expected state */
 		break;
 
@@ -241,6 +242,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	switch (atomic_read(&si->obj_state)) {
 	case SSDFS_SEG_OBJECT_UNDER_CREATION:
 	case SSDFS_SEG_OBJECT_CREATED:
+	case SSDFS_CURRENT_SEG_OBJECT:
 		/* expected state */
 		break;
 
@@ -400,6 +402,9 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	si->fsi = fsi;
 	atomic_set(&si->seg_state, seg_state);
 	ssdfs_requests_queue_init(&si->create_rq);
+	spin_lock_init(&si->pending_lock);
+	si->pending_new_user_data_pages = 0;
+	si->invalidated_user_data_pages = 0;
 
 	si->pebs_count = fsi->pebs_per_seg;
 	si->peb_array = ssdfs_seg_obj_kcalloc(si->pebs_count,
@@ -969,6 +974,7 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 
 		switch (atomic_read(&si->obj_state)) {
 		case SSDFS_SEG_OBJECT_CREATED:
+		case SSDFS_CURRENT_SEG_OBJECT:
 			/* do nothing */
 			break;
 
@@ -1525,14 +1531,8 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 				/* pre-dirty state */
 				new_seg_state = SSDFS_SEG_PRE_DIRTY;
 			} else if (free_pages > 0) {
-				SSDFS_ERR("invalid state: "
-					  "invalid_pages %d, "
-					  "free_pages %d, "
-					  "used_logical_blks %u\n",
-					  invalid_pages,
-					  free_pages,
-					  used_logical_blks);
-				return -ERANGE;
+				/* pre-dirty state */
+				new_seg_state = SSDFS_SEG_PRE_DIRTY;
 			} else {
 				/* dirty state */
 				new_seg_state = SSDFS_SEG_DIRTY;
@@ -1901,6 +1901,8 @@ add_new_current_segment:
 				goto finish_add_block;
 			}
 
+			ssdfs_account_user_data_flush_request(si);
+
 			create_rq = &si->create_rq;
 			ssdfs_requests_queue_add_tail_inc(si->fsi,
 							create_rq, req);
@@ -1914,7 +1916,11 @@ finish_add_block:
 	ssdfs_current_segment_unlock(cur_seg);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished\n");
+	SSDFS_ERR("finished: seg %llu\n",
+		  cur_seg->real_seg->seg_id);
+#else
+	SSDFS_DBG("finished: seg %llu\n",
+		  cur_seg->real_seg->seg_id);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (err) {
@@ -2093,6 +2099,8 @@ add_new_current_segment:
 				goto finish_add_extent;
 			}
 
+			ssdfs_account_user_data_flush_request(si);
+
 			create_rq = &si->create_rq;
 			ssdfs_requests_queue_add_tail_inc(si->fsi,
 							create_rq, req);
@@ -2104,7 +2112,11 @@ finish_add_extent:
 	ssdfs_current_segment_unlock(cur_seg);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished\n");
+	SSDFS_ERR("finished: seg %llu\n",
+		  cur_seg->real_seg->seg_id);
+#else
+	SSDFS_DBG("finished: seg %llu\n",
+		  cur_seg->real_seg->seg_id);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (err) {
@@ -3165,6 +3177,52 @@ int ssdfs_segment_add_index_node_extent_async(struct ssdfs_fs_info *fsi,
 						req, seg_id, extent);
 }
 
+static inline
+int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
+					     u32 count)
+{
+	struct ssdfs_fs_info *fsi;
+	u64 updated = 0;
+	u32 pending = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebc->parent_si->fsi;
+
+	if (!is_ssdfs_peb_containing_user_data(pebc))
+		return 0;
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index, count);
+
+	spin_lock(&fsi->volume_state_lock);
+	updated = fsi->updated_user_data_pages;
+	if (fsi->updated_user_data_pages >= count) {
+		fsi->updated_user_data_pages -= count;
+	} else
+		err = -ERANGE;
+	spin_unlock(&fsi->volume_state_lock);
+
+	if (err) {
+		SSDFS_ERR("count %u is bigger than updated %llu\n",
+			  count, updated);
+		return err;
+	}
+
+	spin_lock(&pebc->pending_lock);
+	pebc->pending_updated_user_data_pages += count;
+	pending = pebc->pending_updated_user_data_pages;
+	spin_unlock(&pebc->pending_lock);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, pending %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index, pending);
+
+	return 0;
+}
+
 /*
  * __ssdfs_segment_update_block() - update block in segment
  * @si: segment info
@@ -3183,6 +3241,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	wait_queue_head_t *wait;
 	u16 peb_index = U16_MAX;
 	u16 logical_blk;
+	u16 len;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3207,6 +3266,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 
 	table = si->blk2off_table;
 	logical_blk = req->place.start.blk_index;
+	len = req->place.len;
 
 	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
 						&peb_index, NULL);
@@ -3244,6 +3304,20 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
+
+	if (len > 0) {
+		err = ssdfs_account_user_data_pages_as_pending(pebc, len);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to make pages as pending: "
+				  "len %u, err %d\n",
+				  len, err);
+			return err;
+		}
+	} else {
+		SSDFS_WARN("unexpected len %u\n", len);
+	}
+
+	ssdfs_account_user_data_flush_request(si);
 
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
@@ -3459,6 +3533,16 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
+
+	err = ssdfs_account_user_data_pages_as_pending(pebc, len);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to make pages as pending: "
+			  "len %u, err %d\n",
+			  len, err);
+		return err;
+	}
+
+	ssdfs_account_user_data_flush_request(si);
 
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
@@ -3950,6 +4034,8 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 		return -ERANGE;
 	}
 
+	ssdfs_account_user_data_flush_request(si);
+
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
 
@@ -4100,6 +4186,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 
 	blk2off_tbl = si->blk2off_table;
 
+	ssdfs_account_invalidated_user_data_pages(si, blks_count);
+
 	for (blk = start_off; blk < upper_blk; blk++) {
 		struct ssdfs_segment_request *req;
 		struct ssdfs_peb_container *pebc;
@@ -4208,6 +4296,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 					    SSDFS_EXTENT_WAS_INVALIDATED,
 					    SSDFS_REQ_ASYNC, req);
 		ssdfs_request_define_segment(si->seg_id, req);
+
+		ssdfs_account_user_data_flush_request(si);
 
 		rq = &pebc->update_rq;
 		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);

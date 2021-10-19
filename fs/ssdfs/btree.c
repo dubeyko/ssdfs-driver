@@ -33,6 +33,7 @@
 #include "btree_search.h"
 #include "btree_node.h"
 #include "btree_hierarchy.h"
+#include "peb_mapping_table.h"
 #include "btree.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -3393,7 +3394,6 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 			 struct ssdfs_btree_search *search)
 {
 	struct ssdfs_fs_info *fsi;
-	u64 free_pages;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3421,18 +3421,12 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 
 	fsi = tree->fsi;
 
-	spin_lock(&fsi->volume_state_lock);
-	free_pages = fsi->free_pages;
-	if (tree->pages_per_node > free_pages)
-		err = -ENOSPC;
-	spin_unlock(&fsi->volume_state_lock);
-
+	err = ssdfs_reserve_free_pages(fsi, tree->pages_per_node,
+					SSDFS_METADATA_PAGES);
 	if (err) {
 		SSDFS_DBG("unable to add the new node: "
-			  "pages_per_node %u, free_pages %llu, "
-			  "err %d\n",
-			  tree->pages_per_node,
-			  free_pages, err);
+			  "pages_per_node %u, err %d\n",
+			  tree->pages_per_node, err);
 		return err;
 	}
 
@@ -3493,7 +3487,6 @@ int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
 			    struct ssdfs_btree_search *search)
 {
 	struct ssdfs_fs_info *fsi;
-	u64 free_pages;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3521,18 +3514,12 @@ int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
 
 	fsi = tree->fsi;
 
-	spin_lock(&fsi->volume_state_lock);
-	free_pages = fsi->free_pages;
-	if (tree->pages_per_node > free_pages)
-		err = -ENOSPC;
-	spin_unlock(&fsi->volume_state_lock);
-
+	err = ssdfs_reserve_free_pages(fsi, tree->pages_per_node,
+					SSDFS_METADATA_PAGES);
 	if (err) {
 		SSDFS_DBG("unable to add the new node: "
-			  "pages_per_node %u, free_pages %llu, "
-			  "err %d\n",
-			  tree->pages_per_node,
-			  free_pages, err);
+			  "pages_per_node %u, err %d\n",
+			  tree->pages_per_node, err);
 		return err;
 	}
 

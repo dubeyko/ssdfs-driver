@@ -147,6 +147,8 @@ int ssdfs_shextree_invalidate_index(struct ssdfs_shared_extents_tree *tree,
 #define SHEXTREE_THREAD_WAKE_CONDITION(tree, index) \
 	(kthread_should_stop() || \
 	 has_shextree_pre_invalid_extents(SHEXTREE_PTR(tree), index))
+#define SHEXTREE_FAILED_THREAD_WAKE_CONDITION() \
+	(kthread_should_stop())
 
 /*
  * ssdfs_shextree_extent_thread_func() - shextree object's thread's function
@@ -155,15 +157,16 @@ static
 int ssdfs_shextree_extent_thread_func(void *data)
 {
 	struct ssdfs_shared_extents_tree *tree = data;
-	wait_queue_head_t *wait_queue;
-	struct ssdfs_invalidation_queue *ptr;
+	wait_queue_head_t *wait_queue = NULL;
+	struct ssdfs_invalidation_queue *ptr = NULL;
 	int id = SSDFS_EXTENT_INVALIDATION_QUEUE;
+	int state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!tree) {
 		SSDFS_ERR("pointer on shared extents tree's object is NULL\n");
-		return -EINVAL;
+		BUG();
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -175,17 +178,20 @@ int ssdfs_shextree_extent_thread_func(void *data)
 
 repeat:
 	if (unlikely(err)) {
-		SSDFS_WARN("shared extents tree's thread failed: "
-			   "err %d\n",
-			   err);
-		complete_all(&ptr->thread.full_stop);
-		return err;
+		ssdfs_extents_queue_remove_all(&ptr->queue);
+		wake_up_all(&tree->wait_queue);
+
+		if (kthread_should_stop())
+			goto finish_thread;
+		else
+			goto sleep_failed_shextree_thread;
 	}
 
 	if (kthread_should_stop()) {
 		if (has_shextree_pre_invalid_extents(tree, id))
 			goto try_invalidate_queue;
 
+finish_thread:
 		complete_all(&ptr->thread.full_stop);
 		return err;
 	}
@@ -196,6 +202,34 @@ repeat:
 try_invalidate_queue:
 	do {
 		struct ssdfs_extent_info *ei = NULL;
+
+		state = atomic_read(&tree->fsi->global_fs_state);
+		switch (state) {
+		case SSDFS_METADATA_GOING_FLUSHING:
+		case SSDFS_METADATA_UNDER_FLUSH:
+			if (kthread_should_stop()) {
+				/*
+				 * continue logic
+				 */
+			} else {
+				/*
+				 * Thread that is trying to flush metadata
+				 * waits the end of user data flush requests.
+				 * So, it needs to wait before adding
+				 * the new invalidation requests.
+				 */
+				SSDFS_DBG("don't add request\n");
+				wait_event_interruptible_timeout(*wait_queue,
+							kthread_should_stop(),
+							HZ);
+				goto repeat;
+			}
+			break;
+
+		default:
+			/* continue logic */
+			break;
+		}
 
 		err = ssdfs_extents_queue_remove_first(&ptr->queue,
 							&ei);
@@ -237,6 +271,11 @@ sleep_shextree_thread:
 	wait_event_interruptible(*wait_queue,
 				 SHEXTREE_THREAD_WAKE_CONDITION(tree, id));
 	goto repeat;
+
+sleep_failed_shextree_thread:
+	wait_event_interruptible(*wait_queue,
+		SHEXTREE_FAILED_THREAD_WAKE_CONDITION());
+	goto repeat;
 }
 
 /*
@@ -246,15 +285,15 @@ static
 int ssdfs_shextree_index_thread_func(void *data)
 {
 	struct ssdfs_shared_extents_tree *tree = data;
-	wait_queue_head_t *wait_queue;
-	struct ssdfs_invalidation_queue *ptr;
+	wait_queue_head_t *wait_queue = NULL;
+	struct ssdfs_invalidation_queue *ptr = NULL;
 	int id = SSDFS_INDEX_INVALIDATION_QUEUE;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!tree) {
 		SSDFS_ERR("pointer on shared extents tree's object is NULL\n");
-		return -EINVAL;
+		BUG();
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -266,17 +305,20 @@ int ssdfs_shextree_index_thread_func(void *data)
 
 repeat:
 	if (unlikely(err)) {
-		SSDFS_WARN("shared extents tree's thread failed: "
-			   "err %d\n",
-			   err);
-		complete_all(&ptr->thread.full_stop);
-		return err;
+		ssdfs_extents_queue_remove_all(&ptr->queue);
+		wake_up_all(&tree->wait_queue);
+
+		if (kthread_should_stop())
+			goto finish_thread;
+		else
+			goto sleep_failed_shextree_thread;
 	}
 
 	if (kthread_should_stop()) {
 		if (has_shextree_pre_invalid_extents(tree, id))
 			goto try_invalidate_queue;
 
+finish_thread:
 		complete_all(&ptr->thread.full_stop);
 		return err;
 	}
@@ -327,6 +369,11 @@ try_invalidate_queue:
 sleep_shextree_thread:
 	wait_event_interruptible(*wait_queue,
 				 SHEXTREE_THREAD_WAKE_CONDITION(tree, id));
+	goto repeat;
+
+sleep_failed_shextree_thread:
+	wait_event_interruptible(*wait_queue,
+		SHEXTREE_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
 }
 

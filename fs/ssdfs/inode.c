@@ -574,9 +574,15 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 	err = ssdfs_inodes_btree_allocate(itree, &ino, search);
 	ssdfs_btree_search_free(search);
 
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to allocate an inode: err %d\n",
-			  err);
+	if (err == -ENOSPC) {
+		SSDFS_DBG("unable to allocate an inode: "
+			  "dir_ino %lu, err %d\n",
+			  (unsigned long)dir->i_ino, err);
+		goto failed_new_inode;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate an inode: "
+			  "dir_ino %lu, err %d\n",
+			  (unsigned long)dir->i_ino, err);
 		goto failed_new_inode;
 	}
 
@@ -728,12 +734,8 @@ static int ssdfs_truncate(struct inode *inode)
 
 int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	u32 pagesize = fsi->pagesize;
 	loff_t oldsize = i_size_read(inode);
 	loff_t newsize = attr->ia_size;
-	loff_t diff_bytes, diff_pages;
-	u64 free_pages;
 	int err = 0;
 
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
@@ -750,52 +752,12 @@ int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 	if (newsize > oldsize) {
 		i_size_write(inode, newsize);
 		pagecache_isize_extended(inode, oldsize, newsize);
-
-		diff_bytes = newsize - oldsize;
-		diff_pages = diff_bytes / pagesize;
-
-		if (diff_pages > 0) {
-			spin_lock(&fsi->volume_state_lock);
-
-			if (fsi->free_pages < diff_pages) {
-				err = -ENOSPC;
-				fsi->free_pages = 0;
-			} else
-				fsi->free_pages -= diff_pages;
-
-			free_pages = fsi->free_pages;
-
-			spin_unlock(&fsi->volume_state_lock);
-
-			if (err) {
-				SSDFS_WARN("free_pages %llu < diff %llu\n",
-					   free_pages, diff_pages);
-				return err;
-			} else {
-				SSDFS_DBG("free_pages %llu\n",
-					  free_pages);
-			}
-		}
-
-		/* TODO: allocate new logical blocks??? or mark new pages as new??? */
 	} else {
 		truncate_setsize(inode, newsize);
 
 		err = ssdfs_truncate(inode);
 		if (err)
 			return err;
-
-		diff_bytes = oldsize - newsize;
-		diff_pages = diff_bytes / pagesize;
-
-		if (diff_pages > 0) {
-			spin_lock(&fsi->volume_state_lock);
-			fsi->free_pages += diff_pages;
-			free_pages = fsi->free_pages;
-			spin_unlock(&fsi->volume_state_lock);
-
-			SSDFS_DBG("free_pages %llu\n", free_pages);
-		}
 	}
 
 	inode->i_mtime = inode->i_ctime = current_time(inode);
@@ -843,11 +805,6 @@ void ssdfs_evict_inode(struct inode *inode)
 	struct ssdfs_xattrs_btree_info *xattrs_tree;
 	ino_t ino = inode->i_ino;
 	bool want_delete = false;
-	u32 pagesize = fsi->pagesize;
-	loff_t oldsize = i_size_read(inode);
-	loff_t newsize = 0;
-	loff_t diff_bytes, diff_pages;
-	u64 free_pages;
 	int err;
 
 	SSDFS_DBG("ino %lu mode %o count %d nlink %u\n",
@@ -891,18 +848,6 @@ void ssdfs_evict_inode(struct inode *inode)
 			SSDFS_WARN("fail to truncate inode: "
 				   "ino %lu, err %d\n",
 				   ino, err);
-		} else {
-			diff_bytes = oldsize - newsize;
-			diff_pages = diff_bytes / pagesize;
-
-			if (diff_pages > 0) {
-				spin_lock(&fsi->volume_state_lock);
-				fsi->free_pages += diff_pages;
-				free_pages = fsi->free_pages;
-				spin_unlock(&fsi->volume_state_lock);
-
-				SSDFS_DBG("free_pages %llu\n", free_pages);
-			}
 		}
 
 		if (xattrs_tree) {

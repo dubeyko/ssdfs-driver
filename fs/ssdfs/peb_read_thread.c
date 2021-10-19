@@ -3453,10 +3453,8 @@ int ssdfs_get_partial_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
 
 	if (!ssdfs_pl_hdr_has_offset_table(pl_hdr)) {
 		if (!env->has_footer) {
-			ssdfs_fs_error(fsi->sb, __FILE__, __func__,
-					__LINE__,
-					"log hasn't footer\n");
-			return -EIO;
+			SSDFS_DBG("log hasn't blk2off table\n");
+			return -ENOENT;
 		}
 
 		if (!ssdfs_log_footer_has_offset_table(env->footer)) {
@@ -7561,6 +7559,8 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 #define READ_THREAD_WAKE_CONDITION(pebc) \
 	(kthread_should_stop() || \
 	 !is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc)))
+#define READ_FAILED_THREAD_WAKE_CONDITION() \
+	(kthread_should_stop())
 
 /*
  * ssdfs_peb_read_thread_func() - main fuction of read thread
@@ -7579,12 +7579,12 @@ int ssdfs_peb_read_thread_func(void *data)
 	struct ssdfs_peb_container *pebc = data;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_segment_request *req;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
 		SSDFS_ERR("pointer on PEB container is NULL\n");
-		return -EINVAL;
+		BUG();
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -7596,7 +7596,7 @@ int ssdfs_peb_read_thread_func(void *data)
 repeat:
 	if (kthread_should_stop()) {
 		complete_all(&pebc->thread[SSDFS_PEB_READ_THREAD].full_stop);
-		return 0;
+		return err;
 	}
 
 	if (is_ssdfs_requests_queue_empty(&pebc->read_rq))
@@ -7617,7 +7617,7 @@ repeat:
 			SSDFS_CRIT("fail to get request from the queue: "
 				   "err %d\n",
 				   err);
-			return err;
+			goto sleep_failed_read_thread;
 		}
 
 		err = ssdfs_process_read_request(pebc, req);
@@ -7633,5 +7633,10 @@ repeat:
 
 sleep_read_thread:
 	wait_event_interruptible(*wait_queue, READ_THREAD_WAKE_CONDITION(pebc));
+	goto repeat;
+
+sleep_failed_read_thread:
+	wait_event_interruptible(*wait_queue,
+			READ_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
 }

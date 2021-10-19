@@ -121,6 +121,7 @@ struct ssdfs_maptbl_area {
  * @extents: metadata extents that describe mapping table location
  * @segs: array of pointers on segment objects
  * @segs_count: count of segment objects are used for mapping table
+ * @state: mapping table's state
  * @erase_op_state: state of erase operation
  * @pre_erase_pebs: count of PEBs in pre-erase state
  * @max_erase_ops: upper bound of erase operations for one iteration
@@ -149,6 +150,8 @@ struct ssdfs_peb_mapping_table {
 	struct ssdfs_segment_info **segs[SSDFS_MAPTBL_SEG_COPY_MAX];
 	u16 segs_count;
 
+	atomic_t state;
+
 	atomic_t erase_op_state;
 	atomic_t pre_erase_pebs;
 	atomic_t max_erase_ops;
@@ -161,6 +164,13 @@ struct ssdfs_peb_mapping_table {
 	wait_queue_head_t wait_queue;
 	struct ssdfs_thread_info thread;
 	struct ssdfs_fs_info *fsi;
+};
+
+/* PEB mapping table's state */
+enum {
+	SSDFS_MAPTBL_CREATED			= 0,
+	SSDFS_MAPTBL_GOING_TO_BE_DESTROY	= 1,
+	SSDFS_MAPTBL_STATE_MAX			= 2,
 };
 
 /*
@@ -450,6 +460,45 @@ bool is_peb_protected(unsigned long found_item)
 	return remainder == 0;
 }
 
+static inline
+bool is_ssdfs_maptbl_going_to_be_destroyed(struct ssdfs_peb_mapping_table *tbl)
+{
+	return atomic_read(&tbl->state) == SSDFS_MAPTBL_GOING_TO_BE_DESTROY;
+}
+
+static inline
+void set_maptbl_going_to_be_destroyed(struct ssdfs_fs_info *fsi)
+{
+	atomic_set(&fsi->maptbl->state, SSDFS_MAPTBL_GOING_TO_BE_DESTROY);
+}
+
+static inline
+void ssdfs_account_updated_user_data_pages(struct ssdfs_fs_info *fsi,
+					   u32 count)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 updated = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p, count %u\n",
+		  fsi, count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&fsi->volume_state_lock);
+	fsi->updated_user_data_pages += count;
+#ifdef CONFIG_SSDFS_DEBUG
+	updated = fsi->updated_user_data_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
+	spin_unlock(&fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("updated %llu\n", updated);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
 /*
  * PEB mapping table's API
  */
@@ -495,6 +544,9 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 					 u64 leb_id, u8 peb_type,
 					 u64 dst_leb_id, int dst_peb_refs,
 					 struct completion **end);
+
+int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi,
+			     u32 count, int type);
 
 /*
  * It makes sense to have special thread for the whole mapping table.

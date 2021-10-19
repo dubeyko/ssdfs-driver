@@ -206,6 +206,15 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 				continue;
 			}
 
+			if (i == SSDFS_RESERVED_SB_SEG &&
+			    leb_id == U64_MAX && peb_id == U64_MAX) {
+				/*
+				 * The reserved seg could be U64_MAX
+				 * if there is no clean segment.
+				 */
+				continue;
+			}
+
 			if (leb_id >= (dev_size >> vh->log_erasesize)) {
 				SSDFS_DBG("corrupted LEB number %llu\n",
 					  leb_id);

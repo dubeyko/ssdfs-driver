@@ -3433,6 +3433,133 @@ int ssdfs_extents_tree_add_fork(struct ssdfs_extents_btree_info *tree,
 }
 
 /*
+ * ssdfs_invalidate_inline_tail_forks() - invalidate inline tail forks
+ * @tree: extents tree
+ * @search: search object
+ *
+ * This method tries to invalidate inline tail forks.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_invalidate_inline_tail_forks(struct ssdfs_extents_btree_info *tree,
+					struct ssdfs_btree_search *search)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_shared_extents_tree *shextree;
+	struct ssdfs_raw_fork *cur;
+	ino_t ino;
+	s64 forks_count;
+	int lower_bound, upper_bound;
+	int i, j;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !tree->fsi || !search);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, search %p\n",
+		  tree, search);
+
+	fsi = tree->fsi;
+	shextree = fsi->shextree;
+
+	if (!shextree) {
+		SSDFS_ERR("shared extents tree is absent\n");
+		return -ERANGE;
+	}
+
+	if (search->request.type != SSDFS_BTREE_SEARCH_INVALIDATE_TAIL) {
+		SSDFS_DBG("nothing should be done\n");
+		return 0;
+	}
+
+	ino = tree->owner->vfs_inode.i_ino;
+	forks_count = atomic64_read(&tree->forks_count);
+
+	lower_bound = search->result.start_index + 1;
+	upper_bound = forks_count - 1;
+
+	for (i = upper_bound; i >= lower_bound; i--) {
+		u64 calculated = 0;
+		u64 blks_count;
+
+		cur = &tree->inline_forks[i];
+
+		if (atomic64_read(&tree->forks_count) == 0) {
+			SSDFS_ERR("invalid forks_count\n");
+			return -ERANGE;
+		} else
+			atomic64_dec(&tree->forks_count);
+
+		SSDFS_DBG("forks_count %lld\n",
+			  atomic64_read(&tree->forks_count));
+
+		blks_count = le64_to_cpu(cur->blks_count);
+		if (blks_count == 0 || blks_count >= U64_MAX) {
+			memset(cur, 0xFF, sizeof(struct ssdfs_raw_fork));
+			continue;
+		}
+
+		for (j = SSDFS_INLINE_EXTENTS_COUNT - 1; j >= 0; j--) {
+			struct ssdfs_raw_extent *extent;
+			u32 len;
+
+			extent = &cur->extents[j];
+			len = le32_to_cpu(extent->len);
+
+			if (len == 0 || len >= U32_MAX) {
+				memset(extent, 0xFF,
+					sizeof(struct ssdfs_raw_extent));
+				continue;
+			}
+
+			if ((calculated + len) > blks_count) {
+				atomic_set(&tree->state,
+					   SSDFS_EXTENTS_BTREE_CORRUPTED);
+				SSDFS_ERR("corrupted extent: "
+					  "calculated %llu, len %u, "
+					  "blks %llu\n",
+					  calculated, len, blks_count);
+				return -ERANGE;
+			}
+
+			err = ssdfs_shextree_add_pre_invalid_extent(shextree,
+								    ino,
+								    extent);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add pre-invalid "
+					  "(seg_id %llu, blk %u, "
+					  "len %u), err %d\n",
+				    le64_to_cpu(extent->seg_id),
+				    le32_to_cpu(extent->logical_blk),
+				    len, err);
+				return err;
+			}
+
+			calculated += len;
+
+			memset(extent, 0xFF, sizeof(struct ssdfs_raw_extent));
+		}
+
+		if (calculated != blks_count) {
+			atomic_set(&tree->state,
+				   SSDFS_EXTENTS_BTREE_CORRUPTED);
+			SSDFS_ERR("calculated %llu != blks %llu\n",
+				  calculated, blks_count);
+			return -ERANGE;
+		}
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_extents_tree_change_inline_fork() - change inline fork
  * @tree: extents tree
  * @search: search object
@@ -3460,10 +3587,8 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 	int private_flags;
 	s64 forks_count, forks_capacity;
 	u16 start_index;
-	int lower_bound, upper_bound;
 	u64 start_offset;
 	u64 blks_count;
-	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3608,83 +3733,11 @@ int ssdfs_extents_tree_change_inline_fork(struct ssdfs_extents_btree_info *tree,
 		     fork_size);
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
 
-	if (search->request.type == SSDFS_BTREE_SEARCH_INVALIDATE_TAIL) {
-		lower_bound = search->result.start_index + 1;
-		upper_bound = forks_count - 1;
-
-		for (i = upper_bound; i >= lower_bound; i--) {
-			u64 calculated = 0;
-			u64 blks_count;
-
-			cur = &tree->inline_forks[i];
-
-			if (atomic64_read(&tree->forks_count) == 0) {
-				SSDFS_ERR("invalid forks_count\n");
-				return -ERANGE;
-			} else
-				atomic64_dec(&tree->forks_count);
-
-			SSDFS_DBG("forks_count %lld\n",
-				  atomic64_read(&tree->forks_count));
-
-			blks_count = le64_to_cpu(cur->blks_count);
-			if (blks_count == 0 || blks_count >= U64_MAX) {
-				memset(cur, 0xFF,
-					sizeof(struct ssdfs_raw_fork));
-				continue;
-			}
-
-			for (j = SSDFS_INLINE_EXTENTS_COUNT - 1; j >= 0; j--) {
-				struct ssdfs_raw_extent *extent;
-				u32 len;
-
-				extent = &cur->extents[j];
-				len = le32_to_cpu(extent->len);
-
-				if (len == 0 || len >= U32_MAX) {
-					memset(extent, 0xFF,
-					    sizeof(struct ssdfs_raw_extent));
-					continue;
-				}
-
-				if ((calculated + len) > blks_count) {
-					atomic_set(&tree->state,
-						SSDFS_EXTENTS_BTREE_CORRUPTED);
-					SSDFS_ERR("corrupted extent: "
-						  "calculated %llu, len %u, "
-						  "blks %llu\n",
-						  calculated, len, blks_count);
-					return -ERANGE;
-				}
-
-				err =
-				 ssdfs_shextree_add_pre_invalid_extent(shextree,
-									ino,
-									extent);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to add pre-invalid "
-						  "(seg_id %llu, blk %u, "
-						  "len %u), err %d\n",
-					    le64_to_cpu(extent->seg_id),
-					    le32_to_cpu(extent->logical_blk),
-					    len, err);
-					return err;
-				}
-
-				calculated += len;
-
-				memset(extent, 0xFF,
-					sizeof(struct ssdfs_raw_extent));
-			}
-
-			if (calculated != blks_count) {
-				atomic_set(&tree->state,
-					   SSDFS_EXTENTS_BTREE_CORRUPTED);
-				SSDFS_ERR("calculated %llu != blks %llu\n",
-					  calculated, blks_count);
-				return -ERANGE;
-			}
-		}
+	err = ssdfs_invalidate_inline_tail_forks(tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to invalidate inline tail forks: "
+			  "err %d\n", err);
+		return err;
 	}
 
 	SSDFS_DBG("AFTER: forks_count %lld\n",
@@ -4636,16 +4689,12 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_shared_extents_tree *shextree;
-	struct ssdfs_raw_fork *fork1, *fork2;
+	struct ssdfs_raw_fork *fork;
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	size_t inline_forks_size = fork_size * SSDFS_INLINE_FORKS_COUNT;
 	ino_t ino;
 	u64 start_hash;
 	s64 forks_count;
-	u64 blks_count;
-	int lower_bound = 0;
-	int upper_bound = 0;
-	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4748,7 +4797,8 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 		SSDFS_ERR("invalid forks count %lld\n",
 			  forks_count);
 		return -ERANGE;
-	}
+	} else
+		atomic64_dec(&tree->forks_count);
 
 	if (search->result.start_index >= forks_count) {
 		SSDFS_ERR("invalid search result: "
@@ -4758,82 +4808,11 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 		return -ENODATA;
 	}
 
-	if (search->request.type == SSDFS_BTREE_SEARCH_INVALIDATE_TAIL) {
-		lower_bound = search->result.start_index;
-		upper_bound = forks_count - 1;
-	} else {
-		lower_bound = search->result.start_index;
-		upper_bound = search->result.start_index;
-	}
-
-	for (i = upper_bound; i >= lower_bound; i--) {
-		u64 calculated = 0;
-
-		fork1 = &tree->inline_forks[i];
-
-		if (atomic64_read(&tree->forks_count) == 0) {
-			SSDFS_ERR("invalid forks_count\n");
-			return -ERANGE;
-		} else
-			atomic64_dec(&tree->forks_count);
-
-		SSDFS_DBG("forks_count %lld\n",
-			  atomic64_read(&tree->forks_count));
-
-		blks_count = le64_to_cpu(fork1->blks_count);
-		if (blks_count == 0 || blks_count >= U64_MAX) {
-			memset(fork1, 0xFF, sizeof(struct ssdfs_raw_fork));
-			continue;
-		}
-
-		for (j = SSDFS_INLINE_EXTENTS_COUNT - 1; j >= 0; j--) {
-			struct ssdfs_raw_extent *extent;
-			u32 len;
-
-			extent = &fork1->extents[j];
-			len = le32_to_cpu(extent->len);
-
-			if (len == 0 || len >= U32_MAX) {
-				memset(extent, 0xFF,
-					sizeof(struct ssdfs_raw_extent));
-				continue;
-			}
-
-			if ((calculated + len) > blks_count) {
-				atomic_set(&tree->state,
-					   SSDFS_EXTENTS_BTREE_CORRUPTED);
-				SSDFS_ERR("corrupted extent: "
-					  "calculated %llu, len %u, "
-					  "blks %llu\n",
-					  calculated, len, blks_count);
-				return -ERANGE;
-			}
-
-			err = ssdfs_shextree_add_pre_invalid_extent(shextree,
-								    ino,
-								    extent);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to add pre-invalid extent "
-					  "(seg_id %llu, blk %u, len %u), "
-					  "err %d\n",
-					  le64_to_cpu(extent->seg_id),
-					  le32_to_cpu(extent->logical_blk),
-					  len, err);
-				return err;
-			}
-
-			calculated += len;
-
-			memset(extent, 0xFF, sizeof(struct ssdfs_raw_extent));
-		}
-
-		if (calculated != blks_count) {
-			atomic_set(&tree->state,
-				   SSDFS_EXTENTS_BTREE_CORRUPTED);
-			SSDFS_ERR("calculated %llu != blks_count %llu\n",
-				  calculated, blks_count);
-			return -ERANGE;
-		}
+	err = ssdfs_invalidate_inline_tail_forks(tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to invalidate inline tail forks: "
+			  "err %d\n", err);
+		return err;
 	}
 
 	if (search->result.start_index < (forks_count - 1)) {
@@ -4852,8 +4831,8 @@ int ssdfs_extents_tree_delete_inline_fork(struct ssdfs_extents_btree_info *tree,
 		}
 
 		index = forks_count - 1;
-		fork2 = &tree->inline_forks[index];
-		memset(fork2, 0xFF, sizeof(struct ssdfs_raw_fork));
+		fork = &tree->inline_forks[index];
+		memset(fork, 0xFF, sizeof(struct ssdfs_raw_fork));
 	}
 
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);

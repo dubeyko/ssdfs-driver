@@ -1565,7 +1565,10 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 
 	spin_lock_init(&fsi->volume_state_lock);
 
-	fsi->free_pages = le64_to_cpu(fsi->vs->free_pages);
+	fsi->free_pages = 0;
+	fsi->reserved_new_user_data_pages = 0;
+	fsi->updated_user_data_pages = 0;
+	fsi->flushing_user_data_requests = 0;
 	fsi->fs_mount_time = ssdfs_current_timestamp();
 	fsi->fs_mod_time = le64_to_cpu(fsi->vs->timestamp);
 	ssdfs_init_boot_vs_mount_timediff(fsi);

@@ -339,6 +339,7 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 			      struct ssdfs_segment_info *si)
 {
 	struct ssdfs_value_pair max_free_pages;
+	int state;
 	int i;
 	int err;
 
@@ -408,6 +409,18 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 	}
 
 	ssdfs_segment_get_object(si);
+
+	state = atomic_cmpxchg(&si->obj_state,
+				SSDFS_SEG_OBJECT_CREATED,
+				SSDFS_CURRENT_SEG_OBJECT);
+	if (state < SSDFS_SEG_OBJECT_CREATED ||
+	    state >= SSDFS_CURRENT_SEG_OBJECT) {
+		ssdfs_segment_put_object(si);
+		SSDFS_WARN("unexpected state %#x\n",
+			   state);
+		return -ERANGE;
+	}
+
 	cur_seg->real_seg = si;
 	cur_seg->seg_id = si->seg_id;
 
@@ -420,6 +433,8 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
  */
 void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 {
+	int state;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cur_seg);
 
@@ -437,6 +452,15 @@ void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 		  cur_seg->real_seg->log_pages,
 		  cur_seg->real_seg->create_threads,
 		  cur_seg->real_seg->seg_type);
+
+	state = atomic_cmpxchg(&cur_seg->real_seg->obj_state,
+				SSDFS_CURRENT_SEG_OBJECT,
+				SSDFS_SEG_OBJECT_CREATED);
+	if (state <= SSDFS_SEG_OBJECT_CREATED ||
+	    state > SSDFS_CURRENT_SEG_OBJECT) {
+		SSDFS_WARN("unexpected state %#x\n",
+			   state);
+	}
 
 	ssdfs_segment_put_object(cur_seg->real_seg);
 	cur_seg->real_seg = NULL;

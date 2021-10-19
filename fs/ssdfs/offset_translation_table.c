@@ -1771,6 +1771,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 
 		if (is_ssdfs_offset_position_older(pos, portion->cno)) {
 			/* logical block has been initialized already */
+			SSDFS_DBG("logical block %u has been initialized already\n",
+				  cur_blk);
 			continue;
 		}
 
@@ -1783,6 +1785,9 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		pos->peb_index = peb_index;
 		pos->sequence_id = sequence_id;
 		pos->offset_index = phys_off_index + i;
+
+		SSDFS_DBG("set init bitmap: cur_blk %u\n",
+			  cur_blk);
 
 		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
 			   cur_blk, 1);
@@ -1807,6 +1812,11 @@ finish_process_fragment:
 		  portion->bmap,
 		  portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
 		  portion->capacity);
+
+	SSDFS_DBG("init_bmap %lx, state_bmap %lx, modification_bmap %lx\n",
+		  *portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
+		  *portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
+		  *portion->table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX]);
 
 	if (is_partially_processed) {
 		SSDFS_DBG("extent has been processed partially: "
@@ -1907,6 +1917,8 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 
 		if (is_ssdfs_offset_position_older(pos, portion->cno)) {
 			/* logical block has been initialized already */
+			SSDFS_DBG("logical block %u has been initialized already\n",
+				  cur_blk);
 			continue;
 		}
 
@@ -1921,6 +1933,16 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 			  cur_blk);
 
 		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
+			   cur_blk, 1);
+
+		/*
+		 * Free block needs to be marked as modified
+		 * with the goal not to lose the information
+		 * about free blocks in the case of PEB migration.
+		 * Because, offsets translation table's snapshot
+		 * needs to contain information about free blocks.
+		 */
+		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX],
 			   cur_blk, 1);
 	}
 
@@ -1998,6 +2020,9 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		offset_id = le16_to_cpu(extent->offset_id);
 		len = le16_to_cpu(extent->len);
 		state = extent->state;
+
+		SSDFS_DBG("logical_blk %u, len %u, state %#x\n",
+			  logical_blk, len, state);
 
 		if (logical_blk >= portion->capacity) {
 			err = -ERANGE;
@@ -2135,6 +2160,8 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("state %#x\n", state);
+
 	if (init_bits > 0) {
 		if (init_bits >= allocated_blks) {
 			state = atomic_cmpxchg(&table->peb[peb_index].state,
@@ -2166,6 +2193,7 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 	}
 
 finish_define_peb_table_state:
+	SSDFS_DBG("state %#x\n", atomic_read(&table->peb[peb_index].state));
 	return 0;
 }
 
@@ -2243,6 +2271,8 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table)
 		SSDFS_WARN("unexpected state %#x\n", state);
 		return -ERANGE;
 	};
+
+	SSDFS_DBG("state %#x\n", atomic_read(&table->state));
 
 	return 0;
 }
@@ -2797,31 +2827,36 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 				 u16 peb_index,
 				 struct ssdfs_blk2off_table_snapshot *snapshot)
 {
+	struct ssdfs_phys_offset_table_array *pot_table;
 	struct ssdfs_sequence_array *sequence;
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
 	u16 capacity;
 	size_t bmap_bytes, tbl_bytes;
 	u16 last_sequence_id;
 	unsigned long dirty_fragments;
+	int state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !snapshot);
 	BUG_ON(peb_index >= table->pebs_count);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("table %p, peb_index %u, snapshot %p\n",
 		  table, peb_index, snapshot);
-
-	if (!ssdfs_blk2off_table_dirtied(table, peb_index)) {
-		SSDFS_DBG("table isn't dirty for peb_index %u\n",
-			  peb_index);
-		return -ENODATA;
-	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(snapshot, 0, sizeof(struct ssdfs_blk2off_table_snapshot));
+	snapshot->bmap_copy = NULL;
+	snapshot->tbl_copy = NULL;
 
-	down_read(&table->translation_lock);
+	down_write(&table->translation_lock);
+
+	if (!ssdfs_blk2off_table_dirtied(table, peb_index)) {
+		err = -ENODATA;
+		SSDFS_DBG("table isn't dirty for peb_index %u\n",
+			  peb_index);
+		goto finish_snapshoting;
+	}
 
 	capacity = table->lblk2off_capacity;
 
@@ -2916,12 +2951,32 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 
 	snapshot->cno = ssdfs_current_cno(table->fsi->sb);
 
+	pot_table = &table->peb[peb_index];
+	state = atomic_cmpxchg(&pot_table->state,
+				SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT,
+				SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
+	if (state != SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT) {
+		state = atomic_cmpxchg(&pot_table->state,
+					SSDFS_BLK2OFF_TABLE_DIRTY,
+					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+		if (state != SSDFS_BLK2OFF_TABLE_DIRTY) {
+			err = -ERANGE;
+			SSDFS_ERR("table isn't dirty: "
+				  "state %#x\n",
+				  state);
+			goto finish_snapshoting;
+		}
+	}
+
 finish_snapshoting:
-	up_read(&table->translation_lock);
+	up_write(&table->translation_lock);
 
 	if (err) {
-		ssdfs_blk2off_kfree(snapshot->bmap_copy);
-		ssdfs_blk2off_kfree(snapshot->tbl_copy);
+		if (snapshot->bmap_copy)
+			ssdfs_blk2off_kfree(snapshot->bmap_copy);
+
+		if (snapshot->tbl_copy)
+			ssdfs_blk2off_kfree(snapshot->tbl_copy);
 	}
 
 	return err;
@@ -3684,7 +3739,6 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 	struct ssdfs_sequence_array *sequence;
 	unsigned long *lbmap1, *lbmap2;
 	u16 last_sequence_id;
-	int state;
 	unsigned long commited_fragments = 0;
 	int i, j;
 	int err = 0;
@@ -3693,12 +3747,12 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 	BUG_ON(!table || !sp || !array);
 	BUG_ON(sp->peb_index >= table->pebs_count);
 	BUG_ON(extent_count == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("table %p, peb_index %u, sp %p, "
 		  "extents %p, extents_count %u\n",
 		  table, sp->peb_index, sp,
 		  array, extent_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&table->translation_lock);
 
@@ -3732,22 +3786,6 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 		goto finish_forget_snapshot;
 	}
 
-	state = atomic_cmpxchg(&pot_table->state,
-				SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT,
-				SSDFS_BLK2OFF_TABLE_PARTIAL_INIT);
-	if (state != SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT) {
-		state = atomic_cmpxchg(&pot_table->state,
-					SSDFS_BLK2OFF_TABLE_DIRTY,
-					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
-		if (state != SSDFS_BLK2OFF_TABLE_DIRTY) {
-			err = -ERANGE;
-			SSDFS_ERR("table isn't dirty: "
-				  "state %#x\n",
-				  state);
-			goto finish_forget_snapshot;
-		}
-	}
-
 	lbmap1 = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
 	lbmap2 = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
 
@@ -3767,7 +3805,15 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 			} else if (cno1 > cno2)
 				continue;
 
-			ssdfs_blk2off_table_bmap_clear(lbmap1, blk);
+			/*
+			 * Don't clear information about free blocks
+			 * in the modification bitmap. Otherwise,
+			 * this information will be lost during
+			 * the PEBs migration.
+			 */
+			if (array[i].state != SSDFS_LOGICAL_BLK_FREE)
+				ssdfs_blk2off_table_bmap_clear(lbmap1, blk);
+
 			ssdfs_blk2off_table_bmap_set(lbmap2, blk);
 		}
 	}
@@ -4216,14 +4262,12 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	memset(desc, 0, sizeof(struct ssdfs_metadata_descriptor));
 	memset(&hdr, 0, tbl_hdr_size);
 
-	if (!ssdfs_blk2off_table_dirtied(table, peb_index)) {
+	err = ssdfs_blk2off_table_snapshot(table, peb_index, &snapshot);
+	if (err == -ENODATA) {
 		SSDFS_DBG("table hasn't dirty fragments: peb_index %u\n",
 			  peb_index);
 		return 0;
-	}
-
-	err = ssdfs_blk2off_table_snapshot(table, peb_index, &snapshot);
-	if (unlikely(err)) {
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get snapshot: peb_index %u, err %d\n",
 			  peb_index, err);
 		return err;
@@ -4478,6 +4522,11 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 			  logical_blk, table->lblk2off_capacity);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("init_bmap %lx, state_bmap %lx, modification_bmap %lx\n",
+		  *table->lbmap[SSDFS_LBMAP_INIT_INDEX],
+		  *table->lbmap[SSDFS_LBMAP_STATE_INDEX],
+		  *table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX]);
 
 	lbmap = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
 	if (ssdfs_blk2off_table_bmap_vacant(lbmap, table->lblk2off_capacity,
@@ -5235,10 +5284,10 @@ int ssdfs_table_fragment_set_dirty(struct ssdfs_blk2off_table *table,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table);
 	BUG_ON(!rwsem_is_locked(&table->translation_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("table %p,  peb_index %u, sequence_id %u\n",
 		  table, peb_index, sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	phys_off_table = &table->peb[peb_index];
 
@@ -5843,10 +5892,10 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !extent);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("table %p, extent (start %u, len %u)\n",
 		  table, extent->start_lblk, extent->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_CREATED) {
 		SSDFS_DBG("unable to free before initialization: "

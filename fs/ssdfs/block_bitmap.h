@@ -68,7 +68,7 @@ int SSDFS_BLK2PAGE(u32 blk, u8 item_bits, u16 *offset)
 {
 	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(item_bits);
 	u32 blks_per_long = SSDFS_ITEMS_PER_LONG(item_bits);
-	u32 blks_per_page = PAGE_SIZE / blks_per_byte;
+	u32 blks_per_page = PAGE_SIZE * blks_per_byte;
 	u32 off;
 
 	if (offset) {
@@ -77,6 +77,13 @@ int SSDFS_BLK2PAGE(u32 blk, u8 item_bits, u16 *offset)
 		BUG_ON(off >= U16_MAX);
 		*offset = off;
 	}
+
+	SSDFS_DBG("blk %u, item_bits %u, blks_per_byte %u, "
+		  "blks_per_long %u, blks_per_page %u, "
+		  "page_index %u\n",
+		  blk, item_bits, blks_per_byte,
+		  blks_per_long, blks_per_page,
+		  blk / blks_per_page);
 
 	return blk / blks_per_page;
 }

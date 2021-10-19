@@ -107,6 +107,9 @@ struct ssdfs_peb_container {
 	/* Update requests queue */
 	struct ssdfs_requests_queue update_rq;
 
+	spinlock_t pending_lock;
+	u32 pending_updated_user_data_pages;
+
 	/* Shared new page requests queue */
 	spinlock_t crq_ptr_lock;
 	struct ssdfs_requests_queue *create_rq;
@@ -191,6 +194,12 @@ bool have_flush_requests(struct ssdfs_peb_container *pebc)
 	return !is_create_rq_empty || !is_update_rq_empty;
 }
 
+static inline
+bool is_ssdfs_peb_containing_user_data(struct ssdfs_peb_container *pebc)
+{
+	return pebc->peb_type == SSDFS_MAPTBL_DATA_PEB_TYPE;
+}
+
 /*
  * PEB container's API
  */
@@ -257,5 +266,6 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
 				struct ssdfs_block_descriptor *blk_desc,
 				int blk_state_index);
 bool ssdfs_peb_has_dirty_pages(struct ssdfs_peb_info *pebi);
+int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi);
 
 #endif /* _SSDFS_PEB_CONTAINER_H */

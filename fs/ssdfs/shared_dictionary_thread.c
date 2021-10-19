@@ -150,6 +150,8 @@ finish_init:
 #define SHDICT_THREAD_WAKE_CONDITION(tree) \
 	(kthread_should_stop() || \
 	 has_queue_unprocessed_names(SHDICT_PTR(tree)))
+#define SHDICT_FAILED_THREAD_WAKE_CONDITION() \
+	(kthread_should_stop())
 
 /*
  * ssdfs_shared_dict_thread_func() - shared dictionary object's thread's func
@@ -158,16 +160,16 @@ static
 int ssdfs_shared_dict_thread_func(void *data)
 {
 	struct ssdfs_shared_dict_btree_info *tree = data;
-	wait_queue_head_t *wait_queue;
-	struct ssdfs_name_requests_queue *ptr;
-	struct ssdfs_btree_search *search;
+	wait_queue_head_t *wait_queue = NULL;
+	struct ssdfs_name_requests_queue *ptr = NULL;
+	struct ssdfs_btree_search *search = NULL;
 	int read_reqs;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!tree) {
 		SSDFS_ERR("pointer on shared dictionary tree is NULL\n");
-		return -EINVAL;
+		BUG();
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -178,25 +180,30 @@ int ssdfs_shared_dict_thread_func(void *data)
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
+		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate btree search object\n");
-		return -ENOMEM;
+		goto sleep_failed_shared_dict_thread;
 	}
 
 repeat:
 	if (unlikely(err)) {
-		SSDFS_WARN("shared dictionary tree's thread failed: "
-			   "err %d\n",
-			   err);
-		complete_all(&ptr->thread.full_stop);
-		goto finish_shared_dict_thread;
+		wake_up_all(&tree->wait_queue);
+
+		if (kthread_should_stop())
+			goto finish_thread;
+		else
+			goto sleep_failed_shared_dict_thread;
 	}
 
 	if (kthread_should_stop()) {
 		if (has_queue_unprocessed_names(tree))
 			goto try_process_queue;
 
+finish_thread:
 		complete_all(&ptr->thread.full_stop);
-		goto finish_shared_dict_thread;
+		if (search)
+			ssdfs_btree_search_free(search);
+		return err;
 	}
 
 	if (!has_queue_unprocessed_names(tree))
@@ -324,9 +331,10 @@ sleep_shared_dict_thread:
 				 SHDICT_THREAD_WAKE_CONDITION(tree));
 	goto repeat;
 
-finish_shared_dict_thread:
-	ssdfs_btree_search_free(search);
-	return err;
+sleep_failed_shared_dict_thread:
+	wait_event_interruptible(*wait_queue,
+		SHDICT_FAILED_THREAD_WAKE_CONDITION());
+	goto repeat;
 }
 
 static

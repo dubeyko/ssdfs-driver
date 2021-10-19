@@ -592,6 +592,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	bool has_index_area, has_items_area;
 	u32 start_blk;
 	u32 len;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -738,6 +739,32 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 			  node_id1, si->seg_id,
 			  start_blk, len);
 		goto finish_invalidate_index;
+	}
+
+	for (i = 0; i < si->pebs_count; i++) {
+		struct ssdfs_segment_request *req;
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto finish_invalidate_index;
+		}
+
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
+						      i, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("commit log request failed: "
+				  "peb_index %d, err %d\n",
+				  i, err);
+			ssdfs_put_request(req);
+			ssdfs_request_free(req);
+			goto finish_invalidate_index;
+		}
 	}
 
 finish_invalidate_index:
@@ -1129,6 +1156,32 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		goto finish_invalidate_index;
 	}
 
+	for (i = 0; i < si->pebs_count; i++) {
+		struct ssdfs_segment_request *req;
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto finish_invalidate_index;
+		}
+
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
+						      i, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("commit log request failed: "
+				  "peb_index %d, err %d\n",
+				  i, err);
+			ssdfs_put_request(req);
+			ssdfs_request_free(req);
+			goto finish_invalidate_index;
+		}
+	}
+
 finish_invalidate_index:
 	ssdfs_ext_queue_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
@@ -1429,6 +1482,32 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 		goto finish_invalidate_index;
 	}
 
+	for (i = 0; i < si->pebs_count; i++) {
+		struct ssdfs_segment_request *req;
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto finish_invalidate_index;
+		}
+
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
+						      i, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("commit log request failed: "
+				  "peb_index %d, err %d\n",
+				  i, err);
+			ssdfs_put_request(req);
+			ssdfs_request_free(req);
+			goto finish_invalidate_index;
+		}
+	}
+
 finish_invalidate_index:
 	ssdfs_ext_queue_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
@@ -1458,6 +1537,7 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	u64 seg_id;
 	u32 start_blk;
 	u32 len;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1488,6 +1568,32 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 			  "seg %llu, extent (start_blk %u, len %u), err %d\n",
 			  seg_id, start_blk, len, err);
 		goto finish_invalidate_extent;
+	}
+
+	for (i = 0; i < si->pebs_count; i++) {
+		struct ssdfs_segment_request *req;
+
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			goto finish_invalidate_extent;
+		}
+
+		ssdfs_request_init(req);
+		ssdfs_get_request(req);
+
+		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
+						      i, req);
+		if (unlikely(err)) {
+			SSDFS_ERR("commit log request failed: "
+				  "peb_index %d, err %d\n",
+				  i, err);
+			ssdfs_put_request(req);
+			ssdfs_request_free(req);
+			goto finish_invalidate_extent;
+		}
 	}
 
 finish_invalidate_extent:

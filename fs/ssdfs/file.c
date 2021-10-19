@@ -35,6 +35,7 @@
 #include "extents_tree.h"
 #include "xattr.h"
 #include "acl.h"
+#include "peb_mapping_table.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -1440,6 +1441,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 				goto fail_issue_write_request;
 		}
 
+		wake_up_all(&fsi->pending_wq);
+
 		/*
 		 * Async request is completely managed by flush thread.
 		 * Forget request because next request will be allocated.
@@ -1459,6 +1462,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 				  ino, err);
 				goto fail_issue_write_request;
 		}
+
+		wake_up_all(&fsi->pending_wq);
 
 		res = wait_for_completion_timeout(&(*req)->result.wait,
 						  SSDFS_DEFAULT_TIMEOUT);
@@ -1641,6 +1646,9 @@ try_add_page_into_request:
 
 		last_index = pagevec_count(&(*req)->result.pvec) - 1;
 		last_page = (*req)->result.pvec.pages[last_index];
+
+		SSDFS_DBG("logical_offset %llu, upper_bound %llu, last_index %u\n",
+			  (u64)logical_offset, upper_bound, last_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!last_page);
@@ -2103,6 +2111,14 @@ out_writepages:
 	return ret;
 }
 
+static void ssdfs_write_failed(struct address_space *mapping, loff_t to)
+{
+	struct inode *inode = mapping->host;
+
+	if (to > inode->i_size)
+		truncate_pagecache(inode, inode->i_size);
+}
+
 /*
  * The ssdfs_write_begin() is called by the generic
  * buffered write code to ask the filesystem to prepare
@@ -2190,20 +2206,22 @@ try_regular_write:
 				  (u64)cur_blk, is_new_blk, blks);
 
 			if (is_new_blk) {
-				if (!need_add_block(page))
+				if (!need_add_block(page)) {
 					set_page_new(page);
+					err = ssdfs_reserve_free_pages(fsi, 1,
+							SSDFS_USER_DATA_PAGES);
+					if (!err)
+						blks++;
+				}
 
+#ifdef CONFIG_SSDFS_DEBUG
 				spin_lock(&fsi->volume_state_lock);
-				if (fsi->free_pages > 0) {
-					fsi->free_pages--;
-					free_pages = fsi->free_pages;
-					blks++;
-				} else
-					err = -ENOSPC;
+				free_pages = fsi->free_pages;
 				spin_unlock(&fsi->volume_state_lock);
 
-				SSDFS_DBG("free_pages %llu, blks %u\n",
-					  free_pages, blks);
+				SSDFS_DBG("free_pages %llu, blks %u, err %d\n",
+					  free_pages, blks, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 				if (err) {
 					spin_lock(&fsi->volume_state_lock);
@@ -2213,11 +2231,18 @@ try_regular_write:
 					ssdfs_unlock_page(page);
 					ssdfs_put_page(page);
 
+					ssdfs_write_failed(mapping, pos + len);
+
 					SSDFS_DBG("page %p, count %d\n",
 						  page, page_ref_count(page));
 					SSDFS_DBG("volume hasn't free space\n");
 					return err;
 				}
+			} else if (!PageDirty(page)) {
+				/*
+				 * ssdfs_write_end() marks page as dirty
+				 */
+				ssdfs_account_updated_user_data_pages(fsi, 1);
 			}
 
 			cur_blk++;

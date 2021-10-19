@@ -148,6 +148,7 @@ bool ssdfs_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap)
 
 void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap)
 {
+	SSDFS_DBG("clear dirty state\n");
 	clear_block_bmap_dirty(blk_bmap);
 }
 
@@ -1058,6 +1059,8 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->invalid_blks, *last_free_page);
 		goto cleanup_snapshot_pagevec;
 	}
+
+	SSDFS_DBG("clear dirty state\n");
 
 	clear_block_bmap_dirty(blk_bmap);
 
@@ -4347,11 +4350,11 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 	set_block_bmap_dirty(blk_bmap);
 
-	SSDFS_DBG("range (start %u, len %u) has been pre-allocated\n",
-		  range->start, range->len);
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("range (start %u, len %u) has been pre-allocated\n",
+		  range->start, range->len);
+#else
+	SSDFS_DBG("range (start %u, len %u) has been pre-allocated\n",
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -4526,11 +4529,11 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 	set_block_bmap_dirty(blk_bmap);
 
-	SSDFS_DBG("range (start %u, len %u) has been allocated\n",
-		  range->start, range->len);
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("range (start %u, len %u) has been allocated\n",
+		  range->start, range->len);
+#else
+	SSDFS_DBG("range (start %u, len %u) has been allocated\n",
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -4633,11 +4636,11 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 
 	ssdfs_debug_block_bitmap(blk_bmap);
 
-	SSDFS_DBG("range (start %u, len %u) has been invalidated\n",
-		  range->start, range->len);
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("range (start %u, len %u) has been invalidated\n",
+		  range->start, range->len);
+#else
+	SSDFS_DBG("range (start %u, len %u) has been invalidated\n",
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 

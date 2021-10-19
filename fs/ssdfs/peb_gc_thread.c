@@ -1110,6 +1110,7 @@ static
 int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_io_load_stats *io_stats)
 {
+	int state;
 	s64 reqs_count;
 	s64 average_diff;
 	s64 cur_diff;
@@ -1140,6 +1141,25 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 	if (io_stats->measurements < SSDFS_MEASUREMENTS_MAX) {
 		io_stats->reqs_count[io_stats->measurements] = reqs_count;
 		io_stats->measurements++;
+	}
+
+	state = atomic_read(&fsi->global_fs_state);
+	switch (state) {
+	case SSDFS_METADATA_GOING_FLUSHING:
+	case SSDFS_METADATA_UNDER_FLUSH:
+		/*
+		 * Thread that is trying to flush metadata
+		 * waits the end of user data flush requests.
+		 * So, GC should not add any requests,
+		 * otherwise, the metadata flush could
+		 * never happened.
+		 */
+		SSDFS_DBG("don't add request before metadata flush\n");
+		return SSDFS_WAIT_IDLE_STATE;
+
+	default:
+		/* continue logic */
+		break;
 	}
 
 	if (reqs_count <= SSDFS_GC_LOW_BOUND_THRESHOLD) {
@@ -1600,6 +1620,11 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index, err);
 		return err;
+	}
+
+	if (is_ssdfs_maptbl_going_to_be_destroyed(si->fsi->maptbl)) {
+		SSDFS_WARN("seg %llu, peb_index %u\n",
+			   si->seg_id, pebc->peb_index);
 	}
 
 	err = ssdfs_peb_container_change_state(pebc);
@@ -2352,6 +2377,234 @@ sleep_failed_gc_thread:
 	wait_event_interruptible(*wq,
 		GLOBAL_GC_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
+}
+
+/*
+ * ssdfs_collect_dirty_segments_now() - collect dirty segments now
+ * @fsi: pointer on shared file system object
+ *
+ * This function tries to collect the dirty segments.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *pebd;
+	struct ssdfs_segment_bmap *segbmap;
+	struct completion *end = NULL;
+	int seg_state = SSDFS_SEG_DIRTY;
+	int seg_state_mask = SSDFS_SEG_DIRTY_STATE_FLAG;
+	u64 seg_id = 0;
+	u64 max_seg_id;
+	u64 nsegs;
+	u64 leb_id;
+	u64 cur_leb_id;
+	u32 lebs_per_segment;
+	u32 i;
+	int res;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif  /* CONFIG_SSDFS_DEBUG */
+
+	segbmap = fsi->segbmap;
+	lebs_per_segment = fsi->pebs_per_seg;
+
+	mutex_lock(&fsi->resize_mutex);
+	nsegs = fsi->nsegs;
+	mutex_unlock(&fsi->resize_mutex);
+
+	while (seg_id < nsegs) {
+		max_seg_id = nsegs;
+
+		err = ssdfs_gc_find_next_seg_id(fsi, seg_id, max_seg_id,
+						seg_state, seg_state_mask,
+						&seg_id);
+		if (err == -ENODATA) {
+			SSDFS_DBG("GC hasn't found any victim\n");
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find segment: "
+				  "seg_id %llu, nsegs %llu, err %d\n",
+				  seg_id, nsegs, err);
+			return err;
+		}
+
+		SSDFS_DBG("found segment: "
+			  "seg_id %llu, seg_state %#x\n",
+			  seg_id, seg_state);
+
+		leb_id = seg_id * lebs_per_segment;
+		i = 0;
+
+		for (; i < lebs_per_segment; i++) {
+			cur_leb_id = leb_id + i;
+
+			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
+			if (err == -ENODATA) {
+				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
+					  cur_leb_id);
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb_id, err);
+				return err;
+			}
+
+			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+			switch (pebd->state) {
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				/* PEB is dirty */
+				break;
+
+			default:
+				SSDFS_DBG("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb_id, pebd->state);
+				goto check_next_segment;
+			}
+
+			goto try_to_find_seg_object;
+		}
+
+try_to_find_seg_object:
+		si = ssdfs_segment_tree_find(fsi, seg_id);
+		if (IS_ERR_OR_NULL(si)) {
+			err = PTR_ERR(si);
+
+			if (err == -ENODATA) {
+				err = 0;
+				goto try_set_pre_erase_state;
+			} else if (err == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("seg tree returns NULL\n");
+				return err;
+			} else {
+				SSDFS_ERR("fail to find segment: "
+					  "seg %llu, err %d\n",
+					  seg_id, err);
+				return err;
+			}
+		} else if (should_ssdfs_segment_be_destroyed(si)) {
+			err = ssdfs_segment_tree_remove(fsi, si);
+			if (unlikely(err)) {
+				SSDFS_WARN("fail to remove segment: "
+					   "seg %llu, err %d\n",
+					   si->seg_id, err);
+			} else {
+				err = ssdfs_segment_destroy_object(si);
+				if (err) {
+					SSDFS_WARN("fail to destroy: "
+						   "seg %llu, err %d\n",
+						   si->seg_id, err);
+				}
+			}
+		} else
+			goto check_next_segment;
+
+try_set_pre_erase_state:
+		for (; i < lebs_per_segment; i++) {
+			cur_leb_id = leb_id + i;
+
+			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
+			if (err == -ENODATA) {
+				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
+					  cur_leb_id);
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb_id, err);
+				return err;
+			}
+
+			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+			switch (pebd->state) {
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				/* PEB is dirty */
+				break;
+
+			default:
+				SSDFS_DBG("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb_id, pebd->state);
+				goto check_next_segment;
+			}
+
+			err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								   cur_leb_id,
+								   pebd->type,
+								   &end);
+			if (err == -EAGAIN) {
+				res = wait_for_completion_timeout(end,
+							SSDFS_DEFAULT_TIMEOUT);
+				if (res == 0) {
+					err = -ERANGE;
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								    cur_leb_id,
+								    pebd->type,
+								    &end);
+			}
+
+			if (err == -EBUSY) {
+				err = 0;
+				SSDFS_DBG("unable to prepare pre-erase state: "
+					  "leb_id %llu\n",
+					  cur_leb_id);
+				goto check_next_segment;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare pre-erase state: "
+					  "leb_id %llu, err %d\n",
+					  leb_id, err);
+				return err;
+			}
+		}
+
+		err = ssdfs_segbmap_change_state(segbmap, seg_id,
+						 SSDFS_SEG_CLEAN, &end);
+		if (err == -EAGAIN) {
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("segbmap init failed: "
+					  "err %d\n", err);
+				return err;
+			}
+
+			err = ssdfs_segbmap_change_state(segbmap, seg_id,
+							 SSDFS_SEG_CLEAN, &end);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change segment state: "
+				  "seg %llu, state %#x, err %d\n",
+				  seg_id, SSDFS_SEG_CLEAN, err);
+			return err;
+		}
+
+check_next_segment:
+		seg_id++;
+	}
+
+	return 0;
 }
 
 int ssdfs_using_seg_gc_thread_func(void *data)

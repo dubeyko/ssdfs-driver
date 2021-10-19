@@ -13,6 +13,15 @@
 #ifndef _SSDFS_FS_INFO_H
 #define _SSDFS_FS_INFO_H
 
+/* Global FS states */
+enum {
+	SSDFS_UNKNOWN_GLOBAL_FS_STATE,
+	SSDFS_REGULAR_FS_OPERATIONS,
+	SSDFS_METADATA_GOING_FLUSHING,
+	SSDFS_METADATA_UNDER_FLUSH,
+	SSDFS_GLOBAL_FS_STATE_MAX
+};
+
 /*
  * struct ssdfs_volume_block - logical block
  * @seg_id: segment ID
@@ -127,6 +136,11 @@ struct ssdfs_device_ops {
  * @user_data_log_pages: full log size in user data segment (pages count)
  * @volume_state_lock: lock for mutable volume metadata
  * @free_pages: free pages count on the volume
+ * @reserved_new_user_data_pages: reserved pages of growing files' content
+ * @updated_user_data_pages: number of updated pages of files' content
+ * @flushing_user_data_requests: number of user data processing flush request
+ * @pending_wq: wait queue for flush threads of user data segments
+ * @finish_user_data_flush_wq: wait queue for waiting the end of user data flush
  * @fs_mount_time: file system mount timestamp
  * @fs_mod_time: last write timestamp
  * @fs_mount_cno: mount checkpoint
@@ -204,8 +218,15 @@ struct ssdfs_fs_info {
 	u16 inodes_seg_log_pages;
 	u16 user_data_log_pages;
 
+	atomic_t global_fs_state;
+
 	spinlock_t volume_state_lock;
 	u64 free_pages;
+	u64 reserved_new_user_data_pages;
+	u64 updated_user_data_pages;
+	u64 flushing_user_data_requests;
+	wait_queue_head_t pending_wq;
+	wait_queue_head_t finish_user_data_flush_wq;
 	u64 fs_mount_time;
 	u64 fs_mod_time;
 	u64 fs_mount_cno;

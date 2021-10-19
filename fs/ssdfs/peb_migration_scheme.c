@@ -31,6 +31,7 @@
 #include "page_array.h"
 #include "peb.h"
 #include "peb_container.h"
+#include "peb_mapping_table.h"
 #include "segment_bitmap.h"
 #include "segment.h"
 
@@ -933,6 +934,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 		SSDFS_DBG("final range: (start %u, len %u)\n",
 			  range.start, range.len);
+
+		if (is_ssdfs_peb_containing_user_data(pebc)) {
+			ssdfs_account_updated_user_data_pages(si->fsi,
+							      range.len);
+		}
 
 		switch (blk_type) {
 		case SSDFS_BLK_VALID:

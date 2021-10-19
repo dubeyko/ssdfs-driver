@@ -195,3 +195,13 @@ config SSDFS_DIFF_ON_WRITE
 	  metadata.
 
 	  If unsure, say N.
+
+config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
+	bool "SSDFS fixed superblock segments set"
+	depends on SSDFS
+	help
+	  This option enables the technique of repeatable using the
+	  reserved set of superblock segments in the beginning
+	  of a volume.
+
+	  If unsure, say N.

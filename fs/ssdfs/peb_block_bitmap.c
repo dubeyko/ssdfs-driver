@@ -1776,8 +1776,9 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 
 	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
 		  bmap, bmap_index, len);
-	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+	SSDFS_DBG("seg %llu, free_logical_blks %u, valid_logical_blks %u, "
 		  "invalid_logical_blks %u, pages_per_peb %u\n",
+		  bmap->parent->parent_si->seg_id,
 		  atomic_read(&bmap->peb_free_blks),
 		  atomic_read(&bmap->peb_valid_blks),
 		  atomic_read(&bmap->peb_invalid_blks),
@@ -2070,8 +2071,9 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 
 	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
 		  bmap, bmap_index, len);
-	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
+	SSDFS_DBG("seg %llu, free_logical_blks %u, valid_logical_blks %u, "
 		  "invalid_logical_blks %u, pages_per_peb %u\n",
+		  bmap->parent->parent_si->seg_id,
 		  atomic_read(&bmap->peb_free_blks),
 		  atomic_read(&bmap->peb_valid_blks),
 		  atomic_read(&bmap->peb_invalid_blks),

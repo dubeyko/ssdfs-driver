@@ -1503,6 +1503,8 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 
 	ssdfs_requests_queue_init(&pebc->read_rq);
 	ssdfs_requests_queue_init(&pebc->update_rq);
+	spin_lock_init(&pebc->pending_lock);
+	pebc->pending_updated_user_data_pages = 0;
 	spin_lock_init(&pebc->crq_ptr_lock);
 	pebc->create_rq = NULL;
 
@@ -2388,7 +2390,7 @@ fail_prepare_destination:
 		break;
 
 	case SSDFS_VALID_DESTINATION:
-		SSDFS_WARN("old destination is valid\n");
+		SSDFS_DBG("old destination is valid\n");
 		break;
 
 	default:

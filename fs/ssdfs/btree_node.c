@@ -974,6 +974,9 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	logical_blk = le32_to_cpu(ptr->index.extent.logical_blk);
 	len = le32_to_cpu(ptr->index.extent.len);
 
+	SSDFS_DBG("seg_id %llu, logical_blk %u, len %u\n",
+		  seg_id, logical_blk, len);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(seg_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1049,7 +1052,9 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		if (res == 0) {
 			err = -ERANGE;
 			SSDFS_ERR("blk2off init failed: "
-				  "err %d\n", err);
+				  "seg_id %llu, logical_blk %u, "
+				  "len %u, err %d\n",
+				  seg_id, logical_blk, len, err);
 			goto fail_read_node;
 		}
 
@@ -1060,8 +1065,8 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to convert: "
-			  "logical_blk %u, err %d\n",
-			  logical_blk, err);
+			  "seg_id %llu, logical_blk %u, len %u, err %d\n",
+			  seg_id, logical_blk, len, err);
 		goto fail_read_node;
 	}
 
@@ -2763,6 +2768,97 @@ void ssdfs_btree_flush_root_node(struct ssdfs_btree_node *node,
 	atomic_set(&node->flush_req.result.state, SSDFS_REQ_FINISHED);
 }
 
+#define SSDFS_DIFF_ON_WRITE_PCT_THRESHOLD	(25)
+
+static
+bool can_diff_on_write_be_used(struct ssdfs_btree_node *node)
+{
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE
+	struct ssdfs_state_bitmap *bmap;
+	unsigned long dirty_bits = 0;
+	unsigned long allocated_bits = 0;
+	unsigned long bits_count = 0;
+	unsigned long items_count = 0;
+	unsigned long items_capacity = 0;
+	unsigned long item_size = 0;
+	unsigned long index_count = 0;
+	unsigned long index_capacity = 0;
+	unsigned long index_size = 0;
+	unsigned long percentage = 0;
+	u64 total_bytes = 0;
+	u64 dirty_bytes = 0;
+	bool can_be_used = false;
+
+	down_read(&node->header_lock);
+
+	down_read(&node->bmap_array.lock);
+	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_DIRTY_BMAP];
+	spin_lock(&bmap->lock);
+	dirty_bits = bitmap_weight(bmap->ptr,
+				    node->bmap_array.bits_count);
+	bits_count = node->bmap_array.bits_count;
+	spin_unlock(&bmap->lock);
+	bmap = &node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP];
+	spin_lock(&bmap->lock);
+	allocated_bits = bitmap_weight(bmap->ptr,
+					node->bmap_array.bits_count);
+	spin_unlock(&bmap->lock);
+	up_read(&node->bmap_array.lock);
+
+	if (is_ssdfs_btree_node_index_area_exist(node)) {
+		index_count = node->index_area.index_count;
+		index_capacity = node->index_area.index_capacity;
+		index_size = node->index_area.index_size;
+	}
+
+	if (is_ssdfs_btree_node_items_area_exist(node)) {
+		items_count = node->items_area.items_count;
+		items_capacity = node->items_area.items_capacity;
+		item_size = node->items_area.item_size;
+	}
+
+	if (index_count == 0 && items_count == 0) {
+		SSDFS_WARN("index_count %ld, items_count %ld\n",
+			   index_count, items_count);
+		can_be_used = false;
+		goto finish_check;
+	}
+
+	percentage = (dirty_bits * 100) / (index_capacity + items_capacity);
+
+	total_bytes = ((u64)index_capacity * index_size) +
+			((u64)items_capacity * item_size);
+	dirty_bytes = (u64)dirty_bits *
+			max_t(unsigned long, item_size, index_size);
+
+	if (percentage <= SSDFS_DIFF_ON_WRITE_PCT_THRESHOLD)
+		can_be_used = true;
+	else
+		can_be_used = false;
+
+finish_check:
+	up_read(&node->header_lock);
+
+	if (can_be_used) {
+		SSDFS_DBG("Diff-On-Write: node_id %u, height %u, type %#x, "
+			  "dirty_bits %ld, allocated_bits %ld, bits_count %ld, "
+			  "items_count %ld, items_capacity %ld, item_size %ld, "
+			  "index_count %ld, index_capacity %ld, index_size %ld, "
+			  "percentage %ld, total_bytes %llu, dirty_bytes %llu\n",
+			  node->node_id, atomic_read(&node->height),
+			  atomic_read(&node->type),
+			  dirty_bits, allocated_bits, bits_count,
+			  items_count, items_capacity, item_size,
+			  index_count, index_capacity, index_size,
+			  percentage, total_bytes, dirty_bytes);
+	}
+
+	return can_be_used;
+#else
+	return false;
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE */
+}
+
 /*
  * ssdfs_btree_common_node_flush() - common method of node flushing
  * @node: node object
@@ -2813,9 +2909,6 @@ int ssdfs_btree_common_node_flush(struct ssdfs_btree_node *node)
 		  node->node_id, atomic_read(&node->height),
 		  atomic_read(&node->type));
 
-/* TODO: implement Diff-On-Write support */
-	SSDFS_DBG("implement Diff-On-Write support\n");
-
 	fsi = node->tree->fsi;
 
 	pvec_size = node->node_size >> PAGE_SHIFT;
@@ -2833,6 +2926,13 @@ int ssdfs_btree_common_node_flush(struct ssdfs_btree_node *node)
 			  pagevec_count(&node->content.pvec),
 			  pvec_size);
 		return -ERANGE;
+	}
+
+	/* TODO: implement Diff-On-Write support */
+	SSDFS_DBG("implement Diff-On-Write support\n");
+
+	if (can_diff_on_write_be_used(node)) {
+		SSDFS_DBG("DIFF_ON_WRITE can be used\n");
 	}
 
 	ssdfs_request_init(&node->flush_req);
@@ -9761,6 +9861,12 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 			break;
 		}
 
+		SSDFS_DBG("search->result.start_index %u, "
+			  "search->result.state %#x, "
+			  "search->result.err %d\n",
+			  search->result.start_index,
+			  search->result.state,
+			  search->result.err);
 		return -ENODATA;
 
 	case 1: /* range1 > range2 */
@@ -9799,6 +9905,12 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 			break;
 		}
 
+		SSDFS_DBG("search->result.start_index %u, "
+			  "search->result.state %#x, "
+			  "search->result.err %d\n",
+			  search->result.start_index,
+			  search->result.state,
+			  search->result.err);
 		return -ENODATA;
 
 	default:
@@ -9847,6 +9959,12 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 			break;
 		}
 
+		SSDFS_DBG("search->result.start_index %u, "
+			  "search->result.state %#x, "
+			  "search->result.err %d\n",
+			  search->result.start_index,
+			  search->result.state,
+			  search->result.err);
 		return -ENODATA;
 	}
 

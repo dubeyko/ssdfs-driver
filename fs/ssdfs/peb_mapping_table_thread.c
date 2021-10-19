@@ -777,6 +777,22 @@ finish_fragment_correction:
 	up_write(&fdesc->lock);
 
 	if (!err) {
+		if (is_ssdfs_maptbl_going_to_be_destroyed(tbl)) {
+			SSDFS_WARN("maptbl %p, "
+				  "fdesc %p, fragment_index %u, "
+				  "start_leb %llu, lebs_count %u\n",
+				  tbl, fdesc, fragment_index,
+				  fdesc->start_leb, fdesc->lebs_count);
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("maptbl %p, "
+				  "fdesc %p, fragment_index %u, "
+				  "start_leb %llu, lebs_count %u\n",
+				  tbl, fdesc, fragment_index,
+				  fdesc->start_leb, fdesc->lebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
 		mutex_lock(&tbl->bmap_lock);
 		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
@@ -1500,6 +1516,22 @@ finish_fragment_correction:
 	up_write(&fdesc->lock);
 
 	if (!err) {
+		if (is_ssdfs_maptbl_going_to_be_destroyed(tbl)) {
+			SSDFS_WARN("maptbl %p, "
+				  "fdesc %p, fragment_index %u, "
+				  "start_leb %llu, lebs_count %u\n",
+				  tbl, fdesc, fragment_index,
+				  fdesc->start_leb, fdesc->lebs_count);
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("maptbl %p, "
+				  "fdesc %p, fragment_index %u, "
+				  "start_leb %llu, lebs_count %u\n",
+				  tbl, fdesc, fragment_index,
+				  fdesc->start_leb, fdesc->lebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
 		mutex_lock(&tbl->bmap_lock);
 		atomic_set(&fdesc->state, SSDFS_MAPTBL_FRAG_DIRTY);
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
@@ -2285,7 +2317,7 @@ int ssdfs_maptbl_thread_func(void *data)
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!tbl) {
 		SSDFS_ERR("pointer on mapping table object is NULL\n");
-		return -EINVAL;
+		BUG();
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
