@@ -2218,6 +2218,44 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 			  "leb_id %llu, peb_type %#x\n",
 			  leb_id, ptr->peb_type);
 		goto fail_prepare_destination;
+	} else if (err == -EBUSY) {
+		DEFINE_WAIT(wait);
+
+wait_erase_operation_end:
+		SSDFS_DBG("wait_erase_operation_end: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, ptr->peb_type);
+
+		wake_up_all(&fsi->maptbl->wait_queue);
+
+		mutex_unlock(&ptr->migration_lock);
+		prepare_to_wait(&fsi->maptbl->erase_ops_end_wq, &wait,
+				TASK_UNINTERRUPTIBLE);
+		schedule();
+		finish_wait(&fsi->maptbl->erase_ops_end_wq, &wait);
+		mutex_lock(&ptr->migration_lock);
+
+		err = ssdfs_maptbl_add_migration_peb(fsi, leb_id, ptr->peb_type,
+						     &pebr, &end);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find PEB for migration: "
+				  "leb_id %llu, peb_type %#x\n",
+				  leb_id, ptr->peb_type);
+			goto fail_prepare_destination;
+		} else if (err == -EBUSY) {
+			/*
+			 * We still have pre-erased PEBs.
+			 * Let's wait more.
+			 */
+			
+			goto wait_erase_operation_end;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to add migration PEB: "
+				  "leb_id %llu, peb_type %#x, "
+				  "err %d\n",
+				  leb_id, ptr->peb_type, err);
+			goto fail_prepare_destination;
+		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add migration PEB: "
 			  "leb_id %llu, peb_type %#x, "

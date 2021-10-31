@@ -8053,6 +8053,9 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 	u32 log_bytes, written_bytes;
 	u32 log_start_off;
 	unsigned flushed_pages;
+#ifdef CONFIG_SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS
+	u32 pages_per_block;
+#endif /* CONFIG_SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8150,6 +8153,32 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 		SSDFS_DBG("iter_write_offset %llu, write_size %u, "
 			  "page_start_off %u\n",
 			  iter_write_offset, write_size, page_start_off);
+
+#ifdef CONFIG_SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS
+		pages_per_block = fsi->pagesize / PAGE_SIZE;
+		for (i = 0; i < pagevec_count(&pvec); i += pages_per_block) {
+			u64 byte_off;
+
+			if (!fsi->devops->can_write_page) {
+				SSDFS_DBG("can_write_page is not supported\n");
+				break;
+			}
+
+			byte_off = iter_write_offset;
+			byte_off += i * PAGE_SIZE;
+
+			err = fsi->devops->can_write_page(fsi->sb, byte_off,
+							  true);
+			if (err) {
+				pagevec_reinit(&pvec);
+				ssdfs_fs_error(fsi->sb,
+					__FILE__, __func__, __LINE__,
+					"offset %llu err %d\n",
+					byte_off, err);
+				return err;
+			}
+		}
+#endif /* CONFIG_SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS */
 
 		err = fsi->devops->writepages(fsi->sb, iter_write_offset,
 						&pvec,
@@ -10170,6 +10199,10 @@ static
 int ssdfs_peb_commit_log_on_thread_stop(struct ssdfs_peb_info *pebi,
 					__le64 *cur_segs, size_t size)
 {
+	struct ssdfs_fs_info *fsi;
+	u64 reserved_new_user_data_pages;
+	u64 updated_user_data_pages;
+	u64 flushing_user_data_requests;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10181,12 +10214,36 @@ int ssdfs_peb_commit_log_on_thread_stop(struct ssdfs_peb_info *pebi,
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_index);
 
+	fsi = pebi->pebc->parent_si->fsi;
+
 	if (ssdfs_peb_has_dirty_pages(pebi)) {
 		/*
-		 * TODO: if we have unfinished log then
-		 * it needs to close and to commit
-		 * aggregated small log
+		 * Unexpected situation.
+		 * Try to commit anyway.
 		 */
+
+		spin_lock(&fsi->volume_state_lock);
+		reserved_new_user_data_pages =
+			fsi->reserved_new_user_data_pages;
+		updated_user_data_pages =
+			fsi->updated_user_data_pages;
+		flushing_user_data_requests =
+			fsi->flushing_user_data_requests;
+		spin_unlock(&fsi->volume_state_lock);
+
+		SSDFS_WARN("PEB has dirty pages: "
+			   "seg %llu, peb %llu, peb_type %#x, "
+			   "global_fs_state %#x, "
+			   "reserved_new_user_data_pages %llu, "
+			   "updated_user_data_pages %llu, "
+			   "flushing_user_data_requests %llu\n",
+			   pebi->pebc->parent_si->seg_id,
+			   pebi->peb_id, pebi->pebc->peb_type,
+			   atomic_read(&fsi->global_fs_state),
+			   reserved_new_user_data_pages,
+			   updated_user_data_pages,
+			   flushing_user_data_requests);
+
 		err = ssdfs_peb_commit_log(pebi, cur_segs, size);
 		if (unlikely(err)) {
 			SSDFS_CRIT("fail to commit log: "
@@ -10197,11 +10254,6 @@ int ssdfs_peb_commit_log_on_thread_stop(struct ssdfs_peb_info *pebi,
 			ssdfs_peb_clear_current_log_pages(pebi);
 			ssdfs_peb_clear_cache_dirty_pages(pebi);
 		}
-
-		SSDFS_WARN("PEB has dirty pages: "
-			   "seg %llu, peb_index %u\n",
-			   pebi->pebc->parent_si->seg_id,
-			   pebi->peb_index);
 	}
 
 	return err;
@@ -10736,10 +10788,13 @@ int wait_next_create_request(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct ssdfs_fs_info *fsi = si->fsi;
+	struct ssdfs_peb_info *pebi;
 	u64 reserved_pages = 0;
 	bool has_reserved_pages = false;
 	int state;
 	bool is_current_seg = false;
+	bool has_dirty_pages = false;
+	bool need_commit_log = false;
 	wait_queue_head_t *wq = NULL;
 	struct ssdfs_segment_request *req;
 	int err;
@@ -10775,7 +10830,22 @@ int wait_next_create_request(struct ssdfs_peb_container *pebc,
 	state = atomic_read(&si->obj_state);
 	is_current_seg = (state == SSDFS_CURRENT_SEG_OBJECT);
 
-	if (!is_regular_fs_operations(pebc) || !is_current_seg) {
+	pebi = ssdfs_get_current_peb_locked(pebc);
+	if (!IS_ERR_OR_NULL(pebi)) {
+		ssdfs_peb_current_log_lock(pebi);
+		has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+		ssdfs_unlock_current_peb(pebc);
+	}
+
+	if (!is_regular_fs_operations(pebc))
+		need_commit_log = true;
+	else if (!is_current_seg)
+		need_commit_log = true;
+	else if (!have_flush_requests(pebc) && has_dirty_pages)
+		need_commit_log = true;
+
+	if (need_commit_log) {
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
@@ -10815,9 +10885,12 @@ int wait_next_update_request(struct ssdfs_peb_container *pebc,
 			     int *thread_state)
 {
 	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_peb_info *pebi;
 	struct ssdfs_fs_info *fsi = si->fsi;
 	u64 updated_pages = 0;
 	bool has_updated_pages = false;
+	bool has_dirty_pages = false;
+	bool need_commit_log = false;
 	wait_queue_head_t *wq = NULL;
 	struct ssdfs_segment_request *req;
 	int err;
@@ -10847,7 +10920,22 @@ int wait_next_update_request(struct ssdfs_peb_container *pebc,
 			err = 0;
 	}
 
-	if (!is_regular_fs_operations(pebc) || no_more_updated_pages(pebc)) {
+	pebi = ssdfs_get_current_peb_locked(pebc);
+	if (!IS_ERR_OR_NULL(pebi)) {
+		ssdfs_peb_current_log_lock(pebi);
+		has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+		ssdfs_unlock_current_peb(pebc);
+	}
+
+	if (!is_regular_fs_operations(pebc))
+		need_commit_log = true;
+	else if (no_more_updated_pages(pebc))
+		need_commit_log = true;
+	else if (!have_flush_requests(pebc) && has_dirty_pages)
+		need_commit_log = true;
+
+	if (need_commit_log) {
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
@@ -12599,6 +12687,45 @@ finish_delegation:
  */
 
 sleep_flush_thread:
+#ifdef CONFIG_SSDFS_DEBUG
+	if (is_ssdfs_peb_containing_user_data(pebc)) {
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (!IS_ERR_OR_NULL(pebi)) {
+			ssdfs_peb_current_log_lock(pebi);
+
+			if (ssdfs_peb_has_dirty_pages(pebi)) {
+				u64 reserved_new_user_data_pages;
+				u64 updated_user_data_pages;
+				u64 flushing_user_data_requests;
+
+				spin_lock(&fsi->volume_state_lock);
+				reserved_new_user_data_pages =
+					fsi->reserved_new_user_data_pages;
+				updated_user_data_pages =
+					fsi->updated_user_data_pages;
+				flushing_user_data_requests =
+					fsi->flushing_user_data_requests;
+				spin_unlock(&fsi->volume_state_lock);
+
+				SSDFS_WARN("seg %llu, peb %llu, peb_type %#x, "
+					  "global_fs_state %#x, "
+					  "reserved_new_user_data_pages %llu, "
+					  "updated_user_data_pages %llu, "
+					  "flushing_user_data_requests %llu\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id, pebi->pebc->peb_type,
+					  atomic_read(&fsi->global_fs_state),
+					  reserved_new_user_data_pages,
+					  updated_user_data_pages,
+					  flushing_user_data_requests);
+			}
+
+			ssdfs_peb_current_log_unlock(pebi);
+			ssdfs_unlock_current_peb(pebc);
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	wait_event_interruptible(*wait_queue,
 				 FLUSH_THREAD_WAKE_CONDITION(pebc));
 	goto repeat;

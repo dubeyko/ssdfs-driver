@@ -205,3 +205,20 @@ config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
 	  of a volume.
 
 	  If unsure, say N.
+
+config SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS
+	bool "SSDFS check a logical block emptyness on every write"
+	depends on SSDFS
+	help
+	  This option enables the technique of checking a logical block
+	  emptyness on every write. The goal of this technique is
+	  to prevent the re-writing pages with existing data because
+	  SSD's FTL can manage this sutiation. However, this can be the
+	  source of data and metadata corruption in the case of some
+	  issues in file system driver logic. But it needs to take into
+	  account that this technique could degrade the write performance
+	  of file system driver. Also, file system volume has to be erased
+	  during creation by mkfs. Otherwise, file system driver will fail
+	  to write even for the case correct write operations.
+
+	  If unsure, say N.

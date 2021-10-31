@@ -1072,14 +1072,10 @@ static int ssdfs_erase_dirty_prev_sb_segs(struct ssdfs_fs_info *fsi,
 					  u64 prev_leb)
 {
 	struct completion *init_end;
-	struct ssdfs_maptbl_peb_relation pebr;
-	struct ssdfs_maptbl_peb_descriptor *ptr;
 	u8 peb_type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
 	u32 pebs_per_seg;
 	u64 leb_id;
 	u64 cur_leb;
-	u64 peb_id;
-	loff_t offset;
 	int i;
 	unsigned long res;
 	int err;
@@ -1098,9 +1094,10 @@ static int ssdfs_erase_dirty_prev_sb_segs(struct ssdfs_fs_info *fsi,
 	for (i = 0; i < pebs_per_seg; i++) {
 		cur_leb = leb_id + i;
 
-		err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
-						   peb_type, &pebr,
-						   &init_end);
+		err = ssdfs_maptbl_erase_reserved_peb_now(fsi,
+							  cur_leb,
+							  peb_type,
+							  &init_end);
 		if (err == -EAGAIN) {
 			res = wait_for_completion_timeout(init_end,
 						  SSDFS_DEFAULT_TIMEOUT);
@@ -1110,63 +1107,16 @@ static int ssdfs_erase_dirty_prev_sb_segs(struct ssdfs_fs_info *fsi,
 				return -ERANGE;
 			}
 
-			err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
-							   peb_type, &pebr,
-							   &init_end);
-		}
-
-		if (err == -ENODATA) {
-			SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
-				  cur_leb);
-			continue;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to convert LEB to PEB: "
-				  "leb_id %llu, peb_type %#x, err %d\n",
-				  cur_leb, peb_type, err);
-			return err;
-		}
-
-		ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
-		peb_id = ptr->peb_id;
-
-		offset = peb_id * fsi->erasesize;
-		err = fsi->devops->trim(fsi->sb, offset, fsi->erasesize);
-		if (err == -EROFS) {
-			SSDFS_ERR("file system has READ_ONLY state\n");
-			return err;
-		} else if (err == -EFAULT) {
-			SSDFS_ERR("erase operation failure: peb %llu\n",
-				  peb_id);
-			return err;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to erase: peb %llu, err %d\n",
-				  peb_id, err);
-			return err;
-		}
-
-		err = ssdfs_maptbl_change_peb_state(fsi, cur_leb, peb_type,
-						SSDFS_MAPTBL_CLEAN_PEB_STATE,
-						&init_end);
-		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
-				SSDFS_ERR("maptbl init failed: "
-					  "err %d\n", err);
-				return err;
-			}
-
-			err = ssdfs_maptbl_change_peb_state(fsi,
-						cur_leb, peb_type,
-						SSDFS_MAPTBL_CLEAN_PEB_STATE,
-						&init_end);
+			err = ssdfs_maptbl_erase_reserved_peb_now(fsi,
+								  cur_leb,
+								  peb_type,
+								  &init_end);
 		}
 
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to change the PEB state: "
-				  "leb_id %llu, new_state %#x, err %d\n",
-				  cur_leb, SSDFS_MAPTBL_CLEAN_PEB_STATE, err);
+			SSDFS_ERR("fail to erase reserved dirty PEB: "
+				  "leb_id %llu, err %d\n",
+				  cur_leb, err);
 			return err;
 		}
 	}

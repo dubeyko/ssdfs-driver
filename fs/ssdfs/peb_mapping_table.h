@@ -24,6 +24,9 @@
 #define SSDFS_MAPTBL_PROTECTION_STEP		50
 #define SSDFS_MAPTBL_PROTECTION_RANGE		3
 
+#define SSDFS_PRE_ERASE_PEB_THRESHOLD_PCT	(3)
+#define SSDFS_UNUSED_LEB_THRESHOLD_PCT		(1)
+
 /*
  * struct ssdfs_maptbl_fragment_desc - fragment descriptor
  * @lock: fragment lock
@@ -125,6 +128,7 @@ struct ssdfs_maptbl_area {
  * @erase_op_state: state of erase operation
  * @pre_erase_pebs: count of PEBs in pre-erase state
  * @max_erase_ops: upper bound of erase operations for one iteration
+ * @erase_ops_end_wq: wait queue of threads are waiting end of erase operation
  * @bmap_lock: dirty bitmap's lock
  * @dirty_bmap: bitmap of dirty fragments
  * @desc_array: array of fragment descriptors
@@ -155,6 +159,8 @@ struct ssdfs_peb_mapping_table {
 	atomic_t erase_op_state;
 	atomic_t pre_erase_pebs;
 	atomic_t max_erase_ops;
+	wait_queue_head_t erase_ops_end_wq;
+
 	atomic64_t last_peb_recover_cno;
 
 	struct mutex bmap_lock;
@@ -209,9 +215,76 @@ enum {
 	SSDFS_MAPTBL_ERASE_IN_PROGRESS
 };
 
+/* Stage of recovering try */
+enum {
+	SSDFS_CHECK_RECOVERABILITY,
+	SSDFS_MAKE_RECOVERING,
+	SSDFS_RECOVER_STAGE_MAX
+};
+
+/* Possible states of erase operation */
+enum {
+	SSDFS_ERASE_RESULT_UNKNOWN,
+	SSDFS_ERASE_DONE,
+	SSDFS_ERASE_SB_PEB_DONE,
+	SSDFS_IGNORE_ERASE,
+	SSDFS_ERASE_FAILURE,
+	SSDFS_BAD_BLOCK_DETECTED,
+	SSDFS_ERASE_RESULT_MAX
+};
+
+/*
+ * struct ssdfs_erase_result - PEB's erase operation result
+ * @fragment_index: index of mapping table's fragment
+ * @peb_index: PEB's index in fragment
+ * @peb_id: PEB ID number
+ * @state: state of erase operation
+ */
+struct ssdfs_erase_result {
+	u32 fragment_index;
+	u16 peb_index;
+	u64 peb_id;
+	int state;
+};
+
+/*
+ * struct ssdfs_erase_result_array - array of erase operation results
+ * @ptr: pointer on memory buffer
+ * @capacity: maximal number of erase operation results in array
+ * @size: count of erase operation results in array
+ */
+struct ssdfs_erase_result_array {
+	struct ssdfs_erase_result *ptr;
+	u32 capacity;
+	u32 size;
+};
+
+#define SSDFS_ERASE_RESULTS_PER_FRAGMENT	(10)
+
 /*
  * Inline functions
  */
+
+/*
+ * SSDFS_ERASE_RESULT_INIT() - init erase result
+ * @fragment_index: index of mapping table's fragment
+ * @peb_index: PEB's index in fragment
+ * @peb_id: PEB ID number
+ * @state: state of erase operation
+ * @result: erase operation result [out]
+ *
+ * This method initializes the erase operation result.
+ */
+static inline
+void SSDFS_ERASE_RESULT_INIT(u32 fragment_index, u16 peb_index,
+			     u64 peb_id, int state,
+			     struct ssdfs_erase_result *result)
+{
+	result->fragment_index = fragment_index;
+	result->peb_index = peb_index;
+	result->peb_id = peb_id;
+	result->state = state;
+}
 
 /*
  * DEFINE_PEB_INDEX_IN_FRAGMENT() - define PEB index in the whole fragment
@@ -581,10 +654,17 @@ int ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id,
 				     struct ssdfs_maptbl_peb_relation *pebr);
-
 void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 				      struct ssdfs_maptbl_area *area,
 				      u16 pages_count);
+int ssdfs_maptbl_erase_peb(struct ssdfs_fs_info *fsi,
+			   struct ssdfs_erase_result *result);
+int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
+				   struct ssdfs_erase_result *result);
+int ssdfs_maptbl_erase_reserved_peb_now(struct ssdfs_fs_info *fsi,
+					u64 leb_id, u8 peb_type,
+					struct completion **end);
 
 #ifdef CONFIG_SSDFS_TESTING
 int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl);

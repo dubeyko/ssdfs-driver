@@ -3202,23 +3202,31 @@ int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
 	updated = fsi->updated_user_data_pages;
 	if (fsi->updated_user_data_pages >= count) {
 		fsi->updated_user_data_pages -= count;
-	} else
+	} else {
 		err = -ERANGE;
+		fsi->updated_user_data_pages = 0;
+	}
 	spin_unlock(&fsi->volume_state_lock);
 
 	if (err) {
-		SSDFS_ERR("count %u is bigger than updated %llu\n",
+		SSDFS_WARN("count %u is bigger than updated %llu\n",
 			  count, updated);
-		return err;
+
+		spin_lock(&pebc->pending_lock);
+		pebc->pending_updated_user_data_pages += updated;
+		pending = pebc->pending_updated_user_data_pages;
+		spin_unlock(&pebc->pending_lock);
+	} else {
+		spin_lock(&pebc->pending_lock);
+		pebc->pending_updated_user_data_pages += count;
+		pending = pebc->pending_updated_user_data_pages;
+		spin_unlock(&pebc->pending_lock);
 	}
 
-	spin_lock(&pebc->pending_lock);
-	pebc->pending_updated_user_data_pages += count;
-	pending = pebc->pending_updated_user_data_pages;
-	spin_unlock(&pebc->pending_lock);
-
-	SSDFS_DBG("seg_id %llu, peb_index %u, pending %u\n",
-		  pebc->parent_si->seg_id, pebc->peb_index, pending);
+	SSDFS_DBG("seg_id %llu, peb_index %u, "
+		  "updated %llu, pending %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  updated, pending);
 
 	return 0;
 }
@@ -3257,11 +3265,12 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 		  req->extent.parent_snapshot);
 #else
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
-		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  "data_bytes %u, blks %u, "
+		  "cno %llu, parent_snapshot %llu\n",
 		  si->seg_id,
 		  req->extent.ino, req->extent.logical_offset,
-		  req->extent.data_bytes, req->extent.cno,
-		  req->extent.parent_snapshot);
+		  req->extent.data_bytes, req->place.len,
+		  req->extent.cno, req->extent.parent_snapshot);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	table = si->blk2off_table;
@@ -3305,16 +3314,30 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
 
-	if (len > 0) {
-		err = ssdfs_account_user_data_pages_as_pending(pebc, len);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to make pages as pending: "
-				  "len %u, err %d\n",
-				  len, err);
-			return err;
+	if (req->private.cmd != SSDFS_COMMIT_LOG_NOW) {
+		SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+			  "logical_blk %u, data_bytes %u, blks %u, "
+			  "cno %llu, parent_snapshot %llu\n",
+			  si->seg_id,
+			  req->extent.ino, req->extent.logical_offset,
+			  req->place.start.blk_index,
+			  req->extent.data_bytes, req->place.len,
+			  req->extent.cno, req->extent.parent_snapshot);
+		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
+			  req->private.class, req->private.cmd);
+
+		if (len > 0) {
+			err = ssdfs_account_user_data_pages_as_pending(pebc,
+									len);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to make pages as pending: "
+					  "len %u, err %d\n",
+					  len, err);
+				return err;
+			}
+		} else {
+			SSDFS_WARN("unexpected len %u\n", len);
 		}
-	} else {
-		SSDFS_WARN("unexpected len %u\n", len);
 	}
 
 	ssdfs_account_user_data_flush_request(si);
@@ -3460,13 +3483,13 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 		  req->extent.parent_snapshot);
 #else
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
-		  "logical_blk %u, "
-		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  "logical_blk %u, data_bytes %u, blks %u, "
+		  "cno %llu, parent_snapshot %llu\n",
 		  si->seg_id,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->place.start.blk_index,
-		  req->extent.data_bytes, req->extent.cno,
-		  req->extent.parent_snapshot);
+		  req->extent.data_bytes, req->place.len,
+		  req->extent.cno, req->extent.parent_snapshot);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	table = si->blk2off_table;
@@ -3534,12 +3557,30 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
 
-	err = ssdfs_account_user_data_pages_as_pending(pebc, len);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to make pages as pending: "
-			  "len %u, err %d\n",
-			  len, err);
-		return err;
+	if (req->private.cmd != SSDFS_COMMIT_LOG_NOW) {
+		SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+			  "logical_blk %u, data_bytes %u, blks %u, "
+			  "cno %llu, parent_snapshot %llu\n",
+			  si->seg_id,
+			  req->extent.ino, req->extent.logical_offset,
+			  req->place.start.blk_index,
+			  req->extent.data_bytes, req->place.len,
+			  req->extent.cno, req->extent.parent_snapshot);
+		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
+			  req->private.class, req->private.cmd);
+
+		if (len > 0) {
+			err = ssdfs_account_user_data_pages_as_pending(pebc,
+									len);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to make pages as pending: "
+					  "len %u, err %d\n",
+					  len, err);
+				return err;
+			}
+		} else {
+			SSDFS_WARN("unexpected len %u\n", len);
+		}
 	}
 
 	ssdfs_account_user_data_flush_request(si);

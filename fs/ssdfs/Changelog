@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.3.98 [October 31, 2021]
+    (*) Fix bugs in PEB mapping table logic.
+
 v.3.97 [October 18, 2021]
     (*) Fix bugs in logic of processing user data requests.
 

@@ -1160,6 +1160,11 @@ try_finish_migration_now:
 		}
 
 		if (range1.len > 0) {
+			if (is_ssdfs_peb_containing_user_data(pebc)) {
+				ssdfs_account_updated_user_data_pages(si->fsi,
+								    range1.len);
+			}
+
 			err = ssdfs_peb_migrate_valid_blocks_range(si, pebc,
 								   peb_blkbmap,
 								   &range1);
@@ -1172,6 +1177,11 @@ try_finish_migration_now:
 		}
 
 		if (range2.len > 0) {
+			if (is_ssdfs_peb_containing_user_data(pebc)) {
+				ssdfs_account_updated_user_data_pages(si->fsi,
+								    range2.len);
+			}
+
 			err = ssdfs_peb_migrate_pre_alloc_blocks_range(si,
 								    pebc,
 								    peb_blkbmap,
