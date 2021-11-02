@@ -5905,8 +5905,11 @@ int ssdfs_maptbl_increase_reserved_pebs(struct ssdfs_fs_info *fsi,
 	unused_pebs = pebs_count - used_pebs;
 
 	if (need_try2reserve_peb(fsi)) {
-		if (reserved_pebs < used_pebs &&
-		    (unused_pebs + reserved_pebs) > used_pebs) {
+		SSDFS_DBG("used_pebs %u, unused_pebs %u, "
+			  "reserved_pebs %u\n",
+			  used_pebs, unused_pebs, reserved_pebs);
+
+		if (reserved_pebs < used_pebs && unused_pebs >= used_pebs) {
 			reserved_pebs = used_pebs;
 
 			spin_lock(&fsi->volume_state_lock);
@@ -6711,24 +6714,36 @@ bool can_peb_be_reserved(struct ssdfs_fs_info *fsi,
 		  pebs_count, used_pebs,
 		  unused_pebs, reserved_pebs);
 
-	/*
-	 * Mapping operation takes one PEB + reservation needs another one.
-	 */
-	if (unused_pebs == 0 || (reserved_pebs + 1) == unused_pebs) {
+	if (unused_pebs == 0) {
 		SSDFS_DBG("unable to reserve PEB: "
 			  "pebs_count %u, used_pebs %u, "
 			  "unused_pebs %u, reserved_pebs %u\n",
 			  pebs_count, used_pebs,
 			  unused_pebs, reserved_pebs);
 		return false;
-	} else if (reserved_pebs > unused_pebs) {
-		SSDFS_WARN("fail to reserve PEB: "
-			  "pebs_count %u, used_pebs %u, "
-			  "unused_pebs %u, reserved_pebs %u\n",
-			  pebs_count, used_pebs,
-			  unused_pebs, reserved_pebs);
+	} else if ((reserved_pebs + 1) >= unused_pebs) {
+		/*
+		 * Mapping operation takes one PEB +
+		 * reservation needs another one.
+		 */
+		if (reserved_pebs > unused_pebs) {
+			SSDFS_WARN("fail to reserve PEB: "
+				  "pebs_count %u, used_pebs %u, "
+				  "unused_pebs %u, reserved_pebs %u\n",
+				  pebs_count, used_pebs,
+				  unused_pebs, reserved_pebs);
+		} else {
+			SSDFS_DBG("unable to reserve PEB: "
+				  "pebs_count %u, used_pebs %u, "
+				  "unused_pebs %u, reserved_pebs %u\n",
+				  pebs_count, used_pebs,
+				  unused_pebs, reserved_pebs);
+		}
+
 		return false;
 	}
+
+	SSDFS_DBG("PEB can be reserved\n");
 
 	return true;
 }
