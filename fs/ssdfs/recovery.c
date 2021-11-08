@@ -103,6 +103,9 @@ int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 	BUG_ON(!sbi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	sbi->vh_buf = NULL;
+	sbi->vs_buf = NULL;
+
 	vh_buf = ssdfs_recovery_kzalloc(hdr_size, GFP_KERNEL);
 	vs_buf = ssdfs_recovery_kzalloc(footer_size, GFP_KERNEL);
 	if (unlikely(!vh_buf || !vs_buf)) {

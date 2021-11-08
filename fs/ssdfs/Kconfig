@@ -31,6 +31,122 @@ config SSDFS_MTD_DEVICE
 
 	  If unsure, say N.
 
+config SSDFS_POSIX_ACL
+	bool "SSDFS POSIX Access Control Lists"
+	depends on SSDFS
+	select FS_POSIX_ACL
+	help
+	  POSIX Access Control Lists (ACLs) support permissions for users and
+	  groups beyond the owner/group/world scheme.
+
+	  To learn more about Access Control Lists, visit the POSIX ACLs for
+	  Linux website <http://acl.bestbits.at/>.
+
+	  If you don't know what Access Control Lists are, say N
+
+config SSDFS_SECURITY
+	bool "SSDFS Security Labels"
+	depends on SSDFS
+	help
+	  Security labels support alternative access control models
+	  implemented by security modules like SELinux.  This option
+	  enables an extended attribute handler for file security
+	  labels in the SSDFS filesystem.
+
+	  If you are not using a security module that requires using
+	  extended attributes for file security labels, say N.
+
+menu "Write amplification management"
+
+config SSDFS_ZLIB
+	bool "SSDFS ZLIB compression support"
+	select ZLIB_INFLATE
+	select ZLIB_DEFLATE
+	depends on SSDFS
+	default y
+	help
+	  Zlib is designed to be a free, general-purpose, legally unencumbered,
+	  lossless data-compression library for use on virtually any computer
+	  hardware and operating system. It offers a good trade-off between
+	  compression achieved and the amount of CPU time and memory necessary
+	  to compress and decompress. See <http://www.gzip.org/zlib/> for
+	  further information.
+
+	  If unsure, say Y.
+
+config SSDFS_ZLIB_COMR_LEVEL
+	int "Zlib compression level (0 => NO_COMPRESSION, 9 => BEST_COMPRESSION)"
+	depends on SSDFS_ZLIB
+	range 0 9
+	default 9
+	help
+	  Select Zlib compression level.
+	  Examples:
+		     0  => Z_NO_COMPRESSION
+		     1  => Z_BEST_SPEED
+		     9  => Z_BEST_COMPRESSION
+
+config SSDFS_LZO
+	bool "SSDFS LZO compression support"
+	select LZO_COMPRESS
+	select LZO_DECOMPRESS
+	depends on SSDFS
+	default n
+	help
+	  minilzo-based compression. Generally works better than Zlib.
+	  LZO compression is mainly aimed at embedded systems with slower
+	  CPUs where the overheads of zlib are too high.
+
+	  If unsure, say N.
+
+config SSDFS_DIFF_ON_WRITE
+	bool "SSDFS Diff-On-Write support"
+	depends on SSDFS
+	help
+	  This option enables delta-encoding support for user data and
+	  metadata.
+
+	  If unsure, say N.
+
+endmenu
+
+menu "Performance"
+
+config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
+	bool "SSDFS fixed superblock segments set"
+	depends on SSDFS
+	help
+	  This option enables the technique of repeatable using the
+	  reserved set of superblock segments in the beginning
+	  of a volume.
+
+	  If unsure, say N.
+
+endmenu
+
+menu "Reliability"
+
+config SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS
+	bool "SSDFS check a logical block emptyness on every write"
+	depends on SSDFS
+	help
+	  This option enables the technique of checking a logical block
+	  emptyness on every write. The goal of this technique is
+	  to prevent the re-writing pages with existing data because
+	  SSD's FTL can manage this sutiation. However, this can be the
+	  source of data and metadata corruption in the case of some
+	  issues in file system driver logic. But it needs to take into
+	  account that this technique could degrade the write performance
+	  of file system driver. Also, file system volume has to be erased
+	  during creation by mkfs. Otherwise, file system driver will fail
+	  to write even for the case correct write operations.
+
+	  If unsure, say N.
+
+endmenu
+
+menu "Development"
+
 config SSDFS_DEBUG
 	bool "SSDFS debugging"
 	depends on SSDFS
@@ -121,104 +237,4 @@ config SSDFS_UNDER_DEVELOPMENT_FUNC
 	  If you are going to check under development functionality
 	  in SSDFS driver then choose Y here. If unsure, say N.
 
-config SSDFS_POSIX_ACL
-	bool "SSDFS POSIX Access Control Lists"
-	depends on SSDFS
-	select FS_POSIX_ACL
-	help
-	  POSIX Access Control Lists (ACLs) support permissions for users and
-	  groups beyond the owner/group/world scheme.
-
-	  To learn more about Access Control Lists, visit the POSIX ACLs for
-	  Linux website <http://acl.bestbits.at/>.
-
-	  If you don't know what Access Control Lists are, say N
-
-config SSDFS_SECURITY
-	bool "SSDFS Security Labels"
-	depends on SSDFS
-	help
-	  Security labels support alternative access control models
-	  implemented by security modules like SELinux.  This option
-	  enables an extended attribute handler for file security
-	  labels in the SSDFS filesystem.
-
-	  If you are not using a security module that requires using
-	  extended attributes for file security labels, say N.
-
-config SSDFS_ZLIB
-	bool "SSDFS ZLIB compression support"
-	select ZLIB_INFLATE
-	select ZLIB_DEFLATE
-	depends on SSDFS
-	default y
-	help
-	  Zlib is designed to be a free, general-purpose, legally unencumbered,
-	  lossless data-compression library for use on virtually any computer
-	  hardware and operating system. It offers a good trade-off between
-	  compression achieved and the amount of CPU time and memory necessary
-	  to compress and decompress. See <http://www.gzip.org/zlib/> for
-	  further information.
-
-	  If unsure, say Y.
-
-config SSDFS_ZLIB_COMR_LEVEL
-	int "Zlib compression level (0 => NO_COMPRESSION, 9 => BEST_COMPRESSION)"
-	depends on SSDFS_ZLIB
-	range 0 9
-	default 9
-	help
-	  Select Zlib compression level.
-	  Examples:
-		     0  => Z_NO_COMPRESSION
-		     1  => Z_BEST_SPEED
-		     9  => Z_BEST_COMPRESSION
-
-config SSDFS_LZO
-	bool "SSDFS LZO compression support"
-	select LZO_COMPRESS
-	select LZO_DECOMPRESS
-	depends on SSDFS
-	default n
-	help
-	  minilzo-based compression. Generally works better than Zlib.
-	  LZO compression is mainly aimed at embedded systems with slower
-	  CPUs where the overheads of zlib are too high.
-
-	  If unsure, say N.
-
-config SSDFS_DIFF_ON_WRITE
-	bool "SSDFS Diff-On-Write support"
-	depends on SSDFS
-	help
-	  This option enables delta-encoding support for user data and
-	  metadata.
-
-	  If unsure, say N.
-
-config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
-	bool "SSDFS fixed superblock segments set"
-	depends on SSDFS
-	help
-	  This option enables the technique of repeatable using the
-	  reserved set of superblock segments in the beginning
-	  of a volume.
-
-	  If unsure, say N.
-
-config SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS
-	bool "SSDFS check a logical block emptyness on every write"
-	depends on SSDFS
-	help
-	  This option enables the technique of checking a logical block
-	  emptyness on every write. The goal of this technique is
-	  to prevent the re-writing pages with existing data because
-	  SSD's FTL can manage this sutiation. However, this can be the
-	  source of data and metadata corruption in the case of some
-	  issues in file system driver logic. But it needs to take into
-	  account that this technique could degrade the write performance
-	  of file system driver. Also, file system volume has to be erased
-	  during creation by mkfs. Otherwise, file system driver will fail
-	  to write even for the case correct write operations.
-
-	  If unsure, say N.
+endmenu

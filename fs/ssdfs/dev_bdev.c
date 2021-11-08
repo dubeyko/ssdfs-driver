@@ -24,6 +24,7 @@
 #include <linux/pagevec.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
+#include <linux/backing-dev.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -320,6 +321,13 @@ static int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bdi_read_congested(sb->s_bdi)) {
+		SSDFS_WARN("read queue is congested!!!\n");
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_bdev_sync_page_request(sb, page, offset,
 					   REQ_OP_READ, REQ_SYNC);
 	if (err) {
@@ -357,6 +365,13 @@ static int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
 {
 	int i;
 	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bdi_read_congested(sb->s_bdi)) {
+		SSDFS_WARN("read queue is congested!!!\n");
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_bdev_sync_pvec_request(sb, pvec, offset,
 					   REQ_OP_READ, REQ_RAHEAD);
@@ -418,6 +433,13 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 
 	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
 		  sb, (unsigned long long)offset, len, buf);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bdi_read_congested(sb->s_bdi)) {
+		SSDFS_WARN("read queue is congested!!!\n");
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*read_bytes = 0;
 
@@ -603,6 +625,13 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 	if (!need_check)
 		return 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bdi_read_congested(sb->s_bdi)) {
+		SSDFS_WARN("read queue is congested!!!\n");
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	buf = ssdfs_dev_bdev_kzalloc(fsi->pagesize, GFP_KERNEL);
 	if (!buf) {
 		SSDFS_ERR("unable to allocate %d bytes\n", fsi->pagesize);
@@ -671,6 +700,13 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	BUG_ON((from_off + len) > PAGE_SIZE);
 	BUG_ON(!PageDirty(page));
 	BUG_ON(PageLocked(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bdi_write_congested(sb->s_bdi)) {
+		SSDFS_WARN("write queue is congested!!!\n");
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
@@ -751,6 +787,13 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 		SSDFS_WARN("empty pagevec\n");
 		return 0;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (bdi_write_congested(sb->s_bdi)) {
+		SSDFS_WARN("write queue is congested!!!\n");
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		page = pvec->pages[i];

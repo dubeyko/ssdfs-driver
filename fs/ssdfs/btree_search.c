@@ -261,6 +261,8 @@ bool need_initialize_btree_search(struct ssdfs_btree_search *search)
 
 		default:
 #ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_ERR("search->request.type %#x\n",
+				  search->request.type);
 			BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
 			break;
@@ -288,6 +290,34 @@ bool need_initialize_btree_search(struct ssdfs_btree_search *search)
 
 		default:
 #ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_ERR("search->request.type %#x\n",
+				  search->request.type);
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+		};
+		break;
+
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+			need_initialize = false;
+			break;
+
+		case SSDFS_BTREE_SEARCH_FIND_ITEM:
+		case SSDFS_BTREE_SEARCH_FIND_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+		case SSDFS_BTREE_SEARCH_DELETE_ITEM:
+		case SSDFS_BTREE_SEARCH_DELETE_RANGE:
+		case SSDFS_BTREE_SEARCH_DELETE_ALL:
+		case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
+			need_initialize = true;
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_ERR("search->request.type %#x\n",
+				  search->request.type);
 			BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
 			break;
@@ -296,6 +326,8 @@ bool need_initialize_btree_search(struct ssdfs_btree_search *search)
 
 	default:
 #ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_ERR("search->result.state %#x\n",
+			  search->result.state);
 		BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;

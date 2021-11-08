@@ -2413,8 +2413,11 @@ unlock_translation_table:
 	up_write(&table->translation_lock);
 
 	ssdfs_blk2off_kfree(portion.bmap);
+	portion.bmap = NULL;
 	ssdfs_blk2off_kfree(portion.pos_array);
+	portion.pos_array = NULL;
 	ssdfs_blk2off_kfree(portion.extent_array);
+	portion.extent_array = NULL;
 
 	return err;
 }
@@ -2972,12 +2975,18 @@ finish_snapshoting:
 	up_write(&table->translation_lock);
 
 	if (err) {
-		if (snapshot->bmap_copy)
+		if (snapshot->bmap_copy) {
 			ssdfs_blk2off_kfree(snapshot->bmap_copy);
+			snapshot->bmap_copy = NULL;
+		}
 
-		if (snapshot->tbl_copy)
+		if (snapshot->tbl_copy) {
 			ssdfs_blk2off_kfree(snapshot->tbl_copy);
+			snapshot->tbl_copy = NULL;
+		}
 	}
+
+	SSDFS_DBG("finished\n");
 
 	return err;
 }
@@ -2991,8 +3000,15 @@ void ssdfs_blk2off_table_free_snapshot(struct ssdfs_blk2off_table_snapshot *sp)
 	if (!sp)
 		return;
 
-	ssdfs_blk2off_kfree(sp->bmap_copy);
-	ssdfs_blk2off_kfree(sp->tbl_copy);
+	if (sp->bmap_copy) {
+		ssdfs_blk2off_kfree(sp->bmap_copy);
+		sp->bmap_copy = NULL;
+	}
+
+	if (sp->tbl_copy) {
+		ssdfs_blk2off_kfree(sp->tbl_copy);
+		sp->tbl_copy = NULL;
+	}
 
 	memset(sp, 0, sizeof(struct ssdfs_blk2off_table_snapshot));
 }
@@ -3820,6 +3836,8 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 
 finish_forget_snapshot:
 	up_write(&table->translation_lock);
+
+	SSDFS_DBG("finished\n");
 
 	return err;
 }

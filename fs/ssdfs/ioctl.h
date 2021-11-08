@@ -17,6 +17,7 @@
 #include <linux/types.h>
 
 #include "testing.h"
+#include "snapshot.h"
 
 #define SSDFS_IOCTL_MAGIC 0xdf
 
@@ -25,5 +26,21 @@
  */
 #define SSDFS_IOC_DO_TESTING _IOW(SSDFS_IOCTL_MAGIC, 1, \
 				  struct ssdfs_testing_environment)
+
+/*
+ * Snapshot related IOCTLs
+ */
+#define SSDFS_IOC_CREATE_SNAPSHOT	_IOW(SSDFS_IOCTL_MAGIC, 2, \
+					     struct ssdfs_snapshot_info)
+#define SSDFS_IOC_LIST_SNAPSHOTS	_IOWR(SSDFS_IOCTL_MAGIC, 3, \
+					     struct ssdfs_snapshot_info)
+#define SSDFS_IOC_MODIFY_SNAPSHOT	_IOW(SSDFS_IOCTL_MAGIC, 4, \
+					     struct ssdfs_snapshot_info)
+#define SSDFS_IOC_REMOVE_SNAPSHOT	_IOW(SSDFS_IOCTL_MAGIC, 5, \
+					     struct ssdfs_snapshot_info)
+#define SSDFS_IOC_REMOVE_RANGE		_IOW(SSDFS_IOCTL_MAGIC, 6, \
+					     struct ssdfs_snapshot_info)
+#define SSDFS_IOC_SHOW_DETAILS		_IOWR(SSDFS_IOCTL_MAGIC, 7, \
+					     struct ssdfs_snapshot_info)
 
 #endif /* _SSDFS_IOCTL_H */

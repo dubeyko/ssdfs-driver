@@ -4282,14 +4282,6 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		}
 
 		pebc = &si->peb_array[peb_index];
-		err = ssdfs_peb_container_invalidate_block(pebc, off_desc);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to invalidate: "
-				  "logical_blk %u, peb_index %u, "
-				  "err %d\n",
-				  blk, peb_index, err);
-			return err;
-		}
 
 		err = ssdfs_blk2off_table_free_block(blk2off_tbl,
 						     peb_index,
@@ -4318,6 +4310,17 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			return err;
 		}
 
+		mutex_lock(&pebc->migration_lock);
+
+		err = ssdfs_peb_container_invalidate_block(pebc, off_desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to invalidate: "
+				  "logical_blk %u, peb_index %u, "
+				  "err %d\n",
+				  blk, peb_index, err);
+			goto finish_invalidate_block;
+		}
+
 		SSDFS_DBG("valid_blks %d, invalid_blks %d\n",
 			  atomic_read(&si->blk_bmap.seg_valid_blks),
 			  atomic_read(&si->blk_bmap.seg_invalid_blks));
@@ -4327,7 +4330,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			return err;
+			goto finish_invalidate_block;
 		}
 
 		ssdfs_request_init(req);
@@ -4342,6 +4345,12 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 
 		rq = &pebc->update_rq;
 		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
+
+finish_invalidate_block:
+		mutex_unlock(&pebc->migration_lock);
+
+		if (unlikely(err))
+			return err;
 
 		wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 		wake_up_all(wait);

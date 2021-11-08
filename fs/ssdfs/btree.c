@@ -722,9 +722,8 @@ check_flush_result_state:
 		rcu_read_lock();
 
 		spin_lock(&tree->nodes_lock);
-		radix_tree_for_each_tagged(slot, &tree->nodes, &iter,
-					   SSDFS_BTREE_ROOT_NODE_ID,
-					   SSDFS_BTREE_NODE_TOWRITE_TAG) {
+		radix_tree_for_each_slot(slot, &tree->nodes, &iter,
+					   SSDFS_BTREE_ROOT_NODE_ID) {
 
 			node = SSDFS_BTN(radix_tree_deref_slot(slot));
 			if (unlikely(!node)) {
@@ -789,9 +788,8 @@ check_flush_result_state:
 		rcu_read_lock();
 
 		spin_lock(&tree->nodes_lock);
-		radix_tree_for_each_tagged(slot, &tree->nodes, &iter,
-					   SSDFS_BTREE_ROOT_NODE_ID,
-					   SSDFS_BTREE_NODE_TOWRITE_TAG) {
+		radix_tree_for_each_slot(slot, &tree->nodes, &iter,
+					   SSDFS_BTREE_ROOT_NODE_ID) {
 
 			node = SSDFS_BTN(radix_tree_deref_slot(slot));
 			if (unlikely(!node)) {

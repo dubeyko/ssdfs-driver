@@ -12475,9 +12475,12 @@ make_log_commit:
 			has_extent_been_invalidated = false;
 
 			if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
-				SSDFS_WARN("seg %llu, peb_index %u\n",
+				SSDFS_WARN("mapping table is near destroy: "
+					   "seg %llu, peb_index %u, "
+					   "peb_type %#x\n",
 					   pebc->parent_si->seg_id,
-					   pebc->peb_index);
+					   pebc->peb_index,
+					   pebc->peb_type);
 			}
 
 			ssdfs_forget_invalidated_user_data_pages(si);

@@ -775,8 +775,10 @@ int ssdfs_btree_node_allocate_bmaps(void *addr[SSDFS_BTREE_NODE_BMAP_COUNT],
 		if (!addr[i]) {
 			SSDFS_ERR("fail to allocate node's bmap: index %d\n",
 				  i);
-			for (; i >= 0; i--)
+			for (; i >= 0; i--) {
 				ssdfs_btree_node_kfree(addr[i]);
+				addr[i] = NULL;
+			}
 			return -ENOMEM;
 		}
 	}
