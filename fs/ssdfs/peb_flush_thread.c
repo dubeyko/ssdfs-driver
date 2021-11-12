@@ -10125,6 +10125,7 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 	};
 
 	ssdfs_forget_user_data_flush_request(pebc->parent_si);
+	ssdfs_segment_finish_request_cno(pebc->parent_si);
 
 	SSDFS_DBG("flush_reqs %lld\n",
 		  atomic64_read(&pebc->parent_si->fsi->flush_reqs));

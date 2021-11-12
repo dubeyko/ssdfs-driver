@@ -92,6 +92,11 @@ void ssdfs_dict_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_name_info_cachep;
 
+void ssdfs_zero_name_info_cache_ptr(void)
+{
+	ssdfs_name_info_cachep = NULL;
+}
+
 static
 void ssdfs_init_name_info_once(void *obj)
 {
@@ -181,7 +186,7 @@ void ssdfs_name_info_init(int type, u64 hash,
 	INIT_LIST_HEAD(&ni->list);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(SSDFS_INIT_SHDICT_NODE <= type ||
+	BUG_ON(type <= SSDFS_INIT_SHDICT_NODE ||
 		type >= SSDFS_NAME_OP_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 	ni->type = type;
@@ -1106,6 +1111,11 @@ int ssdfs_shared_dict_tree_add(struct ssdfs_shared_dict_btree_info *tree,
 		search->request.end.name = name;
 		search->request.end.name_len = len;
 		search->request.count = 1;
+	} else {
+		search->request.flags =
+				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_VALID_COUNT |
+				SSDFS_BTREE_SEARCH_HAS_VALID_NAME;
 	}
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
@@ -1125,7 +1135,14 @@ int ssdfs_shared_dict_tree_add(struct ssdfs_shared_dict_btree_info *tree,
 		return -EEXIST;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;
@@ -10363,7 +10380,13 @@ int ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;
@@ -10382,9 +10405,10 @@ int ssdfs_shared_dict_btree_node_insert_item(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.count != 1);
-	BUG_ON(search->request.flags &
-			~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE);
-	BUG_ON(search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME);
+	BUG_ON(!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE));
+	BUG_ON(!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_NAME));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&node->items_area.state);

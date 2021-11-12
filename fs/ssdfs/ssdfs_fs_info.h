@@ -106,6 +106,14 @@ struct ssdfs_device_ops {
 };
 
 /*
+ * struct ssdfs_snapshot_subsystem - snapshots subsystem
+ * @reqs_queue: snapshot requests queue
+ */
+struct ssdfs_snapshot_subsystem {
+	struct ssdfs_snapshot_reqs_queue reqs_queue;
+};
+
+/*
  * struct ssdfs_fs_info - in-core fs information
  * @log_pagesize: log2(page size)
  * @pagesize: page size in bytes
@@ -169,6 +177,7 @@ struct ssdfs_device_ops {
  * @shextree: shared extents tree
  * @shdictree: shared dictionary
  * @inodes_tree: inodes btree
+ * @snapshots: snapshots subsystem
  * @gc_thread: array of GC threads
  * @gc_wait_queue: array of GC threads' wait queues
  * @gc_should_act: array of counters that define necessity of GC activity
@@ -262,6 +271,8 @@ struct ssdfs_fs_info {
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_shared_dict_btree_info *shdictree;
 	struct ssdfs_inodes_btree_info *inodes_tree;
+
+	struct ssdfs_snapshot_subsystem snapshots;
 
 	struct ssdfs_thread_info gc_thread[SSDFS_GC_THREAD_TYPE_MAX];
 	wait_queue_head_t gc_wait_queue[SSDFS_GC_THREAD_TYPE_MAX];

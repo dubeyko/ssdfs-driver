@@ -53,6 +53,7 @@ void ssdfs_peb_mapping_queue_remove_all(struct ssdfs_peb_mapping_queue *pmq);
 /*
  * PEB mapping info's API
  */
+void ssdfs_zero_peb_mapping_info_cache_ptr(void);
 int ssdfs_init_peb_mapping_info_cache(void);
 void ssdfs_shrink_peb_mapping_info_cache(void);
 void ssdfs_destroy_peb_mapping_info_cache(void);

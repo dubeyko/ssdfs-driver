@@ -3965,12 +3965,26 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 
 	node = search->node.child;
 	if (!node) {
-		SSDFS_ERR("corrupted search request: child node is NULL\n");
-		return -ERANGE;
+		node = search->node.parent;
+
+		if (!node) {
+			SSDFS_ERR("corrupted search request: "
+				  "child and parent nodes are NULL\n");
+			return -ERANGE;
+		}
+
+		if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE) {
+			SSDFS_DBG("parent is root node\n");
+			return -ENOENT;
+		} else {
+			SSDFS_ERR("corrupted search request: "
+				  "child nodes is NULL\n");
+			return -ERANGE;
+		}
 	}
 
 	if (atomic_read(&node->type) == SSDFS_BTREE_ROOT_NODE) {
-		SSDFS_DBG("parent is root node\n");
+		SSDFS_DBG("child is root node\n");
 		return -ENOENT;
 	}
 

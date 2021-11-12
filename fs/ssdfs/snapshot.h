@@ -109,4 +109,36 @@ enum {
 #define SSDFS_INFINITE_SNAPSHOTS_NUMBER		U32_MAX
 #define SSDFS_UNDEFINED_SNAPSHOTS_NUMBER	(0)
 
+/* Requested operation */
+enum {
+	SSDFS_UNKNOWN_OPERATION,
+	SSDFS_CREATE_SNAPSHOT,
+	SSDFS_LIST_SNAPSHOTS,
+	SSDFS_MODIFY_SNAPSHOT,
+	SSDFS_REMOVE_SNAPSHOT,
+	SSDFS_REMOVE_RANGE,
+	SSDFS_SHOW_SNAPSHOT_DETAILS,
+	SSDFS_OPERATION_TYPE_MAX
+};
+
+/*
+ * struct ssdfs_snapshot_request - snapshot request
+ * @list: snapshot requests queue list
+ * @operation: requested operation
+ * @info: snapshot request's info
+ */
+struct ssdfs_snapshot_request {
+	struct list_head list;
+	int operation;
+	struct ssdfs_snapshot_info info;
+};
+
+struct ssdfs_snapshot_subsystem;
+
+/*
+ * Snapshots subsystem's API
+ */
+int ssdfs_snapshot_subsystem_init(struct ssdfs_snapshot_subsystem *ptr);
+int ssdfs_snapshot_subsystem_destroy(struct ssdfs_snapshot_subsystem *ptr);
+
 #endif /* _SSDFS_SNAPSHOT_H */

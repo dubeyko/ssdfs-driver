@@ -99,6 +99,11 @@ void ssdfs_btree_node_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_btree_node_obj_cachep;
 
+void ssdfs_zero_btree_node_obj_cache_ptr(void)
+{
+	ssdfs_btree_node_obj_cachep = NULL;
+}
+
 static void ssdfs_init_btree_node_object_once(void *obj)
 {
 	struct ssdfs_btree_node *node_obj = obj;
@@ -3382,6 +3387,8 @@ int ssdfs_btree_deleted_node_commit_log(struct ssdfs_btree_node *node)
 						    SSDFS_COMMIT_LOG_NOW,
 						    SSDFS_REQ_ASYNC, req);
 		ssdfs_request_define_segment(si->seg_id, req);
+
+		ssdfs_segment_create_request_cno(si);
 
 		rq = &pebc->update_rq;
 		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);

@@ -248,7 +248,14 @@ try_invalidate_queue:
 		}
 
 		err = ssdfs_shextree_invalidate_extent(tree, ei);
-		if (err) {
+		if (err == -EBUSY) {
+			err = 0;
+			ssdfs_extents_queue_add_tail(&ptr->queue, ei);
+			wait_event_interruptible_timeout(*wait_queue,
+						kthread_should_stop(),
+						HZ);
+			continue;
+		} else if (err) {
 			ssdfs_fs_error(tree->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"fail to invalidate extent: "
@@ -347,7 +354,14 @@ try_invalidate_queue:
 		}
 
 		err = ssdfs_shextree_invalidate_index(tree, ei);
-		if (err) {
+		if (err == -EBUSY) {
+			err = 0;
+			ssdfs_extents_queue_add_tail(&ptr->queue, ei);
+			wait_event_interruptible_timeout(*wait_queue,
+						kthread_should_stop(),
+						HZ);
+			continue;
+		} else if (err) {
 			ssdfs_fs_error(tree->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"fail to invalidate index: "

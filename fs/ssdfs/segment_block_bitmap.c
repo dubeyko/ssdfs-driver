@@ -280,6 +280,27 @@ void ssdfs_segment_blk_bmap_init_failed(struct ssdfs_segment_blk_bmap *bmap,
 }
 
 /*
+ * is_ssdfs_segment_blk_bmap_dirty() - check that PEB block bitmap is dirty
+ * @bmap: pointer on segment block bitmap
+ * @peb_index: PEB's index
+ */
+bool is_ssdfs_segment_blk_bmap_dirty(struct ssdfs_segment_blk_bmap *bmap,
+					u16 peb_index)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap || !bmap->peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (peb_index >= bmap->pebs_count) {
+		SSDFS_WARN("peb_index %u >= seg_blkbmap->pebs_count %u\n",
+			  peb_index, bmap->pebs_count);
+		return false;
+	}
+
+	return is_ssdfs_peb_blk_bmap_dirty(&bmap->peb[peb_index]);
+}
+
+/*
  * ssdfs_define_bmap_index() - define block bitmap for operation
  * @pebc: pointer on PEB container
  * @bmap_index: pointer on block bitmap index value [out]

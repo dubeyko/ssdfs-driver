@@ -65,13 +65,33 @@ struct ssdfs_segment_migration_info {
 };
 
 /*
+ * struct ssdfs_protection_window - segment's protection window length
+ * @cno_lock: lock of checkpoints set
+ * @create_cno: segment creation checkpoint
+ * @last_request_cno: last request checkpoint
+ * @reqs_count: current number of active requests
+ * @protected_range: last measured protected range length
+ * @future_request_cno: expectation to receive a next request in the future
+ */
+struct ssdfs_protection_window {
+	spinlock_t cno_lock;
+	u64 create_cno;
+	u64 last_request_cno;
+	u32 reqs_count;
+	u64 protected_range;
+	u64 future_request_cno;
+};
+
+/*
  * struct ssdfs_segment_info - segment object description
  * @seg_id: segment identification number
  * @log_pages: count of pages in full partial log
  * @create_threads: number of flush PEB's threads for new page requests
  * @seg_type: segment type
+ * @protection: segment's protection window
  * @seg_state: current state of segment
  * @obj_state: segment object's state
+ * @activity_type: type of activity with segment object
  * @peb_array: array of PEB's descriptors
  * @pebs_count: count of items in PEBS array
  * @migration: migration info
@@ -97,9 +117,13 @@ struct ssdfs_segment_info {
 	u8 create_threads;
 	u16 seg_type;
 
+	/* Checkpoints set */
+	struct ssdfs_protection_window protection;
+
 	/* Mutable data */
 	atomic_t seg_state;
 	atomic_t obj_state;
+	atomic_t activity_type;
 
 	/* Segment's PEB's containers array */
 	struct ssdfs_peb_container *peb_array;
@@ -147,6 +171,15 @@ enum {
 	SSDFS_CURRENT_SEG_OBJECT,
 	SSDFS_SEG_OBJECT_FAILURE,
 	SSDFS_SEG_OBJECT_STATE_MAX
+};
+
+/* Segment object's activity type */
+enum {
+	SSDFS_SEG_OBJECT_NO_ACTIVITY,
+	SSDFS_SEG_OBJECT_REGULAR_ACTIVITY,
+	SSDFS_SEG_UNDER_GC_ACTIVITY,
+	SSDFS_SEG_UNDER_INVALIDATION,
+	SSDFS_SEG_OBJECT_ACTIVITY_TYPE_MAX
 };
 
 /*
@@ -436,6 +469,159 @@ void ssdfs_forget_invalidated_user_data_pages(struct ssdfs_segment_info *si)
 			  si->seg_id, invalidated);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
+}
+
+static inline
+void ssdfs_segment_create_request_cno(struct ssdfs_segment_info *si)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 create_cno;
+	u64 last_request_cno;
+	u32 reqs_count;
+	u64 protected_range;
+	u64 future_request_cno;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&si->protection.cno_lock);
+
+	if (si->protection.reqs_count == 0) {
+		si->protection.reqs_count = 1;
+		si->protection.last_request_cno =
+				ssdfs_current_cno(si->fsi->sb);
+	} else
+		si->protection.reqs_count++;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	create_cno = si->protection.create_cno;
+	last_request_cno = si->protection.last_request_cno;
+	reqs_count = si->protection.reqs_count;
+	protected_range = si->protection.protected_range;
+	future_request_cno = si->protection.future_request_cno;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_unlock(&si->protection.cno_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, create_cno %llu, "
+		  "last_request_cno %llu, reqs_count %u, "
+		  "protected_range %llu, future_request_cno %llu\n",
+		  si->seg_id, create_cno,
+		  last_request_cno, reqs_count,
+		  protected_range, future_request_cno);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+void ssdfs_segment_finish_request_cno(struct ssdfs_segment_info *si)
+{
+	u64 create_cno;
+	u64 last_request_cno;
+	u32 reqs_count;
+	u64 protected_range;
+	u64 future_request_cno;
+	u64 cur_cno;
+	int err = 0;
+
+	spin_lock(&si->protection.cno_lock);
+
+	if (si->protection.reqs_count == 0) {
+		err = -ERANGE;
+		goto finish_process_request;
+	} else if (si->protection.reqs_count == 1) {
+		si->protection.reqs_count--;
+		cur_cno = ssdfs_current_cno(si->fsi->sb);
+
+		if (si->protection.last_request_cno >= cur_cno) {
+			err = -ERANGE;
+			goto finish_process_request;
+		} else {
+			u64 diff = cur_cno - si->protection.last_request_cno;
+			u64 last_range = si->protection.protected_range;
+			si->protection.protected_range =
+						max_t(u64, last_range, diff);
+			si->protection.last_request_cno = cur_cno;
+			si->protection.future_request_cno =
+				cur_cno + si->protection.protected_range;
+		}
+	} else
+		si->protection.reqs_count--;
+
+finish_process_request:
+	create_cno = si->protection.create_cno;
+	last_request_cno = si->protection.last_request_cno;
+	reqs_count = si->protection.reqs_count;
+	protected_range = si->protection.protected_range;
+	future_request_cno = si->protection.future_request_cno;
+
+	spin_unlock(&si->protection.cno_lock);
+
+	if (unlikely(err)) {
+		SSDFS_WARN("seg_id %llu, create_cno %llu, "
+			   "last_request_cno %llu, reqs_count %u, "
+			   "protected_range %llu, future_request_cno %llu\n",
+			   si->seg_id, create_cno,
+			   last_request_cno, reqs_count,
+			   protected_range, future_request_cno);
+		return;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, create_cno %llu, "
+		  "last_request_cno %llu, reqs_count %u, "
+		  "protected_range %llu, future_request_cno %llu\n",
+		  si->seg_id, create_cno,
+		  last_request_cno, reqs_count,
+		  protected_range, future_request_cno);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+bool should_gc_doesnt_touch_segment(struct ssdfs_segment_info *si)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 create_cno;
+	u64 last_request_cno;
+	u32 reqs_count;
+	u64 protected_range;
+	u64 future_request_cno;
+#endif /* CONFIG_SSDFS_DEBUG */
+	u64 cur_cno;
+	bool dont_touch = false;
+
+	spin_lock(&si->protection.cno_lock);
+	if (si->protection.reqs_count > 0) {
+		/* segment is under processing */
+		dont_touch = true;
+	} else {
+		cur_cno = ssdfs_current_cno(si->fsi->sb);
+		if (cur_cno <= si->protection.future_request_cno) {
+			/* segment is under protection window yet */
+			dont_touch = true;
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	create_cno = si->protection.create_cno;
+	last_request_cno = si->protection.last_request_cno;
+	reqs_count = si->protection.reqs_count;
+	protected_range = si->protection.protected_range;
+	future_request_cno = si->protection.future_request_cno;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_unlock(&si->protection.cno_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, create_cno %llu, "
+		  "last_request_cno %llu, reqs_count %u, "
+		  "protected_range %llu, future_request_cno %llu, "
+		  "dont_touch %#x\n",
+		  si->seg_id, create_cno,
+		  last_request_cno, reqs_count,
+		  protected_range, future_request_cno,
+		  dont_touch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return dont_touch;
 }
 
 /*

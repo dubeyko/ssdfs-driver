@@ -87,6 +87,11 @@ void ssdfs_req_queue_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_seg_req_obj_cachep;
 
+void ssdfs_zero_seg_req_obj_cache_ptr(void)
+{
+	ssdfs_seg_req_obj_cachep = NULL;
+}
+
 static
 void ssdfs_init_seg_req_object_once(void *obj)
 {

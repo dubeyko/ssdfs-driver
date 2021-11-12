@@ -396,6 +396,11 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 		}
 	}
 
+	err = ssdfs_execute_create_snapshots(&fsi->snapshots.reqs_queue);
+	if (err) {
+		SSDFS_ERR("fail to process the snapshots creation\n");
+	}
+
 	up_write(&fsi->volume_sem);
 
 	atomic_set(&fsi->global_fs_state, SSDFS_REGULAR_FS_OPERATIONS);
@@ -2261,6 +2266,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_shextree_memory_leaks_init();
 	ssdfs_super_memory_leaks_init();
 	ssdfs_xattr_memory_leaks_init();
+	ssdfs_snap_reqs_queue_memory_leaks_init();
 }
 
 static void ssdfs_check_memory_leaks(void)
@@ -2320,6 +2326,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_shextree_check_memory_leaks();
 	ssdfs_super_check_memory_leaks();
 	ssdfs_xattr_check_memory_leaks();
+	ssdfs_snap_reqs_queue_check_memory_leaks();
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
@@ -2549,6 +2556,18 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create snapshots subsystem started...\n");
+#else
+	SSDFS_DBG("create snapshots subsystem started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	down_write(&fs_info->volume_sem);
+	err = ssdfs_snapshot_subsystem_init(&fs_info->snapshots);
+	up_write(&fs_info->volume_sem);
+	if (err)
+		goto destroy_inodes_btree;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("getting root inode...\n");
 #else
 	SSDFS_DBG("getting root inode...\n");
@@ -2558,7 +2577,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (IS_ERR(root_i)) {
 		SSDFS_DBG("getting root inode failed\n");
 		err = PTR_ERR(root_i);
-		goto destroy_inodes_btree;
+		goto destroy_snapshot_subsystem;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -2667,6 +2686,9 @@ stop_gc_using_seg_thread:
 
 put_root_inode:
 	iput(root_i);
+
+destroy_snapshot_subsystem:
+	ssdfs_snapshot_subsystem_destroy(&fs_info->snapshots);
 
 destroy_inodes_btree:
 	ssdfs_inodes_btree_destroy(fs_info);
@@ -2952,6 +2974,7 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
+	ssdfs_snapshot_subsystem_destroy(&fsi->snapshots);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
 	ssdfs_segbmap_destroy(fsi);
@@ -3039,11 +3062,22 @@ static void ssdfs_destroy_caches(void)
 	ssdfs_destroy_extent_info_cache();
 	ssdfs_destroy_peb_mapping_info_cache();
 	ssdfs_destroy_blk2off_frag_obj_cache();
+	ssdfs_destroy_name_info_cache();
 }
 
 static int ssdfs_init_caches(void)
 {
 	int err;
+
+	ssdfs_zero_seg_obj_cache_ptr();
+	ssdfs_zero_seg_req_obj_cache_ptr();
+	ssdfs_zero_extent_info_cache_ptr();
+	ssdfs_zero_btree_node_obj_cache_ptr();
+	ssdfs_zero_btree_search_obj_cache_ptr();
+	ssdfs_zero_free_ino_desc_cache_ptr();
+	ssdfs_zero_peb_mapping_info_cache_ptr();
+	ssdfs_zero_blk2off_frag_obj_cache_ptr();
+	ssdfs_zero_name_info_cache_ptr();
 
 	ssdfs_inode_cachep = kmem_cache_create("ssdfs_inode_cache",
 					sizeof(struct ssdfs_inode_info), 0,
@@ -3113,6 +3147,14 @@ static int ssdfs_init_caches(void)
 	err = ssdfs_init_blk2off_frag_obj_cache();
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to create blk2off fragments cache: "
+			  "err %d\n",
+			  err);
+		goto destroy_caches;
+	}
+
+	err = ssdfs_init_name_info_cache();
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to create name info cache: "
 			  "err %d\n",
 			  err);
 		goto destroy_caches;

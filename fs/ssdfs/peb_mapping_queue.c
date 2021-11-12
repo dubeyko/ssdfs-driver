@@ -75,6 +75,11 @@ void ssdfs_map_queue_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_peb_mapping_info_cachep;
 
+void ssdfs_zero_peb_mapping_info_cache_ptr(void)
+{
+	ssdfs_peb_mapping_info_cachep = NULL;
+}
+
 static
 void ssdfs_init_peb_mapping_info_once(void *obj)
 {

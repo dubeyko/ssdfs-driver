@@ -93,6 +93,11 @@ void ssdfs_ext_queue_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_extent_info_cachep;
 
+void ssdfs_zero_extent_info_cache_ptr(void)
+{
+	ssdfs_extent_info_cachep = NULL;
+}
+
 static
 void ssdfs_init_extent_info_once(void *obj)
 {
@@ -403,6 +408,46 @@ void ssdfs_extent_info_init(int type, void *ptr, u64 owner_ino,
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
 	}
+}
+
+static inline
+int ssdfs_mark_segment_under_invalidation(struct ssdfs_segment_info *si)
+{
+	int activity_type;
+
+	activity_type = atomic_cmpxchg(&si->activity_type,
+				SSDFS_SEG_OBJECT_REGULAR_ACTIVITY,
+				SSDFS_SEG_UNDER_INVALIDATION);
+	if (activity_type != SSDFS_SEG_OBJECT_REGULAR_ACTIVITY) {
+		SSDFS_DBG("segment %llu is busy under activity %#x\n",
+			   si->seg_id, activity_type);
+		return -EBUSY;
+	}
+
+	SSDFS_DBG("segment %llu is under invalidation\n",
+		  si->seg_id);
+
+	return 0;
+}
+
+static inline
+int ssdfs_revert_invalidation_to_regular_activity(struct ssdfs_segment_info *si)
+{
+	int activity_type;
+
+	activity_type = atomic_cmpxchg(&si->activity_type,
+				SSDFS_SEG_UNDER_INVALIDATION,
+				SSDFS_SEG_OBJECT_REGULAR_ACTIVITY);
+	if (activity_type != SSDFS_SEG_UNDER_INVALIDATION) {
+		SSDFS_WARN("segment %llu is under activity %#x\n",
+			   si->seg_id, activity_type);
+		return -EFAULT;
+	}
+
+	SSDFS_DBG("segment %llu has been reverted from invalidation\n",
+		  si->seg_id);
+
+	return 0;
 }
 
 /*
@@ -731,6 +776,13 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(index->index.extent.logical_blk);
 	len = le32_to_cpu(index->index.extent.len);
 
+	err = ssdfs_mark_segment_under_invalidation(si);
+	if (err) {
+		SSDFS_DBG("segment %llu is busy\n",
+			  si->seg_id);
+		goto finish_invalidate_index;
+	}
+
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate node: "
@@ -738,7 +790,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 			  "start_blk %u, len %u\n",
 			  node_id1, si->seg_id,
 			  start_blk, len);
-		goto finish_invalidate_index;
+		goto revert_invalidation_state;
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -749,7 +801,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			goto finish_invalidate_index;
+			goto revert_invalidation_state;
 		}
 
 		ssdfs_request_init(req);
@@ -763,8 +815,15 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 				  i, err);
 			ssdfs_put_request(req);
 			ssdfs_request_free(req);
-			goto finish_invalidate_index;
+			goto revert_invalidation_state;
 		}
+	}
+
+revert_invalidation_state:
+	err = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err)) {
+		SSDFS_ERR("unexpected segment %llu activity\n",
+			  si->seg_id);
 	}
 
 finish_invalidate_index:
@@ -1146,6 +1205,13 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(index->index.extent.logical_blk);
 	len = le32_to_cpu(index->index.extent.len);
 
+	err = ssdfs_mark_segment_under_invalidation(si);
+	if (err) {
+		SSDFS_DBG("segment %llu is busy\n",
+			  si->seg_id);
+		goto finish_invalidate_index;
+	}
+
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate node: "
@@ -1153,7 +1219,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 			  "start_blk %u, len %u\n",
 			  node_id1, si->seg_id,
 			  start_blk, len);
-		goto finish_invalidate_index;
+		goto revert_invalidation_state;
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -1164,7 +1230,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			goto finish_invalidate_index;
+			goto revert_invalidation_state;
 		}
 
 		ssdfs_request_init(req);
@@ -1178,8 +1244,15 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 				  i, err);
 			ssdfs_put_request(req);
 			ssdfs_request_free(req);
-			goto finish_invalidate_index;
+			goto revert_invalidation_state;
 		}
+	}
+
+revert_invalidation_state:
+	err = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err)) {
+		SSDFS_ERR("unexpected segment %llu activity\n",
+			  si->seg_id);
 	}
 
 finish_invalidate_index:
@@ -1472,6 +1545,13 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(index->index.extent.logical_blk);
 	len = le32_to_cpu(index->index.extent.len);
 
+	err = ssdfs_mark_segment_under_invalidation(si);
+	if (err) {
+		SSDFS_DBG("segment %llu is busy\n",
+			  si->seg_id);
+		goto finish_invalidate_index;
+	}
+
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate node: "
@@ -1479,7 +1559,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 			  "start_blk %u, len %u\n",
 			  node_id1, si->seg_id,
 			  start_blk, len);
-		goto finish_invalidate_index;
+		goto revert_invalidation_state;
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -1490,7 +1570,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			goto finish_invalidate_index;
+			goto revert_invalidation_state;
 		}
 
 		ssdfs_request_init(req);
@@ -1504,8 +1584,15 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 				  i, err);
 			ssdfs_put_request(req);
 			ssdfs_request_free(req);
-			goto finish_invalidate_index;
+			goto revert_invalidation_state;
 		}
+	}
+
+revert_invalidation_state:
+	err = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err)) {
+		SSDFS_ERR("unexpected segment %llu activity\n",
+			  si->seg_id);
 	}
 
 finish_invalidate_index:
@@ -1562,12 +1649,19 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 		return PTR_ERR(si);
 	}
 
+	err = ssdfs_mark_segment_under_invalidation(si);
+	if (err) {
+		SSDFS_DBG("segment %llu is busy\n",
+			  si->seg_id);
+		goto finish_invalidate_extent;
+	}
+
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate logical extent: "
 			  "seg %llu, extent (start_blk %u, len %u), err %d\n",
 			  seg_id, start_blk, len, err);
-		goto finish_invalidate_extent;
+		goto revert_invalidation_state;
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -1578,7 +1672,7 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			goto finish_invalidate_extent;
+			goto revert_invalidation_state;
 		}
 
 		ssdfs_request_init(req);
@@ -1592,8 +1686,15 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 				  i, err);
 			ssdfs_put_request(req);
 			ssdfs_request_free(req);
-			goto finish_invalidate_extent;
+			goto revert_invalidation_state;
 		}
+	}
+
+revert_invalidation_state:
+	err = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err)) {
+		SSDFS_ERR("unexpected segment %llu activity\n",
+			  si->seg_id);
 	}
 
 finish_invalidate_extent:

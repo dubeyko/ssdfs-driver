@@ -3,6 +3,11 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.00 [November 11, 2021]
+    (*) Implement snapshot requests queue (step 2).
+    (*) Fix bugs in GC subsystem.
+    (*) Fix bugs in shared dictionary.
+
 v.3.99 [November 08, 2021]
     (*) Implement snapshot support (step 1).
     (*) Ioctls have been added.

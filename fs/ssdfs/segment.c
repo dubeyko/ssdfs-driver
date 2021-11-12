@@ -107,6 +107,11 @@ void ssdfs_shrink_seg_obj_cache(void)
 		kmem_cache_shrink(ssdfs_seg_obj_cachep);
 }
 
+void ssdfs_zero_seg_obj_cache_ptr(void)
+{
+	ssdfs_seg_obj_cachep = NULL;
+}
+
 void ssdfs_destroy_seg_obj_cache(void)
 {
 	if (ssdfs_seg_obj_cachep)
@@ -160,6 +165,7 @@ struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
 
 	memset(ptr, 0, sizeof(struct ssdfs_segment_info));
 	atomic_set(&ptr->obj_state, SSDFS_SEG_OBJECT_UNDER_CREATION);
+	atomic_set(&ptr->activity_type, SSDFS_SEG_OBJECT_NO_ACTIVITY);
 	ptr->seg_id = seg_id;
 	atomic_set(&ptr->refs_count, 0);
 	init_waitqueue_head(&ptr->object_queue);
@@ -195,6 +201,18 @@ void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
 	default:
 		SSDFS_WARN("unexpected segment object's state %#x\n",
 			   atomic_read(&si->obj_state));
+		break;
+	}
+
+	switch (atomic_read(&si->activity_type)) {
+	case SSDFS_SEG_OBJECT_NO_ACTIVITY:
+	case SSDFS_SEG_OBJECT_REGULAR_ACTIVITY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected segment object's activity %#x\n",
+			   atomic_read(&si->activity_type));
 		break;
 	}
 
@@ -402,6 +420,14 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	si->fsi = fsi;
 	atomic_set(&si->seg_state, seg_state);
 	ssdfs_requests_queue_init(&si->create_rq);
+
+	spin_lock_init(&si->protection.cno_lock);
+	si->protection.create_cno = ssdfs_current_cno(fsi->sb);
+	si->protection.last_request_cno = si->protection.create_cno;
+	si->protection.reqs_count = 0;
+	si->protection.protected_range = 0;
+	si->protection.future_request_cno = si->protection.create_cno;
+
 	spin_lock_init(&si->pending_lock);
 	si->pending_new_user_data_pages = 0;
 	si->invalidated_user_data_pages = 0;
@@ -537,6 +563,7 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	}
 
 	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_CREATED);
+	atomic_set(&si->activity_type, SSDFS_SEG_OBJECT_REGULAR_ACTIVITY);
 	wake_up_all(&si->object_queue);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -1902,6 +1929,7 @@ add_new_current_segment:
 			}
 
 			ssdfs_account_user_data_flush_request(si);
+			ssdfs_segment_create_request_cno(si);
 
 			create_rq = &si->create_rq;
 			ssdfs_requests_queue_add_tail_inc(si->fsi,
@@ -2100,6 +2128,7 @@ add_new_current_segment:
 			}
 
 			ssdfs_account_user_data_flush_request(si);
+			ssdfs_segment_create_request_cno(si);
 
 			create_rq = &si->create_rq;
 			ssdfs_requests_queue_add_tail_inc(si->fsi,
@@ -3341,6 +3370,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	}
 
 	ssdfs_account_user_data_flush_request(si);
+	ssdfs_segment_create_request_cno(si);
 
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
@@ -3584,6 +3614,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	}
 
 	ssdfs_account_user_data_flush_request(si);
+	ssdfs_segment_create_request_cno(si);
 
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
@@ -4076,6 +4107,7 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 	}
 
 	ssdfs_account_user_data_flush_request(si);
+	ssdfs_segment_create_request_cno(si);
 
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
@@ -4342,6 +4374,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		ssdfs_request_define_segment(si->seg_id, req);
 
 		ssdfs_account_user_data_flush_request(si);
+		ssdfs_segment_create_request_cno(si);
 
 		rq = &pebc->update_rq;
 		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);

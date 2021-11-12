@@ -88,6 +88,11 @@ void ssdfs_ino_tree_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_free_ino_desc_cachep;
 
+void ssdfs_zero_free_ino_desc_cache_ptr(void)
+{
+	ssdfs_free_ino_desc_cachep = NULL;
+}
+
 static
 void ssdfs_init_free_ino_desc_once(void *obj)
 {

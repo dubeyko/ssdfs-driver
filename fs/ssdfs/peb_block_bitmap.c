@@ -692,6 +692,32 @@ void ssdfs_peb_blk_bmap_init_failed(struct ssdfs_peb_blk_bmap *bmap)
 }
 
 /*
+ * is_ssdfs_peb_blk_bmap_dirty() - check that PEB block bitmap is dirty
+ * @bmap: pointer on PEB's block bitmap object
+ */
+bool is_ssdfs_peb_blk_bmap_dirty(struct ssdfs_peb_blk_bmap *bmap)
+{
+	bool is_src_dirty = false;
+	bool is_dst_dirty = false;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!ssdfs_peb_blk_bmap_initialized(bmap))
+		return false;
+
+	down_read(&bmap->lock);
+	if (bmap->src != NULL)
+		is_src_dirty = ssdfs_block_bmap_dirtied(bmap->src);
+	if (bmap->dst != NULL)
+		is_dst_dirty = ssdfs_block_bmap_dirtied(bmap->dst);
+	up_read(&bmap->lock);
+
+	return is_src_dirty || is_dst_dirty;
+}
+
+/*
  * ssdfs_peb_define_reserved_pages_per_log() - estimate reserved pages per log
  * @bmap: pointer on PEB's block bitmap object
  */

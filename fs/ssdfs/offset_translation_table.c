@@ -95,6 +95,11 @@ void ssdfs_blk2off_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_blk2off_frag_obj_cachep;
 
+void ssdfs_zero_blk2off_frag_obj_cache_ptr(void)
+{
+	ssdfs_blk2off_frag_obj_cachep = NULL;
+}
+
 static void ssdfs_init_blk2off_frag_object_once(void *obj)
 {
 	struct ssdfs_phys_offset_table_fragment *frag_obj = obj;

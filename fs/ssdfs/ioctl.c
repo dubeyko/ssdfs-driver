@@ -102,41 +102,29 @@ static int ssdfs_ioctl_do_testing(struct file *file, void __user *arg)
 
 static int ssdfs_ioctl_create_snapshot(struct file *file, void __user *arg)
 {
-//	struct inode *inode = file_inode(file);
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct ssdfs_snapshot_info *info = NULL;
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
 
-	info = kzalloc(sizeof(struct ssdfs_snapshot_info), GFP_KERNEL);
-	if (!info) {
-		SSDFS_ERR("fail to allocate snaphot info\n");
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(info, arg, sizeof(struct ssdfs_snapshot_info))) {
+	snr->operation = SSDFS_CREATE_SNAPSHOT;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
+		ssdfs_snapshot_request_free(snr);
 		goto finish_create_snapshot;
 	}
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", info->name);
-	SSDFS_ERR("UUID %pUb, ", info->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
-		  "frequency %#x, existing_snapshots %u, "
-		  "TIME_RANGE (day %u, month %u, year %u)\n",
-		  info->mode, info->type, info->expiration,
-		  info->frequency, info->existing_snapshots,
-		  info->time_range.day,
-		  info->time_range.month,
-		  info->time_range.year);
+	ssdfs_snapshot_reqs_queue_add_head(&fsi->snapshots.reqs_queue, snr);
 
 finish_create_snapshot:
-	if (!info)
-		kfree(info);
-
 	return err;
 }
 
@@ -144,38 +132,33 @@ static int ssdfs_ioctl_list_snapshots(struct file *file, void __user *arg)
 {
 //	struct inode *inode = file_inode(file);
 //	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct ssdfs_snapshot_info *info = NULL;
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
 
-	info = kzalloc(sizeof(struct ssdfs_snapshot_info), GFP_KERNEL);
-	if (!info) {
-		SSDFS_ERR("fail to allocate snaphot info\n");
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(info, arg, sizeof(struct ssdfs_snapshot_info))) {
+	snr->operation = SSDFS_LIST_SNAPSHOTS;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_list_snapshots;
 	}
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", info->name);
-	SSDFS_ERR("UUID %pUb, ", info->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
-		  "frequency %#x, existing_snapshots %u, "
-		  "TIME_RANGE (day %u, month %u, year %u)\n",
-		  info->mode, info->type, info->expiration,
-		  info->frequency, info->existing_snapshots,
-		  info->time_range.day,
-		  info->time_range.month,
-		  info->time_range.year);
+	err = ssdfs_execute_list_snapshots_request(snr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get the snapshots list: "
+			  "err %d\n", err);
+		goto finish_list_snapshots;
+	}
 
 finish_list_snapshots:
-	if (!info)
-		kfree(info);
+	if (!snr)
+		ssdfs_snapshot_request_free(snr);
 
 	return err;
 }
@@ -184,38 +167,33 @@ static int ssdfs_ioctl_modify_snapshot(struct file *file, void __user *arg)
 {
 //	struct inode *inode = file_inode(file);
 //	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct ssdfs_snapshot_info *info = NULL;
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
 
-	info = kzalloc(sizeof(struct ssdfs_snapshot_info), GFP_KERNEL);
-	if (!info) {
-		SSDFS_ERR("fail to allocate snaphot info\n");
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(info, arg, sizeof(struct ssdfs_snapshot_info))) {
+	snr->operation = SSDFS_MODIFY_SNAPSHOT;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_modify_snapshot;
 	}
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", info->name);
-	SSDFS_ERR("UUID %pUb, ", info->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
-		  "frequency %#x, existing_snapshots %u, "
-		  "TIME_RANGE (day %u, month %u, year %u)\n",
-		  info->mode, info->type, info->expiration,
-		  info->frequency, info->existing_snapshots,
-		  info->time_range.day,
-		  info->time_range.month,
-		  info->time_range.year);
+	err = ssdfs_execute_modify_snapshot_request(snr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to modify snapshot: "
+			  "err %d\n", err);
+		goto finish_modify_snapshot;
+	}
 
 finish_modify_snapshot:
-	if (!info)
-		kfree(info);
+	if (!snr)
+		ssdfs_snapshot_request_free(snr);
 
 	return err;
 }
@@ -224,38 +202,33 @@ static int ssdfs_ioctl_remove_snapshot(struct file *file, void __user *arg)
 {
 //	struct inode *inode = file_inode(file);
 //	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct ssdfs_snapshot_info *info = NULL;
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
 
-	info = kzalloc(sizeof(struct ssdfs_snapshot_info), GFP_KERNEL);
-	if (!info) {
-		SSDFS_ERR("fail to allocate snaphot info\n");
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(info, arg, sizeof(struct ssdfs_snapshot_info))) {
+	snr->operation = SSDFS_REMOVE_SNAPSHOT;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_remove_snapshot;
 	}
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", info->name);
-	SSDFS_ERR("UUID %pUb, ", info->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
-		  "frequency %#x, existing_snapshots %u, "
-		  "TIME_RANGE (day %u, month %u, year %u)\n",
-		  info->mode, info->type, info->expiration,
-		  info->frequency, info->existing_snapshots,
-		  info->time_range.day,
-		  info->time_range.month,
-		  info->time_range.year);
+	err = ssdfs_execute_remove_snapshot_request(snr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete snapshot: "
+			  "err %d\n", err);
+		goto finish_remove_snapshot;
+	}
 
 finish_remove_snapshot:
-	if (!info)
-		kfree(info);
+	if (!snr)
+		ssdfs_snapshot_request_free(snr);
 
 	return err;
 }
@@ -264,38 +237,33 @@ static int ssdfs_ioctl_remove_range(struct file *file, void __user *arg)
 {
 //	struct inode *inode = file_inode(file);
 //	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct ssdfs_snapshot_info *info = NULL;
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
 
-	info = kzalloc(sizeof(struct ssdfs_snapshot_info), GFP_KERNEL);
-	if (!info) {
-		SSDFS_ERR("fail to allocate snaphot info\n");
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(info, arg, sizeof(struct ssdfs_snapshot_info))) {
+	snr->operation = SSDFS_REMOVE_RANGE;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_remove_range;
 	}
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", info->name);
-	SSDFS_ERR("UUID %pUb, ", info->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
-		  "frequency %#x, existing_snapshots %u, "
-		  "TIME_RANGE (day %u, month %u, year %u)\n",
-		  info->mode, info->type, info->expiration,
-		  info->frequency, info->existing_snapshots,
-		  info->time_range.day,
-		  info->time_range.month,
-		  info->time_range.year);
+	err = ssdfs_execute_remove_range_request(snr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to remove range of snapshots: "
+			  "err %d\n", err);
+		goto finish_remove_range;
+	}
 
 finish_remove_range:
-	if (!info)
-		kfree(info);
+	if (!snr)
+		ssdfs_snapshot_request_free(snr);
 
 	return err;
 }
@@ -305,38 +273,33 @@ static int ssdfs_ioctl_show_snapshot_details(struct file *file,
 {
 //	struct inode *inode = file_inode(file);
 //	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct ssdfs_snapshot_info *info = NULL;
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
 
-	info = kzalloc(sizeof(struct ssdfs_snapshot_info), GFP_KERNEL);
-	if (!info) {
-		SSDFS_ERR("fail to allocate snaphot info\n");
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
 		return -ENOMEM;
 	}
 
-	if (copy_from_user(info, arg, sizeof(struct ssdfs_snapshot_info))) {
+	snr->operation = SSDFS_SHOW_SNAPSHOT_DETAILS;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_show_snapshot_details;
 	}
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", info->name);
-	SSDFS_ERR("UUID %pUb, ", info->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
-		  "frequency %#x, existing_snapshots %u, "
-		  "TIME_RANGE (day %u, month %u, year %u)\n",
-		  info->mode, info->type, info->expiration,
-		  info->frequency, info->existing_snapshots,
-		  info->time_range.day,
-		  info->time_range.month,
-		  info->time_range.year);
+	err = ssdfs_execute_show_details_request(snr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to show snapshot's details: "
+			  "err %d\n", err);
+		goto finish_show_snapshot_details;
+	}
 
 finish_show_snapshot_details:
-	if (!info)
-		kfree(info);
+	if (!snr)
+		ssdfs_snapshot_request_free(snr);
 
 	return err;
 }

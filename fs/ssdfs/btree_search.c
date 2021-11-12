@@ -90,6 +90,11 @@ void ssdfs_btree_search_check_memory_leaks(void)
 
 static struct kmem_cache *ssdfs_btree_search_obj_cachep;
 
+void ssdfs_zero_btree_search_obj_cache_ptr(void)
+{
+	ssdfs_btree_search_obj_cachep = NULL;
+}
+
 static void ssdfs_init_btree_search_object_once(void *obj)
 {
 	struct ssdfs_btree_search *search_obj = obj;

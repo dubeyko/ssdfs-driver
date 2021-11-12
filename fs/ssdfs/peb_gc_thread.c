@@ -232,6 +232,7 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		req->extent.logical_offset *= fsi->pagesize;
 	} else if (req->extent.ino != le64_to_cpu(blk_desc->ino)) {
 		err = -EAGAIN;
+		req->place.len = req->extent.data_bytes / fsi->pagesize;
 
 		SSDFS_DBG("OFFSET DESCRIPTOR: "
 			  "logical_offset %u, logical_blk %u, "
@@ -262,13 +263,15 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 			  le32_to_cpu(blk_desc->state[0].byte_offset));
 
 		SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
-			  "processed_blks %d, logical_block %u, data_bytes %u, "
+			  "processed_blks %d, logical_block %u, "
+			  "data_bytes %u, blks %u, "
 			  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
 			  req->extent.ino, req->place.start.seg_id,
 			  pebi->peb_id,
 			  req->extent.logical_offset,
 			  req->result.processed_blks,
 			  req->place.start.blk_index,
+			  req->place.len,
 			  req->extent.data_bytes, req->extent.cno,
 			  req->extent.parent_snapshot,
 			  req->private.cmd, req->private.type);
@@ -1011,15 +1014,23 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 	bool is_rq_empty;
 	bool is_fq_empty;
 	bool peb_has_dirty_pages = false;
+	bool is_blk_bmap_dirty = false;
+	bool dont_touch = false;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("seg_id %llu\n", si->seg_id);
+	SSDFS_DBG("seg_id %llu, refs_count %d\n",
+		  si->seg_id,
+		  atomic_read(&si->refs_count));
 
 	if (atomic_read(&si->refs_count) > 0)
+		return false;
+
+	dont_touch = should_gc_doesnt_touch_segment(si);
+	if (dont_touch)
 		return false;
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -1027,6 +1038,9 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 
 		is_rq_empty = is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc));
 		is_fq_empty = !have_flush_requests(pebc);
+
+		is_blk_bmap_dirty =
+			is_ssdfs_segment_blk_bmap_dirty(&si->blk_bmap, i);
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi))
@@ -1040,13 +1054,16 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 
 		SSDFS_DBG("seg_id %llu, peb_id %llu, refs_count %d, "
 			  "peb_has_dirty_pages %#x, "
-			  "not empty: read %#x, flush %#x\n",
+			  "not empty: (read %#x, flush %#x), "
+			  "dont_touch %#x, is_blk_bmap_dirty %#x\n",
 			  si->seg_id, peb_id,
 			  atomic_read(&si->refs_count),
 			  peb_has_dirty_pages,
-			  !is_rq_empty, !is_fq_empty);
+			  !is_rq_empty, !is_fq_empty,
+			  dont_touch, is_blk_bmap_dirty);
 
-		if (!is_rq_empty || !is_fq_empty || peb_has_dirty_pages)
+		if (!is_rq_empty || !is_fq_empty ||
+		    peb_has_dirty_pages || is_blk_bmap_dirty)
 			return false;
 	}
 
@@ -1665,6 +1682,47 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 	return 0;
 }
 
+static inline
+int ssdfs_mark_segment_under_gc_activity(struct ssdfs_segment_info *si)
+{
+	int activity_type;
+
+	activity_type = atomic_cmpxchg(&si->activity_type,
+				SSDFS_SEG_OBJECT_REGULAR_ACTIVITY,
+				SSDFS_SEG_UNDER_GC_ACTIVITY);
+	if (activity_type < SSDFS_SEG_OBJECT_REGULAR_ACTIVITY ||
+	    activity_type >= SSDFS_SEG_UNDER_GC_ACTIVITY) {
+		SSDFS_DBG("segment %llu is busy under activity %#x\n",
+			   si->seg_id, activity_type);
+		return -EBUSY;
+	}
+
+	SSDFS_DBG("segment %llu is under GC activity\n",
+		  si->seg_id);
+
+	return 0;
+}
+
+static inline
+int ssdfs_revert_segment_to_regular_activity(struct ssdfs_segment_info *si)
+{
+	int activity_type;
+
+	activity_type = atomic_cmpxchg(&si->activity_type,
+				SSDFS_SEG_UNDER_GC_ACTIVITY,
+				SSDFS_SEG_OBJECT_REGULAR_ACTIVITY);
+	if (activity_type != SSDFS_SEG_UNDER_GC_ACTIVITY) {
+		SSDFS_WARN("segment %llu is under activity %#x\n",
+			   si->seg_id, activity_type);
+		return -EFAULT;
+	}
+
+	SSDFS_DBG("segment %llu has been reverted from GC activity\n",
+		  si->seg_id);
+
+	return 0;
+}
+
 /*
  * ssdfs_generic_seg_gc_thread_func() - generic function of GC thread
  * @fsi: pointer on shared file system object
@@ -1993,6 +2051,13 @@ collect_garbage_now:
 				goto sleep_failed_gc_thread;
 			}
 
+			err = ssdfs_mark_segment_under_gc_activity(si);
+			if (err) {
+				SSDFS_DBG("segment %llu is busy\n",
+					  si->seg_id);
+				goto check_next_segment;
+			}
+
 			if (used_pages == 0) {
 				SSDFS_WARN("needs to finish migration: "
 					   "seg %llu, leb_id %llu, "
@@ -2054,6 +2119,13 @@ collect_garbage_now:
 
 		if (is_seg2req_pair_array_exhausted(&reqs_array))
 			ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
+
+		err = ssdfs_revert_segment_to_regular_activity(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment %llu is under unexpected activity\n",
+				  si->seg_id);
+			goto sleep_failed_gc_thread;
+		}
 
 check_next_segment:
 		seg_id++;
