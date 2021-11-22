@@ -662,7 +662,7 @@ struct ssdfs_blk_bmap_options {
 
 /*
  * struct ssdfs_blk2off_tbl_options - offset translation table options
- * @flags: block bitmap's flags
+ * @flags: offset translation table's flags
  * @compression: compression type
  */
 struct ssdfs_blk2off_tbl_options {
@@ -682,7 +682,7 @@ struct ssdfs_blk2off_tbl_options {
 
 /*
  * struct ssdfs_user_data_options - user data options
- * @flags: block bitmap's flags
+ * @flags: user data's flags
  * @compression: compression type
  * @migration_threshold: default value of destination PEBs in migration
  */

@@ -1469,6 +1469,8 @@ int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 	struct ssdfs_btree *tree;
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	size_t hdr_size = sizeof(struct ssdfs_shared_dictionary_node_header);
+	size_t ltbl2_item_size = sizeof(struct ssdfs_shdict_ltbl2_item);
+	size_t htbl_item_size = sizeof(struct ssdfs_shdict_htbl_item);
 	u32 node_size;
 	u32 items_area_size = 0;
 	u16 item_size = 0;
@@ -1615,6 +1617,16 @@ int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 		node->index_area.index_capacity = index_area_size / index_size;
 		index_capacity = node->index_area.index_capacity;
 
+		atomic_set(&node->lookup_tbl_area.state,
+			   SSDFS_BTREE_NODE_LOOKUP_TBL_EXIST);
+		node->lookup_tbl_area.offset = node->node_size;
+		node->lookup_tbl_area.index_size = ltbl2_item_size;
+
+		atomic_set(&node->hash_tbl_area.state,
+			   SSDFS_BTREE_NODE_HASH_TBL_EXIST);
+		node->hash_tbl_area.offset = node->node_size;
+		node->hash_tbl_area.index_size = htbl_item_size;
+
 		node->items_area.offset = node->index_area.offset +
 						node->index_area.area_size;
 
@@ -1658,6 +1670,16 @@ int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 		break;
 
 	case SSDFS_BTREE_LEAF_NODE:
+		atomic_set(&node->lookup_tbl_area.state,
+			   SSDFS_BTREE_NODE_LOOKUP_TBL_EXIST);
+		node->lookup_tbl_area.offset = node->node_size;
+		node->lookup_tbl_area.index_size = ltbl2_item_size;
+
+		atomic_set(&node->hash_tbl_area.state,
+			   SSDFS_BTREE_NODE_HASH_TBL_EXIST);
+		node->hash_tbl_area.offset = node->node_size;
+		node->hash_tbl_area.index_size = htbl_item_size;
+
 		node->items_area.offset = (u32)hdr_size;
 		node->items_area.area_size = node_size - hdr_size;
 		node->items_area.free_space = node->items_area.area_size;
@@ -5163,10 +5185,12 @@ int ssdfs_check_items_area(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
-	if ((area->offset + area->area_size) >= node->node_size) {
+	if ((area->offset + area->area_size) > node->node_size) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid area offset %u\n",
-			  area->offset);
+		SSDFS_ERR("invalid area: offset %u, "
+			  "area_size %u, node_size %u\n",
+			  area->offset, area->area_size,
+			  node->node_size);
 		return -EFAULT;
 	}
 
@@ -5241,18 +5265,37 @@ int ssdfs_check_lookup2_table_area(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (area->area_size == 0 ||
-	    area->area_size >= node->node_size) {
-		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid area_size %u\n",
-			  area->area_size);
-		return -EFAULT;
+	if (area->index_capacity == 0 && area->index_count == 0) {
+		if (area->area_size != 0) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("invalid area: offset %u, area_size %u, "
+				  "index_size %u, index_count %u, "
+				  "index_capacity %u\n",
+				  area->offset, area->area_size,
+				  area->index_size, area->index_count,
+				  area->index_capacity);
+			return -EFAULT;
+		}
+	} else {
+		if (area->area_size == 0 ||
+		    area->area_size >= node->node_size) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("invalid area: offset %u, area_size %u, "
+				  "index_size %u, index_count %u, "
+				  "index_capacity %u\n",
+				  area->offset, area->area_size,
+				  area->index_size, area->index_count,
+				  area->index_capacity);
+			return -EFAULT;
+		}
 	}
 
-	if ((area->offset + area->area_size) >= node->node_size) {
+	if ((area->offset + area->area_size) > node->node_size) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid area offset %u\n",
-			  area->offset);
+		SSDFS_ERR("invalid area: offset %u, "
+			  "area_size %u, node_size %u\n",
+			  area->offset, area->area_size,
+			  node->node_size);
 		return -EFAULT;
 	}
 
@@ -5263,14 +5306,17 @@ int ssdfs_check_lookup2_table_area(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
-	if (area->index_capacity == 0 ||
-	    area->index_capacity < area->index_count) {
-		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid indexes accounting: "
-			  "node_id %u, index_capacity %u, index_count %u\n",
-			  node->node_id, area->index_capacity,
-			  area->index_count);
-		return -EFAULT;
+	if (area->index_capacity != 0 || area->index_count != 0) {
+		if (area->index_capacity == 0 ||
+		    area->index_capacity < area->index_count) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("invalid indexes accounting: "
+				  "node_id %u, index_capacity %u, "
+				  "index_count %u\n",
+				  node->node_id, area->index_capacity,
+				  area->index_count);
+			return -EFAULT;
+		}
 	}
 
 	if (((u32)area->index_capacity * area->index_size) > area->area_size) {
@@ -5310,18 +5356,37 @@ int ssdfs_check_hash_table_area(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (area->area_size == 0 ||
-	    area->area_size >= node->node_size) {
-		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid area_size %u\n",
-			  area->area_size);
-		return -EFAULT;
+	if (area->index_capacity == 0 && area->index_count == 0) {
+		if (area->area_size != 0) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("invalid area: offset %u, area_size %u, "
+				  "index_size %u, index_count %u, "
+				  "index_capacity %u\n",
+				  area->offset, area->area_size,
+				  area->index_size, area->index_count,
+				  area->index_capacity);
+			return -EFAULT;
+		}
+	} else {
+		if (area->area_size == 0 ||
+		    area->area_size >= node->node_size) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("invalid area: offset %u, area_size %u, "
+				  "index_size %u, index_count %u, "
+				  "index_capacity %u\n",
+				  area->offset, area->area_size,
+				  area->index_size, area->index_count,
+				  area->index_capacity);
+			return -EFAULT;
+		}
 	}
 
-	if ((area->offset + area->area_size) >= node->node_size) {
+	if ((area->offset + area->area_size) > node->node_size) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid area offset %u\n",
-			  area->offset);
+		SSDFS_ERR("invalid area: offset %u, "
+			  "area_size %u, node_size %u\n",
+			  area->offset, area->area_size,
+			  node->node_size);
 		return -EFAULT;
 	}
 
@@ -5332,14 +5397,17 @@ int ssdfs_check_hash_table_area(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
-	if (area->index_capacity == 0 ||
-	    area->index_capacity < area->index_count) {
-		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
-		SSDFS_ERR("invalid indexes accounting: "
-			  "node_id %u, index_capacity %u, index_count %u\n",
-			  node->node_id, area->index_capacity,
-			  area->index_count);
-		return -EFAULT;
+	if (area->index_capacity != 0 || area->index_count != 0) {
+		if (area->index_capacity == 0 ||
+		    area->index_capacity < area->index_count) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("invalid indexes accounting: "
+				  "node_id %u, index_capacity %u, "
+				  "index_count %u\n",
+				  node->node_id, area->index_capacity,
+				  area->index_count);
+			return -EFAULT;
+		}
 	}
 
 	if (((u32)area->index_capacity * area->index_size) > area->area_size) {
@@ -6016,7 +6084,7 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 		}
 
 		node->items_area.area_size = new_size;
-		node->items_area.free_space = area_size - new_size;
+		node->items_area.free_space -= area_size - new_size;
 
 		items_capacity = node->items_area.free_space / min_item_size;
 		items_capacity += items_count;
@@ -6503,12 +6571,13 @@ int ssdfs_insert_full_string(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("request doesn't contain the hash\n");
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain the name\n");
 		return -ERANGE;
 	}
@@ -6939,12 +7008,13 @@ int ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("request doesn't contain the hash\n");
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain the name\n");
 		return -ERANGE;
 	}
@@ -7427,8 +7497,6 @@ int ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 	return 0;
 }
 
-
-
 /*
  * ssdfs_lookup2_table_inc_str_count() - increment the strings count
  * @node: node object
@@ -7471,7 +7539,8 @@ int ssdfs_lookup2_table_inc_str_count(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("valid hash is absent in request\n");
 		return -ERANGE;
 	}
@@ -7605,7 +7674,8 @@ int ssdfs_lookup2_table_insert_new_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("valid hash is absent in request\n");
 		return -ERANGE;
 	}
@@ -7735,7 +7805,8 @@ int ssdfs_lookup2_table_insert_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("request doesn't contain the hash\n");
 		return -ERANGE;
 	}
@@ -7938,7 +8009,8 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("request doesn't contain the hash\n");
 		return -ERANGE;
 	}
@@ -8152,7 +8224,8 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("request doesn't contain the hash\n");
 		return -ERANGE;
 	}
@@ -8512,7 +8585,7 @@ int ssdfs_add_full_name(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain valid name\n");
 		return -ERANGE;
 	}
@@ -8800,7 +8873,7 @@ int ssdfs_create_prefix_for_left_name(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain valid name\n");
 		return -ERANGE;
 	}
@@ -9132,7 +9205,7 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain valid name\n");
 		return -ERANGE;
 	}
@@ -9456,12 +9529,13 @@ int __ssdfs_insert_suffix(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE) {
+	if (!(search->request.flags &
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
 		SSDFS_ERR("request doesn't contain the hash\n");
 		return -ERANGE;
 	}
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain the name\n");
 		return -ERANGE;
 	}
@@ -9786,7 +9860,7 @@ int ssdfs_insert_suffix_into_left_range(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain valid name\n");
 		return -ERANGE;
 	}
@@ -9934,7 +10008,7 @@ int ssdfs_insert_suffix_into_right_range(struct ssdfs_btree_node *node,
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	if (search->request.flags & ~SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME)) {
 		SSDFS_ERR("request doesn't contain valid name\n");
 		return -ERANGE;
 	}

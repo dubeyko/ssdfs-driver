@@ -1593,6 +1593,21 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 		     fsi->vs->label, 0, SSDFS_VOLUME_LABEL_MAX,
 		     SSDFS_VOLUME_LABEL_MAX);
 
+	fsi->metadata_options.blk_bmap.flags =
+				le16_to_cpu(fsi->vs->blkbmap.flags);
+	fsi->metadata_options.blk_bmap.compression =
+					fsi->vs->blkbmap.compression;
+	fsi->metadata_options.blk2off_tbl.flags =
+				le16_to_cpu(fsi->vs->blk2off_tbl.flags);
+	fsi->metadata_options.blk2off_tbl.compression =
+					fsi->vs->blk2off_tbl.compression;
+	fsi->metadata_options.user_data.flags =
+				le16_to_cpu(fsi->vs->user_data.flags);
+	fsi->metadata_options.user_data.compression =
+					fsi->vs->user_data.compression;
+	fsi->metadata_options.user_data.migration_threshold =
+			le16_to_cpu(fsi->vs->user_data.migration_threshold);
+
 	fsi->migration_threshold = le16_to_cpu(fsi->vs->migration_threshold);
 	if (fsi->migration_threshold == 0 ||
 	    fsi->migration_threshold >= U16_MAX) {

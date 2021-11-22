@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.01 [November 21, 2021]
+    (*) Fix bugs in compression options support.
+    (*) Fix bugs in shared dictionary (step 2).
+
 v.4.00 [November 11, 2021]
     (*) Implement snapshot requests queue (step 2).
     (*) Fix bugs in GC subsystem.

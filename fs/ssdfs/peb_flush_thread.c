@@ -155,6 +155,7 @@ struct ssdfs_byte_stream_descriptor {
  * @peb_index: PEB index of bitmap owner
  * @flags: fragment flags
  * @type: fragment type
+ * @compression_type: type of compression
  * @last_free_blk: last logical free block
  * @metadata_blks: count of physical pages are used by metadata
  * @invalid_blks: count of invalid blocks
@@ -168,6 +169,7 @@ struct ssdfs_bmap_descriptor {
 	u16 peb_index;
 	u16 flags;
 	u16 type;
+	u8 compression_type;
 	u32 last_free_blk;
 	u32 metadata_blks;
 	u32 invalid_blks;
@@ -186,6 +188,7 @@ struct ssdfs_bmap_descriptor {
  * @bytes_count: size in bytes of valid data in pagevec
  * @desc_array: array of fragment descriptors
  * @array_capacity: capacity of fragment descriptors' array
+ * @compression_type: type of compression
  * @compr_size: whole size of all compressed fragments [out]
  * @uncompr_size: whole size of all fragments in uncompressed state [out]
  * @fragments_count: count of saved fragments
@@ -200,6 +203,7 @@ struct ssdfs_pagevec_descriptor {
 	size_t bytes_count;
 	struct ssdfs_fragment_desc *desc_array;
 	size_t array_capacity;
+	u8 compression_type;
 	u32 compr_size;
 	u32 uncompr_size;
 	u16 fragments_count;
@@ -1898,7 +1902,8 @@ int ssdfs_peb_define_metadata_space(struct ssdfs_peb_info *pebi,
  * ssdfs_peb_store_byte_stream() - store byte stream into log
  * @pebi: pointer on PEB object
  * @stream: byte stream descriptor
- * @type: area type
+ * @area_type: area type
+ * @fragment_type: fragment type
  * @cno: checkpoint
  * @parent_snapshot: parent snapshot number
  *
@@ -2017,11 +2022,6 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		from.data_bytes = min_t(u32, PAGE_SIZE,
 					stream->data_bytes - written_bytes);
 		from.sequence_id = page_index;
-
-		/*
-		 * TODO: temporary fragment flag is hardcoded as zlib fragment
-		 *       It needs to get flag from feature_compat of volume_info
-		 */
 		from.fragment_type = fragment_type;
 		from.fragment_flags = SSDFS_FRAGMENT_HAS_CSUM;
 
@@ -2774,6 +2774,35 @@ int ssdfs_peb_define_area_offset(struct ssdfs_peb_info *pebi,
 	return 0;
 }
 
+static inline
+void ssdfs_prepare_user_data_options(struct ssdfs_fs_info *fsi,
+				     u8 *compression)
+{
+	u16 flags;
+	u8 type;
+
+	flags = fsi->metadata_options.user_data.flags;
+	type = fsi->metadata_options.user_data.compression;
+
+	*compression = SSDFS_FRAGMENT_UNCOMPR_BLOB;
+
+	if (flags & SSDFS_USER_DATA_MAKE_COMPRESSION) {
+		switch (type) {
+		case SSDFS_USER_DATA_NOCOMPR_TYPE:
+			*compression = SSDFS_FRAGMENT_UNCOMPR_BLOB;
+			break;
+
+		case SSDFS_USER_DATA_ZLIB_COMPR_TYPE:
+			*compression = SSDFS_FRAGMENT_ZLIB_BLOB;
+			break;
+
+		case SSDFS_USER_DATA_LZO_COMPR_TYPE:
+			*compression = SSDFS_FRAGMENT_LZO_BLOB;
+			break;
+		}
+	}
+}
+
 /*
  * ssdfs_peb_store_fragment_in_area() - try to store fragment into area
  * @pebi: pointer on PEB object
@@ -2801,7 +2830,9 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 				     u32 data_bytes,
 				     struct ssdfs_peb_phys_offset *off)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_byte_stream_descriptor byte_stream = {0};
+	u8 compression_type = SSDFS_FRAGMENT_UNCOMPR_BLOB;
 	u32 metadata_offset;
 	u32 metadata_space;
 	u32 estimated_compr_size = data_bytes;
@@ -2816,7 +2847,6 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 		(req->result.processed_blks *
 			pebi->pebc->parent_si->fsi->pagesize));
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, ino %llu, "
 		  "processed_blks %d, area_type %#x, "
@@ -2824,6 +2854,9 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 		  req->place.start.seg_id, pebi->peb_id, req->extent.ino,
 		  req->result.processed_blks, area_type,
 		  start_offset, data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
 
 	err = ssdfs_peb_define_metadata_space(pebi, area_type,
 						start_offset,
@@ -2836,15 +2869,38 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
+	ssdfs_prepare_user_data_options(fsi, &compression_type);
+
+	switch (compression_type) {
+	case SSDFS_FRAGMENT_UNCOMPR_BLOB:
+		estimated_compr_size = data_bytes;
+		break;
+
+	case SSDFS_FRAGMENT_ZLIB_BLOB:
 #if defined(CONFIG_SSDFS_ZLIB)
-	estimated_compr_size =
-		ssdfs_peb_estimate_data_fragment_size(data_bytes);
-#elif defined(CONFIG_SSDFS_LZO)
-	estimated_compr_size =
-		ssdfs_peb_estimate_data_fragment_size(data_bytes);
+		estimated_compr_size =
+			ssdfs_peb_estimate_data_fragment_size(data_bytes);
 #else
-	estimated_compr_size = data_bytes;
+		compression_type = SSDFS_FRAGMENT_UNCOMPR_BLOB;
+		estimated_compr_size = data_bytes;
+		SSDFS_WARN("ZLIB compression is not supported\n");
 #endif
+		break;
+
+	case SSDFS_FRAGMENT_LZO_BLOB:
+#if defined(CONFIG_SSDFS_LZO)
+		estimated_compr_size =
+			ssdfs_peb_estimate_data_fragment_size(data_bytes);
+#else
+		compression_type = SSDFS_FRAGMENT_UNCOMPR_BLOB;
+		estimated_compr_size = data_bytes;
+		SSDFS_WARN("LZO compression is not supported\n");
+#endif
+		break;
+
+	default:
+		BUG();
+	}
 
 	check_bytes = metadata_space + estimated_compr_size;
 
@@ -2871,18 +2927,8 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 	byte_stream.start_offset = start_offset;
 	byte_stream.data_bytes = data_bytes;
 
-	/*
-	 * TODO: temporary fragment flag is hardcoded as zlib fragment
-	 *       It needs to get flag from feature_compat of volume_info
-	 */
 	err = ssdfs_peb_store_byte_stream(pebi, &byte_stream, area_type,
-#if defined(CONFIG_SSDFS_ZLIB)
-					  SSDFS_FRAGMENT_ZLIB_BLOB,
-#elif defined(CONFIG_SSDFS_LZO)
-					  SSDFS_FRAGMENT_LZO_BLOB,
-#else
-					  SSDFS_FRAGMENT_UNCOMPR_BLOB,
-#endif
+					  compression_type,
 					  req->extent.cno,
 					  req->extent.parent_snapshot);
 
@@ -5784,12 +5830,25 @@ int ssdfs_peb_store_pagevec(struct ssdfs_pagevec_descriptor *desc)
 	BUG_ON(!desc->pebi->pebc->parent_si->fsi);
 	BUG_ON(!desc->pvec || !desc->desc_array);
 	BUG_ON(!desc->cur_page || !desc->write_offset);
-#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (desc->compression_type) {
+	case SSDFS_FRAGMENT_UNCOMPR_BLOB:
+	case SSDFS_FRAGMENT_ZLIB_BLOB:
+	case SSDFS_FRAGMENT_LZO_BLOB:
+		/* valid type */
+		break;
+
+	default:
+		SSDFS_WARN("invalid compression %#x\n",
+			   desc->compression_type);
+		return -EINVAL;
+	}
 
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u\n",
 		  desc->pebi->pebc->parent_si->seg_id,
 		  desc->pebi->peb_id,
 		  desc->pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = desc->pebi->pebc->parent_si->fsi;
 	desc->compr_size = 0;
@@ -5836,7 +5895,7 @@ try_get_next_page:
 		from.start_offset = 0;
 		from.data_bytes = iter_bytes;
 		from.sequence_id = desc->start_sequence_id + i;
-		from.fragment_type = SSDFS_FRAGMENT_ZLIB_BLOB;
+		from.fragment_type = desc->compression_type;
 		from.fragment_flags = SSDFS_FRAGMENT_HAS_CSUM;
 
 		to.area_offset = desc->area_offset;
@@ -5846,10 +5905,6 @@ try_get_next_page:
 		to.compr_size = 0;
 		to.desc = &desc->desc_array[i];
 
-		/*
-		 * TODO: temporary fragment flag is hardcoded as zlib fragment
-		 *       It needs to get flag from feature_compat of volume_info
-		 */
 		err = ssdfs_peb_store_fragment(&from, &to);
 
 		kunmap(dst_page);
@@ -5939,13 +5994,26 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	BUG_ON(!desc);
 	BUG_ON(!desc->pebi || !desc->cur_page || !desc->write_offset);
 	BUG_ON(pagevec_count(&desc->snapshot) == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (desc->compression_type) {
+	case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
+	case SSDFS_BLK_BMAP_ZLIB_COMPR_TYPE:
+	case SSDFS_BLK_BMAP_LZO_COMPR_TYPE:
+		/* valid type */
+		break;
+
+	default:
+		SSDFS_WARN("invalid compression %#x\n",
+			   desc->compression_type);
+		return -EINVAL;
+	}
 
 	SSDFS_DBG("peb_id %llu, peb_index %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  desc->pebi->peb_id,
 		  desc->pebi->peb_index,
 		  *(desc->cur_page), *(desc->write_offset));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = desc->pebi->pebc->parent_si->fsi;
 
@@ -5963,6 +6031,25 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 
 	frag_desc_array = (struct ssdfs_fragment_desc *)((u8 *)frag_hdr +
 							  frag_hdr_size);
+
+	switch (desc->compression_type) {
+	case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
+		pvec_desc.compression_type = SSDFS_FRAGMENT_UNCOMPR_BLOB;
+		break;
+
+	case SSDFS_BLK_BMAP_ZLIB_COMPR_TYPE:
+		pvec_desc.compression_type = SSDFS_FRAGMENT_ZLIB_BLOB;
+		break;
+
+	case SSDFS_BLK_BMAP_LZO_COMPR_TYPE:
+		pvec_desc.compression_type = SSDFS_FRAGMENT_LZO_BLOB;
+		break;
+
+	default:
+		SSDFS_WARN("invalid compression %#x\n",
+			   desc->compression_type);
+		return -EINVAL;
+	}
 
 	pvec_desc.pebi = desc->pebi;
 	pvec_desc.start_sequence_id = 0;
@@ -6092,7 +6179,7 @@ fail_store_bmap_fragment:
  * ssdfs_peb_store_dst_blk_bmap() - store destination block bitmap
  * @pebi: pointer on PEB object
  * @items_state: PEB container's items state
- * @flags: block bitmap's header flags
+ * @compression: compression type
  * @bmap_hdr_off: offset from log's beginning to bitmap header
  * @frag_id: pointer on fragments counter [in|out]
  * @cur_page: pointer on current page value [in|out]
@@ -6110,7 +6197,7 @@ fail_store_bmap_fragment:
 static
 int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 				 int items_state,
-				 u16 flags,
+				 u8 compression,
 				 u32 bmap_hdr_off,
 				 u16 *frag_id,
 				 pgoff_t *cur_page,
@@ -6126,7 +6213,6 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
-	BUG_ON(flags & ~SSDFS_BLK_BMAP_FLAG_MASK);
 	BUG_ON(!frag_id || !cur_page || !write_offset);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
 
@@ -6141,13 +6227,27 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 			   items_state);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (compression) {
+	case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
+	case SSDFS_BLK_BMAP_ZLIB_COMPR_TYPE:
+	case SSDFS_BLK_BMAP_LZO_COMPR_TYPE:
+		/* valid type */
+		break;
+
+	default:
+		SSDFS_WARN("invalid compression %#x\n",
+			   compression);
+		return -EINVAL;
+	}
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_index,
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	desc.compression_type = compression;
 	desc.flags = SSDFS_PEB_HAS_RELATION | SSDFS_MIGRATING_BLK_BMAP;
 	desc.type = SSDFS_DST_BLK_BMAP;
 	desc.frag_id = frag_id;
@@ -6249,7 +6349,7 @@ finish_store_dst_blk_bmap:
  * ssdfs_peb_store_source_blk_bmap() - store source block bitmap
  * @pebi: pointer on PEB object
  * @items_state: PEB container's items state
- * @flags: block bitmap's header flags
+ * @compression: compression type
  * @bmap_hdr_off: offset from log's beginning to bitmap header
  * @frag_id: pointer on fragments counter [in|out]
  * @cur_page: pointer on current page value [in|out]
@@ -6267,7 +6367,7 @@ finish_store_dst_blk_bmap:
 static
 int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 				    int items_state,
-				    u16 flags,
+				    u8 compression,
 				    u32 bmap_hdr_off,
 				    u16 *frag_id,
 				    pgoff_t *cur_page,
@@ -6283,7 +6383,6 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
-	BUG_ON(flags & ~SSDFS_BLK_BMAP_FLAG_MASK);
 	BUG_ON(!frag_id || !cur_page || !write_offset);
 	BUG_ON(!pebi);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
@@ -6303,13 +6402,27 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 			   items_state);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (compression) {
+	case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
+	case SSDFS_BLK_BMAP_ZLIB_COMPR_TYPE:
+	case SSDFS_BLK_BMAP_LZO_COMPR_TYPE:
+		/* valid type */
+		break;
+
+	default:
+		SSDFS_WARN("invalid compression %#x\n",
+			   compression);
+		return -EINVAL;
+	}
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_index,
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	desc.compression_type = compression;
 	desc.frag_id = frag_id;
 	desc.cur_page = cur_page;
 	desc.write_offset = write_offset;
@@ -6438,7 +6551,7 @@ finish_store_src_blk_bmap:
  * ssdfs_peb_store_dependent_blk_bmap() - store dependent source bitmaps
  * @pebi: pointer on PEB object
  * @items_state: PEB container's items state
- * @flags: block bitmap's header flags
+ * @compression: compression type
  * @bmap_hdr_off: offset from log's beginning to bitmap header
  * @frag_id: pointer on fragments counter [in|out]
  * @cur_page: pointer on current page value [in|out]
@@ -6456,7 +6569,7 @@ finish_store_src_blk_bmap:
 static
 int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 					int items_state,
-					u16 flags,
+					u8 compression,
 					u32 bmap_hdr_off,
 					u16 *frag_id,
 					pgoff_t *cur_page,
@@ -6472,7 +6585,6 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
-	BUG_ON(flags & ~SSDFS_BLK_BMAP_FLAG_MASK);
 	BUG_ON(!frag_id || !cur_page || !write_offset);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
 
@@ -6489,13 +6601,27 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 			   items_state);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (compression) {
+	case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
+	case SSDFS_BLK_BMAP_ZLIB_COMPR_TYPE:
+	case SSDFS_BLK_BMAP_LZO_COMPR_TYPE:
+		/* valid type */
+		break;
+
+	default:
+		SSDFS_WARN("invalid compression %#x\n",
+			   compression);
+		return -EINVAL;
+	}
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_index,
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	desc.compression_type = compression;
 	desc.frag_id = frag_id;
 	desc.cur_page = cur_page;
 	desc.write_offset = write_offset;
@@ -6631,10 +6757,37 @@ finish_store_dependent_blk_bmap:
 	return 0;
 }
 
+static inline
+void ssdfs_prepare_blk_bmap_options(struct ssdfs_fs_info *fsi,
+				    u16 *flags, u8 *compression)
+{
+	u8 type;
+
+	*flags = fsi->metadata_options.blk_bmap.flags;
+	type = fsi->metadata_options.blk_bmap.compression;
+
+	*compression = SSDFS_BLK_BMAP_UNCOMPRESSED_BLOB;
+
+	if (*flags & SSDFS_BLK_BMAP_MAKE_COMPRESSION) {
+		switch (type) {
+		case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
+			*compression = SSDFS_BLK_BMAP_UNCOMPRESSED_BLOB;
+			break;
+
+		case SSDFS_BLK_BMAP_ZLIB_COMPR_TYPE:
+			*compression = SSDFS_BLK_BMAP_ZLIB_BLOB;
+			break;
+
+		case SSDFS_BLK_BMAP_LZO_COMPR_TYPE:
+			*compression = SSDFS_BLK_BMAP_LZO_BLOB;
+			break;
+		}
+	}
+}
+
 /*
  * ssdfs_peb_store_block_bmap() - store block bitmap into page cache
  * @pebi: pointer on PEB object
- * @flags: block bitmap's header flags
  * @desc: block bitmap descriptor [out]
  * @cur_page: pointer on current page value [in|out]
  * @write_offset: pointer on write offset value [in|out]
@@ -6649,7 +6802,6 @@ finish_store_dependent_blk_bmap:
  */
 static
 int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
-				u8 flags,
 				struct ssdfs_metadata_descriptor *desc,
 				pgoff_t *cur_page,
 				u32 *write_offset)
@@ -6662,6 +6814,8 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	u16 frag_id = 0;
 	u32 bmap_hdr_off;
 	u16 log_start_page = 0;
+	u16 flags = 0;
+	u8 compression = SSDFS_BLK_BMAP_UNCOMPRESSED_BLOB;
 	struct page *page;
 	pgoff_t index;
 	void *kaddr;
@@ -6681,6 +6835,8 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 	seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
+
+	ssdfs_prepare_blk_bmap_options(fsi, &flags, &compression);
 
 	bmap_hdr_off = *write_offset;
 	*write_offset += bmap_hdr_size;
@@ -6849,12 +7005,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	desc->size = bmap_hdr->bytes_count;
 
 	bmap_hdr->flags = flags;
-
-	if (flags & SSDFS_BLK_BMAP_COMPRESSED) {
-		/* TODO: define type -> temporary solution */
-		bmap_hdr->type = SSDFS_BLK_BMAP_ZLIB_BLOB;
-	} else
-		bmap_hdr->type = SSDFS_BLK_BMAP_UNCOMPRESSED_BLOB;
+	bmap_hdr->type = compression;
 
 	desc->check.bytes = cpu_to_le16(bmap_hdr_size);
 	desc->check.flags = cpu_to_le16(SSDFS_CRC32);
@@ -8249,9 +8400,9 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 				 bool *log_has_data,
 				 pgoff_t *cur_page, u32 *write_offset)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_metadata_descriptor *cur_hdr_desc;
 	int area_type;
-	u32 flags;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8259,24 +8410,19 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 	BUG_ON(!hdr_desc || !cur_page || !write_offset || !log_has_data);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = pebi->pebc->parent_si->fsi;
 	*log_has_data = false;
 
-	/*
-	 * TODO: currently it is used compressed flag
-	 *       It needs to get flag from feature_compat of volume_info
-	 */
 	cur_hdr_desc = &hdr_desc[SSDFS_BLK_BMAP_INDEX];
-	flags = SSDFS_BLK_BMAP_COMPRESSED;
-	err = ssdfs_peb_store_block_bmap(pebi,
-					 (u8)flags, cur_hdr_desc,
+	err = ssdfs_peb_store_block_bmap(pebi, cur_hdr_desc,
 					 cur_page, write_offset);
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store block bitmap: "
@@ -9799,8 +9945,6 @@ search_from_begin:
 		  si->seg_id, pebc->peb_index);
 	return -ERANGE;
 }
-
-/* TODO: it needs to call put_page() for all pages of all areas after log flushing */
 
 /*
  * __ssdfs_finish_request() - common logic of request's finishing
@@ -11784,8 +11928,15 @@ process_flush_requests:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 		if (is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
-			thread_state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
-			goto sleep_flush_thread;
+			if (have_flush_requests(pebc)) {
+				thread_state =
+					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+				goto next_partial_step;
+			} else {
+				thread_state =
+					SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+				goto sleep_flush_thread;
+			}
 		}
 
 		err = ssdfs_requests_queue_remove_first(&pebc->update_rq, &req);
@@ -11895,8 +12046,7 @@ process_flush_requests:
 			skip_finish_flush_request = false;
 			thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			goto finish_create_request_processing;
-		} else if (!have_flush_requests(pebc) &&
-			   ssdfs_peb_has_dirty_pages(pebi)) {
+		} else if (!have_flush_requests(pebc)) {
 			if (need_wait_next_create_data_request(pebi)) {
 				ssdfs_account_user_data_flush_request(si);
 				ssdfs_finish_flush_request(pebc, req,
@@ -11913,8 +12063,9 @@ process_flush_requests:
 				skip_finish_flush_request = false;
 				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 				goto finish_create_request_processing;
-			} else
+			} else {
 				goto get_next_update_request;
+			}
 		} else {
 get_next_update_request:
 			ssdfs_finish_flush_request(pebc, req,
@@ -12110,8 +12261,7 @@ finish_wait_next_create_request:
 			skip_finish_flush_request = false;
 			thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			goto finish_update_request_processing;
-		} else if (!have_flush_requests(pebc) &&
-			   ssdfs_peb_has_dirty_pages(pebi)) {
+		} else if (!have_flush_requests(pebc)) {
 			if (need_wait_next_update_request(pebi)) {
 				ssdfs_account_user_data_flush_request(si);
 				ssdfs_finish_flush_request(pebc, req,
@@ -12124,7 +12274,8 @@ finish_wait_next_create_request:
 				ssdfs_forget_user_data_flush_request(si);
 				skip_finish_flush_request = false;
 				goto finish_wait_next_data_request;
-			} else if (is_user_data) {
+			} else if (is_user_data &&
+				   ssdfs_peb_has_dirty_pages(pebi)) {
 				skip_finish_flush_request = false;
 				thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 				goto finish_update_request_processing;

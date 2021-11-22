@@ -480,6 +480,9 @@ ssdfs_btree_node_create(struct ssdfs_btree *tree,
 		return ERR_PTR(-ENOMEM);
 	}
 
+	ptr->parent_node = parent;
+	ptr->tree = tree;
+
 	if (node_id == SSDFS_BTREE_NODE_INVALID_ID) {
 		err = -EINVAL;
 		SSDFS_WARN("invalid node_id\n");
@@ -595,9 +598,6 @@ ssdfs_btree_node_create(struct ssdfs_btree *tree,
 	init_waitqueue_head(&ptr->wait_queue);
 	init_rwsem(&ptr->full_lock);
 
-	ptr->parent_node = parent;
-	ptr->tree = tree;
-
 	atomic_set(&ptr->state, SSDFS_BTREE_NODE_CREATED);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -607,6 +607,8 @@ ssdfs_btree_node_create(struct ssdfs_btree *tree,
 	return ptr;
 
 fail_create_node:
+	ptr->parent_node = NULL;
+	ptr->tree = NULL;
 	ssdfs_btree_node_free(ptr);
 	return ERR_PTR(err);
 }
@@ -8785,8 +8787,6 @@ int ssdfs_move_root2common_node_index_range(struct ssdfs_btree_node *src,
 				  i, err);
 		}
 
-		/* TODO: correct node_id */
-
 		up_write(&src->full_lock);
 
 		if (unlikely(err)) {
@@ -15135,12 +15135,12 @@ finish_extract_range:
  *
  * This method tries to resize the items area of the node.
  *
- * TODO: It makes sense to allocate the bitmap with taking into
- *       account that we will resize the node. So, it needs
- *       to allocate the index area in bitmap is equal to
- *       the whole node and items area is equal to the whole node.
- *       This technique provides opportunity not to resize or
- *       to shift the content of the bitmap.
+ * It makes sense to allocate the bitmap with taking into
+ * account that we will resize the node. So, it needs
+ * to allocate the index area in bitmap is equal to
+ * the whole node and items area is equal to the whole node.
+ * This technique provides opportunity not to resize or
+ * to shift the content of the bitmap.
  *
  * RETURN:
  * [success]

@@ -57,6 +57,36 @@ struct ssdfs_peb_extent {
 };
 
 /*
+ * struct ssdfs_metadata_options - metadata options
+ * @blk_bmap.flags: block bitmap's flags
+ * @blk_bmap.compression: compression type
+ *
+ * @blk2off_tbl.flags: offset transaltion table's flags
+ * @blk2off_tbl.compression: compression type
+ *
+ * @user_data.flags: user data's flags
+ * @user_data.compression: compression type
+ * @user_data.migration_threshold: default value of destination PEBs in migration
+ */
+struct ssdfs_metadata_options {
+	struct {
+		u16 flags;
+		u8 compression;
+	} blk_bmap;
+
+	struct {
+		u16 flags;
+		u8 compression;
+	} blk2off_tbl;
+
+	struct {
+		u16 flags;
+		u8 compression;
+		u16 migration_threshold;
+	} user_data;
+};
+
+/*
  * struct ssdfs_sb_info - superblock info
  * @vh_buf: volume header buffer
  * @vs_buf: volume state buffer
@@ -129,6 +159,7 @@ struct ssdfs_snapshot_subsystem {
  * @fs_cno: volume create checkpoint
  * @raw_inode_size: raw inode size in bytes
  * @mount_opts: mount options
+ * @metadata_options: metadata options
  * @volume_sem: volume semaphore
  * @last_vh: buffer for last valid volume header
  * @vh: volume header
@@ -212,6 +243,7 @@ struct ssdfs_fs_info {
 	u16 raw_inode_size;
 
 	unsigned long mount_opts;
+	struct ssdfs_metadata_options metadata_options;
 
 	struct rw_semaphore volume_sem;
 	struct ssdfs_volume_header last_vh;
