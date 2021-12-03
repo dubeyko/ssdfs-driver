@@ -966,6 +966,10 @@ size_t ssdfs_inode_inline_file_capacity(struct inode *inode)
 	((struct ssdfs_blk_state_offset *)(ptr))
 #define SSDFS_STNODE_HDR(ptr) \
 	((struct ssdfs_segment_tree_node_header *)(ptr))
+#define SSDFS_SNRU_HDR(ptr) \
+	((struct ssdfs_snapshot_rules_header *)(ptr))
+#define SSDFS_SNRU_INFO(ptr) \
+	((struct ssdfs_snapshot_rule_info *)(ptr))
 
 #define SSDFS_SEG2PEB(fsi, seg) \
 	((u64)seg * fsi->pebs_per_seg)

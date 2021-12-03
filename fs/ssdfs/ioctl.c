@@ -122,7 +122,7 @@ static int ssdfs_ioctl_create_snapshot(struct file *file, void __user *arg)
 		goto finish_create_snapshot;
 	}
 
-	ssdfs_snapshot_reqs_queue_add_head(&fsi->snapshots.reqs_queue, snr);
+	ssdfs_snapshot_reqs_queue_add_tail(&fsi->snapshots.reqs_queue, snr);
 
 finish_create_snapshot:
 	return err;
@@ -165,8 +165,8 @@ finish_list_snapshots:
 
 static int ssdfs_ioctl_modify_snapshot(struct file *file, void __user *arg)
 {
-//	struct inode *inode = file_inode(file);
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_snapshot_request *snr = NULL;
 	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
@@ -184,7 +184,7 @@ static int ssdfs_ioctl_modify_snapshot(struct file *file, void __user *arg)
 		goto finish_modify_snapshot;
 	}
 
-	err = ssdfs_execute_modify_snapshot_request(snr);
+	err = ssdfs_execute_modify_snapshot_request(fsi, snr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to modify snapshot: "
 			  "err %d\n", err);
@@ -200,8 +200,8 @@ finish_modify_snapshot:
 
 static int ssdfs_ioctl_remove_snapshot(struct file *file, void __user *arg)
 {
-//	struct inode *inode = file_inode(file);
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_snapshot_request *snr = NULL;
 	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
@@ -219,7 +219,7 @@ static int ssdfs_ioctl_remove_snapshot(struct file *file, void __user *arg)
 		goto finish_remove_snapshot;
 	}
 
-	err = ssdfs_execute_remove_snapshot_request(snr);
+	err = ssdfs_execute_remove_snapshot_request(&fsi->snapshots, snr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete snapshot: "
 			  "err %d\n", err);

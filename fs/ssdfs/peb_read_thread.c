@@ -301,6 +301,8 @@ int __ssdfs_peb_release_pages(struct ssdfs_peb_info *pebi)
 
 	switch (atomic_read(&pebi->current_log.state)) {
 	case SSDFS_LOG_INITIALIZED:
+	case SSDFS_LOG_CREATED:
+	case SSDFS_LOG_COMMITTED:
 		/* expected state */
 		break;
 
@@ -329,6 +331,15 @@ int __ssdfs_peb_release_pages(struct ssdfs_peb_info *pebi)
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id, start, end, err);
 		}
+	}
+
+	if (!err && is_ssdfs_page_array_empty(&pebi->cache)) {
+		err = -ENODATA;
+		SSDFS_DBG("cache is empty: "
+			  "seg_id %llu, peb_index %u, peb_id %llu\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->pebc->peb_index,
+			  pebi->peb_id);
 	}
 
 	return err;
@@ -361,12 +372,17 @@ int ssdfs_peb_release_pages(struct ssdfs_peb_container *pebc)
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
 
-	down_read(&pebc->lock);
+	down_write(&pebc->lock);
 
 	pebi = pebc->src_peb;
 	if (pebi) {
 		err1 = __ssdfs_peb_release_pages(pebi);
-		if (unlikely(err1)) {
+		if (err1 == -ENODATA) {
+			SSDFS_DBG("cache is empty: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->pebc->peb_index);
+		} else if (unlikely(err1)) {
 			SSDFS_ERR("fail to release source PEB pages: "
 				  "seg_id %llu, peb_index %u, err %d\n",
 				  pebc->parent_si->seg_id,
@@ -377,7 +393,12 @@ int ssdfs_peb_release_pages(struct ssdfs_peb_container *pebc)
 	pebi = pebc->dst_peb;
 	if (pebi) {
 		err2 = __ssdfs_peb_release_pages(pebi);
-		if (unlikely(err1)) {
+		if (err2 == -ENODATA) {
+			SSDFS_DBG("cache is empty: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->pebc->peb_index);
+		} else if (unlikely(err2)) {
 			SSDFS_ERR("fail to release dest PEB pages: "
 				  "seg_id %llu, peb_index %u, err %d\n",
 				  pebc->parent_si->seg_id,
@@ -385,10 +406,24 @@ int ssdfs_peb_release_pages(struct ssdfs_peb_container *pebc)
 		}
 	}
 
-	up_read(&pebc->lock);
+	up_write(&pebc->lock);
 
-	if (err1 || err2)
-		return -ERANGE;
+	if (err1 || err2) {
+		if (err1 == -ENODATA && err2 == -ENODATA)
+			return -ENODATA;
+		else if (!err1) {
+			if (err2 != -ENODATA)
+				return err2;
+			else
+				return 0;
+		} else if (!err2) {
+			if (err1 != -ENODATA)
+				return err1;
+			else
+				return 0;
+		} else
+			return -ERANGE;
+	}
 
 	return 0;
 }
@@ -6956,7 +6991,9 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 
 	{
 		int err1 = ssdfs_peb_release_pages(pebc);
-		if (unlikely(err1)) {
+		if (err1 == -ENODATA) {
+			SSDFS_DBG("PEB cache is empty\n");
+		} else if (unlikely(err1)) {
 			SSDFS_ERR("fail to release pages: err %d\n",
 				  err1);
 		}
@@ -7251,7 +7288,9 @@ end_init:
 
 	{
 		int err1 = ssdfs_peb_release_pages(pebc);
-		if (unlikely(err1)) {
+		if (err1 == -ENODATA) {
+			SSDFS_DBG("PEB cache is empty\n");
+		} else if (unlikely(err1)) {
 			SSDFS_ERR("fail to release pages: err %d\n",
 				  err1);
 		}
@@ -7554,6 +7593,8 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 	default:
 		BUG();
 	};
+
+	ssdfs_peb_finish_read_request_cno(pebc);
 }
 
 #define READ_THREAD_WAKE_CONDITION(pebc) \
@@ -7561,6 +7602,7 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 	 !is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc)))
 #define READ_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
+#define READ_THREAD_WAKEUP_TIMEOUT	(msecs_to_jiffies(3000))
 
 /*
  * ssdfs_peb_read_thread_func() - main fuction of read thread
@@ -7579,6 +7621,7 @@ int ssdfs_peb_read_thread_func(void *data)
 	struct ssdfs_peb_container *pebc = data;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_segment_request *req;
+	u64 timeout = READ_THREAD_WAKEUP_TIMEOUT;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7632,10 +7675,36 @@ repeat:
 	} while (!is_ssdfs_requests_queue_empty(&pebc->read_rq));
 
 sleep_read_thread:
-	wait_event_interruptible(*wait_queue, READ_THREAD_WAKE_CONDITION(pebc));
-	goto repeat;
+	wait_event_interruptible_timeout(*wait_queue,
+					 READ_THREAD_WAKE_CONDITION(pebc),
+					 timeout);
+	if (!is_ssdfs_requests_queue_empty(&pebc->read_rq)) {
+		/* do requests processing */
+		goto repeat;
+	} else {
+		if (is_it_time_free_peb_cache_memory(pebc)) {
+			err = ssdfs_peb_release_pages(pebc);
+			if (err == -ENODATA) {
+				err = 0;
+				timeout = min_t(u64, timeout * 2,
+						(u64)SSDFS_DEFAULT_TIMEOUT);
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to release pages: "
+					  "err %d\n", err);
+				err = 0;
+			} else
+				timeout = READ_THREAD_WAKEUP_TIMEOUT;
+		}
+
+		if (!is_ssdfs_requests_queue_empty(&pebc->read_rq) ||
+		    kthread_should_stop())
+			goto repeat;
+		else
+			goto sleep_read_thread;
+	}
 
 sleep_failed_read_thread:
+	ssdfs_peb_release_pages(pebc);
 	wait_event_interruptible(*wait_queue,
 			READ_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;

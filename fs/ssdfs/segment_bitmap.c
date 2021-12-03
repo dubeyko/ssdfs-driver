@@ -407,6 +407,7 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_info *si)
 						    SSDFS_READ_INIT_SEGBMAP,
 						    SSDFS_REQ_ASYNC,
 						    req);
+		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
 	}
 

@@ -26,6 +26,7 @@
 #include "ssdfs.h"
 #include "page_array.h"
 #include "peb.h"
+#include "offset_translation_table.h"
 #include "segment_bitmap.h"
 #include "peb_mapping_table.h"
 #include "recovery.h"
@@ -88,7 +89,8 @@ void ssdfs_recovery_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
-int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
+int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
+			struct ssdfs_sb_info *sbi)
 {
 	void *vh_buf = NULL;
 	void *vs_buf = NULL;
@@ -105,6 +107,8 @@ int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi)
 
 	sbi->vh_buf = NULL;
 	sbi->vs_buf = NULL;
+
+	footer_size = max_t(size_t, footer_size, (size_t)fsi->pagesize);
 
 	vh_buf = ssdfs_recovery_kzalloc(hdr_size, GFP_KERNEL);
 	vs_buf = ssdfs_recovery_kzalloc(footer_size, GFP_KERNEL);
@@ -1856,6 +1860,225 @@ finish_read_maptbl_cache:
 	return err;
 }
 
+static inline bool is_ssdfs_snapshot_rules_exist(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return ssdfs_log_footer_has_snapshot_rules(SSDFS_LF(fsi->vs));
+}
+
+static inline
+int ssdfs_check_snapshot_rules_header(struct ssdfs_snapshot_rules_header *hdr)
+{
+	size_t item_size = sizeof(struct ssdfs_snapshot_rule_info);
+	u16 items_count;
+	u16 items_capacity;
+	u32 area_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (le32_to_cpu(hdr->magic) != SSDFS_SNAPSHOT_RULES_MAGIC) {
+		SSDFS_ERR("invalid snapshot rules magic %#x\n",
+			  le32_to_cpu(hdr->magic));
+		return -EIO;
+	}
+
+	if (le16_to_cpu(hdr->item_size) != item_size) {
+		SSDFS_ERR("invalid item size %u\n",
+			  le16_to_cpu(hdr->item_size));
+		return -EIO;
+	}
+
+	items_count = le16_to_cpu(hdr->items_count);
+	items_capacity = le16_to_cpu(hdr->items_capacity);
+
+	if (items_count > items_capacity) {
+		SSDFS_ERR("corrupted header: "
+			  "items_count %u > items_capacity %u\n",
+			  items_count, items_capacity);
+		return -EIO;
+	}
+
+	area_size = le32_to_cpu(hdr->area_size);
+
+	if (area_size != ((u32)items_capacity * item_size)) {
+		SSDFS_ERR("corrupted header: "
+			  "area_size %u, items_capacity %u, "
+			  "item_size %zu\n",
+			  area_size, items_capacity, item_size);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_log_footer *footer;
+	struct ssdfs_snapshot_rules_list *rules_list;
+	struct ssdfs_metadata_descriptor *meta_desc;
+	struct ssdfs_snapshot_rules_header snap_rules_hdr;
+	size_t sr_hdr_size = sizeof(struct ssdfs_snapshot_rules_header);
+	struct ssdfs_snapshot_rule_info info;
+	size_t rule_size = sizeof(struct ssdfs_snapshot_rule_info);
+	struct pagevec pvec;
+	u32 read_off;
+	u32 read_bytes = 0;
+	u32 bytes_count;
+	u32 pages_count;
+	u64 peb_id;
+	struct page *page;
+	void *kaddr;
+	u32 csum = ~0;
+	u16 items_count;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+	BUG_ON(!fsi->devops->read);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p\n", fsi);
+
+	footer = SSDFS_LF(fsi->sbi.vs_buf);
+	rules_list = &fsi->snapshots.rules_list;
+
+	if (!ssdfs_log_footer_has_snapshot_rules(footer)) {
+		SSDFS_ERR("footer hasn't snapshot rules table\n");
+		return -EIO;
+	}
+
+	meta_desc = &footer->desc_array[SSDFS_SNAPSHOT_RULES_AREA_INDEX];
+	read_off = le32_to_cpu(meta_desc->offset);
+	bytes_count = le32_to_cpu(meta_desc->size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(bytes_count >= INT_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb_id = fsi->sbi.last_log.peb_id;
+
+	pages_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	pagevec_init(&pvec);
+
+	for (i = 0; i < pages_count; i++) {
+		size_t size;
+
+		size = min_t(size_t, (size_t)PAGE_SIZE,
+				(size_t)(bytes_count - read_bytes));
+
+		page = ssdfs_snapshot_rules_add_pagevec_page(&pvec);
+		if (unlikely(IS_ERR_OR_NULL(page))) {
+			err = !page ? -ENOMEM : PTR_ERR(page);
+			SSDFS_ERR("fail to add pagevec page: err %d\n",
+				  err);
+			goto finish_read_snapshot_rules;
+		}
+
+		ssdfs_lock_page(page);
+
+		kaddr = kmap(page);
+		err = ssdfs_unaligned_read_buffer(fsi, peb_id,
+						  read_off, kaddr, size);
+		kunmap(page);
+
+		if (unlikely(err)) {
+			ssdfs_unlock_page(page);
+			SSDFS_ERR("fail to read page: "
+				  "peb %llu, offset %u, size %zu, err %d\n",
+				  peb_id, read_off, size, err);
+			goto finish_read_snapshot_rules;
+		}
+
+		ssdfs_unlock_page(page);
+
+		read_off += size;
+		read_bytes += size;
+	}
+
+	page = pvec.pages[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_lock_page(page);
+	kaddr = kmap_atomic(page);
+	ssdfs_memcpy(&snap_rules_hdr, 0, sr_hdr_size,
+		     kaddr, 0, PAGE_SIZE,
+		     sr_hdr_size);
+	kunmap_atomic(kaddr);
+	ssdfs_unlock_page(page);
+
+	err = ssdfs_check_snapshot_rules_header(&snap_rules_hdr);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid snapshot rules header: "
+			  "err %d\n", err);
+		goto finish_read_snapshot_rules;
+	}
+
+	for (i = 0; i < pages_count; i++) {
+		page = pvec.pages[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(i >= U16_MAX);
+		BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_lock_page(page);
+		kaddr = kmap(page);
+		csum = crc32(csum, kaddr, le16_to_cpu(meta_desc->check.bytes));
+		kunmap(page);
+		ssdfs_unlock_page(page);
+	}
+
+	if (csum != le32_to_cpu(meta_desc->check.csum)) {
+		err = -EIO;
+		SSDFS_ERR("invalid checksum\n");
+		goto finish_read_snapshot_rules;
+	}
+
+	items_count = le16_to_cpu(snap_rules_hdr.items_count);
+	read_off = sr_hdr_size;
+
+	for (i = 0; i < items_count; i++) {
+		struct ssdfs_snapshot_rule_item *ptr;
+
+		err = ssdfs_unaligned_read_pagevec(&pvec, read_off,
+						   rule_size, &info);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read a snapshot rule: "
+				  "read_off %u, index %d, err %d\n",
+				  read_off, i, err);
+			goto finish_read_snapshot_rules;
+		}
+
+		ptr = ssdfs_snapshot_rule_alloc();
+		if (!ptr) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate rule item\n");
+			goto finish_read_snapshot_rules;
+		}
+
+		ssdfs_memcpy(&ptr->rule, 0, rule_size,
+			     &info, 0, rule_size,
+			     rule_size);
+
+		ssdfs_snapshot_rules_list_add_tail(rules_list, ptr);
+
+		read_off += rule_size;
+	}
+
+finish_read_snapshot_rules:
+	ssdfs_snapshot_rules_pagevec_release(&pvec);
+	return err;
+}
+
 static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 					   struct ssdfs_volume_header *vh,
 					   u64 pebs_per_volume,
@@ -1876,9 +2099,9 @@ static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 
 	atomic_set(&env->state, SSDFS_RECOVERY_UNKNOWN_STATE);
 
-	err = ssdfs_init_sb_info(&env->sbi);
+	err = ssdfs_init_sb_info(fsi, &env->sbi);
 	if (likely(!err))
-		err = ssdfs_init_sb_info(&env->sbi_backup);
+		err = ssdfs_init_sb_info(fsi, &env->sbi_backup);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare sb info: err %d\n", err);
@@ -2209,9 +2432,9 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 
 	SSDFS_DBG("fsi %p, silent %#x\n", fsi, silent);
 
-	err = ssdfs_init_sb_info(&fsi->sbi);
+	err = ssdfs_init_sb_info(fsi, &fsi->sbi);
 	if (likely(!err)) {
-		err = ssdfs_init_sb_info(&fsi->sbi_backup);
+		err = ssdfs_init_sb_info(fsi, &fsi->sbi_backup);
 	}
 
 	if (unlikely(err)) {
@@ -2569,6 +2792,12 @@ free_environment:
 	err = ssdfs_read_maptbl_cache(fsi);
 	if (err)
 		goto forget_buf;
+
+	if (is_ssdfs_snapshot_rules_exist(fsi)) {
+		err = ssdfs_read_snapshot_rules(fsi);
+		if (err)
+			goto forget_buf;
+	}
 
 	SSDFS_DBG("DONE: gather superblock info\n");
 

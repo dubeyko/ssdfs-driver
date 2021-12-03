@@ -1048,14 +1048,18 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("log created: "
-		  "seg %llu, peb %llu, current_log.start_page %u\n",
+		  "seg %llu, peb %llu, "
+		  "current_log.start_page %u, free_data_pages %u\n",
 		  si->seg_id, pebi->peb_id,
-		  pebi->current_log.start_page);
+		  pebi->current_log.start_page,
+		  log->free_data_pages);
 #else
 	SSDFS_DBG("log created: "
-		  "seg %llu, peb %llu, current_log.start_page %u\n",
+		  "seg %llu, peb %llu, "
+		  "current_log.start_page %u, free_data_pages %u\n",
 		  si->seg_id, pebi->peb_id,
-		  pebi->current_log.start_page);
+		  pebi->current_log.start_page,
+		  log->free_data_pages);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 finish_log_create:
@@ -1191,8 +1195,6 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			return -ENOSPC;
 
 		case SSDFS_START_PARTIAL_LOG:
-		case SSDFS_CONTINUE_PARTIAL_LOG:
-		case SSDFS_FINISH_PARTIAL_LOG:
 			pebi->current_log.free_data_pages += footer_pages;
 			pebi->current_log.reserved_pages -= footer_pages;
 
@@ -1201,6 +1203,10 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 				  pebi->current_log.free_data_pages,
 				  pebi->current_log.reserved_pages);
 			break;
+
+		case SSDFS_CONTINUE_PARTIAL_LOG:
+		case SSDFS_FINISH_PARTIAL_LOG:
+			/* no free space available */
 
 		default:
 			SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
@@ -1348,7 +1354,7 @@ int ssdfs_peb_store_fragment(struct ssdfs_fragment_source *from,
 			     &from->data_bytes, &to->compr_size);
 	kunmap(from->page);
 
-	if (err == -E2BIG) {
+	if (err == -E2BIG || err == -EOPNOTSUPP) {
 		BUG_ON(from->data_bytes > PAGE_SIZE);
 		BUG_ON(from->data_bytes > to->free_space);
 
@@ -6009,10 +6015,12 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	}
 
 	SSDFS_DBG("peb_id %llu, peb_index %u, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_page %lu, write_offset %u, "
+		  "desc->compression_type %#x\n",
 		  desc->pebi->peb_id,
 		  desc->pebi->peb_index,
-		  *(desc->cur_page), *(desc->write_offset));
+		  *(desc->cur_page), *(desc->write_offset),
+		  desc->compression_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = desc->pebi->pebc->parent_si->fsi;
@@ -6847,7 +6855,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	case SSDFS_PEB2_SRC_CONTAINER:
 		/* Prepare source bitmap only */
 		err = ssdfs_peb_store_source_blk_bmap(pebi, items_state,
-						      flags,
+						      compression,
 						      bmap_hdr_off,
 						      &frag_id,
 						      cur_page,
@@ -6876,7 +6884,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		 * (3) all dependent bitmaps
 		 */
 		err = ssdfs_peb_store_dst_blk_bmap(pebi, items_state,
-						   flags,
+						   compression,
 						   bmap_hdr_off,
 						   &frag_id,
 						   cur_page,
@@ -6890,7 +6898,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		}
 
 		err = ssdfs_peb_store_source_blk_bmap(pebi, items_state,
-						      flags,
+						      compression,
 						      bmap_hdr_off,
 						      &frag_id,
 						      cur_page,
@@ -6904,7 +6912,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		}
 
 		err = ssdfs_peb_store_dependent_blk_bmap(pebi, items_state,
-							 flags,
+							 compression,
 							 bmap_hdr_off,
 							 &frag_id,
 							 cur_page,
@@ -6926,7 +6934,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		 * (2) all dependent bitmaps
 		 */
 		err = ssdfs_peb_store_source_blk_bmap(pebi, items_state,
-						      flags,
+						      compression,
 						      bmap_hdr_off,
 						      &frag_id,
 						      cur_page,
@@ -6940,7 +6948,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		}
 
 		err = ssdfs_peb_store_dependent_blk_bmap(pebi, items_state,
-							 flags,
+							 compression,
 							 bmap_hdr_off,
 							 &frag_id,
 							 cur_page,
@@ -7356,6 +7364,13 @@ finish_pagevec_copy:
 		cond_resched();
 	};
 
+	err = ssdfs_page_array_release_all_pages(smap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to release area's pages: "
+			  "err %d\n", err);
+		goto finish_copy_area_pages;
+	}
+
 	pebi->current_log.seg_flags |= SSDFS_AREA_TYPE2FLAG(area_type);
 
 	return 0;
@@ -7367,6 +7382,8 @@ fail_copy_area_pages:
 	}
 
 	pagevec_reinit(&pvec);
+
+finish_copy_area_pages:
 	return err;
 }
 
@@ -8374,6 +8391,16 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 			SSDFS_ERR("fail to clean dirty pages: "
 				  "start %lu, end %lu, err %d\n",
 				  index, end, err);
+		}
+
+		err = ssdfs_page_array_release_pages(&pebi->cache,
+						     &index, end);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release pages: "
+				  "seg_id %llu, peb_id %llu, "
+				  "start %lu, end %lu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, index, end, err);
 		}
 
 		written_bytes += write_size;

@@ -3,6 +3,11 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.02 [December 02, 2021]
+    (*) Implement snapshot rules support (step 3).
+    (*) Fix bugs in compression logic.
+    (*) Improve memory management logic.
+
 v.4.01 [November 21, 2021]
     (*) Fix bugs in compression options support.
     (*) Fix bugs in shared dictionary (step 2).

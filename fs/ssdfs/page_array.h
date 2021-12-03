@@ -76,6 +76,7 @@ enum {
 int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array);
 void ssdfs_destroy_page_array(struct ssdfs_page_array *array);
 int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array);
+bool is_ssdfs_page_array_empty(struct ssdfs_page_array *array);
 int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 			      struct page *page,
 			      unsigned long page_index);

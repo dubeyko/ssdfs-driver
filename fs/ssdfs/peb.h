@@ -23,6 +23,24 @@
 #include "request_queue.h"
 
 /*
+ * struct ssdfs_protection_window - protection window length
+ * @cno_lock: lock of checkpoints set
+ * @create_cno: creation checkpoint
+ * @last_request_cno: last request checkpoint
+ * @reqs_count: current number of active requests
+ * @protected_range: last measured protected range length
+ * @future_request_cno: expectation to receive a next request in the future
+ */
+struct ssdfs_protection_window {
+	spinlock_t cno_lock;
+	u64 create_cno;
+	u64 last_request_cno;
+	u32 reqs_count;
+	u64 protected_range;
+	u64 future_request_cno;
+};
+
+/*
  * struct ssdfs_peb_diffs_area_metadata - diffs area's metadata
  * @hdr: diffs area's table header
  */
@@ -366,8 +384,9 @@ void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, "
-		  "pebi->current_log.start_page %u\n",
-		  pebi->peb_id, start_page);
+		  "pebi->current_log.start_page %u, "
+		  "free_pages %u\n",
+		  pebi->peb_id, start_page, free_pages);
 
 	ssdfs_peb_current_log_lock(pebi);
 	pebi->current_log.start_page = start_page;

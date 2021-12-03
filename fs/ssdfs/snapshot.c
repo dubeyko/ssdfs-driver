@@ -40,6 +40,7 @@ int ssdfs_snapshot_subsystem_init(struct ssdfs_snapshot_subsystem *ptr)
 	SSDFS_DBG("snapshots %p\n", ptr);
 
 	ssdfs_snapshot_reqs_queue_init(&ptr->reqs_queue);
+	ssdfs_snapshot_rules_list_init(&ptr->rules_list);
 
 	return 0;
 }
@@ -65,6 +66,7 @@ int ssdfs_snapshot_subsystem_destroy(struct ssdfs_snapshot_subsystem *ptr)
 	SSDFS_DBG("snapshots %p\n", ptr);
 
 	ssdfs_snapshot_reqs_queue_remove_all(&ptr->reqs_queue);
+	ssdfs_snapshot_rules_list_remove_all(&ptr->rules_list);
 
 	return 0;
 }

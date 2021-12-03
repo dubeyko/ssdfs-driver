@@ -370,6 +370,27 @@ finish_reinit:
 }
 
 /*
+ * is_ssdfs_page_array_empty() - is page array empty?
+ * @array: page array object
+ *
+ * This method tries to check that page array is empty.
+ */
+bool is_ssdfs_page_array_empty(struct ssdfs_page_array *array)
+{
+	bool is_empty = false;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_read(&array->lock);
+	is_empty = array->pages_count == 0;
+	up_read(&array->lock);
+
+	return is_empty;
+}
+
+/*
  * ssdfs_page_array_add_page() - add memory page into the page array
  * @array: page array object
  * @page: memory page
@@ -1402,6 +1423,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 	struct ssdfs_page_array_bitmap *alloc_bmap, *dirty_bmap;
 	int capacity;
 	unsigned long found, found_dirty;
+#ifdef CONFIG_SSDFS_DEBUG
+	unsigned long released = 0;
+	unsigned long allocated_pages = 0;
+	unsigned long dirty_pages = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1446,6 +1472,10 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		goto finish_release_pages_range;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	released = array->pages_count;
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	alloc_bmap = &array->bmap[SSDFS_PAGE_ARRAY_ALLOC_BMAP];
 	if (!alloc_bmap->ptr) {
 		err = -ERANGE;
@@ -1453,12 +1483,26 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		goto finish_release_pages_range;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	spin_lock(&alloc_bmap->lock);
+	allocated_pages = bitmap_weight(alloc_bmap->ptr, capacity);
+	spin_unlock(&alloc_bmap->lock);
+	allocated_pages = capacity - allocated_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	dirty_bmap = &array->bmap[SSDFS_PAGE_ARRAY_DIRTY_BMAP];
 	if (!dirty_bmap->ptr) {
 		err = -ERANGE;
 		SSDFS_WARN("dirty bitmap is empty\n");
 		goto finish_release_pages_range;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	spin_lock(&dirty_bmap->lock);
+	dirty_pages = bitmap_weight(dirty_bmap->ptr, capacity);
+	spin_unlock(&dirty_bmap->lock);
+	dirty_pages = capacity - dirty_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&alloc_bmap->lock);
 	found = bitmap_find_next_zero_area(alloc_bmap->ptr, capacity,
@@ -1517,6 +1561,15 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 						   found, 1, 0);
 		spin_unlock(&alloc_bmap->lock);
 	};
+
+#ifdef CONFIG_SSDFS_DEBUG
+	released -= array->pages_count;
+
+	SSDFS_DBG("released %lu, pages_count %lu, "
+		  "allocated_pages %lu, dirty_pages %lu\n",
+		  released, array->pages_count,
+		  allocated_pages, dirty_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_release_pages_range:
 	up_write(&array->lock);

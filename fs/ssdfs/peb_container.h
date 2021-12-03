@@ -84,6 +84,7 @@ enum {
  * @items_state: items array state
  * @shared_free_dst_blks: count of blocks that destination is able to share
  * @migration_wq: wait queue for migration operations
+ * @cache_protection: PEB cache protection window
  * @lock: container's internals lock
  * @src_peb: pointer on source PEB
  * @dst_peb: pointer on destination PEB
@@ -124,6 +125,9 @@ struct ssdfs_peb_container {
 	atomic_t items_state;
 	atomic_t shared_free_dst_blks;
 	wait_queue_head_t migration_wq;
+
+	/* PEB cache protection window */
+	struct ssdfs_protection_window cache_protection;
 
 	/* PEB objects */
 	struct rw_semaphore lock;

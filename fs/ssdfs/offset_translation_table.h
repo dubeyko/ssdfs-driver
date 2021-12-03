@@ -372,6 +372,9 @@ int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,
 					 u16 peb_index);
 int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 						u16 peb_index);
+int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
+				 u32 offset, u32 size,
+				 void *buf);
 
 #ifdef CONFIG_SSDFS_TESTING
 int ssdfs_blk2off_table_fragment_set_clean(struct ssdfs_blk2off_table *table,

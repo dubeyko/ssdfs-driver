@@ -27,6 +27,7 @@
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "peb_container.h"
 #include "segment.h"
 #include "current_segment.h"
 
@@ -368,7 +369,7 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		major_magic_valid = is_ssdfs_magic_valid(&vs->magic);
 		minor_magic_valid = is_ssdfs_log_footer_magic_valid(footer);
 
-	    	if (!major_magic_valid && !minor_magic_valid) {
+		if (!major_magic_valid && !minor_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("valid magic doesn't detected\n");
 			else

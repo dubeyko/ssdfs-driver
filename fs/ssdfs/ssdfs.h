@@ -29,8 +29,9 @@
 #include "ssdfs_constants.h"
 #include "ssdfs_thread_info.h"
 #include "ssdfs_inode_info.h"
-#include "snapshot_requests_queue.h"
 #include "snapshot.h"
+#include "snapshot_requests_queue.h"
+#include "snapshot_rules.h"
 #include "ssdfs_fs_info.h"
 #include "ssdfs_inline.h"
 
@@ -187,7 +188,8 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 			   struct ssdfs_peb_extent *sb_log);
 
 /* recovery.c */
-int ssdfs_init_sb_info(struct ssdfs_sb_info *sbi);
+int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
+			struct ssdfs_sb_info *sbi);
 void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi);
 void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi);
 void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi);
@@ -324,6 +326,8 @@ void ssdfs_shextree_memory_leaks_init(void);
 void ssdfs_shextree_check_memory_leaks(void);
 void ssdfs_snap_reqs_queue_memory_leaks_init(void);
 void ssdfs_snap_reqs_queue_check_memory_leaks(void);
+void ssdfs_snap_rules_list_memory_leaks_init(void);
+void ssdfs_snap_rules_list_check_memory_leaks(void);
 void ssdfs_xattr_memory_leaks_init(void);
 void ssdfs_xattr_check_memory_leaks(void);
 

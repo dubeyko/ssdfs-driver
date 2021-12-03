@@ -1224,7 +1224,6 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 	return 0;
 }
 
-static
 int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 				 u32 offset, u32 size,
 				 void *buf)
@@ -2365,13 +2364,6 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		goto unlock_translation_table;
 	}
 
-	if (portion.fragments_count > portion.extents_count) {
-		err = -EIO;
-		SSDFS_ERR("fragments_count %u > extents_count %u\n",
-			  portion.fragments_count,
-			  portion.extents_count);
-		goto unlock_translation_table;
-	}
 
 	portion.pot_hdr_off = portion.tbl_hdr_off +
 			le16_to_cpu(portion.tbl_hdr.offset_table_off);

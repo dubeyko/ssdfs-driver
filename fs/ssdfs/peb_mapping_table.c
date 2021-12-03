@@ -793,6 +793,7 @@ int ssdfs_maptbl_segment_init(struct ssdfs_segment_info *si)
 						    SSDFS_READ_INIT_MAPTBL,
 						    SSDFS_REQ_ASYNC,
 						    req);
+		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
 	}
 
@@ -10667,9 +10668,79 @@ finish_try2increase_free_pages:
 	return err;
 }
 
+static
+int ssdfs_wait_maptbl_init_ending(struct ssdfs_fs_info *fsi, u32 count)
+{
+	struct ssdfs_peb_mapping_table *tbl;
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	u32 fragments_count;
+	int state;
+	u64 free_pages;
+	u32 i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tbl = fsi->maptbl;
+
+	fragments_count = tbl->fragments_count;
+
+	down_read(&tbl->tbl_lock);
+
+	for (i = 0; i < fragments_count; i++) {
+		fdesc = &tbl->desc_array[i];
+
+		state = atomic_read(&fdesc->state);
+		if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
+			err = -EFAULT;
+			SSDFS_ERR("fragment is corrupted: index %u\n",
+				  i);
+			goto finish_fragment_check;
+		} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+			struct completion *end = &fdesc->init_end;
+			unsigned long res;
+
+			up_read(&tbl->tbl_lock);
+
+			SSDFS_DBG("wait fragment initialization end: "
+				  "index %u, state %#x\n",
+				  i, state);
+
+			res = wait_for_completion_timeout(end,
+						SSDFS_DEFAULT_TIMEOUT);
+			if (res == 0) {
+				SSDFS_ERR("fragment init failed: "
+					  "index %u\n", i);
+				err = -EFAULT;
+				goto finish_wait_init;
+			}
+
+			spin_lock(&fsi->volume_state_lock);
+			free_pages = fsi->free_pages;
+			spin_unlock(&fsi->volume_state_lock);
+
+			if (free_pages >= count)
+				goto finish_wait_init;
+
+			down_read(&tbl->tbl_lock);
+		}
+	}
+
+finish_fragment_check:
+	up_read(&tbl->tbl_lock);
+
+finish_wait_init:
+	return err;
+}
+
 int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count, int type)
 {
 	u64 free_pages = 0;
+	int state;
 	u32 i;
 	int err = 0;
 
@@ -10681,11 +10752,33 @@ int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count, int type)
 		  fsi, count, type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	state = atomic_read(&fsi->global_fs_state);
+
 	err = __ssdfs_reserve_free_pages(fsi, count, type, &free_pages);
 	if (err == -EEXIST) {
 		err = 0;
 		SSDFS_DBG("free pages %u have been reserved, free_pages %llu\n",
 			  count, free_pages);
+	} else if (err == -ENOSPC && state == SSDFS_UNKNOWN_GLOBAL_FS_STATE) {
+		err = ssdfs_wait_maptbl_init_ending(fsi, count);
+		if (unlikely(err)) {
+			SSDFS_ERR("initialization has failed: "
+				  "err %d\n", err);
+			goto finish_reserve_free_pages;
+		}
+
+		err = __ssdfs_reserve_free_pages(fsi, count,
+						 type, &free_pages);
+		if (err == -EEXIST) {
+			/* succesful reservation */
+			err = 0;
+			goto finish_reserve_free_pages;
+		} else {
+			/*
+			 * finish logic
+			 */
+			goto finish_reserve_free_pages;
+		}
 	} else if (err == -ENOSPC) {
 		DEFINE_WAIT(wait);
 		err = 0;

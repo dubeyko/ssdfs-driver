@@ -37,7 +37,7 @@ struct ssdfs_time_range {
  * @type: snapshot type (PERIODIC|ONE-TIME)
  * @expiration: snapshot expiration time (WEEK|MONTH|YEAR|NEVER)
  * @frequency: taking snapshot frequency (FSYNC|HOUR|DAY|WEEK)
- * @existing_snapshots: max number of simultaneously available snapshots
+ * @snapshots_threshold: max number of simultaneously available snapshots
  * @time_range: time range to select/modify/delete snapshots
  */
 struct ssdfs_snapshot_info {
@@ -48,66 +48,9 @@ struct ssdfs_snapshot_info {
 	int type;
 	int expiration;
 	int frequency;
-	u32 existing_snapshots;
+	u32 snapshots_threshold;
 	struct ssdfs_time_range time_range;
 };
-
-/* Snapshot mode */
-enum {
-	SSDFS_UNKNOWN_SNAPSHOT_MODE,
-	SSDFS_READ_ONLY_SNAPSHOT,
-	SSDFS_READ_WRITE_SNAPSHOT,
-	SSDFS_SNAPSHOT_MODE_MAX
-};
-
-#define SSDFS_READ_ONLY_MODE_STR	"READ_ONLY"
-#define SSDFS_READ_WRITE_MODE_STR	"READ_WRITE"
-
-/* Snapshot type */
-enum {
-	SSDFS_UNKNOWN_SNAPSHOT_TYPE,
-	SSDFS_ONE_TIME_SNAPSHOT,
-	SSDFS_PERIODIC_SNAPSHOT,
-	SSDFS_SNAPSHOT_TYPE_MAX
-};
-
-#define SSDFS_ONE_TIME_TYPE_STR		"ONE-TIME"
-#define SSDFS_PERIODIC_TYPE_STR		"PERIODIC"
-
-/* Snapshot expiration */
-enum {
-	SSDFS_UNKNOWN_EXPIRATION_POINT,
-	SSDFS_EXPIRATION_IN_WEEK,
-	SSDFS_EXPIRATION_IN_MONTH,
-	SSDFS_EXPIRATION_IN_YEAR,
-	SSDFS_NEVER_EXPIRED,
-	SSDFS_EXPIRATION_POINT_MAX
-};
-
-#define SSDFS_WEEK_EXPIRATION_POINT_STR		"WEEK"
-#define SSDFS_MONTH_EXPIRATION_POINT_STR	"MONTH"
-#define SSDFS_YEAR_EXPIRATION_POINT_STR		"YEAR"
-#define SSDFS_NEVER_EXPIRED_STR			"NEVER"
-
-/* Snapshot creation frequency */
-enum {
-	SSDFS_UNKNOWN_FREQUENCY,
-	SSDFS_FSYNC_FREQUENCY,
-	SSDFS_HOUR_FREQUENCY,
-	SSDFS_DAY_FREQUENCY,
-	SSDFS_WEEK_FREQUENCY,
-	SSDFS_MONTH_FREQUENCY,
-	SSDFS_CREATION_FREQUENCY_MAX
-};
-
-#define SSDFS_FSYNC_FREQUENCY_STR		"FSYNC"
-#define SSDFS_HOUR_FREQUENCY_STR		"HOUR"
-#define SSDFS_DAY_FREQUENCY_STR			"DAY"
-#define SSDFS_WEEK_FREQUENCY_STR		"WEEK"
-#define SSDFS_MONTH_FREQUENCY_STR		"MONTH"
-
-#define SSDFS_INFINITE_SNAPSHOTS_NUMBER		U32_MAX
-#define SSDFS_UNDEFINED_SNAPSHOTS_NUMBER	(0)
 
 /* Requested operation */
 enum {
@@ -133,7 +76,100 @@ struct ssdfs_snapshot_request {
 	struct ssdfs_snapshot_info info;
 };
 
+/*
+ * struct ssdfs_snapshot_rule_item - snapshot rule item
+ * @list: snapshot rules list
+ * @rule: snapshot rule's info
+ */
+struct ssdfs_snapshot_rule_item {
+	struct list_head list;
+	struct ssdfs_snapshot_rule_info rule;
+};
+
 struct ssdfs_snapshot_subsystem;
+
+/*
+ * Inline functions
+ */
+
+static inline
+bool is_snapshot_rule_requested(struct ssdfs_snapshot_request *snr)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!snr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return snr->info.type == SSDFS_PERIODIC_SNAPSHOT;
+}
+
+static inline
+bool is_ssdfs_snapshot_mode_correct(int mode)
+{
+	switch (mode) {
+	case SSDFS_READ_ONLY_SNAPSHOT:
+	case SSDFS_READ_WRITE_SNAPSHOT:
+		return true;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return false;
+}
+
+static inline
+bool is_ssdfs_snapshot_type_correct(int type)
+{
+	switch (type) {
+	case SSDFS_ONE_TIME_SNAPSHOT:
+	case SSDFS_PERIODIC_SNAPSHOT:
+		return true;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return false;
+}
+
+static inline
+bool is_ssdfs_snapshot_expiration_correct(int expiration)
+{
+	switch (expiration) {
+	case SSDFS_EXPIRATION_IN_WEEK:
+	case SSDFS_EXPIRATION_IN_MONTH:
+	case SSDFS_EXPIRATION_IN_YEAR:
+	case SSDFS_NEVER_EXPIRED:
+		return true;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return false;
+}
+
+static inline
+bool is_ssdfs_snapshot_frequency_correct(int frequency)
+{
+	switch (frequency) {
+	case SSDFS_SYNCFS_FREQUENCY:
+	case SSDFS_HOUR_FREQUENCY:
+	case SSDFS_DAY_FREQUENCY:
+	case SSDFS_WEEK_FREQUENCY:
+	case SSDFS_MONTH_FREQUENCY:
+		return true;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return false;
+}
 
 /*
  * Snapshots subsystem's API

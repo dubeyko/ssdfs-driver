@@ -194,6 +194,17 @@ config SSDFS_MEMORY_LEAKS_ACCOUNTING
 	  If you are going to check memory leaks in SSDFS driver then
 	  choose Y here. If unsure, say N.
 
+config SSDFS_SHOW_CONSUMED_MEMORY
+	bool "SSDFS shows consumed memory"
+	select SSDFS_MEMORY_LEAKS_ACCOUNTING
+	help
+	  This option enables showing the amount of allocated
+	  memory and memory pages in the form of memory leaks
+	  on every syncfs event.
+
+	  If you are going to check memory consumption in SSDFS driver
+	  then choose Y here. If unsure, say N.
+
 config SSDFS_BTREE_CONSISTENCY_CHECK
 	bool "SSDFS btree consistency check"
 	depends on SSDFS

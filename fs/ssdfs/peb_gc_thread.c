@@ -535,15 +535,17 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 		    (le32_to_cpu(desc_off->blk_state.byte_offset) < U32_MAX);
 
 	if (has_data) {
+		ssdfs_peb_read_request_cno(pebc);
+
 		err = __ssdfs_peb_copy_page(pebc, desc_off, req);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("unable to add block of another inode\n");
-			return err;
+			goto finish_copy_page;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy page: "
 				  "logical_blk %u, err %d\n",
 				  logical_blk, err);
-			return err;
+			goto finish_copy_page;
 		}
 
 		err = ssdfs_blk2off_table_set_block_migration(table,
@@ -554,8 +556,11 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 			SSDFS_ERR("fail to set migration state: "
 				  "logical_blk %u, peb_index %u, err %d\n",
 				  logical_blk, peb_index, err);
-			return err;
+			goto finish_copy_page;
 		}
+
+finish_copy_page:
+		ssdfs_peb_finish_read_request_cno(pebc);
 	} else {
 		if (req->extent.logical_offset >= U64_MAX)
 			req->extent.logical_offset = 0;
@@ -647,17 +652,19 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
+	ssdfs_peb_read_request_cno(pebc);
+
 	err = __ssdfs_peb_copy_page(pebc, desc_off, req);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("unable to copy the whole range: "
 			  "logical_blk %u, peb_index %u\n",
 			  logical_blk, peb_index);
-		return err;
+		goto finish_copy_page;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to copy page: "
 			  "logical_blk %u, peb_index %u, err %d\n",
 			  logical_blk, peb_index, err);
-		return err;
+		goto finish_copy_page;
 	}
 
 	err = ssdfs_blk2off_table_set_block_migration(table,
@@ -668,8 +675,11 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		SSDFS_ERR("fail to set migration state: "
 			  "logical_blk %u, peb_index %u, err %d\n",
 			  logical_blk, peb_index, err);
-		return err;
+		goto finish_copy_page;
 	}
+
+finish_copy_page:
+	ssdfs_peb_finish_read_request_cno(pebc);
 
 	return err;
 }

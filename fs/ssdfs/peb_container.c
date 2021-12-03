@@ -587,6 +587,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -615,6 +616,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
 	if (selected_peb == SSDFS_SRC_AND_DST_PEB) {
@@ -638,6 +640,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 						    SSDFS_REQ_ASYNC,
 						    req3);
 		ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 	}
 
@@ -667,6 +670,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req4);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
@@ -797,6 +801,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -823,6 +828,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -849,6 +855,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req3);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
@@ -1507,6 +1514,15 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	pebc->pending_updated_user_data_pages = 0;
 	spin_lock_init(&pebc->crq_ptr_lock);
 	pebc->create_rq = NULL;
+
+	spin_lock_init(&pebc->cache_protection.cno_lock);
+	pebc->cache_protection.create_cno = ssdfs_current_cno(fsi->sb);
+	pebc->cache_protection.last_request_cno =
+					pebc->cache_protection.create_cno;
+	pebc->cache_protection.reqs_count = 0;
+	pebc->cache_protection.protected_range = 0;
+	pebc->cache_protection.future_request_cno =
+					pebc->cache_protection.create_cno;
 
 	err = ssdfs_peb_container_get_peb_relation(fsi, seg, peb_index,
 						   peb_type,

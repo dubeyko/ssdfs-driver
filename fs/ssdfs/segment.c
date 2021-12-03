@@ -1287,6 +1287,8 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 
 	pebc = &si->peb_array[peb_index];
 
+	ssdfs_peb_read_request_cno(pebc);
+
 	rq = &pebc->read_rq;
 	ssdfs_requests_queue_add_tail(rq, req);
 

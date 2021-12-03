@@ -191,6 +191,9 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	pebi->current_log.free_data_pages = pebi->log_pages;
 	pebi->current_log.seg_flags = 0;
 
+	SSDFS_DBG("free_data_pages %u\n",
+		  pebi->current_log.free_data_pages);
+
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		size_t metadata_size = sizeof(struct ssdfs_peb_area_metadata);
 		size_t blk_table_size = sizeof(struct ssdfs_area_block_table);

@@ -329,6 +329,8 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 
 	pebc = &si->peb_array[pos.peb_index];
 
+	ssdfs_peb_read_request_cno(pebc);
+
 	err = ssdfs_peb_read_page(pebc, req, &end);
 	if (err == -EAGAIN) {
 		res = wait_for_completion_timeout(end,
@@ -337,7 +339,7 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 			err = -ERANGE;
 			SSDFS_ERR("PEB init failed: "
 				  "err %d\n", err);
-			goto finish_read_block;
+			goto forget_request_cno;
 		}
 
 		err = ssdfs_peb_read_page(pebc, req, &end);
@@ -346,11 +348,14 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read page: err %d\n",
 			  err);
-		goto finish_read_block;
+		goto forget_request_cno;
 	}
 
 	for (i = 0; i < req->result.processed_blks; i++)
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
+
+forget_request_cno:
+	ssdfs_peb_finish_read_request_cno(pebc);
 
 finish_read_block:
 	req->result.err = err;

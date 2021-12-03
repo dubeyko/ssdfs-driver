@@ -30,7 +30,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		inodes_tree.o dentries_tree.o \
 		shared_dictionary.o shared_dictionary_thread.o \
 		xattr_tree.o \
-		snapshot_requests_queue.o snapshot.o \
+		snapshot_requests_queue.o snapshot_rules.o snapshot.o \
 		inode.o file.o dir.o ioctl.o \
 		sysfs.o \
 		xattr.o xattr_user.o xattr_trusted.o \

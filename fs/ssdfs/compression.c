@@ -424,7 +424,7 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 		    size_t *srclen, size_t *destlen)
 {
 	const struct ssdfs_compress_ops *ops;
-	struct list_head *workspace;
+	struct list_head *workspace = NULL;
 	int err;
 
 	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
@@ -439,8 +439,7 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unable_compress(type)) {
-		SSDFS_ERR("%s compressor is unable to compress\n",
-			  ssdfs_compressors[type]->name);
+		SSDFS_ERR("unsupported compression type %d\n", type);
 		err = -EOPNOTSUPP;
 		goto failed_compress;
 	}
@@ -500,8 +499,7 @@ int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unable_decompress(type)) {
-		SSDFS_ERR("%s compressor is unable to decompress\n",
-			  ssdfs_compressors[type]->name);
+		SSDFS_ERR("unsupported compression type %d\n", type);
 		err = -EOPNOTSUPP;
 		goto failed_decompress;
 	}
