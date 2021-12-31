@@ -232,7 +232,7 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		req->extent.logical_offset *= fsi->pagesize;
 	} else if (req->extent.ino != le64_to_cpu(blk_desc->ino)) {
 		err = -EAGAIN;
-		req->place.len = req->extent.data_bytes / fsi->pagesize;
+		req->place.len = req->result.processed_blks;
 
 		SSDFS_DBG("OFFSET DESCRIPTOR: "
 			  "logical_offset %u, logical_blk %u, "
@@ -740,6 +740,7 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 
 		err = ssdfs_peb_copy_page(pebc, logical_blk, req);
 		if (err == -EAGAIN) {
+			req->place.len = req->result.processed_blks;
 			SSDFS_DBG("unable to copy the whole range: "
 				  "seg %llu, logical_blk %u, len %u\n",
 				  pebc->parent_si->seg_id,

@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.03 [December 31, 2021]
+    (*) Fix bugs in flush logic.
+    (*) Fix bugs in shared dictionary (step 3).
+
 v.4.02 [December 02, 2021]
     (*) Implement snapshot rules support (step 3).
     (*) Fix bugs in compression logic.

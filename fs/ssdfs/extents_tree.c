@@ -1910,6 +1910,9 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 	start_blk = le64_to_cpu(fork->start_offset);
 	blks_count = le64_to_cpu(fork->blks_count);
 
+	SSDFS_DBG("start_blk %llu, blks_count %llu\n",
+		  start_blk, blks_count);
+
 	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; extent = NULL, i++) {
 		if (processed_blks >= blks_count)
 			break;
@@ -1959,6 +1962,9 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 
 	ssdfs_request_define_segment(seg_id, req);
 	ssdfs_request_define_volume_extent((u16)logical_blk, (u16)len, req);
+
+	SSDFS_DBG("logical_blk %u, len %u\n",
+		  logical_blk, len);
 
 finish_prepare_volume_extent:
 	ssdfs_btree_search_free(search);

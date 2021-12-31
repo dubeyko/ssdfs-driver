@@ -6256,6 +6256,19 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	node->hash_tbl_area.offset = node->items_area.offset +
+					node->items_area.area_size;
+
+	area_offset = node->hash_tbl_area.offset;
+	area_size = node->hash_tbl_area.area_size;
+
+	if ((area_offset + area_size) > node->node_size) {
+		SSDFS_ERR("corrupted area: "
+			  "area_offset %u, area_size %u, node_size %u\n",
+			  area_offset, area_size, node->node_size);
+		return -ERANGE;
+	}
+
 	return 0;
 }
 
@@ -6401,7 +6414,67 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	node->lookup_tbl_area.offset = node->hash_tbl_area.offset +
+					node->hash_tbl_area.area_size;
+
+	area_offset = node->lookup_tbl_area.offset;
+	area_size = node->lookup_tbl_area.area_size;
+
+	if ((area_offset + area_size) > node->node_size) {
+		SSDFS_ERR("corrupted area: "
+			  "area_offset %u, area_size %u, node_size %u\n",
+			  area_offset, area_size, node->node_size);
+		return -ERANGE;
+	}
+
 	return 0;
+}
+
+static
+bool is_ssdfs_resized_node_corrupted(struct ssdfs_btree_node *node)
+{
+	u32 area_offset;
+	u32 area_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	area_offset = node->items_area.offset;
+	area_size = node->items_area.area_size;
+
+	if ((area_offset + area_size) != node->hash_tbl_area.offset) {
+		SSDFS_ERR("corrupted string area: "
+			  "area_offset %u, area_size %u, node_size %u\n",
+			  area_offset, area_size, node->node_size);
+		return true;
+	}
+
+	area_offset = node->hash_tbl_area.offset;
+	area_size = node->hash_tbl_area.area_size;
+
+	if ((area_offset + area_size) != node->lookup_tbl_area.offset) {
+		SSDFS_ERR("corrupted hash table area: "
+			  "area_offset %u, area_size %u, node_size %u\n",
+			  area_offset, area_size, node->node_size);
+		return true;
+	}
+
+	area_offset = node->lookup_tbl_area.offset;
+	area_size = node->lookup_tbl_area.area_size;
+
+	if ((area_offset + area_size) > node->node_size) {
+		SSDFS_ERR("corrupted area: "
+			  "area_offset %u, area_size %u, node_size %u\n",
+			  area_offset, area_size, node->node_size);
+		return true;
+	}
+
+	return false;
 }
 
 /*
@@ -6863,6 +6936,9 @@ int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 	items_capacity = node->hash_tbl_area.index_capacity;
 	item_size = node->hash_tbl_area.index_size;
 
+	SSDFS_DBG("items_count %u, items_capacity %u, item_size %u\n",
+		  items_count, items_capacity, item_size);
+
 	if (item_size != sizeof(struct ssdfs_shdict_htbl_item)) {
 		SSDFS_ERR("corrupted area: "
 			  "item_size %u\n",
@@ -6915,9 +6991,12 @@ int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 	node->hash_tbl_area.index_count++;
 	items_count = node->hash_tbl_area.index_count;
 
+	SSDFS_DBG("items_count %u, items_capacity %u, item_size %u\n",
+		  items_count, items_capacity, item_size);
+
 	str_len = desc->str_len;
 
-	for (i = index + 1; index < items_count; i++) {
+	for (i = index + 1; i < items_count; i++) {
 		struct ssdfs_shdict_htbl_item cur_desc;
 		u32 str_offset;
 
@@ -7200,7 +7279,7 @@ int ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 		break;
 
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
-		if (items_count == 1) {
+		if (items_count <= 1) {
 			desc.str_offset = cpu_to_le16(0);
 
 			if (str_len != search->request.start.name_len) {
@@ -7722,7 +7801,7 @@ int ssdfs_lookup2_table_insert_new_descriptor(struct ssdfs_btree_node *node,
 	node->lookup_tbl_area.index_count++;
 	items_count = node->lookup_tbl_area.index_count;
 
-	for (i = index + 1; index < items_count; i++) {
+	for (i = index + 1; i < items_count; i++) {
 		struct ssdfs_shdict_ltbl2_item cur_desc;
 
 		err = ssdfs_get_lookup2_descriptor(node,
@@ -8713,6 +8792,14 @@ int ssdfs_add_full_name(struct ssdfs_btree_node *node,
 		goto check_node_consistency;
 	}
 
+	if (is_ssdfs_resized_node_corrupted(node)) {
+		err = -ERANGE;
+		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("node %u has been corrupted during resize\n",
+			  node->node_id);
+		goto finish_add_full_name;
+	}
+
 	err = ssdfs_insert_full_string(node, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert the full string: err %d\n", err);
@@ -8988,6 +9075,14 @@ int ssdfs_create_prefix_for_left_name(struct ssdfs_btree_node *node,
 		err = -ERANGE;
 		SSDFS_ERR("threshold %u != area_offset %u\n",
 			  threshold, area_offset);
+		goto check_node_consistency;
+	}
+
+	if (is_ssdfs_resized_node_corrupted(node)) {
+		err = -ERANGE;
+		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("node %u has been corrupted during resize\n",
+			  node->node_id);
 		goto check_node_consistency;
 	}
 
@@ -9320,6 +9415,14 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 		err = -ERANGE;
 		SSDFS_ERR("threshold %u != area_offset %u\n",
 			  threshold, area_offset);
+		goto check_node_consistency;
+	}
+
+	if (is_ssdfs_resized_node_corrupted(node)) {
+		err = -ERANGE;
+		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("node %u has been corrupted during resize\n",
+			  node->node_id);
 		goto check_node_consistency;
 	}
 
@@ -9800,6 +9903,14 @@ int ssdfs_insert_suffix(struct ssdfs_btree_node *node,
 		SSDFS_ERR("threshold %u != area_offset %u\n",
 			  threshold, area_offset);
 		return -ERANGE;
+	}
+
+	if (is_ssdfs_resized_node_corrupted(node)) {
+		err = -ERANGE;
+		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("node %u has been corrupted during resize\n",
+			  node->node_id);
+		return err;
 	}
 
 	err = __ssdfs_insert_suffix(node, search, prefix_len);
@@ -14502,6 +14613,14 @@ int ssdfs_shared_dict_btree_resize_items_area(struct ssdfs_btree_node *node,
 			  "area_size %u, err %d\n",
 			  node->node_id, area_offset,
 			  area_size, err);
+		goto finish_area_resize;
+	}
+
+	if (is_ssdfs_resized_node_corrupted(node)) {
+		err = -ERANGE;
+		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+		SSDFS_ERR("node %u has been corrupted during resize\n",
+			  node->node_id);
 		goto finish_area_resize;
 	}
 

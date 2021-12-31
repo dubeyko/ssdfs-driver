@@ -2453,10 +2453,16 @@ int ssdfs_btree_process_hierarchy_for_add_nolock(struct ssdfs_btree *tree,
 
 		err = ssdfs_btree_create_empty_node(tree, cur_height,
 						    hierarchy);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to create empty node: "
-				  "err %d\n",
-				  err);
+		if (err) {
+			if (err == -ENOSPC) {
+				SSDFS_DBG("unable to create empty node: "
+					  "err %d\n",
+					  err);
+			} else {
+				SSDFS_ERR("fail to create empty node: "
+					  "err %d\n",
+					  err);
+			}
 
 			for (cur_height++; cur_height <= tree_height; cur_height++) {
 				if (!need_add_node(level))
@@ -2724,7 +2730,11 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 
 	err = ssdfs_btree_process_hierarchy_for_add_nolock(tree, search,
 							   hierarchy);
-	if (unlikely(err)) {
+	if (err == -ENOSPC) {
+		SSDFS_DBG("unable to process hierarchy for add: "
+			  "err %d\n", err);
+		goto finish_create_node;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to process hierarchy for add: "
 			  "err %d\n", err);
 		goto finish_create_node;
@@ -2759,7 +2769,9 @@ finish_create_node:
 	if (search->node.parent)
 		complete_all(&search->node.parent->init_end);
 
-	ssdfs_show_btree_hierarchy_object(hierarchy);
+	if (err != -ENOSPC)
+		ssdfs_show_btree_hierarchy_object(hierarchy);
+
 	ssdfs_btree_hierarchy_free(hierarchy);
 
 	search->result.err = err;
@@ -3452,9 +3464,12 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	}
 
 	err = __ssdfs_btree_add_node(tree, search);
-	if (err == -EEXIST)
+	if (err == -EEXIST) {
 		SSDFS_DBG("node has been added\n");
-	else if (unlikely(err)) {
+	} else if (err == -ENOSPC) {
+		SSDFS_DBG("unable to add a new node: err %d\n",
+			  err);
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add a new node: err %d\n",
 			  err);
 	}

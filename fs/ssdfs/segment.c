@@ -2023,9 +2023,14 @@ add_new_current_segment:
 		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			SSDFS_ERR("fail to create segment object: "
-				  "err %d\n",
-				  err);
+			if (err == -ENOSPC) {
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
 			goto finish_add_extent;
 		}
 
@@ -2143,14 +2148,23 @@ finish_add_extent:
 	ssdfs_current_segment_unlock(cur_seg);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished: seg %llu\n",
-		  cur_seg->real_seg->seg_id);
+	if (cur_seg->real_seg) {
+		SSDFS_ERR("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
 #else
-	SSDFS_DBG("finished: seg %llu\n",
-		  cur_seg->real_seg->seg_id);
+	if (cur_seg->real_seg) {
+		SSDFS_DBG("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	if (err) {
+	if (err == -ENOSPC) {
+		SSDFS_DBG("unable to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  req->extent.ino, req->extent.logical_offset, err);
+		return err;
+	} else if (err) {
 		SSDFS_ERR("fail to add extent: "
 			  "ino %llu, logical_offset %llu, err %d\n",
 			  req->extent.ino, req->extent.logical_offset, err);

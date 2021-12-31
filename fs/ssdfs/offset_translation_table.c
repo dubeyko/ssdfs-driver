@@ -2364,7 +2364,6 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		goto unlock_translation_table;
 	}
 
-
 	portion.pot_hdr_off = portion.tbl_hdr_off +
 			le16_to_cpu(portion.tbl_hdr.offset_table_off);
 
