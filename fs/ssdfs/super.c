@@ -2376,7 +2376,10 @@ static void ssdfs_memory_leaks_checker_init(void)
 	atomic64_set(&ssdfs_memory_leaks, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
+#ifdef CONFIG_SSDFS_POSIX_ACL
 	ssdfs_acl_memory_leaks_init();
+#endif /* CONFIG_SSDFS_POSIX_ACL */
+
 	ssdfs_block_bmap_memory_leaks_init();
 	ssdfs_btree_memory_leaks_init();
 	ssdfs_btree_hierarchy_memory_leaks_init();
@@ -2437,7 +2440,10 @@ static void ssdfs_memory_leaks_checker_init(void)
 
 static void ssdfs_check_memory_leaks(void)
 {
+#ifdef CONFIG_SSDFS_POSIX_ACL
 	ssdfs_acl_check_memory_leaks();
+#endif /* CONFIG_SSDFS_POSIX_ACL */
+
 	ssdfs_block_bmap_check_memory_leaks();
 	ssdfs_btree_check_memory_leaks();
 	ssdfs_btree_hierarchy_check_memory_leaks();
