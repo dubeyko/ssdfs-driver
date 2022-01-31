@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/snapshot_requests_queue.h - snapshot requests queue declarations.
  *
- * Copyright (c) 2021 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>

@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/ssdfs_inline.h - inline functions and macros.
  *
- * Copyright (c) 2019-2021 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.04 [January 30, 2022]
+    (*) Fix bugs in offsets translation table.
+
 v.4.03 [December 31, 2021]
     (*) Fix bugs in flush logic.
     (*) Fix bugs in shared dictionary (step 3).

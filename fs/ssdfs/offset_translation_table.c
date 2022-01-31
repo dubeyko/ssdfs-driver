@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/offset_translation_table.c - offset translation table functionality.
  *
- * Copyright (c) 2014-2021 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2022 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -1981,10 +1981,11 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 	BUG_ON(!portion->bmap || !portion->pos_array || !portion->extent_array);
 	BUG_ON(!extent_index);
 	BUG_ON(portion->peb_index >= portion->table->pebs_count);
-#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("peb_index %u, extent_index %u\n",
-		  portion->peb_index, *extent_index);
+	SSDFS_DBG("peb_index %u, extent_index %u, extents_count %u\n",
+		  portion->peb_index, *extent_index,
+		  portion->extents_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_get_fragment_header(portion);
 	if (err) {
@@ -2009,16 +2010,14 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 	}
 
 	if (*extent_index >= portion->extents_count) {
-		err = -ERANGE;
-		SSDFS_ERR("extent_index %u >= extents_count %u\n",
+		SSDFS_DBG("extent_index %u >= extents_count %u\n",
 			  *extent_index, portion->extents_count);
-		return err;
 	}
 
 	start_id = le16_to_cpu(portion->pot_hdr.start_id);
 	id_count = le16_to_cpu(portion->pot_hdr.id_count);
 
-	do {
+	while (*extent_index < portion->extents_count) {
 		extent = &portion->extent_array[*extent_index];
 		logical_blk = le16_to_cpu(extent->logical_blk);
 		offset_id = le16_to_cpu(extent->offset_id);
@@ -2036,8 +2035,12 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		}
 
 		if (state != SSDFS_LOGICAL_BLK_FREE) {
-			if (offset_id >= (start_id + id_count))
+			if (offset_id >= (start_id + id_count)) {
+				SSDFS_DBG("offset_id %u, start_id %u, "
+					  "id_count %u\n",
+					  offset_id, start_id, id_count);
 				break;
+			}
 		}
 
 		if (state == SSDFS_LOGICAL_BLK_USED) {
@@ -2066,11 +2069,11 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 			BUG();
 
 		if (err == -EAGAIN) {
-			/* don't increment extent index */
+			SSDFS_DBG("don't increment extent index\n");
 			break;
 		} else
 			++*extent_index;
-	} while (*extent_index < portion->extents_count);
+	};
 
 	pos_array_bytes = portion->capacity * pos_size;
 	ssdfs_memcpy(portion->table->lblk2off, 0, pos_array_bytes,
@@ -2407,6 +2410,8 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 
 unlock_translation_table:
 	up_write(&table->translation_lock);
+
+	SSDFS_DBG("finished: err %d\n", err);
 
 	ssdfs_blk2off_kfree(portion.bmap);
 	portion.bmap = NULL;

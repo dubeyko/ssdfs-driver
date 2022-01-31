@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/peb_gc_thread.c - GC thread functionality.
  *
- * Copyright (c) 2014-2021 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2022 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -1451,10 +1451,10 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pebc || !array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (have_flush_requests(pebc)) {
 		SSDFS_DBG("Do nothing: request queue is not empty: "
@@ -2112,6 +2112,16 @@ collect_garbage_now:
 
 		ssdfs_segment_put_object(si);
 
+		if (is_seg2req_pair_array_exhausted(&reqs_array))
+			ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
+
+		err = ssdfs_revert_segment_to_regular_activity(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment %llu is under unexpected activity\n",
+				  si->seg_id);
+			goto sleep_failed_gc_thread;
+		}
+
 		if (should_ssdfs_segment_be_destroyed(si)) {
 			err = ssdfs_segment_tree_remove(fsi, si);
 			if (unlikely(err)) {
@@ -2126,16 +2136,6 @@ collect_garbage_now:
 						   si->seg_id, err);
 				}
 			}
-		}
-
-		if (is_seg2req_pair_array_exhausted(&reqs_array))
-			ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
-
-		err = ssdfs_revert_segment_to_regular_activity(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment %llu is under unexpected activity\n",
-				  si->seg_id);
-			goto sleep_failed_gc_thread;
 		}
 
 check_next_segment:

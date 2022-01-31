@@ -4,11 +4,11 @@
  *
  * fs/ssdfs/inodes_tree.c - inodes btree implementation.
  *
- * Copyright (c) 2014-2021 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2022 HGST, a Western Digital Company.
  *              http://www.hgst.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2021, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
  * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
@@ -2132,10 +2132,10 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (node->tree->type == SSDFS_INODES_BTREE)
 		tree = (struct ssdfs_inodes_btree_info *)node->tree;
