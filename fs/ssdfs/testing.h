@@ -119,6 +119,18 @@ struct ssdfs_xattr_tree_testing {
 };
 
 /*
+ * struct ssdfs_shextree_testing - shared extents tree testing environment
+ * @extents_number_threshold: maximum number of shared extents
+ * @extent_len: extent length
+ * @ref_count_threshold: upper bound for reference counter of shared extent
+ */
+struct ssdfs_shextree_testing {
+	u64 extents_number_threshold;
+	u32 extent_len;
+	u32 ref_count_threshold;
+};
+
+/*
  * struct ssdfs_testing_environment - define testing environment
  * @subsystems: enable testing particular subsystems
  * @page_size: logical block size in bytes
@@ -130,6 +142,7 @@ struct ssdfs_xattr_tree_testing {
  * @segment_bitmap: segment bitmap testing environment
  * @shared_dictionary: shared dictionary testing environment
  * @xattr_tree: xattr tree testing environment
+ * @shextree: shared extents tree testing environment
  */
 struct ssdfs_testing_environment {
 	u64 subsystems;
@@ -143,6 +156,7 @@ struct ssdfs_testing_environment {
 	struct ssdfs_segment_bitmap_testing segment_bitmap;
 	struct ssdfs_shared_dictionary_testing shared_dictionary;
 	struct ssdfs_xattr_tree_testing xattr_tree;
+	struct ssdfs_shextree_testing shextree;
 };
 
 /* Subsystem tests */
@@ -154,6 +168,7 @@ struct ssdfs_testing_environment {
 #define SSDFS_ENABLE_SEGMENT_BITMAP_TESTING	(1 << 5)
 #define SSDFS_ENABLE_SHARED_DICTIONARY_TESTING	(1 << 6)
 #define SSDFS_ENABLE_XATTR_TREE_TESTING		(1 << 7)
+#define SSDFS_ENABLE_SHEXTREE_TESTING		(1 << 8)
 
 #ifdef CONFIG_SSDFS_TESTING
 int ssdfs_do_testing(struct ssdfs_fs_info *fsi,

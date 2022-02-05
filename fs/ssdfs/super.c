@@ -370,6 +370,14 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 
 	down_write(&fsi->volume_sem);
 
+	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
+		err = ssdfs_shextree_flush(fsi);
+		if (err) {
+			SSDFS_ERR("fail to flush shared extents btree: "
+				  "err %d\n", err);
+		}
+	}
+
 	if (fsi->fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
 		err = ssdfs_inodes_btree_flush(fsi->inodes_tree);
 		if (err) {
@@ -2703,11 +2711,17 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	SSDFS_DBG("create shared extents tree started...\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	down_write(&fs_info->volume_sem);
-	err = ssdfs_shextree_create(fs_info);
-	up_write(&fs_info->volume_sem);
-	if (err)
+	if (fs_info->fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
+		down_write(&fs_info->volume_sem);
+		err = ssdfs_shextree_create(fs_info);
+		up_write(&fs_info->volume_sem);
+		if (err)
+			goto destroy_current_segment_array;
+	} else {
+		err = -EIO;
+		SSDFS_WARN("volume hasn't shared extents tree\n");
 		goto destroy_current_segment_array;
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create shared dictionary started...\n");
@@ -2985,15 +2999,6 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	pagevec_init(&payload.maptbl_cache.pvec);
 
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("Destroy shared extents tree...\n");
-#else
-	SSDFS_DBG("Destroy shared extents tree...\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	/* TODO: flush shared extents tree */
-	ssdfs_shextree_destroy(fsi);
-
 	if (unfinished_user_data_requests_exist(fsi)) {
 		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
 
@@ -3021,6 +3026,21 @@ static void ssdfs_put_super(struct super_block *sb)
 			can_commit_super = false;
 			SSDFS_ERR("fail to prepare sb log: err %d\n",
 				  err);
+		}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush shared extents b-tree...\n");
+#else
+		SSDFS_DBG("Flush shared extents b-tree...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		if (fsi->fs_feature_compat &
+				SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
+			err = ssdfs_shextree_flush(fsi);
+			if (err) {
+				SSDFS_ERR("fail to flush shared extents btree: "
+					  "err %d\n", err);
+			}
 		}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3158,6 +3178,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
 	ssdfs_snapshot_subsystem_destroy(&fsi->snapshots);
+	ssdfs_shextree_destroy(fsi);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
 	ssdfs_segbmap_destroy(fsi);

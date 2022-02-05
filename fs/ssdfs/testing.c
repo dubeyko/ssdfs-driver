@@ -17,6 +17,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "extents_queue.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
@@ -32,6 +33,7 @@
 #include "peb_mapping_table.h"
 #include "shared_dictionary.h"
 #include "xattr_tree.h"
+#include "shared_extents_tree.h"
 #include "testing.h"
 
 static
@@ -209,6 +211,9 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi,
 	}
 
 	per_1_percent = div_u64(threshold, 100);
+	if (per_1_percent == 0)
+		per_1_percent = 1;
+
 	message_threshold = per_1_percent;
 
 	SSDFS_ERR("ADD LOGICAL BLOCK: 0%%\n");
@@ -573,6 +578,9 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 
 	threshold = env->dentries_tree.files_number_threshold;
 	per_1_percent = div_u64(threshold, 100);
+	if (per_1_percent == 0)
+		per_1_percent = 1;
+
 	message_threshold = per_1_percent;
 
 	SSDFS_ERR("ADD FILE: 0%%\n");
@@ -2819,6 +2827,9 @@ int ssdfs_do_xattr_tree_testing(struct ssdfs_fs_info *fsi,
 	memset(table, 'a', SSDFS_MAX_NAME_LEN);
 
 	per_1_percent = div_u64(threshold, 100);
+	if (per_1_percent == 0)
+		per_1_percent = 1;
+
 	message_threshold = per_1_percent;
 
 	SSDFS_ERR("ADD XATTRs: 0%%\n");
@@ -3014,6 +3025,472 @@ finish_testing:
 	return err;
 }
 
+static
+int ssdfs_testing_shextree_add(struct ssdfs_fs_info *fsi,
+			       struct ssdfs_testing_environment *env,
+			       u64 id)
+{
+	struct ssdfs_shared_extents_tree *tree;
+	struct ssdfs_fingerprint fingerprint;
+	struct ssdfs_shared_extent shared_extent;
+	struct ssdfs_btree_search *search;
+	__le64 fingerprint_value = cpu_to_le64(id);
+	u32 extent_len = env->shextree.extent_len;
+	int err;
+
+	tree = fsi->shextree;
+
+	memset(&shared_extent, 0x0, sizeof(struct ssdfs_shared_extent));
+
+	shared_extent.extent.seg_id = cpu_to_le64(id);
+	shared_extent.extent.logical_blk = cpu_to_le32(id);
+	shared_extent.extent.len = cpu_to_le32(extent_len);
+	ssdfs_memcpy(shared_extent.fingerprint,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	shared_extent.fingerprint_len = sizeof(u64);
+	shared_extent.ref_count = cpu_to_le64(extent_len);
+
+	SSDFS_DBG("fingerprint %pUb, type %#x, len %#x\n",
+		  shared_extent.fingerprint,
+		  shared_extent.fingerprint_type,
+		  shared_extent.fingerprint_len);
+
+	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
+	ssdfs_memcpy(fingerprint.buf,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	fingerprint.len = sizeof(u64);
+
+	SSDFS_DBG("fingerprint %pUb, type %#x, len %#x\n",
+		  fingerprint.buf,
+		  fingerprint.type,
+		  fingerprint.len);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_shextree_add(tree, &fingerprint, &shared_extent, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add shared extent: "
+			  "id %llu, err %d\n",
+			  id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_testing_shextree_check(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_testing_environment *env,
+				 u64 id)
+{
+	struct ssdfs_shared_extents_tree *tree;
+	struct ssdfs_fingerprint fingerprint;
+	struct ssdfs_btree_search *search;
+	__le64 fingerprint_value = cpu_to_le64(id);
+	int err;
+
+	tree = fsi->shextree;
+
+	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
+	ssdfs_memcpy(fingerprint.buf,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	fingerprint.len = sizeof(u64);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_shextree_find(tree, &fingerprint, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find shared extent: "
+			  "id %llu, err %d\n",
+			  id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_testing_shextree_change(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env,
+				  u64 id)
+{
+	struct ssdfs_shared_extents_tree *tree;
+	struct ssdfs_shared_extent shared_extent;
+	struct ssdfs_fingerprint fingerprint;
+	struct ssdfs_btree_search *search;
+	__le64 fingerprint_value = cpu_to_le64(id);
+	u32 extent_len = env->shextree.extent_len;
+	int err;
+
+	tree = fsi->shextree;
+
+	memset(&shared_extent, 0x0, sizeof(struct ssdfs_shared_extent));
+
+	shared_extent.extent.seg_id = cpu_to_le64(id * 2);
+	shared_extent.extent.logical_blk = cpu_to_le32(id * 2);
+	shared_extent.extent.len = cpu_to_le32(extent_len);
+	ssdfs_memcpy(shared_extent.fingerprint,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	shared_extent.fingerprint_len = sizeof(u64);
+	shared_extent.ref_count = cpu_to_le64(extent_len);
+
+	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
+	ssdfs_memcpy(fingerprint.buf,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	fingerprint.len = sizeof(u64);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_shextree_change(tree, &fingerprint,
+				    &shared_extent, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change shared extent: "
+			  "id %llu, err %d\n",
+			  id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_testing_shextree_inc_ref_count(struct ssdfs_fs_info *fsi,
+					 struct ssdfs_testing_environment *env,
+					 u64 id)
+{
+	struct ssdfs_shared_extents_tree *tree;
+	struct ssdfs_fingerprint fingerprint;
+	struct ssdfs_btree_search *search;
+	__le64 fingerprint_value = cpu_to_le64(id);
+	int err;
+
+	tree = fsi->shextree;
+
+	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
+	ssdfs_memcpy(fingerprint.buf,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	fingerprint.len = sizeof(u64);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_shextree_ref_count_inc(tree, &fingerprint, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to increment reference count: "
+			  "id %llu, err %d\n",
+			  id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_testing_shextree_dec_ref_count(struct ssdfs_fs_info *fsi,
+					 struct ssdfs_testing_environment *env,
+					 u64 id)
+{
+	struct ssdfs_shared_extents_tree *tree;
+	struct ssdfs_fingerprint fingerprint;
+	struct ssdfs_btree_search *search;
+	__le64 fingerprint_value = cpu_to_le64(id);
+	u32 extent_len = env->shextree.extent_len;
+	u32 i;
+	int err;
+
+	tree = fsi->shextree;
+
+	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
+	ssdfs_memcpy(fingerprint.buf,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	fingerprint.len = sizeof(u64);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < extent_len; i++) {
+		ssdfs_btree_search_init(search);
+		err = ssdfs_shextree_ref_count_dec(tree, &fingerprint, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to decrement reference count: "
+				  "id %llu, err %d\n",
+				  id, err);
+			goto finish_dec_ref_count;
+		}
+	}
+
+finish_dec_ref_count:
+	ssdfs_btree_search_free(search);
+
+	return err;
+}
+
+static
+int ssdfs_testing_shextree_delete(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env,
+				  u64 id)
+{
+	struct ssdfs_shared_extents_tree *tree;
+	struct ssdfs_fingerprint fingerprint;
+	struct ssdfs_btree_search *search;
+	__le64 fingerprint_value = cpu_to_le64(id);
+	int err;
+
+	tree = fsi->shextree;
+
+	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
+	ssdfs_memcpy(fingerprint.buf,
+		     0, SSDFS_FINGERPRINT_LENGTH_MAX,
+		     &fingerprint_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	fingerprint.len = sizeof(u64);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_shextree_delete(tree, &fingerprint, search);
+	ssdfs_btree_search_free(search);
+
+	if (err == -ENOENT) {
+		err = 0;
+		SSDFS_DBG("tree is empty\n");
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to delete shared extent: "
+			  "id %llu, err %d\n",
+			  id, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_do_shextree_testing(struct ssdfs_fs_info *fsi,
+			      struct ssdfs_testing_environment *env)
+{
+	u64 threshold = env->shextree.extents_number_threshold;
+	u64 per_1_percent = 0;
+	u64 message_threshold = 0;
+	u64 i;
+	int err = 0;
+
+	per_1_percent = div_u64(threshold, 100);
+	if (per_1_percent == 0)
+		per_1_percent = 1;
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("ADD SHARED EXTENTs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("ADD SHARED EXTENTS: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_shextree_add(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to add shared extent: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("ADD SHARED EXTENTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHECK SHARED EXTENTs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("CHECK SHARED EXTENTS: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_shextree_check(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to check shared extent: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("CHECK SHARED EXTENTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHANGE SHARED EXTENTs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("CHANGE SHARED EXTENTS: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_shextree_change(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to change shared extent: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("CHANGE SHARED EXTENTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("INCREMENT REFERENCE COUNT: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("INCREMENT REFERENCE COUNT: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_shextree_inc_ref_count(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to increment reference count: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("INCREMENT REFERENCE COUNT: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("DECREMENT REFERENCE COUNT: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("DECREMENT REFERENCE COUNT: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_shextree_dec_ref_count(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to decrement reference count: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_testing_shextree_dec_ref_count(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to decrement reference count: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("DECREMENT REFERENCE COUNT: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	SSDFS_ERR("FLUSH SHARED EXTENTS BTREE: starting...\n");
+
+	down_write(&fsi->volume_sem);
+	err = ssdfs_shextree_flush(fsi);
+	up_write(&fsi->volume_sem);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to flush shared extents tree: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_ERR("FLUSH SHARED EXTENTS BTREE: finished\n");
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("DELETE SHARED EXTENTs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("DELETE SHARED EXTENTS: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_shextree_delete(fsi, env, i + 1);
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("tree is empty\n");
+		} else if (err) {
+			SSDFS_ERR("fail to delete shared extent: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("DELETE SHARED EXTENTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	return 0;
+}
+
 int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 		     struct ssdfs_testing_environment *env)
 {
@@ -3109,6 +3586,16 @@ int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 			goto free_inode;
 
 		SSDFS_ERR("XATTR TREE TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_SHEXTREE_TESTING) {
+		SSDFS_ERR("START SHARED EXTENTS TREE TESTING...\n");
+
+		err = ssdfs_do_shextree_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("SHARED EXTENTS TREE TESTING FINISHED\n");
 	}
 
 free_inode:

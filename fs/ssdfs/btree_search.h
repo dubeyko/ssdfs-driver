@@ -43,12 +43,14 @@ enum {
  * @name_len: length of the name in bytes
  * @hash: hash value
  * @ino: inode ID
+ * @fingerprint: fingerprint value
  */
 struct ssdfs_btree_search_hash {
 	const char *name;
 	size_t name_len;
 	u64 hash;
 	u64 ino;
+	struct ssdfs_fingerprint *fingerprint;
 };
 
 /*
@@ -66,7 +68,11 @@ struct ssdfs_btree_search_request {
 #define SSDFS_BTREE_SEARCH_HAS_VALID_NAME		(1 << 2)
 #define SSDFS_BTREE_SEARCH_HAS_VALID_INO		(1 << 3)
 #define SSDFS_BTREE_SEARCH_NOT_INVALIDATE		(1 << 4)
-#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1F
+#define SSDFS_BTREE_SEARCH_HAS_VALID_UUID		(1 << 5)
+#define SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT	(1 << 6)
+#define SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT		(1 << 7)
+#define SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT		(1 << 8)
+#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1FF
 	u32 flags;
 
 	struct ssdfs_btree_search_hash start;
@@ -232,6 +238,7 @@ enum {
  * @raw.inode: raw inode buffer
  * @raw.dentry.header: raw directory entry header
  * @raw.xattr.header: raw xattr entry header
+ * @raw.shared_extent: shared extent buffer
  * @name: name string
  */
 struct ssdfs_btree_search {
@@ -247,6 +254,7 @@ struct ssdfs_btree_search {
 		struct ssdfs_raw_xattr {
 			struct ssdfs_xattr_entry header;
 		} xattr;
+		struct ssdfs_shared_extent shared_extent;
 	} raw;
 	struct ssdfs_name_string name;
 };
