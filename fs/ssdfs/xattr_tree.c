@@ -8862,6 +8862,8 @@ int ssdfs_xattrs_btree_node_extract_range(struct ssdfs_btree_node *node,
 					 u16 start_index, u16 count,
 					 struct ssdfs_btree_search *search)
 {
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -8876,9 +8878,13 @@ int ssdfs_xattrs_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	return __ssdfs_btree_node_extract_range(node, start_index, count,
+	down_read(&node->full_lock);
+	err = __ssdfs_btree_node_extract_range(node, start_index, count,
 						sizeof(struct ssdfs_xattr_entry),
 						search);
+	up_read(&node->full_lock);
+
+	return err;
 }
 
 /*

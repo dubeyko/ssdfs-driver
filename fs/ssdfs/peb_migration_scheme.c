@@ -473,7 +473,6 @@ bool should_migration_be_finished(struct ssdfs_peb_container *pebc)
  * @peb_blkbmap: PEB container's block bitmap
  * @range: range of valid blocks
  */
-static
 int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 					 struct ssdfs_peb_container *pebc,
 					 struct ssdfs_peb_blk_bmap *peb_blkbmap,

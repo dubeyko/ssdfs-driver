@@ -73,8 +73,9 @@ u8 FIRST_STATE_IN_BYTE(u8 *value, int state,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!value);
+	BUG_ON(state_bits == 0);
 	BUG_ON(state_bits > BITS_PER_BYTE);
-	BUG_ON((state_bits % 2) != 0);
+	BUG_ON(state_bits > 1 && (state_bits % 2) != 0);
 	BUG_ON(start_offset > SSDFS_ITEMS_PER_BYTE(state_bits));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -122,15 +123,16 @@ int FIND_FIRST_ITEM_IN_BYTE(u8 *value, int state, u8 state_bits,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!value || !found_offset || !check || !op);
+	BUG_ON(state_bits == 0);
 	BUG_ON(state_bits > BITS_PER_BYTE);
-	BUG_ON((state_bits % 2) != 0);
+	BUG_ON(state_bits > 1 && (state_bits % 2) != 0);
 	BUG_ON(start_offset > SSDFS_ITEMS_PER_BYTE(state_bits));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("value %#x, state %#x, state_bits %u, "
 		  "start_offset %u, found_offset %p\n",
 		  *value, state, state_bits,
 		  start_offset, found_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*found_offset = U8_MAX;
 

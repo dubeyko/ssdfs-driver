@@ -48,6 +48,7 @@ enum {
 	SSDFS_PEB_CREATE_IDXNODE_REQ,
 	SSDFS_PEB_UPDATE_REQ,
 	SSDFS_PEB_PRE_ALLOC_UPDATE_REQ,
+	SSDFS_PEB_DIFF_ON_WRITE_REQ,
 	SSDFS_PEB_COLLECT_GARBAGE_REQ,
 	SSDFS_PEB_REQ_CLASS_MAX,
 };
@@ -81,13 +82,16 @@ enum {
 	SSDFS_START_MIGRATION_NOW,		/* 0x16 */
 	SSDFS_EXTENT_WAS_INVALIDATED,		/* 0x17 */
 	SSDFS_UPDATE_CMD_MAX,			/* 0x18 */
-	SSDFS_COPY_PAGE,			/* 0x19 */
-	SSDFS_COPY_PRE_ALLOC_PAGE,		/* 0x1A */
-	SSDFS_MIGRATE_RANGE,			/* 0x1B */
-	SSDFS_MIGRATE_PRE_ALLOC_PAGE,		/* 0x1C */
-	SSDFS_MIGRATE_FRAGMENT,			/* 0x1D */
-	SSDFS_COLLECT_GARBAGE_CMD_MAX,		/* 0x1E */
-	SSDFS_KNOWN_CMD_MAX,			/* 0x1F */
+	SSDFS_BTREE_NODE_DIFF,			/* 0x19 */
+	SSDFS_USER_DATA_DIFF,			/* 0x1A */
+	SSDFS_DIFF_ON_WRITE_MAX,		/* 0x1B */
+	SSDFS_COPY_PAGE,			/* 0x1C */
+	SSDFS_COPY_PRE_ALLOC_PAGE,		/* 0x1D */
+	SSDFS_MIGRATE_RANGE,			/* 0x1E */
+	SSDFS_MIGRATE_PRE_ALLOC_PAGE,		/* 0x1F */
+	SSDFS_MIGRATE_FRAGMENT,			/* 0x20 */
+	SSDFS_COLLECT_GARBAGE_CMD_MAX,		/* 0x21 */
+	SSDFS_KNOWN_CMD_MAX,			/* 0x22 */
 };
 
 /*
@@ -102,7 +106,7 @@ enum {
 };
 
 /*
- * Request types
+ * Request flags
  */
 #define SSDFS_REQ_DONT_FREE_PAGES			(1 << 0)
 #define SSDFS_REQ_FLAGS_MASK				0x1
@@ -156,6 +160,7 @@ struct ssdfs_request_internal_data {
 /*
  * struct ssdfs_request_result - requst result
  * @pvec: array of memory pages
+ * @diffs: array of diffs
  * @processed_blks: count of processed physical pages
  * @state: result's state
  * @wait: wait-for-completion of operation
@@ -163,6 +168,7 @@ struct ssdfs_request_internal_data {
  */
 struct ssdfs_request_result {
 	struct pagevec pvec;
+	struct pagevec diffs;
 	int processed_blks;
 	atomic_t state;
 	struct completion wait;
@@ -367,12 +373,24 @@ void ssdfs_get_request(struct ssdfs_segment_request *req);
 void ssdfs_put_request(struct ssdfs_segment_request *req);
 int ssdfs_request_add_page(struct page *page,
 			   struct ssdfs_segment_request *req);
+int ssdfs_request_add_diff_page(struct page *page,
+				struct ssdfs_segment_request *req);
 struct page *
 ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req);
+struct page *
+ssdfs_request_allocate_and_add_diff_page(struct ssdfs_segment_request *req);
+struct page *
+ssdfs_request_allocate_locked_page(struct ssdfs_segment_request *req,
+				   int page_index);
+struct page *
+ssdfs_request_allocate_locked_diff_page(struct ssdfs_segment_request *req,
+					int page_index);
 int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req);
+int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
 					  int page_index);
 void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req);
+void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req);
 void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req);
 u8 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
 			   struct pagevec *pvec);

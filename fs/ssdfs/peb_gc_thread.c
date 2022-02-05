@@ -294,6 +294,7 @@ finish_define_extent:
  * __ssdfs_peb_copy_page() - copy page from PEB into buffer
  * @pebc: pointer on PEB container
  * @desc_off: physical offset descriptor
+ * @pos: position offset
  * @req: request
  *
  * This function tries to copy PEB's page into the buffer.
@@ -308,23 +309,23 @@ finish_define_extent:
 static
 int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 			  struct ssdfs_phys_offset_descriptor *desc_off,
+			  struct ssdfs_offset_position *pos,
 			  struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi = NULL;
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
-	struct ssdfs_block_descriptor blk_desc = {0};
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-	BUG_ON(!desc_off || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!desc_off || !pos || !req);
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -347,7 +348,7 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	}
 
 	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
-					desc_array, &blk_desc, req);
+					desc_array, &pos->blk_desc, req);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("unable to add block of another inode\n");
 		goto finish_copy_page;
@@ -366,10 +367,9 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		goto finish_copy_page;
 	}
 
-	err = ssdfs_peb_read_block_state(pebi, req,
+	err = ssdfs_peb_read_block_state(pebc, req, pos,
 					 desc_array,
-					 SSDFS_SEG_HDR_DESC_MAX,
-					 &blk_desc, 0);
+					 SSDFS_SEG_HDR_DESC_MAX);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read block state: err %d\n",
 			  err);
@@ -476,6 +476,7 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_phys_offset_descriptor *desc_off = NULL;
+	struct ssdfs_offset_position pos = {0};
 	u16 peb_index;
 	bool has_data = false;
 	int err = 0;
@@ -483,7 +484,6 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x, "
@@ -491,6 +491,7 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd, req->private.type,
 		  logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -503,7 +504,8 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 	table = pebc->parent_si->blk2off_table;
 
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
-						&peb_index, NULL);
+						&peb_index, NULL,
+						&pos);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -520,7 +522,8 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 		}
 
 		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
-							&peb_index, NULL);
+							&peb_index, NULL,
+							&pos);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -537,7 +540,7 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 	if (has_data) {
 		ssdfs_peb_read_request_cno(pebc);
 
-		err = __ssdfs_peb_copy_page(pebc, desc_off, req);
+		err = __ssdfs_peb_copy_page(pebc, desc_off, &pos, req);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("unable to add block of another inode\n");
 			goto finish_copy_page;
@@ -598,6 +601,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_phys_offset_descriptor *desc_off = NULL;
+	struct ssdfs_offset_position pos = {0};
 	u16 peb_index;
 	int err = 0;
 
@@ -624,7 +628,8 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	table = pebc->parent_si->blk2off_table;
 
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
-						&peb_index, NULL);
+						&peb_index, NULL,
+						&pos);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -641,7 +646,8 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		}
 
 		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
-							&peb_index, NULL);
+							&peb_index, NULL,
+							&pos);
 	}
 
 	if (IS_ERR_OR_NULL(desc_off)) {
@@ -654,7 +660,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 
 	ssdfs_peb_read_request_cno(pebc);
 
-	err = __ssdfs_peb_copy_page(pebc, desc_off, req);
+	err = __ssdfs_peb_copy_page(pebc, desc_off, &pos, req);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("unable to copy the whole range: "
 			  "logical_blk %u, peb_index %u\n",

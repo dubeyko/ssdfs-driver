@@ -620,6 +620,103 @@ int ssdfs_define_prev_peb_migration_id(struct ssdfs_peb_info *pebi)
 }
 
 /*
+ * IS_SSDFS_BLK_STATE_OFFSET_INVALID() - check that block state offset invalid
+ * @desc: block state offset
+ */
+static inline
+bool IS_SSDFS_BLK_STATE_OFFSET_INVALID(struct ssdfs_blk_state_offset *desc)
+{
+	if (!desc)
+		return true;
+
+	if (le16_to_cpu(desc->log_start_page) == U16_MAX &&
+	    desc->log_area == U8_MAX &&
+	    desc->peb_migration_id == U8_MAX &&
+	    le32_to_cpu(desc->byte_offset) == U32_MAX)
+		return true;
+
+	return false;
+}
+
+/*
+ * SSDFS_BLK_DESC_INIT() - init block descriptor
+ * @blk_desc: block descriptor
+ */
+static inline
+void SSDFS_BLK_DESC_INIT(struct ssdfs_block_descriptor *blk_desc)
+{
+	if (!blk_desc) {
+		SSDFS_WARN("block descriptor pointer is NULL\n");
+		return;
+	}
+
+	memset(blk_desc, 0xFF, sizeof(struct ssdfs_block_descriptor));
+}
+
+/*
+ * IS_SSDFS_BLK_DESC_EXHAUSTED() - check that block descriptor is exhausted
+ * @blk_desc: block descriptor
+ */
+static inline
+bool IS_SSDFS_BLK_DESC_EXHAUSTED(struct ssdfs_block_descriptor *blk_desc)
+{
+	struct ssdfs_blk_state_offset *offset = NULL;
+
+	if (!blk_desc)
+		return true;
+
+	offset = &blk_desc->state[SSDFS_BLK_STATE_OFF_MAX - 1];
+
+	if (!IS_SSDFS_BLK_STATE_OFFSET_INVALID(offset))
+		return true;
+
+	return false;
+}
+
+static inline
+bool IS_SSDFS_BLK_DESC_READY_FOR_DIFF(struct ssdfs_block_descriptor *blk_desc)
+{
+	return !IS_SSDFS_BLK_STATE_OFFSET_INVALID(&blk_desc->state[0]);
+}
+
+static inline
+u8 SSDFS_GET_BLK_DESC_MIGRATION_ID(struct ssdfs_block_descriptor *blk_desc)
+{
+	if (IS_SSDFS_BLK_STATE_OFFSET_INVALID(&blk_desc->state[0]))
+		return U8_MAX;
+
+	return blk_desc->state[0].peb_migration_id;
+}
+
+static inline
+void DEBUG_BLOCK_DESCRIPTOR(u64 seg_id, u64 peb_id,
+			    struct ssdfs_block_descriptor *blk_desc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	int i;
+
+	SSDFS_DBG("seg_id %llu, peb_id %llu, ino %llu, "
+		  "logical_offset %u, peb_index %u, peb_page %u\n",
+		  seg_id, peb_id,
+		  le64_to_cpu(blk_desc->ino),
+		  le32_to_cpu(blk_desc->logical_offset),
+		  le16_to_cpu(blk_desc->peb_index),
+		  le16_to_cpu(blk_desc->peb_page));
+
+	for (i = 0; i < SSDFS_BLK_STATE_OFF_MAX; i++) {
+		SSDFS_DBG("BLK STATE OFFSET %d: "
+			  "log_start_page %u, log_area %#x, "
+			  "byte_offset %u, peb_migration_id %u\n",
+			  i,
+			  le16_to_cpu(blk_desc->state[i].log_start_page),
+			  blk_desc->state[i].log_area,
+			  le32_to_cpu(blk_desc->state[i].byte_offset),
+			  blk_desc->state[i].peb_migration_id);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
  * PEB object's API
  */
 int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
@@ -641,5 +738,7 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi);
 bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_peb_info *pebi);
+bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_peb_info *pebi);
 
 #endif /* _SSDFS_PEB_H */

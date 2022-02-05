@@ -1720,6 +1720,58 @@ SSDFS_PL_HDR_FNS(PARTIAL_LOG_HEADER_BIT, pl_has_partial_header)
 SSDFS_PL_HDR_FNS(PLH_INSTEAD_FOOTER_BIT, pl_header_instead_footer)
 
 /*
+ * struct ssdfs_diff_blob_header - diff blob header
+ * @magic: diff blob's magic
+ * @type: diff blob's type
+ * @desc_size: size of diff blob's descriptor in bytes
+ * @blob_size: size of diff blob in bytes
+ * @flags: diff blob's flags
+ */
+struct ssdfs_diff_blob_header {
+/* 0x0000 */
+	__le16 magic;
+	__le8 type;
+	__le8 desc_size;
+	__le16 blob_size;
+	__le16 flags;
+
+/* 0x0008 */
+} __packed;
+
+/* Diff blob flags */
+#define SSDFS_DIFF_BLOB_HAS_BTREE_NODE_HEADER	(1 << 0)
+#define SSDFS_DIFF_BLOB_FLAGS_MASK		(0x1)
+
+/*
+ * struct ssdfs_metadata_diff_blob_header - metadata diff blob header
+ * @diff: generic diff blob header
+ * @bits_count: count of bits in bitmap
+ * @item_start_bit: item starting bit in bitmap
+ * @index_start_bit: index starting bit in bitmap
+ * @item_size: size of item in bytes
+ */
+struct ssdfs_metadata_diff_blob_header {
+/* 0x0000 */
+	struct ssdfs_diff_blob_header diff;
+
+/* 0x0008 */
+	__le16 bits_count;
+	__le16 item_start_bit;
+	__le16 index_start_bit;
+	__le16 item_size;
+
+/* 0x0010 */
+} __packed;
+
+/* Diff blob types */
+enum {
+	SSDFS_UNKNOWN_DIFF_BLOB_TYPE,
+	SSDFS_BTREE_NODE_DIFF_BLOB,
+	SSDFS_USER_DATA_DIFF_BLOB,
+	SSDFS_DIFF_BLOB_TYPE_MAX
+};
+
+/*
  * struct ssdfs_fragments_chain_header - header of fragments' chain
  * @compr_bytes: size of the whole fragments' chain in compressed state
  * @uncompr_bytes: size of the whole fragments' chain in decompressed state
@@ -2124,7 +2176,7 @@ struct ssdfs_blk2off_table_header {
  * ----------------------------
  */
 
-#define SSDFS_BLK_STATE_OFF_MAX		5
+#define SSDFS_BLK_STATE_OFF_MAX		6
 
 /*
  * struct ssdfs_block_descriptor - block descriptor
@@ -2133,7 +2185,6 @@ struct ssdfs_blk2off_table_header {
  * @peb_index: PEB's index
  * @peb_page: PEB's page index
  * @state: array of fragment's offsets
- * @prev_desc: offset in bytes to previous descriptor
  */
 struct ssdfs_block_descriptor {
 /* 0x0000 */
@@ -2144,9 +2195,6 @@ struct ssdfs_block_descriptor {
 
 /* 0x0010 */
 	struct ssdfs_blk_state_offset state[SSDFS_BLK_STATE_OFF_MAX];
-
-/* 0x0038 */
-	struct ssdfs_blk_state_offset prev_desc;
 
 /* 0x0040 */
 } __packed;

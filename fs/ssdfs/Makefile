@@ -36,10 +36,13 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		xattr.o xattr_user.o xattr_trusted.o \
 		compression.o
 
-ssdfs-$(CONFIG_SSDFS_POSIX_ACL)		+= acl.o
-ssdfs-$(CONFIG_SSDFS_SECURITY)		+= xattr_security.o
-ssdfs-$(CONFIG_SSDFS_ZLIB)		+= compr_zlib.o
-ssdfs-$(CONFIG_SSDFS_LZO)		+= compr_lzo.o
-ssdfs-$(CONFIG_SSDFS_MTD_DEVICE)	+= dev_mtd.o
-ssdfs-$(CONFIG_SSDFS_BLOCK_DEVICE)	+= dev_bdev.o
-ssdfs-$(CONFIG_SSDFS_TESTING)		+= testing.o
+ssdfs-$(CONFIG_SSDFS_POSIX_ACL)			+= acl.o
+ssdfs-$(CONFIG_SSDFS_SECURITY)			+= xattr_security.o
+ssdfs-$(CONFIG_SSDFS_ZLIB)			+= compr_zlib.o
+ssdfs-$(CONFIG_SSDFS_LZO)			+= compr_lzo.o
+ssdfs-$(CONFIG_SSDFS_MTD_DEVICE)		+= dev_mtd.o
+ssdfs-$(CONFIG_SSDFS_BLOCK_DEVICE)		+= dev_bdev.o
+ssdfs-$(CONFIG_SSDFS_TESTING)			+= testing.o
+ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE)		+= diff_on_write.o
+ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_METADATA)	+= diff_on_write_metadata.o
+ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA)	+= diff_on_write_user_data.o

@@ -98,6 +98,7 @@ enum {
  * @peb_index: PEB's index
  * @sequence_id: sequence ID of physical offset table's fragment
  * @offset_index: offset index inside of fragment
+ * @blk_desc: logical block descriptor
  */
 struct ssdfs_offset_position {
 	u64 cno;
@@ -105,6 +106,8 @@ struct ssdfs_offset_position {
 	u16 peb_index;
 	u16 sequence_id;
 	u16 offset_index;
+
+	struct ssdfs_block_descriptor blk_desc;
 };
 
 /*
@@ -285,7 +288,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 			   int state);
 void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table);
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
-				     struct pagevec *source,
+				     struct pagevec *blk2off_pvec,
+				     struct pagevec *blk2_desc_pvec,
 				     u16 peb_index,
 				     u64 cno);
 int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
@@ -340,7 +344,8 @@ int ssdfs_blk2off_table_get_offset_position(struct ssdfs_blk2off_table *table,
 struct ssdfs_phys_offset_descriptor *
 ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 			    u16 logical_blk, u16 *peb_index,
-			    int *migration_state);
+			    int *migration_state,
+			    struct ssdfs_offset_position *pos);
 int ssdfs_blk2off_table_allocate_block(struct ssdfs_blk2off_table *table,
 					u16 *logical_blk);
 int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
@@ -349,6 +354,7 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 				      u16 logical_blk,
 				      u16 peb_index,
+				      struct ssdfs_block_descriptor *blk_desc,
 				      struct ssdfs_phys_offset_descriptor *off);
 int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
 				   u16 peb_index, u16 logical_blk);
@@ -372,9 +378,6 @@ int ssdfs_blk2off_table_set_block_commit(struct ssdfs_blk2off_table *table,
 					 u16 peb_index);
 int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 						u16 peb_index);
-int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
-				 u32 offset, u32 size,
-				 void *buf);
 
 #ifdef CONFIG_SSDFS_TESTING
 int ssdfs_blk2off_table_fragment_set_clean(struct ssdfs_blk2off_table *table,

@@ -12032,9 +12032,12 @@ int ssdfs_extents_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
+	down_read(&node->full_lock);
 	err = __ssdfs_btree_node_extract_range(node, start_index, count,
 						sizeof(struct ssdfs_raw_fork),
 						search);
+	up_read(&node->full_lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to extract a range: "
 			  "start %u, count %u, err %d\n",

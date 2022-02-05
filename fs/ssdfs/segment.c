@@ -1235,6 +1235,7 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 	wait_queue_head_t *wait;
 	u16 peb_index = U16_MAX;
 	u16 logical_blk;
+	struct ssdfs_offset_position pos = {0};
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1252,7 +1253,7 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 	logical_blk = req->place.start.blk_index;
 
 	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
-						&peb_index, NULL);
+						&peb_index, NULL, &pos);
 	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -1268,7 +1269,8 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 		}
 
 		po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
-							&peb_index, NULL);
+							&peb_index, NULL,
+							&pos);
 	}
 
 	if (IS_ERR_OR_NULL(po_desc)) {
@@ -3292,6 +3294,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_requests_queue *rq;
 	wait_queue_head_t *wait;
+	struct ssdfs_offset_position pos = {0};
 	u16 peb_index = U16_MAX;
 	u16 logical_blk;
 	u16 len;
@@ -3323,7 +3326,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	len = req->place.len;
 
 	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
-						&peb_index, NULL);
+						&peb_index, NULL, &pos);
 	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 		struct completion *end;
 		unsigned long res;
@@ -3339,7 +3342,8 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 		}
 
 		po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
-							&peb_index, NULL);
+							&peb_index, NULL,
+							&pos);
 	}
 
 	if (IS_ERR_OR_NULL(po_desc)) {
@@ -3511,6 +3515,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	wait_queue_head_t *wait;
 	u16 blk, len;
 	u16 peb_index = U16_MAX;
+	struct ssdfs_offset_position pos = {0};
 	int i;
 	int err = 0;
 
@@ -3552,7 +3557,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 
 		po_desc = ssdfs_blk2off_table_convert(table, blk + i,
 							&cur_peb_index,
-							NULL);
+							NULL, &pos);
 		if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 			struct completion *end;
 			unsigned long res;
@@ -3569,7 +3574,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 
 			po_desc = ssdfs_blk2off_table_convert(table, blk + i,
 								&cur_peb_index,
-								NULL);
+								NULL, &pos);
 		}
 
 		if (IS_ERR_OR_NULL(po_desc)) {
@@ -3905,6 +3910,180 @@ int ssdfs_segment_update_pre_alloc_extent_async(struct ssdfs_segment_info *si,
 	ssdfs_request_define_segment(si->seg_id, req);
 
 	return __ssdfs_segment_update_extent(si, req);
+}
+
+/*
+ * ssdfs_segment_node_diff_on_write_sync() - Diff-On-Write btree node
+ * @si: segment info
+ * @req: segment request [in|out]
+ *
+ * This function tries to execute Diff-On-Write operation
+ * on btree node synchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_node_diff_on_write_sync(struct ssdfs_segment_info *si,
+					  struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_DIFF_ON_WRITE_REQ,
+					    SSDFS_BTREE_NODE_DIFF,
+					    SSDFS_REQ_SYNC,
+					    req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_update_extent(si, req);
+}
+
+/*
+ * ssdfs_segment_node_diff_on_write_async() - Diff-On-Write btree node
+ * @si: segment info
+ * @req_type: request type
+ * @req: segment request [in|out]
+ *
+ * This function tries to execute Diff-On-Write operation
+ * on btree node asynchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_node_diff_on_write_async(struct ssdfs_segment_info *si,
+					   int req_type,
+					   struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_DIFF_ON_WRITE_REQ,
+					    SSDFS_BTREE_NODE_DIFF,
+					    req_type, req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_update_extent(si, req);
+}
+
+/*
+ * ssdfs_segment_data_diff_on_write_sync() - Diff-On-Write user data
+ * @si: segment info
+ * @req: segment request [in|out]
+ *
+ * This function tries to execute Diff-On-Write operation
+ * on user data synchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_data_diff_on_write_sync(struct ssdfs_segment_info *si,
+					  struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_DIFF_ON_WRITE_REQ,
+					    SSDFS_USER_DATA_DIFF,
+					    SSDFS_REQ_SYNC,
+					    req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_update_block(si, req);
+}
+
+/*
+ * ssdfs_segment_data_diff_on_write_async() - Diff-On-Write user data
+ * @si: segment info
+ * @req_type: request type
+ * @req: segment request [in|out]
+ *
+ * This function tries to execute Diff-On-Write operation
+ * on user data asynchronously.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_data_diff_on_write_async(struct ssdfs_segment_info *si,
+					   int req_type,
+					   struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_DIFF_ON_WRITE_REQ,
+					    SSDFS_USER_DATA_DIFF,
+					    req_type, req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	return __ssdfs_segment_update_block(si, req);
 }
 
 /*
@@ -4258,6 +4437,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 	u32 blk;
 	u32 upper_blk = start_off + blks_count;
 	struct completion *init_end;
+	struct ssdfs_offset_position pos = {0};
 	unsigned long res;
 	int err = 0;
 
@@ -4294,7 +4474,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		off_desc = ssdfs_blk2off_table_convert(blk2off_tbl,
 							(u16)blk,
 							&peb_index,
-							NULL);
+							NULL, &pos);
 		if (PTR_ERR(off_desc) == -EAGAIN) {
 			init_end = &blk2off_tbl->full_init_end;
 
@@ -4310,7 +4490,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			off_desc = ssdfs_blk2off_table_convert(blk2off_tbl,
 								(u16)blk,
 								&peb_index,
-								NULL);
+								NULL,
+								&pos);
 		}
 
 		if (IS_ERR_OR_NULL(off_desc)) {

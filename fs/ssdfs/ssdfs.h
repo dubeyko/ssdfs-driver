@@ -55,9 +55,20 @@ struct ssdfs_min_max_pair {
 	struct ssdfs_value_pair max;
 };
 
+/*
+ * struct ssdfs_block_bmap_range - block bitmap items range
+ * @start: begin item
+ * @len: count of items in the range
+ */
+struct ssdfs_block_bmap_range {
+	u32 start;
+	u32 len;
+};
+
 struct ssdfs_peb_info;
 struct ssdfs_peb_container;
 struct ssdfs_segment_info;
+struct ssdfs_peb_blk_bmap;
 
 /* btree_node.c */
 void ssdfs_zero_btree_node_obj_cache_ptr(void);
@@ -172,6 +183,10 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc);
 bool has_ssdfs_source_peb_valid_blocks(struct ssdfs_peb_container *pebc);
 int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 				      u32 range_len, int blk_type);
+int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
+					 struct ssdfs_peb_container *pebc,
+					 struct ssdfs_peb_blk_bmap *peb_blkbmap,
+					 struct ssdfs_block_bmap_range *range);
 
 /* readwrite.c */
 int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
@@ -186,6 +201,12 @@ int ssdfs_unaligned_read_buffer(struct ssdfs_fs_info *fsi,
 				void *buf, size_t size);
 int ssdfs_can_write_sb_log(struct super_block *sb,
 			   struct ssdfs_peb_extent *sb_log);
+int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
+				 u32 offset, u32 size,
+				 void *buf);
+int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
+				  u32 offset, u32 size,
+				  void *buf);
 
 /* recovery.c */
 int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,

@@ -103,8 +103,23 @@ config SSDFS_DIFF_ON_WRITE
 	bool "SSDFS Diff-On-Write support"
 	depends on SSDFS
 	help
-	  This option enables delta-encoding support for user data and
-	  metadata.
+	  This option enables delta-encoding support.
+
+	  If unsure, say N.
+
+config SSDFS_DIFF_ON_WRITE_METADATA
+	bool "SSDFS Diff-On-Write support (metadata case)"
+	depends on SSDFS_DIFF_ON_WRITE
+	help
+	  This option enables delta-encoding support for metadata.
+
+	  If unsure, say N.
+
+config SSDFS_DIFF_ON_WRITE_USER_DATA
+	bool "SSDFS Diff-On-Write support (user data case)"
+	depends on SSDFS_DIFF_ON_WRITE
+	help
+	  This option enables delta-encoding support for user data.
 
 	  If unsure, say N.
 

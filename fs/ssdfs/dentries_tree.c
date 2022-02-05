@@ -4191,10 +4191,10 @@ int ssdfs_dentries_tree_extract_range(struct ssdfs_dentries_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, start_index %u, count %u, search %p\n",
 		  tree, start_index, count, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_DENTRIES_BTREE_CREATED:
@@ -5113,6 +5113,14 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 
 	kaddr = kmap(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("PAGE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	hdr = (struct ssdfs_dentries_btree_node_header *)kaddr;
 
 	if (!is_csum_valid(&hdr->node.check, hdr, hdr_size)) {
@@ -5359,6 +5367,15 @@ finish_header_init:
 
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
 	node->bmap_array.bmap_bytes = bmap_bytes;
+
+	SSDFS_DBG("index_capacity %u, index_area_size %u, "
+		  "index_size %u\n",
+		  index_capacity, index_area_size, index_size);
+	SSDFS_DBG("index_start_bit %lu, item_start_bit %lu, "
+		  "bits_count %lu\n",
+		  node->bmap_array.index_start_bit,
+		  node->bmap_array.item_start_bit,
+		  node->bmap_array.bits_count);
 
 	ssdfs_btree_node_init_bmaps(node, addr);
 
@@ -9063,6 +9080,11 @@ finish_detect_affected_items:
 	}
 
 	if (dentries_count != 0) {
+		SSDFS_DBG("set items range as dirty: "
+			  "node_id %u, start %u, count %u\n",
+			  node->node_id, item_index,
+			  old_dentries_count - item_index);
+
 		err = ssdfs_set_dirty_items_range(node,
 					items_area.items_capacity,
 					item_index,
@@ -9314,9 +9336,12 @@ int ssdfs_dentries_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  search->node.child);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	down_read(&node->full_lock);
 	err = __ssdfs_btree_node_extract_range(node, start_index, count,
 						sizeof(struct ssdfs_dir_entry),
 						search);
+	up_read(&node->full_lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to extract a range: "
 			  "start %u, count %u, err %d\n",

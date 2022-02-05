@@ -2191,7 +2191,14 @@ try_regular_write:
 		start_blk = pos >> fsi->log_pagesize;
 		end_blk = (pos + len) >> fsi->log_pagesize;
 
-		if (i_size_read(inode) > 0) {
+		if (can_file_be_inline(inode, i_size_read(inode))) {
+			SSDFS_DBG("change from inline to regular file: "
+				  "old_size %llu, new_size %llu\n",
+				  (u64)i_size_read(inode),
+				  (u64)(pos + len));
+
+			last_blk = U64_MAX;
+		} else if (i_size_read(inode) > 0) {
 			last_blk = (i_size_read(inode) - 1) >>
 						fsi->log_pagesize;
 		}

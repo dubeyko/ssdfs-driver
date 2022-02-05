@@ -184,6 +184,13 @@ struct ssdfs_btree_node_content {
 	struct pagevec pvec;
 };
 
+union ssdfs_aggregated_btree_node_header {
+	struct ssdfs_inodes_btree_node_header inodes_header;
+	struct ssdfs_dentries_btree_node_header dentries_header;
+	struct ssdfs_extents_btree_node_header extents_header;
+	struct ssdfs_xattrs_btree_node_header xattrs_header;
+};
+
 /*
  * struct ssdfs_btree_node - btree node
  * @height: node's height
@@ -737,6 +744,9 @@ int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 				   size_t item_size,
 				   u16 start_index,
 				   unsigned int range_len);
+int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
+					struct page *page,
+					u32 *write_offset);
 
 void ssdfs_show_btree_node_info(struct ssdfs_btree_node *node);
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);

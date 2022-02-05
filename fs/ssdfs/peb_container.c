@@ -3433,6 +3433,96 @@ void ssdfs_unlock_current_peb(struct ssdfs_peb_container *pebc)
 }
 
 /*
+ * ssdfs_get_peb_for_migration_id() - get PEB object for migration ID
+ * @pebc: pointer on PEB container
+ */
+struct ssdfs_peb_info *
+ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
+			       u8 migration_id)
+{
+	struct ssdfs_peb_info *pebi = NULL;
+	int known_migration_id;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_NOT_MIGRATING:
+		pebi = pebc->src_peb;
+		if (!pebi) {
+			err = -ERANGE;
+			SSDFS_WARN("source PEB is NULL\n");
+			goto fail_to_get_peb;
+		}
+
+		known_migration_id = ssdfs_get_peb_migration_id(pebi);
+
+		if (migration_id != known_migration_id) {
+			err = -ERANGE;
+			SSDFS_WARN("migration_id %u != known_migration_id %d\n",
+				   migration_id, known_migration_id);
+			goto fail_to_get_peb;
+		}
+		break;
+
+	case SSDFS_PEB_UNDER_MIGRATION:
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
+		pebi = pebc->src_peb;
+		if (!pebi) {
+			err = -ERANGE;
+			SSDFS_WARN("source PEB is NULL\n");
+			goto fail_to_get_peb;
+		}
+
+		known_migration_id = ssdfs_get_peb_migration_id(pebi);
+
+		if (migration_id != known_migration_id) {
+			pebi = pebc->dst_peb;
+			if (!pebi) {
+				err = -ERANGE;
+				SSDFS_WARN("destination PEB is NULL\n");
+				goto fail_to_get_peb;
+			}
+
+			known_migration_id = ssdfs_get_peb_migration_id(pebi);
+
+			if (migration_id != known_migration_id) {
+				err = -ERANGE;
+				SSDFS_WARN("fail to find PEB: "
+					   "migration_id %u, "
+					   "known_migration_id %d\n",
+					   migration_id, known_migration_id);
+				goto fail_to_get_peb;
+			}
+		}
+		break;
+
+	default:
+		SSDFS_WARN("invalid state: %#x\n",
+			   atomic_read(&pebc->migration_state));
+		return ERR_PTR(-ERANGE);
+	}
+
+	SSDFS_DBG("seg %llu, peb %llu, migration_state %#x, "
+		  "migration_phase %#x, migration_id %u\n",
+		  pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  atomic_read(&pebc->migration_state),
+		  atomic_read(&pebc->migration_phase),
+		  migration_id);
+
+	return pebi;
+
+fail_to_get_peb:
+	return ERR_PTR(err);
+}
+
+/*
  * ssdfs_peb_get_free_pages() - get PEB's free pages count
  * @ptr: pointer on PEB container
  */

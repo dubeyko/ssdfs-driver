@@ -20,6 +20,11 @@
 #ifndef _SSDFS_DIFF_ON_WRITE_H
 #define _SSDFS_DIFF_ON_WRITE_H
 
+#define SSDFS_DIFF_ON_WRITE_PCT_THRESHOLD	(25)
+
+#define SSDFS_DIRTY_ITEM	(0x1)
+#define SSDFS_DIRTY_ITEM_MASK	(0x1)
+
 /*
  * The struct page has union with field "private" and related fields.
  * It is possible to use this field with PG_private flag.
@@ -38,6 +43,8 @@
 
 #ifdef CONFIG_SSDFS_DIFF_ON_WRITE
 
+bool can_diff_on_write_metadata_be_used(struct ssdfs_btree_node *node);
+
 /* TODO: freeze memory page state */
 int ssdfs_dow_freeze_page_state(struct page *page);
 
@@ -48,6 +55,12 @@ int ssdfs_dow_extract_delta(struct page *page, struct page *delta);
 int ssdfs_dow_forget_page_state(struct page *page);
 
 #else
+static inline
+bool can_diff_on_write_metadata_be_used(struct ssdfs_btree_node *node)
+{
+	return false;
+}
+
 static inline
 int ssdfs_dow_freeze_page_state(struct page *page)
 {
@@ -66,5 +79,51 @@ int ssdfs_dow_forget_page_state(struct page *page)
 	return 0;
 }
 #endif /* CONFIG_SSDFS_DIFF_ON_WRITE */
+
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_METADATA
+int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node);
+int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
+				 struct ssdfs_segment_request *req);
+#else
+static inline
+int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
+{
+	SSDFS_ERR("Diff-On-Write (metadata case) is not supported. "
+		  "Please, enable CONFIG_SSDFS_DIFF_ON_WRITE_METADATA option.\n");
+	return -EOPNOTSUPP;
+}
+static inline
+int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
+				 struct ssdfs_segment_request *req)
+{
+	if (pagevec_count(&req->result.diffs) > 0) {
+		ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+			__FILE__, __func__, __LINE__,
+			"Diff-On-Write (metadata case) is not supported. "
+			"Please, enable CONFIG_SSDFS_DIFF_ON_WRITE_METADATA option.\n");
+		return -EOPNOTSUPP;
+	} else
+		return 0;
+}
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_METADATA */
+
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
+int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
+				 struct ssdfs_segment_request *req);
+#else
+static inline
+int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req)
+{
+	if (pagevec_count(&req->result.diffs) > 0) {
+		ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+			__FILE__, __func__, __LINE__,
+			"Diff-On-Write (user data case) is not supported. "
+			"Please, enable CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA option.\n");
+		return -EOPNOTSUPP;
+	} else
+		return 0;
+}
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
 
 #endif /* _SSDFS_DIFF_ON_WRITE_H */

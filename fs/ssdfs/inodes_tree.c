@@ -2118,7 +2118,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	u32 items_count = 0;
 	u8 index_size;
 	u16 items_capacity;
-	u32 index_area_size;
+	u32 index_area_size = 0;
 	u16 index_capacity = 0;
 	u16 inodes_count;
 	u16 valid_inodes;
@@ -2167,6 +2167,14 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	kaddr = kmap(page);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("PAGE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr = (struct ssdfs_inodes_btree_node_header *)kaddr;
 
@@ -2383,6 +2391,15 @@ finish_header_init:
 		BUG();
 
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
+
+	SSDFS_DBG("index_capacity %u, index_area_size %u, "
+		  "index_size %u\n",
+		  index_capacity, index_area_size, index_size);
+	SSDFS_DBG("index_start_bit %lu, item_start_bit %lu, "
+		  "bits_count %lu\n",
+		  node->bmap_array.index_start_bit,
+		  node->bmap_array.item_start_bit,
+		  node->bmap_array.bits_count);
 
 	ssdfs_btree_node_init_bmaps(node, addr);
 
@@ -4753,8 +4770,15 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 		goto finish_delete_range;
 	}
 
-	ssdfs_clear_dirty_items_range_state(node, item_index,
-					    search->result.count);
+	err = ssdfs_set_dirty_items_range(node, items_capacity,
+					  item_index,
+					  search->result.count);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set items range as dirty: "
+			  "start %u, count %u, err %d\n",
+			  item_index, search->result.count, err);
+		goto finish_delete_range;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.count == 0 || search->result.count >= U16_MAX);
@@ -5056,9 +5080,12 @@ int ssdfs_inodes_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
+	down_read(&node->full_lock);
 	err = __ssdfs_btree_node_extract_range(node, start_index, count,
 						sizeof(struct ssdfs_inode),
 						search);
+	up_read(&node->full_lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to extract a range: "
 			  "start %u, count %u, err %d\n",

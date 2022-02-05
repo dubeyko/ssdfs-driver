@@ -1654,8 +1654,6 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 		if (has_backup)
 			ssdfs_segbmap_replicate_fragment(req1, 0, req2);
 
-		i++;
-
 		offset = (u64)start_fragment + i;
 		offset *= fragment_size;
 		size = fragment_size;
@@ -1712,6 +1710,8 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 				  seg_index, err);
 			goto fail_issue_fragment_updates;
 		}
+
+		i++;
 	} while (i < BITS_PER_LONG);
 
 	return 0;

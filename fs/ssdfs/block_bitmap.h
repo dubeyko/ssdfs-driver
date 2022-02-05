@@ -189,16 +189,6 @@ struct ssdfs_block_bmap {
 };
 
 /*
- * struct ssdfs_block_bmap_range - block bitmap items range
- * @start: begin item
- * @len: count of items in the range
- */
-struct ssdfs_block_bmap_range {
-	u32 start;
-	u32 len;
-};
-
-/*
  * compare_block_bmap_ranges() - compare two ranges
  * @range1: left range
  * @range2: right range

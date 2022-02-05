@@ -855,12 +855,12 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	BUG_ON(!pebc || !range);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
 	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_migration_id %u, "
 		  "range (start %u, len %u)\n",
 		  bmap->parent_si->seg_id, pebc->peb_index,
 		  peb_migration_id, range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 

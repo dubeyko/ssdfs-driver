@@ -228,6 +228,9 @@ bool is_peb_joined_into_create_requests_queue(struct ssdfs_peb_container *pebc);
 struct ssdfs_peb_info *
 ssdfs_get_current_peb_locked(struct ssdfs_peb_container *pebc);
 void ssdfs_unlock_current_peb(struct ssdfs_peb_container *pebc);
+struct ssdfs_peb_info *
+ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
+			       u8 migration_id);
 
 int ssdfs_peb_container_create_destination(struct ssdfs_peb_container *ptr);
 int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *pebc);
@@ -263,12 +266,11 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 				struct ssdfs_metadata_descriptor *area_desc,
 				struct ssdfs_block_state_descriptor *desc,
 				u64 *cno, u64 *parent_snapshot);
-int ssdfs_peb_read_block_state(struct ssdfs_peb_info *pebi,
+int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 				struct ssdfs_segment_request *req,
+				struct ssdfs_offset_position *pos,
 				struct ssdfs_metadata_descriptor *array,
-				size_t array_size,
-				struct ssdfs_block_descriptor *blk_desc,
-				int blk_state_index);
+				size_t array_size);
 bool ssdfs_peb_has_dirty_pages(struct ssdfs_peb_info *pebi);
 int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi);
 

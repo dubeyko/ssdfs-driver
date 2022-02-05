@@ -292,8 +292,13 @@ bool is_request_command_valid(int class, int cmd)
 				cmd < SSDFS_UPDATE_CMD_MAX;
 		break;
 
-	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+	case SSDFS_PEB_DIFF_ON_WRITE_REQ:
 		is_valid = cmd > SSDFS_UPDATE_CMD_MAX &&
+				cmd < SSDFS_DIFF_ON_WRITE_MAX;
+		break;
+
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		is_valid = cmd > SSDFS_DIFF_ON_WRITE_MAX &&
 				cmd < SSDFS_COLLECT_GARBAGE_CMD_MAX;
 		break;
 
@@ -537,6 +542,7 @@ void ssdfs_request_init(struct ssdfs_segment_request *req)
 	atomic_set(&req->private.refs_count, 0);
 	init_waitqueue_head(&req->private.wait_queue);
 	pagevec_init(&req->result.pvec);
+	pagevec_init(&req->result.diffs);
 	atomic_set(&req->result.state, SSDFS_REQ_CREATED);
 	init_completion(&req->result.wait);
 	req->result.err = 0;
@@ -593,6 +599,27 @@ int ssdfs_request_add_page(struct page *page,
 }
 
 /*
+ * ssdfs_request_add_diff_page() - add diff page into segment request
+ * @page: memory page
+ * @req: segment request [out]
+ */
+int ssdfs_request_add_diff_page(struct page *page,
+				struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_space(&req->result.diffs) == 0) {
+		SSDFS_WARN("request's pagevec is full\n");
+		return -E2BIG;
+	}
+
+	pagevec_add(&req->result.diffs, page);
+	return 0;
+}
+
+/*
  * ssdfs_request_allocate_and_add_page() - allocate and add page into request
  * @req: segment request [out]
  */
@@ -626,6 +653,149 @@ ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req)
 }
 
 /*
+ * ssdfs_request_allocate_and_add_diff_page() - allocate and add diff page
+ * @req: segment request [out]
+ */
+struct page *
+ssdfs_request_allocate_and_add_diff_page(struct ssdfs_segment_request *req)
+{
+	struct page *page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("pagevec count %d\n",
+		  pagevec_count(&req->result.diffs));
+
+	if (pagevec_space(&req->result.diffs) == 0) {
+		SSDFS_WARN("request's pagevec is full\n");
+		return ERR_PTR(-E2BIG);
+	}
+
+	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+		SSDFS_ERR("unable to allocate memory page\n");
+		return ERR_PTR(err);
+	}
+
+	pagevec_add(&req->result.diffs, page);
+	return page;
+}
+
+/*
+ * ssdfs_request_allocate_locked_page() - allocate and add locked page
+ * @req: segment request [out]
+ * @page_index: index of the page
+ */
+struct page *
+ssdfs_request_allocate_locked_page(struct ssdfs_segment_request *req,
+				   int page_index)
+{
+	struct page *page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("pagevec count %d\n",
+		  pagevec_count(&req->result.pvec));
+
+	if (pagevec_space(&req->result.pvec) == 0) {
+		SSDFS_WARN("request's pagevec is full\n");
+		return ERR_PTR(-E2BIG);
+	}
+
+	if (page_index >= PAGEVEC_SIZE) {
+		SSDFS_ERR("invalid page index %d\n",
+			  page_index);
+		return ERR_PTR(-EINVAL);
+	}
+
+	page = req->result.pvec.pages[page_index];
+
+	if (page) {
+		SSDFS_ERR("page already exists: index %d\n",
+			  page_index);
+		return ERR_PTR(-EINVAL);
+	}
+
+	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+		SSDFS_ERR("unable to allocate memory page\n");
+		return ERR_PTR(err);
+	}
+
+	req->result.pvec.pages[page_index] = page;
+
+	if ((page_index + 1) > req->result.pvec.nr)
+		req->result.pvec.nr = page_index + 1;
+
+	ssdfs_lock_page(page);
+
+	return page;
+}
+
+/*
+ * ssdfs_request_allocate_locked_diff_page() - allocate locked diff page
+ * @req: segment request [out]
+ * @page_index: index of the page
+ */
+struct page *
+ssdfs_request_allocate_locked_diff_page(struct ssdfs_segment_request *req,
+					int page_index)
+{
+	struct page *page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("pagevec count %d\n",
+		  pagevec_count(&req->result.diffs));
+
+	if (pagevec_space(&req->result.diffs) == 0) {
+		SSDFS_WARN("request's pagevec is full\n");
+		return ERR_PTR(-E2BIG);
+	}
+
+	if (page_index >= PAGEVEC_SIZE) {
+		SSDFS_ERR("invalid page index %d\n",
+			  page_index);
+		return ERR_PTR(-EINVAL);
+	}
+
+	page = req->result.diffs.pages[page_index];
+
+	if (page) {
+		SSDFS_ERR("page already exists: index %d\n",
+			  page_index);
+		return ERR_PTR(-EINVAL);
+	}
+
+	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+		SSDFS_ERR("unable to allocate memory page\n");
+		return ERR_PTR(err);
+	}
+
+	req->result.diffs.pages[page_index] = page;
+
+	if ((page_index + 1) > req->result.diffs.nr)
+		req->result.diffs.nr = page_index + 1;
+
+	ssdfs_lock_page(page);
+
+	return page;
+}
+
+/*
  * ssdfs_request_add_allocated_page_locked() - allocate, add and lock page
  * @req: segment request [out]
  */
@@ -639,6 +809,31 @@ int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_request_allocate_and_add_page(req);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+		SSDFS_ERR("fail to allocate page: err %d\n",
+			  err);
+		return err;
+	}
+
+	ssdfs_lock_page(page);
+	return 0;
+}
+
+/*
+ * ssdfs_request_add_allocated_diff_locked() - allocate, add and lock page
+ * @req: segment request [out]
+ */
+int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req)
+{
+	struct page *page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	page = ssdfs_request_allocate_and_add_diff_page(req);
 	if (IS_ERR_OR_NULL(page)) {
 		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
 		SSDFS_ERR("fail to allocate page: err %d\n",
@@ -676,8 +871,53 @@ void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req)
 		ssdfs_unlock_page(page);
 	}
 
+	count = pagevec_count(&req->result.diffs);
+
+	for (i = 0; i < count; i++) {
+		struct page *page = req->result.diffs.pages[i];
+
+		if (!page) {
+			SSDFS_DBG("page %d is NULL\n", i);
+			continue;
+		}
+
+		ssdfs_unlock_page(page);
+	}
+
 	ssdfs_req_queue_pagevec_release(&req->result.pvec);
 	pagevec_reinit(&req->result.pvec);
+	ssdfs_req_queue_pagevec_release(&req->result.diffs);
+	pagevec_reinit(&req->result.diffs);
+}
+
+/*
+ * ssdfs_request_unlock_and_remove_diffs() - unlock and remove diffs
+ * @req: segment request [out]
+ */
+void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req)
+{
+	unsigned count;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	count = pagevec_count(&req->result.diffs);
+
+	for (i = 0; i < count; i++) {
+		struct page *page = req->result.diffs.pages[i];
+
+		if (!page) {
+			SSDFS_DBG("page %d is NULL\n", i);
+			continue;
+		}
+
+		ssdfs_unlock_page(page);
+	}
+
+	ssdfs_req_queue_pagevec_release(&req->result.diffs);
+	pagevec_reinit(&req->result.diffs);
 }
 
 /*
@@ -725,7 +965,7 @@ void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
 		struct page *page = req->result.pvec.pages[i];
 
 		if (!page) {
-			SSDFS_WARN("page %d is NULL\n", i);
+			SSDFS_DBG("page %d is NULL\n", i);
 			continue;
 		}
 
