@@ -34,6 +34,7 @@
 #include "shared_dictionary.h"
 #include "xattr_tree.h"
 #include "shared_extents_tree.h"
+#include "snapshots_tree.h"
 #include "testing.h"
 
 static
@@ -1250,10 +1251,23 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 	}
 
 	for (logical_blk = 0; logical_blk < capacity; logical_blk++) {
+		struct ssdfs_block_descriptor blk_desc;
 		struct ssdfs_phys_offset_descriptor blk_desc_off;
 
 		SSDFS_ERR("CHANGE OFFSET: logical_blk %u, capacity %u\n",
 			  logical_blk, capacity);
+
+		SSDFS_BLK_DESC_INIT(&blk_desc);
+
+		blk_desc.ino = cpu_to_le64(0);
+		blk_desc.logical_offset = cpu_to_le32((u32)logical_blk);
+		blk_desc.peb_index = cpu_to_le16(0);
+		blk_desc.peb_page = cpu_to_le16(0);
+
+		blk_desc.state[0].log_start_page = cpu_to_le16(0);
+		blk_desc.state[0].log_area = 0;
+		blk_desc.state[0].byte_offset = cpu_to_le32(0);
+		blk_desc.state[0].peb_migration_id = 0;
 
 		blk_desc_off.page_desc.logical_offset =
 					cpu_to_le32(logical_blk);
@@ -1272,6 +1286,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 		err = ssdfs_blk2off_table_change_offset(blk2off_tbl,
 							logical_blk,
 							0,
+							&blk_desc,
 							&blk_desc_off);
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->full_init_end;
@@ -1288,6 +1303,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 			err = ssdfs_blk2off_table_change_offset(blk2off_tbl,
 								logical_blk,
 								0,
+								&blk_desc,
 								&blk_desc_off);
 		}
 
@@ -1301,6 +1317,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 
 	for (logical_blk = 0; logical_blk < capacity; logical_blk++) {
 		struct ssdfs_phys_offset_descriptor *ptr;
+		struct ssdfs_offset_position pos = {0};
 		u16 peb_index;
 		int migration_state;
 		u32 logical_offset;
@@ -1318,7 +1335,8 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 		ptr = ssdfs_blk2off_table_convert(blk2off_tbl,
 						  logical_blk,
 						  &peb_index,
-						  &migration_state);
+						  &migration_state,
+						  &pos);
 		if (IS_ERR(ptr) && PTR_ERR(ptr) == -EAGAIN) {
 			end = &blk2off_tbl->full_init_end;
 
@@ -1334,7 +1352,8 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 			ptr = ssdfs_blk2off_table_convert(blk2off_tbl,
 							  logical_blk,
 							  &peb_index,
-							  &migration_state);
+							  &migration_state,
+							  &pos);
 		}
 
 		if (IS_ERR_OR_NULL(ptr)) {
@@ -3491,6 +3510,575 @@ int ssdfs_do_shextree_testing(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
+static
+int ssdfs_testing_snapshots_tree_add(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_testing_environment *env,
+				     u64 id)
+{
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_snapshot_request *snr = NULL;
+	struct ssdfs_btree_search *search;
+	__le64 uuid_value = cpu_to_le64(id);
+	int err = 0;
+
+	tree = fsi->snapshots.tree;
+
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
+		return -ENOMEM;
+	}
+
+	snr->operation = SSDFS_CREATE_SNAPSHOT;
+	snr->ino = id;
+
+	ssdfs_memcpy(snr->info.uuid,
+		     0, SSDFS_UUID_SIZE,
+		     &uuid_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+
+	snr->info.mode = SSDFS_READ_ONLY_SNAPSHOT;
+	snr->info.type = SSDFS_ONE_TIME_SNAPSHOT;
+	snr->info.expiration = SSDFS_NEVER_EXPIRED;
+	snr->info.frequency = SSDFS_HOUR_FREQUENCY;
+	snr->info.snapshots_threshold = 1;
+
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
+		  "frequency %#x, snapshots_threshold %u, "
+		  "TIME_RANGE (day %u, month %u, year %u)\n",
+		  snr->info.mode, snr->info.type, snr->info.expiration,
+		  snr->info.frequency, snr->info.snapshots_threshold,
+		  snr->info.time_range.day,
+		  snr->info.time_range.month,
+		  snr->info.time_range.year);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_create_snapshot;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_add(tree, snr, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create snapshot: "
+			  "id %llu, err %d\n",
+			  id, err);
+		goto finish_create_snapshot;
+	}
+
+finish_create_snapshot:
+	if (snr)
+		ssdfs_snapshot_request_free(snr);
+
+	return err;
+}
+
+static
+int ssdfs_testing_snapshots_tree_check(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					u64 create_time,
+					u64 id)
+{
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_btree_search *search;
+	struct ssdfs_snapshot_id snapshot_id = {0};
+	u8 uuid[SSDFS_UUID_SIZE];
+	__le64 uuid_value = cpu_to_le64(id);
+	int err = 0;
+
+	tree = fsi->snapshots.tree;
+
+	ssdfs_memcpy(uuid,
+		     0, SSDFS_UUID_SIZE,
+		     &uuid_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+	snapshot_id.uuid = uuid;
+	snapshot_id.timestamp = create_time;
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_check_snapshot;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_find(tree, &snapshot_id, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to check snapshot: "
+			  "id %llu, err %d\n",
+			  id, err);
+		goto finish_check_snapshot;
+	}
+
+finish_check_snapshot:
+	return err;
+}
+
+static
+int ssdfs_testing_snapshots_tree_change(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					u64 create_time,
+					u64 id)
+{
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_snapshot_request *snr = NULL;
+	struct ssdfs_btree_search *search;
+	__le64 uuid_value = cpu_to_le64(id);
+	struct timespec64 timestamp;
+	struct tm tm;
+	int err = 0;
+
+	tree = fsi->snapshots.tree;
+
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
+		return -ENOMEM;
+	}
+
+	snr->operation = SSDFS_MODIFY_SNAPSHOT;
+	snr->ino = id;
+
+	ssdfs_memcpy(snr->info.uuid,
+		     0, SSDFS_UUID_SIZE,
+		     &uuid_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+
+	snr->info.mode = SSDFS_READ_ONLY_SNAPSHOT;
+	snr->info.type = SSDFS_PERIODIC_SNAPSHOT;
+	snr->info.expiration = SSDFS_EXPIRATION_IN_WEEK;
+	snr->info.frequency = SSDFS_SYNCFS_FREQUENCY;
+	snr->info.snapshots_threshold = 111;
+
+	timestamp = ns_to_timespec64(create_time);
+	time64_to_tm(timestamp.tv_sec, 0, &tm);
+
+	snr->info.time_range.year = tm.tm_year + 1900;
+	snr->info.time_range.month = tm.tm_mon + 1;
+	snr->info.time_range.day = tm.tm_mday;
+	snr->info.time_range.hour = tm.tm_hour;
+	snr->info.time_range.minute = tm.tm_min;
+
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
+		  "frequency %#x, snapshots_threshold %u, "
+		  "TIME_RANGE (minute %u, hour %u, "
+		  "day %u, month %u, year %u)\n",
+		  snr->info.mode, snr->info.type, snr->info.expiration,
+		  snr->info.frequency, snr->info.snapshots_threshold,
+		  snr->info.time_range.minute,
+		  snr->info.time_range.hour,
+		  snr->info.time_range.day,
+		  snr->info.time_range.month,
+		  snr->info.time_range.year);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_change_snapshot;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_change(tree, snr, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change snapshot: "
+			  "id %llu, err %d\n",
+			  id, err);
+		goto finish_change_snapshot;
+	}
+
+finish_change_snapshot:
+	if (snr)
+		ssdfs_snapshot_request_free(snr);
+
+	return err;
+}
+
+static
+int ssdfs_testing_snapshots_tree_delete(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					u64 create_time,
+					u64 id)
+{
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_snapshot_request *snr = NULL;
+	struct ssdfs_btree_search *search;
+	__le64 uuid_value = cpu_to_le64(id);
+	struct timespec64 timestamp;
+	struct tm tm;
+	int err = 0;
+
+	tree = fsi->snapshots.tree;
+
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
+		return -ENOMEM;
+	}
+
+	snr->operation = SSDFS_REMOVE_SNAPSHOT;
+	snr->ino = id;
+
+	ssdfs_memcpy(snr->info.uuid,
+		     0, SSDFS_UUID_SIZE,
+		     &uuid_value, 0, sizeof(__le64),
+		     sizeof(__le64));
+
+	timestamp = ns_to_timespec64(create_time);
+	time64_to_tm(timestamp.tv_sec, 0, &tm);
+
+	snr->info.time_range.year = tm.tm_year + 1900;
+	snr->info.time_range.month = tm.tm_mon + 1;
+	snr->info.time_range.day = tm.tm_mday;
+	snr->info.time_range.hour = tm.tm_hour;
+	snr->info.time_range.minute = tm.tm_min;
+
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
+		  "frequency %#x, snapshots_threshold %u, "
+		  "TIME_RANGE (minute %u, hour %u, "
+		  "day %u, month %u, year %u)\n",
+		  snr->info.mode, snr->info.type, snr->info.expiration,
+		  snr->info.frequency, snr->info.snapshots_threshold,
+		  snr->info.time_range.minute,
+		  snr->info.time_range.hour,
+		  snr->info.time_range.day,
+		  snr->info.time_range.month,
+		  snr->info.time_range.year);
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate btree search object\n");
+		goto finish_delete_snapshot;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_delete(tree, snr, search);
+	ssdfs_btree_search_free(search);
+
+	if (err == -ENOENT) {
+		err = 0;
+		SSDFS_DBG("tree is empty\n");
+		goto finish_delete_snapshot;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to delete snapshot: "
+			  "id %llu, err %d\n",
+			  id, err);
+		goto finish_delete_snapshot;
+	}
+
+finish_delete_snapshot:
+	if (snr)
+		ssdfs_snapshot_request_free(snr);
+
+	return err;
+}
+
+typedef int (*ssdfs_snapshot_testfn)(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_testing_environment *env,
+				     u64 create_time,
+				     u64 id);
+
+static
+int ssdfs_traverse_snapshots_tree(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env,
+				  u64 per_1_percent,
+				  u64 message_threshold,
+				  const char *message_string,
+				  ssdfs_snapshot_testfn execute_test)
+{
+	struct ssdfs_btree_search *search;
+	size_t desc_size = sizeof(struct ssdfs_snapshot);
+	u64 start_hash = U64_MAX;
+	u64 end_hash = U64_MAX;
+	u64 create_time = U64_MAX;
+	u16 items_count;
+	u64 i, j;
+	int err = 0;
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	err = ssdfs_snapshots_tree_get_start_hash(fsi->snapshots.tree,
+						  &start_hash);
+	if (err == -ENOENT) {
+		SSDFS_ERR("snapshots tree is empty\n");
+		goto finish_snapshots_tree_testing;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to get start root hash: err %d\n", err);
+		goto finish_snapshots_tree_testing;
+	} else if (start_hash >= U64_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid start hash value\n");
+		goto finish_snapshots_tree_testing;
+	}
+
+	i = 0;
+
+	do {
+		struct ssdfs_timestamp_range range;
+		range.start = range.end = start_hash;
+
+		ssdfs_btree_search_init(search);
+
+		SSDFS_DBG("start_hash %llx\n",
+			  start_hash);
+
+		err = ssdfs_snapshots_tree_find_leaf_node(fsi->snapshots.tree,
+							  &range,
+							  search);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find a leaf node: "
+				  "hash %llx, err %d\n",
+				  start_hash, err);
+			goto finish_tree_processing;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a leaf node: "
+				  "hash %llx, err %d\n",
+				  start_hash, err);
+			goto finish_tree_processing;
+		}
+
+		err = ssdfs_snapshots_tree_node_hash_range(fsi->snapshots.tree,
+							   search,
+							   &start_hash,
+							   &end_hash,
+							   &items_count);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get node's hash range: "
+				  "err %d\n", err);
+			goto finish_tree_processing;
+		}
+
+		if (items_count == 0) {
+			err = -ENOENT;
+			SSDFS_DBG("empty leaf node\n");
+			goto finish_tree_processing;
+		}
+
+		if (start_hash > end_hash) {
+			err = -ENOENT;
+			goto finish_tree_processing;
+		}
+
+		err = ssdfs_snapshots_tree_extract_range(fsi->snapshots.tree,
+							 0, items_count,
+							 search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to extract the range: "
+				  "items_count %u, err %d\n",
+				  items_count, err);
+			goto finish_tree_processing;
+		}
+
+finish_tree_processing:
+		if (unlikely(err))
+			goto finish_snapshots_tree_testing;
+
+		err = ssdfs_snapshots_tree_check_search_result(search);
+		if (unlikely(err)) {
+			SSDFS_ERR("corrupted search result: "
+				  "err %d\n", err);
+			goto finish_snapshots_tree_testing;
+		}
+
+		items_count = search->result.count;
+
+		ssdfs_btree_search_forget_child_node(search);
+
+		for (j = 0; j < items_count; j++) {
+			struct ssdfs_snapshot *snapshot = NULL;
+			u8 *start_ptr = (u8 *)search->result.buf;
+
+			snapshot = (struct ssdfs_snapshot *)(start_ptr +
+							(j * desc_size));
+			create_time = le64_to_cpu(snapshot->create_time);
+
+			if (i >= message_threshold) {
+				SSDFS_ERR("%s: %llu%%\n",
+					  message_string,
+					  div64_u64(i, per_1_percent));
+
+				message_threshold += per_1_percent;
+			}
+
+			err = execute_test(fsi, env, create_time, i + 1);
+			if (err) {
+				SSDFS_ERR("fail to check snapshot: "
+					  "err %d\n", err);
+				goto finish_snapshots_tree_testing;
+			}
+
+			i++;
+		}
+
+		if (create_time != end_hash) {
+			err = -ERANGE;
+			SSDFS_ERR("hash %llx < end_hash %llx\n",
+				  create_time, end_hash);
+			goto finish_snapshots_tree_testing;
+		}
+
+		start_hash = end_hash + 1;
+
+		err = ssdfs_snapshots_tree_get_next_hash(fsi->snapshots.tree,
+							 search,
+							 &start_hash);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
+
+		if (err == -ENOENT || err == -ENODATA) {
+			err = 0;
+			SSDFS_DBG("no more items in the tree\n");
+			goto finish_snapshots_tree_testing;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to get next hash: err %d\n",
+				  err);
+			goto finish_snapshots_tree_testing;
+		}
+	} while (start_hash < U64_MAX);
+
+finish_snapshots_tree_testing:
+	if (err) {
+		SSDFS_ERR("fail to execute test: err %d\n",
+			  err);
+	}
+
+	ssdfs_btree_search_free(search);
+
+	return err;
+}
+
+static
+int ssdfs_do_snapshots_tree_testing(struct ssdfs_fs_info *fsi,
+				    struct ssdfs_testing_environment *env)
+{
+	u64 threshold = env->snapshots_tree.snapshots_number_threshold;
+	u64 per_1_percent = 0;
+	u64 message_threshold = 0;
+	u64 i;
+	int err = 0;
+
+	per_1_percent = div_u64(threshold, 100);
+	if (per_1_percent == 0)
+		per_1_percent = 1;
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("ADD SNAPSHOTs: 0%%\n");
+
+	for (i = 0; i < threshold; i++) {
+		if (i >= message_threshold) {
+			SSDFS_ERR("ADD SNAPSHOTS: %llu%%\n",
+				  div64_u64(i, per_1_percent));
+
+			message_threshold += per_1_percent;
+		}
+
+		err = ssdfs_testing_snapshots_tree_add(fsi, env, i + 1);
+		if (err) {
+			SSDFS_ERR("fail to add snapshot: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	SSDFS_ERR("ADD SNAPSHOTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHECK SNAPSHOTs: 0%%\n");
+
+	err = ssdfs_traverse_snapshots_tree(fsi, env, per_1_percent,
+					    message_threshold,
+					    "CHECK SNAPSHOTs",
+					    ssdfs_testing_snapshots_tree_check);
+	if (err) {
+		SSDFS_ERR("fail to check snapshot: err %d\n",
+			  err);
+		return err;
+	}
+
+	SSDFS_ERR("CHECK SNAPSHOTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("CHANGE SNAPSHOTs: 0%%\n");
+
+	err = ssdfs_traverse_snapshots_tree(fsi, env, per_1_percent,
+					    message_threshold,
+					    "CHANGE SNAPSHOTs",
+					    ssdfs_testing_snapshots_tree_change);
+	if (err) {
+		SSDFS_ERR("fail to change snapshot: err %d\n",
+			  err);
+		return err;
+	}
+
+	SSDFS_ERR("CHANGE SNAPSHOTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	SSDFS_ERR("FLUSH SNAPSHOTS BTREE: starting...\n");
+
+	down_write(&fsi->volume_sem);
+	err = ssdfs_snapshots_btree_flush(fsi);
+	up_write(&fsi->volume_sem);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to flush snapshots tree: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_ERR("FLUSH SNAPSHOTS BTREE: finished\n");
+
+	message_threshold = per_1_percent;
+
+	SSDFS_ERR("DELETE SNAPSHOTs: 0%%\n");
+
+	err = ssdfs_traverse_snapshots_tree(fsi, env, per_1_percent,
+					    message_threshold,
+					    "DELETE SNAPSHOTs",
+					    ssdfs_testing_snapshots_tree_delete);
+	if (err == -ENOENT) {
+		err = 0;
+		SSDFS_DBG("tree is empty\n");
+	} else if (err) {
+		SSDFS_ERR("fail to delete snapshot: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_ERR("DELETE SNAPSHOTS: %llu%%\n",
+		  div64_u64(threshold, per_1_percent));
+
+	return err;
+}
+
 int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 		     struct ssdfs_testing_environment *env)
 {
@@ -3596,6 +4184,16 @@ int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 			goto free_inode;
 
 		SSDFS_ERR("SHARED EXTENTS TREE TESTING FINISHED\n");
+	}
+
+	if (env->subsystems & SSDFS_ENABLE_SNAPSHOTS_TREE_TESTING) {
+		SSDFS_ERR("START SNAPSHOTS TREE TESTING...\n");
+
+		err = ssdfs_do_snapshots_tree_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("SNAPSHOTS TREE TESTING FINISHED\n");
 	}
 
 free_inode:

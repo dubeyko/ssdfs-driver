@@ -21,6 +21,7 @@
 #include "btree.h"
 #include "dentries_tree.h"
 #include "shared_dictionary.h"
+#include "snapshots_tree.h"
 #include "snapshot_rules.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -340,6 +341,7 @@ bool is_time_create_snapshot(struct ssdfs_fs_info *fsi,
 
 /*
  * ssdfs_create_snapshot() - create snapshot
+ * @fsi: pointer on shared file system object
  * @ptr: snapshot rule
  *
  * This function tries to create a snapshot.
@@ -351,29 +353,83 @@ bool is_time_create_snapshot(struct ssdfs_fs_info *fsi,
  * %-ERANGE     - internal error
  */
 static
-int ssdfs_create_snapshot(struct ssdfs_snapshot_rule_info *ptr)
+int ssdfs_create_snapshot(struct ssdfs_fs_info *fsi,
+			  struct ssdfs_snapshot_rule_info *ptr)
 {
-	int err = 0;
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_snapshot_request *snr = NULL;
+	u16 snapshots_threshold;
+	u16 snapshots_number;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
+	snapshots_threshold = le16_to_cpu(ptr->snapshots_threshold);
+	snapshots_number = le16_to_cpu(ptr->snapshots_number);
 
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", ptr->name);
-	SSDFS_ERR("UUID %pUb, ", ptr->uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	if (snapshots_threshold == U16_MAX || snapshots_number == U16_MAX) {
+		SSDFS_ERR("corrupted rule: "
+			  "snapshots_number %u, "
+			  "snapshots_threshold %u\n",
+			  snapshots_number, snapshots_threshold);
+		return -ERANGE;
+	}
+
+	if (snapshots_number > snapshots_threshold) {
+		SSDFS_ERR("snapshots_number %u > snapshots_threshold %u\n",
+			  snapshots_number, snapshots_threshold);
+		return -ERANGE;
+	}
+
+	if (snapshots_number == snapshots_threshold) {
+		SSDFS_DBG("nothing should be done: "
+			  "snapshots_number %u, snapshots_threshold %u\n",
+			  snapshots_number, snapshots_threshold);
+		return 0;
+	}
+
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
+		return -ENOMEM;
+	}
+
+	snr->operation = SSDFS_CREATE_SNAPSHOT;
+	snr->ino = le64_to_cpu(ptr->ino);
+
+	ssdfs_memcpy(snr->info.uuid, 0, SSDFS_UUID_SIZE,
+		     ptr->uuid, 0, SSDFS_UUID_SIZE,
+		     SSDFS_UUID_SIZE);
+	ssdfs_memcpy(snr->info.name, 0, SSDFS_MAX_SNAPSHOT_NAME_LEN,
+		     ptr->name, 0, SSDFS_MAX_SNAP_RULE_NAME_LEN,
+		     SSDFS_MAX_SNAPSHOT_NAME_LEN);
+
+	snr->info.mode = ptr->mode;
+	snr->info.type = ptr->type;
+	snr->info.expiration = ptr->expiration;
+	snr->info.frequency = ptr->frequency;
+	snr->info.snapshots_threshold = le16_to_cpu(ptr->snapshots_threshold);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
-		  "snapshots_number %u\n",
-		  ptr->mode, ptr->type, ptr->expiration,
-		  ptr->frequency,
-		  le16_to_cpu(ptr->snapshots_threshold),
-		  le16_to_cpu(ptr->snapshots_number));
+		  "TIME_RANGE (day %u, month %u, year %u)\n",
+		  snr->info.mode, snr->info.type, snr->info.expiration,
+		  snr->info.frequency, snr->info.snapshots_threshold,
+		  snr->info.time_range.day,
+		  snr->info.time_range.month,
+		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	return err;
+	tree = fsi->snapshots.tree;
+	ssdfs_snapshot_reqs_queue_add_tail(&tree->requests.queue, snr);
+	wake_up_all(&tree->wait_queue);
+
+	return 0;
 }
 
 /*
@@ -437,7 +493,7 @@ int ssdfs_process_snapshot_rules(struct ssdfs_fs_info *fsi)
 		}
 
 		if (is_time_create_snapshot(fsi, &rule)) {
-			err = ssdfs_create_snapshot(&rule);
+			err = ssdfs_create_snapshot(fsi, &rule);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to create snapshot: "
 					  "UUID %pUb, err %d\n",
@@ -459,17 +515,6 @@ try_next_rule:
 	spin_unlock(&rl->lock);
 
 	return err;
-}
-
-/*
- * is_uuids_identical() - check the UUIDs identity
- * @uuid1: first UUID instance
- * @uuid2: second UUID instance
- */
-static inline
-bool is_uuids_identical(const u8 *uuid1, const u8 *uuid2)
-{
-	return memcmp(uuid1, uuid2, SSDFS_UUID_SIZE) == 0;
 }
 
 /*

@@ -202,6 +202,9 @@ int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
 				struct ssdfs_btree_node **node);
 int ssdfs_btree_synchronize_root_node(struct ssdfs_btree *tree,
 				struct ssdfs_btree_inline_root_node *root);
+int ssdfs_btree_get_next_hash(struct ssdfs_btree *tree,
+			      struct ssdfs_btree_search *search,
+			      u64 *next_hash);
 
 void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
 					 struct ssdfs_btree_node *parent);

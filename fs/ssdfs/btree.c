@@ -4251,6 +4251,7 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 	case SSDFS_BTREE_SEARCH_ALLOCATE_RANGE:
 	case SSDFS_BTREE_SEARCH_ADD_ITEM:
 	case SSDFS_BTREE_SEARCH_ADD_RANGE:
+	case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
 	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		/* expected state */
@@ -4363,10 +4364,18 @@ try_find_item_again:
 	}
 
 	if (err == -EAGAIN) {
-		err = 0;
-		search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
-		SSDFS_DBG("try next search\n");
-		goto try_next_search;
+		if (search->result.items_in_buffer > 0 &&
+		    search->result.state == SSDFS_BTREE_SEARCH_VALID_ITEM) {
+			/* finish search */
+			err = 0;
+			search->result.err = 0;
+			goto finish_search_item;
+		} else {
+			err = 0;
+			search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
+			SSDFS_DBG("try next search\n");
+			goto try_next_search;
+		}
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("unable to find item: "
 			  "start_hash %llx, end_hash %llx\n",
@@ -4604,9 +4613,18 @@ try_find_range_again:
 	}
 
 	if (err == -EAGAIN) {
-		err = 0;
-		search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
-		goto try_next_search;
+		if (search->result.items_in_buffer > 0 &&
+		    search->result.state == SSDFS_BTREE_SEARCH_VALID_ITEM) {
+			/* finish search */
+			err = 0;
+			search->result.err = 0;
+			goto finish_search_range;
+		} else {
+			err = 0;
+			search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
+			SSDFS_DBG("try next search\n");
+			goto try_next_search;
+		}
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("unable to find range: "
 			  "start_hash %llx, end_hash %llx\n",
@@ -6592,6 +6610,158 @@ finish_synchronize_root:
 	return err;
 }
 
+/*
+ * ssdfs_btree_get_next_hash() - get next node's starting hash
+ * @tree: btree object
+ * @search: search object
+ * @next_hash: next node's starting hash [out]
+ */
+int ssdfs_btree_get_next_hash(struct ssdfs_btree *tree,
+			      struct ssdfs_btree_search *search,
+			      u64 *next_hash)
+{
+	struct ssdfs_btree_node *parent;
+	struct ssdfs_btree_node_index_area area;
+	struct ssdfs_btree_index_key index_key;
+	u64 old_hash = U64_MAX;
+	int type;
+	spinlock_t *lock;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search || !next_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_hash = le64_to_cpu(search->node.found_index.index.hash);
+
+	SSDFS_DBG("search %p, next_hash %p, old (node %u, hash %llx)\n",
+		  search, next_hash, search->node.id, old_hash);
+
+	*next_hash = U64_MAX;
+
+	parent = search->node.parent;
+
+	if (!parent) {
+		SSDFS_ERR("node pointer is NULL\n");
+		return -ERANGE;
+	}
+
+	type = atomic_read(&parent->type);
+
+	down_read(&tree->lock);
+
+	do {
+		u16 found_pos;
+
+		err = -ENOENT;
+
+		down_read(&parent->full_lock);
+
+		SSDFS_DBG("old_hash %llx\n", old_hash);
+
+		down_read(&parent->header_lock);
+		ssdfs_memcpy(&area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     &parent->index_area,
+			     0, sizeof(struct ssdfs_btree_node_index_area),
+			     sizeof(struct ssdfs_btree_node_index_area));
+		err = ssdfs_find_index_by_hash(parent, &area,
+						old_hash,
+						&found_pos);
+		up_read(&parent->header_lock);
+
+		if (err == -EEXIST) {
+			/* hash == found hash */
+			err = 0;
+		} else if (err == -ENODATA) {
+			SSDFS_DBG("unable to find the index position: "
+				  "old_hash %llx\n",
+				  old_hash);
+			goto finish_index_search;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find the index position: "
+				  "old_hash %llx, err %d\n",
+				  old_hash, err);
+			goto finish_index_search;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(found_pos == U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		found_pos++;
+
+		if (found_pos >= area.index_count) {
+			err = -ENOENT;
+			SSDFS_DBG("index area is finished: "
+				  "found_pos %u, area.index_count %u\n",
+				  found_pos, area.index_count);
+			goto finish_index_search;
+		}
+
+		if (type == SSDFS_BTREE_ROOT_NODE) {
+			err = __ssdfs_btree_root_node_extract_index(parent,
+								    found_pos,
+								    &index_key);
+		} else {
+			err = __ssdfs_btree_common_node_extract_index(parent,
+								    &area,
+								    found_pos,
+								    &index_key);
+		}
+
+finish_index_search:
+		up_read(&parent->full_lock);
+
+		if (err == -ENOENT) {
+			if (type == SSDFS_BTREE_ROOT_NODE) {
+				SSDFS_DBG("no more next hashes\n");
+				goto finish_get_next_hash;
+			}
+
+			spin_lock(&parent->descriptor_lock);
+			old_hash = le64_to_cpu(parent->node_index.index.hash);
+			spin_unlock(&parent->descriptor_lock);
+
+			/* try next parent */
+			lock = &parent->descriptor_lock;
+			spin_lock(lock);
+			parent = parent->parent_node;
+			spin_unlock(lock);
+			lock = NULL;
+
+			if (!parent) {
+				err = -ERANGE;
+				SSDFS_ERR("node pointer is NULL\n");
+				goto finish_get_next_hash;
+			}
+		} else if (err == -ENODATA) {
+			SSDFS_DBG("unable to find the index position\n");
+			goto finish_get_next_hash;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to extract index key: "
+				  "index_position %u, err %d\n",
+				  found_pos, err);
+			ssdfs_debug_show_btree_node_indexes(parent->tree,
+							    parent);
+			goto finish_get_next_hash;
+		} else {
+			/* next hash has been found */
+			err = 0;
+			*next_hash = le64_to_cpu(index_key.index.hash);
+			SSDFS_DBG("next_hash %llx\n", *next_hash);
+			goto finish_get_next_hash;
+		}
+
+		type = atomic_read(&parent->type);
+	} while (parent != NULL);
+
+finish_get_next_hash:
+	up_read(&tree->lock);
+
+	return err;
+}
+
 void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
 					 struct ssdfs_btree_node *parent)
 {
@@ -6752,9 +6922,9 @@ void ssdfs_debug_btree_check_indexes(struct ssdfs_btree *tree,
 		err = ssdfs_btree_radix_tree_find(tree, node_id2, &child);
 
 		if (err || !child) {
-			SSDFS_WARN("node_id %u is absent\n",
+			SSDFS_ERR("node_id %u is absent\n",
 				   node_id2);
-			BUG();
+			goto continue_tree_check;
 		}
 
 		switch (atomic_read(&child->type)) {
@@ -6855,6 +7025,7 @@ void ssdfs_debug_btree_check_indexes(struct ssdfs_btree *tree,
 			}
 		}
 
+continue_tree_check:
 		prev_hash = start_hash1;
 
 		down_read(&parent->full_lock);

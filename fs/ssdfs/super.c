@@ -51,6 +51,7 @@
 #include "xattr_tree.h"
 #include "xattr.h"
 #include "acl.h"
+#include "snapshots_tree.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -394,6 +395,19 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 		}
 	}
 
+	err = ssdfs_execute_create_snapshots(fsi);
+	if (err) {
+		SSDFS_ERR("fail to process the snapshots creation\n");
+	}
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
+		err = ssdfs_snapshots_btree_flush(fsi);
+		if (err) {
+			SSDFS_ERR("fail to flush snapshots btree: "
+				  "err %d\n", err);
+		}
+	}
+
 	if (fsi->fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
 		err = ssdfs_segbmap_flush(fsi->segbmap);
 		if (err) {
@@ -408,11 +422,6 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 			SSDFS_ERR("fail to flush mapping table: "
 				  "err %d\n", err);
 		}
-	}
-
-	err = ssdfs_execute_create_snapshots(fsi);
-	if (err) {
-		SSDFS_ERR("fail to process the snapshots creation\n");
 	}
 
 	up_write(&fsi->volume_sem);
@@ -2444,6 +2453,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_xattr_memory_leaks_init();
 	ssdfs_snap_reqs_queue_memory_leaks_init();
 	ssdfs_snap_rules_list_memory_leaks_init();
+	ssdfs_snap_tree_memory_leaks_init();
 }
 
 static void ssdfs_check_memory_leaks(void)
@@ -2508,6 +2518,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_xattr_check_memory_leaks();
 	ssdfs_snap_reqs_queue_check_memory_leaks();
 	ssdfs_snap_rules_list_check_memory_leaks();
+	ssdfs_snap_tree_check_memory_leaks();
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 #ifdef CONFIG_SSDFS_SHOW_CONSUMED_MEMORY
@@ -2604,16 +2615,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto free_erase_page;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("create snapshots subsystem started...\n");
-#else
-	SSDFS_DBG("create snapshots subsystem started...\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	err = ssdfs_snapshot_subsystem_init(&fs_info->snapshots);
-	if (err)
-		goto free_erase_page;
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("gather superblock info started...\n");
 #else
 	SSDFS_DBG("gather superblock info started...\n");
@@ -2644,6 +2645,16 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_xattr = ssdfs_xattr_handlers;
 	set_posix_acl_flag(sb);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create snapshots subsystem started...\n");
+#else
+	SSDFS_DBG("create snapshots subsystem started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	err = ssdfs_snapshot_subsystem_init(fs_info);
+	if (err)
+		goto free_erase_page;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create segment tree started...\n");
@@ -2914,7 +2925,7 @@ release_maptbl_cache:
 	ssdfs_maptbl_cache_destroy(&fs_info->maptbl_cache);
 
 destroy_snapshot_subsystem:
-	ssdfs_snapshot_subsystem_destroy(&fs_info->snapshots);
+	ssdfs_snapshot_subsystem_destroy(fs_info);
 
 free_erase_page:
 	if (fs_info->erase_page)
@@ -3072,6 +3083,32 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Execute create snapshots...\n");
+#else
+		SSDFS_DBG("Execute create snapshots...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		err = ssdfs_execute_create_snapshots(fsi);
+		if (err) {
+			SSDFS_ERR("fail to process the snapshots creation\n");
+		}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush snapshots b-tree...\n");
+#else
+		SSDFS_DBG("Flush snapshots b-tree...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		if (fsi->fs_feature_compat &
+				SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
+			err = ssdfs_snapshots_btree_flush(fsi);
+			if (err) {
+				SSDFS_ERR("fail to flush snapshots btree: "
+					  "err %d\n", err);
+			}
+		}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
 		SSDFS_ERR("Flush segment bitmap...\n");
 #else
 		SSDFS_DBG("Flush segment bitmap...\n");
@@ -3177,7 +3214,7 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
-	ssdfs_snapshot_subsystem_destroy(&fsi->snapshots);
+	ssdfs_snapshot_subsystem_destroy(fsi);
 	ssdfs_shextree_destroy(fsi);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);

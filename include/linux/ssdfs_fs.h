@@ -261,6 +261,7 @@ enum {
 	SSDFS_XATTR_BTREE,
 	SSDFS_SHARED_XATTR_BTREE,
 	SSDFS_SHARED_DICTIONARY_BTREE,
+	SSDFS_SNAPSHOTS_BTREE,
 	SSDFS_BTREE_TYPE_MAX
 };
 
@@ -620,6 +621,29 @@ struct ssdfs_shared_dictionary_btree {
  * the whole btree on two branches.
  */
 struct ssdfs_shared_xattr_btree {
+/* 0x0000 */
+	struct ssdfs_btree_descriptor desc;
+
+/* 0x0010 */
+	__le8 reserved[0x30];
+
+/* 0x0040 */
+	struct ssdfs_btree_inline_root_node root_node;
+
+/* 0x0080 */
+} __packed;
+
+/*
+ * struct ssdfs_snapshots_btree - snapshots btree
+ * @desc: btree descriptor
+ * @root_node: btree's root node
+ *
+ * The goal of a btree root is to keep
+ * the main features of a tree and knowledge
+ * about two root indexes. These indexes splits
+ * the whole btree on two branches.
+ */
+struct ssdfs_snapshots_btree {
 /* 0x0000 */
 	struct ssdfs_btree_descriptor desc;
 
@@ -1129,6 +1153,7 @@ struct ssdfs_inode {
  * @inodes_btree: inodes btree root
  * @shared_extents_btree: shared extents btree root
  * @shared_dict_btree: shared dictionary btree root
+ * @snapshots_btree: snapshots btree root
  */
 struct ssdfs_volume_state {
 /* 0x0000 */
@@ -1194,7 +1219,7 @@ struct ssdfs_volume_state {
 	struct ssdfs_shared_dictionary_btree shared_dict_btree;
 
 /* 0x0380 */
-	__le8 reserved4[0x80];
+	struct ssdfs_snapshots_btree snapshots_btree;
 
 /* 0x0400 */
 } __packed;
@@ -1206,6 +1231,7 @@ struct ssdfs_volume_state {
 #define SSDFS_HAS_SHARED_XATTRS_COMPAT_FLAG		(1 << 3)
 #define SSDFS_HAS_SHARED_DICT_COMPAT_FLAG		(1 << 4)
 #define SSDFS_HAS_INODES_TREE_COMPAT_FLAG		(1 << 5)
+#define SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG		(1 << 6)
 
 /* Read-Only compatible feature flags */
 #define SSDFS_ZLIB_COMPAT_RO_FLAG	(1 << 0)
@@ -1216,7 +1242,8 @@ struct ssdfs_volume_state {
 	 SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG | \
 	 SSDFS_HAS_SHARED_XATTRS_COMPAT_FLAG | \
 	 SSDFS_HAS_SHARED_DICT_COMPAT_FLAG | \
-	 SSDFS_HAS_INODES_TREE_COMPAT_FLAG)
+	 SSDFS_HAS_INODES_TREE_COMPAT_FLAG | \
+	 SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG)
 
 #define SSDFS_FEATURE_COMPAT_RO_SUPP \
 	(SSDFS_ZLIB_COMPAT_RO_FLAG | SSDFS_LZO_COMPAT_RO_FLAG)
@@ -1561,6 +1588,7 @@ SSDFS_LOG_FOOTER_FNS(SNAPSHOT_RULE_AREA_BIT, log_footer_has_snapshot_rules)
  * @log_erasesize: log2(erase block size)
  * @log_segsize: log2(segment size)
  * @log_pebs_per_seg: log2(erase blocks per segment)
+ * @snapshots_btree: snapshots btree root
  *
  * This header is used when the full log needs to be built from several
  * partial logs. The header represents the combination of the most
@@ -1617,7 +1645,10 @@ struct ssdfs_partial_log_header {
 	__le8 reserved[0x8];
 
 /* 0x0350 */
-	__le8 payload[0xB0];
+	struct ssdfs_snapshots_btree snapshots_btree;
+
+/* 0x03D0 */
+	__le8 payload[0x30];
 
 /* 0x0400 */
 } __packed;
@@ -3014,6 +3045,7 @@ struct ssdfs_inodes_btree_node_header {
  * @frequency: taking snapshot frequency (SYNCFS|HOUR|DAY|WEEK)
  * @snapshots_threshold max number of simultaneously available snapshots
  * @snapshots_number: current number of created snapshots
+ * @ino: root object inode ID
  * @flags: various rule's flags
  * @name_hash: name hash
  * @last_snapshot_cno: latest snapshot checkpoint
@@ -3034,8 +3066,7 @@ struct ssdfs_snapshot_rule_info {
 	__le16 snapshots_number;
 
 /* 0x0028 */
-	__le32 flags;
-	__le32 padding;
+	__le64 ino;
 
 /* 0x0030 */
 	__le64 name_hash;
@@ -3125,6 +3156,72 @@ struct ssdfs_snapshot_rules_header {
 	__le8 padding[0x10];
 
 /* 0x0020 */
+} __packed;
+
+/*
+ * struct ssdfs_snapshot - snapshot info
+ * @uuid: snapshot UUID
+ * @name: snapshot name
+ * @mode: snapshot mode (READ-ONLY|READ-WRITE)
+ * @expiration: snapshot expiration time (WEEK|MONTH|YEAR|NEVER)
+ * @flags: various flags
+ * @create_time: snapshot's timestamp
+ * @create_cno: snapshot's checkpoint
+ * @ino: root object inode ID
+ * @name_hash: name hash
+ */
+struct ssdfs_snapshot {
+/* 0x0000 */
+	__le8 uuid[SSDFS_UUID_SIZE];
+
+/* 0x0010 */
+	char name[SSDFS_MAX_SNAPSHOT_NAME_LEN];
+	__le8 mode;
+	__le8 expiration;
+	__le16 flags;
+
+/* 0x0020 */
+	__le64 create_time;
+	__le64 create_cno;
+
+/* 0x0030 */
+	__le64 ino;
+	__le64 name_hash;
+
+/* 0x0040 */
+} __packed;
+
+/* snapshot flags */
+#define SSDFS_SNAPSHOT_HAS_EXTERNAL_STRING	(1 << 0)
+#define SSDFS_SNAPSHOT_FLAGS_MASK		0x1
+
+#define SSDFS_SNAPSHOTS_PAGES_PER_NODE_MAX		(32)
+#define SSDFS_SNAPSHOTS_BMAP_SIZE \
+	(((SSDFS_SNAPSHOTS_PAGES_PER_NODE_MAX * PAGE_SIZE) / \
+	  sizeof(struct ssdfs_snapshot_info)) / BITS_PER_BYTE)
+
+/*
+ * struct ssdfs_snapshots_btree_node_header - snapshots node's header
+ * @node: generic btree node's header
+ * @snapshots_count: snapshots count in the node
+ * @lookup_table: table for clustering search in the node
+ *
+ * The @lookup_table has goal to provide the way of clustering
+ * the snapshots in the node with the goal to speed-up the search.
+ */
+struct ssdfs_snapshots_btree_node_header {
+/* 0x0000 */
+	struct ssdfs_btree_node_header node;
+
+/* 0x0040 */
+	__le32 snapshots_count;
+	__le8 padding[0x0C];
+
+/* 0x0050 */
+#define SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE		(22)
+	__le64 lookup_table[SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE];
+
+/* 0x0100 */
 } __packed;
 
 /*

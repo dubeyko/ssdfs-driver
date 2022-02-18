@@ -47,12 +47,17 @@ struct ssdfs_snapshot_request *ssdfs_snapshot_request_alloc(void);
 void ssdfs_snapshot_request_free(struct ssdfs_snapshot_request *snr);
 
 int ssdfs_execute_create_snapshots(struct ssdfs_fs_info *fsi);
-int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_request *snr);
+int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_subsystem *ptr,
+					 struct ssdfs_snapshot_request *snr);
 int ssdfs_execute_modify_snapshot_request(struct ssdfs_fs_info *fsi,
 					  struct ssdfs_snapshot_request *snr);
 int ssdfs_execute_remove_snapshot_request(struct ssdfs_snapshot_subsystem *ptr,
 					  struct ssdfs_snapshot_request *snr);
-int ssdfs_execute_remove_range_request(struct ssdfs_snapshot_request *snr);
-int ssdfs_execute_show_details_request(struct ssdfs_snapshot_request *snr);
+int ssdfs_execute_remove_range_request(struct ssdfs_snapshot_subsystem *ptr,
+					struct ssdfs_snapshot_request *snr);
+int ssdfs_execute_show_details_request(struct ssdfs_snapshot_subsystem *ptr,
+					struct ssdfs_snapshot_request *snr);
+int ssdfs_execute_list_snapshot_rules_request(struct ssdfs_fs_info *fsi,
+					struct ssdfs_snapshot_request *snr);
 
 #endif /* _SSDFS_SNAPSHOT_REQUESTS_QUEUE_H */

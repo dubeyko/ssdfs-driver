@@ -349,6 +349,8 @@ void ssdfs_snap_reqs_queue_memory_leaks_init(void);
 void ssdfs_snap_reqs_queue_check_memory_leaks(void);
 void ssdfs_snap_rules_list_memory_leaks_init(void);
 void ssdfs_snap_rules_list_check_memory_leaks(void);
+void ssdfs_snap_tree_memory_leaks_init(void);
+void ssdfs_snap_tree_check_memory_leaks(void);
 void ssdfs_xattr_memory_leaks_init(void);
 void ssdfs_xattr_check_memory_leaks(void);
 

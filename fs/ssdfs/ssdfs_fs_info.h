@@ -139,10 +139,12 @@ struct ssdfs_device_ops {
  * struct ssdfs_snapshot_subsystem - snapshots subsystem
  * @reqs_queue: snapshot requests queue
  * @rules_list: snapshot rules list
+ * @tree: snapshots btree
  */
 struct ssdfs_snapshot_subsystem {
 	struct ssdfs_snapshot_reqs_queue reqs_queue;
 	struct ssdfs_snapshot_rules_list rules_list;
+	struct ssdfs_snapshots_btree_info *tree;
 };
 
 /*

@@ -2,133 +2,109 @@
 /*
  * SSDFS -- SSD-oriented File System.
  *
- * fs/ssdfs/shared_extents_tree.c - Shared extents tree implementation.
+ * fs/ssdfs/snapshots_tree.c - snapshots btree implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
- *              http://www.hgst.com/
+ * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * All rights reserved.
  *
- * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
- *
- * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
- *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
  */
 
+#include <linux/kernel.h>
+#include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/pagevec.h>
+#include <linux/time.h>
+#include <linux/time64.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
-#include "extents_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
 #include "btree.h"
-#include "segment_tree.h"
-#include "shared_extents_tree.h"
+#include "shared_dictionary.h"
+#include "dentries_tree.h"
+#include "snapshot.h"
+#include "snapshots_tree.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_shextree_page_leaks;
-atomic64_t ssdfs_shextree_memory_leaks;
-atomic64_t ssdfs_shextree_cache_leaks;
+atomic64_t ssdfs_snap_tree_page_leaks;
+atomic64_t ssdfs_snap_tree_memory_leaks;
+atomic64_t ssdfs_snap_tree_cache_leaks;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
- * void ssdfs_shextree_cache_leaks_increment(void *kaddr)
- * void ssdfs_shextree_cache_leaks_decrement(void *kaddr)
- * void *ssdfs_shextree_kmalloc(size_t size, gfp_t flags)
- * void *ssdfs_shextree_kzalloc(size_t size, gfp_t flags)
- * void *ssdfs_shextree_kcalloc(size_t n, size_t size, gfp_t flags)
- * void ssdfs_shextree_kfree(void *kaddr)
- * struct page *ssdfs_shextree_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_shextree_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_shextree_free_page(struct page *page)
- * void ssdfs_shextree_pagevec_release(struct pagevec *pvec)
+ * void ssdfs_snap_tree_cache_leaks_increment(void *kaddr)
+ * void ssdfs_snap_tree_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_snap_tree_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_snap_tree_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_snap_tree_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_snap_tree_kfree(void *kaddr)
+ * struct page *ssdfs_snap_tree_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_snap_tree_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_snap_tree_free_page(struct page *page)
+ * void ssdfs_snap_tree_pagevec_release(struct pagevec *pvec)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	SSDFS_MEMORY_LEAKS_CHECKER_FNS(shextree)
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(snap_tree)
 #else
-	SSDFS_MEMORY_ALLOCATOR_FNS(shextree)
+	SSDFS_MEMORY_ALLOCATOR_FNS(snap_tree)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
-void ssdfs_shextree_memory_leaks_init(void)
+void ssdfs_snap_tree_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_shextree_page_leaks, 0);
-	atomic64_set(&ssdfs_shextree_memory_leaks, 0);
-	atomic64_set(&ssdfs_shextree_cache_leaks, 0);
+	atomic64_set(&ssdfs_snap_tree_page_leaks, 0);
+	atomic64_set(&ssdfs_snap_tree_memory_leaks, 0);
+	atomic64_set(&ssdfs_snap_tree_cache_leaks, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
-void ssdfs_shextree_check_memory_leaks(void)
+void ssdfs_snap_tree_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_shextree_page_leaks) != 0) {
-		SSDFS_ERR("SHARED EXTENTS TREE: "
+	if (atomic64_read(&ssdfs_snap_tree_page_leaks) != 0) {
+		SSDFS_ERR("SNAPSHOTS TREE: "
 			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_shextree_page_leaks));
+			  atomic64_read(&ssdfs_snap_tree_page_leaks));
 	}
 
-	if (atomic64_read(&ssdfs_shextree_memory_leaks) != 0) {
-		SSDFS_ERR("SHARED EXTENTS TREE: "
+	if (atomic64_read(&ssdfs_snap_tree_memory_leaks) != 0) {
+		SSDFS_ERR("SNAPSHOTS TREE: "
 			  "memory allocator suffers from %lld leaks\n",
-			  atomic64_read(&ssdfs_shextree_memory_leaks));
+			  atomic64_read(&ssdfs_snap_tree_memory_leaks));
 	}
 
-	if (atomic64_read(&ssdfs_shextree_cache_leaks) != 0) {
-		SSDFS_ERR("SHARED EXTENTS TREE: "
+	if (atomic64_read(&ssdfs_snap_tree_cache_leaks) != 0) {
+		SSDFS_ERR("SNAPSHOTS TREE: "
 			  "caches suffers from %lld leaks\n",
-			  atomic64_read(&ssdfs_shextree_cache_leaks));
+			  atomic64_read(&ssdfs_snap_tree_cache_leaks));
 	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
 /******************************************************************************
- *                   SHARED EXTENTS TREE OBJECT FUNCTIONALITY                 *
+ *                     SNAPSHOTS TREE OBJECT FUNCTIONALITY                    *
  ******************************************************************************/
 
 /*
- * ssdfs_fingerprint2hash() - convert fingerprint into hash
- * @fingerprint: fingerprint buffer
- * @len: fingeprint's length in bytes
+ * ssdfs_snapshots_btree_create() - create snapshots btree
+ * @fsi: pointer on shared file system object
+ *
+ * This method tries to create snapshots btree object.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
  */
-static inline
-u64 ssdfs_fingerprint2hash(u8 *fingerprint, u8 len)
+int ssdfs_snapshots_btree_create(struct ssdfs_fs_info *fsi)
 {
-	u8 *input, *output;
-	int step;
-	u64 hash = 0;
-	int i;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fingerprint);
-	BUG_ON(len > SSDFS_FINGERPRINT_LENGTH_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	step = len / sizeof(u64);
-
-	for (i = 0; i < sizeof(u64); i += step) {
-		input = fingerprint + (i * step);
-		output = (u8 *)&hash + i;
-		*output = *input;
-	}
-
-	return hash;
-}
-
-/*
- * ssdfs_shextree_create() - create shared extents tree object
- * @fsi: file system info object
- */
-int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
-{
-	struct ssdfs_shared_extents_tree *ptr;
-	size_t shextree_obj_size = sizeof(struct ssdfs_shared_extents_tree);
-	void *kaddr;
-	int i;
+	struct ssdfs_snapshots_btree_info *ptr;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -141,85 +117,73 @@ int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p\n", fsi);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	fsi->shextree = NULL;
+	fsi->snapshots.tree = NULL;
 
-	kaddr = ssdfs_shextree_kzalloc(shextree_obj_size, GFP_KERNEL);
-	if (!kaddr) {
-		SSDFS_ERR("fail to allocate shared extents tree's object\n");
+	ptr = ssdfs_snap_tree_kzalloc(sizeof(struct ssdfs_snapshots_btree_info),
+				      GFP_KERNEL);
+	if (!ptr) {
+		SSDFS_ERR("fail to allocate snapshots tree\n");
 		return -ENOMEM;
 	}
 
-	ptr = (struct ssdfs_shared_extents_tree *)kaddr;
+	atomic_set(&ptr->state, SSDFS_SNAPSHOTS_BTREE_UNKNOWN_STATE);
+
+	fsi->snapshots.tree = ptr;
 	ptr->fsi = fsi;
 
-	atomic_set(&ptr->state, SSDFS_SHEXTREE_UNKNOWN_STATE);
-
 	err = ssdfs_btree_create(fsi,
-				 SSDFS_SHARED_EXTENTS_BTREE_INO,
-				 &ssdfs_shextree_desc_ops,
-				 &ssdfs_shextree_ops,
+				 SSDFS_SNAPSHOTS_BTREE_INO,
+				 &ssdfs_snapshots_btree_desc_ops,
+				 &ssdfs_snapshots_btree_ops,
 				 &ptr->generic_tree);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to create shared extents tree: err %d\n",
+		SSDFS_ERR("fail to create snapshots tree: err %d\n",
 			  err);
-		goto fail_create_shextree;
+		goto fail_create_snapshots_tree;
 	}
 
 	init_rwsem(&ptr->lock);
+
+	atomic64_set(&ptr->snapshots_count, 0);
+
 	init_waitqueue_head(&ptr->wait_queue);
+	ssdfs_snapshot_reqs_queue_init(&ptr->requests.queue);
 
-	atomic64_set(&ptr->shared_extents, 0);
-
-	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
-		ssdfs_extents_queue_init(&ptr->array[i].queue);
-
-		err = ssdfs_shextree_start_thread(ptr, i);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to start shared extent tree's thread: "
-				  "ID %d, err %d\n",
-				  i, err);
-			goto destroy_shextree_object;
-		}
+	err = ssdfs_start_snapshots_btree_thread(fsi);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to start snapshots tree's thread: "
+			  "err %d\n", err);
+		goto destroy_snapshots_tree_object;
 	}
 
-	atomic_set(&ptr->state, SSDFS_SHEXTREE_CREATED);
+	atomic_set(&ptr->state, SSDFS_SNAPSHOTS_BTREE_CREATED);
 
-	ssdfs_debug_shextree_object(ptr);
-
-	fsi->shextree = ptr;
+	ssdfs_debug_snapshots_btree_object(ptr);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("DONE: create shared extents tree\n");
+	SSDFS_ERR("DONE: create snapshots tree\n");
 #else
-	SSDFS_DBG("DONE: create shared extents tree\n");
+	SSDFS_DBG("DONE: create snapshots tree\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 
-destroy_shextree_object:
-	for (; i >= 0; i--)
-		ssdfs_shextree_stop_thread(ptr, i);
-
+destroy_snapshots_tree_object:
 	ssdfs_btree_destroy(&ptr->generic_tree);
 
-fail_create_shextree:
-	ssdfs_shextree_kfree(ptr);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(err == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-
+fail_create_snapshots_tree:
+	ssdfs_snap_tree_kfree(ptr);
+	fsi->snapshots.tree = NULL;
 	return err;
 }
 
 /*
- * ssdfs_shextree_destroy() - destroy shared extents tree object
- * @fsi: file system info object
+ * ssdfs_snapshots_btree_destroy - destroy snapshots btree
+ * @fsi: pointer on shared file system object
  */
-void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
+void ssdfs_snapshots_btree_destroy(struct ssdfs_fs_info *fsi)
 {
-	struct ssdfs_shared_extents_tree *tree;
-	int i;
+	struct ssdfs_snapshots_btree_info *tree;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -227,36 +191,34 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("shextree %p\n", fsi->shextree);
+	SSDFS_ERR("tree %p\n", fsi->snapshots.tree);
 #else
-	SSDFS_DBG("shextree %p\n", fsi->shextree);
+	SSDFS_DBG("tree %p\n", fsi->snapshots.tree);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	if (!fsi->shextree)
+	if (!fsi->snapshots.tree)
 		return;
 
-	tree = fsi->shextree;
+	tree = fsi->snapshots.tree;
 
-	ssdfs_debug_shextree_object(tree);
+	ssdfs_debug_snapshots_btree_object(tree);
 
-	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
-		err = ssdfs_shextree_stop_thread(fsi->shextree, i);
-		if (err == -EIO) {
-			ssdfs_fs_error(fsi->sb,
-					__FILE__, __func__, __LINE__,
-					"thread I/O issue\n");
-		} else if (unlikely(err)) {
-			SSDFS_WARN("thread stopping issue: ID %d, err %d\n",
-				   i, err);
-		}
-
-		ssdfs_extents_queue_remove_all(&fsi->shextree->array[i].queue);
+	err = ssdfs_stop_snapshots_btree_thread(fsi);
+	if (err == -EIO) {
+		ssdfs_fs_error(fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"thread I/O issue\n");
+	} else if (unlikely(err)) {
+		SSDFS_WARN("thread stopping issue: err %d\n",
+			   err);
 	}
+
+	ssdfs_snapshot_reqs_queue_remove_all(&tree->requests.queue);
 
 	ssdfs_btree_destroy(&tree->generic_tree);
 
-	ssdfs_shextree_kfree(fsi->shextree);
-	fsi->shextree = NULL;
+	ssdfs_snap_tree_kfree(tree);
+	fsi->snapshots.tree = NULL;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -264,10 +226,10 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
 }
 
 /*
- * ssdfs_shextree_flush() - flush dirty shared extents btree
+ * ssdfs_snapshots_btree_flush() - flush dirty snapshots btree
  * @fsi: pointer on shared file system object
  *
- * This method tries to flush the dirty shared extents btree.
+ * This method tries to flush the dirty snapshots btree.
  *
  * RETURN:
  * [success]
@@ -275,7 +237,7 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
  *
  * %-ERANGE     - internal error.
  */
-int ssdfs_shextree_flush(struct ssdfs_fs_info *fsi)
+int ssdfs_snapshots_btree_flush(struct ssdfs_fs_info *fsi)
 {
 	int err;
 
@@ -285,19 +247,14 @@ int ssdfs_shextree_flush(struct ssdfs_fs_info *fsi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p\n", fsi->shextree);
+	SSDFS_ERR("tree %p\n", fsi->snapshots.tree);
 #else
-	SSDFS_DBG("tree %p\n", fsi->shextree);
+	SSDFS_DBG("tree %p\n", fsi->snapshots.tree);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	if (!fsi->shextree) {
-		SSDFS_WARN("shared extents btree is absent\n");
-		return -EINVAL;
-	}
-
-	err = ssdfs_btree_flush(&fsi->shextree->generic_tree);
+	err = ssdfs_btree_flush(&fsi->snapshots.tree->generic_tree);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to flush shared extents btree: err %d\n",
+		SSDFS_ERR("fail to flush snapshots btree: err %d\n",
 			  err);
 		return err;
 	}
@@ -308,46 +265,47 @@ int ssdfs_shextree_flush(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_debug_shextree_object(fsi->shextree);
+	ssdfs_debug_snapshots_btree_object(fsi->snapshots.tree);
 
 	return 0;
 }
 
 /******************************************************************************
- *                   SHARED EXTENTS TREE OBJECT FUNCTIONALITY                 *
+ *                     SNAPSHOTS TREE OBJECT FUNCTIONALITY                    *
  ******************************************************************************/
 
 /*
- * need_initialize_shextree_search() - check necessity to init the search
- * @fingerprint: fingerprint object
+ * need_initialize_snapshots_btree_search() - check necessity to init the search
+ * @id: snapshot ID
+ * @range: timestamps range
  * @search: search object
  */
 static inline
-bool need_initialize_shextree_search(struct ssdfs_fingerprint *fingerprint,
-				     struct ssdfs_btree_search *search)
+bool need_initialize_snapshots_btree_search(struct ssdfs_snapshot_id *id,
+					    struct ssdfs_timestamp_range *range,
+					    struct ssdfs_btree_search *search)
 {
-	bool need_init = false;
-	void *buf1, *buf2;
+	bool need_init1 = false;
+	bool need_init2 = false;
 
-	if (search->request.start.fingerprint) {
-		buf1 = search->request.start.fingerprint->buf;
-		buf2 = fingerprint->buf;
+	if (id != NULL)
+		need_init1 = search->request.start.hash != id->timestamp;
 
-		if (memcmp(buf1, buf2, SSDFS_FINGERPRINT_LENGTH_MAX) != 0)
-			need_init = true;
-	} else
-		need_init = true;
+	if (range != NULL) {
+		need_init2 = search->request.start.hash != range->start ||
+				search->request.end.hash != range->end;
+	}
 
-	return need_initialize_btree_search(search) || need_init;
+	return need_initialize_btree_search(search) || need_init1 || need_init2;
 }
 
 /*
- * ssdfs_shextree_find() - find shared extent
- * @tree: pointer on shared extents btree object
- * @fingerprint: fingerprint object
+ * ssdfs_snapshots_btree_find() - find snapshot
+ * @tree: pointer on snapshots btree object
+ * @id: snapshot ID
  * @search: pointer on search request object
  *
- * This method tries to find a shared extent.
+ * This method tries to find a snapshot.
  *
  * RETURN:
  * [success]
@@ -356,33 +314,42 @@ bool need_initialize_shextree_search(struct ssdfs_fingerprint *fingerprint,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-int ssdfs_shextree_find(struct ssdfs_shared_extents_tree *tree,
-			struct ssdfs_fingerprint *fingerprint,
-			struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_find(struct ssdfs_snapshots_btree_info *tree,
+				struct ssdfs_snapshot_id *id,
+				struct ssdfs_btree_search *search)
 {
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !fingerprint || !search);
+	size_t len;
 
-	SSDFS_DBG("tree %p, fingerprint %pUb, search %p\n",
-		  tree, fingerprint->buf, search);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !id || !search);
+
+	SSDFS_DBG("tree %p, timestamp %llu, search %p\n",
+		  tree, id->timestamp, search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
-	if (need_initialize_shextree_search(fingerprint, search)) {
-		u64 hash;
-
+	if (need_initialize_snapshots_btree_search(id, NULL, search)) {
 		ssdfs_btree_search_init(search);
 		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = fingerprint;
-		search->request.end.fingerprint = fingerprint;
-		hash = ssdfs_fingerprint2hash(fingerprint->buf,
-					      fingerprint->len);
-		search->request.start.hash = hash;
-		search->request.end.hash = hash;
+		search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
+		search->request.start.hash = id->timestamp;
+		search->request.end.hash = id->timestamp;
+		if (id->uuid) {
+			search->request.start.uuid = id->uuid;
+			search->request.end.uuid = id->uuid;
+			search->request.flags |=
+				SSDFS_BTREE_SEARCH_HAS_VALID_UUID;
+		}
+		if (id->name) {
+			search->request.start.name = id->name;
+			search->request.end.name = id->name;
+			len = strnlen(id->name, SSDFS_MAX_NAME_LEN);
+			search->request.start.name_len = len;
+			search->request.end.name_len = len;
+			search->request.flags |=
+				SSDFS_BTREE_SEARCH_HAS_VALID_NAME;
+		}
 		search->request.count = 1;
 	}
 
@@ -390,12 +357,12 @@ int ssdfs_shextree_find(struct ssdfs_shared_extents_tree *tree,
 }
 
 /*
- * ssdfs_shextree_find_range() - find range of shared extents
- * @tree: pointer on shared extents btree object
- * @range: fingerprints range
+ * ssdfs_snapshots_btree_find_range() - find range of snapshots
+ * @tree: pointer on snapshots btree object
+ * @range: timestamp range
  * @search: pointer on search request object
  *
- * This method tries to find the range of shared extents.
+ * This method tries to find the range of snapshots.
  *
  * RETURN:
  * [success]
@@ -404,47 +371,37 @@ int ssdfs_shextree_find(struct ssdfs_shared_extents_tree *tree,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-int ssdfs_shextree_find_range(struct ssdfs_shared_extents_tree *tree,
-			      struct ssdfs_fingeprint_range *range,
-			      struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_find_range(struct ssdfs_snapshots_btree_info *tree,
+				     struct ssdfs_timestamp_range *range,
+				     struct ssdfs_btree_search *search)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !range || !search);
 
-	SSDFS_DBG("tree %p, range (start %pUb, end %pUb), search %p\n",
-		  tree, range->start.buf, range->end.buf, search);
+	SSDFS_DBG("tree %p, range (start %llu, end %llu), search %p\n",
+		  tree, range->start, range->end, search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
 
-	if (need_initialize_shextree_search(&range->start, search)) {
-		u64 hash;
-
+	if (need_initialize_snapshots_btree_search(NULL, range, search)) {
 		ssdfs_btree_search_init(search);
 		search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
-		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = &range->start;
-		hash = ssdfs_fingerprint2hash(range->start.buf,
-					      range->start.len);
-		search->request.start.hash = hash;
-		search->request.end.fingerprint = &range->end;
-		hash = ssdfs_fingerprint2hash(range->end.buf,
-					      range->end.len);
-		search->request.end.hash = hash;
+		search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
+		search->request.start.hash = range->start;
+		search->request.end.hash = range->end;
 	}
 
 	return ssdfs_btree_find_range(&tree->generic_tree, search);
 }
 
 /*
- * ssdfs_shextree_find_leaf_node() - find a leaf node in the tree
- * @tree: shared extents tree
- * @fingerprint: fingerprint object
+ * ssdfs_snapshots_tree_find_leaf_node() - find a leaf node in the tree
+ * @tree: snapshots tree
+ * @range: timestamp range
  * @search: search object
  *
- * This method tries to find a leaf node for the requested @fingerprint.
+ * This method tries to find a leaf node for the requested @range->start.
  *
  * RETURN:
  * [success]
@@ -453,35 +410,28 @@ int ssdfs_shextree_find_range(struct ssdfs_shared_extents_tree *tree,
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-int ssdfs_shextree_find_leaf_node(struct ssdfs_shared_extents_tree *tree,
-				  struct ssdfs_fingerprint *fingerprint,
-				  struct ssdfs_btree_search *search)
+int ssdfs_snapshots_tree_find_leaf_node(struct ssdfs_snapshots_btree_info *tree,
+					struct ssdfs_timestamp_range *range,
+					struct ssdfs_btree_search *search)
 {
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !fingerprint || !search);
+	BUG_ON(!tree || !range || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("tree %p, fingerprint %pUb, search %p\n",
-		  tree, fingerprint->buf, search);
+	SSDFS_DBG("tree %p, range (start %llx, end %llx), search %p\n",
+		  tree, range->start, range->end, search);
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
-	if (need_initialize_shextree_search(fingerprint, search)) {
-		u64 hash;
-
+	if (need_initialize_snapshots_btree_search(NULL, range, search)) {
 		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
-		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = fingerprint;
-		search->request.end.fingerprint = fingerprint;
-		hash = ssdfs_fingerprint2hash(fingerprint->buf,
-					      fingerprint->len);
-		search->request.start.hash = hash;
-		search->request.end.hash = hash;
+		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
+		search->request.start.hash = range->start;
+		search->request.end.hash = range->start;
+		search->request.count = 1;
 	}
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
@@ -520,11 +470,316 @@ finish_find_leaf_node:
 }
 
 /*
- * ssdfs_prepare_shared_extent() - prepare shared extent object
- * @extent: shared extent
+ * ssdfs_snapshots_tree_get_start_hash() - get starting hash of the tree
+ * @tree: snapshots tree
+ * @start_hash: extracted start hash [out]
+ *
+ * This method tries to extract a start hash of the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_snapshots_tree_get_start_hash(struct ssdfs_snapshots_btree_info *tree,
+					u64 *start_hash)
+{
+	struct ssdfs_btree_node *node;
+	u64 snapshots_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("tree %p, start_hash %p\n",
+		  tree, start_hash);
+
+	*start_hash = U64_MAX;
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	snapshots_count = atomic64_read(&tree->snapshots_count);
+
+	if (snapshots_count < 0) {
+		SSDFS_WARN("invalid snapshots count: "
+			   "snapshots_count %llu\n",
+			   snapshots_count);
+		return -ERANGE;
+	} else if (snapshots_count == 0)
+		return -ENOENT;
+
+	down_read(&tree->lock);
+
+	err = ssdfs_btree_radix_tree_find(&tree->generic_tree,
+					  SSDFS_BTREE_ROOT_NODE_ID,
+					  &node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find root node in radix tree: "
+			  "err %d\n", err);
+		goto finish_get_start_hash;
+	} else if (!node) {
+		err = -ENOENT;
+		SSDFS_WARN("empty node pointer\n");
+		goto finish_get_start_hash;
+	}
+
+	down_read(&node->header_lock);
+	*start_hash = node->index_area.start_hash;
+	up_read(&node->header_lock);
+
+finish_get_start_hash:
+	up_read(&tree->lock);
+
+	if (*start_hash >= U64_MAX) {
+		/* warn about invalid hash code */
+		SSDFS_WARN("hash_code is invalid\n");
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_snapshots_tree_node_hash_range() - get node's hash range
+ * @tree: snapshots tree
+ * @search: search object
+ * @start_hash: extracted start hash [out]
+ * @end_hash: extracted end hash [out]
+ * @items_count: extracted number of items in node [out]
+ *
+ * This method tries to extract start hash, end hash,
+ * and items count in a node.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_snapshots_tree_node_hash_range(struct ssdfs_snapshots_btree_info *tree,
+					 struct ssdfs_btree_search *search,
+					 u64 *start_hash, u64 *end_hash,
+					 u16 *items_count)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search || !start_hash || !end_hash || !items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("search %p, start_hash %p, "
+		  "end_hash %p, items_count %p\n",
+		  search, start_hash, end_hash, items_count);
+
+	*start_hash = *end_hash = U64_MAX;
+	*items_count = 0;
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	err = ssdfs_btree_node_get_hash_range(search,
+					      start_hash,
+					      end_hash,
+					      items_count);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get hash range: err %d\n",
+			  err);
+		goto finish_extract_hash_range;
+	}
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, items_count %u\n",
+		  *start_hash, *end_hash, *items_count);
+
+finish_extract_hash_range:
+	return err;
+}
+
+/*
+ * ssdfs_snapshots_tree_extract_range() - extract range of items
+ * @tree: snapshots tree
+ * @start_index: start item index in the node
+ * @count: requested count of items
  * @search: search object
  *
- * This method tries to prepare a shared extent for adding into the tree.
+ * This method tries to extract a range of items from the node.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENOENT     - unable to extract any items.
+ */
+int ssdfs_snapshots_tree_extract_range(struct ssdfs_snapshots_btree_info *tree,
+				       u16 start_index, u16 count,
+				       struct ssdfs_btree_search *search)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+
+	SSDFS_DBG("tree %p, start_index %u, count %u, search %p\n",
+		  tree, start_index, count, search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	down_read(&tree->lock);
+	err = ssdfs_btree_extract_range(&tree->generic_tree,
+					start_index, count,
+					search);
+	up_read(&tree->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to extract the range: "
+			  "start_index %u, count %u, err %d\n",
+			  start_index, count, err);
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_snapshots_tree_check_search_result() - check result of search
+ * @search: search object
+ */
+int ssdfs_snapshots_tree_check_search_result(struct ssdfs_btree_search *search)
+{
+	size_t desc_size = sizeof(struct ssdfs_snapshot);
+	u16 items_count;
+	size_t buf_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected result's state %#x\n",
+			  search->result.state);
+		return  -ERANGE;
+	}
+
+	switch (search->result.buf_state) {
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+		if (!search->result.buf) {
+			SSDFS_ERR("buffer pointer is NULL\n");
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected buffer's state\n");
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(search->result.items_in_buffer >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	items_count = (u16)search->result.items_in_buffer;
+
+	if (items_count == 0) {
+		SSDFS_ERR("items_in_buffer %u\n",
+			  items_count);
+		return -ENOENT;
+	} else if (items_count != search->result.count) {
+		SSDFS_ERR("items_count %u != search->result.count %u\n",
+			  items_count, search->result.count);
+		return -ERANGE;
+	}
+
+	buf_size = desc_size * items_count;
+
+	if (buf_size != search->result.buf_size) {
+		SSDFS_ERR("buf_size %zu != search->result.buf_size %zu\n",
+			  buf_size,
+			  search->result.buf_size);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_snapshots_tree_get_next_hash() - get next node's starting hash
+ * @tree: snapshots tree
+ * @search: search object
+ * @next_hash: next node's starting hash [out]
+ */
+int ssdfs_snapshots_tree_get_next_hash(struct ssdfs_snapshots_btree_info *tree,
+					struct ssdfs_btree_search *search,
+					u64 *next_hash)
+{
+	u64 old_hash;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search || !next_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_hash = le64_to_cpu(search->node.found_index.index.hash);
+
+	SSDFS_DBG("search %p, next_hash %p, old (node %u, hash %llx)\n",
+		  search, next_hash, search->node.id, old_hash);
+
+	down_read(&tree->lock);
+	err = ssdfs_btree_get_next_hash(&tree->generic_tree, search, next_hash);
+	up_read(&tree->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_prepare_snapshot_info() - prepare snapshot info
+ * @snr: snapshot request
+ * @create_time: create timestamp
+ * @create_cno: create checkpoint
+ * @search: pointer on search request object
+ *
+ * This method tries to prepare a snapshot info.
  *
  * RETURN:
  * [success]
@@ -534,14 +789,17 @@ finish_find_leaf_node:
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
+int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
+				u64 create_time,
+				u64 create_cno,
 				struct ssdfs_btree_search *search)
 {
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!extent || !search);
+	struct ssdfs_snapshot *desc;
+	u64 name_hash = U64_MAX;
+	size_t len;
 
-	SSDFS_DBG("extent %p, search %p\n",
-		  extent, search);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!snr || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.buf_state) {
@@ -550,8 +808,8 @@ int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
-		search->result.buf = &search->raw.shared_extent;
-		search->result.buf_size = sizeof(struct ssdfs_shared_extent);
+		search->result.buf = &search->raw.snapshot;
+		search->result.buf_size = sizeof(struct ssdfs_snapshot);
 		search->result.items_in_buffer = 1;
 		break;
 
@@ -559,7 +817,7 @@ int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!search->result.buf);
 		BUG_ON(search->result.buf_size !=
-			sizeof(struct ssdfs_shared_extent));
+			sizeof(struct ssdfs_snapshot));
 		BUG_ON(search->result.items_in_buffer != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
@@ -570,21 +828,62 @@ int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
 		return -ERANGE;
 	}
 
-	ssdfs_memcpy(search->result.buf, 0, sizeof(struct ssdfs_shared_extent),
-		     extent, 0, sizeof(struct ssdfs_shared_extent),
-		     sizeof(struct ssdfs_shared_extent));
+	desc = &search->raw.snapshot;
+
+	memset(desc, 0, sizeof(struct ssdfs_snapshot));
+
+	ssdfs_memcpy(desc->uuid, 0, SSDFS_UUID_SIZE,
+		     snr->info.uuid, 0, SSDFS_UUID_SIZE,
+		     SSDFS_UUID_SIZE);
+	ssdfs_memcpy(desc->name, 0, SSDFS_MAX_SNAPSHOT_NAME_LEN,
+		     snr->info.name, 0, SSDFS_MAX_NAME_LEN,
+		     SSDFS_MAX_SNAPSHOT_NAME_LEN);
+
+	if (!is_ssdfs_snapshot_mode_correct(snr->info.mode)) {
+		SSDFS_ERR("invalid mode %#x\n",
+			  snr->info.mode);
+		return -EINVAL;
+	}
+
+	desc->mode = (u8)snr->info.mode;
+
+	if (!is_ssdfs_snapshot_expiration_correct(snr->info.expiration)) {
+		SSDFS_ERR("invalid expiration %#x\n",
+			  snr->info.expiration);
+		return -EINVAL;
+	}
+
+	desc->expiration = (u8)snr->info.expiration;
+	desc->flags = 0;
+
+	desc->create_time = cpu_to_le64(create_time);
+	desc->create_cno = cpu_to_le64(create_cno);
+
+	desc->ino = cpu_to_le64(snr->ino);
+
+	len = strnlen(snr->info.name, SSDFS_MAX_NAME_LEN);
+
+	if (len != 0) {
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
+		if (name_hash == U64_MAX) {
+			SSDFS_ERR("fail to generate name hash\n");
+			return -ERANGE;
+		}
+
+		desc->name_hash = cpu_to_le64(name_hash);
+	} else
+		desc->name_hash = cpu_to_le64(U64_MAX);
 
 	return 0;
 }
 
 /*
- * ssdfs_shextree_add() - add shared extent info into the tree
- * @tree: pointer on shared extents btree object
- * @fingerprint: fingerprint object
- * @extent: shared extent
+ * ssdfs_snapshots_btree_add() - add snapshot info into the tree
+ * @tree: pointer on snapshots btree object
+ * @snr: snapshot request
  * @search: search object
  *
- * This method tries to add shared extent info into the tree.
+ * This method tries to add snapshot info into the tree.
  *
  * RETURN:
  * [success]
@@ -592,49 +891,53 @@ int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
  *
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
- * %-EEXIST     - shared extent exists in the tree.
+ * %-EEXIST     - snapshot exists in the tree.
  */
-int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
-			struct ssdfs_fingerprint *fingerprint,
-			struct ssdfs_shared_extent *extent,
-			struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_add(struct ssdfs_snapshots_btree_info *tree,
+			      struct ssdfs_snapshot_request *snr,
+			      struct ssdfs_btree_search *search)
 {
-	u64 hash;
+	u64 create_time;
+	u64 create_cno;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !extent || !search);
+	BUG_ON(!tree || !tree->fsi || !snr || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, extent %p, search %p\n",
-		  tree, extent, search);
+	SSDFS_ERR("tree %p, snr %p, search %p\n",
+		  tree, snr, search);
 #else
-	SSDFS_DBG("tree %p, extent %p, search %p\n",
-		  tree, extent, search);
+	SSDFS_DBG("tree %p, snr %p, search %p\n",
+		  tree, snr, search);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	create_time = ssdfs_current_timestamp();
+	create_cno = ssdfs_current_cno(tree->fsi->sb);
+
+	SSDFS_DBG("create_time %#llx, create_cno %#llx, ino %llu\n",
+		  create_time, create_cno, snr->ino);
 
 	ssdfs_btree_search_init(search);
 	search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
-	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-	search->request.start.fingerprint = fingerprint;
-	search->request.end.fingerprint = fingerprint;
-	hash = ssdfs_fingerprint2hash(fingerprint->buf,
-				      fingerprint->len);
-	search->request.start.hash = hash;
-	search->request.end.hash = hash;
+	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_VALID_INO;
+	search->request.start.hash = create_time;
+	search->request.start.ino = snr->ino;
+	search->request.end.hash = create_time;
+	search->request.end.ino = snr->ino;
 	search->request.count = 1;
 
 	switch (atomic_read(&tree->state)) {
-	case SSDFS_SHEXTREE_CREATED:
-	case SSDFS_SHEXTREE_INITIALIZED:
-	case SSDFS_SHEXTREE_DIRTY:
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
 		/* expected state */
 		break;
 
 	default:
-		SSDFS_ERR("invalid shared extents tree's state %#x\n",
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
 			  atomic_read(&tree->state));
 		return -ERANGE;
 	};
@@ -644,21 +947,22 @@ int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (err == -ENODATA) {
 		/*
-		 * Shared extent doesn't exist.
+		 * Snapshot doesn't exist.
 		 */
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find the shared extent: "
-			  "fingerprint %pUb, err %d\n",
-			  extent->fingerprint, err);
-		goto finish_add_shared_extent;
+		SSDFS_ERR("fail to find the snapshot: "
+			  "timestamp %llu, err %d\n",
+			  create_time, err);
+		goto finish_add_snapshot;
 	}
 
 	if (err == -ENODATA) {
-		err = ssdfs_prepare_shared_extent(extent, search);
+		err = ssdfs_prepare_snapshot_info(snr, create_time,
+						  create_cno, search);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to prepare the shared extent: "
+			SSDFS_ERR("fail to prepare snapshot info: "
 				  "err %d\n", err);
-			goto finish_add_shared_extent;
+			goto finish_add_snapshot;
 		}
 
 		search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
@@ -674,7 +978,7 @@ int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
 			err = -ERANGE;
 			SSDFS_ERR("invalid search result's state %#x\n",
 				  search->result.state);
-			goto finish_add_shared_extent;
+			goto finish_add_snapshot;
 		}
 
 		if (search->result.buf_state !=
@@ -682,52 +986,155 @@ int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
 			err = -ERANGE;
 			SSDFS_ERR("invalid buf_state %#x\n",
 				  search->result.buf_state);
-			goto finish_add_shared_extent;
+			goto finish_add_snapshot;
 		}
 
 		err = ssdfs_btree_add_item(&tree->generic_tree, search);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to add shared extent into the tree: "
+			SSDFS_ERR("fail to add snapshot into the tree: "
 				  "err %d\n", err);
-			goto finish_add_shared_extent;
+			goto finish_add_snapshot;
 		}
 
-		atomic_set(&tree->state, SSDFS_SHEXTREE_DIRTY);
+		atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_DIRTY);
 
 		ssdfs_btree_search_forget_parent_node(search);
 		ssdfs_btree_search_forget_child_node(search);
 
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to add shared extent: "
+			SSDFS_ERR("fail to add snapshot: "
 				  "err %d\n", err);
-			goto finish_add_shared_extent;
+			goto finish_add_snapshot;
 		}
 	} else {
 		err = -EEXIST;
-		SSDFS_DBG("shared extent exists in the tree\n");
-		goto finish_add_shared_extent;
+		SSDFS_DBG("snapshot exists in the tree\n");
+		goto finish_add_snapshot;
 	}
 
-finish_add_shared_extent:
+finish_add_snapshot:
 	up_read(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_debug_shextree_object(tree);
+	ssdfs_debug_snapshots_btree_object(tree);
 
 	return err;
 }
 
 /*
- * ssdfs_shextree_change() - change shared extent in the tree
- * @tree: shared extents tree
- * @fingerprint: old fingerprint
- * @extent: new state of shared extent
+ * ssdfs_convert_time2timestamp_range() - convert timestamp range
+ * @fsi: pointer on shared file system object
+ * @range1: input time range
+ * @range2: output time range in nanoseconds [out]
+ *
+ * This method tries to convert input time range into nanoseconds.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ */
+int ssdfs_convert_time2timestamp_range(struct ssdfs_fs_info *fsi,
+					struct ssdfs_time_range *range1,
+					struct ssdfs_timestamp_range *range2)
+{
+	u32 year;
+	u32 month1 = 1, month2 = 12;
+	u32 day1 = 1, day2 = 31;
+	u32 hour1 = 0, hour2 = 24;
+	u32 minute1 = 0, minute2 = 60;
+	u32 second1 = 0, second2 = 60;
+	struct timespec64 timestamp = {0};
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !range1 || !range2);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	range2->start = U64_MAX;
+	range2->end = U64_MAX;
+
+	if (range1->year == SSDFS_ANY_YEAR) {
+		range2->start = fsi->fs_ctime;
+		range2->end = ssdfs_current_timestamp();
+		goto finish_conversion;
+	}
+
+	err = check_year(range1->year);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid year value %u\n",
+			  range1->year);
+		goto finish_conversion;
+	} else
+		year = range1->year;
+
+	if (range1->month == SSDFS_ANY_MONTH)
+		goto calculate_timestamp_range;
+
+	err = check_month(range1->month);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid month value %u\n",
+			  range1->month);
+		goto finish_conversion;
+	} else
+		month1 = month2 = range1->month;
+
+	if (range1->day == SSDFS_ANY_DAY)
+		goto calculate_timestamp_range;
+
+	err = check_day(range1->day);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid day value %u\n",
+			  range1->day);
+		goto finish_conversion;
+	} else
+		day1 = day2 = range1->day;
+
+	if (range1->hour == SSDFS_ANY_HOUR)
+		goto calculate_timestamp_range;
+
+	err = check_hour(range1->hour);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid hour value %u\n",
+			  range1->hour);
+		goto finish_conversion;
+	} else
+		hour1 = hour2 = range1->hour;
+
+	if (range1->minute == SSDFS_ANY_MINUTE)
+		goto calculate_timestamp_range;
+
+	err = check_minute(range1->minute);
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid minute value %u\n",
+			  range1->minute);
+		goto finish_conversion;
+	} else
+		minute1 = minute2 = range1->minute;
+
+calculate_timestamp_range:
+	timestamp.tv_sec = mktime64(year, month1, day1,
+				    hour1, minute1, second1);
+	range2->start = timespec64_to_ns(&timestamp);
+
+	timestamp.tv_sec = mktime64(year, month2, day2,
+				    hour2, minute2, second2);
+	range2->end = timespec64_to_ns(&timestamp);
+
+finish_conversion:
+	return err;
+}
+
+/*
+ * ssdfs_modify_snapshot() - change a snapshot
+ * @snr: snapshot request
  * @search: search object
  *
- * This method tries to change shared extent in the tree.
+ * This method tries to prepare a new state of the snapshot object.
  *
  * RETURN:
  * [success]
@@ -735,62 +1142,168 @@ finish_add_shared_extent:
  *
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
- * %-ENODATA    - shared extent doesn't exist in the tree.
  */
-int ssdfs_shextree_change(struct ssdfs_shared_extents_tree *tree,
-			  struct ssdfs_fingerprint *fingerprint,
-			  struct ssdfs_shared_extent *extent,
+static
+int ssdfs_modify_snapshot(struct ssdfs_snapshot_request *snr,
 			  struct ssdfs_btree_search *search)
 {
+	struct ssdfs_snapshot *desc;
+	u64 name_hash = U64_MAX;
+	size_t len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!snr || !search);
+
+	SSDFS_DBG("ino %llu, UUID %pUb\n",
+		  snr->ino, snr->info.uuid);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER ||
+	    !search->result.buf ||
+	    search->result.buf_size != sizeof(struct ssdfs_snapshot)) {
+		SSDFS_ERR("invalid buffer state: "
+			  "state %#x, buf %p\n",
+			  search->result.buf_state,
+			  search->result.buf);
+		return -ERANGE;
+	}
+
+	desc = &search->raw.snapshot;
+
+	if (!is_uuids_identical(desc->uuid, snr->info.uuid)) {
+		SSDFS_ERR("not identical: UUID1 %pUb, UUID2 %pUb\n",
+			  desc->uuid, snr->info.uuid);
+		return -ERANGE;
+	}
+
+	if (!is_ssdfs_snapshot_mode_correct(snr->info.mode)) {
+		SSDFS_ERR("invalid mode %#x\n",
+			  snr->info.mode);
+		return -EINVAL;
+	}
+
+	desc->mode = (u8)snr->info.mode;
+
+	if (!is_ssdfs_snapshot_expiration_correct(snr->info.expiration)) {
+		SSDFS_ERR("invalid expiration %#x\n",
+			  snr->info.expiration);
+		return -EINVAL;
+	}
+
+	desc->expiration = (u8)snr->info.expiration;
+
+	len = strnlen(snr->info.name, SSDFS_MAX_NAME_LEN);
+
+	if (len != 0) {
+		ssdfs_memcpy(desc->name, 0, SSDFS_MAX_SNAPSHOT_NAME_LEN,
+			     snr->info.name, 0, SSDFS_MAX_NAME_LEN,
+			     SSDFS_MAX_SNAPSHOT_NAME_LEN);
+
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
+		if (name_hash == U64_MAX) {
+			SSDFS_ERR("fail to generate name hash\n");
+			return -ERANGE;
+		}
+
+		desc->name_hash = cpu_to_le64(name_hash);
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_snapshots_btree_change() - change snapshot in the tree
+ * @tree: snapshots tree
+ * @snr: snapshot request
+ * @search: search object
+ *
+ * This method tries to change snapshot in the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - snapshot doesn't exist in the tree.
+ */
+int ssdfs_snapshots_btree_change(struct ssdfs_snapshots_btree_info *tree,
+				 struct ssdfs_snapshot_request *snr,
+				 struct ssdfs_btree_search *search)
+{
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_timestamp_range time_range;
+	struct ssdfs_snapshot_id id;
+	size_t len;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !tree->fsi || !search);
-	BUG_ON(!fingerprint || !extent);
+	BUG_ON(!tree || !tree->fsi || !snr || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, fingerprint %pUb, "
-		  "extent %p, search %p\n",
-		  tree, fingerprint->buf, extent, search);
+	SSDFS_ERR("tree %p, snr %p, search %p\n",
+		  tree, snr, search);
 #else
-	SSDFS_DBG("tree %p, fingerprint %pUb, "
-		  "extent %p, search %p\n",
-		  tree, fingerprint->buf, extent, search);
+	SSDFS_DBG("tree %p, snr %p, search %p\n",
+		  tree, snr, search);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (atomic_read(&tree->state)) {
-	case SSDFS_SHEXTREE_CREATED:
-	case SSDFS_SHEXTREE_INITIALIZED:
-	case SSDFS_SHEXTREE_DIRTY:
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
 		/* expected state */
 		break;
 
 	default:
-		SSDFS_ERR("invalid shared extents tree's state %#x\n",
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
 			  atomic_read(&tree->state));
 		return -ERANGE;
 	};
 
 	fsi = tree->fsi;
 
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	err = ssdfs_convert_time2timestamp_range(fsi,
+						 &snr->info.time_range,
+						 &time_range);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert time range: err %d\n",
+			  err);
+		return err;
+	}
 
-	if (need_initialize_shextree_search(fingerprint, search)) {
-		u64 hash;
+	id.timestamp = time_range.start;
+	id.uuid = snr->info.uuid;
+	id.name = snr->info.name;
 
+	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+
+	if (need_initialize_snapshots_btree_search(&id, &time_range, search)) {
 		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
 		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = fingerprint;
-		search->request.end.fingerprint = fingerprint;
-		hash = ssdfs_fingerprint2hash(fingerprint->buf,
-					      fingerprint->len);
-		search->request.start.hash = hash;
-		search->request.end.hash = hash;
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_VALID_INO;
+		search->request.start.hash = time_range.start;
+		search->request.start.ino = snr->ino;
+		search->request.end.hash = time_range.end;
+		search->request.end.ino = snr->ino;
+		if (id.uuid) {
+			search->request.start.uuid = id.uuid;
+			search->request.end.uuid = id.uuid;
+			search->request.flags |=
+				SSDFS_BTREE_SEARCH_HAS_VALID_UUID;
+		}
+		if (id.name) {
+			search->request.start.name = id.name;
+			search->request.end.name = id.name;
+			len = strnlen(id.name, SSDFS_MAX_NAME_LEN);
+			search->request.start.name_len = len;
+			search->request.end.name_len = len;
+			search->request.flags |=
+				SSDFS_BTREE_SEARCH_HAS_VALID_NAME;
+		}
 		search->request.count = 1;
 	}
 
@@ -798,10 +1311,17 @@ int ssdfs_shextree_change(struct ssdfs_shared_extents_tree *tree,
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to find the shared extent: "
-			  "fingerprint %pUb, err %d\n",
-			  fingerprint->buf, err);
-		goto finish_change_shared_extent;
+		SSDFS_ERR("fail to find the snapshot: "
+			  "time range (start %llu, end %llu), err %d\n",
+			  time_range.start, time_range.end, err);
+		goto finish_change_snapshot;
+	}
+
+	err = ssdfs_modify_snapshot(snr, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change snapshot: err %d\n",
+			  err);
+		goto finish_change_snapshot;
 	}
 
 	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
@@ -810,57 +1330,47 @@ int ssdfs_shextree_change(struct ssdfs_shared_extents_tree *tree,
 		err = -ERANGE;
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
-		goto finish_change_shared_extent;
+		goto finish_change_snapshot;
 	}
 
 	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid buf_state %#x\n",
 			  search->result.buf_state);
-		goto finish_change_shared_extent;
-	}
-
-	err = ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
-			  extent, 0, sizeof(struct ssdfs_shared_extent),
-			  sizeof(struct ssdfs_shared_extent));
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to prepare new state of shared extent: "
-			  "err %d\n", err);
-		goto finish_change_shared_extent;
+		goto finish_change_snapshot;
 	}
 
 	err = ssdfs_btree_change_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to change shared extent in the tree: "
+		SSDFS_ERR("fail to change snapshot in the tree: "
 			  "err %d\n", err);
-		goto finish_change_shared_extent;
+		goto finish_change_snapshot;
 	}
 
-	atomic_set(&tree->state, SSDFS_SHEXTREE_DIRTY);
+	atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_DIRTY);
 
 	ssdfs_btree_search_forget_parent_node(search);
 	ssdfs_btree_search_forget_child_node(search);
 
-finish_change_shared_extent:
+finish_change_snapshot:
 	up_read(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_debug_shextree_object(tree);
+	ssdfs_debug_snapshots_btree_object(tree);
 
 	return err;
 }
 
 /*
- * ssdfs_shextree_ref_count_inc() - increment shared extent's ref count
- * @tree: shared extents tree
- * @fingerprint: old fingerprint
+ * ssdfs_snapshots_btree_delete() - delete snapshot from the tree
+ * @tree: snapshots tree
+ * @snr: snapshot request
  * @search: search object
  *
- * This method tries to increment the reference counter of
- * shared extent in the tree.
+ * This method tries to delete snapshot from the tree.
  *
  * RETURN:
  * [success]
@@ -868,61 +1378,87 @@ finish_change_shared_extent:
  *
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
- * %-ENODATA    - shared extent doesn't exist in the tree.
+ * %-ENODATA    - snapshot doesn't exist in the tree.
  */
-int ssdfs_shextree_ref_count_inc(struct ssdfs_shared_extents_tree *tree,
-				 struct ssdfs_fingerprint *fingerprint,
+int ssdfs_snapshots_btree_delete(struct ssdfs_snapshots_btree_info *tree,
+				 struct ssdfs_snapshot_request *snr,
 				 struct ssdfs_btree_search *search)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_timestamp_range time_range;
+	struct ssdfs_snapshot_id id;
+	struct ssdfs_snapshot *desc;
+	s64 snapshots_count;
+	size_t len;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !tree->fsi || !search);
-	BUG_ON(!fingerprint);
+	BUG_ON(!tree || !tree->fsi || !snr || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, fingerprint %pUb, "
-		  "search %p\n",
-		  tree, fingerprint->buf, search);
+	SSDFS_ERR("tree %p, snr %p, search %p\n",
+		  tree, snr, search);
 #else
-	SSDFS_DBG("tree %p, fingerprint %pUb, "
-		  "search %p\n",
-		  tree, fingerprint->buf, search);
+	SSDFS_DBG("tree %p, snr %p, search %p\n",
+		  tree, snr, search);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (atomic_read(&tree->state)) {
-	case SSDFS_SHEXTREE_CREATED:
-	case SSDFS_SHEXTREE_INITIALIZED:
-	case SSDFS_SHEXTREE_DIRTY:
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
 		/* expected state */
 		break;
 
 	default:
-		SSDFS_ERR("invalid shared extents tree's state %#x\n",
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
 			  atomic_read(&tree->state));
 		return -ERANGE;
 	};
 
 	fsi = tree->fsi;
 
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	err = ssdfs_convert_time2timestamp_range(fsi,
+						 &snr->info.time_range,
+						 &time_range);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert time range: err %d\n",
+			  err);
+		return err;
+	}
 
-	if (need_initialize_shextree_search(fingerprint, search)) {
-		u64 hash;
+	id.timestamp = time_range.start;
+	id.uuid = snr->info.uuid;
+	id.name = snr->info.name;
 
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+
+	if (need_initialize_snapshots_btree_search(&id, &time_range, search)) {
 		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
 		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = fingerprint;
-		search->request.end.fingerprint = fingerprint;
-		hash = ssdfs_fingerprint2hash(fingerprint->buf,
-					      fingerprint->len);
-		search->request.start.hash = hash;
-		search->request.end.hash = hash;
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_VALID_INO;
+		search->request.start.hash = time_range.start;
+		search->request.start.ino = snr->ino;
+		search->request.end.hash = time_range.end;
+		search->request.end.ino = snr->ino;
+		if (id.uuid) {
+			search->request.start.uuid = id.uuid;
+			search->request.end.uuid = id.uuid;
+			search->request.flags |=
+				SSDFS_BTREE_SEARCH_HAS_VALID_UUID;
+		}
+		if (id.name) {
+			search->request.start.name = id.name;
+			search->request.end.name = id.name;
+			len = strnlen(id.name, SSDFS_MAX_NAME_LEN);
+			search->request.start.name_len = len;
+			search->request.end.name_len = len;
+			search->request.flags |=
+				SSDFS_BTREE_SEARCH_HAS_VALID_NAME;
+		}
 		search->request.count = 1;
 	}
 
@@ -930,228 +1466,10 @@ int ssdfs_shextree_ref_count_inc(struct ssdfs_shared_extents_tree *tree,
 
 	err = ssdfs_btree_find_item(&tree->generic_tree, search);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to find the shared extent: "
-			  "fingerprint %pUb, err %d\n",
-			  fingerprint->buf, err);
-		goto finish_change_shared_extent;
-	}
-
-	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
-	search->request.flags |= SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT;
-
-	err = ssdfs_btree_change_item(&tree->generic_tree, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to change shared exetnt in the tree: "
-			  "err %d\n", err);
-		goto finish_change_shared_extent;
-	}
-
-	atomic_set(&tree->state, SSDFS_SHEXTREE_DIRTY);
-
-	ssdfs_btree_search_forget_parent_node(search);
-	ssdfs_btree_search_forget_child_node(search);
-
-finish_change_shared_extent:
-	up_read(&tree->lock);
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	ssdfs_debug_shextree_object(tree);
-
-	return err;
-}
-
-/*
- * ssdfs_shextree_ref_count_dec() - decrement shared extent's ref count
- * @tree: shared extents tree
- * @fingerprint: old fingerprint
- * @search: search object
- *
- * This method tries to decrement the reference counter of
- * shared extent in the tree.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- * %-ENODATA    - shared extent doesn't exist in the tree.
- */
-int ssdfs_shextree_ref_count_dec(struct ssdfs_shared_extents_tree *tree,
-				 struct ssdfs_fingerprint *fingerprint,
-				 struct ssdfs_btree_search *search)
-{
-	struct ssdfs_fs_info *fsi;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !tree->fsi || !search);
-	BUG_ON(!fingerprint);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, fingerprint %pUb, "
-		  "search %p\n",
-		  tree, fingerprint->buf, search);
-#else
-	SSDFS_DBG("tree %p, fingerprint %pUb, "
-		  "search %p\n",
-		  tree, fingerprint->buf, search);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	switch (atomic_read(&tree->state)) {
-	case SSDFS_SHEXTREE_CREATED:
-	case SSDFS_SHEXTREE_INITIALIZED:
-	case SSDFS_SHEXTREE_DIRTY:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid shared extents tree's state %#x\n",
-			  atomic_read(&tree->state));
-		return -ERANGE;
-	};
-
-	fsi = tree->fsi;
-
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-
-	if (need_initialize_shextree_search(fingerprint, search)) {
-		u64 hash;
-
-		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = fingerprint;
-		search->request.end.fingerprint = fingerprint;
-		hash = ssdfs_fingerprint2hash(fingerprint->buf,
-					      fingerprint->len);
-		search->request.start.hash = hash;
-		search->request.end.hash = hash;
-		search->request.count = 1;
-	}
-
-	down_read(&tree->lock);
-
-	err = ssdfs_btree_find_item(&tree->generic_tree, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to find the shared extent: "
-			  "fingerprint %pUb, err %d\n",
-			  fingerprint->buf, err);
-		goto finish_change_shared_extent;
-	}
-
-	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
-	search->request.flags |= SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT;
-
-	err = ssdfs_btree_change_item(&tree->generic_tree, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to change shared exetnt in the tree: "
-			  "err %d\n", err);
-		goto finish_change_shared_extent;
-	}
-
-	atomic_set(&tree->state, SSDFS_SHEXTREE_DIRTY);
-
-	ssdfs_btree_search_forget_parent_node(search);
-	ssdfs_btree_search_forget_child_node(search);
-
-finish_change_shared_extent:
-	up_read(&tree->lock);
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	ssdfs_debug_shextree_object(tree);
-
-	return err;
-}
-
-/*
- * ssdfs_shextree_delete() - delete shared extent from the tree
- * @tree: shared extents tree
- * @fingerprint: fingerprint value
- * @search: search object
- *
- * This method tries to delete shared extent from the tree.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- * %-ENODATA    - shared extent doesn't exist in the tree.
- */
-int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
-			  struct ssdfs_fingerprint *fingerprint,
-			  struct ssdfs_btree_search *search)
-{
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_shared_extent *shared_extent;
-	s64 shared_extents_count;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !tree->fsi || !fingerprint || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, fingerprint %pUb, search %p\n",
-		  tree, fingerprint->buf, search);
-#else
-	SSDFS_DBG("tree %p, fingerprint %pUb, search %p\n",
-		  tree, fingerprint->buf, search);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	switch (atomic_read(&tree->state)) {
-	case SSDFS_SHEXTREE_CREATED:
-	case SSDFS_SHEXTREE_INITIALIZED:
-	case SSDFS_SHEXTREE_DIRTY:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid shared extents tree's state %#x\n",
-			  atomic_read(&tree->state));
-		return -ERANGE;
-	};
-
-	fsi = tree->fsi;
-
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-
-	if (need_initialize_shextree_search(fingerprint, search)) {
-		u64 hash;
-
-		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-		search->request.flags =
-				SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
-				SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
-		search->request.start.fingerprint = fingerprint;
-		search->request.end.fingerprint = fingerprint;
-		hash = ssdfs_fingerprint2hash(fingerprint->buf,
-					      fingerprint->len);
-		search->request.start.hash = hash;
-		search->request.end.hash = hash;
-		search->request.count = 1;
-	}
-
-	down_read(&tree->lock);
-
-	err = ssdfs_btree_find_item(&tree->generic_tree, search);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to find the shared extent: "
-			  "fingerprint %pUb, err %d\n",
-			  fingerprint->buf, err);
-		goto finish_delete_shared_extent;
+		SSDFS_ERR("fail to find the snapshot: "
+			  "time range (start %llu, end %llu), err %d\n",
+			  time_range.start, time_range.end, err);
+		goto finish_delete_snapshot;
 	}
 
 	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
@@ -1160,26 +1478,25 @@ int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
 		err = -ERANGE;
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
-		goto finish_delete_shared_extent;
+		goto finish_delete_snapshot;
 	}
 
 	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid buf_state %#x\n",
 			  search->result.buf_state);
-		goto finish_delete_shared_extent;
+		goto finish_delete_snapshot;
 	}
 
-	shared_extent = &search->raw.shared_extent;
+	desc = &search->raw.snapshot;
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
-		if (le32_to_cpu(shared_extent->ref_count) != 0) {
+		if (!is_uuids_identical(desc->uuid, snr->info.uuid)) {
 			err = -ERANGE;
-			SSDFS_ERR("shared extent has references yet: "
-				  "ref_count %u\n",
-				  le32_to_cpu(shared_extent->ref_count));
-			goto finish_delete_shared_extent;
+			SSDFS_ERR("not identical: UUID1 %pUb, UUID2 %pUb\n",
+				  desc->uuid, snr->info.uuid);
+			goto finish_delete_snapshot;
 		}
 		break;
 
@@ -1187,69 +1504,69 @@ int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
 		err = -ERANGE;
 		SSDFS_WARN("unexpected result state %#x\n",
 			   search->result.state);
-		goto finish_delete_shared_extent;
+		goto finish_delete_snapshot;
 	}
 
-	shared_extents_count = atomic64_read(&tree->shared_extents);
-	if (shared_extents_count == 0) {
+	snapshots_count = atomic64_read(&tree->snapshots_count);
+	if (snapshots_count == 0) {
 		err = -ENOENT;
 		SSDFS_DBG("empty tree\n");
-		goto finish_delete_shared_extent;
+		goto finish_delete_snapshot;
 	}
 
-	if (search->result.start_index >= shared_extents_count) {
+	if (search->result.start_index >= snapshots_count) {
 		err = -ENODATA;
 		SSDFS_ERR("invalid search result: "
-			  "start_index %u, shared_extents_count %lld\n",
+			  "start_index %u, snapshots_count %lld\n",
 			  search->result.start_index,
-			  shared_extents_count);
-		goto finish_delete_shared_extent;
+			  snapshots_count);
+		goto finish_delete_snapshot;
 	}
 
 	err = ssdfs_btree_delete_item(&tree->generic_tree,
 				      search);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to delete the shared extent from the tree: "
+		SSDFS_ERR("fail to delete snapshot from the tree: "
 			  "err %d\n", err);
-		goto finish_delete_shared_extent;
+		goto finish_delete_snapshot;
 	}
 
-	atomic_set(&tree->state, SSDFS_SHEXTREE_DIRTY);
+	atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_DIRTY);
 
 	ssdfs_btree_search_forget_parent_node(search);
 	ssdfs_btree_search_forget_child_node(search);
 
-	shared_extents_count = atomic64_read(&tree->shared_extents);
+	snapshots_count = atomic64_read(&tree->snapshots_count);
 
-	if (shared_extents_count == 0) {
+	if (snapshots_count == 0) {
 		err = -ENOENT;
 		SSDFS_DBG("tree is empty now\n");
-		goto finish_delete_shared_extent;
-	} else if (shared_extents_count < 0) {
+		goto finish_delete_snapshot;
+	} else if (snapshots_count < 0) {
 		err = -ERANGE;
-		SSDFS_WARN("invalid shared_extents_count %lld\n",
-			   shared_extents_count);
-		atomic_set(&tree->state, SSDFS_SHEXTREE_CORRUPTED);
-		goto finish_delete_shared_extent;
+		SSDFS_WARN("invalid snapshots_count %lld\n",
+			   snapshots_count);
+		atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_CORRUPTED);
+		goto finish_delete_snapshot;
 	}
 
-finish_delete_shared_extent:
+finish_delete_snapshot:
 	up_read(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_debug_shextree_object(tree);
+	ssdfs_debug_snapshots_btree_object(tree);
 
 	return err;
 }
 
 /*
- * ssdfs_shextree_delete_all() - delete all shared extents in the tree
- * @tree: shared extents tree
+ * ssdfs_snapshots_btree_delete_all() - delete all snapshots in the tree
+ * @tree: snapshots tree
  *
- * This method tries to delete all shared extents from the tree.
+ * This method tries to delete all snapshots in the tree.
  *
  * RETURN:
  * [success]
@@ -1258,7 +1575,7 @@ finish_delete_shared_extent:
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  */
-int ssdfs_shextree_delete_all(struct ssdfs_shared_extents_tree *tree)
+int ssdfs_snapshots_btree_delete_all(struct ssdfs_snapshots_btree_info *tree)
 {
 	int err = 0;
 
@@ -1273,14 +1590,14 @@ int ssdfs_shextree_delete_all(struct ssdfs_shared_extents_tree *tree)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (atomic_read(&tree->state)) {
-	case SSDFS_SHEXTREE_CREATED:
-	case SSDFS_SHEXTREE_INITIALIZED:
-	case SSDFS_SHEXTREE_DIRTY:
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
 		/* expected state */
 		break;
 
 	default:
-		SSDFS_ERR("invalid shared extents tree's state %#x\n",
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
 			  atomic_read(&tree->state));
 		return -ERANGE;
 	};
@@ -1288,11 +1605,11 @@ int ssdfs_shextree_delete_all(struct ssdfs_shared_extents_tree *tree)
 	down_write(&tree->lock);
 	err = ssdfs_btree_delete_all(&tree->generic_tree);
 	if (!err)
-		atomic64_set(&tree->shared_extents, 0);
+		atomic64_set(&tree->snapshots_count, 0);
 	up_write(&tree->lock);
 
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to delete the all shared extents: "
+		SSDFS_ERR("fail to delete the all snapshots: "
 			  "err %d\n",
 			  err);
 	}
@@ -1304,336 +1621,23 @@ int ssdfs_shextree_delete_all(struct ssdfs_shared_extents_tree *tree)
 	return err;
 }
 
-/*
- * ssdfs_shextree_add_pre_invalid_extent() - add pre-invalid extent into queue
- * @tree: shared extents tree
- * @owner_ino: btree's owner inode id
- * @extent: pre-invalid extent
- *
- * This method tries to add pre-invalid extent into
- * invalidation queue.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- */
-int ssdfs_shextree_add_pre_invalid_extent(struct ssdfs_shared_extents_tree *tree,
-					  u64 owner_ino,
-					  struct ssdfs_raw_extent *extent)
-{
-	struct ssdfs_extents_queue *queue;
-	struct ssdfs_extent_info *ei;
-	u64 seg_id;
-	u32 logical_blk;
-	u32 len;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !extent);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	seg_id = le64_to_cpu(extent->seg_id);
-	logical_blk = le32_to_cpu(extent->logical_blk);
-	len = le32_to_cpu(extent->len);
-
-	SSDFS_DBG("tree %p, extent %p, "
-		  "seg_id %llu, logical_blk %u, len %u\n",
-		  tree, extent, seg_id, logical_blk, len);
-
-#ifdef CONFIG_SSDFS_TESTING
-	if (!tree->fsi->do_fork_invalidation &&
-	    owner_ino == SSDFS_TESTING_INO) {
-		SSDFS_DBG("ignore extent: "
-			  "owner_ino %llu, seg_id %llu, "
-			  "logical_blk %u, len %u\n",
-			  owner_ino, seg_id, logical_blk, len);
-		return 0;
-	}
-#endif /* CONFIG_SSDFS_TESTING */
-
-	if (seg_id == U64_MAX || logical_blk == U32_MAX || len == U32_MAX) {
-		SSDFS_ERR("invalid extent: "
-			  "seg_id %llu, logical_blk %u, len %u\n",
-			  seg_id, logical_blk, len);
-		return -ERANGE;
-	}
-
-	ei = ssdfs_extent_info_alloc();
-	if (IS_ERR_OR_NULL(ei)) {
-		err = !ei ? -ENOMEM : PTR_ERR(ei);
-		SSDFS_ERR("fail to allocate extent info: "
-			  "err %d\n",
-			  err);
-		return err;
-	}
-
-	queue = &tree->array[SSDFS_EXTENT_INVALIDATION_QUEUE].queue;
-	ssdfs_extent_info_init(SSDFS_EXTENT_INFO_RAW_EXTENT, extent,
-				owner_ino, ei);
-	ssdfs_extents_queue_add_tail(queue, ei);
-
-	wake_up_all(&tree->wait_queue);
-	return 0;
-}
-
-/*
- * ssdfs_shextree_add_pre_invalid_fork() - add fork's extents into queue
- * @tree: shared extents tree
- * @owner_ino: btree's owner inode id
- * @fork: pre-invalid fork
- *
- * This method tries to add pre-invalid fork's extent into
- * invalidation queue.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- */
-int ssdfs_shextree_add_pre_invalid_fork(struct ssdfs_shared_extents_tree *tree,
-					u64 owner_ino,
-					struct ssdfs_raw_fork *fork)
-{
-	u64 start_offset;
-	u64 blks_count;
-	u64 processed_blks = 0;
-	int i;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !fork);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	start_offset = le64_to_cpu(fork->start_offset);
-	blks_count = le64_to_cpu(fork->blks_count);
-
-	SSDFS_DBG("tree %p, fork %p, "
-		  "start_offset %llu, blks_count %llu\n",
-		  tree, fork, start_offset, blks_count);
-
-#ifdef CONFIG_SSDFS_TESTING
-	if (!tree->fsi->do_fork_invalidation &&
-	    owner_ino == SSDFS_TESTING_INO) {
-		SSDFS_DBG("ignore fork: "
-			  "owner_ino %llu, start_offset %llu, "
-			  "blks_count %llu\n",
-			  owner_ino, start_offset, blks_count);
-		return 0;
-	}
-#endif /* CONFIG_SSDFS_TESTING */
-
-	if (start_offset == U64_MAX || blks_count == U64_MAX) {
-		SSDFS_WARN("invalid fork: "
-			   "start_offset %llu, blks_count %llu\n",
-			   start_offset, blks_count);
-		return -ERANGE;
-	}
-
-	if (blks_count == 0) {
-		SSDFS_WARN("empty fork\n");
-		return 0;
-	}
-
-	SSDFS_DBG("INVALIDATING FORK: "
-		  "start_offset %llu, blks_count %llu\n",
-		  le64_to_cpu(fork->start_offset),
-		  le64_to_cpu(fork->blks_count));
-
-	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; i++) {
-		struct ssdfs_raw_extent *ptr = &fork->extents[i];
-		u32 len = le32_to_cpu(ptr->len);
-		u64 seg_id = le64_to_cpu(ptr->seg_id);
-		u32 start_blk = le32_to_cpu(ptr->logical_blk);
-
-		SSDFS_DBG("INVALIDATING FORK: extent[%d]: "
-			  "seg_id %llu, start_blk %u, len %u\n",
-			  i, seg_id, start_blk, len);
-
-		err = ssdfs_shextree_add_pre_invalid_extent(tree, owner_ino,
-							    ptr);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add pre-invalid extent: "
-				  "err %d\n",
-				  err);
-			return err;
-		}
-
-		processed_blks += len;
-
-		if (processed_blks >= blks_count)
-			break;
-	}
-
-	if (processed_blks != blks_count) {
-		SSDFS_WARN("processed_blks %llu != blks_count %llu\n",
-			   processed_blks, blks_count);
-		return -ERANGE;
-	}
-
-	return 0;
-}
-
-/*
- * ssdfs_shextree_add_pre_invalid_index() - add pre-invalid index into queue
- * @tree: shared extents tree
- * @owner_ino: btree's owner inode id
- * @index: pre-invalid index
- *
- * This method tries to add pre-invalid index into
- * invalidation queue.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- */
-int ssdfs_shextree_add_pre_invalid_index(struct ssdfs_shared_extents_tree *tree,
-					 u64 owner_ino,
-					 int index_type,
-					 struct ssdfs_btree_index_key *index)
-{
-	struct ssdfs_extents_queue *queue;
-	struct ssdfs_extent_info *ei;
-	u32 node_id;
-	u8 node_type;
-	u8 height;
-	u16 flags;
-	u64 hash;
-	u64 seg_id;
-	u32 logical_blk;
-	u32 len;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	node_id = le32_to_cpu(index->node_id);
-	node_type = index->node_type;
-	height = index->height;
-	flags = le16_to_cpu(index->flags);
-	hash = le64_to_cpu(index->index.hash);
-	seg_id = le64_to_cpu(index->index.extent.seg_id);
-	logical_blk = le32_to_cpu(index->index.extent.logical_blk);
-	len = le32_to_cpu(index->index.extent.len);
-
-	SSDFS_DBG("tree %p, owner_ino %llu, index_type %#x, "
-		  "node_id %u, node_type %#x, height %u, flags %#x, "
-		  "hash %llx, seg_id %llu, logical_blk %u, len %u\n",
-		  tree, owner_ino, index_type,
-		  node_id, node_type, height, flags,
-		  hash, seg_id, logical_blk, len);
-
-#ifdef CONFIG_SSDFS_TESTING
-	if (!tree->fsi->do_fork_invalidation &&
-	    owner_ino == SSDFS_TESTING_INO) {
-		SSDFS_DBG("ignore index: "
-			  "owner_ino %llu, index_type %#x, "
-			  "node_id %u, node_type %#x, "
-			  "height %u, flags %#x, "
-			  "hash %llx, seg_id %llu, "
-			  "logical_blk %u, len %u\n",
-			  owner_ino, index_type,
-			  node_id, node_type, height, flags,
-			  hash, seg_id, logical_blk, len);
-		return 0;
-	}
-#endif /* CONFIG_SSDFS_TESTING */
-
-	switch (index_type) {
-	case SSDFS_EXTENT_INFO_INDEX_DESCRIPTOR:
-	case SSDFS_EXTENT_INFO_DENTRY_INDEX_DESCRIPTOR:
-	case SSDFS_EXTENT_INFO_SHDICT_INDEX_DESCRIPTOR:
-	case SSDFS_EXTENT_INFO_XATTR_INDEX_DESCRIPTOR:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid index_type %#x\n",
-			  index_type);
-		return -ERANGE;
-	}
-
-	if (node_id >= SSDFS_BTREE_NODE_INVALID_ID) {
-		SSDFS_ERR("invalid node_id\n");
-		return -ERANGE;
-	}
-
-	switch (node_type) {
-	case SSDFS_BTREE_INDEX_NODE:
-	case SSDFS_BTREE_HYBRID_NODE:
-		/* expected node type */
-		break;
-
-	default:
-		SSDFS_ERR("invalid node_type %#x\n",
-			  node_type);
-		return -ERANGE;
-	}
-
-	if (height >= U8_MAX) {
-		SSDFS_ERR("invalid node's height\n");
-		return -ERANGE;
-	}
-
-	if (flags & ~SSDFS_BTREE_INDEX_FLAGS_MASK) {
-		SSDFS_ERR("invalid flags set %#x\n",
-			  flags);
-		return -ERANGE;
-	}
-
-	if (hash >= U64_MAX) {
-		SSDFS_ERR("invalid hash\n");
-		return -ERANGE;
-	}
-
-	if (seg_id == U64_MAX || logical_blk == U32_MAX || len == U32_MAX) {
-		SSDFS_ERR("invalid extent\n");
-		return -ERANGE;
-	}
-
-	ei = ssdfs_extent_info_alloc();
-	if (IS_ERR_OR_NULL(ei)) {
-		err = !ei ? -ENOMEM : PTR_ERR(ei);
-		SSDFS_ERR("fail to allocate extent info: "
-			  "err %d\n",
-			  err);
-		return err;
-	}
-
-	queue = &tree->array[SSDFS_INDEX_INVALIDATION_QUEUE].queue;
-	ssdfs_extent_info_init(index_type, index,
-				owner_ino, ei);
-	ssdfs_extents_queue_add_tail(queue, ei);
-
-	wake_up_all(&tree->wait_queue);
-	return 0;
-}
-
 /******************************************************************************
- *             SPECIALIZED SHARED EXTENTS BTREE DESCRIPTOR OPERATIONS         *
+ *             SPECIALIZED SNAPSHOTS BTREE DESCRIPTOR OPERATIONS              *
  ******************************************************************************/
 
 /*
- * ssdfs_shextree_desc_init() - specialized btree descriptor init
+ * ssdfs_snapshots_btree_desc_init() - specialized btree descriptor init
  * @fsi: pointer on shared file system object
- * @tree: pointer on shared extents btree object
+ * @tree: pointer on inodes btree object
  */
 static
-int ssdfs_shextree_desc_init(struct ssdfs_fs_info *fsi,
-			     struct ssdfs_btree *tree)
+int ssdfs_snapshots_btree_desc_init(struct ssdfs_fs_info *fsi,
+				    struct ssdfs_btree *tree)
 {
 	struct ssdfs_btree_descriptor *desc;
 	u32 erasesize;
 	u32 node_size;
-	size_t shared_extent_desc_size = sizeof(struct ssdfs_shared_extent);
+	size_t snapshot_desc_size = sizeof(struct ssdfs_snapshot);
 	u16 item_size;
 	int err = 0;
 
@@ -1647,9 +1651,9 @@ int ssdfs_shextree_desc_init(struct ssdfs_fs_info *fsi,
 
 	erasesize = fsi->erasesize;
 
-	desc = &fsi->vs->shared_extents_btree.desc;
+	desc = &fsi->vs->snapshots_btree.desc;
 
-	if (le32_to_cpu(desc->magic) != SSDFS_SHARED_EXTENTS_BTREE_MAGIC) {
+	if (le32_to_cpu(desc->magic) != SSDFS_SNAPSHOTS_BTREE_MAGIC) {
 		err = -EIO;
 		SSDFS_ERR("invalid magic %#x\n",
 			  le32_to_cpu(desc->magic));
@@ -1658,7 +1662,7 @@ int ssdfs_shextree_desc_init(struct ssdfs_fs_info *fsi,
 
 	/* TODO: check flags */
 
-	if (desc->type != SSDFS_SHARED_EXTENTS_BTREE) {
+	if (desc->type != SSDFS_SNAPSHOTS_BTREE) {
 		err = -EIO;
 		SSDFS_ERR("invalid btree type %#x\n",
 			  desc->type);
@@ -1677,7 +1681,7 @@ int ssdfs_shextree_desc_init(struct ssdfs_fs_info *fsi,
 
 	item_size = le16_to_cpu(desc->item_size);
 
-	if (item_size != shared_extent_desc_size) {
+	if (item_size != snapshot_desc_size) {
 		err = -EIO;
 		SSDFS_ERR("invalid item size %u\n",
 			  item_size);
@@ -1685,7 +1689,7 @@ int ssdfs_shextree_desc_init(struct ssdfs_fs_info *fsi,
 	}
 
 	if (le16_to_cpu(desc->index_area_min_size) !=
-					(4 * shared_extent_desc_size)) {
+					(4 * snapshot_desc_size)) {
 		err = -EIO;
 		SSDFS_ERR("invalid index_area_min_size %u\n",
 			  le16_to_cpu(desc->index_area_min_size));
@@ -1704,15 +1708,15 @@ finish_btree_desc_init:
 }
 
 /*
- * ssdfs_shextree_desc_flush() - specialized btree's descriptor flush
+ * ssdfs_snapshots_btree_desc_flush() - specialized btree's descriptor flush
  * @tree: pointer on inodes btree object
  */
 static
-int ssdfs_shextree_desc_flush(struct ssdfs_btree *tree)
+int ssdfs_snapshots_btree_desc_flush(struct ssdfs_btree *tree)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree_descriptor desc;
-	size_t shared_extent_desc_size = sizeof(struct ssdfs_shared_extent);
+	size_t snapshot_desc_size = sizeof(struct ssdfs_snapshot);
 	u32 erasesize;
 	u32 node_size;
 	int err;
@@ -1730,8 +1734,8 @@ int ssdfs_shextree_desc_flush(struct ssdfs_btree *tree)
 
 	memset(&desc, 0xFF, sizeof(struct ssdfs_btree_descriptor));
 
-	desc.magic = cpu_to_le32(SSDFS_SHARED_EXTENTS_BTREE_MAGIC);
-	desc.item_size = cpu_to_le16(shared_extent_desc_size);
+	desc.magic = cpu_to_le32(SSDFS_SNAPSHOTS_BTREE_MAGIC);
+	desc.item_size = cpu_to_le16(snapshot_desc_size);
 
 	err = ssdfs_btree_desc_flush(tree, &desc);
 	if (unlikely(err)) {
@@ -1740,7 +1744,7 @@ int ssdfs_shextree_desc_flush(struct ssdfs_btree *tree)
 		return err;
 	}
 
-	if (desc.type != SSDFS_SHARED_EXTENTS_BTREE) {
+	if (desc.type != SSDFS_SNAPSHOTS_BTREE) {
 		SSDFS_ERR("invalid btree type %#x\n",
 			  desc.type);
 		return -ERANGE;
@@ -1757,14 +1761,13 @@ int ssdfs_shextree_desc_flush(struct ssdfs_btree *tree)
 		return -ERANGE;
 	}
 
-	if (le16_to_cpu(desc.index_area_min_size) !=
-					(4 * shared_extent_desc_size)) {
+	if (le16_to_cpu(desc.index_area_min_size) != (4 * snapshot_desc_size)) {
 		SSDFS_ERR("invalid index_area_min_size %u\n",
 			  le16_to_cpu(desc.index_area_min_size));
 		return -ERANGE;
 	}
 
-	ssdfs_memcpy(&fsi->vs->shared_extents_btree.desc,
+	ssdfs_memcpy(&fsi->vs->snapshots_btree.desc,
 		     0, sizeof(struct ssdfs_btree_descriptor),
 		     &desc,
 		     0, sizeof(struct ssdfs_btree_descriptor),
@@ -1774,17 +1777,17 @@ int ssdfs_shextree_desc_flush(struct ssdfs_btree *tree)
 }
 
 /******************************************************************************
- *                 SPECIALIZED SHARED EXTENTS BTREE OPERATIONS                *
+ *                   SPECIALIZED SNAPSHOTS BTREE OPERATIONS                   *
  ******************************************************************************/
 
 /*
- * ssdfs_shextree_create_root_node() - specialized root node creation
+ * ssdfs_snapshots_btree_create_root_node() - specialized root node creation
  * @fsi: pointer on shared file system object
  * @node: pointer on node object [out]
  */
 static
-int ssdfs_shextree_create_root_node(struct ssdfs_fs_info *fsi,
-				    struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_create_root_node(struct ssdfs_fs_info *fsi,
+					   struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree_inline_root_node *root_node;
 	int err = 0;
@@ -1797,7 +1800,7 @@ int ssdfs_shextree_create_root_node(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("fsi %p, node %p\n",
 		  fsi, node);
 
-	root_node = &fsi->vs->shared_extents_btree.root_node;
+	root_node = &fsi->vs->snapshots_btree.root_node;
 	err = ssdfs_btree_create_root_node(node, root_node);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create root node: err %d\n",
@@ -1808,11 +1811,11 @@ int ssdfs_shextree_create_root_node(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_shextree_pre_flush_root_node() - specialized root node pre-flush
+ * ssdfs_snapshots_btree_pre_flush_root_node() - specialized root node pre-flush
  * @node: pointer on node object
  */
 static
-int ssdfs_shextree_pre_flush_root_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_pre_flush_root_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree *tree;
 	struct ssdfs_state_bitmap *bmap;
@@ -1859,7 +1862,7 @@ int ssdfs_shextree_pre_flush_root_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	if (tree->type != SSDFS_SHARED_EXTENTS_BTREE) {
+	if (tree->type != SSDFS_SNAPSHOTS_BTREE) {
 		SSDFS_WARN("invalid tree type %#x\n",
 			   tree->type);
 		return -ERANGE;
@@ -1882,11 +1885,11 @@ int ssdfs_shextree_pre_flush_root_node(struct ssdfs_btree_node *node)
 }
 
 /*
- * ssdfs_shextree_flush_root_node() - specialized root node flush
+ * ssdfs_snapshots_btree_flush_root_node() - specialized root node flush
  * @node: pointer on node object
  */
 static
-int ssdfs_shextree_flush_root_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_flush_root_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree_inline_root_node *root_node;
 
@@ -1904,22 +1907,22 @@ int ssdfs_shextree_flush_root_node(struct ssdfs_btree_node *node)
 		return 0;
 	}
 
-	root_node = &node->tree->fsi->vs->shared_extents_btree.root_node;
+	root_node = &node->tree->fsi->vs->snapshots_btree.root_node;
 	ssdfs_btree_flush_root_node(node, root_node);
 
 	return 0;
 }
 
 /*
- * ssdfs_shextree_create_node() - specialized node creation
+ * ssdfs_snapshots_btree_create_node() - specialized node creation
  * @node: pointer on node object
  */
 static
-int ssdfs_shextree_create_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_create_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree *tree;
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
-	size_t hdr_size = sizeof(struct ssdfs_shextree_node_header);
+	size_t hdr_size = sizeof(struct ssdfs_snapshots_btree_node_header);
 	u32 node_size;
 	u32 items_area_size = 0;
 	u16 item_size = 0;
@@ -1944,7 +1947,7 @@ int ssdfs_shextree_create_node(struct ssdfs_btree_node *node)
 	node_size = tree->node_size;
 	index_area_min_size = tree->index_area_min_size;
 
-	node->node_ops = &ssdfs_shextree_node_ops;
+	node->node_ops = &ssdfs_snapshots_btree_node_ops;
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_INDEX_NODE:
@@ -2163,18 +2166,18 @@ int ssdfs_shextree_create_node(struct ssdfs_btree_node *node)
 
 	node->bmap_array.bmap_bytes = bmap_bytes;
 
-	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SHEXTREE_BMAP_SIZE) {
+	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SNAPSHOTS_BMAP_SIZE) {
 		err = -EIO;
 		SSDFS_ERR("invalid bmap_bytes %zu\n",
 			  bmap_bytes);
 		goto finish_create_node;
 	}
 
-	node->raw.shextree_header.shared_extents = cpu_to_le32(0);
+	node->raw.snapshots_header.snapshots_count = cpu_to_le32(0);
 
-	SSDFS_DBG("node_id %u, shared_extents %u\n",
+	SSDFS_DBG("node_id %u, snapshots_count %u\n",
 		  node->node_id,
-		  le32_to_cpu(node->raw.shextree_header.shared_extents));
+		  le32_to_cpu(node->raw.snapshots_header.snapshots_count));
 	SSDFS_DBG("items_count %u, items_capacity %u, "
 		  "start_hash %llx, end_hash %llx\n",
 		  node->items_area.items_count,
@@ -2226,10 +2229,10 @@ finish_create_node:
 }
 
 /*
- * ssdfs_shextree_init_node() - init shared extents tree's node
+ * ssdfs_snapshots_btree_init_node() - init snapshots tree's node
  * @node: pointer on node object
  *
- * This method tries to init the node of shared extents btree.
+ * This method tries to init the node of snapshots btree.
  *
  *       It makes sense to allocate the bitmap with taking into
  *       account that we will resize the node. So, it needs
@@ -2247,19 +2250,19 @@ finish_create_node:
  * %-EIO        - invalid node's header content
  */
 static
-int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_init_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree *tree;
-	struct ssdfs_shared_extents_tree *tree_info = NULL;
-	struct ssdfs_shextree_node_header *hdr;
-	size_t hdr_size = sizeof(struct ssdfs_shextree_node_header);
+	struct ssdfs_snapshots_btree_info *tree_info = NULL;
+	struct ssdfs_snapshots_btree_node_header *hdr;
+	size_t hdr_size = sizeof(struct ssdfs_snapshots_btree_node_header);
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	struct page *page;
 	void *kaddr;
 	u64 start_hash, end_hash;
 	u32 node_size;
 	u16 item_size;
-	u32 shared_extents;
+	u32 snapshots_count;
 	u16 items_capacity;
 	u32 items_count;
 	u16 free_space = 0;
@@ -2284,8 +2287,8 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	if (node->tree->type == SSDFS_SHARED_EXTENTS_BTREE)
-		tree_info = (struct ssdfs_shared_extents_tree *)node->tree;
+	if (node->tree->type == SSDFS_SNAPSHOTS_BTREE)
+		tree_info = (struct ssdfs_snapshots_btree_info *)node->tree;
 	else {
 		SSDFS_ERR("invalid tree type %#x\n",
 			  node->tree->type);
@@ -2315,7 +2318,7 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 
 	kaddr = kmap(page);
 
-	hdr = (struct ssdfs_shextree_node_header *)kaddr;
+	hdr = (struct ssdfs_snapshots_btree_node_header *)kaddr;
 
 	if (!is_csum_valid(&hdr->node.check, hdr, hdr_size)) {
 		err = -EIO;
@@ -2325,7 +2328,7 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 	}
 
 	if (le32_to_cpu(hdr->node.magic.common) != SSDFS_SUPER_MAGIC ||
-	    le16_to_cpu(hdr->node.magic.key) != SSDFS_EXTENTS_BNODE_MAGIC) {
+	    le16_to_cpu(hdr->node.magic.key) != SSDFS_SNAPSHOTS_BNODE_MAGIC) {
 		err = -EIO;
 		SSDFS_ERR("invalid magic: common %#x, key %#x\n",
 			  le32_to_cpu(hdr->node.magic.common),
@@ -2335,7 +2338,7 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 
 	down_write(&node->header_lock);
 
-	ssdfs_memcpy(&node->raw.shextree_header, 0, hdr_size,
+	ssdfs_memcpy(&node->raw.snapshots_header, 0, hdr_size,
 		     hdr, 0, hdr_size,
 		     hdr_size);
 
@@ -2355,12 +2358,12 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 	index_size = hdr->node.index_size;
 	item_size = hdr->node.min_item_size;
 	items_capacity = le16_to_cpu(hdr->node.items_capacity);
-	shared_extents = le32_to_cpu(hdr->shared_extents);
+	snapshots_count = le32_to_cpu(hdr->snapshots_count);
 
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
-		  "items_capacity %u, shared_extents %u\n",
+		  "items_capacity %u, snapshots_count %u\n",
 		  start_hash, end_hash,
-		  items_capacity, shared_extents);
+		  items_capacity, snapshots_count);
 
 	if (item_size == 0 || node_size % item_size) {
 		err = -EIO;
@@ -2369,17 +2372,17 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 		goto finish_header_init;
 	}
 
-	if (item_size != sizeof(struct ssdfs_shared_extent)) {
+	if (item_size != sizeof(struct ssdfs_snapshot)) {
 		err = -EIO;
 		SSDFS_ERR("invalid item_size: "
 			  "size %u, expected size %zu\n",
 			  item_size,
-			  sizeof(struct ssdfs_shared_extent));
+			  sizeof(struct ssdfs_snapshot));
 		goto finish_header_init;
 	}
 
 	calculated_used_space = hdr_size;
-	calculated_used_space += shared_extents * item_size;
+	calculated_used_space += snapshots_count * item_size;
 
 	if (flags & SSDFS_BTREE_NODE_HAS_INDEX_AREA) {
 		index_area_size = 1 << hdr->node.log_index_area_size;
@@ -2431,7 +2434,7 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 		/* pass through */
 
 	case SSDFS_BTREE_LEAF_NODE:
-		if (shared_extents > 0 &&
+		if (snapshots_count > 0 &&
 		    (start_hash >= U64_MAX || end_hash >= U64_MAX)) {
 			err = -EIO;
 			SSDFS_ERR("invalid hash range: "
@@ -2447,12 +2450,12 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 			goto finish_header_init;
 		}
 
-		if (item_size != sizeof(struct ssdfs_shared_extent)) {
+		if (item_size != sizeof(struct ssdfs_snapshot)) {
 			err = -EIO;
 			SSDFS_ERR("invalid item_size: "
 				  "size %u, expected size %zu\n",
 				  item_size,
-				  sizeof(struct ssdfs_shared_extent));
+				  sizeof(struct ssdfs_snapshot));
 			goto finish_header_init;
 		}
 
@@ -2464,16 +2467,16 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 			goto finish_header_init;
 		}
 
-		if (shared_extents > items_capacity) {
+		if (snapshots_count > items_capacity) {
 			err = -EIO;
-			SSDFS_ERR("items_capacity %u != shared_extents %u\n",
+			SSDFS_ERR("items_capacity %u != snapshots_count %u\n",
 				  items_capacity,
-				  shared_extents);
+				  snapshots_count);
 			goto finish_header_init;
 		}
 
 		free_space =
-			(u32)(items_capacity - shared_extents) * item_size;
+			(u32)(items_capacity - snapshots_count) * item_size;
 		if (free_space > node->items_area.area_size) {
 			err = -EIO;
 			SSDFS_ERR("free_space %u > area_size %u\n",
@@ -2488,10 +2491,10 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 	}
 
 	SSDFS_DBG("free_space %u, index_area_size %u, "
-		  "hdr_size %zu, shared_extents %u, "
+		  "hdr_size %zu, snapshots_count %u, "
 		  "item_size %u\n",
 		  free_space, index_area_size, hdr_size,
-		  shared_extents, item_size);
+		  snapshots_count, item_size);
 
 	if (free_space != (node_size - calculated_used_space)) {
 		err = -EIO;
@@ -2503,7 +2506,7 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 	}
 
 	node->items_area.free_space = free_space;
-	node->items_area.items_count = (u16)shared_extents;
+	node->items_area.items_count = (u16)snapshots_count;
 	node->items_area.items_capacity = items_capacity;
 
 	SSDFS_DBG("items_count %u, items_capacity %u, "
@@ -2541,7 +2544,7 @@ finish_header_init:
 	bmap_bytes += BITS_PER_LONG;
 	bmap_bytes /= BITS_PER_BYTE;
 
-	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SHEXTREE_BMAP_SIZE) {
+	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SNAPSHOTS_BMAP_SIZE) {
 		err = -EIO;
 		SSDFS_ERR("invalid bmap_bytes %zu\n",
 			  bmap_bytes);
@@ -2581,7 +2584,7 @@ finish_header_init:
 
 	spin_lock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
 	bitmap_set(node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].ptr,
-		   0, shared_extents);
+		   0, snapshots_count);
 	spin_unlock(&node->bmap_array.bmap[SSDFS_BTREE_NODE_ALLOC_BMAP].lock);
 
 	up_write(&node->bmap_array.lock);
@@ -2591,7 +2594,7 @@ finish_init_operation:
 	if (unlikely(err))
 		goto finish_init_node;
 
-	atomic64_add((u64)shared_extents, &tree_info->shared_extents);
+	atomic64_add((u64)snapshots_count, &tree_info->snapshots_count);
 
 finish_init_node:
 	up_read(&node->full_lock);
@@ -2602,16 +2605,16 @@ finish_init_node:
 }
 
 static
-void ssdfs_shextree_destroy_node(struct ssdfs_btree_node *node)
+void ssdfs_snapshots_btree_destroy_node(struct ssdfs_btree_node *node)
 {
 	SSDFS_DBG("operation is unavailable\n");
 }
 
 /*
- * ssdfs_shextree_add_node() - add node into shared extents btree
+ * ssdfs_snapshots_btree_add_node() - add node into snapshots btree
  * @node: pointer on node object
  *
- * This method tries to finish addition of node into shared extents btree.
+ * This method tries to finish addition of node into snapshots btree.
  *
  * RETURN:
  * [success]
@@ -2620,7 +2623,7 @@ void ssdfs_shextree_destroy_node(struct ssdfs_btree_node *node)
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_shextree_add_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_add_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree *tree;
 	int type;
@@ -2691,9 +2694,9 @@ int ssdfs_shextree_add_node(struct ssdfs_btree_node *node)
 		}
 	}
 
-	SSDFS_DBG("node_id %u, shared_extents %u\n",
+	SSDFS_DBG("node_id %u, snapshots_count %u\n",
 		  node->node_id,
-		  le16_to_cpu(node->raw.shextree_header.shared_extents));
+		  le16_to_cpu(node->raw.snapshots_header.snapshots_count));
 	SSDFS_DBG("items_count %u, items_capacity %u, "
 		  "start_hash %llx, end_hash %llx\n",
 		  node->items_area.items_count,
@@ -2727,7 +2730,7 @@ finish_add_node:
 }
 
 static
-int ssdfs_shextree_delete_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_delete_node(struct ssdfs_btree_node *node)
 {
 	/* TODO: implement */
 	SSDFS_DBG("TODO: implement\n");
@@ -2756,7 +2759,7 @@ int ssdfs_shextree_delete_node(struct ssdfs_btree_node *node)
 }
 
 /*
- * ssdfs_shextree_pre_flush_node() - pre-flush node's header
+ * ssdfs_snapshots_btree_pre_flush_node() - pre-flush node's header
  * @node: pointer on node object
  *
  * This method tries to flush node's header.
@@ -2769,18 +2772,18 @@ int ssdfs_shextree_delete_node(struct ssdfs_btree_node *node)
  * %-EFAULT     - node is corrupted.
  */
 static
-int ssdfs_shextree_pre_flush_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_pre_flush_node(struct ssdfs_btree_node *node)
 {
-	struct ssdfs_shextree_node_header header;
-	size_t hdr_size = sizeof(struct ssdfs_shextree_node_header);
+	struct ssdfs_snapshots_btree_node_header snapshots_header;
+	size_t hdr_size = sizeof(struct ssdfs_snapshots_btree_node_header);
 	struct ssdfs_btree *tree;
-	struct ssdfs_shared_extents_tree *tree_info = NULL;
+	struct ssdfs_snapshots_btree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
 	void *kaddr;
 	u16 items_count;
 	u32 items_area_size;
-	u16 shared_extents;
+	u16 snapshots_count;
 	u32 used_space;
 	int err = 0;
 
@@ -2827,76 +2830,81 @@ int ssdfs_shextree_pre_flush_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	if (tree->type != SSDFS_SHARED_EXTENTS_BTREE) {
+	if (tree->type != SSDFS_SNAPSHOTS_BTREE) {
 		SSDFS_WARN("invalid tree type %#x\n",
 			   tree->type);
 		return -ERANGE;
 	} else {
 		tree_info = container_of(tree,
-					 struct ssdfs_shared_extents_tree,
+					 struct ssdfs_snapshots_btree_info,
 					 generic_tree);
 	}
 
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	ssdfs_memcpy(&header, 0, hdr_size,
-		     &node->raw.shextree_header, 0, hdr_size,
-		     hdr_size);
+	ssdfs_memcpy(&snapshots_header,
+		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
+		     &node->raw.snapshots_header,
+		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
+		     sizeof(struct ssdfs_snapshots_btree_node_header));
 
-	header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
-	header.node.magic.key = cpu_to_le16(SSDFS_EXTENTS_BNODE_MAGIC);
-	header.node.magic.version.major = SSDFS_MAJOR_REVISION;
-	header.node.magic.version.minor = SSDFS_MINOR_REVISION;
+	snapshots_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
+	snapshots_header.node.magic.key =
+				cpu_to_le16(SSDFS_SNAPSHOTS_BNODE_MAGIC);
+	snapshots_header.node.magic.version.major = SSDFS_MAJOR_REVISION;
+	snapshots_header.node.magic.version.minor = SSDFS_MINOR_REVISION;
 
-	err = ssdfs_btree_node_pre_flush_header(node, &header.node);
+	err = ssdfs_btree_node_pre_flush_header(node, &snapshots_header.node);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to flush generic header: "
 			  "node_id %u, err %d\n",
 			  node->node_id, err);
-		goto finish_shextree_header_preparation;
+		goto finish_snapshots_header_preparation;
 	}
 
 	items_count = node->items_area.items_count;
 	items_area_size = node->items_area.area_size;
-	shared_extents = le16_to_cpu(header.shared_extents);
+	snapshots_count = le16_to_cpu(snapshots_header.snapshots_count);
 
-	if (shared_extents != items_count) {
+	if (snapshots_count != items_count) {
 		err = -ERANGE;
-		SSDFS_ERR("shared_extents %u != items_count %u\n",
-			  shared_extents, items_count);
-		goto finish_shextree_header_preparation;
+		SSDFS_ERR("snapshots_count %u != items_count %u\n",
+			  snapshots_count, items_count);
+		goto finish_snapshots_header_preparation;
 	}
 
-	used_space = (u32)items_count * sizeof(struct ssdfs_shared_extent);
+	used_space = (u32)items_count * sizeof(struct ssdfs_snapshot);
 
 	if (used_space > items_area_size) {
 		err = -ERANGE;
 		SSDFS_ERR("used_space %u > items_area_size %u\n",
 			  used_space, items_area_size);
-		goto finish_shextree_header_preparation;
+		goto finish_snapshots_header_preparation;
 	}
 
-	SSDFS_DBG("shared_extents %u, "
+	SSDFS_DBG("snapshots_count %u, "
 		  "items_area_size %u, item_size %zu\n",
-		  shared_extents, items_area_size,
-		  sizeof(struct ssdfs_shared_extent));
+		  snapshots_count, items_area_size,
+		  sizeof(struct ssdfs_snapshot));
 
-	header.node.check.bytes = cpu_to_le16((u16)hdr_size);
-	header.node.check.flags = cpu_to_le16(SSDFS_CRC32);
+	snapshots_header.node.check.bytes = cpu_to_le16((u16)hdr_size);
+	snapshots_header.node.check.flags = cpu_to_le16(SSDFS_CRC32);
 
-	err = ssdfs_calculate_csum(&header.node.check,
-				   &header, hdr_size);
+	err = ssdfs_calculate_csum(&snapshots_header.node.check,
+				   &snapshots_header, hdr_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to calculate checksum: err %d\n", err);
-		goto finish_shextree_header_preparation;
+		goto finish_snapshots_header_preparation;
 	}
 
-	ssdfs_memcpy(&node->raw.shextree_header, 0, hdr_size,
-		     &header, 0, hdr_size,
-		     hdr_size);
+	ssdfs_memcpy(&node->raw.snapshots_header,
+		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
+		     &snapshots_header,
+		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
+		     sizeof(struct ssdfs_snapshots_btree_node_header));
 
-finish_shextree_header_preparation:
+finish_snapshots_header_preparation:
 	up_write(&node->header_lock);
 
 	if (unlikely(err))
@@ -2910,9 +2918,11 @@ finish_shextree_header_preparation:
 
 	page = node->content.pvec.pages[0];
 	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, hdr_size,
-		     &header, 0, hdr_size,
-		     hdr_size);
+	ssdfs_memcpy(kaddr,
+		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
+		     &snapshots_header,
+		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
+		     sizeof(struct ssdfs_snapshots_btree_node_header));
 	kunmap_atomic(kaddr);
 
 finish_node_pre_flush:
@@ -2922,7 +2932,7 @@ finish_node_pre_flush:
 }
 
 /*
- * ssdfs_shextree_flush_node() - flush node
+ * ssdfs_snapshots_btree_flush_node() - flush node
  * @node: pointer on node object
  *
  * This method tries to flush node.
@@ -2935,7 +2945,7 @@ finish_node_pre_flush:
  * %-EFAULT     - node is corrupted.
  */
 static
-int ssdfs_shextree_flush_node(struct ssdfs_btree_node *node)
+int ssdfs_snapshots_btree_flush_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree *tree;
@@ -2955,7 +2965,7 @@ int ssdfs_shextree_flush_node(struct ssdfs_btree_node *node)
 		return -ERANGE;
 	}
 
-	if (tree->type != SSDFS_SHARED_EXTENTS_BTREE) {
+	if (tree->type != SSDFS_SNAPSHOTS_BTREE) {
 		SSDFS_WARN("invalid tree type %#x\n",
 			   tree->type);
 		return -ERANGE;
@@ -2967,7 +2977,7 @@ int ssdfs_shextree_flush_node(struct ssdfs_btree_node *node)
 	fs_feature_compat = fsi->fs_feature_compat;
 	spin_unlock(&fsi->volume_state_lock);
 
-	if (fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
+	if (fs_feature_compat & SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
 		err = ssdfs_btree_common_node_flush(node);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to flush node: "
@@ -2978,7 +2988,7 @@ int ssdfs_shextree_flush_node(struct ssdfs_btree_node *node)
 		}
 	} else {
 		err = -EFAULT;
-		SSDFS_CRIT("shared extents tree is absent\n");
+		SSDFS_CRIT("snapshots tree is absent\n");
 	}
 
 	ssdfs_debug_btree_node_object(node);
@@ -2987,7 +2997,7 @@ int ssdfs_shextree_flush_node(struct ssdfs_btree_node *node)
 }
 
 /******************************************************************************
- *             SPECIALIZED SHARED EXTENTS BTREE NODE OPERATIONS               *
+ *               SPECIALIZED SNAPSHOTS BTREE NODE OPERATIONS                  *
  ******************************************************************************/
 
 /*
@@ -3002,8 +3012,8 @@ u16 ssdfs_convert_lookup2item_index(u32 node_size, u16 lookup_index)
 		  node_size, lookup_index);
 
 	return __ssdfs_convert_lookup2item_index(lookup_index, node_size,
-					sizeof(struct ssdfs_shared_extent),
-					SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE);
+					sizeof(struct ssdfs_snapshot),
+					SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE);
 }
 
 /*
@@ -3018,8 +3028,8 @@ u16 ssdfs_convert_item2lookup_index(u32 node_size, u16 item_index)
 		  node_size, item_index);
 
 	return __ssdfs_convert_item2lookup_index(item_index, node_size,
-					sizeof(struct ssdfs_shared_extent),
-					SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE);
+					sizeof(struct ssdfs_snapshot),
+					SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE);
 }
 
 /*
@@ -3046,7 +3056,7 @@ bool is_hash_for_lookup_table(u32 node_size, u16 item_index)
 }
 
 /*
- * ssdfs_shextree_node_find_lookup_index() - find lookup index
+ * ssdfs_snapshots_btree_node_find_lookup_index() - find lookup index
  * @node: node object
  * @search: search object
  * @lookup_index: lookup index [out]
@@ -3061,12 +3071,12 @@ bool is_hash_for_lookup_table(u32 node_size, u16 item_index)
  * %-ENODATA    - lookup index doesn't exist for requested hash.
  */
 static
-int ssdfs_shextree_node_find_lookup_index(struct ssdfs_btree_node *node,
-					  struct ssdfs_btree_search *search,
-					  u16 *lookup_index)
+int ssdfs_snapshots_btree_node_find_lookup_index(struct ssdfs_btree_node *node,
+					    struct ssdfs_btree_search *search,
+					    u16 *lookup_index)
 {
 	__le64 *lookup_table;
-	int array_size = SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE;
+	int array_size = SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3084,7 +3094,7 @@ int ssdfs_shextree_node_find_lookup_index(struct ssdfs_btree_node *node,
 		  search->node.child);
 
 	down_read(&node->header_lock);
-	lookup_table = node->raw.shextree_header.lookup_table;
+	lookup_table = node->raw.snapshots_header.lookup_table;
 	err = ssdfs_btree_node_find_lookup_index_nolock(search,
 							lookup_table,
 							array_size,
@@ -3095,12 +3105,12 @@ int ssdfs_shextree_node_find_lookup_index(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_check_shared_extent_for_request() - check shared extent
+ * __ssdfs_check_snapshot_for_request() - check snapshot
  * @fsi:  pointer on shared file system object
- * @extent: pointer on shared extent object
+ * @snapshot: pointer on snapshot object
  * @search: search object
  *
- * This method tries to check @extent for the @search request.
+ * This method tries to check @snapshot for the @search request.
  *
  * RETURN:
  * [success]
@@ -3112,112 +3122,215 @@ int ssdfs_shextree_node_find_lookup_index(struct ssdfs_btree_node *node,
  * %-ENODATA    - possible place was found.
  */
 static
-int ssdfs_check_shared_extent_for_request(struct ssdfs_fs_info *fsi,
-					  struct ssdfs_shared_extent *extent,
-					  struct ssdfs_btree_search *search)
+int __ssdfs_check_snapshot_for_request(struct ssdfs_fs_info *fsi,
+				       struct ssdfs_snapshot *snapshot,
+				       struct ssdfs_btree_search *search)
 {
+	struct ssdfs_shared_dict_btree_info *dict;
 	u32 req_flags;
-	int err = 0;
+	u64 req_ino;
+	const char *req_name;
+	size_t req_name_len;
+	u64 create_time;
+	u64 ino;
+	u64 name_hash;
+	u8 name_len;
+	u16 flags;
+	int res, err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !extent || !search);
+	BUG_ON(!fsi || !snapshot || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("fsi %p, extent %p, search %p\n",
-		  fsi, extent, search);
+	SSDFS_DBG("fsi %p, snapshot %p, search %p\n",
+		  fsi, snapshot, search);
 
-	req_flags = search->request.flags;
-
-	SSDFS_DBG("start: (hash %llx, fingerprint %pUb), "
-		  "end (hash %llx, fingerprint %pUb), "
-		  "req_flags %#x\n",
-		  search->request.start.hash,
-		  search->request.start.fingerprint->buf,
-		  search->request.end.hash,
-		  search->request.end.fingerprint->buf,
-		  req_flags);
-
-	if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT) {
-		u8 type1, type2;
-		u8 len1, len2;
-		int res;
-
-		type1 = search->request.start.fingerprint->type;
-		type2 = extent->fingerprint_type;
-
-		if (type1 != type2) {
-			err = -ERANGE;
-			SSDFS_ERR("fingerprint: type1 %#x != type2 %#x\n",
-				  type1, type2);
-			goto finish_check_shared_extent;
-		}
-
-		len1 = search->request.start.fingerprint->len;
-		len2 = extent->fingerprint_len;
-
-		if (len1 != len2) {
-			err = -ERANGE;
-			SSDFS_ERR("fingerprint: len1 %u != len2 %u\n",
-				  len1, len2);
-			goto finish_check_shared_extent;
-		}
-
-		res = memcmp(search->request.start.fingerprint->buf,
-			     extent->fingerprint,
-			     len1);
-
-		if (res == 0) {
-			search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
-			goto finish_check_shared_extent;
-		} else if (res > 0) {
-			/* continue the search */
-			err = -EAGAIN;
-			goto finish_check_shared_extent;
-		}
-
-		res = memcmp(search->request.end.fingerprint->buf,
-			     extent->fingerprint,
-			     len1);
-
-		if (res >= 0) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid request: "
-				  "start: (hash %llx, fingerprint %pUb), "
-				  "end (hash %llx, fingerprint %pUb)\n",
-				  search->request.start.hash,
-				  search->request.start.fingerprint->buf,
-				  search->request.end.hash,
-				  search->request.end.fingerprint->buf);
-			goto finish_check_shared_extent;
-		} else {
-			err = -ENODATA;
-			search->result.err = -ENODATA;
-			search->result.state =
-				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
-			goto finish_check_shared_extent;
-		}
-	} else {
-		err = -ERANGE;
-		SSDFS_ERR("invalid set of flags: %#x\n", req_flags);
-		goto finish_check_shared_extent;
+	dict = fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
 	}
 
-finish_check_shared_extent:
+	req_flags = search->request.flags;
+	req_ino = search->request.start.ino;
+	req_name = search->request.start.name;
+	req_name_len = search->request.start.name_len;
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, req_ino %llu\n",
+		  search->request.start.hash,
+		  search->request.end.hash,
+		  req_ino);
+
+	ino = le64_to_cpu(snapshot->ino);
+	create_time = le64_to_cpu(snapshot->create_time);
+	name_hash = le64_to_cpu(snapshot->name_hash);
+	flags = le16_to_cpu(snapshot->flags);
+
+	SSDFS_DBG("create_time %llx, ino %llu\n",
+		  create_time, ino);
+
+	if (create_time > search->request.end.hash) {
+		err = -ENODATA;
+		goto finish_check_snapshot;
+	} else if (search->request.start.hash > create_time) {
+		/* continue the search */
+		err = -EAGAIN;
+		goto finish_check_snapshot;
+	} else {
+		/* create_time is inside [start_hash, end_hash] */
+
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
+			if (req_ino < ino) {
+				err = -ENODATA;
+				goto finish_check_snapshot;
+			} else if (req_ino == ino) {
+				/* check UUID */
+				goto check_uuid;
+			} else {
+				/* continue the search */
+				err = -EAGAIN;
+				goto finish_check_snapshot;
+			}
+		} else {
+			/* valid item */
+			goto finish_check_snapshot;
+		}
+
+check_uuid:
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
+			if (is_uuids_identical(search->request.start.uuid,
+						snapshot->uuid)) {
+				/* valid item */
+				goto finish_check_snapshot;
+			} else {
+				err = -ENODATA;
+				goto finish_check_snapshot;
+			}
+		}
+
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_NAME) {
+			if (!req_name) {
+				SSDFS_ERR("empty name pointer\n");
+				return -ERANGE;
+			}
+
+			name_len = min_t(u8, name_len,
+					 SSDFS_MAX_SNAPSHOT_NAME_LEN);
+			res = strncmp(req_name, snapshot->name,
+					name_len);
+			if (res < 0) {
+				/* hash collision case */
+				err = -ENODATA;
+				goto finish_check_snapshot;
+			} else if (res == 0) {
+				/* valid item */
+				goto extract_full_name;
+			} else {
+				/* hash collision case */
+				/* continue the search */
+				err = -EAGAIN;
+				goto finish_check_snapshot;
+			}
+
+extract_full_name:
+			if (!(flags & SSDFS_SNAPSHOT_HAS_EXTERNAL_STRING))
+				goto finish_check_snapshot;
+
+			err = ssdfs_shared_dict_get_name(dict, name_hash,
+							 &search->name);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to extract the name: "
+					  "hash %llx, err %d\n",
+					  name_hash, err);
+				goto finish_check_snapshot;
+			}
+
+			res = strncmp(req_name, search->name.str,
+					req_name_len);
+			if (res < 0) {
+				/* hash collision case */
+				err = -ENODATA;
+				goto finish_check_snapshot;
+			} else if (res == 0) {
+				/* valid item */
+				goto finish_check_snapshot;
+			} else {
+				/* hash collision case */
+				/* continue the search */
+				err = -EAGAIN;
+				goto finish_check_snapshot;
+			}
+		}
+	}
+
+finish_check_snapshot:
 	return err;
 }
 
 /*
- * ssdfs_get_shared_extents_hash_range() - get shared extents' hash range
- * @kaddr: pointer on shared extent object
+ * ssdfs_check_snapshot_for_request() - check snapshot
+ * @fsi:  pointer on shared file system object
+ * @snapshot: pointer on snapshot object
+ * @search: search object
+ *
+ * This method tries to check @snapshot for the @search request.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue the search.
+ * %-ENODATA    - possible place was found.
+ */
+static
+int ssdfs_check_snapshot_for_request(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_snapshot *snapshot,
+				     struct ssdfs_btree_search *search)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !snapshot || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, snapshot %p, search %p\n",
+		  fsi, snapshot, search);
+
+	err = __ssdfs_check_snapshot_for_request(fsi, snapshot, search);
+	if (err == -EAGAIN) {
+		/* continue the search */
+		return err;
+	} else if (err == -ENODATA) {
+		search->result.err = -ENODATA;
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to check snapshot: err %d\n",
+			  err);
+		return err;
+	} else {
+		/* valid item found */
+		search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_get_snapshot_hash_range() - get snapshot's hash range
+ * @kaddr: pointer on snapshot object
  * @start_hash: pointer on start_hash value [out]
  * @end_hash: pointer on end_hash value [out]
  */
 static
-void ssdfs_get_shared_extents_hash_range(void *kaddr,
-					 u64 *start_hash,
-					 u64 *end_hash)
+void ssdfs_get_snapshot_hash_range(void *kaddr,
+				   u64 *start_hash,
+				   u64 *end_hash)
 {
-	struct ssdfs_shared_extent *extent;
+	struct ssdfs_snapshot *snapshot;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!kaddr || !start_hash || !end_hash);
@@ -3225,42 +3338,48 @@ void ssdfs_get_shared_extents_hash_range(void *kaddr,
 
 	SSDFS_DBG("kaddr %p\n", kaddr);
 
-	extent = (struct ssdfs_shared_extent *)kaddr;
-	*start_hash = ssdfs_fingerprint2hash(extent->fingerprint,
-					     extent->fingerprint_len);
+	snapshot = (struct ssdfs_snapshot *)kaddr;
+	*start_hash = le64_to_cpu(snapshot->create_time);
 	*end_hash = *start_hash;
 }
 
 /*
- * ssdfs_check_found_shared_extent() - check found shared extent
+ * ssdfs_check_found_snapshot() - check found snapshot
  * @fsi: pointer on shared file system object
  * @search: search object
- * @kaddr: pointer on shared extent object
- * @item_index: index of the shared extent
+ * @kaddr: pointer on snapshot object
+ * @item_index: index of the snapshot
  * @start_hash: pointer on start_hash value [out]
  * @end_hash: pointer on end_hash value [out]
  * @found_index: pointer on found index [out]
  *
- * This method tries to check the found shared extent.
+ * This method tries to check the found snapshot.
  *
  * RETURN:
  * [success]
  * [failure] - error code:
  *
- * %-ERANGE     - corrupted shared extent.
+ * %-ERANGE     - corrupted snapshot.
  * %-EAGAIN     - continue the search.
  * %-ENODATA    - possible place was found.
  */
 static
-int ssdfs_check_found_shared_extent(struct ssdfs_fs_info *fsi,
-				    struct ssdfs_btree_search *search,
-				    void *kaddr,
-				    u16 item_index,
-				    u64 *start_hash,
-				    u64 *end_hash,
-				    u16 *found_index)
+int ssdfs_check_found_snapshot(struct ssdfs_fs_info *fsi,
+			       struct ssdfs_btree_search *search,
+			       void *kaddr,
+			       u16 item_index,
+			       u64 *start_hash,
+			       u64 *end_hash,
+			       u16 *found_index)
 {
-	struct ssdfs_shared_extent *extent;
+	struct ssdfs_snapshot *snapshot;
+	u64 ino;
+	u8 mode;
+	u8 expiration;
+	u64 create_time;
+	u64 create_cno;
+	u64 cno;
+	u64 name_hash;
 	u32 req_flags;
 	int err = 0;
 
@@ -3275,17 +3394,63 @@ int ssdfs_check_found_shared_extent(struct ssdfs_fs_info *fsi,
 	*end_hash = U64_MAX;
 	*found_index = U16_MAX;
 
-	extent = (struct ssdfs_shared_extent *)kaddr;
+	snapshot = (struct ssdfs_snapshot *)kaddr;
+	ino = le64_to_cpu(snapshot->ino);
+	mode = snapshot->mode;
+	expiration = snapshot->expiration;
+	create_time = le64_to_cpu(snapshot->create_time);
+	create_cno = le64_to_cpu(snapshot->create_cno);
+	name_hash = le64_to_cpu(snapshot->name_hash);
+
+	SSDFS_DBG("UUID %pUb, name_hash %llx, ino %llu, "
+		  "mode %#x, expiration %#x, create_cno %llx\n",
+		  snapshot->uuid, name_hash, ino,
+		  mode, expiration, create_cno);
+
 	req_flags = search->request.flags;
 
-	if (!(req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT)) {
-		SSDFS_ERR("invalid request: fingerprint is absent\n");
+	if (ino >= U64_MAX) {
+		SSDFS_ERR("corrupted snapshot: "
+			  "ino %llu\n", ino);
 		return -ERANGE;
 	}
 
-	ssdfs_get_shared_extents_hash_range(kaddr, start_hash, end_hash);
+	if (!is_ssdfs_snapshot_mode_correct(mode)) {
+		SSDFS_ERR("corrupted snapshot: "
+			  "mode %#x\n", mode);
+		return -ERANGE;
+	}
 
-	err = ssdfs_check_shared_extent_for_request(fsi, extent, search);
+	if (!is_ssdfs_snapshot_expiration_correct(expiration)) {
+		SSDFS_ERR("corrupted snapshot: "
+			  "expiration %#x\n", expiration);
+		return -ERANGE;
+	}
+
+	if (create_time >= U64_MAX) {
+		SSDFS_ERR("corrupted snapshot: "
+			  "create_time %llx\n", create_time);
+		return -ERANGE;
+	}
+
+	cno = ssdfs_current_cno(fsi->sb);
+
+	if (create_cno < fsi->fs_cno || create_cno >= cno) {
+		SSDFS_ERR("corrupted snapshot: "
+			  "fs create cno %llx, current cno %llx, "
+			  "snapshot create_cno %llx\n",
+			  fsi->fs_cno, cno, create_cno);
+		return -ERANGE;
+	}
+
+	if (!(req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE)) {
+		SSDFS_ERR("invalid request: hash is absent\n");
+		return -ERANGE;
+	}
+
+	ssdfs_get_snapshot_hash_range(kaddr, start_hash, end_hash);
+
+	err = ssdfs_check_snapshot_for_request(fsi, snapshot, search);
 	if (err == -ENODATA) {
 		search->result.state =
 			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
@@ -3315,7 +3480,7 @@ int ssdfs_check_found_shared_extent(struct ssdfs_fs_info *fsi,
 		err = 0;
 		*found_index = U16_MAX;
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to check shared extent: err %d\n",
+		SSDFS_ERR("fail to check snapshot: err %d\n",
 			  err);
 	} else {
 		*found_index = item_index;
@@ -3332,40 +3497,40 @@ int ssdfs_check_found_shared_extent(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_prepare_shared_extents_buffer() - prepare buffer for shared extents
+ * ssdfs_prepare_snapshots_buffer() - prepare buffer for snapshots
  * @search: search object
- * @found_index: found index of shared extent
+ * @found_index: found index of snapshot
  * @start_hash: starting hash
  * @end_hash: ending hash
  * @items_count: count of items in the sequence
  * @item_size: size of the item
  */
 static
-int ssdfs_prepare_shared_extents_buffer(struct ssdfs_btree_search *search,
-					u16 found_index,
-					u64 start_hash,
-					u64 end_hash,
-					u16 items_count,
-					size_t item_size)
+int ssdfs_prepare_snapshots_buffer(struct ssdfs_btree_search *search,
+				   u16 found_index,
+				   u64 start_hash,
+				   u64 end_hash,
+				   u16 items_count,
+				   size_t item_size)
 {
-	u16 found_extents = 0;
-	size_t buf_size = sizeof(struct ssdfs_shared_extent);
+	u16 found_snapshots = 0;
+	size_t buf_size = sizeof(struct ssdfs_snapshot);
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("found_index %u, start_hash %llx, end_hash %llx, "
 		  "items_count %u, item_size %zu\n",
 		   found_index, start_hash, end_hash,
 		   items_count, item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_search_free_result_buf(search);
 
 	if (start_hash == end_hash) {
 		/* use inline buffer */
-		found_extents = 1;
+		found_snapshots = 1;
 	} else {
 		/* use external buffer */
 		if (found_index >= items_count) {
@@ -3373,15 +3538,22 @@ int ssdfs_prepare_shared_extents_buffer(struct ssdfs_btree_search *search,
 				  found_index, items_count);
 			return -ERANGE;
 		}
-		found_extents = items_count - found_index;
+		found_snapshots = items_count - found_index;
 	}
 
-	if (found_extents == 1) {
+	if (found_snapshots == 1) {
 		search->result.buf_state =
 			SSDFS_BTREE_SEARCH_INLINE_BUFFER;
-		search->result.buf = &search->raw.shared_extent;
+		search->result.buf = &search->raw.snapshot;
 		search->result.buf_size = buf_size;
 		search->result.items_in_buffer = 0;
+
+		search->result.name_state =
+			SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.name = &search->name;
+		search->result.name_string_size =
+			sizeof(struct ssdfs_name_string);
+		search->result.names_in_buffer = 0;
 	} else {
 		if (search->result.buf) {
 			SSDFS_WARN("search->result.buf %p, "
@@ -3391,26 +3563,40 @@ int ssdfs_prepare_shared_extents_buffer(struct ssdfs_btree_search *search,
 		}
 
 		err = ssdfs_btree_search_alloc_result_buf(search,
-						buf_size * found_extents);
+						buf_size * found_snapshots);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to allocate memory for buffer\n");
 			return err;
 		}
+
+		err = ssdfs_btree_search_alloc_result_name(search,
+				(size_t)found_snapshots *
+					sizeof(struct ssdfs_name_string));
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to allocate memory for buffer\n");
+			ssdfs_btree_search_free_result_buf(search);
+			return err;
+		}
 	}
+
+	SSDFS_DBG("found_snapshots %u, "
+		  "search->result.items_in_buffer %u\n",
+		  found_snapshots,
+		  search->result.items_in_buffer);
 
 	return 0;
 }
 
 /*
- * ssdfs_extract_found_shared_extent() - extract found shared extent
+ * ssdfs_extract_found_snapshot() - extract found snapshot
  * @fsi: pointer on shared file system object
  * @search: search object
  * @item_size: size of the item
- * @kaddr: pointer on shared extent
+ * @kaddr: pointer on snapshot
  * @start_hash: pointer on start_hash value [out]
  * @end_hash: pointer on end_hash value [out]
  *
- * This method tries to extract the found shared extent.
+ * This method tries to extract the found snapshot.
  *
  * RETURN:
  * [success]
@@ -3419,16 +3605,21 @@ int ssdfs_prepare_shared_extents_buffer(struct ssdfs_btree_search *search,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_extract_found_shared_extent(struct ssdfs_fs_info *fsi,
-				      struct ssdfs_btree_search *search,
-				      size_t item_size,
-				      void *kaddr,
-				      u64 *start_hash,
-				      u64 *end_hash)
+int ssdfs_extract_found_snapshot(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_btree_search *search,
+				 size_t item_size,
+				 void *kaddr,
+				 u64 *start_hash,
+				 u64 *end_hash)
 {
-	struct ssdfs_shared_extent *extent;
-	size_t buf_size = sizeof(struct ssdfs_shared_extent);
+	struct ssdfs_shared_dict_btree_info *dict;
+	struct ssdfs_snapshot *snapshot;
+	size_t buf_size = sizeof(struct ssdfs_snapshot);
+	struct ssdfs_name_string *name;
+	size_t name_size = sizeof(struct ssdfs_name_string);
+	u64 name_hash;
 	u32 calculated;
+	u8 flags;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3441,6 +3632,12 @@ int ssdfs_extract_found_shared_extent(struct ssdfs_fs_info *fsi,
 	*start_hash = U64_MAX;
 	*end_hash = U64_MAX;
 
+	dict = fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
+
 	calculated = search->result.items_in_buffer * buf_size;
 	if (calculated > search->result.buf_size) {
 		SSDFS_ERR("calculated %u > buf_size %zu\n",
@@ -3449,22 +3646,68 @@ int ssdfs_extract_found_shared_extent(struct ssdfs_fs_info *fsi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("search->result.items_in_buffer %u, "
+		  "calculated %u\n",
+		  search->result.items_in_buffer,
+		  calculated);
+
 	BUG_ON(!search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	extent = (struct ssdfs_shared_extent *)kaddr;
-	ssdfs_get_shared_extents_hash_range(extent, start_hash, end_hash);
+	snapshot = (struct ssdfs_snapshot *)kaddr;
+	ssdfs_get_snapshot_hash_range(snapshot, start_hash, end_hash);
+
+	err = __ssdfs_check_snapshot_for_request(fsi, snapshot, search);
+	if (err == -ENODATA) {
+		SSDFS_DBG("current snapshot is out of requested range\n");
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to check snapshot: err %d\n",
+			  err);
+		return err;
+	}
 
 	err = ssdfs_memcpy(search->result.buf,
 			   calculated, search->result.buf_size,
-			   extent, 0, item_size,
+			   snapshot, 0, item_size,
 			   item_size);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
+		SSDFS_ERR("fail to copy: calculated %u, "
+			  "search->result.buf_size %zu, err %d\n",
+			  calculated, search->result.buf_size, err);
 		return err;
 	}
 
 	search->result.items_in_buffer++;
+
+	flags = snapshot->flags;
+	if (flags & SSDFS_SNAPSHOT_HAS_EXTERNAL_STRING) {
+		calculated = search->result.names_in_buffer * name_size;
+		if (calculated >= search->result.name_string_size) {
+			SSDFS_ERR("calculated %u >= name_string_size %zu\n",
+				  calculated,
+				  search->result.name_string_size);
+			return -ERANGE;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		name_hash = le64_to_cpu(snapshot->name_hash);
+		name = search->result.name + search->result.names_in_buffer;
+
+		err = ssdfs_shared_dict_get_name(dict, name_hash, name);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to extract the name: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+			return err;
+		}
+
+		search->result.names_in_buffer++;
+	}
+
 	search->result.count++;
 	search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
 
@@ -3496,18 +3739,19 @@ int ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 					u16 lookup_index,
 					struct ssdfs_btree_search *search)
 {
-	int capacity = SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE;
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	int capacity = SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE;
+	size_t item_size = sizeof(struct ssdfs_snapshot);
 
 	return __ssdfs_extract_range_by_lookup_index(node, lookup_index,
-					capacity, item_size, search,
-					ssdfs_check_found_shared_extent,
-					ssdfs_prepare_shared_extents_buffer,
-					ssdfs_extract_found_shared_extent);
+						capacity, item_size,
+						search,
+						ssdfs_check_found_snapshot,
+						ssdfs_prepare_snapshots_buffer,
+						ssdfs_extract_found_snapshot);
 }
 
 /*
- * ssdfs_shextree_node_find_range() - find a range of items into the node
+ * ssdfs_snapshots_btree_node_find_range() - find a range of items into the node
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -3522,8 +3766,8 @@ int ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
  * %-ENOMEM     - unable to allocate memory.
  */
 static
-int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
-				   struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_find_range(struct ssdfs_btree_node *node,
+					  struct ssdfs_btree_search *search)
 {
 	int state;
 	u16 items_count;
@@ -3554,6 +3798,12 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
 	start_hash = node->items_area.start_hash;
 	end_hash = node->items_area.end_hash;
 	up_read(&node->header_lock);
+
+	SSDFS_DBG("request (start_hash %llx, end_hash %llx), "
+		  "node (start_hash %llx, end_hash %llx)\n",
+		  search->request.start.hash,
+		  search->request.end.hash,
+		  start_hash, end_hash);
 
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
 		SSDFS_ERR("invalid area state %#x\n",
@@ -3587,9 +3837,23 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
 	if (err)
 		return err;
 
-	err = ssdfs_shextree_node_find_lookup_index(node, search,
-						    &lookup_index);
+	err = ssdfs_snapshots_btree_node_find_lookup_index(node, search,
+							   &lookup_index);
 	if (err == -ENODATA) {
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+		case SSDFS_BTREE_SEARCH_DELETE_ITEM:
+			/*
+			 * Change request is represented by time range.
+			 * It needs to check UUID value.
+			 */
+			goto try_extract_range_by_lookup_index;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
 		search->result.state =
 			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
 		search->result.err = -ENODATA;
@@ -3630,8 +3894,10 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+try_extract_range_by_lookup_index:
+
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(lookup_index >= SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE);
+	BUG_ON(lookup_index >= SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_extract_range_by_lookup_index(node, lookup_index,
@@ -3639,7 +3905,7 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
 	if (err == -EAGAIN) {
-		SSDFS_DBG("node contains not all requested shared extents: "
+		SSDFS_DBG("node contains not all requested snapshots: "
 			  "node (start_hash %llx, end_hash %llx), "
 			  "request (start_hash %llx, end_hash %llx)\n",
 			  start_hash, end_hash,
@@ -3672,7 +3938,7 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_shextree_node_find_item() - find item into node
+ * ssdfs_snapshots_btree_node_find_item() - find item into node
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -3685,8 +3951,8 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_shextree_node_find_item(struct ssdfs_btree_node *node,
-				  struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_find_item(struct ssdfs_btree_node *node,
+					 struct ssdfs_btree_search *search)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
@@ -3711,35 +3977,35 @@ int ssdfs_shextree_node_find_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	return ssdfs_shextree_node_find_range(node, search);
+	return ssdfs_snapshots_btree_node_find_range(node, search);
 }
 
 static
-int ssdfs_shextree_node_allocate_item(struct ssdfs_btree_node *node,
-				      struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_allocate_item(struct ssdfs_btree_node *node,
+					     struct ssdfs_btree_search *search)
 {
 	SSDFS_DBG("operation is unavailable\n");
 	return -EOPNOTSUPP;
 }
 
 static
-int ssdfs_shextree_node_allocate_range(struct ssdfs_btree_node *node,
-				       struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_allocate_range(struct ssdfs_btree_node *node,
+					      struct ssdfs_btree_search *search)
 {
 	SSDFS_DBG("operation is unavailable\n");
 	return -EOPNOTSUPP;
 }
 
 /*
- * __ssdfs_shextree_node_get_shared_extent() - extract the shared extent
+ * __ssdfs_snapshots_btree_node_get_snapshot() - extract the snapshot
  * @pvec: pointer on pagevec
  * @area_offset: area offset from the node's beginning
  * @area_size: area size
  * @node_size: size of the node
- * @item_index: index of the shared extent in the node
- * @extent: pointer on shared extent's buffer [out]
+ * @item_index: index of the snapshot in the node
+ * @snapshot: pointer on snapshot's buffer [out]
  *
- * This method tries to extract the shared extent from the node.
+ * This method tries to extract the snapshot from the node.
  *
  * RETURN:
  * [success]
@@ -3748,14 +4014,14 @@ int ssdfs_shextree_node_allocate_range(struct ssdfs_btree_node *node,
  * %-ERANGE     - internal error.
  */
 static
-int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
-					    u32 area_offset,
-					    u32 area_size,
-					    u32 node_size,
-					    u16 item_index,
-					    struct ssdfs_shared_extent *extent)
+int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
+					      u32 area_offset,
+					      u32 area_size,
+					      u32 node_size,
+					      u16 item_index,
+					      struct ssdfs_snapshot *snapshot)
 {
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	size_t item_size = sizeof(struct ssdfs_snapshot);
 	u32 item_offset;
 	int page_index;
 	struct page *page;
@@ -3763,7 +4029,7 @@ int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !extent);
+	BUG_ON(!pvec || !snapshot);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
@@ -3799,7 +4065,7 @@ int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
 	page = pvec->pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(extent, 0, item_size,
+	err = ssdfs_memcpy(snapshot, 0, item_size,
 			   kaddr, item_offset, PAGE_SIZE,
 			   item_size);
 	kunmap_atomic(kaddr);
@@ -3813,13 +4079,13 @@ int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
 }
 
 /*
- * ssdfs_shextree_node_get_shared_extent() - extract shared extent from the node
+ * ssdfs_snapshots_btree_node_get_snapshot() - extract snapshot from the node
  * @node: pointer on node object
  * @area: items area descriptor
- * @item_index: index of the shared extent
- * @extent: pointer on extracted shared extent [out]
+ * @item_index: index of the snapshot
+ * @snapshot: pointer on extracted snapshot [out]
  *
- * This method tries to extract the shared extent from the node.
+ * This method tries to extract the snapshot from the node.
  *
  * RETURN:
  * [success]
@@ -3828,25 +4094,25 @@ int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_shextree_node_get_shared_extent(struct ssdfs_btree_node *node,
+int ssdfs_snapshots_btree_node_get_snapshot(struct ssdfs_btree_node *node,
 				struct ssdfs_btree_node_items_area *area,
 				u16 item_index,
-				struct ssdfs_shared_extent *extent)
+				struct ssdfs_snapshot *snapshot)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node || !area || !extent);
+	BUG_ON(!node || !area || !snapshot);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, item_index);
 
-	return __ssdfs_shextree_node_get_shared_extent(&node->content.pvec,
-							area->offset,
-							area->area_size,
-							node->node_size,
-							item_index,
-							extent);
+	return __ssdfs_snapshots_btree_node_get_snapshot(&node->content.pvec,
+							 area->offset,
+							 area->area_size,
+							 node->node_size,
+							 item_index,
+							 snapshot);
 }
 
 /*
@@ -3855,8 +4121,8 @@ int ssdfs_shextree_node_get_shared_extent(struct ssdfs_btree_node *node,
  * @area: items area descriptor
  * @search: search object
  *
- * This method tries to check that requested position of a shared extent
- * in the node is correct.
+ * This method tries to check that requested position of a snapshot
+ * into the node is correct.
  *
  * RETURN:
  * [success]
@@ -3874,8 +4140,11 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 				  struct ssdfs_btree_node_items_area *area,
 				  struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_extent extent;
+	struct ssdfs_snapshot snapshot;
 	u16 item_index;
+	u64 ino;
+	u64 create_time;
+	u64 name_hash;
 	u32 req_flags;
 	int direction = SSDFS_CHECK_POSITION_FAILURE;
 	int err;
@@ -3905,87 +4174,69 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 		search->result.start_index = item_index;
 	}
 
-	if (area->items_count == 0) {
-		direction = SSDFS_CORRECT_POSITION;
-		goto finish_check_position;
-	}
-
-	err = ssdfs_shextree_node_get_shared_extent(node, area,
-						    item_index, &extent);
+	err = ssdfs_snapshots_btree_node_get_snapshot(node, area,
+						      item_index, &snapshot);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to extract the shared extent: "
+		SSDFS_ERR("fail to extract the snapshot: "
 			  "item_index %u, err %d\n",
 			  item_index, err);
 		return SSDFS_CHECK_POSITION_FAILURE;
 	}
 
+	ino = le64_to_cpu(snapshot.ino);
+	create_time = le64_to_cpu(snapshot.create_time);
+	name_hash = le64_to_cpu(snapshot.name_hash);
 	req_flags = search->request.flags;
 
-	if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT) {
-		u8 type1, type2;
-		u8 len1, len2;
-		int res;
+	if (search->request.end.hash < create_time)
+		direction = SSDFS_SEARCH_LEFT_DIRECTION;
+	else if (create_time < search->request.start.hash)
+		direction = SSDFS_SEARCH_RIGHT_DIRECTION;
+	else {
+		/* search->request.start.hash == create_time */
 
-		type1 = search->request.start.fingerprint->type;
-		type2 = extent.fingerprint_type;
-
-		if (type1 != type2) {
-			SSDFS_ERR("fingerprint: type1 %#x != type2 %#x\n",
-				  type1, type2);
-			return SSDFS_CHECK_POSITION_FAILURE;
-		}
-
-		len1 = search->request.start.fingerprint->len;
-		len2 = extent.fingerprint_len;
-
-		if (len1 != len2) {
-			SSDFS_ERR("fingerprint: len1 %u != len2 %u\n",
-				  len1, len2);
-			return SSDFS_CHECK_POSITION_FAILURE;
-		}
-
-		res = memcmp(search->request.start.fingerprint->buf,
-			     extent.fingerprint,
-			     len1);
-
-		if (res == 0) {
-			direction = SSDFS_CORRECT_POSITION;
-			goto finish_check_position;
-		} else if (res > 0) {
-			direction = SSDFS_SEARCH_RIGHT_DIRECTION;
-			goto finish_check_position;
-		}
-
-		res = memcmp(search->request.end.fingerprint->buf,
-			     extent.fingerprint,
-			     len1);
-
-		if (res >= 0) {
-			SSDFS_ERR("invalid request: "
-				  "start: (hash %llx, fingerprint %pUb), "
-				  "end (hash %llx, fingerprint %pUb)\n",
-				  search->request.start.hash,
-				  search->request.start.fingerprint->buf,
-				  search->request.end.hash,
-				  search->request.end.fingerprint->buf);
-			return SSDFS_CHECK_POSITION_FAILURE;
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
+			if (search->request.start.ino < ino)
+				direction = SSDFS_SEARCH_LEFT_DIRECTION;
+			else if (ino < search->request.start.ino)
+				direction = SSDFS_SEARCH_RIGHT_DIRECTION;
+			else
+				direction = SSDFS_CORRECT_POSITION;
 		} else {
-			direction = SSDFS_SEARCH_LEFT_DIRECTION;
-			goto finish_check_position;
+			SSDFS_ERR("invalid request: "
+				  "req_flags %#x\n",
+				  req_flags);
+			return SSDFS_CHECK_POSITION_FAILURE;
 		}
-	} else {
-		SSDFS_ERR("invalid set of flags: %#x\n", req_flags);
-		return SSDFS_CHECK_POSITION_FAILURE;
+
+		if (direction != SSDFS_CORRECT_POSITION)
+			goto finish_check_position;
+
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
+			if (is_uuids_identical(search->request.start.uuid,
+						snapshot.uuid)) {
+				direction = SSDFS_CORRECT_POSITION;
+				goto finish_check_position;
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "UUID1 %pUb, UUID2 %pUb\n",
+					  search->request.start.uuid,
+					  snapshot.uuid);
+				return SSDFS_CHECK_POSITION_FAILURE;
+			}
+		}
 	}
 
 finish_check_position:
-	SSDFS_DBG("start: (hash %llx, fingerprint %pUb), "
-		  "end (hash %llx, fingerprint %pUb), "
+	SSDFS_DBG("ino %llu, create_time %llx, "
+		  "search (start_hash %llx, ino %llu; "
+		  "end_hash %llx, ino %llu), "
 		  "direction %#x\n",
+		  ino, create_time,
 		  search->request.start.hash,
-		  search->request.start.fingerprint->buf,
+		  search->request.start.ino,
 		  search->request.end.hash,
-		  search->request.end.fingerprint->buf,
+		  search->request.end.ino,
 		  direction);
 
 	return direction;
@@ -3997,8 +4248,8 @@ finish_check_position:
  * @area: items area descriptor
  * @search: search object
  *
- * This method tries to find a correct position of the shared extent
- * from the left side of shared extents' sequence in the node.
+ * This method tries to find a correct position of the snapshot
+ * from the left side of snapshots' sequence in the node.
  *
  * RETURN:
  * [success]
@@ -4011,8 +4262,10 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_node_items_area *area,
 				    struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_extent extent;
+	struct ssdfs_snapshot snapshot;
 	int item_index;
+	u64 ino;
+	u64 create_time;
 	u32 req_flags;
 	int err;
 
@@ -4044,53 +4297,62 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 
 	req_flags = search->request.flags;
 
-	if (!(req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT)) {
-		SSDFS_ERR("invalid request: req_flags %#x\n",
-			  req_flags);
-		return -ERANGE;
-	}
-
 	for (; item_index >= 0; item_index--) {
-		u8 type1, type2;
-		u8 len1, len2;
-		int res;
-
-		err = ssdfs_shextree_node_get_shared_extent(node, area,
-							    (u16)item_index,
-							    &extent);
+		err = ssdfs_snapshots_btree_node_get_snapshot(node, area,
+							   (u16)item_index,
+							   &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to extract the shared extent: "
+			SSDFS_ERR("fail to extract the snapshot: "
 				  "item_index %d, err %d\n",
 				  item_index, err);
 			return err;
 		}
 
-		type1 = search->request.start.fingerprint->type;
-		type2 = extent.fingerprint_type;
+		ino = le64_to_cpu(snapshot.ino);
+		create_time = le64_to_cpu(snapshot.create_time);
 
-		if (type1 != type2) {
-			SSDFS_ERR("fingerprint: type1 %#x != type2 %#x\n",
-				  type1, type2);
-			return -ERANGE;;
-		}
+		if (search->request.start.hash == create_time) {
+			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
+				if (ino == search->request.start.ino) {
+					/* continue logic */
+					goto check_uuid;
+				} else if (ino < search->request.start.ino) {
+					search->result.start_index =
+							(u16)(item_index + 1);
+					return 0;
+				} else
+					continue;
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "req_flags %#x\n",
+					  req_flags);
+				return -ERANGE;
+			}
 
-		len1 = search->request.start.fingerprint->len;
-		len2 = extent.fingerprint_len;
+check_uuid:
+			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
+				u8 *uuid = search->request.start.uuid;
+				if (is_uuids_identical(uuid, snapshot.uuid)) {
+					/*
+					 * continue logic.
+					 */
+				} else {
+					SSDFS_ERR("invalid request: "
+						  "UUID1 %pUb, UUID2 %pUb\n",
+						  search->request.start.uuid,
+						  snapshot.uuid);
+					return -ERANGE;
+				}
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "req_flags %#x\n",
+					  req_flags);
+				return -ERANGE;
+			}
 
-		if (len1 != len2) {
-			SSDFS_ERR("fingerprint: len1 %u != len2 %u\n",
-				  len1, len2);
-			return -ERANGE;
-		}
-
-		res = memcmp(search->request.start.fingerprint->buf,
-			     extent.fingerprint,
-			     len1);
-
-		if (res == 0) {
 			search->result.start_index = (u16)item_index;
 			return 0;
-		} else if (res > 0) {
+		} else if (create_time < search->request.start.hash) {
 			search->result.start_index = (u16)(item_index + 1);
 			return 0;
 		}
@@ -4106,8 +4368,8 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
  * @area: items area descriptor
  * @search: search object
  *
- * This method tries to find a correct position of the shared extent
- * from the right side of shared extents' sequence in the node.
+ * This method tries to find a correct position of the snapshot
+ * from the right side of snapshots' sequence in the node.
  *
  * RETURN:
  * [success]
@@ -4120,8 +4382,10 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_node_items_area *area,
 				    struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_extent extent;
+	struct ssdfs_snapshot snapshot;
 	int item_index;
+	u64 ino;
+	u64 create_time;
 	u32 req_flags;
 	int err;
 
@@ -4154,54 +4418,74 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 
 	req_flags = search->request.flags;
 
-	if (!(req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT)) {
-		SSDFS_ERR("invalid request: req_flags %#x\n",
-			  req_flags);
-		return -ERANGE;
-	}
-
 	for (; item_index < area->items_count; item_index++) {
-		u8 type1, type2;
-		u8 len1, len2;
-		int res;
-
-		err = ssdfs_shextree_node_get_shared_extent(node, area,
-							    (u16)item_index,
-							    &extent);
+		err = ssdfs_snapshots_btree_node_get_snapshot(node, area,
+							      (u16)item_index,
+							      &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to extract the shared extent: "
+			SSDFS_ERR("fail to extract the snapshot: "
 				  "item_index %d, err %d\n",
 				  item_index, err);
 			return err;
 		}
 
-		type1 = search->request.end.fingerprint->type;
-		type2 = extent.fingerprint_type;
+		ino = le64_to_cpu(snapshot.ino);
+		create_time = le64_to_cpu(snapshot.create_time);
 
-		if (type1 != type2) {
-			SSDFS_ERR("fingerprint: type1 %#x != type2 %#x\n",
-				  type1, type2);
-			return -ERANGE;;
-		}
+		if (search->request.start.hash == create_time) {
+			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
+				if (ino == search->request.start.ino) {
+					/* continue logic */
+					goto check_uuid;
+				} else if (search->request.start.ino < ino) {
+					if (item_index == 0) {
+						search->result.start_index =
+								(u16)item_index;
+					} else {
+						search->result.start_index =
+							(u16)(item_index - 1);
+					}
+					return 0;
+				} else
+					continue;
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "req_flags %#x\n",
+					  req_flags);
+				return -ERANGE;
+			}
 
-		len1 = search->request.end.fingerprint->len;
-		len2 = extent.fingerprint_len;
+check_uuid:
+			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
+				u8 *uuid = search->request.start.uuid;
+				if (is_uuids_identical(uuid, snapshot.uuid)) {
+					/*
+					 * continue logic.
+					 */
+				} else {
+					SSDFS_ERR("invalid request: "
+						  "UUID1 %pUb, UUID2 %pUb\n",
+						  search->request.start.uuid,
+						  snapshot.uuid);
+					return -ERANGE;
+				}
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "req_flags %#x\n",
+					  req_flags);
+				return -ERANGE;
+			}
 
-		if (len1 != len2) {
-			SSDFS_ERR("fingerprint: len1 %u != len2 %u\n",
-				  len1, len2);
-			return -ERANGE;
-		}
-
-		res = memcmp(search->request.end.fingerprint->buf,
-			     extent.fingerprint,
-			     len1);
-
-		if (res == 0) {
 			search->result.start_index = (u16)item_index;
 			return 0;
-		} else if (res < 0) {
-			search->result.start_index = (u16)(item_index - 1);
+		} else if (search->request.end.hash < create_time) {
+			if (item_index == 0) {
+				search->result.start_index =
+						(u16)item_index;
+			} else {
+				search->result.start_index =
+						(u16)(item_index - 1);
+			}
 			return 0;
 		}
 	}
@@ -4253,11 +4537,11 @@ int ssdfs_clean_lookup_table(struct ssdfs_btree_node *node,
 		return 0;
 	}
 
-	lookup_table = node->raw.shextree_header.lookup_table;
+	lookup_table = node->raw.snapshots_header.lookup_table;
 
 	lookup_index = ssdfs_convert_item2lookup_index(node->node_size,
 						       start_index);
-	if (unlikely(lookup_index >= SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE)) {
+	if (unlikely(lookup_index >= SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE)) {
 		SSDFS_ERR("invalid lookup_index %u\n",
 			  lookup_index);
 		return -ERANGE;
@@ -4275,7 +4559,8 @@ int ssdfs_clean_lookup_table(struct ssdfs_btree_node *node,
 	if (item_index != start_index)
 		lookup_index++;
 
-	cleaning_indexes = SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE - lookup_index;
+	cleaning_indexes =
+		SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE - lookup_index;
 	cleaning_bytes = cleaning_indexes * sizeof(__le64);
 
 	SSDFS_DBG("lookup_index %u, cleaning_indexes %u, cleaning_bytes %u\n",
@@ -4307,7 +4592,7 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 				u16 start_index, u16 range_len)
 {
 	__le64 *lookup_table;
-	struct ssdfs_shared_extent extent;
+	struct ssdfs_snapshot snapshot;
 	int i;
 	int err;
 
@@ -4325,7 +4610,7 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 		return 0;
 	}
 
-	lookup_table = node->raw.shextree_header.lookup_table;
+	lookup_table = node->raw.snapshots_header.lookup_table;
 
 	for (i = 0; i < range_len; i++) {
 		int item_index = start_index + i;
@@ -4336,20 +4621,18 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 				ssdfs_convert_item2lookup_index(node->node_size,
 								item_index);
 
-			err = ssdfs_shextree_node_get_shared_extent(node,
-								    area,
-								    item_index,
-								    &extent);
+			err = ssdfs_snapshots_btree_node_get_snapshot(node,
+								   area,
+								   item_index,
+								   &snapshot);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to extract the shared extent: "
+				SSDFS_ERR("fail to extract snapshot: "
 					  "item_index %d, err %d\n",
 					  item_index, err);
 				return err;
 			}
 
-			lookup_table[lookup_index] =
-				ssdfs_fingerprint2hash(extent.fingerprint,
-							extent.fingerprint_len);
+			lookup_table[lookup_index] = snapshot.create_time;
 		}
 	}
 
@@ -4372,17 +4655,17 @@ void ssdfs_initialize_lookup_table(struct ssdfs_btree_node *node)
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-	lookup_table = node->raw.shextree_header.lookup_table;
+	lookup_table = node->raw.snapshots_header.lookup_table;
 	memset(lookup_table, 0xFF,
-		sizeof(__le64) * SSDFS_SHEXTREE_LOOKUP_TABLE_SIZE);
+		sizeof(__le64) * SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE);
 }
 
 /*
- * __ssdfs_shextree_node_insert_range() - insert range into node
+ * __ssdfs_snapshots_btree_node_insert_range() - insert range into node
  * @node: pointer on node object
  * @search: search object
  *
- * This method tries to insert the range of shared extents into the node.
+ * This method tries to insert the range of snapshots into the node.
  *
  * RETURN:
  * [success]
@@ -4392,25 +4675,25 @@ void ssdfs_initialize_lookup_table(struct ssdfs_btree_node *node)
  * %-EFAULT     - node is corrupted.
  */
 static
-int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
-					struct ssdfs_btree_search *search)
+int __ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
+					      struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree *tree;
-	struct ssdfs_shared_extents_tree *tree_info;
-	struct ssdfs_shextree_node_header *hdr;
+	struct ssdfs_snapshots_btree_info *tree_info;
+	struct ssdfs_snapshots_btree_node_header *hdr;
 	struct ssdfs_btree_node_items_area items_area;
-	struct ssdfs_shared_extent extent;
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	struct ssdfs_snapshot snapshot;
+	size_t item_size = sizeof(struct ssdfs_snapshot);
+	u64 old_hash;
+	u64 start_hash = U64_MAX, end_hash = U64_MAX;
+	u64 cur_hash;
 	u16 item_index;
 	int free_items;
 	u16 range_len;
-	u16 shared_extents = 0;
-	int direction;
+	u16 snapshots_count = 0;
 	u32 used_space;
-	u64 start_hash = U64_MAX;
-	u64 end_hash = U64_MAX;
-	u64 cur_hash;
-	u64 old_hash;
+	u64 ino;
+	int direction;
 	int i;
 	int err = 0;
 
@@ -4442,7 +4725,7 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 	tree = node->tree;
 
 	switch (tree->type) {
-	case SSDFS_SHARED_EXTENTS_BTREE:
+	case SSDFS_SNAPSHOTS_BTREE:
 		/* expected btree type */
 		break;
 
@@ -4452,7 +4735,7 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	tree_info = container_of(tree,
-				 struct ssdfs_shared_extents_tree,
+				 struct ssdfs_snapshots_btree_info,
 				 generic_tree);
 
 	down_read(&node->header_lock);
@@ -4573,15 +4856,15 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	range_len = items_area.items_count - search->result.start_index;
-	shared_extents = range_len + search->request.count;
+	snapshots_count = range_len + search->request.count;
 
 	item_index = search->result.start_index;
-	if ((item_index + shared_extents) > items_area.items_capacity) {
+	if ((item_index + snapshots_count) > items_area.items_capacity) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid shared_extents: "
-			  "item_index %u, shared_extents %u, "
+		SSDFS_ERR("invalid snapshots_count: "
+			  "item_index %u, snapshots_count %u, "
 			  "items_capacity %u\n",
-			  item_index, shared_extents,
+			  item_index, snapshots_count,
 			  items_area.items_capacity);
 		goto finish_detect_affected_items;
 	}
@@ -4593,19 +4876,19 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 	end_hash = search->request.end.hash;
 
 	if (item_index > 0) {
-		err = ssdfs_shextree_node_get_shared_extent(node,
-							    &items_area,
-							    item_index - 1,
-							    &extent);
+		err = ssdfs_snapshots_btree_node_get_snapshot(node,
+							   &items_area,
+							   item_index - 1,
+							   &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get extent: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_detect_affected_items;
 		}
 
-		cur_hash = ssdfs_fingerprint2hash(extent.fingerprint,
-						  extent.fingerprint_len);
+		ino = le64_to_cpu(snapshot.ino);
+		cur_hash = le64_to_cpu(snapshot.create_time);
 
-		if (cur_hash < start_hash) {
+		if (cur_hash <= start_hash && ino < search->request.start.ino) {
 			/*
 			 * expected state
 			 */
@@ -4618,19 +4901,19 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 
 			for (i = 0; i < items_area.items_count; i++) {
 				err =
-				   ssdfs_shextree_node_get_shared_extent(node,
+				   ssdfs_snapshots_btree_node_get_snapshot(node,
 								  &items_area,
-								  i, &extent);
+								  i, &snapshot);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to get snapshot: "
 						  "err %d\n", err);
 					goto finish_detect_affected_items;
 				}
 
-				SSDFS_ERR("index %d, hash %llx\n",
-				    i,
-				    ssdfs_fingerprint2hash(extent.fingerprint,
-						  extent.fingerprint_len));
+				SSDFS_ERR("index %d, ino %llu, hash %llx\n",
+					  i,
+					  le64_to_cpu(snapshot.ino),
+					  le64_to_cpu(snapshot.create_time));
 			}
 
 			err = -ERANGE;
@@ -4639,19 +4922,19 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	if (item_index < items_area.items_count) {
-		err = ssdfs_shextree_node_get_shared_extent(node,
-							    &items_area,
-							    item_index,
-							    &extent);
+		err = ssdfs_snapshots_btree_node_get_snapshot(node,
+							      &items_area,
+							      item_index,
+							      &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get extent: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_detect_affected_items;
 		}
 
-		cur_hash = ssdfs_fingerprint2hash(extent.fingerprint,
-						  extent.fingerprint_len);
+		ino = le64_to_cpu(snapshot.ino);
+		cur_hash = le64_to_cpu(snapshot.create_time);
 
-		if (end_hash < cur_hash) {
+		if (end_hash <= cur_hash && search->request.end.ino < ino) {
 			/*
 			 * expected state
 			 */
@@ -4664,19 +4947,19 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 
 			for (i = 0; i < items_area.items_count; i++) {
 				err =
-				   ssdfs_shextree_node_get_shared_extent(node,
+				   ssdfs_snapshots_btree_node_get_snapshot(node,
 								  &items_area,
-								  i, &extent);
+								  i, &snapshot);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to get snapshot: "
 						  "err %d\n", err);
 					goto finish_detect_affected_items;
 				}
 
-				SSDFS_ERR("index %d, hash %llx\n",
-				    i,
-				    ssdfs_fingerprint2hash(extent.fingerprint,
-						  extent.fingerprint_len));
+				SSDFS_ERR("index %d, ino %llu, hash %llx\n",
+					  i,
+					  le64_to_cpu(snapshot.ino),
+					  le64_to_cpu(snapshot.create_time));
 			}
 
 			err = -ERANGE;
@@ -4685,7 +4968,7 @@ int __ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 lock_items_range:
-	err = ssdfs_lock_items_range(node, item_index, shared_extents);
+	err = ssdfs_lock_items_range(node, item_index, snapshots_count);
 	if (err == -ENOENT) {
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
@@ -4751,25 +5034,23 @@ finish_detect_affected_items:
 	}
 	node->items_area.free_space -= used_space;
 
-	err = ssdfs_shextree_node_get_shared_extent(node, &node->items_area,
-						    0, &extent);
+	err = ssdfs_snapshots_btree_node_get_snapshot(node, &node->items_area,
+						      0, &snapshot);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to get extent: err %d\n", err);
+		SSDFS_ERR("fail to get snapshot: err %d\n", err);
 		goto finish_items_area_correction;
 	}
-	start_hash = ssdfs_fingerprint2hash(extent.fingerprint,
-					    extent.fingerprint_len);
+	start_hash = le64_to_cpu(snapshot.create_time);
 
-	err = ssdfs_shextree_node_get_shared_extent(node,
+	err = ssdfs_snapshots_btree_node_get_snapshot(node,
 					&node->items_area,
 					node->items_area.items_count - 1,
-					&extent);
+					&snapshot);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to get extent: err %d\n", err);
+		SSDFS_ERR("fail to get snapshot: err %d\n", err);
 		goto finish_items_area_correction;
 	}
-	end_hash = ssdfs_fingerprint2hash(extent.fingerprint,
-					  extent.fingerprint_len);
+	end_hash = le64_to_cpu(snapshot.create_time);
 
 	if (start_hash >= U64_MAX || end_hash >= U64_MAX) {
 		err = -ERANGE;
@@ -4790,17 +5071,17 @@ finish_detect_affected_items:
 		  node->node_id, start_hash, end_hash);
 
 	err = ssdfs_correct_lookup_table(node, &node->items_area,
-					 item_index, shared_extents);
+					 item_index, snapshots_count);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct lookup table: "
 			  "err %d\n", err);
 		goto finish_items_area_correction;
 	}
 
-	hdr = &node->raw.shextree_header;
+	hdr = &node->raw.snapshots_header;
 
-	le32_add_cpu(&hdr->shared_extents, search->request.count);
-	atomic64_add(search->request.count, &tree_info->shared_extents);
+	le32_add_cpu(&hdr->snapshots_count, search->request.count);
+	atomic64_add(search->request.count, &tree_info->snapshots_count);
 
 finish_items_area_correction:
 	up_write(&node->header_lock);
@@ -4818,16 +5099,16 @@ finish_items_area_correction:
 	}
 
 	err = ssdfs_set_dirty_items_range(node, items_area.items_capacity,
-					  item_index, shared_extents);
+					  item_index, snapshots_count);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set items range as dirty: "
 			  "start %u, count %u, err %d\n",
-			  item_index, shared_extents, err);
+			  item_index, snapshots_count, err);
 		goto unlock_items_range;
 	}
 
 unlock_items_range:
-	ssdfs_unlock_items_range(node, item_index, shared_extents);
+	ssdfs_unlock_items_range(node, item_index, snapshots_count);
 
 finish_insert_item:
 	up_read(&node->full_lock);
@@ -4899,7 +5180,7 @@ finish_insert_item:
 }
 
 /*
- * ssdfs_shextree_node_insert_item() - insert item in the node
+ * ssdfs_snapshots_btree_node_insert_item() - insert item in the node
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -4914,8 +5195,8 @@ finish_insert_item:
  * %-ENOMEM     - fail to allocate memory.
  */
 static
-int ssdfs_shextree_node_insert_item(struct ssdfs_btree_node *node,
-				    struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_insert_item(struct ssdfs_btree_node *node,
+					   struct ssdfs_btree_search *search)
 {
 	int state;
 	int err = 0;
@@ -4972,7 +5253,7 @@ int ssdfs_shextree_node_insert_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	err = __ssdfs_shextree_node_insert_range(node, search);
+	err = __ssdfs_snapshots_btree_node_insert_range(node, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
 			  "node_id %u, err %d\n",
@@ -4986,7 +5267,7 @@ int ssdfs_shextree_node_insert_item(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_shextree_node_insert_range() - insert range of items
+ * ssdfs_snapshots_btree_node_insert_range() - insert range of items
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -5001,8 +5282,8 @@ int ssdfs_shextree_node_insert_item(struct ssdfs_btree_node *node,
  * %-ENOMEM     - fail to allocate memory.
  */
 static
-int ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
-				     struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
+					    struct ssdfs_btree_search *search)
 {
 	int state;
 	int err = 0;
@@ -5057,7 +5338,7 @@ int ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	err = __ssdfs_shextree_node_insert_range(node, search);
+	err = __ssdfs_snapshots_btree_node_insert_range(node, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert range: "
 			  "node_id %u, err %d\n",
@@ -5071,7 +5352,7 @@ int ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_change_item_only() - change shared extent in the node
+ * ssdfs_change_item_only() - change snapshot in the node
  * @node: pointer on node object
  * @area: pointer on items area's descriptor
  * @search: pointer on search request object
@@ -5090,16 +5371,11 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 			   struct ssdfs_btree_node_items_area *area,
 			   struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_extent shared_extent;
-	struct ssdfs_shared_extent *ptr;
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	struct ssdfs_snapshot snapshot;
+	size_t item_size = sizeof(struct ssdfs_snapshot);
 	u16 range_len;
 	u16 item_index;
 	u64 start_hash, end_hash;
-	u32 req_flags;
-	u32 extent_len;
-	u64 ref_count;
-	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5135,124 +5411,11 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	err = ssdfs_shextree_node_get_shared_extent(node, area, item_index,
-						    &shared_extent);
+	err = ssdfs_snapshots_btree_node_get_snapshot(node, area, item_index,
+						      &snapshot);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to get extent: err %d\n", err);
+		SSDFS_ERR("fail to get snapshot: err %d\n", err);
 		return err;
-	}
-
-	req_flags = search->request.flags;
-
-	if (req_flags & SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT) {
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(req_flags & SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (range_len > 1) {
-			SSDFS_ERR("fail to increment several extents\n");
-			return -ERANGE;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!search->result.buf);
-
-		if (search->result.buf_state !=
-				SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
-			SSDFS_ERR("invalid state of result buffer %#x\n",
-				  search->result.buf_state);
-			return -ERANGE;
-		}
-
-		if (search->result.buf_size != item_size) {
-			SSDFS_ERR("invalid buffer size: "
-				  "current %zu, expected %zu\n",
-				  search->result.buf_size, item_size);
-			return -ERANGE;
-		}
-
-		if (search->result.items_in_buffer != 1) {
-			SSDFS_ERR("unexpected number of items in buffer %u\n",
-				  search->result.items_in_buffer);
-			return -ERANGE;
-		}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ptr = (struct ssdfs_shared_extent *)search->result.buf;
-
-		res = memcmp(shared_extent.fingerprint, ptr->fingerprint,
-			     shared_extent.fingerprint_len);
-		if (res != 0) {
-			SSDFS_ERR("fingerprints do not match: "
-				  "fingerprint1 %pUb, fingerprint2 %pUb\n",
-				  shared_extent.fingerprint,
-				  ptr->fingerprint);
-			return -ERANGE;
-		}
-
-		ref_count = le64_to_cpu(shared_extent.ref_count);
-		extent_len = le32_to_cpu(shared_extent.extent.len);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(ref_count >= (U64_MAX - extent_len));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ref_count += extent_len;
-		ptr->ref_count = cpu_to_le64(ref_count);
-	} else if (req_flags & SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT) {
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(req_flags & SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (range_len > 1) {
-			SSDFS_ERR("fail to decrement several extents\n");
-			return -ERANGE;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!search->result.buf);
-
-		if (search->result.buf_state !=
-				SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
-			SSDFS_ERR("invalid state of result buffer %#x\n",
-				  search->result.buf_state);
-			return -ERANGE;
-		}
-
-		if (search->result.buf_size != item_size) {
-			SSDFS_ERR("invalid buffer size: "
-				  "current %zu, expected %zu\n",
-				  search->result.buf_size, item_size);
-			return -ERANGE;
-		}
-
-		if (search->result.items_in_buffer != 1) {
-			SSDFS_ERR("unexpected number of items in buffer %u\n",
-				  search->result.items_in_buffer);
-			return -ERANGE;
-		}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ptr = (struct ssdfs_shared_extent *)search->result.buf;
-
-		res = memcmp(shared_extent.fingerprint, ptr->fingerprint,
-			     shared_extent.fingerprint_len);
-		if (res != 0) {
-			SSDFS_ERR("fingerprints do not match: "
-				  "fingerprint1 %pUb, fingerprint2 %pUb\n",
-				  shared_extent.fingerprint,
-				  ptr->fingerprint);
-			return -ERANGE;
-		}
-
-		ref_count = le64_to_cpu(shared_extent.ref_count);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(ref_count == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ref_count--;
-		ptr->ref_count = cpu_to_le64(ref_count);
 	}
 
 	err = ssdfs_generic_insert_range(node, area,
@@ -5270,29 +5433,27 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 	end_hash = node->items_area.end_hash;
 
 	if (item_index == 0) {
-		err = ssdfs_shextree_node_get_shared_extent(node,
+		err = ssdfs_snapshots_btree_node_get_snapshot(node,
 							   &node->items_area,
 							   item_index,
-							   &shared_extent);
+							   &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get extent: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		start_hash = ssdfs_fingerprint2hash(shared_extent.fingerprint,
-						shared_extent.fingerprint_len);
+		start_hash = le64_to_cpu(snapshot.create_time);
 	}
 
 	if ((item_index + range_len) == node->items_area.items_count) {
-		err = ssdfs_shextree_node_get_shared_extent(node,
+		err = ssdfs_snapshots_btree_node_get_snapshot(node,
 						    &node->items_area,
 						    item_index + range_len - 1,
-						    &shared_extent);
+						    &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get extent: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		end_hash = ssdfs_fingerprint2hash(shared_extent.fingerprint,
-						shared_extent.fingerprint_len);
+		end_hash = le64_to_cpu(snapshot.create_time);
 	} else if ((item_index + range_len) > node->items_area.items_count) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid range_len: "
@@ -5323,7 +5484,7 @@ finish_items_area_correction:
 }
 
 /*
- * ssdfs_shextree_node_change_item() - change item in the node
+ * ssdfs_snapshots_btree_node_change_item() - change item in the node
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -5337,10 +5498,10 @@ finish_items_area_correction:
  * %-EFAULT     - node is corrupted.
  */
 static
-int ssdfs_shextree_node_change_item(struct ssdfs_btree_node *node,
-				    struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_change_item(struct ssdfs_btree_node *node,
+					   struct ssdfs_btree_search *search)
 {
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	size_t item_size = sizeof(struct ssdfs_snapshot);
 	struct ssdfs_btree_node_items_area items_area;
 	u16 item_index;
 	int direction;
@@ -5780,7 +5941,7 @@ int ssdfs_invalidate_items_area_partially(struct ssdfs_btree_node *node,
 }
 
 /*
- * __ssdfs_shextree_node_delete_range() - delete range of items
+ * __ssdfs_snapshots_btree_node_delete_range() - delete range of items
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -5795,15 +5956,15 @@ int ssdfs_invalidate_items_area_partially(struct ssdfs_btree_node *node,
  * %-EAGAIN     - continue deletion in the next node.
  */
 static
-int __ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
-					struct ssdfs_btree_search *search)
+int __ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
+					      struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree *tree;
-	struct ssdfs_shared_extents_tree *tree_info;
-	struct ssdfs_shextree_node_header *hdr;
+	struct ssdfs_snapshots_btree_info *tree_info;
+	struct ssdfs_snapshots_btree_node_header *hdr;
 	struct ssdfs_btree_node_items_area items_area;
-	struct ssdfs_shared_extent extent;
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	struct ssdfs_snapshot snapshot;
+	size_t item_size = sizeof(struct ssdfs_snapshot);
 	u16 index_count = 0;
 	int free_items;
 	u16 item_index;
@@ -5815,8 +5976,8 @@ int __ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 	u64 start_hash = U64_MAX;
 	u64 end_hash = U64_MAX;
 	u64 old_hash;
-	u32 old_shared_extents = 0, shared_extents = 0;
-	u32 extents_diff;
+	u32 old_snapshots_count = 0, snapshots_count = 0;
+	u32 snapshots_diff;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5865,7 +6026,7 @@ int __ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 	tree = node->tree;
 
 	switch (tree->type) {
-	case SSDFS_SHARED_EXTENTS_BTREE:
+	case SSDFS_SNAPSHOTS_BTREE:
 		/* expected btree type */
 		break;
 
@@ -5875,7 +6036,7 @@ int __ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 	}
 
 	tree_info = container_of(tree,
-				 struct ssdfs_shared_extents_tree,
+				 struct ssdfs_snapshots_btree_info,
 				 generic_tree);
 
 	down_read(&node->header_lock);
@@ -5938,7 +6099,7 @@ int __ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
-	shared_extents = items_area.items_count;
+	snapshots_count = items_area.items_count;
 	item_index = search->result.start_index;
 
 	range_len = search->request.count;
@@ -6152,26 +6313,24 @@ finish_detect_affected_items:
 		start_hash = U64_MAX;
 		end_hash = U64_MAX;
 	} else {
-		err = ssdfs_shextree_node_get_shared_extent(node,
+		err = ssdfs_snapshots_btree_node_get_snapshot(node,
 						    &node->items_area,
-						    0, &extent);
+						    0, &snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get extent: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		start_hash = ssdfs_fingerprint2hash(extent.fingerprint,
-						    extent.fingerprint_len);
+		start_hash = le64_to_cpu(snapshot.create_time);
 
-		err = ssdfs_shextree_node_get_shared_extent(node,
+		err = ssdfs_snapshots_btree_node_get_snapshot(node,
 					&node->items_area,
 					node->items_area.items_count - 1,
-					&extent);
+					&snapshot);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get extent: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		end_hash = ssdfs_fingerprint2hash(extent.fingerprint,
-						  extent.fingerprint_len);
+		end_hash = le64_to_cpu(snapshot.create_time);
 	}
 
 	SSDFS_DBG("BEFORE: node_id %u, items_area.start_hash %llx, "
@@ -6225,25 +6384,25 @@ finish_detect_affected_items:
 		}
 	}
 
-	hdr = &node->raw.shextree_header;
+	hdr = &node->raw.snapshots_header;
 
-	old_shared_extents = le16_to_cpu(hdr->shared_extents);
+	old_snapshots_count = le16_to_cpu(hdr->snapshots_count);
 
 	if (node->items_area.items_count == 0) {
-		hdr->shared_extents = cpu_to_le16(0);
+		hdr->snapshots_count = cpu_to_le16(0);
 	} else {
-		if (old_shared_extents < search->request.count) {
-			hdr->shared_extents = cpu_to_le16(0);
+		if (old_snapshots_count < search->request.count) {
+			hdr->snapshots_count = cpu_to_le16(0);
 		} else {
-			shared_extents = le16_to_cpu(hdr->shared_extents);
-			shared_extents -= search->request.count;
-			hdr->shared_extents = cpu_to_le16(shared_extents);
+			snapshots_count = le16_to_cpu(hdr->snapshots_count);
+			snapshots_count -= search->request.count;
+			hdr->snapshots_count = cpu_to_le16(snapshots_count);
 		}
 	}
 
-	shared_extents = le16_to_cpu(hdr->shared_extents);
-	extents_diff = old_shared_extents - shared_extents;
-	atomic64_sub(extents_diff, &tree_info->shared_extents);
+	snapshots_count = le16_to_cpu(hdr->snapshots_count);
+	snapshots_diff = old_snapshots_count - snapshots_count;
+	atomic64_sub(snapshots_diff, &tree_info->snapshots_count);
 
 	ssdfs_memcpy(&items_area,
 		     0, sizeof(struct ssdfs_btree_node_items_area),
@@ -6258,16 +6417,16 @@ finish_detect_affected_items:
 		goto finish_items_area_correction;
 	}
 
-	if (shared_extents != 0) {
+	if (snapshots_count != 0) {
 		err = ssdfs_set_dirty_items_range(node,
 					items_area.items_capacity,
 					item_index,
-					old_shared_extents - item_index);
+					old_snapshots_count - item_index);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set items range as dirty: "
 				  "start %u, count %u, err %d\n",
 				  item_index,
-				  old_shared_extents - item_index,
+				  old_snapshots_count - item_index,
 				  err);
 			goto finish_items_area_correction;
 		}
@@ -6288,7 +6447,7 @@ finish_delete_range:
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
-		if (shared_extents == 0) {
+		if (snapshots_count == 0) {
 			int state;
 
 			down_read(&node->header_lock);
@@ -6354,11 +6513,11 @@ finish_delete_range:
 		break;
 	}
 
-	SSDFS_DBG("node_type %#x, shared_extents %u, index_count %u\n",
+	SSDFS_DBG("node_type %#x, snapshots_count %u, index_count %u\n",
 		  atomic_read(&node->type),
-		  shared_extents, index_count);
+		  snapshots_count, index_count);
 
-	if (shared_extents == 0 && index_count == 0)
+	if (snapshots_count == 0 && index_count == 0)
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;
 	else
 		search->result.state = SSDFS_BTREE_SEARCH_OBSOLETE_RESULT;
@@ -6377,7 +6536,7 @@ finish_delete_range:
 }
 
 /*
- * ssdfs_shextree_node_delete_item() - delete an item from node
+ * ssdfs_snapshots_btree_node_delete_item() - delete an item from node
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -6391,8 +6550,8 @@ finish_delete_range:
  * %-EFAULT     - node is corrupted.
  */
 static
-int ssdfs_shextree_node_delete_item(struct ssdfs_btree_node *node,
-				    struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_delete_item(struct ssdfs_btree_node *node,
+					   struct ssdfs_btree_search *search)
 {
 	int err;
 
@@ -6416,9 +6575,9 @@ int ssdfs_shextree_node_delete_item(struct ssdfs_btree_node *node,
 	BUG_ON(search->result.count != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = __ssdfs_shextree_node_delete_range(node, search);
+	err = __ssdfs_snapshots_btree_node_delete_range(node, search);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to delete shared extent: err %d\n",
+		SSDFS_ERR("fail to delete snapshot: err %d\n",
 			  err);
 		return err;
 	}
@@ -6427,7 +6586,7 @@ int ssdfs_shextree_node_delete_item(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_shextree_node_delete_range() - delete range of items from node
+ * ssdfs_snapshots_btree_node_delete_range() - delete range of items from node
  * @node: pointer on node object
  * @search: pointer on search request object
  *
@@ -6441,8 +6600,8 @@ int ssdfs_shextree_node_delete_item(struct ssdfs_btree_node *node,
  * %-EFAULT     - node is corrupted.
  */
 static
-int ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
-				     struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
+					    struct ssdfs_btree_search *search)
 {
 	int err;
 
@@ -6460,7 +6619,7 @@ int ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
-	err = __ssdfs_shextree_node_delete_range(node, search);
+	err = __ssdfs_snapshots_btree_node_delete_range(node, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to delete snapshots range: err %d\n",
 			  err);
@@ -6471,7 +6630,7 @@ int ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_shextree_node_extract_range() - extract range of items from node
+ * ssdfs_snapshots_btree_node_extract_range() - extract range of items from node
  * @node: pointer on node object
  * @start_index: starting index of the range
  * @count: count of items in the range
@@ -6489,11 +6648,11 @@ int ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
  * %-ENODATA    - no such range in the node.
  */
 static
-int ssdfs_shextree_node_extract_range(struct ssdfs_btree_node *node,
-				      u16 start_index, u16 count,
-				      struct ssdfs_btree_search *search)
+int ssdfs_snapshots_btree_node_extract_range(struct ssdfs_btree_node *node,
+					     u16 start_index, u16 count,
+					     struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_extent *extent;
+	struct ssdfs_snapshot *snapshot;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6512,8 +6671,8 @@ int ssdfs_shextree_node_extract_range(struct ssdfs_btree_node *node,
 
 	down_read(&node->full_lock);
 	err = __ssdfs_btree_node_extract_range(node, start_index, count,
-					sizeof(struct ssdfs_shared_extent),
-					search);
+						sizeof(struct ssdfs_snapshot),
+						search);
 	up_read(&node->full_lock);
 
 	if (unlikely(err)) {
@@ -6524,22 +6683,19 @@ int ssdfs_shextree_node_extract_range(struct ssdfs_btree_node *node,
 	}
 
 	search->request.flags =
-			SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
 			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-	extent = (struct ssdfs_shared_extent *)search->result.buf;
-	search->request.start.hash = ssdfs_fingerprint2hash(extent->fingerprint,
-							extent->fingerprint_len);
-	extent += search->result.count - 1;
-	search->request.end.hash = ssdfs_fingerprint2hash(extent->fingerprint,
-							extent->fingerprint_len);
+	snapshot = (struct ssdfs_snapshot *)search->result.buf;
+	search->request.start.hash = le64_to_cpu(snapshot->create_time);
+	snapshot += search->result.count - 1;
+	search->request.end.hash = le64_to_cpu(snapshot->create_time);
 	search->request.count = count;
 
 	return 0;
 }
 
 /*
- * ssdfs_shextree_resize_items_area() - resize items area of the node
+ * ssdfs_snapshots_btree_resize_items_area() - resize items area of the node
  * @node: node object
  * @new_size: new size of the items area
  *
@@ -6560,11 +6716,11 @@ int ssdfs_shextree_node_extract_range(struct ssdfs_btree_node *node,
  * %-EFAULT     - node is corrupted.
  */
 static
-int ssdfs_shextree_resize_items_area(struct ssdfs_btree_node *node,
-				     u32 new_size)
+int ssdfs_snapshots_btree_resize_items_area(struct ssdfs_btree_node *node,
+					    u32 new_size)
 {
 	struct ssdfs_fs_info *fsi;
-	size_t item_size = sizeof(struct ssdfs_shared_extent);
+	size_t item_size = sizeof(struct ssdfs_snapshot);
 	size_t index_size;
 	int err;
 
@@ -6578,7 +6734,7 @@ int ssdfs_shextree_resize_items_area(struct ssdfs_btree_node *node,
 		  node->node_id, new_size);
 
 	fsi = node->tree->fsi;
-	index_size = le16_to_cpu(fsi->vs->shared_extents_btree.desc.index_size);
+	index_size = le16_to_cpu(fsi->vs->snapshots_btree.desc.index_size);
 
 	err = __ssdfs_btree_node_resize_items_area(node,
 						   item_size,
@@ -6594,15 +6750,15 @@ int ssdfs_shextree_resize_items_area(struct ssdfs_btree_node *node,
 	return 0;
 }
 
-void ssdfs_debug_shextree_object(struct ssdfs_shared_extents_tree *tree)
+void ssdfs_debug_snapshots_btree_object(struct ssdfs_snapshots_btree_info *tree)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
 
-	SSDFS_DBG("SHARED EXTENTS TREE: state %#x, "
-		  "shared_extents %llu, is_locked %d, fsi %p\n",
+	SSDFS_DBG("SNAPSHOTS TREE: state %#x, "
+		  "snapshots_count %llu, is_locked %d, fsi %p\n",
 		  atomic_read(&tree->state),
-		  (u64)atomic64_read(&tree->shared_extents),
+		  (u64)atomic64_read(&tree->snapshots_count),
 		  rwsem_is_locked(&tree->lock),
 		  tree->fsi);
 
@@ -6610,34 +6766,34 @@ void ssdfs_debug_shextree_object(struct ssdfs_shared_extents_tree *tree)
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
-const struct ssdfs_btree_descriptor_operations ssdfs_shextree_desc_ops = {
-	.init		= ssdfs_shextree_desc_init,
-	.flush		= ssdfs_shextree_desc_flush,
+const struct ssdfs_btree_descriptor_operations ssdfs_snapshots_btree_desc_ops = {
+	.init		= ssdfs_snapshots_btree_desc_init,
+	.flush		= ssdfs_snapshots_btree_desc_flush,
 };
 
-const struct ssdfs_btree_operations ssdfs_shextree_ops = {
-	.create_root_node	= ssdfs_shextree_create_root_node,
-	.create_node		= ssdfs_shextree_create_node,
-	.init_node		= ssdfs_shextree_init_node,
-	.destroy_node		= ssdfs_shextree_destroy_node,
-	.add_node		= ssdfs_shextree_add_node,
-	.delete_node		= ssdfs_shextree_delete_node,
-	.pre_flush_root_node	= ssdfs_shextree_pre_flush_root_node,
-	.flush_root_node	= ssdfs_shextree_flush_root_node,
-	.pre_flush_node		= ssdfs_shextree_pre_flush_node,
-	.flush_node		= ssdfs_shextree_flush_node,
+const struct ssdfs_btree_operations ssdfs_snapshots_btree_ops = {
+	.create_root_node	= ssdfs_snapshots_btree_create_root_node,
+	.create_node		= ssdfs_snapshots_btree_create_node,
+	.init_node		= ssdfs_snapshots_btree_init_node,
+	.destroy_node		= ssdfs_snapshots_btree_destroy_node,
+	.add_node		= ssdfs_snapshots_btree_add_node,
+	.delete_node		= ssdfs_snapshots_btree_delete_node,
+	.pre_flush_root_node	= ssdfs_snapshots_btree_pre_flush_root_node,
+	.flush_root_node	= ssdfs_snapshots_btree_flush_root_node,
+	.pre_flush_node		= ssdfs_snapshots_btree_pre_flush_node,
+	.flush_node		= ssdfs_snapshots_btree_flush_node,
 };
 
-const struct ssdfs_btree_node_operations ssdfs_shextree_node_ops = {
-	.find_item		= ssdfs_shextree_node_find_item,
-	.find_range		= ssdfs_shextree_node_find_range,
-	.extract_range		= ssdfs_shextree_node_extract_range,
-	.allocate_item		= ssdfs_shextree_node_allocate_item,
-	.allocate_range		= ssdfs_shextree_node_allocate_range,
-	.insert_item		= ssdfs_shextree_node_insert_item,
-	.insert_range		= ssdfs_shextree_node_insert_range,
-	.change_item		= ssdfs_shextree_node_change_item,
-	.delete_item		= ssdfs_shextree_node_delete_item,
-	.delete_range		= ssdfs_shextree_node_delete_range,
-	.resize_items_area	= ssdfs_shextree_resize_items_area,
+const struct ssdfs_btree_node_operations ssdfs_snapshots_btree_node_ops = {
+	.find_item		= ssdfs_snapshots_btree_node_find_item,
+	.find_range		= ssdfs_snapshots_btree_node_find_range,
+	.extract_range		= ssdfs_snapshots_btree_node_extract_range,
+	.allocate_item		= ssdfs_snapshots_btree_node_allocate_item,
+	.allocate_range		= ssdfs_snapshots_btree_node_allocate_range,
+	.insert_item		= ssdfs_snapshots_btree_node_insert_item,
+	.insert_range		= ssdfs_snapshots_btree_node_insert_range,
+	.change_item		= ssdfs_snapshots_btree_node_change_item,
+	.delete_item		= ssdfs_snapshots_btree_node_delete_item,
+	.delete_range		= ssdfs_snapshots_btree_node_delete_range,
+	.resize_items_area	= ssdfs_snapshots_btree_resize_items_area,
 };

@@ -213,6 +213,7 @@ union ssdfs_aggregated_btree_node_header {
  * @raw.dict_header: shared dictionary node's header
  * @raw.xattrs_header: xattrs node's header
  * @raw.shextree_header: shared extents tree's header
+ * @raw.snapshots_header: snapshots node's header
  * @index_area: index area descriptor
  * @items_area: items area descriptor
  * @lookup_tbl_area: lookup table's area descriptor
@@ -270,6 +271,7 @@ struct ssdfs_btree_node {
 		struct ssdfs_shared_dictionary_node_header dict_header;
 		struct ssdfs_xattrs_btree_node_header xattrs_header;
 		struct ssdfs_shextree_node_header shextree_header;
+		struct ssdfs_snapshots_btree_node_header snapshots_header;
 	} raw;
 	struct ssdfs_btree_node_index_area index_area;
 	struct ssdfs_btree_node_items_area items_area;

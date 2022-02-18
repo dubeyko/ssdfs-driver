@@ -131,6 +131,14 @@ struct ssdfs_shextree_testing {
 };
 
 /*
+ * struct ssdfs_snapshots_tree_testing - snapshots tree testing environment
+ * @snapshots_number_threshold: maximum number of snapshots
+ */
+struct ssdfs_snapshots_tree_testing {
+	u64 snapshots_number_threshold;
+};
+
+/*
  * struct ssdfs_testing_environment - define testing environment
  * @subsystems: enable testing particular subsystems
  * @page_size: logical block size in bytes
@@ -143,6 +151,7 @@ struct ssdfs_shextree_testing {
  * @shared_dictionary: shared dictionary testing environment
  * @xattr_tree: xattr tree testing environment
  * @shextree: shared extents tree testing environment
+ * @snapshots_tree: snaphots tree testing environment
  */
 struct ssdfs_testing_environment {
 	u64 subsystems;
@@ -157,6 +166,7 @@ struct ssdfs_testing_environment {
 	struct ssdfs_shared_dictionary_testing shared_dictionary;
 	struct ssdfs_xattr_tree_testing xattr_tree;
 	struct ssdfs_shextree_testing shextree;
+	struct ssdfs_snapshots_tree_testing snapshots_tree;
 };
 
 /* Subsystem tests */
@@ -169,6 +179,7 @@ struct ssdfs_testing_environment {
 #define SSDFS_ENABLE_SHARED_DICTIONARY_TESTING	(1 << 6)
 #define SSDFS_ENABLE_XATTR_TREE_TESTING		(1 << 7)
 #define SSDFS_ENABLE_SHEXTREE_TESTING		(1 << 8)
+#define SSDFS_ENABLE_SNAPSHOTS_TREE_TESTING	(1 << 9)
 
 #ifdef CONFIG_SSDFS_TESTING
 int ssdfs_do_testing(struct ssdfs_fs_info *fsi,

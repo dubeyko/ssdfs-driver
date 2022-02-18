@@ -2219,7 +2219,6 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 		return err;
 	}
 
-
 	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
 						tree->root);
 	if (unlikely(err)) {
@@ -3303,6 +3302,15 @@ int ssdfs_dentries_tree_delete_dentry(struct ssdfs_dentries_btree_info *tree,
 
 	atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_DIRTY);
 
+	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
+						tree->root);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to synchronize the root node: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	dentries_count = atomic64_read(&tree->dentries_count);
 	if (dentries_count == 0) {
 		SSDFS_DBG("tree is empty now\n");
 		return -ENOENT;
@@ -3311,14 +3319,6 @@ int ssdfs_dentries_tree_delete_dentry(struct ssdfs_dentries_btree_info *tree,
 			   dentries_count);
 		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_CORRUPTED);
 		return -ERANGE;
-	}
-
-	err = ssdfs_btree_synchronize_root_node(tree->generic_tree,
-						tree->root);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to synchronize the root node: "
-			  "err %d\n", err);
-		return err;
 	}
 
 	return 0;

@@ -10220,6 +10220,13 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 			search->result.err = err;
 			break;
 		}
+	} else if (err == -EAGAIN) {
+		SSDFS_DBG("node %u "
+			  "hasn't all items for request "
+			  "(start_hash %llx, end_hash %llx)\n",
+			  node->node_id,
+			  search->request.start.hash,
+			  search->request.end.hash);
 	} else if (err == -ENOENT) {
 		SSDFS_DBG("node %u hasn't items area\n",
 			  node->node_id);
@@ -10369,6 +10376,13 @@ int ssdfs_btree_node_find_range(struct ssdfs_btree_search *search)
 			search->result.err = err;
 			break;
 		}
+	} else if (err == -EAGAIN) {
+		SSDFS_DBG("node %u "
+			  "hasn't all items for request "
+			  "(start_hash %llx, end_hash %llx)\n",
+			  node->node_id,
+			  search->request.start.hash,
+			  search->request.end.hash);
 	} else if (err == -ENOENT) {
 		SSDFS_DBG("node %u hasn't items area\n",
 			  node->node_id);
@@ -12942,7 +12956,6 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search || !lookup_table || !lookup_index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -12950,6 +12963,7 @@ ssdfs_btree_node_find_lookup_index_nolock(struct ssdfs_btree_search *search,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash, search->request.end.hash,
 		  lookup_table, table_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*lookup_index = U16_MAX;
 	hash = search->request.start.hash;
@@ -13120,7 +13134,6 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree || !node->tree->fsi || !search);
 	BUG_ON(lookup_index >= lookup_table_capacity);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -13131,6 +13144,7 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height),
 		  lookup_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = node->tree->fsi;
 
@@ -13283,21 +13297,34 @@ try_lock_checking_item:
 		}
 	}
 
-	err = prepare_buffer(search, found_index,
-			     start_hash, end_hash,
-			     items_count, item_size);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to prepare buffers: "
-			  "found_index %u, start_hash %llx, "
-			  "end_hash %llx, items_count %u, "
-			  "item_size %zu, err %d\n",
-			  found_index, start_hash, end_hash,
-			  items_count, item_size, err);
-		goto finish_extract_range;
-	}
+	if (found_index > items_count) {
+		SSDFS_DBG("found_index %u, items_count %u\n",
+			  found_index, items_count);
 
-	search->result.start_index = found_index;
-	search->result.count = 0;
+		err = -ENODATA;
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		search->result.err = -ENODATA;
+		search->result.start_index = items_count;
+		search->result.count = 1;
+		goto finish_extract_range;
+	} else {
+		err = prepare_buffer(search, found_index,
+				     start_hash, end_hash,
+				     items_count, item_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare buffers: "
+				  "found_index %u, start_hash %llx, "
+				  "end_hash %llx, items_count %u, "
+				  "item_size %zu, err %d\n",
+				  found_index, start_hash, end_hash,
+				  items_count, item_size, err);
+			goto finish_extract_range;
+		}
+
+		search->result.start_index = found_index;
+		search->result.count = 0;
+	}
 
 try_extract_range:
 	for (; found_index < items_count; found_index++) {
@@ -13374,6 +13401,9 @@ try_lock_extracting_item:
 			goto finish_extract_range;
 		}
 
+		SSDFS_DBG("item_offset %u, item_size %zu\n",
+			  item_offset, item_size);
+
 		kaddr = kmap_atomic(page);
 		err = extract_item(fsi, search, item_size,
 				   (u8 *)kaddr + item_offset,
@@ -13388,7 +13418,18 @@ try_lock_extracting_item:
 
 		wake_up_all(&node->wait_queue);
 
-		if (unlikely(err)) {
+		if (err == -ENODATA && search->result.count > 0) {
+			err = 0;
+			search->result.err = 0;
+
+			SSDFS_DBG("stop search: "
+				  "found_index %u, start_hash %llx, "
+				  "end_hash %llx, search->request.end.hash %llx\n",
+				  found_index, start_hash, end_hash,
+				  search->request.end.hash);
+
+			goto finish_extract_range;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to extract item: "
 				  "kaddr %p, item_offset %u, err %d\n",
 				  kaddr, item_offset, err);
@@ -13396,8 +13437,9 @@ try_lock_extracting_item:
 		}
 
 		SSDFS_DBG("found_index %u, start_hash %llx, "
-			  "end_hash %llx\n",
-			  found_index, start_hash, end_hash);
+			  "end_hash %llx, search->request.end.hash %llx\n",
+			  found_index, start_hash, end_hash,
+			  search->request.end.hash);
 
 		if (search->request.end.hash <= end_hash)
 			break;

@@ -21,6 +21,7 @@
 #include "btree.h"
 #include "dentries_tree.h"
 #include "shared_dictionary.h"
+#include "snapshots_tree.h"
 #include "snapshot_requests_queue.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -283,6 +284,7 @@ void ssdfs_snapshot_request_free(struct ssdfs_snapshot_request *snr)
 
 /*
  * ssdfs_create_snapshot() - create snapshot
+ * @fsi: pointer on shared file system object
  * @snr: snapshot request
  *
  * This function tries to create a snapshot.
@@ -293,22 +295,19 @@ void ssdfs_snapshot_request_free(struct ssdfs_snapshot_request *snr)
  *
  * %-ERANGE     - internal error
  */
-static
-int ssdfs_create_snapshot(struct ssdfs_snapshot_request *snr)
+static inline
+int ssdfs_create_snapshot(struct ssdfs_fs_info *fsi,
+			  struct ssdfs_snapshot_request *snr)
 {
-	int err = 0;
+	struct ssdfs_snapshots_btree_info *tree;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!snr);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!fsi || !snr);
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", snr->info.name);
-	SSDFS_ERR("UUID %pUb, ", snr->info.uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
 		  "TIME_RANGE (day %u, month %u, year %u)\n",
 		  snr->info.mode, snr->info.type, snr->info.expiration,
@@ -316,8 +315,11 @@ int ssdfs_create_snapshot(struct ssdfs_snapshot_request *snr)
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	return err;
+	tree = fsi->snapshots.tree;
+	ssdfs_snapshot_reqs_queue_add_tail(&tree->requests.queue, snr);
+	return 0;
 }
 
 /*
@@ -457,7 +459,7 @@ int ssdfs_add_snapshot_rule(struct ssdfs_fs_info *fsi,
 			cpu_to_le16((u16)snr->info.snapshots_threshold);
 	ptr->rule.snapshots_number = cpu_to_le16(0);
 
-	ptr->rule.flags = cpu_to_le32(0);
+	ptr->rule.ino = cpu_to_le64(snr->ino);
 
 	ptr->rule.last_snapshot_cno = cpu_to_le64(SSDFS_INVALID_CNO);
 
@@ -526,20 +528,25 @@ int ssdfs_execute_create_snapshots(struct ssdfs_fs_info *fsi)
 			return err;
 		}
 
-		if (is_snapshot_rule_requested(snr))
+		if (is_snapshot_rule_requested(snr)) {
 			err = ssdfs_add_snapshot_rule(fsi, snr);
-		else
-			err = ssdfs_create_snapshot(snr);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to create snapshot: err %d\n",
-				  err);
 			ssdfs_snapshot_request_free(snr);
-			ssdfs_snapshot_reqs_queue_remove_all(rq);
-			return err;
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add rule: err %d\n",
+					  err);
+				ssdfs_snapshot_reqs_queue_remove_all(rq);
+				return err;
+			}
+		} else {
+			err = ssdfs_create_snapshot(fsi, snr);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to create snapshot: err %d\n",
+					  err);
+				ssdfs_snapshot_request_free(snr);
+				ssdfs_snapshot_reqs_queue_remove_all(rq);
+				return err;
+			}
 		}
-
-		ssdfs_snapshot_request_free(snr);
 	};
 
 	err = ssdfs_process_snapshot_rules(fsi);
@@ -552,8 +559,27 @@ int ssdfs_execute_create_snapshots(struct ssdfs_fs_info *fsi)
 	return 0;
 }
 
+static inline
+int ssdfs_copy_snapshot_details(struct ssdfs_snapshot_details __user *dst,
+				struct ssdfs_snapshot_details *src)
+{
+	size_t desc_size = sizeof(struct ssdfs_snapshot_details);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dst || !src);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (copy_to_user(dst, src, desc_size)) {
+		SSDFS_ERR("fail to copy snapshot details\n");
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
 /*
  * ssdfs_execute_list_snapshots_request() - get list of snapshots
+ * @ptr: snapshots subsystem
  * @snr: snapshot request
  *
  * This function tries to get a list of snapshots.
@@ -564,21 +590,30 @@ int ssdfs_execute_create_snapshots(struct ssdfs_fs_info *fsi)
  *
  * %-ERANGE     - internal error
  */
-int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_request *snr)
+int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_subsystem *ptr,
+					 struct ssdfs_snapshot_request *snr)
 {
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_btree_search *search = NULL;
+	struct ssdfs_snapshot_details *cur_details = NULL;
+	struct ssdfs_snapshot *cur_snapshot = NULL;
+	size_t desc_size = sizeof(struct ssdfs_snapshot_details);
+	size_t snapshot_size = sizeof(struct ssdfs_snapshot);
+	struct ssdfs_timestamp_range range = {0};
+	u64 snapshots_count;
+	u64 end_timestamp = U64_MAX;
+	u16 items_count;
+	u64 written_bytes = 0;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!snr);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!ptr || !snr);
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", snr->info.name);
-	SSDFS_ERR("UUID %pUb, ", snr->info.uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
 		  "TIME_RANGE (day %u, month %u, year %u)\n",
 		  snr->info.mode, snr->info.type, snr->info.expiration,
@@ -586,7 +621,271 @@ int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_request *snr)
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	tree = ptr->tree;
+	snapshots_count = atomic64_read(&tree->snapshots_count);
+
+	if (!snr->info.buf) {
+		err = -E2BIG;
+		snr->info.buf_size = snapshots_count * desc_size;
+
+		SSDFS_DBG("buf_size %llu\n",
+			  snr->info.buf_size);
+	} else {
+		err = ssdfs_convert_time2timestamp_range(tree->fsi,
+							 &snr->info.time_range,
+							 &range);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert time to timestamp range: "
+				  "err %d\n", err);
+			goto finish_execute_list_snapshots;
+		}
+
+		search = ssdfs_btree_search_alloc();
+		if (!search) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate btree search object\n");
+			goto finish_execute_list_snapshots;
+		}
+
+		do {
+			ssdfs_btree_search_init(search);
+
+			SSDFS_DBG("range (start %llx, end %llx)\n",
+				  range.start, range.end);
+
+			err = ssdfs_snapshots_tree_find_leaf_node(tree,
+								  &range,
+								  search);
+			if (err == -ENODATA) {
+				SSDFS_DBG("unable to find a leaf node: "
+					  "range (start %llx, end %llx), "
+					  "err %d\n",
+					  range.start, range.end, err);
+				goto free_search_object;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to find a leaf node: "
+					  "range (start %llx, end %llx), "
+					  "err %d\n",
+					  range.start, range.end, err);
+				goto free_search_object;
+			}
+
+			err = ssdfs_btree_node_get_hash_range(search,
+							      &range.start,
+							      &end_timestamp,
+							      &items_count);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to get node's hash range: "
+					  "err %d\n", err);
+				goto free_search_object;
+			}
+
+			if (items_count == 0) {
+				err = -ENOENT;
+				SSDFS_DBG("empty leaf node\n");
+				goto free_search_object;
+			}
+
+			if (range.start > end_timestamp) {
+				err = -ENOENT;
+				goto free_search_object;
+			}
+
+			down_read(&tree->lock);
+			err = ssdfs_btree_extract_range(&tree->generic_tree,
+							0, items_count,
+							search);
+			up_read(&tree->lock);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to extract the range: "
+					  "items_count %u, err %d\n",
+					  items_count, err);
+				goto free_search_object;
+			}
+
+			err = ssdfs_snapshots_tree_check_search_result(search);
+			if (unlikely(err)) {
+				SSDFS_ERR("corrupted search result: "
+					  "err %d\n", err);
+				goto free_search_object;
+			}
+
+			items_count = search->result.count;
+
+			for (i = 0; i < items_count; i++) {
+				struct ssdfs_snapshot_details tmp = {0};
+				u8 *start_ptr = (u8 *)search->result.buf;
+
+				if ((written_bytes + desc_size) >
+							snr->info.buf_size) {
+					err = -E2BIG;
+					SSDFS_ERR("not enough buffer space: "
+						  "written_bytes %llu, "
+						  "buf_size %llu, "
+						  "desc_size %zu\n",
+						  written_bytes,
+						  snr->info.buf_size,
+						  desc_size);
+					goto free_search_object;
+				}
+
+				cur_details =
+					SSDFS_SNAP_DETAILS(snr->info.buf +
+							written_bytes);
+				cur_snapshot =
+					(struct ssdfs_snapshot *)(start_ptr +
+							(i * snapshot_size));
+
+				tmp.create_time =
+					le64_to_cpu(cur_snapshot->create_time);
+
+				if (tmp.create_time > range.end) {
+					err = 0;
+					SSDFS_DBG("stop extract snapshots: "
+						  "create_time %llx, "
+						  "range.end %llx\n",
+						  tmp.create_time, range.end);
+					goto free_search_object;
+				}
+
+				tmp.cno =
+					le64_to_cpu(cur_snapshot->create_cno);
+				tmp.mode = cur_snapshot->mode;
+				tmp.expiration = cur_snapshot->expiration;
+				tmp.ino = le64_to_cpu(cur_snapshot->ino);
+				ssdfs_memcpy(tmp.uuid, 0, SSDFS_UUID_SIZE,
+					     cur_snapshot->uuid,
+					     0, SSDFS_UUID_SIZE,
+					     SSDFS_UUID_SIZE);
+
+				err = ssdfs_copy_snapshot_details(cur_details,
+								  &tmp);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to copy details: "
+						  "item_index %d, err %d\n",
+						  i, err);
+					goto free_search_object;
+				}
+			}
+
+			range.start = end_timestamp + 1;
+
+			ssdfs_btree_search_forget_parent_node(search);
+			ssdfs_btree_search_forget_child_node(search);
+		} while (range.start < range.end);
+
+free_search_object:
+		ssdfs_btree_search_free(search);
+	}
+
+finish_execute_list_snapshots:
+	return err;
+}
+
+/*
+ * ssdfs_execute_list_snapshot_rules_request() - get list of rules
+ * @fsi: pointer on shared file system object
+ * @snr: snapshot request
+ *
+ * This function tries to get a list of snapshot rules.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error
+ */
+int ssdfs_execute_list_snapshot_rules_request(struct ssdfs_fs_info *fsi,
+					struct ssdfs_snapshot_request *snr)
+{
+	struct ssdfs_snapshot_rules_list *rules_list;
+	struct list_head *this, *next;
+	struct ssdfs_snapshot_rule_item *ptr = NULL;
+	struct ssdfs_snapshot_rule_details *cur_details = NULL;
+	size_t details_size = sizeof(struct ssdfs_snapshot_rule_details);
+	u64 rules_count = 0;
+	u64 written_bytes = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !snr);
+
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
+		  "frequency %#x, snapshots_threshold %u, "
+		  "TIME_RANGE (day %u, month %u, year %u)\n",
+		  snr->info.mode, snr->info.type, snr->info.expiration,
+		  snr->info.frequency, snr->info.snapshots_threshold,
+		  snr->info.time_range.day,
+		  snr->info.time_range.month,
+		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	rules_list = &fsi->snapshots.rules_list;
+
+	if (is_ssdfs_snapshot_rules_list_empty(rules_list)) {
+		SSDFS_DBG("snapshot rules list is empty\n");
+		return -ENODATA;
+	}
+
+	spin_lock(&rules_list->lock);
+	list_for_each_safe(this, next, &rules_list->list) {
+		rules_count++;
+	}
+	spin_unlock(&rules_list->lock);
+
+	if (!snr->info.buf) {
+		err = -E2BIG;
+		snr->info.buf_size = rules_count * details_size;
+
+		SSDFS_DBG("buf_size %llu\n",
+			  snr->info.buf_size);
+	} else {
+		spin_lock(&rules_list->lock);
+		list_for_each_safe(this, next, &rules_list->list) {
+			ptr = list_entry(this, struct ssdfs_snapshot_rule_item,
+					 list);
+
+			if ((written_bytes + details_size) >
+							snr->info.buf_size) {
+				err = -E2BIG;
+				SSDFS_ERR("not enough buffer space: "
+					  "written_bytes %llu, "
+					  "buf_size %llu, "
+					  "details_size %zu\n",
+					  written_bytes,
+					  snr->info.buf_size,
+					  details_size);
+				goto finish_execute_list_snapshot_rules;
+			}
+
+			cur_details = SSDFS_SNAP_RULE_DETAILS(snr->info.buf +
+								written_bytes);
+
+			cur_details->mode = ptr->rule.mode;
+			cur_details->type = ptr->rule.type;
+			cur_details->expiration = ptr->rule.expiration;
+			cur_details->frequency = ptr->rule.frequency;
+			cur_details->snapshots_threshold =
+				le16_to_cpu(ptr->rule.snapshots_threshold);
+			cur_details->snapshots_number =
+				le16_to_cpu(ptr->rule.snapshots_number);
+			cur_details->last_snapshot_cno =
+				le64_to_cpu(ptr->rule.last_snapshot_cno);
+			cur_details->ino = le64_to_cpu(ptr->rule.ino);
+			ssdfs_memcpy(cur_details->uuid, 0, SSDFS_UUID_SIZE,
+				     ptr->rule.uuid, 0, SSDFS_UUID_SIZE,
+				     SSDFS_UUID_SIZE);
+		}
+		spin_unlock(&rules_list->lock);
+	}
+
+finish_execute_list_snapshot_rules:
 	return err;
 }
 
@@ -607,19 +906,17 @@ static
 int ssdfs_modify_snapshot(struct ssdfs_snapshot_subsystem *ptr,
 			  struct ssdfs_snapshot_request *snr)
 {
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_btree_search *search = NULL;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !snr);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!ptr || !ptr->tree || !snr);
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", snr->info.name);
-	SSDFS_ERR("UUID %pUb, ", snr->info.uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
 		  "TIME_RANGE (day %u, month %u, year %u)\n",
 		  snr->info.mode, snr->info.type, snr->info.expiration,
@@ -627,6 +924,26 @@ int ssdfs_modify_snapshot(struct ssdfs_snapshot_subsystem *ptr,
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree = ptr->tree;
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_change(tree, snr, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to modify snapshot: err %d\n",
+			  err);
+		SHOW_SNAPSHOT_INFO(snr);
+	}
+
+	ssdfs_snapshot_request_free(snr);
+	ssdfs_btree_search_free(search);
 
 	return err;
 }
@@ -713,19 +1030,17 @@ static
 int ssdfs_remove_snapshot(struct ssdfs_snapshot_subsystem *ptr,
 			  struct ssdfs_snapshot_request *snr)
 {
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_btree_search *search = NULL;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !snr);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!ptr || !ptr->tree || !snr);
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", snr->info.name);
-	SSDFS_ERR("UUID %pUb, ", snr->info.uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
 		  "TIME_RANGE (day %u, month %u, year %u)\n",
 		  snr->info.mode, snr->info.type, snr->info.expiration,
@@ -733,6 +1048,26 @@ int ssdfs_remove_snapshot(struct ssdfs_snapshot_subsystem *ptr,
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree = ptr->tree;
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_delete(tree, snr, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete snapshot: err %d\n",
+			  err);
+		SHOW_SNAPSHOT_INFO(snr);
+	}
+
+	ssdfs_snapshot_request_free(snr);
+	ssdfs_btree_search_free(search);
 
 	return err;
 }
@@ -804,6 +1139,7 @@ int ssdfs_execute_remove_snapshot_request(struct ssdfs_snapshot_subsystem *ptr,
 
 /*
  * ssdfs_execute_remove_range_request() - remove range of snapshots
+ * @ptr: snapshots subsystem
  * @snr: snapshot request
  *
  * This function tries to delete a range of snapshots.
@@ -814,21 +1150,20 @@ int ssdfs_execute_remove_snapshot_request(struct ssdfs_snapshot_subsystem *ptr,
  *
  * %-ERANGE     - internal error
  */
-int ssdfs_execute_remove_range_request(struct ssdfs_snapshot_request *snr)
+int ssdfs_execute_remove_range_request(struct ssdfs_snapshot_subsystem *ptr,
+					struct ssdfs_snapshot_request *snr)
 {
+	struct ssdfs_snapshots_btree_info *tree;
+	struct ssdfs_btree_search *search = NULL;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!snr);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!ptr || !ptr->tree || !snr);
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", snr->info.name);
-	SSDFS_ERR("UUID %pUb, ", snr->info.uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
 		  "TIME_RANGE (day %u, month %u, year %u)\n",
 		  snr->info.mode, snr->info.type, snr->info.expiration,
@@ -836,12 +1171,33 @@ int ssdfs_execute_remove_range_request(struct ssdfs_snapshot_request *snr)
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree = ptr->tree;
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_snapshots_btree_delete(tree, snr, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete range: err %d\n",
+			  err);
+		SHOW_SNAPSHOT_INFO(snr);
+	}
+
+	ssdfs_snapshot_request_free(snr);
+	ssdfs_btree_search_free(search);
 
 	return err;
 }
 
 /*
  * ssdfs_execute_show_details_request() - show snapshot's details
+ * @ptr: snapshots subsystem
  * @snr: snapshot request
  *
  * This function tries to extract a snapshot's details.
@@ -852,21 +1208,16 @@ int ssdfs_execute_remove_range_request(struct ssdfs_snapshot_request *snr)
  *
  * %-ERANGE     - internal error
  */
-int ssdfs_execute_show_details_request(struct ssdfs_snapshot_request *snr)
+int ssdfs_execute_show_details_request(struct ssdfs_snapshot_subsystem *ptr,
+					struct ssdfs_snapshot_request *snr)
 {
-	int err = 0;
-
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!snr);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!ptr || !snr);
 
-/* TODO: implement */
-	err = -EOPNOTSUPP;
-
-	SSDFS_ERR("SNAPSHOT INFO: ");
-	SSDFS_ERR("name %s, ", snr->info.name);
-	SSDFS_ERR("UUID %pUb, ", snr->info.uuid);
-	SSDFS_ERR("mode %#x, type %#x, expiration %#x, "
+	SSDFS_DBG("SNAPSHOT INFO: ");
+	SSDFS_DBG("name %s, ", snr->info.name);
+	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
+	SSDFS_DBG("mode %#x, type %#x, expiration %#x, "
 		  "frequency %#x, snapshots_threshold %u, "
 		  "TIME_RANGE (day %u, month %u, year %u)\n",
 		  snr->info.mode, snr->info.type, snr->info.expiration,
@@ -874,6 +1225,7 @@ int ssdfs_execute_show_details_request(struct ssdfs_snapshot_request *snr)
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	return err;
+	return ssdfs_execute_list_snapshots_request(ptr, snr);
 }

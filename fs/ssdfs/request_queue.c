@@ -29,6 +29,10 @@
 #include "page_array.h"
 #include "peb_container.h"
 #include "segment.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
+#include "snapshots_tree.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_req_queue_page_leaks;

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.07 [February 18, 2022]
+    (*) Implement snapshots btree functionality (step 4).
+
 v.4.06 [February 04, 2022]
     (*) Implement Diff-on-Write approach for metadata case.
 

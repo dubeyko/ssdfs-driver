@@ -115,6 +115,7 @@ static int ssdfs_ioctl_create_snapshot(struct file *file, void __user *arg)
 	}
 
 	snr->operation = SSDFS_CREATE_SNAPSHOT;
+	snr->ino = inode->i_ino;
 
 	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
@@ -130,8 +131,8 @@ finish_create_snapshot:
 
 static int ssdfs_ioctl_list_snapshots(struct file *file, void __user *arg)
 {
-//	struct inode *inode = file_inode(file);
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_snapshot_request *snr = NULL;
 	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
@@ -143,16 +144,23 @@ static int ssdfs_ioctl_list_snapshots(struct file *file, void __user *arg)
 	}
 
 	snr->operation = SSDFS_LIST_SNAPSHOTS;
+	snr->ino = inode->i_ino;
 
 	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_list_snapshots;
 	}
 
-	err = ssdfs_execute_list_snapshots_request(snr);
+	err = ssdfs_execute_list_snapshots_request(&fsi->snapshots, snr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get the snapshots list: "
 			  "err %d\n", err);
+		goto finish_list_snapshots;
+	}
+
+	if (copy_to_user((struct ssdfs_snapshot_info __user *)arg,
+			 &snr->info, info_size)) {
+		err = -EFAULT;
 		goto finish_list_snapshots;
 	}
 
@@ -178,6 +186,7 @@ static int ssdfs_ioctl_modify_snapshot(struct file *file, void __user *arg)
 	}
 
 	snr->operation = SSDFS_MODIFY_SNAPSHOT;
+	snr->ino = inode->i_ino;
 
 	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
@@ -213,6 +222,7 @@ static int ssdfs_ioctl_remove_snapshot(struct file *file, void __user *arg)
 	}
 
 	snr->operation = SSDFS_REMOVE_SNAPSHOT;
+	snr->ino = inode->i_ino;
 
 	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
@@ -235,8 +245,8 @@ finish_remove_snapshot:
 
 static int ssdfs_ioctl_remove_range(struct file *file, void __user *arg)
 {
-//	struct inode *inode = file_inode(file);
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_snapshot_request *snr = NULL;
 	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
@@ -248,13 +258,14 @@ static int ssdfs_ioctl_remove_range(struct file *file, void __user *arg)
 	}
 
 	snr->operation = SSDFS_REMOVE_RANGE;
+	snr->ino = inode->i_ino;
 
 	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_remove_range;
 	}
 
-	err = ssdfs_execute_remove_range_request(snr);
+	err = ssdfs_execute_remove_range_request(&fsi->snapshots, snr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to remove range of snapshots: "
 			  "err %d\n", err);
@@ -271,8 +282,8 @@ finish_remove_range:
 static int ssdfs_ioctl_show_snapshot_details(struct file *file,
 					     void __user *arg)
 {
-//	struct inode *inode = file_inode(file);
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_snapshot_request *snr = NULL;
 	size_t info_size = sizeof(struct ssdfs_snapshot_info);
 	int err = 0;
@@ -284,20 +295,69 @@ static int ssdfs_ioctl_show_snapshot_details(struct file *file,
 	}
 
 	snr->operation = SSDFS_SHOW_SNAPSHOT_DETAILS;
+	snr->ino = inode->i_ino;
 
 	if (copy_from_user(&snr->info, arg, info_size)) {
 		err = -EFAULT;
 		goto finish_show_snapshot_details;
 	}
 
-	err = ssdfs_execute_show_details_request(snr);
+	err = ssdfs_execute_show_details_request(&fsi->snapshots, snr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to show snapshot's details: "
 			  "err %d\n", err);
 		goto finish_show_snapshot_details;
 	}
 
+	if (copy_to_user((struct ssdfs_snapshot_info __user *)arg,
+			 &snr->info, info_size)) {
+		err = -EFAULT;
+		goto finish_show_snapshot_details;
+	}
+
 finish_show_snapshot_details:
+	if (!snr)
+		ssdfs_snapshot_request_free(snr);
+
+	return err;
+}
+
+static int ssdfs_ioctl_list_snapshot_rules(struct file *file, void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_snapshot_request *snr = NULL;
+	size_t info_size = sizeof(struct ssdfs_snapshot_info);
+	int err = 0;
+
+	snr = ssdfs_snapshot_request_alloc();
+	if (!snr) {
+		SSDFS_ERR("fail to allocate snaphot request\n");
+		return -ENOMEM;
+	}
+
+	snr->operation = SSDFS_LIST_SNAPSHOT_RULES;
+	snr->ino = inode->i_ino;
+
+	if (copy_from_user(&snr->info, arg, info_size)) {
+		err = -EFAULT;
+		goto finish_list_snapshot_rules;
+	}
+
+	err = ssdfs_execute_list_snapshot_rules_request(fsi, snr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get the snapshot rules list: "
+			  "err %d\n", err);
+		goto finish_list_snapshot_rules;
+	}
+
+	if (copy_to_user((struct ssdfs_snapshot_info __user *)arg,
+			 &snr->info, info_size)) {
+		err = -EFAULT;
+		goto finish_list_snapshot_rules;
+	}
+
+finish_list_snapshot_rules:
 	if (!snr)
 		ssdfs_snapshot_request_free(snr);
 
@@ -330,6 +390,8 @@ long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return ssdfs_ioctl_remove_range(file, argp);
 	case SSDFS_IOC_SHOW_DETAILS:
 		return ssdfs_ioctl_show_snapshot_details(file, argp);
+	case SSDFS_IOC_LIST_SNAPSHOT_RULES:
+		return ssdfs_ioctl_list_snapshot_rules(file, argp);
 	}
 
 	return -ENOTTY;

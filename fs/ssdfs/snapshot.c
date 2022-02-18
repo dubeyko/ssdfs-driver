@@ -17,11 +17,15 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
 #include "snapshot.h"
+#include "snapshots_tree.h"
 
 /*
  * ssdfs_snapshot_subsystem_init() - initialize the snapshot subsystem
- * @ptr: snapshots subsystem
+ * @fsi: pointer on shared file system object
  *
  * This function tries to initialize the snapshots subsystem.
  *
@@ -31,23 +35,42 @@
  *
  * %-ERANGE     - internal error.
  */
-int ssdfs_snapshot_subsystem_init(struct ssdfs_snapshot_subsystem *ptr)
+int ssdfs_snapshot_subsystem_init(struct ssdfs_fs_info *fsi)
 {
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr);
+	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("snapshots %p\n", ptr);
+	SSDFS_DBG("fsi %p\n", fsi);
 
-	ssdfs_snapshot_reqs_queue_init(&ptr->reqs_queue);
-	ssdfs_snapshot_rules_list_init(&ptr->rules_list);
+	ssdfs_snapshot_reqs_queue_init(&fsi->snapshots.reqs_queue);
+	ssdfs_snapshot_rules_list_init(&fsi->snapshots.rules_list);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create snapshots tree started...\n");
+#else
+	SSDFS_DBG("create snapshots tree started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (fsi->fs_feature_compat & SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
+		down_write(&fsi->volume_sem);
+		err = ssdfs_snapshots_btree_create(fsi);
+		up_write(&fsi->volume_sem);
+		if (err)
+			return err;
+	} else {
+		SSDFS_WARN("volume hasn't snapshots tree\n");
+		return -EIO;
+	}
 
 	return 0;
 }
 
 /*
  * ssdfs_snapshot_subsystem_destroy() - destroy the snapshot subsystem
- * @ptr: snapshots subsystem
+ * @fsi: pointer on shared file system object
  *
  * This function tries to destroy the snapshots subsystem.
  *
@@ -57,16 +80,17 @@ int ssdfs_snapshot_subsystem_init(struct ssdfs_snapshot_subsystem *ptr)
  *
  * %-ERANGE     - internal error.
  */
-int ssdfs_snapshot_subsystem_destroy(struct ssdfs_snapshot_subsystem *ptr)
+int ssdfs_snapshot_subsystem_destroy(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr);
+	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("snapshots %p\n", ptr);
+	SSDFS_DBG("fsi %p\n", fsi);
 
-	ssdfs_snapshot_reqs_queue_remove_all(&ptr->reqs_queue);
-	ssdfs_snapshot_rules_list_remove_all(&ptr->rules_list);
+	ssdfs_snapshot_reqs_queue_remove_all(&fsi->snapshots.reqs_queue);
+	ssdfs_snapshot_rules_list_remove_all(&fsi->snapshots.rules_list);
+	ssdfs_snapshots_btree_destroy(fsi);
 
 	return 0;
 }

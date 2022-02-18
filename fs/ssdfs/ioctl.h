@@ -42,5 +42,7 @@
 					     struct ssdfs_snapshot_info)
 #define SSDFS_IOC_SHOW_DETAILS		_IOWR(SSDFS_IOCTL_MAGIC, 7, \
 					     struct ssdfs_snapshot_info)
+#define SSDFS_IOC_LIST_SNAPSHOT_RULES	_IOWR(SSDFS_IOCTL_MAGIC, 8, \
+					     struct ssdfs_snapshot_info)
 
 #endif /* _SSDFS_IOCTL_H */

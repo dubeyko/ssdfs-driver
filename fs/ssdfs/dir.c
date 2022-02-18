@@ -1367,12 +1367,7 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 					struct ssdfs_btree_search *search,
 					u64 *next_hash)
 {
-	struct ssdfs_btree_node *parent;
-	struct ssdfs_btree_node_index_area area;
-	struct ssdfs_btree_index_key index_key;
-	u64 old_hash = U64_MAX;
-	int type;
-	spinlock_t *lock;
+	u64 old_hash;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1383,8 +1378,6 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 
 	SSDFS_DBG("search %p, next_hash %p, old (node %u, hash %llx)\n",
 		  search, next_hash, search->node.id, old_hash);
-
-	*next_hash = U64_MAX;
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
@@ -1401,118 +1394,8 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
-	parent = search->node.parent;
-
-	if (!parent) {
-		SSDFS_ERR("node pointer is NULL\n");
-		return -ERANGE;
-	}
-
-	type = atomic_read(&parent->type);
-
 	down_read(&tree->lock);
-	down_read(&tree->generic_tree->lock);
-
-	do {
-		u16 found_pos;
-
-		err = -ENOENT;
-
-		down_read(&parent->full_lock);
-
-		SSDFS_DBG("old_hash %llx\n", old_hash);
-
-		down_read(&parent->header_lock);
-		ssdfs_memcpy(&area,
-			     0, sizeof(struct ssdfs_btree_node_index_area),
-			     &parent->index_area,
-			     0, sizeof(struct ssdfs_btree_node_index_area),
-			     sizeof(struct ssdfs_btree_node_index_area));
-		err = ssdfs_find_index_by_hash(parent, &area,
-						old_hash,
-						&found_pos);
-		up_read(&parent->header_lock);
-
-		if (err == -EEXIST) {
-			/* hash == found hash */
-			err = 0;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find the index position: "
-				  "old_hash %llx, err %d\n",
-				  old_hash, err);
-			goto finish_index_search;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(found_pos == U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		found_pos++;
-
-		if (found_pos >= area.index_count) {
-			err = -ENOENT;
-			SSDFS_DBG("index area is finished: "
-				  "found_pos %u, area.index_count %u\n",
-				  found_pos, area.index_count);
-			goto finish_index_search;
-		}
-
-		if (type == SSDFS_BTREE_ROOT_NODE) {
-			err = __ssdfs_btree_root_node_extract_index(parent,
-								    found_pos,
-								    &index_key);
-		} else {
-			err = __ssdfs_btree_common_node_extract_index(parent,
-								    &area,
-								    found_pos,
-								    &index_key);
-		}
-
-finish_index_search:
-		up_read(&parent->full_lock);
-
-		if (err == -ENOENT) {
-			if (type == SSDFS_BTREE_ROOT_NODE) {
-				SSDFS_DBG("no more next hashes\n");
-				goto finish_get_next_hash;
-			}
-
-			spin_lock(&parent->descriptor_lock);
-			old_hash = le64_to_cpu(parent->node_index.index.hash);
-			spin_unlock(&parent->descriptor_lock);
-
-			/* try next parent */
-			lock = &parent->descriptor_lock;
-			spin_lock(lock);
-			parent = parent->parent_node;
-			spin_unlock(lock);
-			lock = NULL;
-
-			if (!parent) {
-				err = -ERANGE;
-				SSDFS_ERR("node pointer is NULL\n");
-				goto finish_get_next_hash;
-			}
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to extract index key: "
-				  "index_position %u, err %d\n",
-				  found_pos, err);
-			ssdfs_debug_show_btree_node_indexes(parent->tree,
-							    parent);
-			goto finish_get_next_hash;
-		} else {
-			/* next hash has been found */
-			err = 0;
-			*next_hash = le64_to_cpu(index_key.index.hash);
-			SSDFS_DBG("next_hash %llx\n", *next_hash);
-			goto finish_get_next_hash;
-		}
-
-		type = atomic_read(&parent->type);
-	} while (parent != NULL);
-
-finish_get_next_hash:
-	up_read(&tree->generic_tree->lock);
+	err = ssdfs_btree_get_next_hash(tree->generic_tree, search, next_hash);
 	up_read(&tree->lock);
 
 	return err;

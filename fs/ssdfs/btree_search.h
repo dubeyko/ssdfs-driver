@@ -41,6 +41,7 @@ enum {
  * struct ssdfs_btree_search_hash - btree search hash
  * @name: name of the searching object
  * @name_len: length of the name in bytes
+ * @uuid: UUID of the searching object
  * @hash: hash value
  * @ino: inode ID
  * @fingerprint: fingerprint value
@@ -48,6 +49,7 @@ enum {
 struct ssdfs_btree_search_hash {
 	const char *name;
 	size_t name_len;
+	u8 *uuid;
 	u64 hash;
 	u64 ino;
 	struct ssdfs_fingerprint *fingerprint;
@@ -239,6 +241,7 @@ enum {
  * @raw.dentry.header: raw directory entry header
  * @raw.xattr.header: raw xattr entry header
  * @raw.shared_extent: shared extent buffer
+ * @raw.snapshot: raw snapshot info buffer
  * @name: name string
  */
 struct ssdfs_btree_search {
@@ -255,6 +258,7 @@ struct ssdfs_btree_search {
 			struct ssdfs_xattr_entry header;
 		} xattr;
 		struct ssdfs_shared_extent shared_extent;
+		struct ssdfs_snapshot snapshot;
 	} raw;
 	struct ssdfs_name_string name;
 };
