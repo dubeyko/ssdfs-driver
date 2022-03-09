@@ -2491,7 +2491,7 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		} else if (((u32)items_capacity * item_size) > area_size) {
 			SSDFS_ERR("corrupted items area's state: "
-				  "items_capacity %u, item_szie %u, "
+				  "items_capacity %u, item_size %u, "
 				  "area_size %u\n",
 				  items_capacity,
 				  item_size,
@@ -10185,7 +10185,10 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 		return -EOPNOTSUPP;
 	}
 
+	down_read(&node->full_lock);
 	err = node->node_ops->find_item(node, search);
+	up_read(&node->full_lock);
+
 	if (err == -ENODATA) {
 		u16 items_count;
 		u16 items_capacity;
@@ -10346,7 +10349,10 @@ int ssdfs_btree_node_find_range(struct ssdfs_btree_search *search)
 		return -EOPNOTSUPP;
 	}
 
+	down_read(&node->full_lock);
 	err = node->node_ops->find_range(node, search);
+	up_read(&node->full_lock);
+
 	if (err == -ENODATA) {
 		u16 items_count;
 		u16 items_capacity;

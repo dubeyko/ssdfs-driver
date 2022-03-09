@@ -1974,6 +1974,7 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 
 	err = ssdfs_btree_radix_tree_find(tree, node_id, &child);
 	if (err == -ENOENT) {
+		err = 0;
 		child = __ssdfs_btree_read_node(tree, parent,
 						&index_key,
 						index_key.node_type,

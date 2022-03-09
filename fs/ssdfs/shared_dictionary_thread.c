@@ -109,6 +109,7 @@ int ssdfs_shared_dict_pre_fetch_nodes(struct ssdfs_shared_dict_btree_info *tree,
 		hash = le64_to_cpu(ni->desc.index.hash);
 
 		down_write(&tree->lock);
+		down_write(&tree->generic_tree.lock);
 
 		err = ssdfs_btree_radix_tree_find(&tree->generic_tree,
 						  SSDFS_BTREE_ROOT_NODE_ID,
@@ -133,6 +134,7 @@ int ssdfs_shared_dict_pre_fetch_nodes(struct ssdfs_shared_dict_btree_info *tree,
 		}
 
 finish_read_child_node:
+		up_write(&tree->generic_tree.lock);
 		up_write(&tree->lock);
 
 		if (unlikely(err))
@@ -256,6 +258,9 @@ try_process_queue:
 		if (read_reqs > 0)
 			goto sleep_shared_dict_thread;
 
+		if (!has_queue_unprocessed_names(tree))
+			goto sleep_shared_dict_thread;
+
 		err = ssdfs_names_queue_remove_first(&ptr->queue, &ni);
 		if (err == -ENODATA) {
 			err = 0;
@@ -327,11 +332,13 @@ try_process_queue:
 		goto repeat;
 
 sleep_shared_dict_thread:
+	wake_up_all(&tree->wait_queue);
 	wait_event_interruptible(*wait_queue,
 				 SHDICT_THREAD_WAKE_CONDITION(tree));
 	goto repeat;
 
 sleep_failed_shared_dict_thread:
+	wake_up_all(&tree->wait_queue);
 	wait_event_interruptible(*wait_queue,
 		SHDICT_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
