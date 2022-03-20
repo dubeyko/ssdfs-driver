@@ -263,6 +263,7 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 				  u32 logical_blk,
 				  struct ssdfs_segment_request *req);
 int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
 				struct ssdfs_metadata_descriptor *area_desc,
 				struct ssdfs_block_state_descriptor *desc,
 				u64 *cno, u64 *parent_snapshot);

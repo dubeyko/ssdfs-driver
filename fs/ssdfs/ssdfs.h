@@ -295,6 +295,8 @@ void ssdfs_dev_mtd_memory_leaks_init(void);
 void ssdfs_dev_mtd_check_memory_leaks(void);
 void ssdfs_dir_memory_leaks_init(void);
 void ssdfs_dir_check_memory_leaks(void);
+void ssdfs_diff_memory_leaks_init(void);
+void ssdfs_diff_check_memory_leaks(void);
 void ssdfs_ext_queue_memory_leaks_init(void);
 void ssdfs_ext_queue_check_memory_leaks(void);
 void ssdfs_ext_tree_memory_leaks_init(void);

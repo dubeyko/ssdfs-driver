@@ -545,6 +545,7 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_peb_read_log_hdr_desc_array() - read log's header area's descriptors
  * @pebi: pointer on PEB object
+ * @req: request
  * @log_start_page: starting page of the log
  * @array: array of area's descriptors [out]
  * @array_size: count of items into array
@@ -557,8 +558,10 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
  *
  * %-ERANGE     - internal error.
  * %-ENOMEM     - fail to allocate memory.
+ * %-ENOENT     - cache hasn't the requested page.
  */
 int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
+				      struct ssdfs_segment_request *req,
 				      u16 log_start_page,
 				      struct ssdfs_metadata_descriptor *array,
 				      size_t array_size)
@@ -593,6 +596,9 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 	if (unlikely(IS_ERR_OR_NULL(page))) {
 		SSDFS_DBG("unable to get page: index %u\n",
 			   page_off);
+
+		if (req->private.flags & SSDFS_REQ_READ_ONLY_CACHE)
+			return -ENOENT;
 
 		page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
@@ -669,12 +675,14 @@ fail_copy_desc_array:
 /*
  * ssdfs_peb_read_page_locked() - read locked page into PEB's cache
  * @pebi: pointer on PEB object
+ * @req: request
  * @page_off: page index
  *
  * This function tries to read locked page into PEB's cache.
  */
 static
 struct page *ssdfs_peb_read_page_locked(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req,
 					u32 page_off)
 {
 	struct ssdfs_fs_info *fsi;
@@ -692,30 +700,39 @@ struct page *ssdfs_peb_read_page_locked(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
+	page = ssdfs_page_array_get_page_locked(&pebi->cache, page_off);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
-		SSDFS_ERR("fail to grab page: index %u\n",
-			  page_off);
-		return NULL;
+		SSDFS_DBG("unable to get page: index %u\n",
+			   page_off);
+
+		if (req->private.flags & SSDFS_REQ_READ_ONLY_CACHE)
+			return ERR_PTR(-ENOENT);
+
+		page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
+		if (unlikely(IS_ERR_OR_NULL(page))) {
+			SSDFS_ERR("fail to grab page: index %u\n",
+				  page_off);
+			return NULL;
+		}
+
+		if (PageUptodate(page) || PageDirty(page))
+			goto finish_page_read;
+
+		err = ssdfs_read_page_from_volume(fsi, pebi->peb_id,
+						  page_off << PAGE_SHIFT,
+						  page);
+
+		/*
+		 * ->readpage() unlock the page
+		 * But caller expects that page is locked
+		 */
+		ssdfs_lock_page(page);
+
+		if (unlikely(err))
+			goto fail_read_page;
+
+		SetPageUptodate(page);
 	}
-
-	if (PageUptodate(page) || PageDirty(page))
-		goto finish_page_read;
-
-	err = ssdfs_read_page_from_volume(fsi, pebi->peb_id,
-					  page_off << PAGE_SHIFT,
-					  page);
-
-	/*
-	 * ->readpage() unlock the page
-	 * But caller expects that page is locked
-	 */
-	ssdfs_lock_page(page);
-
-	if (unlikely(err))
-		goto fail_read_page;
-
-	SetPageUptodate(page);
 
 finish_page_read:
 	return page;
@@ -788,7 +805,7 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi,
+	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req,
 					le16_to_cpu(desc_off->log_start_page),
 					array, array_size);
 	if (unlikely(err)) {
@@ -855,6 +872,7 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
 /*
  * __ssdfs_peb_get_block_state_desc() - get block state descriptor
  * @pebi: pointer on PEB object
+ * @req: segment request
  * @area_desc: area descriptor
  * @desc: block state descriptor [out]
  * @cno: checkpoint ID [out]
@@ -871,6 +889,7 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
  * %-ENOMEM     - fail to allocate memory.
  */
 int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
 				struct ssdfs_metadata_descriptor *area_desc,
 				struct ssdfs_block_state_descriptor *desc,
 				u64 *cno, u64 *parent_snapshot)
@@ -899,6 +918,11 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 					 state_desc_size,
 					 desc);
 	if (err) {
+		SSDFS_DBG("cache hasn't requested page\n");
+
+		if (req->private.flags & SSDFS_REQ_READ_ONLY_CACHE)
+			return -ENOENT;
+
 		err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
 						  area_offset,
 						  desc, state_desc_size);
@@ -970,9 +994,12 @@ int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
-	err = __ssdfs_peb_get_block_state_desc(pebi, area_desc,
+	err = __ssdfs_peb_get_block_state_desc(pebi, req, area_desc,
 						desc, &cno, &parent_snapshot);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page\n");
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get block state descriptor: "
 			  "err %d\n", err);
 		return err;
@@ -998,6 +1025,7 @@ int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_peb_get_fragment_desc_array() - get fragment descriptors array
  * @pebi: pointer on PEB object
+ * @req: segment request
  * @array_offset: offset of array from the log's beginning
  * @array: array of fragment descriptors [out]
  * @array_size: count of items into array
@@ -1013,6 +1041,7 @@ int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
  */
 static
 int ssdfs_peb_get_fragment_desc_array(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req,
 					u32 array_offset,
 					struct ssdfs_fragment_desc *array,
 					size_t array_size)
@@ -1046,11 +1075,17 @@ read_next_page:
 	read_size = min_t(size_t, size, PAGE_SIZE - page_off);
 
 	page_index = array_offset >> PAGE_SHIFT;
-	page = ssdfs_peb_read_page_locked(pebi, page_index);
+	page = ssdfs_peb_read_page_locked(pebi, req, page_index);
 	if (IS_ERR_OR_NULL(page)) {
-		SSDFS_ERR("fail to read locked page: index %u\n",
-			  page_index);
-		return -ERANGE;
+		err = IS_ERR(page) ? PTR_ERR(page) : -ERANGE;
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't page: index %u\n",
+				  page_index);
+		} else {
+			SSDFS_ERR("fail to read locked page: index %u\n",
+				  page_index);
+		}
+		return err;
 	}
 
 	kaddr = kmap_atomic(page);
@@ -1086,6 +1121,7 @@ read_next_page:
 /*
  * ssdfs_peb_unaligned_read_fragment() - unaligned read fragment
  * @pebi: pointer on PEB object
+ * @req: request
  * @byte_off: offset in bytes from PEB's begin
  * @size: size of fragment in bytes
  * @buf: buffer pointer
@@ -1100,6 +1136,7 @@ read_next_page:
  */
 static
 int ssdfs_peb_unaligned_read_fragment(struct ssdfs_peb_info *pebi,
+				      struct ssdfs_segment_request *req,
 				      u32 byte_off,
 				      size_t size,
 				      void *buf)
@@ -1138,11 +1175,17 @@ read_next_page:
 	read_size = min_t(size_t, size, PAGE_SIZE - page_off);
 
 	page_index = byte_off >> PAGE_SHIFT;
-	page = ssdfs_peb_read_page_locked(pebi, page_index);
+	page = ssdfs_peb_read_page_locked(pebi, req, page_index);
 	if (IS_ERR_OR_NULL(page)) {
-		SSDFS_ERR("fail to read locked page: index %u\n",
-			  page_off);
-		return -ERANGE;
+		err = IS_ERR(page) ? PTR_ERR(page) : -ERANGE;
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't page: page_off %u\n",
+				  page_off);
+		} else {
+			SSDFS_ERR("fail to read locked page: index %u\n",
+				  page_off);
+		}
+		return err;
 	}
 
 	kaddr = kmap_atomic(page);
@@ -1178,6 +1221,7 @@ read_next_page:
 /*
  * ssdfs_read_checked_fragment() - read and check data fragment
  * @pebi: pointer on PEB object
+ * @req: segment request
  * @area_offset: offset in bytes from log's begin
  * @sequence_id: fragment identification number
  * @desc: fragment descriptor
@@ -1197,6 +1241,7 @@ read_next_page:
  */
 static
 int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
 				u32 area_offset,
 				int sequence_id,
 				struct ssdfs_fragment_desc *desc,
@@ -1272,14 +1317,21 @@ int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
 		}
 
 		kaddr = kmap(page);
-		err = ssdfs_peb_unaligned_read_fragment(pebi, offset,
+		err = ssdfs_peb_unaligned_read_fragment(pebi, req, offset,
 							uncompr_size,
 							kaddr);
 		if (!err)
 			checksum = ssdfs_crc32_le(kaddr, uncompr_size);
 		kunmap(page);
 
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't requested page: "
+				  "seg %llu, peb %llu, offset %u, size %zu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  offset, uncompr_size);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to read fragment: "
 				  "seg %llu, peb %llu, offset %u, size %zu, "
 				  "err %d\n",
@@ -1291,10 +1343,17 @@ int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
 	} else if (is_compressed) {
 		int type;
 
-		err = ssdfs_peb_unaligned_read_fragment(pebi, offset,
+		err = ssdfs_peb_unaligned_read_fragment(pebi, req, offset,
 							compr_size,
 							cdata_buf);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't requested page: "
+				  "seg %llu, peb %llu, offset %u, size %zu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  offset, uncompr_size);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to read fragment: "
 				  "seg %llu, peb %llu, offset %u, size %zu, "
 				  "err %d\n",
@@ -1421,17 +1480,28 @@ int ssdfs_peb_read_main_area_page(struct ssdfs_peb_info *pebi,
 	page_index = (int)(read_bytes >> PAGE_SHIFT);
 	BUG_ON(page_index >= U16_MAX);
 
-	if (pagevec_count(&req->result.pvec) <= page_index) {
-		SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-			  page_index,
-			  pagevec_count(&req->result.pvec));
-		return -EIO;
+	if (req->private.flags & SSDFS_REQ_PREPARE_DIFF) {
+		if (pagevec_count(&req->result.old_state) <= page_index) {
+			SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+				  page_index,
+				  pagevec_count(&req->result.old_state));
+			return -EIO;
+		}
+
+		page = req->result.old_state.pages[page_index];
+	} else {
+		if (pagevec_count(&req->result.pvec) <= page_index) {
+			SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+				  page_index,
+				  pagevec_count(&req->result.pvec));
+			return -EIO;
+		}
+
+		page = req->result.pvec.pages[page_index];
 	}
 
-	page = req->result.pvec.pages[page_index];
-
 	kaddr = kmap(page);
-	err = ssdfs_peb_unaligned_read_fragment(pebi,
+	err = ssdfs_peb_unaligned_read_fragment(pebi, req,
 						area_offset + byte_offset,
 						data_bytes,
 						kaddr);
@@ -1531,7 +1601,10 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 
 	err = ssdfs_peb_get_block_state_desc(pebi, req, &array[area_index],
 					     &found_blk_state);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page\n");
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get block state descriptor: "
 			  "area_offset %u, err %d\n",
 			  le32_to_cpu(array[area_index].offset),
@@ -1574,9 +1647,12 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		  area_offset, le32_to_cpu(blk_state_off->byte_offset),
 		  state_desc_size, frag_desc_offset, full_offset);
 
-	err = ssdfs_peb_get_fragment_desc_array(pebi, full_offset,
+	err = ssdfs_peb_get_fragment_desc_array(pebi, req, full_offset,
 						frag_descs, fragments);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page\n");
+		goto free_bufs;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get fragment descriptor array: "
 			  "offset %u, fragments %u, err %d\n",
 			  full_offset, fragments, err);
@@ -1594,16 +1670,30 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(page_index >= U16_MAX);
 
 	for (i = 0; i < fragments; i++) {
+		struct pagevec *pvec;
 		struct page *page;
 		struct ssdfs_fragment_desc *cur_desc;
 		u32 compr_size;
 
-		if (pagevec_count(&req->result.pvec) <= (page_index + i)) {
-			err = -EIO;
-			SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-				  page_index + i,
-				  pagevec_count(&req->result.pvec));
-			goto free_bufs;
+		if (req->private.flags & SSDFS_REQ_PREPARE_DIFF) {
+			pvec = &req->result.old_state;
+
+			if (pagevec_count(pvec) <= i) {
+				err = -EIO;
+				SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+					  i, pagevec_count(pvec));
+				goto free_bufs;
+			}
+		} else {
+			pvec = &req->result.pvec;
+
+			if (pagevec_count(pvec) <= (page_index + i)) {
+				err = -EIO;
+				SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+					  page_index + i,
+					  pagevec_count(pvec));
+				goto free_bufs;
+			}
 		}
 
 		cur_desc = &frag_descs[i];
@@ -1644,13 +1734,19 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 			goto free_bufs;
 		}
 
-		page = req->result.pvec.pages[page_index + i];
+		if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
+			page = pvec->pages[i];
+		else
+			page = pvec->pages[page_index + i];
 
-		err = ssdfs_read_checked_fragment(pebi, area_offset,
+		err = ssdfs_read_checked_fragment(pebi, req, area_offset,
 						  i, cur_desc,
 						  cdata_buf,
 						  page);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't requested page\n");
+			goto free_bufs;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to read fragment: "
 				  "index %d, err %d\n",
 				  i, err);
@@ -1682,6 +1778,7 @@ free_bufs:
  * %-EIO        - I/O error.
  * %-ERANGE     - internal error.
  * %-ENOMEM     - fail to allocate memory.
+ * %-ENOENT     - cache hasn't requested page.
  */
 static
 int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
@@ -1702,10 +1799,13 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi,
+	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req,
 					le16_to_cpu(offset->log_start_page),
 					array, array_size);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page\n");
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read log's header desc array: "
 			  "seg %llu, peb %llu, log_start_page %u, err %d\n",
 			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
@@ -1718,7 +1818,16 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_read_main_area_page(pebi, req,
 						    array, array_size,
 						    offset);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't requested page: "
+				  "seg %llu, peb %llu, "
+				  "ino %llu, logical_offset %llu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  req->extent.ino,
+				  req->extent.logical_offset);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to read main area's page: "
 				  "seg %llu, peb %llu, "
 				  "ino %llu, logical_offset %llu, "
@@ -1734,7 +1843,16 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_read_area_fragment(pebi, req,
 						   array, array_size,
 						   offset);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't requested page: "
+				  "seg %llu, peb %llu, "
+				  "ino %llu, logical_offset %llu\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  req->extent.ino,
+				  req->extent.logical_offset);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to read area's fragment: "
 				  "seg %llu, peb %llu, "
 				  "ino %llu, logical_offset %llu, "
@@ -1754,6 +1872,7 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_peb_read_area_diff_fragment() - read diff fragment
  * @pebi: pointer on PEB object
+ * @req: request
  * @array: array of area's descriptors
  * @array_size: count of items into array
  * @blk_state_off: block state offset
@@ -1772,6 +1891,7 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
  */
 static
 int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
+				 struct ssdfs_segment_request *req,
 				 struct ssdfs_metadata_descriptor *array,
 				 size_t array_size,
 				 struct ssdfs_blk_state_offset *blk_state_off,
@@ -1808,7 +1928,7 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 
 	fsi = pebi->pebc->parent_si->fsi;
 
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi,
+	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req,
 				le16_to_cpu(blk_state_off->log_start_page),
 				array, array_size);
 	if (unlikely(err)) {
@@ -1827,7 +1947,7 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 		return -EIO;
 	}
 
-	err = __ssdfs_peb_get_block_state_desc(pebi, &array[area_index],
+	err = __ssdfs_peb_get_block_state_desc(pebi, req, &array[area_index],
 						&found_blk_state,
 						&cno, &parent_snapshot);
 	if (unlikely(err)) {
@@ -1855,20 +1975,25 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 		  area_offset, le32_to_cpu(blk_state_off->byte_offset),
 		  state_desc_size, frag_desc_offset, full_offset);
 
-	err = ssdfs_peb_get_fragment_desc_array(pebi, full_offset,
+	err = ssdfs_peb_get_fragment_desc_array(pebi, req, full_offset,
 						&frag_desc, 1);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page: "
+			  "seg %llu, peb %llu\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id);
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get fragment descriptor array: "
 			  "offset %u, fragments %u, err %d\n",
 			  full_offset, fragments, err);
-		goto free_bufs;
+		return err;
 	}
 
 	cdata_buf = ssdfs_read_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (!cdata_buf) {
-		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate cdata_buf\n");
-		goto free_bufs;
+		return -ENOMEM;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1901,11 +2026,17 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 		goto free_bufs;
 	}
 
-	err = ssdfs_read_checked_fragment(pebi, area_offset,
+	err = ssdfs_read_checked_fragment(pebi, req, area_offset,
 					  0, &frag_desc,
 					  cdata_buf,
 					  page);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page: "
+			  "seg %llu, peb %llu\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id);
+		goto free_bufs;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read fragment: "
 			  "index %d, err %d\n",
 			  sequence_id, err);
@@ -1981,9 +2112,15 @@ int ssdfs_peb_read_diff_block_state(struct ssdfs_peb_info *pebi,
 	ssdfs_lock_page(page);
 
 	sequence_id = pagevec_count(&req->result.diffs) - 1;
-	err = ssdfs_peb_read_area_diff_fragment(pebi, array, array_size,
+	err = ssdfs_peb_read_area_diff_fragment(pebi, req, array, array_size,
 						offset, page, sequence_id);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("cache hasn't requested page: "
+			  "seg %llu, peb %llu\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id);
+		return err;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read area's fragment: "
 			  "seg %llu, peb %llu, "
 			  "err %d\n",
@@ -2065,7 +2202,15 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 	err = ssdfs_peb_read_base_block_state(pebi, req,
 					      array, array_size,
 					      offset);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to read block state: "
+			  "seg %llu, peb_index %u, ino %llu, "
+			  "logical_offset %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
+			  ino, logical_offset);
+		goto finish_prepare_pvec;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read block state: "
 			  "seg %llu, peb_index %u, ino %llu, "
 			  "logical_offset %u, err %d\n",
@@ -2106,7 +2251,15 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 							      offset);
 		}
 
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("cache hasn't requested page: "
+				  "seg %llu, peb_index %u, ino %llu, "
+				  "logical_offset %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index,
+				  ino, logical_offset);
+			goto finish_prepare_pvec;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to read block state: "
 				  "seg %llu, peb_index %u, ino %llu, "
 				  "logical_offset %u, err %d\n",
@@ -2118,7 +2271,19 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 	}
 
 finish_prepare_pvec:
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to read the block state: "
+			  "seg %llu, peb_index %u, ino %llu, "
+			  "logical_offset %u, peb_index %u, "
+			  "peb_page %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index,
+			  le64_to_cpu(pos->blk_desc.ino),
+			  le32_to_cpu(pos->blk_desc.logical_offset),
+			  le16_to_cpu(pos->blk_desc.peb_index),
+			  le16_to_cpu(pos->blk_desc.peb_page));
+		goto finish_read_block_state;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read the block state: "
 			  "seg %llu, peb_index %u, ino %llu, "
 			  "logical_offset %u, peb_index %u, "
@@ -2198,10 +2363,14 @@ finish_prepare_pvec:
 	}
 
 finish_read_block_state:
-	if (!err)
+	if (!err && !(req->private.flags & SSDFS_REQ_PREPARE_DIFF))
 		req->result.processed_blks++;
 
+	if (err)
+		ssdfs_request_unlock_and_remove_old_state(req);
+
 	ssdfs_request_unlock_and_remove_diffs(req);
+
 	return err;
 }
 
@@ -4563,6 +4732,7 @@ int ssdfs_read_checked_block_bitmap_header(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_read_checked_block_bitmap() - read and check block bitmap
  * @pebi: pointer on PEB object
+ * @req: segment request
  * @env: init environment [in|out]
  *
  * This function reads block bitmap from the volume and
@@ -4577,6 +4747,7 @@ int ssdfs_read_checked_block_bitmap_header(struct ssdfs_peb_info *pebi,
  */
 static
 int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
+				    struct ssdfs_segment_request *req,
 				    struct ssdfs_read_init_env *env)
 {
 	struct ssdfs_fs_info *fsi;
@@ -4786,7 +4957,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		}
 
 		ssdfs_lock_page(page);
-		err = ssdfs_read_checked_fragment(pebi, area_offset,
+		err = ssdfs_read_checked_fragment(pebi, req, area_offset,
 						  sequence_id,
 						  frag_desc,
 						  cdata_buf, page);
@@ -4824,6 +4995,7 @@ fail_read_blk_bmap:
 /*
  * ssdfs_init_block_bitmap_fragment() - init block bitmap fragment
  * @pebi: pointer on PEB object
+ * @req: segment request
  * @env: init environment [in|out]
  *
  * This function reads block bitmap's fragment from the volume and
@@ -4838,6 +5010,7 @@ fail_read_blk_bmap:
  */
 static
 int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
+				     struct ssdfs_segment_request *req,
 				     struct ssdfs_read_init_env *env)
 {
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
@@ -4861,7 +5034,7 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 
 	pagevec_init(&env->b_init.pvec);
 
-	err = ssdfs_read_checked_block_bitmap(pebi, env);
+	err = ssdfs_read_checked_block_bitmap(pebi, req, env);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read block bitmap: "
 			  "seg %llu, peb %llu, err %d\n",
@@ -5434,7 +5607,7 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 
 	for (i = 0; i < fragments_count; i++) {
 		env->b_init.fragment_index = i;
-		err = ssdfs_init_block_bitmap_fragment(pebi, env);
+		err = ssdfs_init_block_bitmap_fragment(pebi, req, env);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to init block bitmap: "
 				  "peb_id %llu, peb_index %u, "
@@ -5687,7 +5860,7 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 
 	for (i = 0; i < fragments_count; i++) {
 		env->b_init.fragment_index = i;
-		err = ssdfs_init_block_bitmap_fragment(pebi, env);
+		err = ssdfs_init_block_bitmap_fragment(pebi, req, env);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to init block bitmap: "
 				  "peb_id %llu, peb_index %u, "

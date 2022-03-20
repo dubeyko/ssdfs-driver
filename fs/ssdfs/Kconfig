@@ -115,6 +115,15 @@ config SSDFS_DIFF_ON_WRITE_METADATA
 
 	  If unsure, say N.
 
+config SSDFS_DIFF_ON_WRITE_METADATA_THRESHOLD
+	int "Btree node modification percentage threshold (1% - 50%)"
+	range 1 50
+	default 25
+	depends on SSDFS_DIFF_ON_WRITE_METADATA
+	help
+	  Select btree node modification percentage threshold as
+	  upper bound of modified items in a node.
+
 config SSDFS_DIFF_ON_WRITE_USER_DATA
 	bool "SSDFS Diff-On-Write support (user data case)"
 	depends on SSDFS_DIFF_ON_WRITE
@@ -122,6 +131,15 @@ config SSDFS_DIFF_ON_WRITE_USER_DATA
 	  This option enables delta-encoding support for user data.
 
 	  If unsure, say N.
+
+config SSDFS_DIFF_ON_WRITE_USER_DATA_THRESHOLD
+	int "Logical block's modified bits percentage threshold (1% - 50%)"
+	range 1 50
+	default 50
+	depends on SSDFS_DIFF_ON_WRITE_USER_DATA
+	help
+	  Select logical block modification percentage threshold as
+	  upper bound of modified bits in the logical block.
 
 endmenu
 

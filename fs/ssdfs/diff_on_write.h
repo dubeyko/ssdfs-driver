@@ -108,9 +108,21 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DIFF_ON_WRITE_METADATA */
 
 #ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
-int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
+int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
+				 struct ssdfs_offset_position *pos,
 				 struct ssdfs_segment_request *req);
+int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req);
 #else
+static inline
+int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
+				 struct ssdfs_offset_position *pos,
+				 struct ssdfs_segment_request *req)
+{
+	SSDFS_ERR("Diff-On-Write (user data case) is not supported. "
+		  "Please, enable CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA option.\n");
+	return -EOPNOTSUPP;
+}
 static inline
 int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 				struct ssdfs_segment_request *req)

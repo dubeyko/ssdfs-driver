@@ -104,7 +104,11 @@ bool can_diff_on_write_metadata_be_used(struct ssdfs_btree_node *node)
 	total_bytes = ((u64)index_capacity * index_size) +
 			((u64)items_capacity * item_size);
 
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_METADATA
+	if (percentage <= CONFIG_SSDFS_DIFF_ON_WRITE_METADATA_THRESHOLD) {
+#else
 	if (percentage <= SSDFS_DIFF_ON_WRITE_PCT_THRESHOLD) {
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_METADATA */
 		dirty_bytes = sizeof(struct ssdfs_diff_blob_header);
 		dirty_bytes += bmap_bytes;
 		dirty_bytes += sizeof(node->raw);

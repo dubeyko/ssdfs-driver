@@ -186,7 +186,7 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		goto finish_define_extent;
 	}
 
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi, log_start_page,
+	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req, log_start_page,
 						desc_array,
 						SSDFS_SEG_HDR_DESC_MAX);
 	if (unlikely(err)) {

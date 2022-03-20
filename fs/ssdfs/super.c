@@ -2424,6 +2424,11 @@ static void ssdfs_memory_leaks_checker_init(void)
 #endif
 
 	ssdfs_dir_memory_leaks_init();
+
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
+	ssdfs_diff_memory_leaks_init();
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
+
 	ssdfs_ext_queue_memory_leaks_init();
 	ssdfs_ext_tree_memory_leaks_init();
 	ssdfs_file_memory_leaks_init();
@@ -2489,6 +2494,11 @@ static void ssdfs_check_memory_leaks(void)
 #endif
 
 	ssdfs_dir_check_memory_leaks();
+
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
+	ssdfs_diff_check_memory_leaks();
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
+
 	ssdfs_ext_queue_check_memory_leaks();
 	ssdfs_ext_tree_check_memory_leaks();
 	ssdfs_file_check_memory_leaks();
@@ -2622,7 +2632,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	err = ssdfs_gather_superblock_info(fs_info, silent);
 	if (err)
-		goto destroy_snapshot_subsystem;
+		goto free_erase_page;
 
 	spin_lock(&fs_info->volume_state_lock);
 	fs_feature_compat = fs_info->fs_feature_compat;
@@ -2654,7 +2664,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	err = ssdfs_snapshot_subsystem_init(fs_info);
 	if (err)
-		goto free_erase_page;
+		goto destroy_sysfs_device_group;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create segment tree started...\n");
@@ -2666,7 +2676,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	err = ssdfs_segment_tree_create(fs_info);
 	up_write(&fs_info->volume_sem);
 	if (err)
-		goto destroy_sysfs_device_group;
+		goto destroy_snapshot_subsystem;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create mapping table started...\n");
@@ -2918,14 +2928,14 @@ destroy_segments_tree:
 	ssdfs_segment_tree_destroy(fs_info);
 	ssdfs_current_segment_array_destroy(fs_info);
 
+destroy_snapshot_subsystem:
+	ssdfs_snapshot_subsystem_destroy(fs_info);
+
 destroy_sysfs_device_group:
 	ssdfs_sysfs_delete_device_group(fs_info);
 
 release_maptbl_cache:
 	ssdfs_maptbl_cache_destroy(&fs_info->maptbl_cache);
-
-destroy_snapshot_subsystem:
-	ssdfs_snapshot_subsystem_destroy(fs_info);
 
 free_erase_page:
 	if (fs_info->erase_page)

@@ -383,6 +383,7 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 	}
 
 	pagevec_release(pvec);
+	memset(pvec->pages, 0, sizeof(struct page *) * PAGEVEC_SIZE);
 }
 
 #define SSDFS_MEMORY_LEAKS_CHECKER_FNS(name)				\
@@ -825,6 +826,12 @@ pgoff_t ssdfs_mem_page_to_phys_page(struct ssdfs_fs_info *fsi,
 
 static inline
 bool need_add_block(struct page *page)
+{
+	return PageChecked(page);
+}
+
+static inline
+bool is_diff_page(struct page *page)
 {
 	return PageChecked(page);
 }

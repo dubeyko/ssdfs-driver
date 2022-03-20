@@ -1771,7 +1771,8 @@ struct ssdfs_diff_blob_header {
 
 /* Diff blob flags */
 #define SSDFS_DIFF_BLOB_HAS_BTREE_NODE_HEADER	(1 << 0)
-#define SSDFS_DIFF_BLOB_FLAGS_MASK		(0x1)
+#define SSDFS_DIFF_CHAIN_CONTAINS_NEXT_BLOB	(1 << 1)
+#define SSDFS_DIFF_BLOB_FLAGS_MASK		(0x3)
 
 /*
  * struct ssdfs_metadata_diff_blob_header - metadata diff blob header

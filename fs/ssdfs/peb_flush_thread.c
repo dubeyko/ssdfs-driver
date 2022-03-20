@@ -37,6 +37,10 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 #include "peb_mapping_table.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
+#include "diff_on_write.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -2038,7 +2042,7 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		kaddr = kmap(stream->pvec->pages[i]);
-		SSDFS_DBG("DIFF DUMP: index %d\n",
+		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
@@ -3213,9 +3217,178 @@ bool is_ssdfs_block_full(u32 pagesize, u32 data_size)
 }
 
 /*
+ * can_ssdfs_pagevec_be_compressed() - check that pagevec can be compressed
+ * @start_page: starting page in pagevec
+ * @page_count: count of pages in the portion
+ * @bytes_count: bytes number in the portion
+ * @req: segment request
+ */
+static
+bool can_ssdfs_pagevec_be_compressed(u32 start_page, u32 page_count,
+				     u32 bytes_count,
+				     struct ssdfs_segment_request *req)
+{
+	struct page *page;
+	int page_index;
+	u32 start_offset;
+	u32 portion_size;
+	u32 tested_bytes = 0;
+	u32 can_compress[2] = {0, 0};
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+
+	SSDFS_DBG("start_page %u, page_count %u, "
+		  "bytes_count %u\n",
+		  start_page, page_count, bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < page_count; i++) {
+		int state;
+
+		page_index = i + start_page;
+		start_offset = page_index >> PAGE_SHIFT;
+		portion_size = PAGE_SIZE;
+
+		if (page_index >= pagevec_count(&req->result.pvec)) {
+			SSDFS_ERR("fail to check page: "
+				  "index %d, pvec_size %u\n",
+				  page_index,
+				  pagevec_count(&req->result.pvec));
+			return false;
+		}
+
+		page = req->result.pvec.pages[page_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(tested_bytes >= bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		portion_size = min_t(u32, portion_size,
+				     bytes_count - tested_bytes);
+
+		if (ssdfs_can_compress_data(page, portion_size))
+			state = 1;
+		else
+			state = 0;
+
+		can_compress[state]++;
+		tested_bytes += portion_size;
+	}
+
+	return can_compress[true] >= can_compress[false];
+}
+
+/*
+ * ssdfs_peb_define_area_type() - define area type
+ * @pebi: pointer on PEB object
+ * @bytes_count: bytes number in the portion
+ * @start_page: starting page in pagevec
+ * @page_count: count of pages in the portion
+ * @req: I/O request
+ * @pos: offset position
+ * @area_type: type of area [out]
+ */
+static
+int ssdfs_peb_define_area_type(struct ssdfs_peb_info *pebi,
+				u32 bytes_count,
+				u32 start_page, u32 page_count,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_offset_position *pos,
+				int *area_type)
+{
+	struct ssdfs_fs_info *fsi;
+	bool can_be_compressed = false;
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
+	int err;
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(!req || !area_type);
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+
+	SSDFS_DBG("seg %llu, peb %llu, ino %llu, "
+		  "processed_blks %d, bytes_count %u, "
+		  "start_page %u, page_count %u\n",
+		  req->place.start.seg_id, pebi->peb_id, req->extent.ino,
+		  req->result.processed_blks,
+		  bytes_count, start_page, page_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+
+	*area_type = SSDFS_LOG_AREA_MAX;
+
+	if (req->private.class == SSDFS_PEB_DIFF_ON_WRITE_REQ) {
+		*area_type = SSDFS_LOG_DIFFS_AREA;
+	} else if (!is_ssdfs_block_full(fsi->pagesize, bytes_count))
+		*area_type = SSDFS_LOG_JOURNAL_AREA;
+	else {
+#ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
+		if (req->private.class == SSDFS_PEB_UPDATE_REQ) {
+			err = ssdfs_user_data_prepare_diff(pebi->pebc, pos, req);
+		} else
+			err = -ENOENT;
+
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("unable to prepare user data diff: "
+				  "seg %llu, peb %llu, ino %llu, "
+				  "processed_blks %d, bytes_count %u, "
+				  "start_page %u, page_count %u\n",
+				  req->place.start.seg_id,
+				  pebi->peb_id,
+				  req->extent.ino,
+				  req->result.processed_blks,
+				  bytes_count, start_page,
+				  page_count);
+
+			can_be_compressed =
+				can_ssdfs_pagevec_be_compressed(start_page,
+								page_count,
+								bytes_count,
+								req);
+			if (can_be_compressed)
+				*area_type = SSDFS_LOG_DIFFS_AREA;
+			else
+				*area_type = SSDFS_LOG_MAIN_AREA;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare user data diff: "
+				  "seg %llu, peb %llu, ino %llu, "
+				  "processed_blks %d, bytes_count %u, "
+				  "start_page %u, page_count %u, err %d\n",
+				  req->place.start.seg_id,
+				  pebi->peb_id,
+				  req->extent.ino,
+				  req->result.processed_blks,
+				  bytes_count, start_page,
+				  page_count, err);
+			return err;
+		} else
+			*area_type = SSDFS_LOG_DIFFS_AREA;
+#else
+		can_be_compressed = can_ssdfs_pagevec_be_compressed(start_page,
+								    page_count,
+								    bytes_count,
+								    req);
+		if (can_be_compressed)
+			*area_type = SSDFS_LOG_DIFFS_AREA;
+		else
+			*area_type = SSDFS_LOG_MAIN_AREA;
+#endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_peb_add_block_into_data_area() - try to add data block into log
  * @pebi: pointer on PEB object
  * @req: I/O request
+ * @pos: offset position
  * @off: PEB's physical offset to data [out]
  * @written_bytes: amount of written bytes [out]
  *
@@ -3234,19 +3407,15 @@ bool is_ssdfs_block_full(u32 pagesize, u32 data_size)
 static
 int ssdfs_peb_add_block_into_data_area(struct ssdfs_peb_info *pebi,
 					struct ssdfs_segment_request *req,
+					struct ssdfs_offset_position *pos,
 					struct ssdfs_peb_phys_offset *off,
 					u32 *written_bytes)
 {
 	struct ssdfs_fs_info *fsi;
-	int area_type;
-	u32 rest_bytes, tested_bytes = 0;
+	int area_type = SSDFS_LOG_AREA_MAX;
+	u32 rest_bytes;
 	u32 start_page = 0;
 	u32 page_count = 0;
-	u32 start_offset;
-	u32 portion_size;
-	int page_index;
-	struct page *page;
-	u32 can_compress[2] = {0, 0};
 	int i;
 	int err = 0;
 
@@ -3291,47 +3460,16 @@ int ssdfs_peb_add_block_into_data_area(struct ssdfs_peb_info *pebi,
 		page_count >>= PAGE_SHIFT;
 	}
 
-	if (req->private.class == SSDFS_PEB_DIFF_ON_WRITE_REQ) {
-		area_type = SSDFS_LOG_DIFFS_AREA;
-	} else if (!is_ssdfs_block_full(fsi->pagesize, rest_bytes))
-		area_type = SSDFS_LOG_JOURNAL_AREA;
-	else {
-		for (i = 0; i < page_count; i++) {
-			int state;
-
-			page_index = i + start_page;
-			start_offset = page_index >> PAGE_SHIFT;
-			portion_size = PAGE_SIZE;
-
-			if (page_index >= pagevec_count(&req->result.pvec)) {
-				SSDFS_ERR("fail to add page: "
-					  "index %d, portion_size %u, err %d\n",
-					  page_index, portion_size, err);
-				return -ERANGE;
-			}
-
-			page = req->result.pvec.pages[page_index];
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(tested_bytes >= rest_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			portion_size = min_t(u32, portion_size,
-					     rest_bytes - tested_bytes);
-
-			if (ssdfs_can_compress_data(page, portion_size))
-				state = 1;
-			else
-				state = 0;
-
-			can_compress[state]++;
-			tested_bytes += portion_size;
-		}
-
-		if (can_compress[true] >= can_compress[false])
-			area_type = SSDFS_LOG_DIFFS_AREA;
-		else
-			area_type = SSDFS_LOG_MAIN_AREA;
+	err = ssdfs_peb_define_area_type(pebi, rest_bytes,
+					 start_page, page_count,
+					 req, pos, &area_type);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define area type: "
+			  "rest_bytes %u, start_page %u, "
+			  "page_count %u, err %d\n",
+			  rest_bytes, start_page,
+			  page_count, err);
+		return err;
 	}
 
 	for (i = 0; i < page_count; i++) {
@@ -4110,6 +4248,7 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_block_descriptor blk_desc = {0};
 	struct ssdfs_peb_phys_offset data_off = {0};
 	struct ssdfs_peb_phys_offset desc_off = {0};
+	struct ssdfs_offset_position pos = {0};
 	u16 logical_block;
 	int processed_blks;
 	u64 logical_offset;
@@ -4174,7 +4313,8 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	err = ssdfs_peb_add_block_into_data_area(pebi, req, &data_off,
+	err = ssdfs_peb_add_block_into_data_area(pebi, req,
+						 &pos, &data_off,
 						 &written_bytes);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("try again to add block: "
@@ -4980,6 +5120,34 @@ int ssdfs_peb_read_from_offset(struct ssdfs_peb_info *pebi,
 }
 #endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
+static inline
+bool does_user_data_block_contain_diff(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	u32 mem_pages_per_block;
+	int page_index;
+	struct page *page;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_ssdfs_peb_containing_user_data(pebi->pebc))
+		return false;
+
+	fsi = pebi->pebc->parent_si->fsi;
+	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
+	page_index = req->result.processed_blks * mem_pages_per_block;
+	page = req->result.pvec.pages[page_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return is_diff_page(page);
+}
+
 /*
  * ssdfs_peb_update_block() - update data block
  * @pebi: pointer on PEB object
@@ -5241,7 +5409,7 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	err = ssdfs_peb_add_block_into_data_area(pebi, req, &data_off,
+	err = ssdfs_peb_add_block_into_data_area(pebi, req, &pos, &data_off,
 						 &written_bytes);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("try again to add block: "
@@ -5286,7 +5454,8 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 	data_off.peb_page = (u16)range.start;
 
-	if (req->private.class != SSDFS_PEB_DIFF_ON_WRITE_REQ)
+	if (req->private.class != SSDFS_PEB_DIFF_ON_WRITE_REQ &&
+	    !does_user_data_block_contain_diff(pebi, req))
 		SSDFS_BLK_DESC_INIT(&pos.blk_desc);
 	else {
 #ifdef CONFIG_SSDFS_DEBUG

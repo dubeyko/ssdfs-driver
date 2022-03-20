@@ -732,7 +732,8 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 				u32 area_offset, u32 area_size,
 				void *buf);
 int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
-				      u16 log_index,
+				      struct ssdfs_segment_request *req,
+				      u16 log_start_page,
 				      struct ssdfs_metadata_descriptor *array,
 				      size_t array_size);
 u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi);
