@@ -14239,9 +14239,10 @@ int ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_shift_memory_range_right() - shift the memory range to the right
+ * __ssdfs_shift_memory_range_right() - shift the memory range to the right
  * @node: pointer on node object
- * @area: pointer on the area descriptor
+ * @area_offset: area offset in bytes from the node's beginning
+ * @area_size: area size in bytes
  * @offset: offset from the area's beginning to the range start
  * @range_len: length of the range in bytes
  * @shift: value of the shift in bytes
@@ -14255,10 +14256,11 @@ int ssdfs_shift_range_left(struct ssdfs_btree_node *node,
  *
  * %-ERANGE     - internal error.
  */
-int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
-				   struct ssdfs_btree_node_items_area *area,
-				   u16 offset, u16 range_len,
-				   u16 shift)
+static
+int __ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
+				     u32 area_offset, u32 area_size,
+				     u16 offset, u16 range_len,
+				     u16 shift)
 {
 	int page_index1, page_index2;
 	int src_offset, dst_offset;
@@ -14270,17 +14272,21 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node || !area);
+	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+
+	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
+		  "offset %u, range_len %u, shift %u\n",
+		  node->node_id, area_offset, area_size,
+		  offset, range_len, shift);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, offset %u, range_len %u, shift %u\n",
-		  node->node_id, offset, range_len, shift);
-
-	if (((u32)offset + range_len + shift) > area->area_size) {
+	if (((u32)offset + range_len + shift) > (area_offset + area_size)) {
 		SSDFS_ERR("invalid request: "
-			  "offset %u, range_len %u, shift %u, area_size %u\n",
-			  offset, range_len, shift, area->area_size);
+			  "offset %u, range_len %u, shift %u, "
+			  "area_offset %u, area_size %u\n",
+			  offset, range_len, shift,
+			  area_offset, area_size);
 		return -ERANGE;
 	}
 
@@ -14292,13 +14298,13 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 		u32 moving_range;
 
 		range_offset1 = src_offset;
-		if (range_offset1 > area->area_size) {
+		if (range_offset1 > area_size) {
 			SSDFS_ERR("range_offset1 %u > area_size %u\n",
-				  range_offset1, area->area_size);
+				  range_offset1, area_size);
 			return -ERANGE;
 		}
 
-		range_offset1 += area->offset;
+		range_offset1 += area_offset;
 		if (range_offset1 > node->node_size) {
 			SSDFS_ERR("range_offset1 %u > node_size %u\n",
 				  range_offset1, node->node_size);
@@ -14336,16 +14342,9 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 
 		range_offset2 = range_offset1 + shift;
 
-		if (range_offset2 > area->area_size) {
+		if (range_offset2 > area_size) {
 			SSDFS_ERR("range_offset2 %u > area_size %u\n",
-				  range_offset2, area->area_size);
-			return -ERANGE;
-		}
-
-		range_offset2 += area->offset;
-		if (range_offset2 > node->node_size) {
-			SSDFS_ERR("range_offset2 %u > node_size %u\n",
-				  range_offset2, node->node_size);
+				  range_offset2, area_size);
 			return -ERANGE;
 		}
 
@@ -14443,9 +14442,82 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 }
 
 /*
- * ssdfs_shift_memory_range_left() - shift the memory range to the left
+ * ssdfs_shift_memory_range_right() - shift the memory range to the right
  * @node: pointer on node object
  * @area: pointer on the area descriptor
+ * @offset: offset from the area's beginning to the range start
+ * @range_len: length of the range in bytes
+ * @shift: value of the shift in bytes
+ *
+ * This method tries to move the memory range (@offset; @range_len)
+ * in the @node for the @shift in bytes to the right.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_node_items_area *area,
+				   u16 offset, u16 range_len,
+				   u16 shift)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+
+	SSDFS_DBG("node_id %u, offset %u, range_len %u, shift %u\n",
+		  node->node_id, offset, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __ssdfs_shift_memory_range_right(node,
+						area->offset, area->area_size,
+						offset, range_len,
+						shift);
+}
+
+/*
+ * ssdfs_shift_memory_range_right2() - shift the memory range to the right
+ * @node: pointer on node object
+ * @area: pointer on the area descriptor
+ * @offset: offset from the area's beginning to the range start
+ * @range_len: length of the range in bytes
+ * @shift: value of the shift in bytes
+ *
+ * This method tries to move the memory range (@offset; @range_len)
+ * in the @node for the @shift in bytes to the right.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_shift_memory_range_right2(struct ssdfs_btree_node *node,
+				    struct ssdfs_btree_node_index_area *area,
+				    u16 offset, u16 range_len,
+				    u16 shift)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+
+	SSDFS_DBG("node_id %u, offset %u, range_len %u, shift %u\n",
+		  node->node_id, offset, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __ssdfs_shift_memory_range_right(node,
+						area->offset, area->area_size,
+						offset, range_len,
+						shift);
+}
+
+/*
+ * __ssdfs_shift_memory_range_left() - shift the memory range to the left
+ * @node: pointer on node object
+ * @area_offset: offset area from the node's beginning
+ * @area_size: size of area in bytes
  * @offset: offset from the area's beginning to the range start
  * @range_len: length of the range in bytes
  * @shift: value of the shift in bytes
@@ -14459,10 +14531,11 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
  *
  * %-ERANGE     - internal error.
  */
-int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
-				   struct ssdfs_btree_node_items_area *area,
-				   u16 offset, u16 range_len,
-				   u16 shift)
+static
+int __ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
+				    u32 area_offset, u32 area_size,
+				    u16 offset, u16 range_len,
+				    u16 shift)
 {
 	int page_index1, page_index2;
 	int src_offset, dst_offset;
@@ -14474,17 +14547,21 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node || !area);
+	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
+
+	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
+		  "offset %u, range_len %u, shift %u\n",
+		  node->node_id, area_offset, area_size,
+		  offset, range_len, shift);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("node_id %u, offset %u, range_len %u, shift %u\n",
-		  node->node_id, offset, range_len, shift);
-
-	if ((offset + range_len) >= area->area_size) {
+	if ((offset + range_len) >= (area_offset + area_size)) {
 		SSDFS_ERR("invalid request: "
-			  "offset %u, range_len %u, area_size %u\n",
-			  offset, range_len, area->area_size);
+			  "offset %u, range_len %u, "
+			  "area_offset %u, area_size %u\n",
+			  offset, range_len,
+			  area_offset, area_size);
 		return -ERANGE;
 	} else if (shift > offset) {
 		SSDFS_ERR("shift is out of area: "
@@ -14496,17 +14573,20 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 	src_offset = offset;
 	dst_offset = offset - shift;
 
+	SSDFS_DBG("src_offset %u, dst_offset %u\n",
+		  src_offset, dst_offset);
+
 	do {
 		u32 moving_range;
 
 		range_offset1 = src_offset;
-		if (range_offset1 > area->area_size) {
+		if (range_offset1 > area_size) {
 			SSDFS_ERR("range_offset1 %u > area_size %u\n",
-				  range_offset1, area->area_size);
+				  range_offset1, area_size);
 			return -ERANGE;
 		}
 
-		range_offset1 += area->offset;
+		range_offset1 += area_offset;
 		if (range_offset1 > node->node_size) {
 			SSDFS_ERR("range_offset1 %u > node_size %u\n",
 				  range_offset1, node->node_size);
@@ -14526,13 +14606,13 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 			range_offset1 %= page_index1 * PAGE_SIZE;
 
 		range_offset2 = dst_offset;
-		if (range_offset2 >= area->area_size) {
+		if (range_offset2 >= area_size) {
 			SSDFS_ERR("range_offset2 %u >= area_size %u\n",
-				  range_offset2, area->area_size);
+				  range_offset2, area_size);
 			return -ERANGE;
 		}
 
-		range_offset2 += area->offset;
+		range_offset2 += area_offset;
 		if (range_offset2 >= node->node_size) {
 			SSDFS_ERR("range_offset2 %u >= node_size %u\n",
 				  range_offset2, node->node_size);
@@ -14631,6 +14711,11 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		moved_range += moving_range;
+
+		SSDFS_DBG("src_offset %u, dst_offset %u, "
+			  "moving_range %u, moved_range %u\n",
+			  src_offset, dst_offset,
+			  moving_range, moved_range);
 	} while (moved_range < range_len);
 
 	if (moved_range != range_len) {
@@ -14639,13 +14724,77 @@ int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (dst_offset != offset) {
-		SSDFS_ERR("dst_offset %d != offset %u\n",
-			  dst_offset, offset);
-		return -ERANGE;
-	}
-
 	return 0;
+}
+
+/*
+ * ssdfs_shift_memory_range_left() - shift the memory range to the left
+ * @node: pointer on node object
+ * @area: pointer on the area descriptor
+ * @offset: offset from the area's beginning to the range start
+ * @range_len: length of the range in bytes
+ * @shift: value of the shift in bytes
+ *
+ * This method tries to move the memory range (@offset; @range_len)
+ * in the @node for the @shift in bytes to the left.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_node_items_area *area,
+				   u16 offset, u16 range_len,
+				   u16 shift)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+
+	SSDFS_DBG("node_id %u, offset %u, range_len %u, shift %u\n",
+		  node->node_id, offset, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __ssdfs_shift_memory_range_left(node,
+						area->offset, area->area_size,
+						offset, range_len, shift);
+}
+
+/*
+ * ssdfs_shift_memory_range_left2() - shift the memory range to the left
+ * @node: pointer on node object
+ * @area: pointer on the area descriptor
+ * @offset: offset from the area's beginning to the range start
+ * @range_len: length of the range in bytes
+ * @shift: value of the shift in bytes
+ *
+ * This method tries to move the memory range (@offset; @range_len)
+ * in the @node for the @shift in bytes to the left.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_shift_memory_range_left2(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_node_index_area *area,
+				   u16 offset, u16 range_len,
+				   u16 shift)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !area);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+
+	SSDFS_DBG("node_id %u, offset %u, range_len %u, shift %u\n",
+		  node->node_id, offset, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __ssdfs_shift_memory_range_left(node,
+						area->offset, area->area_size,
+						offset, range_len, shift);
 }
 
 /*

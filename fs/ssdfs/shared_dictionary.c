@@ -1173,6 +1173,10 @@ int ssdfs_shared_dict_tree_add(struct ssdfs_shared_dict_btree_info *tree,
 		return -EEXIST;
 	}
 
+	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
+	ssdfs_debug_btree_search_result_name(search);
+	SSDFS_DBG("END DEBUG OUTPUT\n");
+
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
@@ -2235,6 +2239,11 @@ int ssdfs_shared_dict_init_hash_table_area(struct ssdfs_btree_node *node,
 		node->hash_tbl_area.index_count = items_count;
 		node->hash_tbl_area.index_capacity = desc_capacity;
 
+		SSDFS_DBG("offset %u, area_size %u, desc_size %zu, "
+			  "index_count %u, index_capacity %u\n",
+			  area_offset, area_size, desc_size,
+			  items_count, desc_capacity);
+
 		err = ssdfs_init_hash_table_range(node, area_offset,
 						  area_size, items_count,
 						  &start_hash,
@@ -3253,6 +3262,60 @@ int ssdfs_shared_dict_btree_flush_node(struct ssdfs_btree_node *node)
  *          SPECIALIZED SHARED DICTIONARY BTREE NODE OPERATIONS               *
  ******************************************************************************/
 
+/*
+ * The lookup1 table's capacity array
+ */
+static
+const u16 lookup1_tbl_range_capacity[SSDFS_SHDIC_LTBL1_SIZE] = {
+	2,	/* 00 */
+	4,	/* 01 */
+	8,	/* 02 */
+	16,	/* 03 */
+	32,	/* 04 */
+	32,	/* 05 */
+	32,	/* 06 */
+	32,	/* 07 */
+	32,	/* 08 */
+	64,	/* 09 */
+	64,	/* 10 */
+	32,	/* 11 */
+	32,	/* 12 */
+	32,	/* 13 */
+	32,	/* 14 */
+	32,	/* 15 */
+	16,	/* 16 */
+	8,	/* 17 */
+	4,	/* 18 */
+	2,	/* 19 */
+	};
+
+/*
+ * The lookup1 table's threshold array
+ */
+static
+const u16 lookup1_tbl_threshold[SSDFS_SHDIC_LTBL1_SIZE] = {
+	2,	/* 00 */
+	6,	/* 01 */
+	14,	/* 02 */
+	30,	/* 03 */
+	62,	/* 04 */
+	94,	/* 05 */
+	126,	/* 06 */
+	158,	/* 07 */
+	190,	/* 08 */
+	254,	/* 09 */
+	318,	/* 10 */
+	350,	/* 11 */
+	382,	/* 12 */
+	414,	/* 13 */
+	446,	/* 14 */
+	478,	/* 15 */
+	494,	/* 16 */
+	502,	/* 17 */
+	506,	/* 18 */
+	508,	/* 19 */
+	};
+
 typedef int (*convert_hash64_to_hash32_fn)(struct ssdfs_btree_search *search,
 					struct ssdfs_shdict_search_key *value);
 
@@ -3418,6 +3481,13 @@ int ssdfs_hash32_hi_compare(struct ssdfs_shdict_search_key *value1,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!value1 || !value2);
+
+	SSDFS_DBG("value1->name.hash_high %#x (%#x), "
+		  "value2->name.hash_high %#x (%#x)\n",
+		  value1->name.hash_hi,
+		  le32_to_cpu(value1->name.hash_hi),
+		  value2->name.hash_hi,
+		  le32_to_cpu(value2->name.hash_hi));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (value1->name.hash_hi == value2->name.hash_hi)
@@ -3466,6 +3536,16 @@ int ssdfs_get_lookup1_table_search_key(struct ssdfs_btree_node *node,
 	}
 
 	lookup_table = node->raw.dict_header.lookup_table1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("LOOKUP1 TABLE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     lookup_table,
+			     sizeof(struct ssdfs_shdict_ltbl1_item) *
+				array_size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	ssdfs_memcpy(value,
 		     0, sizeof(struct ssdfs_shdict_search_key),
 		     &lookup_table[index],
@@ -3758,6 +3838,13 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	SSDFS_DBG("area_offset %u, area_size %u, "
+		  "items_count %u, index %u, "
+		  "item_offset %u, item_size %zu\n",
+		  area_offset, area_size,
+		  items_count, index,
+		  item_offset, item_size);
+
 	page_index = item_offset >> PAGE_SHIFT;
 
 	if (page_index > 0)
@@ -3778,6 +3865,11 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 			   kaddr, item_offset, PAGE_SIZE,
 			   item_size);
 	kunmap_atomic(kaddr);
+
+	SSDFS_DBG("item_offset %u, hash_hi %#x, str_offset %u\n",
+		  item_offset,
+		  le32_to_cpu(desc->hash_hi),
+		  le16_to_cpu(desc->str_offset));
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
@@ -3922,6 +4014,8 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
  * ssdfs_shared_dict_node_find_index_nolock() - find index in the table
  * @node: node object
  * @search: search object
+ * @start_index: index to start the search
+ * @range_len: maximum number of items for search
  * @table_size: number of items in the table
  * @hash64_to_key: pointer on function that convert hash64 to key
  * @get_key: pointer on function that extract descriptor from the table
@@ -3944,6 +4038,7 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 static
 int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_search *search,
+				    u16 start_index, u16 range_len,
 				    int table_size,
 				    convert_hash64_to_hash32_fn hash64_to_key,
 				    get_search_key_fn get_key,
@@ -3963,14 +4058,30 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
+		  "start_index %u, range_len %u, table_size %d, "
 		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
+		  start_index, range_len, table_size,
 		  search->request.start.hash, search->request.end.hash,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+
+	if (table_size < 0) {
+		SSDFS_ERR("invalid table_size %d\n",
+			  table_size);
+		return -EINVAL;
+	}
+
+	if ((start_index + range_len) > table_size) {
+		SSDFS_ERR("invalid request: "
+			  "start_index %u, range_len %u, "
+			  "table_size %d\n",
+			  start_index, range_len, table_size);
+		return -ERANGE;
+	}
 
 	*found_index = U16_MAX;
 	memset(found_key, 0xFF, key_size);
@@ -3981,7 +4092,7 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	lower_index = 0;
+	lower_index = start_index;
 	err = get_key(node, lower_index, &lower_bound);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get key: index %u, err %d\n",
@@ -3991,6 +4102,7 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 
 	if (!is_valid(&lower_bound)) {
 		*found_index = lower_index;
+		SSDFS_DBG("lower_bound is invalid\n");
 		return -ENODATA;
 	}
 
@@ -4000,16 +4112,18 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 		ssdfs_memcpy(found_key, 0, key_size,
 			     &lower_bound, 0, key_size,
 			     key_size);
+		SSDFS_DBG("search key is lesser than lower_bound\n");
 		return -ENODATA;
 	} else if (res == 0) {
 		*found_index = lower_index;
 		ssdfs_memcpy(found_key, 0, key_size,
 			     &lower_bound, 0, key_size,
 			     key_size);
+		SSDFS_DBG("search key is equal to lower_bound\n");
 		return -EEXIST;
 	}
 
-	upper_index = table_size - 1;
+	upper_index = start_index + range_len - 1;
 	err = get_key(node, upper_index, &upper_bound);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get key: index %u, err %d\n",
@@ -4028,20 +4142,28 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 			ssdfs_memcpy(found_key, 0, key_size,
 				     &upper_bound, 0, key_size,
 				     key_size);
+			SSDFS_DBG("search key is equal to upper_bound\n");
 			return -EEXIST;
 		} else if (res > 0) {
 			*found_index = upper_index;
 			ssdfs_memcpy(found_key, 0, key_size,
 				     &upper_bound, 0, key_size,
 				     key_size);
-			return 0;
+			SSDFS_DBG("search key is bigger than upper_bound\n");
+			return -ENODATA;
 		}
 	}
 
-	do {
+	upper_index--;
+
+	while (lower_index < upper_index) {
 		int diff = upper_index - lower_index;
 
-		index = diff / 2;
+		index = lower_index + (diff / 2);
+
+		SSDFS_DBG("lower_index %d, upper_index %d, "
+			  "diff %d, index %d\n",
+			  lower_index, upper_index, diff, index);
 
 		err = get_key(node, index, &lower_bound);
 		if (unlikely(err)) {
@@ -4068,18 +4190,33 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 				ssdfs_memcpy(found_key, 0, key_size,
 					     &lower_bound, 0, key_size,
 					     key_size);
+				SSDFS_DBG("key is equal to lower_bound\n");
 				return -EEXIST;
 			} else {
 				if (!is_valid(&upper_bound)) {
 					*found_index = index;
 					ssdfs_memcpy(found_key, 0, key_size,
-						     &upper_bound, 0, key_size,
+						     &lower_bound, 0, key_size,
 						     key_size);
-					return 0;
+					SSDFS_DBG("invalid upper_bound\n");
+					return -ENODATA;
 				} else {
 					res = key_compare(&key, &upper_bound);
 					if (res < 0) {
-						lower_index = index;
+						if (index > 0 &&
+						    (index + 1) < upper_index) {
+							lower_index = index + 1;
+						} else {
+							*found_index = index;
+							ssdfs_memcpy(found_key,
+								0,
+								key_size,
+								&lower_bound,
+								0, key_size,
+								key_size);
+							SSDFS_DBG("no data\n");
+							return -ENODATA;
+						}
 					} else if (res == 0) {
 						*found_index = index + 1;
 						ssdfs_memcpy(found_key,
@@ -4087,25 +4224,41 @@ int ssdfs_shared_dict_node_find_index_nolock(struct ssdfs_btree_node *node,
 							     &upper_bound,
 							     0, key_size,
 							     key_size);
+						SSDFS_DBG("key found\n");
 						return -EEXIST;
 					} else
 						lower_index = index + 1;
 				}
 			}
 		}
-	} while (lower_index <= upper_index);
 
-	if (lower_index != upper_index) {
-		SSDFS_ERR("lower_index %d != upper_index %d\n",
+		SSDFS_DBG("lower_index %d, upper_index %d\n",
+			  lower_index, upper_index);
+	};
+
+	if (lower_index > upper_index) {
+		SSDFS_ERR("lower_index %d > upper_index %d\n",
 			  lower_index, upper_index);
 		return -ERANGE;
 	}
 
 	*found_index = lower_index;
+
+	err = get_key(node, *found_index, &lower_bound);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get key: index %u, err %d\n",
+			  *found_index, err);
+		return err;
+	}
+
 	ssdfs_memcpy(found_key, 0, key_size,
 		     &lower_bound, 0, key_size,
 		     key_size);
-	return 0;
+
+	SSDFS_DBG("no data: index %u\n",
+		  *found_index);
+
+	return -ENODATA;
 }
 
 /*
@@ -4147,7 +4300,8 @@ int ssdfs_shared_dict_node_find_lookup1_index(struct ssdfs_btree_node *node,
 		  search->node.child);
 
 	down_read(&node->header_lock);
-	err = ssdfs_shared_dict_node_find_index_nolock(node, search, array_size,
+	err = ssdfs_shared_dict_node_find_index_nolock(node, search,
+					    0, array_size, array_size,
 					    ssdfs_convert_hash64_to_hash32_lo,
 					    ssdfs_get_lookup1_table_search_key,
 					    is_ssdfs_hash32_lo_valid,
@@ -4161,6 +4315,9 @@ int ssdfs_shared_dict_node_find_lookup1_index(struct ssdfs_btree_node *node,
 		/* pass through */
 
 	case -ENODATA:
+		/* pass through */
+
+	default:
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(*index >= array_size);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -4186,11 +4343,17 @@ int ssdfs_shared_dict_node_find_lookup1_index(struct ssdfs_btree_node *node,
 			     0, sizeof(struct ssdfs_shdict_ltbl1_item),
 			     sizeof(struct ssdfs_shdict_ltbl1_item));
 		break;
-
-	default:
-		/* do nothing */
-		break;
 	}
+
+	SSDFS_DBG("index %u, hash_lo %#x, start_index %u, range_len %u\n",
+		  *index,
+		  le32_to_cpu(search->result.name->lookup.desc.hash_lo),
+		  le16_to_cpu(search->result.name->lookup.desc.start_index),
+		  le16_to_cpu(search->result.name->lookup.desc.range_len));
+
+	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
+	ssdfs_debug_btree_search_result_name(search);
+	SSDFS_DBG("END DEBUG OUTPUT\n");
 
 	return err;
 }
@@ -4221,6 +4384,9 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 	size_t ldesc_size = sizeof(struct ssdfs_lookup_descriptor);
 	size_t ltbl2_item_len = sizeof(struct ssdfs_shdict_ltbl2_item);
 	int table_size;
+	int array_size;
+	u16 start_index;
+	u16 range_len;
 	u16 found_items;
 	u16 i;
 	int err = 0;
@@ -4239,13 +4405,42 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(*index >= SSDFS_SHDIC_LTBL1_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	down_read(&node->header_lock);
 	table_size = node->lookup_tbl_area.index_capacity;
 	up_read(&node->header_lock);
 
+	array_size = lookup1_tbl_range_capacity[*index];
+	start_index = le16_to_cpu(search->result.name->lookup.desc.start_index);
+	range_len = le16_to_cpu(search->result.name->lookup.desc.range_len);
+
+	if (range_len > array_size) {
+		SSDFS_ERR("invalid request: "
+			  "range_len %u > array_size %d\n",
+			  range_len, array_size);
+		return -ERANGE;
+	}
+
+	if ((start_index + range_len) > table_size) {
+		SSDFS_ERR("invalid request: "
+			  "start_index %u, range_len %u, "
+			  "table_size %d\n",
+			  start_index, range_len, table_size);
+		return -ERANGE;
+	}
+
+	array_size = min_t(int, array_size, table_size - start_index);
+
+	SSDFS_DBG("start_index %u, range_len %u, array_size %d\n",
+		  start_index, range_len, array_size);
+
 	down_read(&node->full_lock);
 
-	err = ssdfs_shared_dict_node_find_index_nolock(node, search, table_size,
+	err = ssdfs_shared_dict_node_find_index_nolock(node, search,
+					    start_index, array_size, table_size,
 					    ssdfs_convert_hash64_to_hash32_lo,
 					    ssdfs_get_lookup2_table_search_key,
 					    is_ssdfs_hash32_lo_valid,
@@ -4354,6 +4549,10 @@ finish_index_search:
 		break;
 	}
 
+	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
+	ssdfs_debug_btree_search_result_name(search);
+	SSDFS_DBG("END DEBUG OUTPUT\n");
+
 	return err;
 }
 
@@ -4377,9 +4576,12 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 					   struct ssdfs_btree_search *search,
 					   u16 *index)
 {
+	struct ssdfs_shdict_ltbl2_item *ltbl2_item;
 	struct ssdfs_shdict_search_key found;
 	struct ssdfs_string_descriptor prefix;
 	int table_size;
+	u16 start_index;
+	u16 range_len;
 	u32 found_items;
 	u16 i;
 	int err = 0;
@@ -4402,24 +4604,24 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 	table_size = node->hash_tbl_area.index_capacity;
 	up_read(&node->header_lock);
 
-	down_read(&node->full_lock);
+	ltbl2_item = &search->result.name->strings_range.desc;
+	start_index = le16_to_cpu(ltbl2_item->hash_index);
+	range_len = ltbl2_item->str_count;
 
-	err = ssdfs_get_hash_table_search_key(node, *index, &found);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to get hash item: "
-			  "node_id %u, index %u, err %d\n",
-			  node->node_id, *index, err);
-		goto finish_index_search;
+	if ((start_index + range_len) > table_size) {
+		SSDFS_ERR("invalid request: "
+			  "start_index %u, range_len %u, "
+			  "table_size %d\n",
+			  start_index, range_len, table_size);
+		return -ERANGE;
 	}
 
-	prefix.index = *index;
-	ssdfs_memcpy(&prefix.desc,
-		     0, sizeof(struct ssdfs_shdict_htbl_item),
-		     &found,
-		     0, sizeof(struct ssdfs_shdict_htbl_item),
-		     sizeof(struct ssdfs_shdict_htbl_item));
+	down_read(&node->full_lock);
 
-	err = ssdfs_shared_dict_node_find_index_nolock(node, search, table_size,
+	err = ssdfs_shared_dict_node_find_index_nolock(node, search,
+					    start_index,
+					    table_size - start_index,
+					    table_size,
 					    ssdfs_convert_hash64_to_hash32_hi,
 					    ssdfs_get_hash_table_search_key,
 					    is_ssdfs_hash32_hi_valid,
@@ -4466,12 +4668,6 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 
 		found_items = min_t(u32, found_items, (u32)table_size);
 
-		ssdfs_memcpy(&search->result.name->prefix,
-			     0, sizeof(struct ssdfs_string_descriptor),
-			     &prefix,
-			     0, sizeof(struct ssdfs_string_descriptor),
-			     sizeof(struct ssdfs_string_descriptor));
-
 		search->result.name->right_name.index = *index;
 		ssdfs_memcpy(&search->result.name->right_name.desc,
 			     0, sizeof(struct ssdfs_shdict_htbl_item),
@@ -4480,6 +4676,19 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 			     sizeof(struct ssdfs_shdict_htbl_item));
 
 		if (*index == 0) {
+			prefix.index = *index;
+			ssdfs_memcpy(&prefix.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
+
+			ssdfs_memcpy(&search->result.name->prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     &prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     sizeof(struct ssdfs_string_descriptor));
+
 			search->result.name->left_name.index = *index;
 			ssdfs_memcpy(&search->result.name->left_name.desc,
 				     0, sizeof(struct ssdfs_shdict_htbl_item),
@@ -4487,8 +4696,6 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 				     0, sizeof(struct ssdfs_shdict_htbl_item),
 				     sizeof(struct ssdfs_shdict_htbl_item));
 		} else {
-			search->result.name->left_name.index = *index - 1;
-
 			err = ssdfs_get_hash_table_search_key(node, *index - 1,
 							      &found);
 			if (unlikely(err)) {
@@ -4498,6 +4705,20 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 				goto finish_index_search;
 			}
 
+			prefix.index = *index - 1;
+			ssdfs_memcpy(&prefix.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
+
+			ssdfs_memcpy(&search->result.name->prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     &prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     sizeof(struct ssdfs_string_descriptor));
+
+			search->result.name->left_name.index = *index - 1;
 			ssdfs_memcpy(&search->result.name->left_name.desc,
 				     0, sizeof(struct ssdfs_shdict_htbl_item),
 				     &found,
@@ -4559,12 +4780,6 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 		BUG_ON(!search->result.name);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_memcpy(&search->result.name->prefix,
-			     0, sizeof(struct ssdfs_string_descriptor),
-			     &prefix,
-			     0, sizeof(struct ssdfs_string_descriptor),
-			     sizeof(struct ssdfs_string_descriptor));
-
 		search->result.name->right_name.index = *index;
 		ssdfs_memcpy(&search->result.name->right_name.desc,
 			     0, sizeof(struct ssdfs_shdict_htbl_item),
@@ -4573,6 +4788,19 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 			     sizeof(struct ssdfs_shdict_htbl_item));
 
 		if (*index == 0) {
+			prefix.index = *index;
+			ssdfs_memcpy(&prefix.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
+
+			ssdfs_memcpy(&search->result.name->prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     &prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     sizeof(struct ssdfs_string_descriptor));
+
 			search->result.name->left_name.index = *index;
 			ssdfs_memcpy(&search->result.name->left_name.desc,
 				     0, sizeof(struct ssdfs_shdict_htbl_item),
@@ -4580,8 +4808,6 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 				     0, sizeof(struct ssdfs_shdict_htbl_item),
 				     sizeof(struct ssdfs_shdict_htbl_item));
 		} else {
-			search->result.name->left_name.index = *index - 1;
-
 			err = ssdfs_get_hash_table_search_key(node, *index - 1,
 							      &found);
 			if (unlikely(err)) {
@@ -4591,6 +4817,20 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 				goto finish_index_search;
 			}
 
+			prefix.index = *index - 1;
+			ssdfs_memcpy(&prefix.desc,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     &found,
+				     0, sizeof(struct ssdfs_shdict_htbl_item),
+				     sizeof(struct ssdfs_shdict_htbl_item));
+
+			ssdfs_memcpy(&search->result.name->prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     &prefix,
+				     0, sizeof(struct ssdfs_string_descriptor),
+				     sizeof(struct ssdfs_string_descriptor));
+
+			search->result.name->left_name.index = *index - 1;
 			ssdfs_memcpy(&search->result.name->left_name.desc,
 				     0, sizeof(struct ssdfs_shdict_htbl_item),
 				     &found,
@@ -4601,6 +4841,10 @@ int ssdfs_shared_dict_node_find_hash_index(struct ssdfs_btree_node *node,
 
 finish_index_search:
 	up_read(&node->full_lock);
+
+	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
+	ssdfs_debug_btree_search_result_name(search);
+	SSDFS_DBG("END DEBUG OUTPUT\n");
 
 	return err;
 }
@@ -4728,7 +4972,6 @@ int ssdfs_extract_name(struct ssdfs_btree_node *node,
 {
 	u32 hash32_lo, hash32_hi;
 	u8 str_len;
-	u64 prefix_hash;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4792,28 +5035,6 @@ int ssdfs_extract_name(struct ssdfs_btree_node *node,
 		break;
 
 	case SSDFS_FULL_NAME:
-		switch (name->prefix.desc.type) {
-		case SSDFS_FULL_NAME:
-			/* expected type */
-			break;
-
-		default:
-			SSDFS_ERR("invalid prefix type %#x\n",
-				  name->prefix.desc.type);
-			return -ERANGE;
-		}
-
-		hash32_lo = le32_to_cpu(name->strings_range.desc.hash_lo);
-		hash32_hi = le32_to_cpu(name->prefix.desc.hash_hi);
-
-		prefix_hash = SSDFS_NAME_HASH(hash32_lo, hash32_hi);
-
-		if (prefix_hash != name->hash) {
-			SSDFS_ERR("prefix_hash %llx != hash %llx\n",
-				  prefix_hash, name->hash);
-			return -ERANGE;
-		}
-
 		str_len = name->right_name.desc.str_len;
 		if (str_len >= SSDFS_MAX_NAME_LEN) {
 			SSDFS_ERR("invalid suffix len %u\n",
@@ -4894,13 +5115,12 @@ int ssdfs_extract_range_by_hash_index(struct ssdfs_btree_node *node,
 
 		if (name->hash < search->request.start.hash ||
 		    name->hash > search->request.end.hash) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid hash: "
+			SSDFS_DBG("hash is out of range: "
 				  "hash %llx, start_hash %llx, end_hash %llx\n",
 				  name->hash,
 				  search->request.start.hash,
 				  search->request.end.hash);
-			goto finish_extract_range;
+			break;
 		}
 	}
 
@@ -4947,7 +5167,7 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 	u64 start_hash;
 	u64 end_hash;
 	u16 index;
-	int err = 0;
+	int err = 0, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
@@ -5013,62 +5233,73 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 		break;
 
 	case -1: /* range1 < range2 */
-		if (have_enough_space) {
-			search->result.state =
-				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
-		} else {
-			search->result.state =
-				SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
-		}
-
 		search->result.err = -ENODATA;
 		search->result.start_index = 0;
 		search->result.count = search->request.count;
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
-		search->result.name_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.name_state =
+			SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		memset(&search->name, 0, sizeof(struct ssdfs_name_string));
 		search->result.name = &search->name;
 		search->result.name_string_size =
-					sizeof(struct ssdfs_name_string);
+				sizeof(struct ssdfs_name_string);
 		search->result.names_in_buffer = 0;
 		search->result.buf_state =
 			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 		search->result.buf = NULL;
 		search->result.buf_size = 0;
 		search->result.items_in_buffer = 0;
-		return -ENODATA;
 
-	case 1: /* range1 > range2 */
 		if (have_enough_space) {
+			res = -ENODATA;
 			search->result.state =
-				SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+			SSDFS_DBG("possible place has been found\n");
 		} else {
 			search->result.state =
 				SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+			return -ENODATA;
 		}
+		break;
 
+	case 1: /* range1 > range2 */
 		search->result.err = -ENODATA;
 		search->result.start_index = items_count;
 		search->result.count = search->request.count;
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
-		search->result.name_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.name_state =
+			SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		memset(&search->name, 0, sizeof(struct ssdfs_name_string));
 		search->result.name = &search->name;
 		search->result.name_string_size =
-					sizeof(struct ssdfs_name_string);
+				sizeof(struct ssdfs_name_string);
 		search->result.names_in_buffer = 0;
 		search->result.buf_state =
 			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 		search->result.buf = NULL;
 		search->result.buf_size = 0;
 		search->result.items_in_buffer = 0;
-		return -ENODATA;
+
+		if (have_enough_space) {
+			res = -ENODATA;
+			search->result.state =
+				SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+			SSDFS_DBG("search is out of range\n");
+		} else {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+			return -ENODATA;
+		}
+		break;
 
 	default:
 		BUG();
 	}
 
-	if (!RANGE_HAS_PARTIAL_INTERSECTION(search->request.start.hash,
+	if (res != -ENODATA &&
+	    !RANGE_HAS_PARTIAL_INTERSECTION(search->request.start.hash,
 					    search->request.end.hash,
 					    start_hash, end_hash)) {
 		SSDFS_ERR("invalid request: "
@@ -5090,6 +5321,7 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 		search->result.search_cno =
 			ssdfs_current_cno(node->tree->fsi->sb);
 		search->result.name_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		memset(&search->name, 0, sizeof(struct ssdfs_name_string));
 		search->result.name = &search->name;
 		search->result.name_string_size =
 					sizeof(struct ssdfs_name_string);
@@ -5110,7 +5342,13 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 
 	err = ssdfs_shared_dict_node_find_lookup1_index(node, search,
 							&index);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		/*
+		 * continue logic
+		 */
+		res = -ENODATA;
+		SSDFS_DBG("possible place has been found\n");
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the lookup1 index: "
 			  "start_hash %llx, end_hash %llx, err %d\n",
 			  search->request.start.hash,
@@ -5129,6 +5367,8 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 		/*
 		 * Continue to find the hash
 		 */
+		res = -ENODATA;
+		SSDFS_DBG("possible place has been found\n");
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the lookup2 index: "
 			  "start_hash %llx, end_hash %llx, err %d\n",
@@ -5136,11 +5376,19 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 			  search->request.end.hash,
 			  err);
 		return err;
+	} else {
+		/*
+		 * Lookup1 index defines range of indexes
+		 * in lookup2 table. If lookup2 index has been found
+		 * then -ENODATA needs to be reset.
+		 */
+		res = 0;
 	}
 
 	err = ssdfs_shared_dict_node_find_hash_index(node, search,
 						     &index);
 	if (err == -ENODATA) {
+		res = -ENODATA;
 		search->result.state =
 			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
 		search->result.err = -ENODATA;
@@ -5153,7 +5401,7 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 		search->result.buf = NULL;
 		search->result.buf_size = 0;
 		search->result.items_in_buffer = 0;
-		return -ENODATA;
+		SSDFS_DBG("possible place has been found\n");
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the hash index: "
 			  "start_hash %llx, end_hash %llx, err %d\n",
@@ -5166,14 +5414,38 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 	err = ssdfs_extract_range_by_hash_index(node, search);
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
-	if (err == -EAGAIN) {
-		SSDFS_DBG("node contains not all requested names: "
-			  "node (start_hash %llx, end_hash %llx), "
-			  "request (start_hash %llx, end_hash %llx)\n",
-			  start_hash, end_hash,
+	if (err == -ENODATA) {
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		SSDFS_DBG("unable to find: "
+			  "request (start_hash %#llx, end_hash %#llx), "
+			  "items_area (start_hash %#llx, end_hash %#llx)\n",
 			  search->request.start.hash,
-			  search->request.end.hash);
+			  search->request.end.hash,
+			  start_hash, end_hash);
 		return err;
+	} else if (err == -EAGAIN) {
+		if (res == -ENODATA) {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+			SSDFS_DBG("unable to find: "
+				  "request (start_hash %#llx, "
+				  "end_hash %#llx), "
+				  "items_area (start_hash %#llx, "
+				  "end_hash %#llx)\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  start_hash, end_hash);
+			return res;
+		} else {
+			SSDFS_DBG("node contains not all requested names: "
+				  "node (start_hash %llx, end_hash %llx), "
+				  "request (start_hash %llx, end_hash %llx)\n",
+				  start_hash, end_hash,
+				  search->request.start.hash,
+				  search->request.end.hash);
+			return err;
+		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract range: "
 			  "node (start_hash %llx, end_hash %llx), "
@@ -5184,6 +5456,20 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 			  search->request.end.hash,
 			  err);
 		return err;
+	} else {
+		if (res == -ENODATA) {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+			SSDFS_DBG("unable to find: "
+				  "request (start_hash %#llx, "
+				  "end_hash %#llx), "
+				  "items_area (start_hash %#llx, "
+				  "end_hash %#llx)\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
+				  start_hash, end_hash);
+			return res;
+		}
 	}
 
 	return 0;
@@ -5600,7 +5886,7 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (str1->desc.str_len == 0 || str2_len) {
+	if (str1->desc.str_len == 0 || str2_len == 0) {
 		SSDFS_ERR("invalid string length: "
 			  "str1 %u, str2 %zu\n",
 			  str1->desc.str_len,
@@ -5730,6 +6016,10 @@ int ssdfs_extract_intersection_with_left_name(struct ssdfs_btree_node *node,
 			  search->result.names_in_buffer);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
+	ssdfs_debug_btree_search_result_name(search);
+	SSDFS_DBG("END DEBUG OUTPUT\n");
 
 	index1 = search->result.name->prefix.index;
 	type1 = search->result.name->prefix.desc.type;
@@ -5951,6 +6241,10 @@ int ssdfs_extract_intersection_with_right_name(struct ssdfs_btree_node *node,
 			  search->result.names_in_buffer);
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("DEBUG SEARCH RESULT NAME:\n");
+	ssdfs_debug_btree_search_result_name(search);
+	SSDFS_DBG("END DEBUG OUTPUT\n");
 
 	index1 = search->result.name->prefix.index;
 	type1 = search->result.name->prefix.desc.type;
@@ -6211,6 +6505,7 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 	u32 items_capacity = 0;
 	u8 min_item_size;
 	u16 max_item_size;
+	u32 diff;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6240,6 +6535,13 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 	min_item_size = node->items_area.min_item_size;
 	max_item_size = node->items_area.max_item_size;
 
+	SSDFS_DBG("area_offset %u, area_size %u, "
+		  "free_space %u, items_count %u, "
+		  "min_item_size %u, max_item_size %u\n",
+		  area_offset, area_size,
+		  free_space, items_count,
+		  min_item_size, max_item_size);
+
 	if ((new_offset + new_size) > node->node_size) {
 		SSDFS_ERR("invalid request: "
 			  "new_offset %u, new_size %u, node_size %u\n",
@@ -6254,7 +6556,7 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (area_size > free_space) {
+	if (area_size < free_space) {
 		SSDFS_ERR("corrupted area: "
 			  "area_size %u, free_space %u\n",
 			  area_size, free_space);
@@ -6262,6 +6564,45 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 	}
 
 	node->items_area.item_size = ssdfs_define_item_size(node);
+
+	if (new_offset < area_offset) {
+		diff = area_offset - new_offset;
+
+		node->items_area.offset = new_offset;
+		node->items_area.area_size += diff;
+
+		err = ssdfs_shift_memory_range_left(node, &node->items_area,
+						    diff, area_size,
+						    diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move area: err %d\n", err);
+			return err;
+		}
+
+		node->items_area.area_size -= diff;
+	} else if (new_offset > area_offset) {
+		diff = new_offset - area_offset;
+
+		if ((area_offset + diff) > node->node_size) {
+			SSDFS_ERR("fail to shift the area: "
+				 "area_offset %u, diff %u, node_size %u\n",
+				 area_offset, diff, node->node_size);
+			return -ERANGE;
+		}
+
+		node->items_area.area_size += diff;
+
+		err = ssdfs_shift_memory_range_right(node, &node->items_area,
+						     0, area_size,
+						     diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move area: err %d\n", err);
+			return err;
+		}
+
+		node->items_area.offset = new_offset;
+		node->items_area.area_size -= diff;
+	}
 
 	if (new_size > area_size) {
 		/* resize case */
@@ -6297,21 +6638,6 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 	SSDFS_DBG("items_count %u, items_capacity %u\n",
 		  items_count, items_capacity);
 
-	if (new_offset < area_offset) {
-		err = ssdfs_shift_memory_range_left(node, &node->items_area,
-						    area_offset, area_size,
-						    area_offset - new_offset);
-	} else if (new_offset > area_offset) {
-		err = ssdfs_shift_memory_range_right(node, &node->items_area,
-						    area_offset, area_size,
-						    new_offset - area_offset);
-	}
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to move area: err %d\n", err);
-		return err;
-	}
-
 	return 0;
 }
 
@@ -6339,6 +6665,12 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 	u32 items_count;
 	u32 items_capacity;
 	u8 item_size;
+	u32 diff;
+#ifdef CONFIG_SSDFS_DEBUG
+	int page_index;
+	struct page *page;
+	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6374,6 +6706,17 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	if (new_offset != (node->items_area.offset +
+					node->items_area.area_size)) {
+		SSDFS_ERR("invalid new area start: "
+			  "new_offset %u, items_area.offset %u, "
+			  "items_area.area_size %u\n",
+			  new_offset,
+			  node->items_area.offset,
+			  node->items_area.area_size);
+		return -ERANGE;
+	}
+
 	if ((area_offset + area_size) > node->node_size) {
 		SSDFS_ERR("corrupted area: "
 			  "area_offset %u, area_size %u, node_size %u\n",
@@ -6402,6 +6745,61 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	if (items_count == 0)
+		node->hash_tbl_area.offset = new_offset;
+	else if (new_offset < area_offset) {
+		diff = area_offset - new_offset;
+
+		if (diff % item_size) {
+			SSDFS_ERR("unaligned new area offset: "
+				  "diff %u, item_size %u\n",
+				  diff, item_size);
+			return -ERANGE;
+		}
+
+		node->hash_tbl_area.offset = new_offset;
+		node->hash_tbl_area.area_size += diff;
+
+		err = ssdfs_shift_memory_range_left2(node, &node->hash_tbl_area,
+						     diff, area_size,
+						     diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move area: err %d\n", err);
+			return err;
+		}
+
+		node->hash_tbl_area.area_size -= diff;
+	} else if (new_offset > area_offset) {
+		diff = new_offset - area_offset;
+
+		if (diff % item_size) {
+			SSDFS_ERR("unaligned new area offset: "
+				  "diff %u, item_size %u\n",
+				  diff, item_size);
+			return -ERANGE;
+		}
+
+		if ((area_offset + diff) > node->node_size) {
+			SSDFS_ERR("fail to shift the area: "
+				 "area_offset %u, diff %u, node_size %u\n",
+				 area_offset, diff, node->node_size);
+			return -ERANGE;
+		}
+
+		node->hash_tbl_area.area_size += diff;
+
+		err = ssdfs_shift_memory_range_right2(node, &node->hash_tbl_area,
+						      0, area_size,
+						      diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move area: err %d\n", err);
+			return err;
+		}
+
+		node->hash_tbl_area.offset = new_offset;
+		node->hash_tbl_area.area_size -= diff;
+	}
+
 	if (new_size > area_size) {
 		/* resize case */
 
@@ -6414,6 +6812,9 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 		}
 
 		node->hash_tbl_area.index_capacity = (u16)items_capacity;
+
+		SSDFS_DBG("index_capacity %u\n",
+			  node->hash_tbl_area.index_capacity);
 	} else if (new_size < area_size) {
 		/* shrink case */
 
@@ -6440,25 +6841,10 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 		}
 
 		node->hash_tbl_area.index_capacity = (u16)items_capacity;
-	}
 
-	if (new_offset < area_offset) {
-		err = ssdfs_shift_range_left2(node, &node->hash_tbl_area,
-					item_size, 0, items_capacity,
-					(area_offset - new_offset) / item_size);
-	} else if (new_offset > area_offset) {
-		err = ssdfs_shift_range_right2(node, &node->hash_tbl_area,
-					item_size, 0, items_capacity,
-					(new_offset - area_offset) / item_size);
+		SSDFS_DBG("index_capacity %u\n",
+			  node->hash_tbl_area.index_capacity);
 	}
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to move area: err %d\n", err);
-		return err;
-	}
-
-	node->hash_tbl_area.offset = node->items_area.offset +
-					node->items_area.area_size;
 
 	area_offset = node->hash_tbl_area.offset;
 	area_size = node->hash_tbl_area.area_size;
@@ -6469,6 +6855,23 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 			  area_offset, area_size, node->node_size);
 		return -ERANGE;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	page_index = area_offset >> PAGE_SHIFT;
+	page = node->content.pvec.pages[page_index];
+
+	SSDFS_DBG("area_offset %u, page_index %d\n",
+		  area_offset, page_index);
+
+	kaddr = kmap(page);
+	SSDFS_DBG("PAGE DUMP: index %d\n",
+		  page_index);
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
+	kunmap(page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6497,6 +6900,12 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 	u32 items_count;
 	u32 items_capacity;
 	u8 item_size;
+	u32 diff;
+#ifdef CONFIG_SSDFS_DEBUG
+	int page_index;
+	struct page *page;
+	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6525,10 +6934,26 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 	items_capacity = node->lookup_tbl_area.index_capacity;
 	item_size = node->lookup_tbl_area.index_size;
 
+	SSDFS_DBG("BEFORE: area_offset %u, area_size %u, "
+		  "items_count %u, items_capacity %u\n",
+		  area_offset, area_size,
+		  items_count, items_capacity);
+
 	if ((new_offset + new_size) > node->node_size) {
 		SSDFS_ERR("invalid request: "
 			  "new_offset %u, new_size %u, node_size %u\n",
 			  new_offset, new_size, node->node_size);
+		return -ERANGE;
+	}
+
+	if (new_offset != (node->hash_tbl_area.offset +
+					node->hash_tbl_area.area_size)) {
+		SSDFS_ERR("invalid new area start: "
+			  "new_offset %u, hash_tbl_area.offset %u, "
+			  "hash_tbl_area.area_size %u\n",
+			  new_offset,
+			  node->hash_tbl_area.offset,
+			  node->hash_tbl_area.area_size);
 		return -ERANGE;
 	}
 
@@ -6560,6 +6985,63 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+	if (items_count == 0)
+		node->lookup_tbl_area.offset = new_offset;
+	else if (new_offset < area_offset) {
+		diff = area_offset - new_offset;
+
+		if (diff % item_size) {
+			SSDFS_ERR("unaligned new area offset: "
+				  "diff %u, item_size %u\n",
+				  diff, item_size);
+			return -ERANGE;
+		}
+
+		node->lookup_tbl_area.offset = new_offset;
+		node->lookup_tbl_area.area_size += diff;
+
+		err = ssdfs_shift_memory_range_left2(node,
+						     &node->lookup_tbl_area,
+						     diff, area_size,
+						     diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move area: err %d\n", err);
+			return err;
+		}
+
+		node->lookup_tbl_area.area_size -= diff;
+	} else if (new_offset > area_offset) {
+		diff = new_offset - area_offset;
+
+		if (diff % item_size) {
+			SSDFS_ERR("unaligned new area offset: "
+				  "diff %u, item_size %u\n",
+				  diff, item_size);
+			return -ERANGE;
+		}
+
+		if ((area_offset + diff) > node->node_size) {
+			SSDFS_ERR("fail to shift the area: "
+				 "area_offset %u, diff %u, node_size %u\n",
+				 area_offset, diff, node->node_size);
+			return -ERANGE;
+		}
+
+		node->lookup_tbl_area.area_size += diff;
+
+		err = ssdfs_shift_memory_range_right2(node,
+						      &node->lookup_tbl_area,
+						      0, area_size,
+						      diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move area: err %d\n", err);
+			return err;
+		}
+
+		node->lookup_tbl_area.offset = new_offset;
+		node->lookup_tbl_area.area_size -= diff;
+	}
+
 	if (new_size > area_size) {
 		/* resize case */
 
@@ -6600,26 +7082,14 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 		node->lookup_tbl_area.index_capacity = (u16)items_capacity;
 	}
 
-	if (new_offset < area_offset) {
-		err = ssdfs_shift_range_left2(node, &node->lookup_tbl_area,
-					item_size, 0, items_capacity,
-					(area_offset - new_offset) / item_size);
-	} else if (new_offset > area_offset) {
-		err = ssdfs_shift_range_right2(node, &node->lookup_tbl_area,
-					item_size, 0, items_capacity,
-					(new_offset - area_offset) / item_size);
-	}
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to move area: err %d\n", err);
-		return err;
-	}
-
-	node->lookup_tbl_area.offset = node->hash_tbl_area.offset +
-					node->hash_tbl_area.area_size;
-
 	area_offset = node->lookup_tbl_area.offset;
 	area_size = node->lookup_tbl_area.area_size;
+
+	SSDFS_DBG("AFTER: area_offset %u, area_size %u, "
+		  "items_count %u, items_capacity %u\n",
+		  area_offset, area_size,
+		  node->lookup_tbl_area.index_count,
+		  node->lookup_tbl_area.index_capacity);
 
 	if ((area_offset + area_size) > node->node_size) {
 		SSDFS_ERR("corrupted area: "
@@ -6627,6 +7097,23 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 			  area_offset, area_size, node->node_size);
 		return -ERANGE;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	page_index = area_offset >> PAGE_SHIFT;
+	page = node->content.pvec.pages[page_index];
+
+	SSDFS_DBG("area_offset %u, page_index %d\n",
+		  area_offset, page_index);
+
+	kaddr = kmap(page);
+	SSDFS_DBG("PAGE DUMP: index %d\n",
+		  page_index);
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
+	kunmap(page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6778,6 +7265,415 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 	return 0;
 }
 
+static
+int __ssdfs_insert_full_string(struct ssdfs_btree_node *node,
+				struct ssdfs_btree_search *search)
+{
+	struct ssdfs_string_descriptor *left_name, *right_name;
+	const char *name;
+	u32 area_size;
+	u32 free_space;
+	u32 used_space;
+	size_t name_len;
+	u32 left_hash_hi;
+	u32 right_hash_hi;
+	u32 search_hash_hi;
+	u16 str_offset;
+	u32 range_len;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!search->result.name) {
+		SSDFS_ERR("empty buffer pointer\n");
+		return -ERANGE;
+	}
+
+	area_size = node->items_area.area_size;
+	free_space = node->items_area.free_space;
+
+	if (free_space > area_size) {
+		SSDFS_ERR("corrupted area: "
+			  "area_size %u, free_space %u\n",
+			  area_size, free_space);
+		return -ERANGE;
+	}
+
+	used_space = area_size - free_space;
+
+	name_len = search->request.start.name_len;
+
+	if (name_len > free_space) {
+		SSDFS_ERR("name_len %zu > free_space %u\n",
+			  name_len, free_space);
+		return -ENOSPC;
+	}
+
+	name = search->request.start.name;
+
+	if (!name) {
+		SSDFS_ERR("invalid name pointer\n");
+		return -ERANGE;
+	}
+
+	search_hash_hi = SSDFS_HASH32_HI(search->request.start.hash);
+	left_name = &search->result.name->left_name;
+	left_hash_hi = le32_to_cpu(left_name->desc.hash_hi);
+	right_name = &search->result.name->right_name;
+	right_hash_hi = le32_to_cpu(right_name->desc.hash_hi);
+
+	if (search_hash_hi >= U32_MAX || left_hash_hi >= U32_MAX ||
+	    right_hash_hi >= U32_MAX) {
+		SSDFS_ERR("invalid hash: "
+			  "search_hash_hi %#x, left_hash_hi %#x, "
+			  "right_hash_hi %#x\n",
+			  search_hash_hi, left_hash_hi,
+			  right_hash_hi);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("search (start.hash %llx, hash_hi %#x), "
+		  "left_hash_hi %#x, right_hash_hi %#x\n",
+		  search->request.start.hash,
+		  search_hash_hi,
+		  left_hash_hi,
+		  right_hash_hi);
+
+	if (search_hash_hi < left_hash_hi) {
+		str_offset = le16_to_cpu(left_name->desc.str_offset);
+		range_len = area_size - free_space - str_offset;
+
+		err = ssdfs_shift_memory_range_right(node,
+						     &node->items_area,
+						     str_offset,
+						     range_len,
+						     name_len);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to shift the range: "
+				  "start %u, range %u, "
+				  "shift %zu, err %d\n",
+				  str_offset, range_len, name_len, err);
+			return err;
+		}
+	} else if (search_hash_hi <= right_hash_hi) {
+		str_offset = le16_to_cpu(right_name->desc.str_offset);
+		range_len = area_size - free_space - str_offset;
+
+		err = ssdfs_shift_memory_range_right(node,
+						     &node->items_area,
+						     str_offset,
+						     range_len,
+						     name_len);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to shift the range: "
+				  "start %u, range %u, "
+				  "shift %zu, err %d\n",
+				  str_offset, range_len, name_len, err);
+			return err;
+		}
+	} else {
+		str_offset = le16_to_cpu(right_name->desc.str_offset);
+		str_offset += right_name->desc.str_len;
+
+		if (str_offset < used_space) {
+			range_len = area_size - free_space - str_offset;
+
+			err = ssdfs_shift_memory_range_right(node,
+							     &node->items_area,
+							     str_offset,
+							     range_len,
+							     name_len);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to shift the range: "
+					  "start %u, range %u, "
+					  "shift %zu, err %d\n",
+					  str_offset, range_len,
+					  name_len, err);
+				return err;
+			}
+		}
+	}
+
+	err = ssdfs_copy_string_from_buffer(node,
+					    name, name_len,
+					    str_offset);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy string: "
+			  "node_id %u, str_offset %u, "
+			  "name_len %zu, err %d\n",
+			  node->node_id, str_offset,
+			  name_len, err);
+		return err;
+	}
+
+	if (search->request.start.hash < node->items_area.start_hash)
+		node->items_area.start_hash = search->request.start.hash;
+
+	if (node->items_area.end_hash < search->request.start.hash)
+		node->items_area.end_hash = search->request.start.hash;
+
+	return 0;
+}
+
+static
+int ssdfs_add_string_in_empty_node(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_search *search)
+{
+	const char *name;
+	u32 area_size;
+	u32 free_space;
+	u16 items_count;
+	u16 str_offset;
+	size_t name_len;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	area_size = node->items_area.area_size;
+	free_space = node->items_area.free_space;
+	items_count = node->items_area.items_count;
+
+	if (items_count != 0) {
+		SSDFS_ERR("node is not empty\n");
+		return -EINVAL;
+	}
+
+	if (free_space != area_size) {
+		SSDFS_ERR("corrupted area: "
+			  "free_space %u != area_size %u\n",
+			  free_space, area_size);
+		return -ERANGE;
+	}
+
+	name_len = search->request.start.name_len;
+
+	if (name_len > free_space) {
+		SSDFS_ERR("name_len %zu > free_space %u\n",
+			  name_len, free_space);
+		return -ENOSPC;
+	}
+
+	name = search->request.start.name;
+
+	if (!name) {
+		SSDFS_ERR("invalid name pointer\n");
+		return -ERANGE;
+	}
+
+	str_offset = 0;
+
+	err = ssdfs_copy_string_from_buffer(node,
+					    name, name_len,
+					    str_offset);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy string: "
+			  "node_id %u, str_offset %u, "
+			  "name_len %zu, err %d\n",
+			  node->node_id, str_offset,
+			  name_len, err);
+		return err;
+	}
+
+	node->items_area.start_hash = search->request.start.hash;
+	node->items_area.end_hash = search->request.start.hash;
+
+	return 0;
+}
+
+static
+int ssdfs_add_string_after_last_name(struct ssdfs_btree_node *node,
+				     struct ssdfs_btree_search *search)
+{
+	struct ssdfs_string_descriptor *left_name;
+	const char *name;
+	size_t name_len;
+	u32 free_space;
+	u32 hash32_hi1, hash32_hi2;
+	u16 str_offset;
+	u16 items_count;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!search->result.name) {
+		SSDFS_ERR("empty buffer pointer\n");
+		return -ERANGE;
+	}
+
+	left_name = &search->result.name->left_name;
+	hash32_hi1 = SSDFS_HASH32_HI(search->request.start.hash);
+	hash32_hi2 = le32_to_cpu(left_name->desc.hash_hi);
+	items_count = node->items_area.items_count;
+	free_space = node->items_area.free_space;
+
+	if ((left_name->index + 1) != items_count) {
+		SSDFS_ERR("invalid request: index %u, items_count %u\n",
+			  left_name->index, items_count);
+		return -ERANGE;
+	}
+
+	if (hash32_hi1 <= hash32_hi2) {
+		SSDFS_ERR("invalid position: "
+			  "name->hash %#x, "
+			  "desc.hash %#x\n",
+			  hash32_hi1, hash32_hi2);
+		return -ERANGE;
+	}
+
+	name_len = search->request.start.name_len;
+
+	if (name_len > free_space) {
+		SSDFS_ERR("name_len %zu > free_space %u\n",
+			  name_len, free_space);
+		return -ENOSPC;
+	}
+
+	name = search->request.start.name;
+
+	if (!name) {
+		SSDFS_ERR("invalid name pointer\n");
+		return -ERANGE;
+	}
+
+	str_offset = le16_to_cpu(left_name->desc.str_offset);
+	str_offset += left_name->desc.str_len;
+
+	err = ssdfs_copy_string_from_buffer(node, name, name_len, str_offset);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy string: "
+			  "node_id %u, str_offset %u, "
+			  "name_len %zu, err %d\n",
+			  node->node_id, str_offset,
+			  name_len, err);
+		return err;
+	}
+
+	if (search->request.start.hash < node->items_area.start_hash)
+		node->items_area.start_hash = search->request.start.hash;
+
+	if (node->items_area.end_hash < search->request.start.hash)
+		node->items_area.end_hash = search->request.start.hash;
+
+	return 0;
+}
+
+static
+int ssdfs_add_string_before_first_name(struct ssdfs_btree_node *node,
+					struct ssdfs_btree_search *search)
+{
+	struct ssdfs_string_descriptor *left_name;
+	const char *name;
+	size_t name_len;
+	u32 area_size;
+	u32 free_space;
+	u32 hash32_hi1, hash32_hi2;
+	u16 str_offset;
+	u32 range_len;
+	u16 items_count;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!search->result.name) {
+		SSDFS_ERR("empty buffer pointer\n");
+		return -ERANGE;
+	}
+
+	left_name = &search->result.name->left_name;
+	hash32_hi1 = SSDFS_HASH32_HI(search->request.start.hash);
+	hash32_hi2 = le32_to_cpu(left_name->desc.hash_hi);
+	area_size = node->items_area.area_size;
+	items_count = node->items_area.items_count;
+	free_space = node->items_area.free_space;
+
+	if (left_name->index != 0) {
+		SSDFS_ERR("invalid request: index %u\n",
+			  left_name->index);
+		return -ERANGE;
+	}
+
+	if (hash32_hi1 >= hash32_hi2) {
+		SSDFS_ERR("invalid position: "
+			  "name->hash %#x, "
+			  "desc.hash %#x\n",
+			  hash32_hi1,
+			  hash32_hi2);
+		return -ERANGE;
+	}
+
+	name_len = search->request.start.name_len;
+
+	if (name_len > free_space) {
+		SSDFS_ERR("name_len %zu > free_space %u\n",
+			  name_len, free_space);
+		return -ENOSPC;
+	}
+
+	name = search->request.start.name;
+
+	if (!name) {
+		SSDFS_ERR("invalid name pointer\n");
+		return -ERANGE;
+	}
+
+	str_offset = 0;
+	range_len = area_size - free_space;
+
+	err = ssdfs_shift_memory_range_right(node, &node->items_area,
+					     str_offset, range_len,
+					     name_len);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to shift the range: "
+			  "start %u, range %u, "
+			  "shift %zu, err %d\n",
+			  str_offset, range_len,
+			  name_len, err);
+		return err;
+	}
+
+	err = ssdfs_copy_string_from_buffer(node, name, name_len, str_offset);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy string: "
+			  "node_id %u, str_offset %u, "
+			  "name_len %zu, err %d\n",
+			  node->node_id, str_offset,
+			  name_len, err);
+		return err;
+	}
+
+	if (search->request.start.hash < node->items_area.start_hash)
+		node->items_area.start_hash = search->request.start.hash;
+
+	if (node->items_area.end_hash < search->request.start.hash)
+		node->items_area.end_hash = search->request.start.hash;
+
+	return 0;
+}
+
 /*
  * ssdfs_insert_full_string() - insert the full string into the node
  * @node: pointer on node object
@@ -6796,16 +7692,12 @@ static
 int ssdfs_insert_full_string(struct ssdfs_btree_node *node,
 			     struct ssdfs_btree_search *search)
 {
-	struct ssdfs_string_descriptor *left_name, *right_name;
-	const char *name;
+	struct ssdfs_string_descriptor *left_name;
 	u32 area_size;
 	u32 free_space;
 	u16 items_count;
 	u32 items_capacity;
 	size_t name_len;
-	u16 str_offset;
-	u32 hash32_hi1, hash32_hi2;
-	u32 range_len;
 	u8 min_item_size;
 	int err;
 
@@ -6871,68 +7763,14 @@ int ssdfs_insert_full_string(struct ssdfs_btree_node *node,
 		return -ENOSPC;
 	}
 
-	name = search->request.start.name;
-
-	if (!name) {
-		SSDFS_ERR("invalid name pointer\n");
-		return -ERANGE;
-	}
-
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-		if (!search->result.name) {
-			SSDFS_ERR("empty buffer pointer\n");
-			return -ERANGE;
-		}
-
-		hash32_hi1 = SSDFS_HASH32_HI(search->request.start.hash);
-
-		left_name = &search->result.name->left_name;
-		hash32_hi2 = le32_to_cpu(left_name->desc.hash_hi);
-
-		if (hash32_hi1 <= hash32_hi2) {
-			SSDFS_ERR("invalid position: "
-				  "name->hash %#x, "
-				  "desc.hash %#x\n",
-				  hash32_hi1,
-				  hash32_hi2);
-			return -ERANGE;
-		}
-
-		right_name = &search->result.name->right_name;
-		hash32_hi2 = le32_to_cpu(right_name->desc.hash_hi);
-
-		if (hash32_hi1 >= hash32_hi2) {
-			SSDFS_ERR("invalid position: "
-				  "name->hash %#x, "
-				  "desc.hash %#x\n",
-				  hash32_hi1,
-				  hash32_hi2);
-			return -ERANGE;
-		}
-
-		str_offset = le16_to_cpu(right_name->desc.str_offset);
-		range_len = area_size - free_space - str_offset;
-
-		err = ssdfs_shift_memory_range_right(node, &node->items_area,
-						     str_offset, range_len,
-						     name_len);
+		err = __ssdfs_insert_full_string(node, search);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to shift the range: "
-				  "start %u, range %u, "
-				  "shift %zu, err %d\n",
-				  str_offset, range_len, name_len, err);
-			return err;
-		}
-
-		err = ssdfs_copy_string_from_buffer(node,
-						    name, name_len,
-						    str_offset);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy string: "
-				  "node_id %u, str_offset %u, "
+			SSDFS_ERR("fail to insert string: "
+				  "node_id %u, "
 				  "name_len %zu, err %d\n",
-				  node->node_id, str_offset,
+				  node->node_id,
 				  name_len, err);
 			return err;
 		}
@@ -6940,115 +7778,32 @@ int ssdfs_insert_full_string(struct ssdfs_btree_node *node,
 
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 		if (items_count == 0) {
-			if (free_space != area_size) {
-				SSDFS_ERR("corrupted area: "
-					  "free_space %u != area_size %u\n",
-					  free_space, area_size);
-				return -ERANGE;
-			}
-
-			str_offset = 0;
-
-			err = ssdfs_copy_string_from_buffer(node,
-							    name, name_len,
-							    str_offset);
+			err = ssdfs_add_string_in_empty_node(node, search);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to copy string: "
-					  "node_id %u, str_offset %u, "
-					  "name_len %zu, err %d\n",
-					  node->node_id, str_offset,
-					  name_len, err);
+				SSDFS_ERR("fail to add string: "
+					  "node_id %u, err %d\n",
+					  node->node_id, err);
 				return err;
 			}
-
-			node->items_area.start_hash =
-					search->request.start.hash;
-			node->items_area.end_hash =
-					search->request.start.hash;
 		} else {
-			if (!search->result.name) {
-				SSDFS_ERR("empty buffer pointer\n");
-				return -ERANGE;
-			}
-
 			left_name = &search->result.name->left_name;
-			hash32_hi1 =
-				SSDFS_HASH32_HI(search->request.start.hash);
-			hash32_hi2 = le32_to_cpu(left_name->desc.hash_hi);
 
 			if ((left_name->index + 1) == items_count) {
-				if (hash32_hi1 <= hash32_hi2) {
-					SSDFS_ERR("invalid position: "
-						  "name->hash %#x, "
-						  "desc.hash %#x\n",
-						  hash32_hi1,
-						  hash32_hi2);
-					return -ERANGE;
-				}
-
-				str_offset =
-				    le16_to_cpu(left_name->desc.str_offset);
-				str_offset += left_name->desc.str_len;
-
-				err = ssdfs_copy_string_from_buffer(node,
-								    name,
-								    name_len,
-								    str_offset);
+				err = ssdfs_add_string_after_last_name(node,
+									search);
 				if (unlikely(err)) {
-					SSDFS_ERR("fail to copy string: "
-						  "node_id %u, str_offset %u, "
-						  "name_len %zu, err %d\n",
-						  node->node_id, str_offset,
-						  name_len, err);
+					SSDFS_ERR("fail to add string: "
+						  "err %d\n", err);
 					return err;
 				}
-
-				node->items_area.end_hash =
-						search->request.start.hash;
 			} else if (left_name->index == 0) {
-				if (hash32_hi1 >= hash32_hi2) {
-					SSDFS_ERR("invalid position: "
-						  "name->hash %#x, "
-						  "desc.hash %#x\n",
-						  hash32_hi1,
-						  hash32_hi2);
-					return -ERANGE;
-				}
-
-				str_offset = 0;
-				range_len = area_size - free_space;
-
-				err = ssdfs_shift_memory_range_right(node,
-							&node->items_area,
-							str_offset,
-							range_len,
-							name_len);
+				err = ssdfs_add_string_before_first_name(node,
+									search);
 				if (unlikely(err)) {
-					SSDFS_ERR("fail to shift the range: "
-						  "start %u, range %u, "
-						  "shift %zu, err %d\n",
-						  str_offset,
-						  range_len,
-						  name_len,
-						  err);
+					SSDFS_ERR("fail to add string: "
+						  "err %d\n", err);
 					return err;
 				}
-
-				err = ssdfs_copy_string_from_buffer(node,
-								    name,
-								    name_len,
-								    str_offset);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to copy string: "
-						  "node_id %u, str_offset %u, "
-						  "name_len %zu, err %d\n",
-						  node->node_id, str_offset,
-						  name_len, err);
-					return err;
-				}
-
-				node->items_area.start_hash =
-						search->request.start.hash;
 			} else {
 				SSDFS_ERR("invalid index: "
 					  "left_name->index %u\n",
@@ -7084,6 +7839,7 @@ int ssdfs_insert_full_string(struct ssdfs_btree_node *node,
 /*
  * __ssdfs_hash_table_insert_descriptor() - insert the hash descriptor
  * @node: node object
+ * @search: search object
  * @index: index of the item in the hash table
  * @desc: pointer on the hash descriptor [in]
  *
@@ -7099,6 +7855,7 @@ int ssdfs_insert_full_string(struct ssdfs_btree_node *node,
  */
 static
 int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
+					 struct ssdfs_btree_search *search,
 					 u16 index,
 					 struct ssdfs_shdict_htbl_item *desc)
 {
@@ -7112,7 +7869,7 @@ int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node || !desc);
+	BUG_ON(!node || !desc || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -7130,6 +7887,51 @@ int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 			  atomic_read(&node->hash_tbl_area.state));
 		return -ERANGE;
 	}
+
+	items_count = node->lookup_tbl_area.index_count;
+
+	for (i = 0; i < items_count; i++) {
+		struct ssdfs_shdict_ltbl2_item cur_desc;
+		u16 cur_index;
+
+		err = ssdfs_get_lookup2_descriptor(node,
+						   &node->lookup_tbl_area,
+						   i, &cur_desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get lookup2 descriptor: "
+				  "index %u, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		cur_index = le16_to_cpu(cur_desc.hash_index);
+
+		SSDFS_DBG("index %u, cur_index %u\n",
+			  index, cur_index);
+
+		if (cur_index >= index) {
+			le16_add_cpu(&cur_desc.hash_index, 1);
+			SSDFS_DBG("correct lookup2_table: "
+				  "lookup2_index %d, "
+				  "hash_index (old %u, new %u), "
+				  "hash_lo %#x\n",
+				  i, cur_index,
+				  le16_to_cpu(cur_desc.hash_index),
+				  le32_to_cpu(cur_desc.hash_lo));
+
+			err = ssdfs_set_lookup2_descriptor(node,
+						   &node->lookup_tbl_area,
+						   i, &cur_desc);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to set lookup2 descriptor: "
+					  "index %u, err %d\n",
+					  i, err);
+				return err;
+			}
+		}
+	}
+
+	ssdfs_mark_lookup2_table_dirty(node);
 
 	items_count = node->hash_tbl_area.index_count;
 	items_capacity = node->hash_tbl_area.index_capacity;
@@ -7187,6 +7989,12 @@ int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	if (index == 0)
+		node->hash_tbl_area.start_hash = search->request.start.hash;
+
+	if (index == items_count)
+		node->hash_tbl_area.end_hash = search->request.start.hash;
+
 	node->hash_tbl_area.index_count++;
 	items_count = node->hash_tbl_area.index_count;
 
@@ -7231,6 +8039,894 @@ int __ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 
 	ssdfs_mark_hash_table_dirty(node);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->result.name->placement.hash_index = index;
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_before_left_name() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor before left name.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_before_left_name(struct ssdfs_btree_node *node,
+					     struct ssdfs_btree_search *search,
+					     u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *left_name;
+	struct ssdfs_shdict_htbl_item desc;
+	u32 str_offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	left_name = &search->result.name->left_name;
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+
+	str_offset = le16_to_cpu(left_name->desc.str_offset);
+	if ((str_offset + str_len) > node->items_area.area_size) {
+		SSDFS_ERR("invalid offset: "
+			  "str_offset %u, "
+			  "area_size %u\n",
+			  str_offset,
+			  node->items_area.area_size);
+		return -ERANGE;
+	}
+
+	desc.str_offset = cpu_to_le16((u16)str_offset);
+
+	desc.str_len = str_len;
+	desc.type = str_type;
+
+	err = __ssdfs_hash_table_insert_descriptor(node, search,
+						   left_name->index,
+						   &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert hash: "
+			  "node_id %u, index %u, "
+			  "err %d\n",
+			  node->node_id, left_name->index, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_before_right_name() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor before right name.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_before_right_name(struct ssdfs_btree_node *node,
+					      struct ssdfs_btree_search *search,
+					      u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *left_name, *right_name;
+	struct ssdfs_shdict_htbl_item desc;
+	u32 str_offset;
+	u16 index;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	left_name = &search->result.name->left_name;
+	right_name = &search->result.name->right_name;
+
+	switch (left_name->desc.type) {
+	case SSDFS_NAME_PREFIX:
+		switch (right_name->desc.type) {
+		case SSDFS_NAME_PREFIX:
+		case SSDFS_NAME_SUFFIX:
+		case SSDFS_FULL_NAME:
+			if (str_type != SSDFS_NAME_SUFFIX) {
+				SSDFS_ERR("invalid type: str_type %#x\n",
+					  str_type);
+				return -ERANGE;
+			}
+			break;
+
+		default:
+			SSDFS_ERR("invalid type: right_name %#x\n",
+				  right_name->desc.type);
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_NAME_SUFFIX:
+		switch (right_name->desc.type) {
+		case SSDFS_NAME_PREFIX:
+		case SSDFS_NAME_SUFFIX:
+		case SSDFS_FULL_NAME:
+			/* any str_type is valid */
+			break;
+
+		default:
+			SSDFS_ERR("invalid type: right_name %#x\n",
+				  right_name->desc.type);
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_FULL_NAME:
+		switch (right_name->desc.type) {
+		case SSDFS_NAME_PREFIX:
+		case SSDFS_FULL_NAME:
+			if (str_type == SSDFS_NAME_SUFFIX) {
+				SSDFS_ERR("invalid type: str_type %#x\n",
+					  str_type);
+				return -ERANGE;
+			}
+			break;
+
+		default:
+			SSDFS_ERR("invalid type: right_name %#x\n",
+				  right_name->desc.type);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("invalid type: left_name %#x\n",
+			  left_name->desc.type);
+		return -ERANGE;
+	}
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+
+	str_offset = le16_to_cpu(right_name->desc.str_offset);
+	if ((str_offset + str_len) > node->items_area.area_size) {
+		SSDFS_ERR("invalid offset: str_offset %u, area_size %u\n",
+			  str_offset, node->items_area.area_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("right_name: (str_offset %u, str_len %u), "
+		  "str_offset %u\n",
+		  le16_to_cpu(right_name->desc.str_offset),
+		  right_name->desc.str_len,
+		  str_offset);
+
+	desc.str_offset = cpu_to_le16((u16)str_offset);
+
+	desc.str_len = str_len;
+	desc.type = str_type;
+
+	index = right_name->index;
+	err = __ssdfs_hash_table_insert_descriptor(node, search,
+						   right_name->index,
+						   &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert hash: "
+			  "node_id %u, index %u, err %d\n",
+			  node->node_id, index, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_after_right_name() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor after right name.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_after_right_name(struct ssdfs_btree_node *node,
+					     struct ssdfs_btree_search *search,
+					     u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *right_name;
+	struct ssdfs_shdict_htbl_item desc;
+	u32 str_offset;
+	u16 index;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	right_name = &search->result.name->right_name;
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+
+	str_offset = le16_to_cpu(right_name->desc.str_offset);
+	str_offset += right_name->desc.str_len;
+	if ((str_offset + str_len) > node->items_area.area_size) {
+		SSDFS_ERR("invalid offset: str_offset %u, area_size %u\n",
+			  str_offset, node->items_area.area_size);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(str_offset >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	desc.str_offset = cpu_to_le16((u16)str_offset);
+
+	desc.str_len = str_len;
+	desc.type = str_type;
+
+	index = right_name->index + 1;
+	err = __ssdfs_hash_table_insert_descriptor(node, search, index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert hash: "
+			  "node_id %u, index %u, "
+			  "err %d\n",
+			  node->node_id, index, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_into_found_position() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor into found position.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static
+int ssdfs_hash_table_insert_into_found_position(struct ssdfs_btree_node *node,
+					    struct ssdfs_btree_search *search,
+					    u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *left_name, *right_name;
+	u32 left_name_hash, right_name_hash, request_hash;
+	u16 index1, index2;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	left_name = &search->result.name->left_name;
+	right_name = &search->result.name->right_name;
+	request_hash = SSDFS_HASH32_HI(search->request.start.hash);
+	left_name_hash = le32_to_cpu(left_name->desc.hash_hi);
+	right_name_hash = le32_to_cpu(right_name->desc.hash_hi);
+
+	if (left_name_hash > right_name_hash) {
+		SSDFS_ERR("invalid hash: left_name %#x, right_name %#x\n",
+			  left_name_hash, right_name_hash);
+		return -ERANGE;
+	}
+
+	if (left_name_hash == right_name_hash) {
+		index1 = left_name->index;
+		index2 = right_name->index;
+	} else {
+		index1 = left_name->index + 1;
+		index2 = right_name->index;
+	}
+
+	if (index1 != index2) {
+		SSDFS_ERR("invalid index: left_name %u, right_name %u\n",
+			  left_name->index, right_name->index);
+		return -ERANGE;
+	}
+
+	if (left_name_hash == request_hash) {
+		SSDFS_ERR("invalid hash: "
+			  "request %#x == left_name %#x\n",
+			  request_hash, left_name_hash);
+		return -EEXIST;
+	} else if (request_hash < left_name_hash) {
+		err = ssdfs_hash_table_insert_before_left_name(node,
+					    search, str_len, str_type);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to insert descriptor: "
+				  "err %d\n", err);
+			return err;
+		}
+	} else if (left_name_hash < request_hash &&
+		   request_hash < right_name_hash) {
+		err = ssdfs_hash_table_insert_before_right_name(node,
+					    search, str_len, str_type);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to insert descriptor: "
+				  "err %d\n", err);
+			return err;
+		}
+	} else if (request_hash == right_name_hash) {
+		SSDFS_ERR("invalid hash: "
+			  "request %#x == right_name %#x\n",
+			  request_hash, right_name_hash);
+		return -EEXIST;
+	} else {
+		err = ssdfs_hash_table_insert_after_right_name(node,
+					    search, str_len, str_type);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to insert descriptor: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_into_empty_table() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor into empty table.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_into_empty_table(struct ssdfs_btree_node *node,
+					     struct ssdfs_btree_search *search,
+					     u8 str_len, u8 str_type)
+{
+	struct ssdfs_shdict_htbl_item desc;
+	u16 items_count;
+	u16 index;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	items_count = node->hash_tbl_area.index_count;
+
+	if (items_count > 0) {
+		SSDFS_ERR("hash table is not empty\n");
+		return -ERANGE;
+	}
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+	desc.str_offset = cpu_to_le16(0);
+
+	if (str_len != search->request.start.name_len) {
+		SSDFS_ERR("invalid string length: "
+			  "str_len %u, name_len %zu\n",
+			  str_len, search->request.start.name_len);
+		return -ERANGE;
+	}
+
+	desc.str_len = str_len;
+
+	if (str_type != SSDFS_FULL_NAME) {
+		SSDFS_ERR("invalid str_type %#x\n",
+			  str_type);
+		return -ERANGE;
+	}
+
+	desc.type = str_type;
+
+	index = 0;
+	err = __ssdfs_hash_table_insert_descriptor(node, search, index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert hash descriptor: "
+			  "node_id %u, index %u, err %d\n",
+			  node->node_id, index, err);
+		return err;
+	}
+
+	node->hash_tbl_area.start_hash = search->request.start.hash;
+	node->hash_tbl_area.end_hash = search->request.start.hash;
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_before_prefix() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor before prefix.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_before_prefix(struct ssdfs_btree_node *node,
+					  struct ssdfs_btree_search *search,
+					  u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *prefix, *left_name;
+	struct ssdfs_shdict_htbl_item desc;
+	u16 index, index1, index2;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	prefix = &search->result.name->prefix;
+	left_name = &search->result.name->left_name;
+
+	if (prefix->index != 0) {
+		SSDFS_ERR("invalid index: prefix->index %u\n",
+			  prefix->index);
+		return -ERANGE;
+	}
+
+	switch (prefix->desc.type) {
+	case SSDFS_NAME_PREFIX:
+		index1 = prefix->index + 1;
+		index2 = left_name->index;
+		if (index1 != index2) {
+			SSDFS_ERR("invalid index: "
+				  "type %#x, prefix %u, left_name %u\n",
+				  prefix->desc.type,
+				  prefix->index,
+				  left_name->index);
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_FULL_NAME:
+		index1 = prefix->index;
+		index2 = left_name->index;
+		if (index1 != index2) {
+			SSDFS_ERR("invalid index: "
+				  "type %#x, prefix %u, left_name %u\n",
+				  prefix->desc.type,
+				  prefix->index,
+				  left_name->index);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("invalid prefix type %#x\n",
+			  prefix->desc.type);
+		return -ERANGE;
+	}
+
+	switch (str_type) {
+	case SSDFS_NAME_PREFIX:
+	case SSDFS_FULL_NAME:
+		/* expected type */
+		break;
+
+	default:
+		SSDFS_ERR("invalid type: str_type %#x\n",
+			  str_type);
+		return -ERANGE;
+	}
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+	desc.str_offset = cpu_to_le16(0);
+	desc.str_len = str_len;
+	desc.type = str_type;
+
+	index = prefix->index;
+	err = __ssdfs_hash_table_insert_descriptor(node, search, index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert hash: "
+			  "node_id %u, index %u, "
+			  "err %d\n",
+			  node->node_id, index, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_after_prefix() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor after prefix.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_after_prefix(struct ssdfs_btree_node *node,
+					 struct ssdfs_btree_search *search,
+					 u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *prefix, *left_name;
+	struct ssdfs_shdict_htbl_item desc;
+	u16 index, index1, index2;
+	u32 str_offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	prefix = &search->result.name->prefix;
+	left_name = &search->result.name->left_name;
+
+	if (prefix->index != 0) {
+		SSDFS_ERR("invalid index: "
+			  "prefix->index %u\n",
+			  prefix->index);
+		return -ERANGE;
+	}
+
+	switch (prefix->desc.type) {
+	case SSDFS_NAME_PREFIX:
+		index1 = prefix->index + 1;
+		index2 = left_name->index;
+		if (index1 != index2) {
+			SSDFS_ERR("invalid index: type %#x, "
+				  "prefix %u, left_name %u\n",
+				  prefix->desc.type,
+				  prefix->index,
+				  left_name->index);
+			return -ERANGE;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("invalid prefix type %#x\n",
+			  prefix->desc.type);
+		return -ERANGE;
+	}
+
+	switch (str_type) {
+	case SSDFS_NAME_SUFFIX:
+		/* expected type */
+		break;
+
+	default:
+		SSDFS_ERR("invalid type: str_type %#x\n",
+			  str_type);
+		return -ERANGE;
+	}
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+
+	str_offset = le16_to_cpu(prefix->desc.str_offset);
+	str_offset += prefix->desc.str_len;
+
+	if (str_offset >= node->items_area.area_size || str_offset >= U16_MAX) {
+		SSDFS_ERR("invalid offset: str_offset %u, area_size %u\n",
+			  str_offset, node->items_area.area_size);
+		return -ERANGE;
+	}
+
+	desc.str_offset = cpu_to_le16((u16)str_offset);
+
+	desc.str_len = str_len;
+	desc.type = str_type;
+
+	index = left_name->index;
+	err = __ssdfs_hash_table_insert_descriptor(node, search, index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert hash: "
+			  "node_id %u, index %u, "
+			  "err %d\n",
+			  node->node_id, index, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_insert_after_suffix() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor after suffix.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_insert_after_suffix(struct ssdfs_btree_node *node,
+					 struct ssdfs_btree_search *search,
+					 u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *left_name;
+	struct ssdfs_shdict_htbl_item desc;
+	u16 index;
+	u16 items_count;
+	u32 str_offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	left_name = &search->result.name->left_name;
+	items_count = node->hash_tbl_area.index_count;
+
+	if ((left_name->index + 1) != items_count) {
+		SSDFS_ERR("invalid index: "
+			  "left_name->index %u, items_count %u\n",
+			  left_name->index,
+			  items_count);
+		return -ERANGE;
+	}
+
+	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
+
+	str_offset = le16_to_cpu(left_name->desc.str_offset);
+	str_offset += left_name->desc.str_len;
+
+	if (str_offset >= node->items_area.area_size || str_offset >= U16_MAX) {
+		SSDFS_ERR("invalid offset: "
+			  "str_offset %u, area_size %u\n",
+			  str_offset, node->items_area.area_size);
+		return -ERANGE;
+	}
+
+	desc.str_offset = cpu_to_le16((u16)str_offset);
+
+	if (str_len > search->request.start.name_len) {
+		SSDFS_ERR("invalid string length: "
+			  "str_len %u, name_len %zu\n",
+			str_len, search->request.start.name_len);
+		return -ERANGE;
+	}
+
+	desc.str_len = str_len;
+
+	switch (str_type) {
+	case SSDFS_NAME_PREFIX:
+	case SSDFS_NAME_SUFFIX:
+	case SSDFS_FULL_NAME:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid str_type %#x\n",
+			  str_type);
+		return -ERANGE;
+	}
+
+	desc.type = str_type;
+
+	index = left_name->index + 1;
+	err = __ssdfs_hash_table_insert_descriptor(node, search, index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to insert descriptor: "
+			  "node_id %u, index %u, err %d\n",
+			  node->node_id, index,
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_hash_table_add_after_found_position() - insert the hash descriptor
+ * @node: node object
+ * @search: search object
+ * @str_len: string length
+ * @str_type: string type
+ *
+ * This method tries to insert the hash descriptor after found position.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - hash table hasn't vacant items.
+ * %-EEXIST     - hash table contains the descriptor already.
+ */
+static inline
+int ssdfs_hash_table_add_after_found_position(struct ssdfs_btree_node *node,
+					    struct ssdfs_btree_search *search,
+					    u8 str_len, u8 str_type)
+{
+	struct ssdfs_string_descriptor *prefix, *left_name;
+	u32 prefix_hash, left_name_hash, request_hash;
+	u16 items_count;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
+		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	items_count = node->hash_tbl_area.index_count;
+
+	if (items_count <= 1) {
+		err = ssdfs_hash_table_insert_into_empty_table(node, search,
+								str_len,
+								str_type);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to insert descriptor: "
+				  "err %d\n", err);
+			return err;
+		}
+	} else {
+		if (!search->result.name) {
+			SSDFS_ERR("empty buffer pointer\n");
+			return -ERANGE;
+		}
+
+		prefix = &search->result.name->prefix;
+		left_name = &search->result.name->left_name;
+		request_hash = SSDFS_HASH32_HI(search->request.start.hash);
+		prefix_hash = le32_to_cpu(prefix->desc.hash_hi);
+		left_name_hash = le32_to_cpu(left_name->desc.hash_hi);
+
+		if (prefix_hash > left_name_hash) {
+			SSDFS_ERR("prefix %#x > left_name %#x\n",
+				  prefix_hash, left_name_hash);
+			return -ERANGE;
+		}
+
+		if (request_hash < prefix_hash) {
+			err = ssdfs_hash_table_insert_before_prefix(node,
+								    search,
+								    str_len,
+								    str_type);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to insert descriptor: "
+					  "err %d\n", err);
+				return err;
+			}
+		} else if (request_hash == prefix_hash) {
+			SSDFS_ERR("invalid hash: "
+				  "request %#x == prefix %#x\n",
+				  request_hash, prefix_hash);
+			return -EEXIST;
+		} else if (request_hash > prefix_hash &&
+			    request_hash < left_name_hash) {
+			err = ssdfs_hash_table_insert_after_prefix(node,
+								   search,
+								   str_len,
+								   str_type);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to insert descriptor: "
+					  "err %d\n", err);
+				return err;
+			}
+		} else if (request_hash > prefix_hash &&
+			   request_hash == left_name_hash) {
+			SSDFS_ERR("invalid hash: "
+				  "request %#x == left_name %#x\n",
+				  request_hash, left_name_hash);
+			return -EEXIST;
+		} else if (request_hash > left_name_hash) {
+			err = ssdfs_hash_table_insert_after_suffix(node,
+								   search,
+								   str_len,
+								   str_type);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to insert descriptor: "
+					  "err %d\n", err);
+				return err;
+			}
+		} else
+			BUG();
+	}
+
 	return 0;
 }
 
@@ -7256,24 +8952,19 @@ int ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 					struct ssdfs_btree_search *search,
 					u8 str_len, u8 str_type)
 {
-	struct ssdfs_string_descriptor *prefix, *left_name, *right_name;
-	struct ssdfs_shdict_htbl_item desc;
-	u32 prefix_hash, left_name_hash, right_name_hash, request_hash;
 	u16 items_count;
 	u16 items_capacity;
 	u16 item_size;
-	u16 index, index1, index2;
-	u32 str_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, str_len %u, str_type %#x\n",
 		  node->node_id, str_len, str_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->hash_tbl_area.state)) {
 	case SSDFS_BTREE_NODE_HASH_TBL_EXIST:
@@ -7331,438 +9022,26 @@ int ssdfs_hash_table_insert_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	desc.hash_hi = cpu_to_le32(SSDFS_HASH32_HI(search->request.start.hash));
-
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-		left_name = &search->result.name->left_name;
-		right_name = &search->result.name->right_name;
-		request_hash = SSDFS_HASH32_HI(search->request.start.hash);
-		left_name_hash =
-		    le32_to_cpu(left_name->desc.hash_hi);
-		right_name_hash =
-		    le32_to_cpu(right_name->desc.hash_hi);
-
-		if (left_name_hash >= right_name_hash) {
-			SSDFS_ERR("invalid hash: "
-				  "left_name %#x, "
-				  "right_name %#x\n",
-				  left_name_hash,
-				  right_name_hash);
-			return -ERANGE;
-		}
-
-		index1 = left_name->index + 1;
-		index2 = right_name->index;
-		if (index1 != index2) {
-			SSDFS_ERR("invalid index: "
-				  "left_name %u, "
-				  "right_name %u\n",
-				  left_name->index,
-				  right_name->index);
-			return -ERANGE;
-		}
-
-		if (left_name_hash == request_hash) {
-			SSDFS_ERR("invalid hash: "
-				  "request %#x == left_name %#x\n",
-				  request_hash, left_name_hash);
-			return -EEXIST;
-		} else if (left_name_hash < request_hash &&
-			   request_hash < right_name_hash) {
-			switch (left_name->desc.type) {
-			case SSDFS_NAME_PREFIX:
-				switch (right_name->desc.type) {
-				case SSDFS_NAME_PREFIX:
-				case SSDFS_NAME_SUFFIX:
-				case SSDFS_FULL_NAME:
-					if (str_type != SSDFS_NAME_SUFFIX) {
-						SSDFS_ERR("invalid type: "
-							  "str_type %#x\n",
-							  str_type);
-						return -ERANGE;
-					}
-					break;
-
-				default:
-					SSDFS_ERR("invalid type: "
-						  "right_name %#x\n",
-						  right_name->desc.type);
-					return -ERANGE;
-				}
-				break;
-
-			case SSDFS_NAME_SUFFIX:
-				switch (right_name->desc.type) {
-				case SSDFS_NAME_PREFIX:
-				case SSDFS_NAME_SUFFIX:
-				case SSDFS_FULL_NAME:
-					/* any str_type is valid */
-					break;
-
-				default:
-					SSDFS_ERR("invalid type: "
-						  "right_name %#x\n",
-						  right_name->desc.type);
-					return -ERANGE;
-				}
-				break;
-
-			case SSDFS_FULL_NAME:
-				switch (right_name->desc.type) {
-				case SSDFS_NAME_PREFIX:
-				case SSDFS_FULL_NAME:
-					if (str_type == SSDFS_NAME_SUFFIX) {
-						SSDFS_ERR("invalid type: "
-							  "str_type %#x\n",
-							  str_type);
-						return -ERANGE;
-					}
-					break;
-
-				default:
-					SSDFS_ERR("invalid type: "
-						  "right_name %#x\n",
-						  right_name->desc.type);
-					return -ERANGE;
-				}
-				break;
-
-			default:
-				SSDFS_ERR("invalid type: "
-					  "left_name %#x\n",
-					  left_name->desc.type);
-				return -ERANGE;
-			}
-
-			str_offset = le16_to_cpu(right_name->desc.str_offset);
-			if (str_offset >= node->items_area.area_size) {
-				SSDFS_ERR("invalid offset: "
-					  "str_offset %u, "
-					  "area_size %u\n",
-					  str_offset,
-					  node->items_area.area_size);
-				return -ERANGE;
-			}
-
-			desc.str_offset = cpu_to_le16((u16)str_offset);
-
-			desc.str_len = str_len;
-			desc.type = str_type;
-
-			index = right_name->index;
-			err = __ssdfs_hash_table_insert_descriptor(node,
-								index,
-								&desc);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to insert hash: "
-					  "node_id %u, index %u, "
-					  "err %d\n",
-					  node->node_id, index, err);
-				return err;
-			}
-		} else if (request_hash == right_name_hash) {
-			SSDFS_ERR("invalid hash: "
-				  "request %#x == right_name %#x\n",
-				  request_hash, right_name_hash);
-			return -EEXIST;
-		} else {
-			SSDFS_ERR("invalid hash: "
-				  "left_name %#x, right_name %#x, "
-				  "request %#x\n",
-				  left_name_hash,
-				  right_name_hash,
-				  request_hash);
-			return -ERANGE;
+		err = ssdfs_hash_table_insert_into_found_position(node, search,
+								  str_len,
+								  str_type);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to insert descriptor: "
+				  "err %d\n", err);
+			return err;
 		}
 		break;
 
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
-		if (items_count <= 1) {
-			desc.str_offset = cpu_to_le16(0);
-
-			if (str_len != search->request.start.name_len) {
-				SSDFS_ERR("invalid string length: "
-					  "str_len %u, name_len %zu\n",
-					  str_len,
-					  search->request.start.name_len);
-				return -ERANGE;
-			}
-
-			desc.str_len = str_len;
-
-			if (str_type != SSDFS_FULL_NAME) {
-				SSDFS_ERR("invalid str_type %#x\n",
-					  str_type);
-				return -ERANGE;
-			}
-
-			desc.type = str_type;
-
-			index = 0;
-			err = __ssdfs_hash_table_insert_descriptor(node,
-								   index,
-								   &desc);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to insert hash descriptor: "
-					  "node_id %u, index %u, err %d\n",
-					  node->node_id, index, err);
-				return err;
-			}
-
-			node->hash_tbl_area.start_hash =
-					search->request.start.hash;
-			node->hash_tbl_area.end_hash =
-					search->request.start.hash;
-		} else {
-			if (!search->result.name) {
-				SSDFS_ERR("empty buffer pointer\n");
-				return -ERANGE;
-			}
-
-			prefix = &search->result.name->prefix;
-			left_name = &search->result.name->left_name;
-			request_hash =
-				SSDFS_HASH32_HI(search->request.start.hash);
-			prefix_hash =
-			    le32_to_cpu(prefix->desc.hash_hi);
-			left_name_hash =
-			    le32_to_cpu(left_name->desc.hash_hi);
-
-			if (prefix_hash > left_name_hash) {
-				SSDFS_ERR("prefix %#x > left_name %#x\n",
-					  prefix_hash, left_name_hash);
-				return -ERANGE;
-			}
-
-			if (request_hash < prefix_hash) {
-				if (prefix->index != 0) {
-					SSDFS_ERR("invalid index: "
-						  "prefix->index %u\n",
-						  prefix->index);
-					return -ERANGE;
-				}
-
-				switch (prefix->desc.type) {
-				case SSDFS_NAME_PREFIX:
-					index1 = prefix->index + 1;
-					index2 = left_name->index;
-					if (index1 != index2) {
-						SSDFS_ERR("invalid index: "
-							  "type %#x, "
-							  "prefix %u, "
-							  "left_name %u\n",
-							  prefix->desc.type,
-							  prefix->index,
-							  left_name->index);
-						return -ERANGE;
-					}
-					break;
-
-				case SSDFS_FULL_NAME:
-					index1 = prefix->index;
-					index2 = left_name->index;
-					if (index1 != index2) {
-						SSDFS_ERR("invalid index: "
-							  "type %#x, "
-							  "prefix %u, "
-							  "left_name %u\n",
-							  prefix->desc.type,
-							  prefix->index,
-							  left_name->index);
-						return -ERANGE;
-					}
-					break;
-
-				default:
-					SSDFS_ERR("invalid prefix type %#x\n",
-						  prefix->desc.type);
-					return -ERANGE;
-				}
-
-				switch (str_type) {
-				case SSDFS_NAME_PREFIX:
-				case SSDFS_FULL_NAME:
-					/* expected type */
-					break;
-
-				default:
-					SSDFS_ERR("invalid type: "
-						  "str_type %#x\n",
-						  str_type);
-					return -ERANGE;
-				}
-
-				desc.str_offset = cpu_to_le16(0);
-				desc.str_len = str_len;
-				desc.type = str_type;
-
-				index = prefix->index;
-				err = __ssdfs_hash_table_insert_descriptor(node,
-									index,
-									&desc);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to insert hash: "
-						  "node_id %u, index %u, "
-						  "err %d\n",
-						  node->node_id, index, err);
-					return err;
-				}
-
-				node->hash_tbl_area.start_hash =
-						search->request.start.hash;
-			} else if (request_hash == prefix_hash) {
-				SSDFS_ERR("invalid hash: "
-					  "request %#x == prefix %#x\n",
-					  request_hash, prefix_hash);
-				return -EEXIST;
-			} else if (request_hash > prefix_hash &&
-				   request_hash < left_name_hash) {
-				if (prefix->index != 0) {
-					SSDFS_ERR("invalid index: "
-						  "prefix->index %u\n",
-						  prefix->index);
-					return -ERANGE;
-				}
-
-				switch (prefix->desc.type) {
-				case SSDFS_NAME_PREFIX:
-					index1 = prefix->index + 1;
-					index2 = left_name->index;
-					if (index1 != index2) {
-						SSDFS_ERR("invalid index: "
-							  "type %#x, "
-							  "prefix %u, "
-							  "left_name %u\n",
-							  prefix->desc.type,
-							  prefix->index,
-							  left_name->index);
-						return -ERANGE;
-					}
-					break;
-
-				default:
-					SSDFS_ERR("invalid prefix type %#x\n",
-						  prefix->desc.type);
-					return -ERANGE;
-				}
-
-				switch (str_type) {
-				case SSDFS_NAME_SUFFIX:
-					/* expected type */
-					break;
-
-				default:
-					SSDFS_ERR("invalid type: "
-						  "str_type %#x\n",
-						  str_type);
-					return -ERANGE;
-				}
-
-				str_offset =
-				    le16_to_cpu(prefix->desc.str_offset);
-				str_offset += prefix->desc.str_len;
-
-				if (str_offset >= node->items_area.area_size ||
-				    str_offset >= U16_MAX) {
-					SSDFS_ERR("invalid offset: "
-						  "str_offset %u, "
-						  "area_size %u\n",
-						  str_offset,
-						  node->items_area.area_size);
-					return -ERANGE;
-				}
-
-				desc.str_offset = cpu_to_le16((u16)str_offset);
-
-				desc.str_len = str_len;
-				desc.type = str_type;
-
-				index = left_name->index;
-				err = __ssdfs_hash_table_insert_descriptor(node,
-									index,
-									&desc);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to insert hash: "
-						  "node_id %u, index %u, "
-						  "err %d\n",
-						  node->node_id, index, err);
-					return err;
-				}
-			} else if (request_hash > prefix_hash &&
-				   request_hash == left_name_hash) {
-				SSDFS_ERR("invalid hash: "
-					  "request %#x == left_name %#x\n",
-					  request_hash, left_name_hash);
-				return -EEXIST;
-			} else if (request_hash > left_name_hash) {
-				if ((left_name->index + 1) != items_count) {
-					SSDFS_ERR("invalid index: "
-						  "left_name->index %u, "
-						  "items_count %u\n",
-						  left_name->index,
-						  items_count);
-					return -ERANGE;
-				}
-
-				str_offset =
-				    le16_to_cpu(left_name->desc.str_offset);
-				str_offset += left_name->desc.str_len;
-
-				if (str_offset >= node->items_area.area_size ||
-				    str_offset >= U16_MAX) {
-					SSDFS_ERR("invalid offset: "
-						  "str_offset %u, "
-						  "area_size %u\n",
-						  str_offset,
-						  node->items_area.area_size);
-					return -ERANGE;
-				}
-
-				desc.str_offset = cpu_to_le16((u16)str_offset);
-
-				if (str_len > search->request.start.name_len) {
-					SSDFS_ERR("invalid string length: "
-						  "str_len %u, name_len %zu\n",
-						str_len,
-						search->request.start.name_len);
-					return -ERANGE;
-				}
-
-				desc.str_len = str_len;
-
-				switch (str_type) {
-				case SSDFS_NAME_PREFIX:
-				case SSDFS_NAME_SUFFIX:
-				case SSDFS_FULL_NAME:
-					/* expected state */
-					break;
-
-				default:
-					SSDFS_ERR("invalid str_type %#x\n",
-						  str_type);
-					return -ERANGE;
-				}
-
-				desc.type = str_type;
-
-				index = left_name->index + 1;
-				err = __ssdfs_hash_table_insert_descriptor(node,
-									index,
-									&desc);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to insert descriptor: "
-						  "node_id %u, index %u, "
-						  "err %d\n",
-						  node->node_id, index,
-						  err);
-					return err;
-				}
-
-				node->hash_tbl_area.end_hash =
-						search->request.start.hash;
-			} else
-				BUG();
+		err = ssdfs_hash_table_add_after_found_position(node, search,
+								str_len,
+								str_type);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to insert descriptor: "
+				  "err %d\n", err);
+			return err;
 		}
 		break;
 
@@ -7874,6 +9153,255 @@ int ssdfs_lookup2_table_inc_str_count(struct ssdfs_btree_node *node,
 
 	ssdfs_mark_lookup2_table_dirty(node);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->result.name->placement.lookup2_index =
+				search->name.strings_range.index;
+
+	return 0;
+}
+
+/*
+ * __ssdfs_lookup2_table_insert_descriptor() - insert a new lookup2 descriptor
+ * @node: node object
+ * @search: search object
+ *
+ * This method tries to insert a new descriptor in the lookup2 table.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - lookup2 table hasn't vacant items.
+ */
+static
+int __ssdfs_lookup2_table_insert_descriptor(struct ssdfs_btree_node *node,
+					    struct ssdfs_btree_search *search)
+{
+	struct ssdfs_shdict_ltbl2_item desc;
+	u16 items_count;
+	u16 items_capacity;
+	u16 item_size;
+	u16 hash_index;
+	u16 lookup2_index;
+	u16 range_len;
+	u16 shift;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	switch (atomic_read(&node->lookup_tbl_area.state)) {
+	case SSDFS_BTREE_NODE_LOOKUP_TBL_EXIST:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid lookup_tbl_area state %#x\n",
+			  atomic_read(&node->lookup_tbl_area.state));
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	items_count = node->lookup_tbl_area.index_count;
+	items_capacity = node->lookup_tbl_area.index_capacity;
+	item_size = node->lookup_tbl_area.index_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	hash_index = search->result.name->placement.hash_index;
+	lookup2_index = search->name.strings_range.index;
+
+	SSDFS_DBG("items_count %u, items_capacity %u, "
+		  "index_size %u, hash_index %u, "
+		  "lookup2_index %u\n",
+		  items_count, items_capacity,
+		  item_size, hash_index,
+		  lookup2_index);
+
+	if (items_count >= items_capacity) {
+		SSDFS_ERR("corrupted node: "
+			  "node_id %u, items_count %u, "
+			  "items_capacity %u\n",
+			  node->node_id, items_count,
+			  items_capacity);
+		return -ERANGE;
+	}
+
+	node->lookup_tbl_area.index_count++;
+
+	desc.hash_lo = cpu_to_le32(SSDFS_HASH32_LO(search->request.start.hash));
+
+	if (lookup2_index < items_count) {
+		range_len = items_count - lookup2_index;
+		shift = 1;
+
+		err = ssdfs_shift_range_right2(node,
+						&node->lookup_tbl_area,
+						item_size,
+						lookup2_index, range_len,
+						shift);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to shift the range: "
+				  "index %u, range_len %u, "
+				  "shift %u, err %d\n",
+				  lookup2_index, range_len, shift, err);
+			return err;
+		}
+	} else {
+		SSDFS_ERR("invalid index: "
+			  "index %u, items_count %u\n",
+			  lookup2_index, items_count);
+		return -ERANGE;
+	}
+
+	if (search->request.start.name_len > SSDFS_MAX_NAME_LEN) {
+		SSDFS_ERR("invalid name len %zu\n",
+			  search->request.start.name_len);
+		return -ERANGE;
+	}
+
+	desc.prefix_len = (u8)search->request.start.name_len;
+	desc.hash_index = cpu_to_le16(hash_index);
+	desc.str_count = cpu_to_le16(1);
+
+	err = ssdfs_set_lookup2_descriptor(node, &node->lookup_tbl_area,
+					   lookup2_index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set lookup2 descriptor: "
+			  "index %u, err %d\n",
+			  lookup2_index, err);
+		return err;
+	}
+
+	items_count = node->lookup_tbl_area.index_count;
+
+	if (lookup2_index == 0) {
+		node->lookup_tbl_area.start_hash =
+			SSDFS_NAME_HASH(le32_to_cpu(desc.hash_lo), 0);
+	}
+
+	if ((lookup2_index + 1) == items_count) {
+		node->lookup_tbl_area.end_hash =
+			SSDFS_NAME_HASH(le32_to_cpu(desc.hash_lo), 0);
+	}
+
+	ssdfs_mark_lookup2_table_dirty(node);
+
+	search->result.name->placement.lookup2_index = lookup2_index;
+
+	return 0;
+}
+
+/*
+ * __ssdfs_lookup2_table_add_descriptor() - add a new lookup2 descriptor
+ * @node: node object
+ * @search: search object
+ *
+ * This method tries to add a new descriptor in the lookup2 table.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOSPC     - lookup2 table hasn't vacant items.
+ */
+static
+int __ssdfs_lookup2_table_add_descriptor(struct ssdfs_btree_node *node,
+					 struct ssdfs_btree_search *search)
+{
+	struct ssdfs_shdict_ltbl2_item desc;
+	u16 items_count;
+	u16 items_capacity;
+	u16 item_size;
+	u16 hash_index;
+	u16 lookup2_index;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+	BUG_ON(!rwsem_is_locked(&node->full_lock));
+	BUG_ON(!rwsem_is_locked(&node->header_lock));
+
+	switch (atomic_read(&node->lookup_tbl_area.state)) {
+	case SSDFS_BTREE_NODE_LOOKUP_TBL_EXIST:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid lookup_tbl_area state %#x\n",
+			  atomic_read(&node->lookup_tbl_area.state));
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	items_count = node->lookup_tbl_area.index_count;
+	items_capacity = node->lookup_tbl_area.index_capacity;
+	item_size = node->lookup_tbl_area.index_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	hash_index = search->result.name->placement.hash_index;
+	lookup2_index = items_count;
+
+	SSDFS_DBG("items_count %u, items_capacity %u, "
+		  "index_size %u, strings_range.index %u, "
+		  "hash_index %u, lookup2_index %u\n",
+		  items_count, items_capacity, item_size,
+		  search->name.strings_range.index,
+		  hash_index, lookup2_index);
+
+	if (items_count >= items_capacity) {
+		SSDFS_ERR("invalid request: "
+			  "items_count %u >= items_capacity %u\n",
+			  items_count, items_capacity);
+		return -ERANGE;
+	}
+
+	desc.hash_lo = cpu_to_le32(SSDFS_HASH32_LO(search->request.start.hash));
+
+	if (search->request.start.name_len > SSDFS_MAX_NAME_LEN) {
+		SSDFS_ERR("invalid name len %zu\n",
+			  search->request.start.name_len);
+		return -ERANGE;
+	}
+
+	desc.prefix_len = (u8)search->request.start.name_len;
+	desc.hash_index = cpu_to_le16(hash_index);
+	desc.str_count = cpu_to_le16(1);
+
+	err = ssdfs_set_lookup2_descriptor(node, &node->lookup_tbl_area,
+					   lookup2_index, &desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set lookup2 descriptor: "
+			  "index %u, err %d\n",
+			  lookup2_index, err);
+		return err;
+	}
+
+	node->lookup_tbl_area.index_count++;
+
+	node->lookup_tbl_area.end_hash =
+			SSDFS_NAME_HASH(le32_to_cpu(desc.hash_lo), 0);
+
+	ssdfs_mark_lookup2_table_dirty(node);
+
+	search->result.name->placement.lookup2_index = lookup2_index;
+
 	return 0;
 }
 
@@ -7895,14 +9423,12 @@ static
 int ssdfs_lookup2_table_insert_new_descriptor(struct ssdfs_btree_node *node,
 					    struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shdict_ltbl2_item desc;
+	u32 req_hash32;
+	u32 found_hash32;
 	u16 items_count;
 	u16 items_capacity;
 	u16 item_size;
 	u16 index;
-	u16 range_len;
-	u16 shift;
-	u16 i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7928,6 +9454,11 @@ int ssdfs_lookup2_table_insert_new_descriptor(struct ssdfs_btree_node *node,
 	items_capacity = node->lookup_tbl_area.index_capacity;
 	item_size = node->lookup_tbl_area.index_size;
 	index = search->name.strings_range.index;
+
+	SSDFS_DBG("items_count %u, items_capacity %u, "
+		  "index_size %u, strings_range.index %u\n",
+		  items_count, items_capacity,
+		  item_size, index);
 
 	if (items_count == items_capacity) {
 		SSDFS_ERR("no vacant items: "
@@ -7958,85 +9489,68 @@ int ssdfs_lookup2_table_insert_new_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	desc.hash_lo = cpu_to_le32(SSDFS_HASH32_LO(search->request.start.hash));
+	req_hash32 = SSDFS_HASH32_LO(search->request.start.hash);
+	found_hash32 = le32_to_cpu(search->name.strings_range.desc.hash_lo);
 
-	if (index < items_count) {
-		range_len = items_count - index;
-		shift = 1;
+	SSDFS_DBG("req_hash32 %#x, found_hash32 %#x, "
+		  "search->result.state %#x\n",
+		  req_hash32, found_hash32,
+		  search->result.state);
 
-		err = ssdfs_shift_range_right2(node,
-						&node->lookup_tbl_area,
-						item_size,
-						index, range_len,
-						shift);
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+		if (req_hash32 == found_hash32) {
+			SSDFS_ERR("invalid hash: "
+				  "request %#x == found_hash %#x\n",
+				  req_hash32, found_hash32);
+			return -EEXIST;
+		} else if (req_hash32 < found_hash32) {
+			err = __ssdfs_lookup2_table_insert_descriptor(node,
+								      search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to insert descriptor: "
+					  "err %d\n", err);
+				return err;
+			}
+		} else {
+			search->name.strings_range.index++;
+			index = search->name.strings_range.index;
+
+			if (index < items_count) {
+				err =
+				   __ssdfs_lookup2_table_insert_descriptor(node,
+									search);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to insert descriptor: "
+						  "err %d\n", err);
+					return err;
+				}
+			} else {
+				err = __ssdfs_lookup2_table_add_descriptor(node,
+									search);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to add descriptor: "
+						  "err %d\n", err);
+					return err;
+				}
+			}
+		}
+		break;
+
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		err = __ssdfs_lookup2_table_add_descriptor(node, search);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to shift the range: "
-				  "index %u, range_len %u, "
-				  "shift %u, err %d\n",
-				  index, range_len, shift, err);
+			SSDFS_ERR("fail to add descriptor: "
+				  "err %d\n", err);
 			return err;
 		}
-	}
+		break;
 
-	if (search->request.start.name_len > SSDFS_MAX_NAME_LEN) {
-		SSDFS_ERR("invalid name len %zu\n",
-			  search->request.start.name_len);
+	default:
+		SSDFS_ERR("unexpected result state %#x\n",
+			  search->result.state);
 		return -ERANGE;
 	}
-
-	desc.prefix_len = (u8)search->request.start.name_len;
-	desc.hash_index = cpu_to_le16(index);
-	desc.str_count = cpu_to_le16(1);
-
-	err = ssdfs_set_lookup2_descriptor(node, &node->lookup_tbl_area,
-					   index, &desc);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to set lookup2 descriptor: "
-			  "index %u, err %d\n",
-			  index, err);
-		return err;
-	}
-
-	node->lookup_tbl_area.index_count++;
-	items_count = node->lookup_tbl_area.index_count;
-
-	for (i = index + 1; i < items_count; i++) {
-		struct ssdfs_shdict_ltbl2_item cur_desc;
-
-		err = ssdfs_get_lookup2_descriptor(node,
-						   &node->lookup_tbl_area,
-						   i, &cur_desc);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to get lookup2 descriptor: "
-				  "index %u, err %d\n",
-				  i, err);
-			return err;
-		}
-
-		cur_desc.hash_index = cpu_to_le16(i);
-
-		err = ssdfs_set_lookup2_descriptor(node,
-						   &node->lookup_tbl_area,
-						   i, &cur_desc);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set lookup2 descriptor: "
-				  "index %u, err %d\n",
-				  i, err);
-			return err;
-		}
-	}
-
-	if (index == 0) {
-		node->lookup_tbl_area.start_hash =
-			SSDFS_NAME_HASH(le16_to_cpu(desc.hash_lo), 0);
-	}
-
-	if ((index + 1) == items_count) {
-		node->lookup_tbl_area.end_hash =
-			SSDFS_NAME_HASH(le16_to_cpu(desc.hash_lo), 0);
-	}
-
-	ssdfs_mark_lookup2_table_dirty(node);
 
 	return 0;
 }
@@ -8127,60 +9641,6 @@ int ssdfs_lookup2_table_insert_descriptor(struct ssdfs_btree_node *node,
 }
 
 /*
- * The lookup1 table's capacity array
- */
-static
-const u16 lookup1_tbl_range_capacity[SSDFS_SHDIC_LTBL1_SIZE] = {
-	2,	/* 00 */
-	4,	/* 01 */
-	8,	/* 02 */
-	16,	/* 03 */
-	32,	/* 04 */
-	32,	/* 05 */
-	32,	/* 06 */
-	32,	/* 07 */
-	32,	/* 08 */
-	64,	/* 09 */
-	64,	/* 10 */
-	32,	/* 11 */
-	32,	/* 12 */
-	32,	/* 13 */
-	32,	/* 14 */
-	32,	/* 15 */
-	16,	/* 16 */
-	8,	/* 17 */
-	4,	/* 18 */
-	2,	/* 19 */
-	};
-
-/*
- * The lookup1 table's threshold array
- */
-static
-const u16 lookup1_tbl_threshold[SSDFS_SHDIC_LTBL1_SIZE] = {
-	2,	/* 00 */
-	6,	/* 01 */
-	14,	/* 02 */
-	30,	/* 03 */
-	62,	/* 04 */
-	94,	/* 05 */
-	126,	/* 06 */
-	158,	/* 07 */
-	190,	/* 08 */
-	254,	/* 09 */
-	318,	/* 10 */
-	350,	/* 11 */
-	382,	/* 12 */
-	414,	/* 13 */
-	446,	/* 14 */
-	478,	/* 15 */
-	494,	/* 16 */
-	502,	/* 17 */
-	506,	/* 18 */
-	508,	/* 19 */
-	};
-
-/*
  * ssdfs_lookup1_table_get_range_capacity() - get the capacity for an index
  * @index: lookup1 table's index
  */
@@ -8200,7 +9660,7 @@ u16 ssdfs_lookup1_table_get_range_capacity(u16 index)
 static inline
 u16 ssdfs_convert_lookup2_to_lookup1_index(u16 lookup2_index)
 {
-	u16 cur_index;
+	int cur_index;
 	u16 lower_bound, upper_bound;
 	u16 range_capacity;
 	u16 threshold;
@@ -8209,32 +9669,44 @@ u16 ssdfs_convert_lookup2_to_lookup1_index(u16 lookup2_index)
 	threshold = lookup1_tbl_threshold[0];
 	range_capacity = lookup1_tbl_range_capacity[0];
 
-	if (lookup2_index >= threshold &&
-	    lookup2_index < (threshold + range_capacity)) {
+	SSDFS_DBG("lookup2_index %u, threshold %u, "
+		  "range_capacity %u\n",
+		  lookup2_index, threshold, range_capacity);
+
+	if (lookup2_index < threshold) {
 		/* first index */
 		return 0;
 	}
 
 	threshold = lookup1_tbl_threshold[SSDFS_SHDIC_LTBL1_SIZE - 1];
 
+	SSDFS_DBG("lookup2_index %u, threshold %u\n",
+		  lookup2_index, threshold);
+
 	if (lookup2_index >= threshold) {
 		/* last index */
 		return SSDFS_SHDIC_LTBL1_SIZE - 1;
 	}
 
-	lower_bound = 0;
-	upper_bound = SSDFS_SHDIC_LTBL1_SIZE - 1;
+	lower_bound = 1;
+	upper_bound = SSDFS_SHDIC_LTBL1_SIZE - 2;
 	cur_index = SSDFS_SHDIC_LTBL1_SIZE / 2;
 
 	do {
 		threshold = lookup1_tbl_threshold[cur_index];
 		range_capacity = lookup1_tbl_range_capacity[cur_index];
 
-		if (lookup2_index >= threshold &&
-		    lookup2_index < (threshold + range_capacity)) {
+		SSDFS_DBG("lower_bound %u, upper_bound %u, "
+			  "cur_index %u, threshold %u, "
+			  "range_capacity %u\n",
+			  lower_bound, upper_bound, cur_index,
+			  threshold, range_capacity);
+
+		if (lookup2_index >= (threshold - range_capacity) &&
+		    lookup2_index < threshold) {
 			found_index = cur_index;
 			break;
-		} else if (lookup2_index < threshold) {
+		} else if (lookup2_index < (threshold - range_capacity)) {
 			/* correct upper_bound */
 			upper_bound = cur_index;
 		} else {
@@ -8242,8 +9714,11 @@ u16 ssdfs_convert_lookup2_to_lookup1_index(u16 lookup2_index)
 			lower_bound = cur_index;
 		}
 
-		cur_index = (upper_bound - lower_bound) / 2;
+		cur_index = lower_bound + ((upper_bound - lower_bound) / 2);
 	} while (lower_bound < upper_bound);
+
+	SSDFS_DBG("found_index %u\n",
+		  found_index);
 
 	return found_index;
 }
@@ -8270,9 +9745,10 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 	struct ssdfs_shdict_ltbl1_item read_desc;
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl1_item);
 	u16 items_count;
+	u16 items_capacity;
 	u16 lookup2_index;
+	u16 start_lookup2_index;
 	u16 found_index, calculated_index;
-	u16 start_index;
 	u16 range_len;
 	u16 range_capacity;
 	u64 hash64;
@@ -8294,6 +9770,7 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	items_count = le16_to_cpu(node->raw.dict_header.lookup_table1_items);
+	items_capacity = SSDFS_SHDIC_LTBL1_SIZE;
 
 	if (items_count > SSDFS_SHDIC_LTBL1_SIZE) {
 		SSDFS_ERR("invalid lookup_table1_items %u\n",
@@ -8318,7 +9795,11 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	lookup2_index = search->result.name->strings_range.index;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	lookup2_index = search->result.name->placement.lookup2_index;
 	calculated_index =
 		ssdfs_convert_lookup2_to_lookup1_index(lookup2_index);
 	if (calculated_index >= U16_MAX) {
@@ -8332,31 +9813,31 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 	found_index = search->result.name->lookup.index;
 	found_desc = &search->result.name->lookup.desc;
 
-	start_index = le16_to_cpu(found_desc->start_index);
-	if (start_index >= U16_MAX) {
+	start_lookup2_index = le16_to_cpu(found_desc->start_index);
+	if (start_lookup2_index >= U16_MAX) {
 		SSDFS_ERR("invalid lookup1 item: "
-			  "start_index %#x\n",
-			  start_index);
+			  "start_lookup2_index %u\n",
+			  start_lookup2_index);
 		return -ERANGE;
 	}
 
 	range_len = le16_to_cpu(found_desc->range_len);
 	if (range_len >= U16_MAX) {
 		SSDFS_ERR("invalid lookup1 item: "
-			  "range_len %#x\n",
+			  "range_len %u\n",
 			  range_len);
 		return -ERANGE;
 	}
 
 	range_capacity = lookup1_tbl_range_capacity[calculated_index];
 
-	if (lookup2_index < start_index ||
-	    lookup2_index > (start_index + range_len + 1)) {
+	if (lookup2_index < start_lookup2_index ||
+	    lookup2_index > (start_lookup2_index + range_len + 1)) {
 		SSDFS_ERR("invalid range: "
-			  "lookup2_index %u, start_index %u, "
+			  "lookup2_index %u, start_lookup2_index %u, "
 			  "range_len %u\n",
 			  lookup2_index,
-			  start_index,
+			  start_lookup2_index,
 			  range_len);
 		return -ERANGE;
 	}
@@ -8370,89 +9851,164 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (start_index == lookup2_index) {
+	SSDFS_DBG("lookup2_index %u, calculated_index %u, "
+		  "requested_hash %#x, "
+		  "found_hash %#x\n",
+		  lookup2_index, calculated_index,
+		  SSDFS_HASH32_LO(search->request.start.hash),
+		  le32_to_cpu(read_desc.hash_lo));
+
+	if (start_lookup2_index == lookup2_index) {
 		hash64 = search->request.start.hash;
 		read_desc.hash_lo = cpu_to_le32(SSDFS_HASH32_LO(hash64));
 	}
-
-	if (range_len < range_capacity)
-		le16_add_cpu(&read_desc.range_len, 1);
 
 	ssdfs_memcpy(&lookup1_tbl[calculated_index], 0, item_size,
 		     &read_desc, 0, item_size,
 		     item_size);
 
-	calculated_index += 1;
-	for (i = calculated_index + 1; i < items_count; i++) {
+	start_lookup2_index = lookup1_tbl_threshold[calculated_index];
+
+	SSDFS_DBG("calculated_index %u, items_count %u, "
+		  "start_lookup2_index %u\n",
+		  calculated_index, items_count,
+		  start_lookup2_index);
+
+	for (i = calculated_index + 1; i < items_capacity; i++) {
 		struct ssdfs_shdict_ltbl2_item lookup2_item;
+		u16 start_index;
 		u16 index_count;
-
-		ssdfs_memcpy(&read_desc, 0, item_size,
-			     &lookup1_tbl[i], 0, item_size,
-			     item_size);
-
-		start_index = le16_to_cpu(read_desc.start_index);
-		if (start_index >= U16_MAX) {
-			SSDFS_ERR("invalid lookup1 item: "
-				  "start_index %#x\n",
-				  start_index);
-			return -ERANGE;
-		}
-
-		range_len = le16_to_cpu(read_desc.range_len);
-		if (range_len >= U16_MAX) {
-			SSDFS_ERR("invalid lookup1 item: "
-				  "range_len %#x\n",
-				  range_len);
-			return -ERANGE;
-		}
 
 		index_count = node->lookup_tbl_area.index_count;
 
-		if ((start_index + range_len) > index_count) {
-			SSDFS_ERR("invalid lookup1 item: "
-				  "start_index %u, "
-				  "range_len %u, "
-				  "index_count %u\n",
-				  start_index,
-				  range_len,
-				  index_count);
-			return -ERANGE;
+		SSDFS_DBG("lookup2_index_count %u\n",
+			  index_count);
+
+		if (index_count <= start_lookup2_index) {
+			SSDFS_DBG("lookup2_index_count %u, "
+				  "threshold %u\n",
+				  index_count,
+				  start_lookup2_index);
+			goto set_node_header_dirty;
 		}
 
-		start_index += 1;
-		if (start_index >= index_count) {
-			SSDFS_ERR("invalid index: "
-				  "start_index %u, "
-				  "index_count %u\n",
-				  start_index,
-				  index_count);
-			return -ERANGE;
+		if (i < items_count) {
+			ssdfs_memcpy(&read_desc, 0, item_size,
+				     &lookup1_tbl[i], 0, item_size,
+				     item_size);
+
+			start_index = le16_to_cpu(read_desc.start_index);
+			if (start_index >= U16_MAX) {
+				SSDFS_ERR("invalid lookup1 item: "
+					  "start_index %#x\n",
+					  start_index);
+				return -ERANGE;
+			}
+
+			range_len = le16_to_cpu(read_desc.range_len);
+			if (range_len >= U16_MAX) {
+				SSDFS_ERR("invalid lookup1 item: "
+					  "range_len %#x\n",
+					  range_len);
+				return -ERANGE;
+			}
+
+			if ((start_index + range_len) > index_count) {
+				SSDFS_ERR("invalid lookup1 item: "
+					  "start_index %u, "
+					  "range_len %u, "
+					  "index_count %u\n",
+					  start_index,
+					  range_len,
+					  index_count);
+				return -ERANGE;
+			}
+
+			if (start_index != start_lookup2_index) {
+				SSDFS_ERR("invalid lookup1 item: "
+					  "start_index %u, "
+					  "start_lookup2_index %u\n",
+					  start_index,
+					  start_lookup2_index);
+				return -ERANGE;
+			}
+
+			err = ssdfs_get_lookup2_descriptor(node,
+						&node->lookup_tbl_area,
+						start_lookup2_index,
+						&lookup2_item);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to extract: "
+					  "index %u, err %d\n",
+					  start_lookup2_index,
+					  err);
+				return err;
+			}
+
+			read_desc.hash_lo = lookup2_item.hash_lo;
+			read_desc.start_index =
+					cpu_to_le16(start_lookup2_index);
+
+			SSDFS_DBG("lookup1_index %u, lookup2_index %u, "
+				  "hash_lo %#x, range_len %u\n",
+				  i, start_lookup2_index,
+				  le32_to_cpu(lookup2_item.hash_lo),
+				  range_len);
+
+			ssdfs_memcpy(&lookup1_tbl[i], 0, item_size,
+				     &read_desc, 0, item_size,
+				     item_size);
+		} else {
+			err = ssdfs_get_lookup2_descriptor(node,
+						&node->lookup_tbl_area,
+						start_lookup2_index,
+						&lookup2_item);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to extract: "
+					  "index %u, err %d\n",
+					  start_lookup2_index,
+					  err);
+				return err;
+			}
+
+			read_desc.hash_lo = lookup2_item.hash_lo;
+			read_desc.start_index =
+					cpu_to_le16(start_lookup2_index);
+			read_desc.range_len = cpu_to_le16(0);
+
+			SSDFS_DBG("lookup1_index %u, lookup2_index %u, "
+				  "hash_lo %#x, range_len %u\n",
+				  i, start_lookup2_index,
+				  le32_to_cpu(lookup2_item.hash_lo),
+				  le16_to_cpu(read_desc.range_len));
+
+			ssdfs_memcpy(&lookup1_tbl[i], 0, item_size,
+				     &read_desc, 0, item_size,
+				     item_size);
+
+			le16_add_cpu(&node->raw.dict_header.lookup_table1_items,
+				     1);
 		}
 
-		err = ssdfs_get_lookup2_descriptor(node,
-					&node->lookup_tbl_area,
-					start_index,
-					&lookup2_item);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to extract: "
-				  "index %u, err %d\n",
-				  start_index,
-				  err);
-			return err;
-		}
-
-		read_desc.hash_lo = lookup2_item.hash_lo;
-		read_desc.start_index = cpu_to_le16(start_index);
-
-		range_len = min_t(u16, range_len, index_count - start_index);
-
-		read_desc.range_len = cpu_to_le16(range_len);
-
-		ssdfs_memcpy(&lookup1_tbl[i], 0, item_size,
-			     &read_desc, 0, item_size,
-			     item_size);
+		start_lookup2_index = lookup1_tbl_threshold[i];
 	}
+
+set_node_header_dirty:
+	items_count = le16_to_cpu(node->raw.dict_header.lookup_table1_items);
+
+	ssdfs_memcpy(&read_desc, 0, item_size,
+		     &lookup1_tbl[items_count - 1], 0, item_size,
+		     item_size);
+
+	le16_add_cpu(&read_desc.range_len, 1);
+
+	ssdfs_memcpy(&lookup1_tbl[items_count - 1], 0, item_size,
+		     &read_desc, 0, item_size,
+		     item_size);
+
+	SSDFS_DBG("items_count %u, range_len %u\n",
+		  items_count,
+		  le16_to_cpu(read_desc.range_len));
 
 	err = ssdfs_set_node_header_dirty(node,
 					  node->items_area.items_capacity);
@@ -8461,6 +10017,17 @@ int ssdfs_lookup1_table_modify_descriptor(struct ssdfs_btree_node *node,
 			  err);
 		return err;
 	}
+
+	search->result.name->placement.lookup1_index = calculated_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("LOOKUP1 TABLE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     lookup1_tbl,
+			     sizeof(struct ssdfs_shdict_ltbl1_item) *
+				SSDFS_SHDIC_LTBL1_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -8535,10 +10102,14 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 
 	lookup1_tbl = node->raw.dict_header.lookup_table1;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (items_count == 0) {
 		calculated_index = 0;
 	} else {
-		lookup2_index = search->result.name->strings_range.index;
+		lookup2_index = search->result.name->placement.lookup2_index;
 		calculated_index =
 			ssdfs_convert_lookup2_to_lookup1_index(lookup2_index);
 		if (calculated_index >= U16_MAX) {
@@ -8631,6 +10202,17 @@ int ssdfs_lookup1_table_add_descriptor(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	search->result.name->placement.lookup1_index = calculated_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("LOOKUP1 TABLE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     lookup1_tbl,
+			     sizeof(struct ssdfs_shdict_ltbl1_item) *
+				SSDFS_SHDIC_LTBL1_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -8668,6 +10250,10 @@ int ssdfs_lookup1_table_insert_descriptor(struct ssdfs_btree_node *node,
 
 	items_count = le16_to_cpu(node->raw.dict_header.lookup_table1_items);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->result.name);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	switch (str_type) {
 	case SSDFS_NAME_PREFIX:
 	case SSDFS_FULL_NAME:
@@ -8688,7 +10274,7 @@ int ssdfs_lookup1_table_insert_descriptor(struct ssdfs_btree_node *node,
 			return 0;
 		}
 
-		lookup2_index = search->result.name->strings_range.index;
+		lookup2_index = search->result.name->placement.lookup2_index;
 		calculated_index =
 			ssdfs_convert_lookup2_to_lookup1_index(lookup2_index);
 		if (calculated_index >= U16_MAX) {
@@ -8699,7 +10285,7 @@ int ssdfs_lookup1_table_insert_descriptor(struct ssdfs_btree_node *node,
 		}
 
 		found_index = search->result.name->lookup.index;
-		if (found_index == calculated_index) {
+		if (calculated_index <= found_index) {
 			err = ssdfs_lookup1_table_modify_descriptor(node,
 								    search);
 			if (unlikely(err)) {
@@ -8708,7 +10294,7 @@ int ssdfs_lookup1_table_insert_descriptor(struct ssdfs_btree_node *node,
 					  found_index, err);
 				return err;
 			}
-		} else if ((found_index + 1) == calculated_index) {
+		} else if (calculated_index == (found_index + 1)) {
 			err = ssdfs_lookup1_table_add_descriptor(node,
 								 search);
 			if (unlikely(err)) {
@@ -9694,7 +11280,7 @@ int ssdfs_create_prefix_for_right_name(struct ssdfs_btree_node *node,
 	read_hdesc.str_len = (u8)(str_len - prefix_len);
 	read_hdesc.type = SSDFS_NAME_SUFFIX;
 
-	err = __ssdfs_hash_table_insert_descriptor(node,
+	err = __ssdfs_hash_table_insert_descriptor(node, search,
 						   right_name->index + 1,
 						   &read_hdesc);
 	if (unlikely(err)) {
@@ -12118,6 +13704,15 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		memset(hdr->lookup_table1, 0xFF,
 			sizeof(struct ssdfs_shdict_ltbl1_item) *
 			SSDFS_SHDIC_LTBL1_SIZE);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("LOOKUP1 TABLE DUMP\n");
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     hdr->lookup_table1,
+				     sizeof(struct ssdfs_shdict_ltbl1_item) *
+					SSDFS_SHDIC_LTBL1_SIZE);
+		SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else
 		items_area_empty = false;
 
@@ -14927,6 +16522,116 @@ void ssdfs_debug_shdict_btree_object(struct ssdfs_shared_dict_btree_info *tree)
 
 	SSDFS_DBG("WAIT_QUEUE: is_active %d\n",
 		  waitqueue_active(&tree->wait_queue));
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+void ssdfs_debug_btree_search_result_name(struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_shdict_ltbl2_item *ltbl2_item;
+	size_t item_size;
+	size_t count;
+	int i;
+
+	BUG_ON(!search);
+
+	SSDFS_DBG("REQUEST: type %#x, flags %#x, count %u, "
+		  "START: name %p, name_len %zu, hash %#llx, ino %llu, "
+		  "END: name %p, name_len %zu, hash %#llx, ino %llu\n",
+		  search->request.type,
+		  search->request.flags,
+		  search->request.count,
+		  search->request.start.name,
+		  search->request.start.name_len,
+		  search->request.start.hash,
+		  search->request.start.ino,
+		  search->request.end.name,
+		  search->request.end.name_len,
+		  search->request.end.hash,
+		  search->request.end.ino);
+
+	SSDFS_DBG("RESULT: state %#x, err %d, start_index %u, count %u, "
+		  "search_cno %llu\n",
+		  search->result.state,
+		  search->result.err,
+		  search->result.start_index,
+		  search->result.count,
+		  search->result.search_cno);
+
+	SSDFS_DBG("NAME: name_state %#x, name %p, "
+		  "name_string_size %zu, names_in_buffer %u\n",
+		  search->result.name_state,
+		  search->result.name,
+		  search->result.name_string_size,
+		  search->result.names_in_buffer);
+
+	if (search->result.name) {
+		count = search->result.names_in_buffer;
+
+		if (count > 0)
+			item_size = search->result.name_string_size / count;
+		else
+			item_size = 0;
+
+		for (i = 0; i < search->result.names_in_buffer; i++) {
+			struct ssdfs_name_string *name;
+			u8 *addr;
+
+			addr = (u8 *)search->result.name + (i * item_size);
+			name = (struct ssdfs_name_string *)addr;
+
+			SSDFS_DBG("NAME: index %d, hash %#llx, str_len %zu\n",
+				  i, name->hash, name->len);
+
+			SSDFS_DBG("LOOKUP: index %u, hash_lo %#x, "
+				  "start_index %u, range_len %u\n",
+				  name->lookup.index,
+				  le32_to_cpu(name->lookup.desc.hash_lo),
+				  le16_to_cpu(name->lookup.desc.start_index),
+				  le16_to_cpu(name->lookup.desc.range_len));
+
+			ltbl2_item = &name->strings_range.desc;
+			SSDFS_DBG("STRINGS_RANGE: index %u, hash_lo %#x, "
+				  "prefix_len %u, str_count %u, "
+				  "hash_index %u\n",
+				  name->strings_range.index,
+				  le32_to_cpu(ltbl2_item->hash_lo),
+				  ltbl2_item->prefix_len,
+				  ltbl2_item->str_count,
+				  le16_to_cpu(ltbl2_item->hash_index));
+
+			SSDFS_DBG("PREFIX: index %u, hash_hi %#x, "
+				  "str_offset %u, str_len %u, type %#x\n",
+				  name->prefix.index,
+				  le32_to_cpu(name->prefix.desc.hash_hi),
+				  le16_to_cpu(name->prefix.desc.str_offset),
+				  name->prefix.desc.str_len,
+				  name->prefix.desc.type);
+
+			SSDFS_DBG("LEFT_NAME: index %u, hash_hi %#x, "
+				  "str_offset %u, str_len %u, type %#x\n",
+				  name->left_name.index,
+				  le32_to_cpu(name->left_name.desc.hash_hi),
+				  le16_to_cpu(name->left_name.desc.str_offset),
+				  name->left_name.desc.str_len,
+				  name->left_name.desc.type);
+
+			SSDFS_DBG("RIGHT_NAME: index %u, hash_hi %#x, "
+				  "str_offset %u, str_len %u, type %#x\n",
+				  name->right_name.index,
+				  le32_to_cpu(name->right_name.desc.hash_hi),
+				  le16_to_cpu(name->right_name.desc.str_offset),
+				  name->right_name.desc.str_len,
+				  name->right_name.desc.type);
+
+			SSDFS_DBG("RAW STRING DUMP: index %d\n",
+				  i);
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+						name->str,
+						name->len);
+			SSDFS_DBG("\n");
+		}
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 

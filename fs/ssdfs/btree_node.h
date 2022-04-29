@@ -703,8 +703,16 @@ int ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 				   struct ssdfs_btree_node_items_area *area,
 				   u16 offset, u16 range_len,
 				   u16 shift);
+int ssdfs_shift_memory_range_right2(struct ssdfs_btree_node *node,
+				    struct ssdfs_btree_node_index_area *area,
+				    u16 offset, u16 range_len,
+				    u16 shift);
 int ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 				   struct ssdfs_btree_node_items_area *area,
+				   u16 offset, u16 range_len,
+				   u16 shift);
+int ssdfs_shift_memory_range_left2(struct ssdfs_btree_node *node,
+				   struct ssdfs_btree_node_index_area *area,
 				   u16 offset, u16 range_len,
 				   u16 shift);
 int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,

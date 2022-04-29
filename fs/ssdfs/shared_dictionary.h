@@ -168,6 +168,7 @@ int ssdfs_names_queue_remove_first(struct ssdfs_names_queue *nq,
 void ssdfs_names_queue_remove_all(struct ssdfs_names_queue *nq);
 
 void ssdfs_debug_shdict_btree_object(struct ssdfs_shared_dict_btree_info *tree);
+void ssdfs_debug_btree_search_result_name(struct ssdfs_btree_search *search);
 
 /*
  * Shared dictionary btree specialized operations

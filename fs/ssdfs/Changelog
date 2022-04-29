@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.10 [April 29, 2022]
+    (*) Fix bugs in shared dictionary (step 5).
+
 v.4.09 [March 19, 2022]
     (*) Implement Diff-on-Write approach for user-data case.
 

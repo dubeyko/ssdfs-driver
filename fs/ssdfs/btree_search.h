@@ -165,6 +165,26 @@ struct ssdfs_string_descriptor {
 };
 
 /*
+ * struct ssdfs_string_table_index - string table indexes
+ * @lookup1_index: index in lookup1 table
+ * @lookup2_index: index in lookup2 table
+ * @hash_index: index in hash table
+ *
+ * Search operation defines lookup, strings_range, prefix,
+ * left_name, and right_name. This information contains
+ * potential position to store the string. However,
+ * the final position to insert string and indexes can
+ * be defined during the insert operation. This field
+ * keeps the knowledge of finally used indexes to store
+ * the string and lookup1, lookup2, hash indexes.
+ */
+struct ssdfs_string_table_index {
+	u16 lookup1_index;
+	u16 lookup2_index;
+	u16 hash_index;
+};
+
+/*
  * struct ssdfs_name_string - name string
  * @hash: name hash
  * @lookup: lookup item descriptor
@@ -172,6 +192,7 @@ struct ssdfs_string_descriptor {
  * @prefix: prefix descriptor
  * @left_name: left name descriptor
  * @right_name: right name descriptor
+ * @placement: stored indexes descriptor
  * @len: name length
  * @str: name buffer
  */
@@ -182,6 +203,8 @@ struct ssdfs_name_string {
 	struct ssdfs_string_descriptor prefix;
 	struct ssdfs_string_descriptor left_name;
 	struct ssdfs_string_descriptor right_name;
+
+	struct ssdfs_string_table_index placement;
 
 	size_t len;
 	unsigned char str[SSDFS_MAX_NAME_LEN];
