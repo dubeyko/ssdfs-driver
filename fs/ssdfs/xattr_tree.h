@@ -93,11 +93,13 @@ int ssdfs_xattrs_tree_find(struct ssdfs_xattrs_btree_info *tree,
 			  const char *name, size_t len,
 			  struct ssdfs_btree_search *search);
 int ssdfs_xattrs_tree_add(struct ssdfs_xattrs_btree_info *tree,
+			 int name_index,
 			 const char *name, size_t name_len,
 			 const void *value, size_t size,
 			 struct ssdfs_inode_info *ii,
 			 struct ssdfs_btree_search *search);
 int ssdfs_xattrs_tree_change(struct ssdfs_xattrs_btree_info *tree,
+			    int name_index,
 			    u64 name_hash,
 			    const char *name, size_t name_len,
 			    const void *value, size_t size,

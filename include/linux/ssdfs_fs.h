@@ -856,7 +856,8 @@ struct ssdfs_blob_extent {
 /* 0x0020 */
 } __packed;
 
-#define SSDFS_XATTR_INLINE_BLOB_MAX_LEN	(32)
+#define SSDFS_XATTR_INLINE_BLOB_MAX_LEN		(32)
+#define SSDFS_XATTR_EXTERNAL_BLOB_MAX_LEN	(32768)
 
 /*
  * struct ssdfs_blob_bytes - inline blob's byte stream

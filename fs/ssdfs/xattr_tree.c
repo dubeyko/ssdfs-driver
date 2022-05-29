@@ -39,6 +39,8 @@
 #include "shared_dictionary.h"
 #include "shared_extents_tree.h"
 #include "segment_tree.h"
+#include "peb_mapping_table.h"
+#include "xattr.h"
 #include "xattr_tree.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -138,6 +140,9 @@ u16 ssdfs_calculate_inline_capacity(struct ssdfs_fs_info *fsi)
 		inline_capacity += (raw_size / private_area_size) / 2;
 	}
 
+	SSDFS_DBG("raw_size %zu, inline_capacity %u\n",
+		  raw_size, inline_capacity);
+
 	return inline_capacity;
 }
 
@@ -181,7 +186,7 @@ int ssdfs_xattrs_tree_create(struct ssdfs_fs_info *fsi,
 	ptr->generic_tree = NULL;
 
 	inline_capacity = ssdfs_calculate_inline_capacity(fsi);
-	if (inline_capacity >= U16_MAX) {
+	if (inline_capacity == 0 || inline_capacity >= U16_MAX) {
 		SSDFS_ERR("invalid inline_capacity %u\n",
 			  inline_capacity);
 		return -ERANGE;
@@ -190,7 +195,7 @@ int ssdfs_xattrs_tree_create(struct ssdfs_fs_info *fsi,
 	ptr->inline_capacity = (u16)inline_capacity;
 	ptr->inline_count = 0;
 
-	if (ptr->inline_capacity > 1) {
+	if (ptr->inline_capacity == 1) {
 		atomic_set(&ptr->type, SSDFS_INLINE_XATTR);
 		memset(&ptr->buffer.xattr, 0, xattr_size);
 		ptr->inline_xattrs = &ptr->buffer.xattr;
@@ -1300,12 +1305,14 @@ bool can_blob_be_inline(size_t size)
 
 /*
  * ssdfs_define_name_type() - define type of the name
+ * @name_index: name index
  * @name: name string
  * @name_len: length of the name
  * @name_type: pointer on the value of name type [out]
  */
 static
-int ssdfs_define_name_type(const char *name, size_t name_len,
+int ssdfs_define_name_type(int name_index,
+			   const char *name, size_t name_len,
 			   u8 *name_type)
 {
 	size_t len;
@@ -1314,9 +1321,10 @@ int ssdfs_define_name_type(const char *name, size_t name_len,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!name || !name_type);
-#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("name_len %zu\n", name_len);
+	SSDFS_DBG("name_len %zu, name_index %#x\n",
+		  name_len, name_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (name_len == 0 || name_len > SSDFS_MAX_NAME_LEN) {
 		*name_type = SSDFS_XATTR_NAME_UNKNOWN_TYPE;
@@ -1331,12 +1339,39 @@ int ssdfs_define_name_type(const char *name, size_t name_len,
 			len = min_t(size_t, name_len,
 				    strlen(SSDFS_NS_PREFIX[i]));
 
+			SSDFS_DBG("name %s, prefix %s\n",
+				  name, SSDFS_NS_PREFIX[i]);
+
 			res = strncmp(name, SSDFS_NS_PREFIX[i], len);
 			if (res == 0)
 				break;
 		}
 
 		if (res != 0) {
+			switch (name_index) {
+			case SSDFS_USER_XATTR_ID:
+				*name_type = SSDFS_XATTR_USER_INLINE_NAME;
+				return 0;
+
+			case SSDFS_TRUSTED_XATTR_ID:
+				*name_type = SSDFS_XATTR_TRUSTED_INLINE_NAME;
+				return 0;
+
+			case SSDFS_SECURITY_XATTR_ID:
+				*name_type = SSDFS_XATTR_SECURITY_INLINE_NAME;
+				return 0;
+
+			case SSDFS_SYSTEM_XATTR_ID:
+				*name_type = SSDFS_XATTR_SYSTEM_INLINE_NAME;
+				return 0;
+
+			case SSDFS_POSIX_ACL_ACCESS_XATTR_ID:
+			case SSDFS_POSIX_ACL_DEFAULT_XATTR_ID:
+			case SSDFS_RICHACL_XATTR_ID:
+				/* TODO: support */
+				break;
+			}
+
 			*name_type = SSDFS_XATTR_INLINE_NAME;
 			return 0;
 		}
@@ -1376,6 +1411,30 @@ int ssdfs_define_name_type(const char *name, size_t name_len,
 		}
 
 		if (res != 0) {
+			switch (name_index) {
+			case SSDFS_USER_XATTR_ID:
+				*name_type = SSDFS_XATTR_USER_REGULAR_NAME;
+				return 0;
+
+			case SSDFS_TRUSTED_XATTR_ID:
+				*name_type = SSDFS_XATTR_TRUSTED_REGULAR_NAME;
+				return 0;
+
+			case SSDFS_SECURITY_XATTR_ID:
+				*name_type = SSDFS_XATTR_SECURITY_REGULAR_NAME;
+				return 0;
+
+			case SSDFS_SYSTEM_XATTR_ID:
+				*name_type = SSDFS_XATTR_SYSTEM_REGULAR_NAME;
+				return 0;
+
+			case SSDFS_POSIX_ACL_ACCESS_XATTR_ID:
+			case SSDFS_POSIX_ACL_DEFAULT_XATTR_ID:
+			case SSDFS_RICHACL_XATTR_ID:
+				/* TODO: support */
+				break;
+			}
+
 			*name_type = SSDFS_XATTR_REGULAR_NAME;
 			return 0;
 		}
@@ -1505,12 +1564,19 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
+	err = ssdfs_reserve_free_pages(fsi, 1, SSDFS_USER_DATA_PAGES);
+	if (unlikely(err)) {
+		SSDFS_DBG("unable to reserve logical block: "
+			  "err %d\n", err);
+		return -ENOSPC;
+	}
+
 	req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(req)) {
 		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		return err;
+		goto free_reserved_page;
 	}
 
 	ssdfs_request_init(req);
@@ -1553,7 +1619,6 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 
 finish_copy:
 		ssdfs_put_page(page);
-		ssdfs_unlock_page(page);
 
 		if (unlikely(err))
 			goto finish_save_external_blob;
@@ -1592,11 +1657,17 @@ finish_save_external_blob:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		end_page_writeback(page);
+		ssdfs_unlock_page(page);
 	}
 
 	ssdfs_xattr_pagevec_release(&req->result.pvec);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
+
+free_reserved_page:
+	spin_lock(&fsi->volume_state_lock);
+	fsi->free_pages--;
+	spin_unlock(&fsi->volume_state_lock);
 
 	return err;
 }
@@ -1645,6 +1716,7 @@ int ssdfs_invalidate_external_blob(struct ssdfs_fs_info *fsi,
  * ssdfs_prepare_xattr() - prepare xattr object
  * @fsi:  pointer on shared file system object
  * @ii: inode descriptor
+ * @name_index: index of name
  * @name: name string
  * @name_len: length of the name
  * @value: pointer on xattr's blob
@@ -1663,6 +1735,7 @@ int ssdfs_invalidate_external_blob(struct ssdfs_fs_info *fsi,
 static
 int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 			struct ssdfs_inode_info *ii,
+			int name_index,
 			const char *name, size_t name_len,
 			const void *value, size_t size,
 			struct ssdfs_btree_search *search)
@@ -1717,7 +1790,12 @@ int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 		err = ssdfs_save_external_blob(fsi, ii,
 						value, size,
 						&extent);
-		if (unlikely(err)) {
+		if (err == -ENOSPC) {
+			SSDFS_DBG("unable to store the blob: "
+				  "size %zu, err %d\n",
+				  size, err);
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to store the blob: "
 				  "size %zu, err %d\n",
 				  size, err);
@@ -1725,7 +1803,7 @@ int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	err = ssdfs_define_name_type(name, name_len,
+	err = ssdfs_define_name_type(name_index, name, name_len,
 				     &name_type);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define name's type: "
@@ -1775,6 +1853,10 @@ int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 	xattr->header.name_len = cpu_to_le16(inline_len);
 	xattr->header.name_type = name_type;
 	xattr->header.name_flags = name_flags;
+
+	SSDFS_DBG("name_hash %llx, name_len %zu, "
+		  "name_type %#x, name_flags %#x\n",
+		  name_hash, inline_len, name_type, name_flags);
 
 	inline_len = min_t(size_t, inline_len, SSDFS_XATTR_INLINE_NAME_MAX_LEN);
 
@@ -1842,10 +1924,10 @@ int ssdfs_xattrs_tree_add_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_XATTR:
@@ -1912,7 +1994,13 @@ int ssdfs_xattrs_tree_add_inline_xattr(struct ssdfs_xattrs_btree_info *tree,
 		return -ENOSPC;
 	}
 
-	if (search->result.state != SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND) {
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		/* expected state */
+		break;
+
+	default:
 		SSDFS_ERR("invalid search result's state %#x\n",
 			  search->result.state);
 		return -ERANGE;
@@ -2388,6 +2476,7 @@ recover_inline_tree:
 /*
  * ssdfs_xattrs_tree_add() - add the xattr into the tree
  * @tree: xattrs tree
+ * @name_index: index of name
  * @name: xattr's name
  * @name_len: length of the name
  * @value: xattr's blob
@@ -2406,6 +2495,7 @@ recover_inline_tree:
  * %-EEXIST     - xattr exists in the tree.
  */
 int ssdfs_xattrs_tree_add(struct ssdfs_xattrs_btree_info *tree,
+			 int name_index,
 			 const char *name, size_t name_len,
 			 const void *value, size_t size,
 			 struct ssdfs_inode_info *ii,
@@ -2418,10 +2508,10 @@ int ssdfs_xattrs_tree_add(struct ssdfs_xattrs_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !tree->fsi || !name || !value || !ii || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, ii %p, ino %lu\n",
 		  tree, ii, ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tree->fsi;
 	dict = fsi->shdictree;
@@ -2485,9 +2575,18 @@ int ssdfs_xattrs_tree_add(struct ssdfs_xattrs_btree_info *tree,
 		}
 
 		if (err == -ENODATA) {
-			err = ssdfs_prepare_xattr(fsi, ii, name, name_len,
+			err = ssdfs_prepare_xattr(fsi, ii, name_index,
+						  name, name_len,
 						  value, size, search);
-			if (unlikely(err)) {
+			if (err == -ENOSPC) {
+				SSDFS_DBG("unable to prepare the xattr: "
+					  "name_hash %llx, ino %lu, "
+					  "err %d\n",
+					  name_hash,
+					  ii->vfs_inode.i_ino,
+					  err);
+				goto finish_add_inline_xattr;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare the xattr: "
 					  "name_hash %llx, ino %lu, "
 					  "err %d\n",
@@ -2542,6 +2641,7 @@ finish_add_inline_xattr:
 
 	case SSDFS_INLINE_XATTR_ARRAY:
 		/* TODO: implement support */
+		BUG();
 		break;
 
 	case SSDFS_PRIVATE_XATTR_BTREE:
@@ -2565,7 +2665,8 @@ try_to_add_into_generic_tree:
 		}
 
 		if (err == -ENODATA) {
-			err = ssdfs_prepare_xattr(fsi, ii, name, name_len,
+			err = ssdfs_prepare_xattr(fsi, ii, name_index,
+						  name, name_len,
 						  value, size, search);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare the xattr: "
@@ -2622,6 +2723,7 @@ finish_add_generic_xattr:
  * ssdfs_change_xattr() - change the existing xattr object
  * @fsi:  pointer on shared file system object
  * @ii: inode descriptor
+ * @name_index: name index
  * @name: name string
  * @name_len: length of the name
  * @value: pointer on xattr's blob
@@ -2640,6 +2742,7 @@ finish_add_generic_xattr:
 static
 int ssdfs_change_xattr(struct ssdfs_fs_info *fsi,
 			struct ssdfs_inode_info *ii,
+			int name_index,
 			const char *name, size_t name_len,
 			const void *value, size_t size,
 			struct ssdfs_btree_search *search)
@@ -2700,6 +2803,7 @@ int ssdfs_change_xattr(struct ssdfs_fs_info *fsi,
 	}
 
 	return ssdfs_prepare_xattr(fsi, ii,
+				   name_index,
 				   name, name_len,
 				   value, size,
 				   search);
@@ -2924,6 +3028,7 @@ int ssdfs_xattrs_tree_change_xattr(struct ssdfs_xattrs_btree_info *tree,
 /*
  * ssdfs_xattrs_tree_change() - change xattr in the tree
  * @tree: xattrs tree
+ * @name_index: name index
  * @name_hash: hash of the name
  * @name: name string of xattr
  * @name_len: length of the name
@@ -2942,6 +3047,7 @@ int ssdfs_xattrs_tree_change_xattr(struct ssdfs_xattrs_btree_info *tree,
  * %-ENODATA    - xattr doesn't exist in the tree.
  */
 int ssdfs_xattrs_tree_change(struct ssdfs_xattrs_btree_info *tree,
+			    int name_index,
 			    u64 name_hash,
 			    const char *name, size_t name_len,
 			    const void *value, size_t size,
@@ -3005,6 +3111,7 @@ int ssdfs_xattrs_tree_change(struct ssdfs_xattrs_btree_info *tree,
 		}
 
 		err = ssdfs_change_xattr(fsi, tree->owner,
+					 name_index,
 					 name, name_len,
 					 value, size,
 					 search);
@@ -3040,6 +3147,7 @@ finish_change_inline_xattr:
 		}
 
 		err = ssdfs_change_xattr(fsi, tree->owner,
+					 name_index,
 					 name, name_len,
 					 value, size,
 					 search);
@@ -3686,7 +3794,12 @@ int ssdfs_xattrs_tree_delete(struct ssdfs_xattrs_btree_info *tree,
 		down_write(&tree->lock);
 
 		err = ssdfs_xattrs_tree_find_inline_xattr(tree, search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find the inline xattr: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+			goto finish_delete_inline_xattr;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the inline xattr: "
 				  "name_hash %llx, err %d\n",
 				  name_hash, err);
@@ -3711,7 +3824,12 @@ finish_delete_inline_xattr:
 		down_read(&tree->lock);
 
 		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find the xattr: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+			goto finish_delete_generic_xattr;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the xattr: "
 				  "name_hash %llx, err %d\n",
 				  name_hash, err);
@@ -4109,6 +4227,17 @@ ssdfs_xattrs_tree_extract_inline_range(struct ssdfs_xattrs_btree_info *tree,
 		search->result.items_in_buffer++;
 		search->result.count++;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_in_buffer %u\n",
+		  search->result.items_in_buffer);
+
+	SSDFS_DBG("INLINE XATTR DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     search->result.buf,
+			     search->result.buf_size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
 	return 0;

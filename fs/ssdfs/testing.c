@@ -35,6 +35,7 @@
 #include "xattr_tree.h"
 #include "shared_extents_tree.h"
 #include "snapshots_tree.h"
+#include "xattr.h"
 #include "testing.h"
 
 static
@@ -2607,6 +2608,7 @@ int ssdfs_testing_xattr_tree_add(struct ssdfs_fs_info *fsi,
 
 	ssdfs_btree_search_init(search);
 	err = ssdfs_xattrs_tree_add(ii->xattrs_tree,
+				    SSDFS_USER_XATTR_ID,
 				    name, env->xattr_tree.name_len,
 				    blob, env->xattr_tree.blob_len,
 				    ii,
@@ -2725,6 +2727,7 @@ int ssdfs_testing_xattr_tree_resize_blob(struct ssdfs_fs_info *fsi,
 
 	ssdfs_btree_search_init(search);
 	err = ssdfs_xattrs_tree_change(ii->xattrs_tree,
+					SSDFS_USER_XATTR_ID,
 					name_hash,
 					name, env->xattr_tree.name_len,
 					blob, env->xattr_tree.blob_len,
