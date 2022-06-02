@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.12 [June 02, 2022]
+    (*) Synchronize on-disk layout between tools and driver.
+
 v.4.11 [May 28, 2022]
     (*) Fix bugs in xattrs tree (step 1).
 

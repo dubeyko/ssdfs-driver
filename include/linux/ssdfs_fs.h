@@ -344,9 +344,11 @@ struct ssdfs_leb2peb_pair {
  * @log_erasesize: log2(erase block size)
  * @log_segsize: log2(segment size)
  * @log_pebs_per_seg: log2(erase blocks per segment)
- * @reserved: reserved
+ * @megabytes_per_peb: MBs in one PEB
+ * @pebs_per_seg: number of PEBs per segment
  * @create_time: volume create timestamp (mkfs phase)
  * @create_cno: volume create checkpoint
+ * @flags: volume creation flags
  * @sb_pebs: array of prev, cur and next superblock's PEB numbers
  * @segbmap: superblock's segment bitmap header
  * @maptbl: superblock's mapping table header
@@ -373,12 +375,17 @@ struct ssdfs_volume_header {
 	__le8 log_erasesize;
 	__le8 log_segsize;
 	__le8 log_pebs_per_seg;
-	__le8 reserved1[4];
+	__le16 megabytes_per_peb;
+	__le16 pebs_per_seg;
 
 /* 0x0018 */
 	__le64 create_time;
 	__le64 create_cno;
-	__le64 reserved2;
+#define SSDFS_VH_ZNS_BASED_VOLUME	(1 << 0)
+#define SSDFS_VH_UNALIGNED_ZONE		(1 << 1)
+#define SSDFS_VH_FLAGS_MASK		(0x3)
+	__le32 flags;
+	__le32 reserved2;
 
 /* 0x0030 */
 #define VH_LIMIT1	SSDFS_SB_CHAIN_MAX
@@ -1844,7 +1851,8 @@ struct ssdfs_fragments_chain_header {
 #define SSDFS_CHAIN_HDR_FLAG_MASK	0x1
 
 /* Fragments chain constants */
-#define SSDFS_FRAGMENTS_CHAIN_MAX	14
+#define SSDFS_FRAGMENTS_CHAIN_MAX		14
+#define SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX	64
 
 /*
  * struct ssdfs_fragment_desc - fragment descriptor
