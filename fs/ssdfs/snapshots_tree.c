@@ -864,7 +864,8 @@ int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
 	len = strnlen(snr->info.name, SSDFS_MAX_NAME_LEN);
 
 	if (len != 0) {
-		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len,
+						SSDFS_MAX_SNAPSHOT_NAME_LEN);
 		if (name_hash == U64_MAX) {
 			SSDFS_ERR("fail to generate name hash\n");
 			return -ERANGE;
@@ -1199,7 +1200,8 @@ int ssdfs_modify_snapshot(struct ssdfs_snapshot_request *snr,
 			     snr->info.name, 0, SSDFS_MAX_NAME_LEN,
 			     SSDFS_MAX_SNAPSHOT_NAME_LEN);
 
-		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len,
+						SSDFS_MAX_SNAPSHOT_NAME_LEN);
 		if (name_hash == U64_MAX) {
 			SSDFS_ERR("fail to generate name hash\n");
 			return -ERANGE;

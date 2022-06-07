@@ -6404,7 +6404,7 @@ bool is_ssdfs_btree_empty(struct ssdfs_btree *tree)
 		SSDFS_WARN("invalid tree state %#x\n",
 			   tree_state);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return -ERANGE;
+		return false;
 	}
 
 	down_read(&tree->lock);
@@ -6523,6 +6523,182 @@ finish_check_tree:
 	up_read(&tree->lock);
 
 	return err ? false : true;
+}
+
+/*
+ * need_migrate_generic2inline_btree() - is it time to migrate?
+ * @tree: btree object
+ * @items_threshold: items migration threshold
+ */
+bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
+					int items_threshold)
+{
+	struct ssdfs_btree_node *node;
+	struct ssdfs_btree_index_key key1, key2;
+	int tree_state;
+	u32 node_id1, node_id2;
+	u16 items_count;
+	bool need_migrate = false;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree_state = atomic_read(&tree->state);
+
+	SSDFS_DBG("tree %p, type %#x, state %#x\n",
+		  tree, tree->type, tree_state);
+
+	switch (tree_state) {
+	case SSDFS_BTREE_CREATED:
+	case SSDFS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#else
+		SSDFS_WARN("invalid tree state %#x\n",
+			   tree_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return false;
+	}
+
+	down_read(&tree->lock);
+
+	err = ssdfs_btree_radix_tree_find(tree,
+					  SSDFS_BTREE_ROOT_NODE_ID,
+					  &node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find root node: err %d\n",
+			  err);
+		goto finish_check_tree;
+	} else if (!node) {
+		err = -ERANGE;
+		SSDFS_ERR("node is NULL\n");
+		goto finish_check_tree;
+	}
+
+	if (!is_ssdfs_btree_node_index_area_exist(node)) {
+		err = -ERANGE;
+		SSDFS_WARN("root node hasn't index area\n");
+		goto finish_check_tree;
+	}
+
+	if (is_ssdfs_btree_node_index_area_empty(node))
+		goto finish_check_tree;
+
+	down_read(&node->full_lock);
+	err = __ssdfs_btree_root_node_extract_index(node,
+						SSDFS_ROOT_NODE_LEFT_LEAF_NODE,
+						&key1);
+	up_read(&node->full_lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get index: err %d\n",
+			  err);
+		goto finish_check_tree;
+	}
+
+	node_id1 = le32_to_cpu(key1.node_id);
+	if (node_id1 == SSDFS_BTREE_NODE_INVALID_ID) {
+		SSDFS_WARN("index is invalid\n");
+		goto finish_check_tree;
+	}
+
+	down_read(&node->full_lock);
+	err = __ssdfs_btree_root_node_extract_index(node,
+						SSDFS_ROOT_NODE_RIGHT_LEAF_NODE,
+						&key2);
+	up_read(&node->full_lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get index: err %d\n",
+			  err);
+		goto finish_check_tree;
+	}
+
+	node_id2 = le32_to_cpu(key2.node_id);
+	if (node_id2 != SSDFS_BTREE_NODE_INVALID_ID) {
+		err = -EEXIST;
+		goto finish_check_tree;
+	}
+
+	err = ssdfs_btree_radix_tree_find(tree, node_id1, &node);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find node: node_id %u, err %d\n",
+			  node_id1, err);
+		goto finish_check_tree;
+	} else if (!node) {
+		err = -ERANGE;
+		SSDFS_ERR("node is NULL\n");
+		goto finish_check_tree;
+	}
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_LEAF_NODE:
+		if (!is_ssdfs_btree_node_items_area_empty(node)) {
+			down_read(&node->header_lock);
+			items_count = node->items_area.items_count;
+			up_read(&node->header_lock);
+
+			if (items_count <= items_threshold) {
+				/* time to migrate */
+				need_migrate = true;
+			}
+
+			goto finish_check_tree;
+		} else {
+			/* empty node */
+			goto finish_check_tree;
+		}
+		break;
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		if (is_ssdfs_btree_node_index_area_empty(node) &&
+		    !is_ssdfs_btree_node_items_area_empty(node)) {
+			down_read(&node->header_lock);
+			items_count = node->items_area.items_count;
+			up_read(&node->header_lock);
+
+			if (items_count <= items_threshold) {
+				/* time to migrate */
+				need_migrate = true;
+			}
+
+			goto finish_check_tree;
+		} else if (!is_ssdfs_btree_node_index_area_empty(node)) {
+			err = -EEXIST;
+			goto finish_check_tree;
+		} else {
+			/* empty node */
+			goto finish_check_tree;
+		}
+		break;
+
+	case SSDFS_BTREE_INDEX_NODE:
+		err = -EEXIST;
+		goto finish_check_tree;
+
+	case SSDFS_BTREE_ROOT_NODE:
+		err = -ERANGE;
+		SSDFS_WARN("node %u has root node type\n",
+			   node_id1);
+		goto finish_check_tree;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid node type %#x\n",
+			  atomic_read(&node->type));
+		goto finish_check_tree;
+	}
+
+finish_check_tree:
+	up_read(&tree->lock);
+
+	return need_migrate;
 }
 
 /*

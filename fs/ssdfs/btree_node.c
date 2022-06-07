@@ -9918,7 +9918,6 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -9931,6 +9930,7 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	vacant_items = items_capacity - items_count;
 	have_enough_space = search->request.count <= vacant_items;
@@ -11968,6 +11968,7 @@ int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 
 	switch (src->tree->type) {
 	case SSDFS_EXTENTS_BTREE:
+	case SSDFS_XATTR_BTREE:
 		search->request.flags |= SSDFS_BTREE_SEARCH_NOT_INVALIDATE;
 		break;
 
@@ -15066,6 +15067,10 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 
 	case SSDFS_DENTRIES_BTREE:
 		index_type = SSDFS_EXTENT_INFO_DENTRY_INDEX_DESCRIPTOR;
+		break;
+
+	case SSDFS_XATTR_BTREE:
+		index_type = SSDFS_EXTENT_INFO_XATTR_INDEX_DESCRIPTOR;
 		break;
 
 	case SSDFS_SHARED_DICTIONARY_BTREE:

@@ -4434,6 +4434,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 {
 	struct ssdfs_blk2off_table *blk2off_tbl;
 	struct ssdfs_phys_offset_descriptor *off_desc = NULL;
+	struct ssdfs_phys_offset_descriptor old_desc;
+	size_t desc_size = sizeof(struct ssdfs_phys_offset_descriptor);
 	u32 blk;
 	u32 upper_blk = start_off + blks_count;
 	struct completion *init_end;
@@ -4502,7 +4504,11 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		peb_page = le16_to_cpu(off_desc->page_desc.peb_page);
+		ssdfs_memcpy(&old_desc, 0, desc_size,
+			     off_desc, 0, desc_size,
+			     desc_size);
+
+		peb_page = le16_to_cpu(old_desc.page_desc.peb_page);
 
 		if (peb_index >= si->pebs_count) {
 			SSDFS_ERR("peb_index %u >= pebs_count %u\n",
@@ -4541,7 +4547,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 
 		mutex_lock(&pebc->migration_lock);
 
-		err = ssdfs_peb_container_invalidate_block(pebc, off_desc);
+		err = ssdfs_peb_container_invalidate_block(pebc, &old_desc);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate: "
 				  "logical_blk %u, peb_index %u, "

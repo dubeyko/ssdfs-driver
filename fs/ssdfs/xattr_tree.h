@@ -105,8 +105,9 @@ int ssdfs_xattrs_tree_change(struct ssdfs_xattrs_btree_info *tree,
 			    const void *value, size_t size,
 			    struct ssdfs_btree_search *search);
 int ssdfs_xattrs_tree_delete(struct ssdfs_xattrs_btree_info *tree,
-			    u64 name_hash,
-			    struct ssdfs_btree_search *search);
+			     u64 name_hash,
+			     const char *name, size_t name_len,
+			     struct ssdfs_btree_search *search);
 int ssdfs_xattrs_tree_delete_all(struct ssdfs_xattrs_btree_info *tree);
 
 /*

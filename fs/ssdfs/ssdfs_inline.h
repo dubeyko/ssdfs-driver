@@ -961,6 +961,74 @@ size_t ssdfs_inode_inline_file_capacity(struct inode *inode)
 	return raw_inode_size - metadata_len;
 }
 
+/*
+ * __ssdfs_generate_name_hash() - generate a name's hash
+ * @name: pointer on the name's string
+ * @len: length of the name
+ * @inline_name_max_len: max length of inline name
+ */
+static inline
+u64 __ssdfs_generate_name_hash(const char *name, size_t len,
+				size_t inline_name_max_len)
+{
+	u32 hash32_lo, hash32_hi;
+	size_t copy_len;
+	u64 name_hash;
+	u32 diff = 0;
+	u8 symbol1, symbol2;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!name);
+
+	SSDFS_DBG("name %s, len %zu, inline_name_max_len %zu\n",
+		  name, len, inline_name_max_len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (len == 0) {
+		SSDFS_ERR("invalid len %zu\n", len);
+		return U64_MAX;
+	}
+
+	copy_len = min_t(size_t, len, inline_name_max_len);
+	hash32_lo = full_name_hash(NULL, name, copy_len);
+
+	if (len <= inline_name_max_len) {
+		hash32_hi = len;
+
+		for (i = 1; i < len; i++) {
+			symbol1 = (u8)name[i - 1];
+			symbol2 = (u8)name[i];
+			diff = 0;
+
+			if (symbol1 > symbol2)
+				diff = symbol1 - symbol2;
+			else
+				diff = symbol2 - symbol1;
+
+			hash32_hi += diff * symbol1;
+
+			SSDFS_DBG("hash32_hi %x, symbol1 %x, "
+				  "symbol2 %x, index %d, diff %u\n",
+				  hash32_hi, symbol1, symbol2,
+				  i, diff);
+		}
+	} else {
+		hash32_hi = full_name_hash(NULL,
+					   name + inline_name_max_len,
+					   len - copy_len);
+	}
+
+	name_hash = SSDFS_NAME_HASH(hash32_lo, hash32_hi);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("name %s, len %zu, name_hash %llx\n",
+		  name, len, name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return name_hash;
+}
+
 #define SSDFS_FSI(ptr) \
 	((struct ssdfs_fs_info *)(ptr))
 #define SSDFS_BLKT(ptr) \

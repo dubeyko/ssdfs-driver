@@ -375,7 +375,8 @@ int ssdfs_add_snapshot_rule(struct ssdfs_fs_info *fsi,
 			goto fail_add_snapshot_rule;
 		}
 
-		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len,
+						SSDFS_MAX_SNAP_RULE_NAME_LEN);
 		if (name_hash == U64_MAX) {
 			err = -ERANGE;
 			SSDFS_ERR("fail to generate name hash\n");
@@ -398,7 +399,8 @@ int ssdfs_add_snapshot_rule(struct ssdfs_fs_info *fsi,
 
 		ptr->rule.name_hash = cpu_to_le64(name_hash);
 	} else {
-		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len,
+						SSDFS_MAX_SNAP_RULE_NAME_LEN);
 		if (name_hash == U64_MAX) {
 			err = -ERANGE;
 			SSDFS_ERR("fail to generate name hash\n");

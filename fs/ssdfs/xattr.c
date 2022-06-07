@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/rwsem.h>
 #include <linux/pagevec.h>
+#include <linux/sched/signal.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -86,7 +87,49 @@ int ssdfs_xattrs_tree_get_start_hash(struct ssdfs_xattrs_btree_info *tree,
 	index = &tree->root->indexes[SSDFS_ROOT_NODE_LEFT_LEAF_NODE];
 	*start_hash = le64_to_cpu(index->hash);
 
+	SSDFS_DBG("start_hash %llx\n", *start_hash);
+
 finish_get_start_hash:
+	up_read(&tree->lock);
+
+	return err;
+}
+
+static
+int ssdfs_xattrs_tree_get_next_hash(struct ssdfs_xattrs_btree_info *tree,
+				    struct ssdfs_btree_search *search,
+				    u64 *next_hash)
+{
+	u64 old_hash;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search || !next_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_hash = le64_to_cpu(search->node.found_index.index.hash);
+
+	SSDFS_DBG("search %p, next_hash %p, old (node %u, hash %llx)\n",
+		  search, next_hash, search->node.id, old_hash);
+
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_XATTR:
+	case SSDFS_INLINE_XATTR_ARRAY:
+		SSDFS_DBG("inline xattrs array is unsupported\n");
+		return -ENOENT;
+
+	case SSDFS_PRIVATE_XATTR_BTREE:
+		/* expected tree type */
+		break;
+
+	default:
+		SSDFS_ERR("invalid tree type %#x\n",
+			  atomic_read(&tree->type));
+		return -ERANGE;
+	}
+
+	down_read(&tree->lock);
+	err = ssdfs_btree_get_next_hash(tree->generic_tree, search, next_hash);
 	up_read(&tree->lock);
 
 	return err;
@@ -583,7 +626,12 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 					      0,
 					      SSDFS_DEFAULT_INLINE_XATTR_COUNT,
 					      search);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to extract inline xattr: "
+			  "ino %lu\n",
+			  inode->i_ino);
+		goto finish_tree_processing;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract inline xattr: "
 			  "ino %lu, err %d\n",
 			  inode->i_ino, err);
@@ -648,8 +696,7 @@ ssize_t ssdfs_listxattr_generic_tree(struct inode *inode,
 	struct ssdfs_shared_dict_btree_info *dict;
 	struct ssdfs_xattr_entry *xattr;
 	size_t xattr_size = sizeof(struct ssdfs_xattr_entry);
-	u64 start_hash, end_hash, hash;
-	u64 cur_hash = 0;
+	u64 start_hash, end_hash;
 	u16 items_count;
 	ssize_t res, copied = 0;
 	int i;
@@ -698,15 +745,29 @@ finish_get_start_hash:
 		goto clean_up;
 
 	do {
+		ssdfs_btree_search_init(search);
+
+		/* allow ssdfs_listxattr_generic_tree() to be interrupted */
+		if (fatal_signal_pending(current)) {
+			err = -ERESTARTSYS;
+			goto clean_up;
+		}
+		cond_resched();
+
 		down_read(&ii->lock);
 
 		err = ssdfs_xattrs_tree_find_leaf_node(ii->xattrs_tree,
-							cur_hash,
+							start_hash,
 							search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find a leaf node: "
+				  "hash %llx, err %d\n",
+				  start_hash, err);
+			goto finish_tree_processing;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a leaf node: "
 				  "hash %llx, err %d\n",
-				  cur_hash, err);
+				  start_hash, err);
 			goto finish_tree_processing;
 		}
 
@@ -727,7 +788,7 @@ finish_get_start_hash:
 			goto finish_tree_processing;
 		}
 
-		if (cur_hash >= end_hash) {
+		if (start_hash > end_hash) {
 			err = -ENOENT;
 			goto finish_tree_processing;
 		}
@@ -761,9 +822,12 @@ finish_tree_processing:
 		items_count = search->result.count;
 
 		for (i = 0; i < items_count; i++) {
+			u64 hash;
+
 			xattr =
 			    (struct ssdfs_xattr_entry *)(search->result.buf +
 							(i * xattr_size));
+			hash = le64_to_cpu(xattr->name_hash);
 
 			if (is_invalid_xattr(xattr)) {
 				err = -EIO;
@@ -787,16 +851,37 @@ finish_tree_processing:
 					ssdfs_calculate_name_length(xattr) + 1;
 			}
 
-			cur_hash = hash + 1;
+			start_hash = hash;
 		}
 
-		if (cur_hash <= end_hash) {
+		if (start_hash != end_hash) {
 			err = -ERANGE;
-			SSDFS_ERR("cur_hash %llx <= end_hash %llx\n",
-				  cur_hash, end_hash);
+			SSDFS_ERR("cur_hash %llx != end_hash %llx\n",
+				  start_hash, end_hash);
 			goto clean_up;
 		}
-	} while (cur_hash < U64_MAX);
+
+		start_hash = end_hash + 1;
+
+		down_read(&ii->lock);
+		err = ssdfs_xattrs_tree_get_next_hash(ii->xattrs_tree,
+						      search,
+						      &start_hash);
+		up_read(&ii->lock);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
+
+		if (err == -ENOENT) {
+			err = 0;
+			SSDFS_DBG("no more xattrs in the tree\n");
+			goto clean_up;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to get next hash: err %d\n",
+				  err);
+			goto clean_up;
+		}
+	} while (start_hash < U64_MAX);
 
 clean_up:
 	return err < 0 ? err : copied;
@@ -843,8 +928,6 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		return -ENOMEM;
 	}
 
-	ssdfs_btree_search_init(search);
-
 	if (!ii->xattrs_tree) {
 		err = -ERANGE;
 		SSDFS_ERR("unexpected xattrs tree absence\n");
@@ -854,6 +937,7 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	switch (atomic_read(&ii->xattrs_tree->type)) {
 	case SSDFS_INLINE_XATTR:
 	case SSDFS_INLINE_XATTR_ARRAY:
+		ssdfs_btree_search_init(search);
 		copied = ssdfs_listxattr_inline_tree(inode, search,
 						     buffer, size);
 		if (unlikely(copied < 0)) {
@@ -866,7 +950,7 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 
 	case SSDFS_PRIVATE_XATTR_BTREE:
 		copied = ssdfs_listxattr_generic_tree(inode, search,
-						   buffer, size);
+						      buffer, size);
 		if (unlikely(copied < 0)) {
 			err = copied;
 			SSDFS_ERR("fail to extract the range: "
@@ -1418,7 +1502,8 @@ finish_create_xattrs_tree:
 
 	ssdfs_btree_search_init(search);
 
-	name_hash = __ssdfs_generate_name_hash(name, name_len);
+	name_hash = __ssdfs_generate_name_hash(name, name_len,
+					       SSDFS_XATTR_INLINE_NAME_MAX_LEN);
 	if (name_hash >= U64_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid name hash\n");
@@ -1428,7 +1513,9 @@ finish_create_xattrs_tree:
 	if (value == NULL) {
 		/* remove value */
 		err = ssdfs_xattrs_tree_delete(ii->xattrs_tree,
-						name_hash, search);
+						name_hash,
+						name, name_len,
+						search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to remove xattr: "
 				  "ino %lu, name %s, err %d\n",
@@ -1473,7 +1560,9 @@ finish_create_xattrs_tree:
 		}
 	} else {
 		err = ssdfs_xattrs_tree_delete(ii->xattrs_tree,
-						name_hash, search);
+						name_hash,
+						name, name_len,
+						search);
 		if (err == -ENODATA) {
 			err = 0;
 			SSDFS_DBG("no requested xattr in the tree: "

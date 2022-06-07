@@ -133,7 +133,6 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree);
 /*
  * Internal dentries tree API
  */
-u64 __ssdfs_generate_name_hash(const char *name, size_t len);
 u64 ssdfs_generate_name_hash(const struct qstr *str);
 int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
 					u64 name_hash,

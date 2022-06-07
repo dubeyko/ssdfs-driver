@@ -165,6 +165,8 @@ int ssdfs_btree_delete_all(struct ssdfs_btree *tree);
 /*
  * Internal Btree API
  */
+bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
+					int items_threshold);
 int ssdfs_btree_desc_init(struct ssdfs_fs_info *fsi,
 			  struct ssdfs_btree *tree,
 			  struct ssdfs_btree_descriptor *desc,

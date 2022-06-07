@@ -5353,7 +5353,8 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 
 	search->request.type = SSDFS_BTREE_SEARCH_DELETE_RANGE;
 	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
-				SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+				SSDFS_BTREE_SEARCH_HAS_VALID_COUNT |
+				SSDFS_BTREE_SEARCH_NOT_INVALIDATE;
 	search->request.start.hash = start_hash;
 	search->request.end.hash = end_hash;
 	search->request.count = forks_count;
@@ -5731,7 +5732,8 @@ finish_truncate_generic_fork:
 		SSDFS_DBG("forks_count %lld\n",
 			  atomic64_read(&tree->forks_count));
 
-		if (!err && atomic64_read(&tree->forks_count) <= 1) {
+		if (!err &&
+		    need_migrate_generic2inline_btree(tree->generic_tree, 1)) {
 			down_write(&tree->lock);
 			err = ssdfs_migrate_generic2inline_tree(tree);
 			up_write(&tree->lock);
@@ -5944,7 +5946,8 @@ finish_delete_generic_extent:
 		SSDFS_DBG("forks_count %lld\n",
 			  atomic64_read(&tree->forks_count));
 
-		if (!err && atomic64_read(&tree->forks_count) <= 1) {
+		if (!err &&
+		    need_migrate_generic2inline_btree(tree->generic_tree, 1)) {
 			down_write(&tree->lock);
 			err = ssdfs_migrate_generic2inline_tree(tree);
 			up_write(&tree->lock);
@@ -6183,17 +6186,6 @@ int ssdfs_extents_tree_delete_all(struct ssdfs_extents_btree_info *tree)
 
 			SSDFS_DBG("forks_count %lld\n",
 				  atomic64_read(&tree->forks_count));
-
-			err = ssdfs_migrate_generic2inline_tree(tree);
-			if (err == -ENOSPC) {
-				/* continue to use the generic tree */
-				err = 0;
-				SSDFS_DBG("unable to re-create inline tree\n");
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to re-create inline tree: "
-					  "err %d\n",
-					  err);
-			}
 		}
 		up_write(&tree->lock);
 

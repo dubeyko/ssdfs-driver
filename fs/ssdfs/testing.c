@@ -2506,7 +2506,8 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 				  env->shared_dictionary.name_len);
 
 		name_hash = __ssdfs_generate_name_hash(name,
-					env->shared_dictionary.name_len);
+					env->shared_dictionary.name_len,
+					SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
 		if (name_hash == U64_MAX) {
 			SSDFS_ERR("fail to generate name hash\n");
 			return -ERANGE;
@@ -2533,7 +2534,8 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 					 env->shared_dictionary.step_factor);
 
 		name_hash = __ssdfs_generate_name_hash(name,
-					env->shared_dictionary.name_len);
+					env->shared_dictionary.name_len,
+					SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
 		if (name_hash == U64_MAX) {
 			SSDFS_ERR("fail to generate name hash\n");
 			return -ERANGE;
@@ -2711,7 +2713,8 @@ int ssdfs_testing_xattr_tree_resize_blob(struct ssdfs_fs_info *fsi,
 				    env->xattr_tree.blob_len,
 				    env->xattr_tree.blob_pattern);
 
-	name_hash = __ssdfs_generate_name_hash(name, env->xattr_tree.name_len);
+	name_hash = __ssdfs_generate_name_hash(name, env->xattr_tree.name_len,
+					       SSDFS_XATTR_INLINE_NAME_MAX_LEN);
 	if (name_hash == U64_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to generate name hash\n");
@@ -2789,7 +2792,8 @@ int ssdfs_testing_xattr_tree_delete(struct ssdfs_fs_info *fsi,
 				 env->xattr_tree.name_len,
 				 env->xattr_tree.step_factor);
 
-	name_hash = __ssdfs_generate_name_hash(name, env->xattr_tree.name_len);
+	name_hash = __ssdfs_generate_name_hash(name, env->xattr_tree.name_len,
+					       SSDFS_XATTR_INLINE_NAME_MAX_LEN);
 	if (name_hash == U64_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to generate name hash\n");
@@ -2806,6 +2810,8 @@ int ssdfs_testing_xattr_tree_delete(struct ssdfs_fs_info *fsi,
 	ssdfs_btree_search_init(search);
 	err = ssdfs_xattrs_tree_delete(ii->xattrs_tree,
 					name_hash,
+					name,
+					env->xattr_tree.name_len,
 					search);
 	ssdfs_btree_search_free(search);
 
