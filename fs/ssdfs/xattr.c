@@ -1516,7 +1516,12 @@ finish_create_xattrs_tree:
 						name_hash,
 						name, name_len,
 						search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to remove xattr: "
+				  "ino %lu, name %s, err %d\n",
+				  inode->i_ino, name, err);
+			goto clean_up;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remove xattr: "
 				  "ino %lu, name %s, err %d\n",
 				  inode->i_ino, name, err);
@@ -1574,6 +1579,8 @@ finish_create_xattrs_tree:
 				  inode->i_ino, name, err);
 			goto clean_up;
 		}
+
+		ssdfs_btree_search_init(search);
 
 		err = ssdfs_xattrs_tree_add(ii->xattrs_tree,
 					    name_index,

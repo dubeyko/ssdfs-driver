@@ -10115,7 +10115,6 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -10126,6 +10125,7 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 		  search->node.state, search->node.id,
 		  search->node.height, search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	node = search->node.child;
 	if (!node) {
@@ -11909,12 +11909,12 @@ int __ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!src || !dst);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("src node_id %u, dst node_id %u, "
 		  "start_item %u, count %u\n",
 		  src->node_id, dst->node_id,
 		  start_item, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -12045,12 +12045,12 @@ int ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 	BUG_ON(!src || !dst);
 	BUG_ON(!src->tree);
 	BUG_ON(!rwsem_is_locked(&src->tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("src node_id %u, dst node_id %u, "
 		  "start_item %u, count %u\n",
 		  src->node_id, dst->node_id,
 		  start_item, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = src->tree->fsi;
 
@@ -12177,10 +12177,10 @@ int ssdfs_copy_item_in_buffer(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, index %u\n",
 		  node->node_id, index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->header_lock);
 	area_offset = node->items_area.offset;
@@ -12319,10 +12319,10 @@ int ssdfs_lock_items_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_index %u, count %u\n",
 		  start_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12389,10 +12389,10 @@ void ssdfs_unlock_items_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_index %u, count %u\n",
 		  start_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12441,10 +12441,10 @@ int ssdfs_allocate_items_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("items_capacity %u, start_index %u, count %u\n",
 		  items_capacity, start_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12512,10 +12512,10 @@ bool is_ssdfs_node_items_range_allocated(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_index %u, count %u\n",
 		  start_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12568,10 +12568,10 @@ int ssdfs_free_items_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_index %u, count %u\n",
 		  start_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12622,10 +12622,10 @@ int ssdfs_set_node_header_dirty(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, items_capacity %u\n",
 		  node->node_id, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12665,9 +12665,9 @@ void ssdfs_clear_node_header_dirty_state(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12709,10 +12709,10 @@ int ssdfs_set_dirty_items_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("items_capacity %u, start_index %u, count %u\n",
 		  items_capacity, start_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->bmap_array.lock);
 
@@ -12835,12 +12835,12 @@ bool is_last_leaf_node_found(struct ssdfs_btree_search *search)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_hash %llx, end_hash %llx, node_id %u\n",
 		  search->request.start.hash,
 		  search->request.end.hash,
 		  search->node.id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!search->node.child) {
 		SSDFS_WARN("empty child node pointer\n");
@@ -13284,7 +13284,7 @@ try_lock_checking_item:
 
 		if (err == -EAGAIN)
 			continue;
-		else if (unlikely(err))
+		else if (err)
 			goto finish_extract_range;
 		else if (found_index != U16_MAX)
 			break;
@@ -13314,6 +13314,17 @@ try_lock_checking_item:
 		search->result.err = -ENODATA;
 		search->result.start_index = items_count;
 		search->result.count = 1;
+		goto finish_extract_range;
+	} else if (is_btree_search_contains_new_item(search)) {
+		SSDFS_DBG("found_index %u, items_count %u\n",
+			  found_index, items_count);
+
+		err = -ENODATA;
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		search->result.err = -ENODATA;
+		search->result.start_index = found_index;
+		search->result.count = 0;
 		goto finish_extract_range;
 	} else {
 		err = prepare_buffer(search, found_index,
@@ -13499,12 +13510,12 @@ int ssdfs_calculate_item_offset(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !page_index || !item_offset);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
 		  "item_size %zu, index %d\n",
 		  node->node_id, area_offset, area_size,
 		  item_size, index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*item_offset = (u32)index * item_size;
 	if (*item_offset >= area_size) {
@@ -13572,13 +13583,13 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
 		  "item_size %zu, start_index %u, "
 		  "range_len %u, shift %u\n",
 		  node->node_id, area_offset, area_size,
 		  item_size, start_index, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	src_index = start_index + range_len - 1;
 	dst_index = src_index + shift;
@@ -13822,12 +13833,12 @@ int ssdfs_shift_range_right2(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu, "
 		  "start_index %u, range_len %u, shift %u\n",
 		  node->node_id, item_size,
 		  start_index, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start_index > area->index_count) {
 		SSDFS_ERR("invalid request: "
@@ -13884,12 +13895,12 @@ int ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu, "
 		  "start_index %u, range_len %u, shift %u\n",
 		  node->node_id, item_size,
 		  start_index, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start_index > area->items_count) {
 		SSDFS_ERR("invalid request: "
@@ -13956,13 +13967,13 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, area_offset %u, area_size %u, "
 		  "item_size %zu, start_index %u, "
 		  "range_len %u, shift %u\n",
 		  node->node_id, area_offset, area_size,
 		  item_size, start_index, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	src_index = start_index;
 	dst_index = start_index - shift;
@@ -14150,12 +14161,12 @@ int ssdfs_shift_range_left2(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu, "
 		  "start_index %u, range_len %u, shift %u\n",
 		  node->node_id, item_size,
 		  start_index, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start_index > area->index_count) {
 		SSDFS_ERR("invalid request: "
@@ -14210,12 +14221,12 @@ int ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu, "
 		  "start_index %u, range_len %u, shift %u\n",
 		  node->node_id, item_size,
 		  start_index, range_len, shift);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start_index >= area->items_capacity) {
 		SSDFS_ERR("invalid request: "
@@ -14375,12 +14386,12 @@ int __ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 				   range_offset2, moving_range);
 			return -ERANGE;
 		}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		SSDFS_DBG("page_index1 %d, page_index2 %d, "
 			  "range_offset1 %u, range_offset2 %u\n",
 			  page_index1, page_index2,
 			  range_offset1, range_offset2);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
@@ -14832,10 +14843,10 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu\n",
 		  node->node_id, item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.buf_state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
@@ -14964,11 +14975,11 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("copying_items %u, item_offset1 %u, "
 			  "item_offset2 %u\n",
 			  copying_items, item_offset1, item_offset2);
 
-#ifdef CONFIG_SSDFS_DEBUG
 		if ((item_offset1 + copying_bytes) > PAGE_SIZE) {
 			SSDFS_WARN("invalid offset: "
 				   "item_offset1 %u, copying_bytes %u\n",
@@ -14984,7 +14995,6 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 				   search->result.buf_size);
 			return -ERANGE;
 		}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		SSDFS_DBG("page_index %d, pvec_size %u, "
 			  "item_offset1 %u, item_offset2 %u, "
@@ -14994,6 +15004,7 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			  item_offset1, item_offset2,
 			  copying_bytes,
 			  search->result.buf_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		page = node->content.pvec.pages[page_index];
 
@@ -15055,9 +15066,9 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree || !node->tree->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	switch (tree->type) {
@@ -15200,7 +15211,6 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_index %u, count %u, "
@@ -15209,6 +15219,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  start_index, count,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	search->result.start_index = U16_MAX;
@@ -15526,12 +15537,12 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !node->tree);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_size %zu, new_size %u\n",
 		  node->node_id, item_size, new_size);
 
 	ssdfs_debug_btree_node_object(node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_INITIALIZED:
@@ -16104,13 +16115,13 @@ int ssdfs_btree_node_get_hash_range(struct ssdfs_btree_search *search,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search || !start_hash || !end_hash || !items_count);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("search %p, start_hash %p, "
 		  "end_hash %p, items_count %p\n",
 		  search, start_hash, end_hash, items_count);
 
 	ssdfs_debug_btree_search_object(search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = *end_hash = U64_MAX;
 	*items_count = 0;

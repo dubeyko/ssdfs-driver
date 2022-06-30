@@ -1815,10 +1815,10 @@ int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !ii || !name || !value || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("name_len %zu, value_size %zu\n",
 		  name_len, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dict = fsi->shdictree;
 	if (!dict) {
@@ -1967,6 +1967,20 @@ int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 			     value, 0, size,
 			     size);
 	}
+
+	search->request.flags |= SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("BUFFER: buf %px, buf_size %zu, items_in_buffer %u\n",
+		  search->result.buf,
+		  search->result.buf_size,
+		  search->result.items_in_buffer);
+	SSDFS_DBG("BUFFER DUMP:\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     search->result.buf,
+			     search->result.buf_size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 invalidate_blob:
 	if (err && blob_type == SSDFS_XATTR_REGULAR_BLOB)
@@ -2868,10 +2882,10 @@ int ssdfs_change_xattr(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !ii || !name || !value || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("name_len %zu, value_size %zu\n",
 		  name_len, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER ||
 	    !search->result.buf ||
@@ -6220,9 +6234,9 @@ int ssdfs_check_found_xattr(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search || !kaddr || !found_index);
 	BUG_ON(!start_hash || !end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("item_index %u\n", item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = U64_MAX;
 	*end_hash = U64_MAX;
@@ -6346,12 +6360,6 @@ int ssdfs_check_found_xattr(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	ssdfs_memcpy(&search->raw.xattr.header,
-		     0, sizeof(struct ssdfs_xattr_entry),
-		     xattr,
-		     0, sizeof(struct ssdfs_xattr_entry),
-		     sizeof(struct ssdfs_xattr_entry));
-
 	ssdfs_get_xattrs_hash_range(kaddr, start_hash, end_hash);
 
 	err = ssdfs_check_xattr_for_request(fsi, xattr, search);
@@ -6366,6 +6374,7 @@ int ssdfs_check_found_xattr(struct ssdfs_fs_info *fsi,
 		search->result.buf = NULL;
 		search->result.buf_size = 0;
 		search->result.items_in_buffer = 0;
+		*found_index = item_index;
 	} else if (err == -EAGAIN) {
 		/* continue to search */
 		err = 0;
@@ -6619,6 +6628,64 @@ int ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 }
 
 /*
+ * ssdfs_btree_search_result_no_data() - prepare result state for no data case
+ * @node: pointer on node object
+ * @lookup_index: lookup index
+ * @search: pointer on search request object [in|out]
+ *
+ * This method prepares result state for no data case.
+ */
+static inline
+void ssdfs_btree_search_result_no_data(struct ssdfs_btree_node *node,
+					u16 lookup_index,
+					struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node || !search);
+
+	SSDFS_DBG("type %#x, flags %#x, "
+		  "start_hash %llx, end_hash %llx, "
+		  "state %#x, node_id %u, height %u, "
+		  "parent %p, child %p\n",
+		  search->request.type, search->request.flags,
+		  search->request.start.hash, search->request.end.hash,
+		  atomic_read(&node->state), node->node_id,
+		  atomic_read(&node->height), search->node.parent,
+		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->result.state = SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+	search->result.err = -ENODATA;
+	search->result.start_index =
+			ssdfs_convert_lookup2item_index(node->node_size,
+							lookup_index);
+	search->result.count = search->request.count;
+	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
+
+	if (!is_btree_search_contains_new_item(search)) {
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+	}
+}
+
+/*
  * ssdfs_xattrs_btree_node_find_range() - find a range of items into the node
  * @node: pointer on node object
  * @search: pointer on search request object
@@ -6707,36 +6774,7 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 	err = ssdfs_xattrs_btree_node_find_lookup_index(node, search,
 							 &lookup_index);
 	if (err == -ENODATA) {
-		search->result.state =
-			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
-		search->result.err = -ENODATA;
-		search->result.start_index =
-			ssdfs_convert_lookup2item_index(node->node_size,
-							lookup_index);
-		search->result.count = search->request.count;
-		search->result.search_cno =
-			ssdfs_current_cno(node->tree->fsi->sb);
-
-		switch (search->request.type) {
-		case SSDFS_BTREE_SEARCH_ADD_ITEM:
-		case SSDFS_BTREE_SEARCH_ADD_RANGE:
-		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
-			/* do nothing */
-			break;
-
-		default:
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			search->result.buf_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-			search->result.buf = NULL;
-			search->result.buf_size = 0;
-			search->result.items_in_buffer = 0;
-			break;
-		}
-
+		ssdfs_btree_search_result_no_data(node, lookup_index, search);
 		return -ENODATA;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the index: "
@@ -6772,6 +6810,8 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
+
+		ssdfs_btree_search_result_no_data(node, lookup_index, search);
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract range: "
@@ -6784,6 +6824,8 @@ int ssdfs_xattrs_btree_node_find_range(struct ssdfs_btree_node *node,
 			  err);
 		return err;
 	}
+
+	search->request.flags &= ~SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search->result (state %#x, err %d, "
@@ -7112,7 +7154,6 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 		return 0;
 	}
 
-
 	req_flags = search->request.flags;
 
 	for (; item_index >= 0; item_index--) {
@@ -7197,10 +7238,10 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, search->result.start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
 	if ((item_index + search->request.count) >= area->items_capacity) {
@@ -7251,28 +7292,19 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 				res = strncmp(search->request.start.name,
 						xattr.inline_string,
 						name_len);
-				if (res == 0) {
+				if (res < 0)
+					continue;
+				else {
 					search->result.start_index =
 							(u16)item_index;
 					return 0;
-				} else if (res > 0) {
-					search->result.start_index =
-							(u16)(item_index - 1);
-					return 0;
-				} else
-					continue;
+				}
 			}
 
 			search->result.start_index = (u16)item_index;
 			return 0;
 		} else if (search->request.end.hash < hash) {
-			if (item_index == 0) {
-				search->result.start_index =
-						(u16)item_index;
-			} else {
-				search->result.start_index =
-						(u16)(item_index - 1);
-			}
+			search->result.start_index = (u16)item_index;
 			return 0;
 		}
 	}
@@ -7481,7 +7513,7 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 	u64 cur_hash;
 	u64 old_hash;
 	int i;
-	int err = 0;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
@@ -7495,6 +7527,16 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+
+	SSDFS_DBG("BUFFER: buf %px, buf_size %zu, items_in_buffer %u\n",
+		  search->result.buf,
+		  search->result.buf_size,
+		  search->result.items_in_buffer);
+	SSDFS_DBG("BUFFER DUMP:\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     search->result.buf,
+			     search->result.buf_size);
+	SSDFS_DBG("\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->items_area.state)) {
@@ -7683,12 +7725,12 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 				  cur_hash, start_hash, end_hash);
 
 			for (i = 0; i < items_area.items_count; i++) {
-				err = ssdfs_xattrs_btree_node_get_xattr(node,
+				err1 = ssdfs_xattrs_btree_node_get_xattr(node,
 								   &items_area,
 								   i, &xattr);
-				if (unlikely(err)) {
+				if (unlikely(err1)) {
 					SSDFS_ERR("fail to get dentry: "
-						  "err %d\n", err);
+						  "err %d\n", err1);
 					goto finish_detect_affected_items;
 				}
 
@@ -7724,12 +7766,12 @@ int __ssdfs_xattrs_btree_node_insert_range(struct ssdfs_btree_node *node,
 				  cur_hash, start_hash, end_hash);
 
 			for (i = 0; i < items_area.items_count; i++) {
-				err = ssdfs_xattrs_btree_node_get_xattr(node,
+				err1 = ssdfs_xattrs_btree_node_get_xattr(node,
 								   &items_area,
 								   i, &xattr);
-				if (unlikely(err)) {
+				if (unlikely(err1)) {
 					SSDFS_ERR("fail to get dentry: "
-						  "err %d\n", err);
+						  "err %d\n", err1);
 					goto finish_detect_affected_items;
 				}
 
@@ -8013,11 +8055,42 @@ int ssdfs_xattrs_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return search->result.err;
 	}
 
+	if (is_btree_search_contains_new_item(search)) {
+		switch (search->result.buf_state) {
+		case SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE:
+			search->result.buf_state =
+					SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(search->result.count != 1);
-	BUG_ON(!search->result.buf);
-	BUG_ON(search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER);
+			BUG_ON(search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
+			search->result.buf = &search->raw.xattr;
+			search->result.buf_size =
+					sizeof(struct ssdfs_raw_xattr);
+			search->result.items_in_buffer = 1;
+			break;
+
+		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!search->result.buf);
+			BUG_ON(search->result.buf_size !=
+					sizeof(struct ssdfs_raw_xattr));
+			BUG_ON(search->result.items_in_buffer != 1);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		default:
+			SSDFS_ERR("unexpected buffer state %#x\n",
+				  search->result.buf_state);
+			return -ERANGE;
+		}
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(search->result.count != 1);
+		BUG_ON(!search->result.buf);
+		BUG_ON(search->result.buf_state !=
+				SSDFS_BTREE_SEARCH_INLINE_BUFFER);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	state = atomic_read(&node->items_area.state);
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
@@ -8275,7 +8348,6 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -8286,6 +8358,7 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
 		SSDFS_ERR("invalid result's state %#x\n",
@@ -8299,12 +8372,43 @@ int ssdfs_xattrs_btree_node_change_item(struct ssdfs_btree_node *node,
 		return search->result.err;
 	}
 
+	if (is_btree_search_contains_new_item(search)) {
+		switch (search->result.buf_state) {
+		case SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE:
+			search->result.buf_state =
+					SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(search->result.count != 1);
-	BUG_ON(!search->result.buf);
-	BUG_ON(search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER);
-	BUG_ON(search->result.items_in_buffer != 1);
+			BUG_ON(search->result.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
+			search->result.buf = &search->raw.xattr;
+			search->result.buf_size =
+					sizeof(struct ssdfs_raw_xattr);
+			search->result.items_in_buffer = 1;
+			break;
+
+		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!search->result.buf);
+			BUG_ON(search->result.buf_size !=
+					sizeof(struct ssdfs_raw_xattr));
+			BUG_ON(search->result.items_in_buffer != 1);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		default:
+			SSDFS_ERR("unexpected buffer state %#x\n",
+				  search->result.buf_state);
+			return -ERANGE;
+		}
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(search->result.count != 1);
+		BUG_ON(!search->result.buf);
+		BUG_ON(search->result.buf_state !=
+				SSDFS_BTREE_SEARCH_INLINE_BUFFER);
+		BUG_ON(search->result.items_in_buffer != 1);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	switch (atomic_read(&node->items_area.state)) {
 	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:

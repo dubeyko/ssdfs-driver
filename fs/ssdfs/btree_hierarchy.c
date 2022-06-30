@@ -105,9 +105,9 @@ int ssdfs_define_hierarchy_height(struct ssdfs_btree *tree)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree_height = atomic_read(&tree->height);
 	if (tree_height < 0) {
@@ -141,9 +141,9 @@ void ssdfs_btree_hierarchy_init(struct ssdfs_btree *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hierarchy %p\n", ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree_height = ssdfs_define_hierarchy_height(tree);
 
@@ -262,9 +262,9 @@ ssdfs_btree_hierarchy_allocate(struct ssdfs_btree *tree)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree_height = ssdfs_define_hierarchy_height(tree);
 	if (tree_height <= 0) {

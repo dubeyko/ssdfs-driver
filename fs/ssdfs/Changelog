@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.14 [June 29, 2022]
+    (*) Fix bugs in xattrs tree (step 3).
+
 v.4.13 [June 06, 2022]
     (*) Fix bugs in xattrs tree (step 2).
 

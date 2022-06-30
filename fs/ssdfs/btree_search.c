@@ -787,7 +787,7 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 		}
 	}
 
-	SSDFS_DBG("BUFFER: buf_state %#x, buf %p, "
+	SSDFS_DBG("RESULT BUFFER: buf_state %#x, buf %p, "
 		  "buf_size %zu, items_in_buffer %u\n",
 		  search->result.buf_state,
 		  search->result.buf,

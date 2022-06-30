@@ -74,7 +74,8 @@ struct ssdfs_btree_search_request {
 #define SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT	(1 << 6)
 #define SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT		(1 << 7)
 #define SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT		(1 << 8)
-#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1FF
+#define SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM	(1 << 9)
+#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x3FF
 	u32 flags;
 
 	struct ssdfs_btree_search_hash start;
@@ -292,6 +293,17 @@ enum {
 	SSDFS_BTREE_PARENT2HYBRID_HEIGHT	= 2,
 	SSDFS_BTREE_PARENT2INDEX_HEIGHT		= 3,
 };
+
+/*
+ * Inline functions
+ */
+
+static inline
+bool is_btree_search_contains_new_item(struct ssdfs_btree_search *search)
+{
+	return search->request.flags &
+			SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM;
+}
 
 /*
  * Btree search object API

@@ -5415,14 +5415,26 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
 	if (err == -ENODATA) {
-		search->result.state =
-			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
 		SSDFS_DBG("unable to find: "
 			  "request (start_hash %#llx, end_hash %#llx), "
 			  "items_area (start_hash %#llx, end_hash %#llx)\n",
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  start_hash, end_hash);
+
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		search->result.err = -ENODATA;
+		search->result.start_index = index;
+		search->result.count = search->request.count;
+		search->result.search_cno =
+			ssdfs_current_cno(node->tree->fsi->sb);
+		search->result.buf_state =
+			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+		search->result.buf = NULL;
+		search->result.buf_size = 0;
+		search->result.items_in_buffer = 0;
+
 		return err;
 	} else if (err == -EAGAIN) {
 		if (res == -ENODATA) {
@@ -5471,6 +5483,8 @@ int ssdfs_shared_dict_btree_node_find_range(struct ssdfs_btree_node *node,
 			return res;
 		}
 	}
+
+	search->request.flags &= ~SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM;
 
 	return 0;
 }
