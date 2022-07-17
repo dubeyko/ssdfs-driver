@@ -115,6 +115,7 @@ void ssdfs_reserve_diff_blob_header(struct ssdfs_diff_blob_header *hdr,
 /*
  * ssdfs_user_data_prepare_diff() - prepare logical block's diff
  * @pebc: PEB container object
+ * @desc_off: block descriptor offset
  * @pos: offset position
  * @req: segment request
  *
@@ -130,6 +131,7 @@ void ssdfs_reserve_diff_blob_header(struct ssdfs_diff_blob_header *hdr,
  * %-E2BIG      - unable to prepare diff (delta is too big).
  */
 int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
+				 struct ssdfs_phys_offset_descriptor *desc_off,
 				 struct ssdfs_offset_position *pos,
 				 struct ssdfs_segment_request *req)
 {
@@ -157,7 +159,7 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
 	BUG_ON(!pebc->parent_si || !pebc->parent_si->fsi);
-	BUG_ON(!req);
+	BUG_ON(!req || !desc_off || !pos);
 
 	SSDFS_DBG("seg %llu, peb_index %u, ino %llu, "
 		  "processed_blks %d\n",
@@ -199,7 +201,7 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		}
 	}
 
-	err = ssdfs_peb_read_block_state(pebc, req, pos,
+	err = ssdfs_peb_read_block_state(pebc, req, desc_off, pos,
 					 desc_array,
 					 SSDFS_SEG_HDR_DESC_MAX);
 	if (err == -ENOENT) {

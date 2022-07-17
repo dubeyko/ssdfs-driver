@@ -1019,11 +1019,11 @@ int ssdfs_peb_container_get_peb_relation(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg %llu, peb_index %u, "
 		  "peb_type %#x, seg_state %#x\n",
 		  fsi, seg, peb_index, peb_type, seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, seg, peb_index);
 	if (leb_id == U64_MAX) {
@@ -1475,11 +1475,11 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 			  peb_index, si->pebs_count);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg %llu, peb_index %u, "
 		  "peb_type %#x, si %p\n",
 		  fsi, seg, peb_index, peb_type, si);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebc = &si->peb_array[peb_index];
 
@@ -3442,6 +3442,8 @@ ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_peb_info *pebi = NULL;
 	int known_migration_id;
+	u64 src_peb_id, dst_peb_id;
+	int src_migration_id, dst_migration_id;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3458,12 +3460,14 @@ ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
 			goto fail_to_get_peb;
 		}
 
-		known_migration_id = ssdfs_get_peb_migration_id(pebi);
+		known_migration_id = ssdfs_get_peb_migration_id_checked(pebi);
 
 		if (migration_id != known_migration_id) {
 			err = -ERANGE;
-			SSDFS_WARN("migration_id %u != known_migration_id %d\n",
-				   migration_id, known_migration_id);
+			SSDFS_WARN("peb %llu, "
+				   "migration_id %u != known_migration_id %d\n",
+				   pebi->peb_id, migration_id,
+				   known_migration_id);
 			goto fail_to_get_peb;
 		}
 		break;
@@ -3479,9 +3483,12 @@ ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
 			goto fail_to_get_peb;
 		}
 
-		known_migration_id = ssdfs_get_peb_migration_id(pebi);
+		known_migration_id = ssdfs_get_peb_migration_id_checked(pebi);
 
 		if (migration_id != known_migration_id) {
+			src_peb_id = pebi->peb_id;
+			src_migration_id = known_migration_id;
+
 			pebi = pebc->dst_peb;
 			if (!pebi) {
 				err = -ERANGE;
@@ -3489,14 +3496,23 @@ ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
 				goto fail_to_get_peb;
 			}
 
-			known_migration_id = ssdfs_get_peb_migration_id(pebi);
+			known_migration_id =
+				ssdfs_get_peb_migration_id_checked(pebi);
 
 			if (migration_id != known_migration_id) {
+				dst_peb_id = pebi->peb_id;
+				dst_migration_id = known_migration_id;
+
 				err = -ERANGE;
 				SSDFS_WARN("fail to find PEB: "
-					   "migration_id %u, "
-					   "known_migration_id %d\n",
-					   migration_id, known_migration_id);
+					   "src_peb_id %llu, "
+					   "src_migration_id %d, "
+					   "dst_peb_id %llu, "
+					   "dst_migration_id %d, "
+					   "migration_id %u\n",
+					   src_peb_id, src_migration_id,
+					   dst_peb_id, dst_migration_id,
+					   migration_id);
 				goto fail_to_get_peb;
 			}
 		}
@@ -3905,10 +3921,12 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	si = pebc->parent_si;
 	fsi = pebc->parent_si->fsi;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebc %p, seg %llu, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, si->seg_id, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	seg_blkbmap = &si->blk_bmap;
 	maptbl = fsi->maptbl;

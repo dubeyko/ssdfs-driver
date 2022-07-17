@@ -118,6 +118,96 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 }
 
 /*
+ * ssdfs_read_pagevec_from_volume() - read pagevec from volume
+ * @fsi: pointer on shared file system object
+ * @peb_id: PEB identification number
+ * @bytes_off: offset from PEB's begining in bytes
+ * @pvec: pagevec [in|out]
+ *
+ * This function tries to read pages from the volume.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-EIO        - I/O error.
+ */
+int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
+				   u64 peb_id, u32 bytes_off,
+				   struct pagevec *pvec)
+{
+	struct super_block *sb;
+	loff_t offset;
+	u32 peb_size;
+	u32 pagesize;
+	u32 pages_per_peb;
+	u32 pages_off;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pvec);
+	BUG_ON(!fsi->devops->readpages);
+
+	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, pvec %p\n",
+		  fsi, peb_id, bytes_off, pvec);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	sb = fsi->sb;
+	pagesize = fsi->pagesize;
+	pages_per_peb = fsi->pages_per_peb;
+	pages_off = bytes_off / pagesize;
+
+	if (pages_per_peb >= (U32_MAX / pagesize)) {
+		SSDFS_ERR("pages_per_peb %u >= U32_MAX / pagesize %u\n",
+			  pages_per_peb, pagesize);
+		return -EINVAL;
+	}
+
+	peb_size = pages_per_peb * pagesize;
+
+	if (peb_id >= div_u64(ULLONG_MAX, peb_size)) {
+		SSDFS_ERR("peb_id %llu >= ULLONG_MAX / peb_size %u\n",
+			  peb_id, peb_size);
+		return -EINVAL;
+	}
+
+	offset = peb_id * peb_size;
+
+	if (pages_off >= pages_per_peb) {
+		SSDFS_ERR("pages_off %u >= pages_per_peb %u\n",
+			  pages_off, pages_per_peb);
+		return -EINVAL;
+	}
+
+	if (pages_off >= (U32_MAX / pagesize)) {
+		SSDFS_ERR("pages_off %u >= U32_MAX / pagesize %u\n",
+			  pages_off, fsi->pagesize);
+		return -EINVAL;
+	}
+
+	offset += bytes_off;
+
+	if (fsi->devops->peb_isbad) {
+		err = fsi->devops->peb_isbad(sb, offset);
+		if (err) {
+			SSDFS_DBG("offset %llu is in bad PEB: err %d\n",
+				  (unsigned long long)offset, err);
+			return -EIO;
+		}
+	}
+
+	err = fsi->devops->readpages(sb, pvec, offset);
+	if (unlikely(err)) {
+		SSDFS_DBG("fail to read pvec: offset %llu, err %d\n",
+			  (unsigned long long)offset, err);
+		return -EIO;
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_aligned_read_buffer() - aligned read from volume into buffer
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
@@ -414,11 +504,11 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 					(size_t)(PAGE_SIZE - cur_off));
 
 		if (page_off >= pagevec_count(pvec)) {
-			SSDFS_ERR("invalid page index %u: "
+			SSDFS_DBG("page out of range: index %u: "
 				  "offset %zu, pagevec_count %u\n",
 				  page_off, cur_off,
 				  pagevec_count(pvec));
-			return -EINVAL;
+			return -E2BIG;
 		}
 
 		page = pvec->pages[page_off];

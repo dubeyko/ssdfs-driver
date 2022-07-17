@@ -489,12 +489,12 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pebc || !peb_blkbmap || !range);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "range (start %u, len %u)\n",
 		  si->seg_id, pebc->peb_index, pebc->peb_type,
 		  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range->len == 0) {
 		SSDFS_ERR("empty range\n");
@@ -621,12 +621,12 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pebc || !peb_blkbmap || !range);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "range (start %u, len %u)\n",
 		  si->seg_id, pebc->peb_index, pebc->peb_type,
 		  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range->len == 0) {
 		SSDFS_ERR("empty range\n");

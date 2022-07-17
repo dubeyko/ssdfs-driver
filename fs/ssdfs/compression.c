@@ -427,11 +427,11 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 	struct list_head *workspace = NULL;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
 		  "srclen %zu, destlen %zu\n",
 		  type, data_in, cdata_out, *srclen, *destlen);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (unknown_compression(type)) {
 		SSDFS_ERR("unknown compression type %d\n", type);
 		BUG();
@@ -487,11 +487,11 @@ int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 	struct list_head *workspace;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("type %d, cdata_in %p, data_out %p, "
 		  "srclen %zu, destlen %zu\n",
 		  type, cdata_in, data_out, srclen, destlen);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (unknown_compression(type)) {
 		SSDFS_ERR("unknown compression type %d\n", type);
 		BUG();

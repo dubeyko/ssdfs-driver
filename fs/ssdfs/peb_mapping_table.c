@@ -5187,11 +5187,11 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebr || !end);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, leb_id %llu, peb_type %#x, "
 		  "pebr %p, init_end %p\n",
 		  fsi, leb_id, peb_type, pebr, end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
 	memset(pebr, 0xFF, peb_relation_size);

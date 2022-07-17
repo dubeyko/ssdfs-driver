@@ -2444,6 +2444,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_map_cache_memory_leaks_init();
 	ssdfs_map_thread_memory_leaks_init();
 	ssdfs_migration_memory_leaks_init();
+	ssdfs_peb_memory_leaks_init();
 	ssdfs_read_memory_leaks_init();
 	ssdfs_recovery_memory_leaks_init();
 	ssdfs_req_queue_memory_leaks_init();
@@ -2514,6 +2515,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_map_cache_check_memory_leaks();
 	ssdfs_map_thread_check_memory_leaks();
 	ssdfs_migration_check_memory_leaks();
+	ssdfs_peb_check_memory_leaks();
 	ssdfs_read_check_memory_leaks();
 	ssdfs_recovery_check_memory_leaks();
 	ssdfs_req_queue_check_memory_leaks();

@@ -193,11 +193,11 @@ static int ssdfs_zlib_compress(struct list_head *ws,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ws || !data_in || !cdata_out || !srclen || !destlen);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ws_ptr %p, data_in %p, cdata_out %p, "
 		  "srclen %zu, destlen %zu\n",
 		  ws, data_in, cdata_out, *srclen, *destlen);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	workspace = list_entry(ws, struct ssdfs_zlib_workspace, list);
 	stream = &workspace->deflate_stream;
@@ -281,12 +281,12 @@ static int ssdfs_zlib_decompress(struct list_head *ws,
 	int wbits = MAX_WBITS;
 	int ret = Z_OK;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ws || !cdata_in || !data_out);
+
 	SSDFS_DBG("ws_ptr %p, cdata_in %p, data_out %p, "
 		  "srclen %zu, destlen %zu\n",
 		  ws, cdata_in, data_out, srclen, destlen);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ws || !cdata_in || !data_out);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	workspace = list_entry(ws, struct ssdfs_zlib_workspace, list);
@@ -321,12 +321,15 @@ static int ssdfs_zlib_decompress(struct list_head *ws,
 		ret = zlib_inflate(&workspace->inflate_stream, Z_FINISH);
 	} while (ret == Z_OK);
 
-	if (ret != Z_STREAM_END)
-		SSDFS_NOTICE("inflate returned %d\n", ret);
-
 	zlib_inflateEnd(&workspace->inflate_stream);
 
-	SSDFS_DBG("decompression has succeded: total_in %zu, total_out %zu\n",
+	if (ret != Z_STREAM_END) {
+		SSDFS_ERR("inflate returned %d\n", ret);
+		return -EFAULT;
+	}
+
+	SSDFS_DBG("decompression has succeded: "
+		  "total_in %zu, total_out %zu\n",
 		  workspace->inflate_stream.total_in,
 		  workspace->inflate_stream.total_out);
 

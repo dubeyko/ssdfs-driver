@@ -92,6 +92,26 @@ enum {
 #define SSDFS_BLK2OFF_TABLE_INVALID_ID		U16_MAX
 
 /*
+ * struct ssdfs_block_descriptor_state - block descriptor state
+ * @status: state of block descriptor buffer
+ * @buf: block descriptor buffer
+ */
+struct ssdfs_block_descriptor_state {
+	u32 status;
+	struct ssdfs_block_descriptor buf;
+};
+
+/*
+ * Block descriptor buffer state
+ */
+enum {
+	SSDFS_BLK_DESC_BUF_UNKNOWN_STATE,
+	SSDFS_BLK_DESC_BUF_INITIALIZED,
+	SSDFS_BLK_DESC_BUF_STATE_MAX,
+	SSDFS_BLK_DESC_BUF_ALLOCATED = U32_MAX,
+};
+
+/*
  * struct ssdfs_offset_position - defines offset id and position
  * @cno: checkpoint of change
  * @id: physical offset ID
@@ -107,7 +127,7 @@ struct ssdfs_offset_position {
 	u16 sequence_id;
 	u16 offset_index;
 
-	struct ssdfs_block_descriptor blk_desc;
+	struct ssdfs_block_descriptor_state blk_desc;
 };
 
 /*
@@ -210,6 +230,7 @@ enum {
  * @peb_index: PEB index
  * @start_sequence_id: sequence ID of the first dirty fragment
  * @dirty_fragments: count of dirty fragments
+ * @fragments_count: total count of fragments
  *
  * The @bmap_copy and @tbl_copy are allocated during getting
  * snapshot inside of called function. Freeing of allocated
@@ -229,6 +250,7 @@ struct ssdfs_blk2off_table_snapshot {
 	u16 peb_index;
 	u16 start_sequence_id;
 	u16 dirty_fragments;
+	u32 fragments_count;
 };
 
 /*
@@ -292,6 +314,9 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     struct pagevec *blk2_desc_pvec,
 				     u16 peb_index,
 				     u64 cno);
+int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
+					u16 logical_blk,
+					struct ssdfs_offset_position *pos);
 int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 				u16 new_items_count);
 int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,

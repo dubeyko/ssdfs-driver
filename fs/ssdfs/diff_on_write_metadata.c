@@ -1523,11 +1523,30 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 			return err;
 		}
 
-		if (!IS_SSDFS_BLK_DESC_READY_FOR_DIFF(&pos.blk_desc)) {
+		switch (pos.blk_desc.status) {
+		case SSDFS_BLK_DESC_BUF_INITIALIZED:
+			/* expecting state */
+			break;
+
+		case SSDFS_BLK_DESC_BUF_UNKNOWN_STATE:
+		case SSDFS_BLK_DESC_BUF_ALLOCATED:
+			SSDFS_ERR("unexpected status: "
+				  "pos->blk_desc.status %#x\n",
+				  pos.blk_desc.status);
+			return -ERANGE;
+
+		default:
+			SSDFS_ERR("unexpected status: "
+				  "pos->blk_desc.status %#x\n",
+				  pos.blk_desc.status);
+			BUG();
+		}
+
+		if (!IS_SSDFS_BLK_DESC_READY_FOR_DIFF(&pos.blk_desc.buf)) {
 			SSDFS_DBG("logical block %u is not ready for diff\n",
 				  cur_blk);
 			return -EAGAIN;
-		} else if (IS_SSDFS_BLK_DESC_EXHAUSTED(&pos.blk_desc)) {
+		} else if (IS_SSDFS_BLK_DESC_EXHAUSTED(&pos.blk_desc.buf)) {
 			SSDFS_DBG("block descripor is exhausted: "
 				  "seg %llu, peb_index %u\n",
 				  seg_id, peb_index);
@@ -1541,7 +1560,7 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 			bool is_peb_ready_to_exhaust = false;
 
 			migration_id1 =
-				SSDFS_GET_BLK_DESC_MIGRATION_ID(&pos.blk_desc);
+			    SSDFS_GET_BLK_DESC_MIGRATION_ID(&pos.blk_desc.buf);
 			if (migration_id1 >= U8_MAX) {
 				SSDFS_WARN("invalid migration_id %#x\n",
 					   migration_id1);
@@ -1592,7 +1611,7 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 				DEBUG_BLOCK_DESCRIPTOR(pebc->parent_si->seg_id,
 							peb_id,
-							&pos.blk_desc);
+							&pos.blk_desc.buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 			}
 		}

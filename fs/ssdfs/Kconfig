@@ -148,10 +148,28 @@ menu "Performance"
 config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
 	bool "SSDFS fixed superblock segments set"
 	depends on SSDFS
+	default y
 	help
 	  This option enables the technique of repeatable using the
 	  reserved set of superblock segments in the beginning
 	  of a volume.
+
+	  If unsure, say N.
+
+config SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+	bool "Save whole offset translation table in every log"
+	depends on SSDFS
+	help
+	  This option enables the technique of storing the whole
+	  offset translation table in every log. SSDFS can distribute
+	  the complete state of ofset translation table among multiple
+	  logs. It could decrease amount of metadata in the log.
+	  However, this policy increases the amount of read I/O requests
+	  because it requires to read multiple log headers in the same
+	  erase block. If a big erase block contains a lot of small
+	  partial logs then it can degrades file system performance
+	  because of significant amount of read I/O during
+	  initialization phase.
 
 	  If unsure, say N.
 

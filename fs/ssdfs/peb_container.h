@@ -267,8 +267,15 @@ int __ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 				struct ssdfs_metadata_descriptor *area_desc,
 				struct ssdfs_block_state_descriptor *desc,
 				u64 *cno, u64 *parent_snapshot);
+int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_phys_offset_descriptor *desc_off,
+				struct ssdfs_offset_position *pos,
+				struct ssdfs_metadata_descriptor *array,
+				size_t array_size);
 int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 				struct ssdfs_segment_request *req,
+				struct ssdfs_phys_offset_descriptor *desc_off,
 				struct ssdfs_offset_position *pos,
 				struct ssdfs_metadata_descriptor *array,
 				size_t array_size);

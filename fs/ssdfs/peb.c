@@ -37,6 +37,62 @@
 
 #include <trace/events/ssdfs.h>
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+atomic64_t ssdfs_peb_page_leaks;
+atomic64_t ssdfs_peb_memory_leaks;
+atomic64_t ssdfs_peb_cache_leaks;
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
+/*
+ * void ssdfs_peb_cache_leaks_increment(void *kaddr)
+ * void ssdfs_peb_cache_leaks_decrement(void *kaddr)
+ * void *ssdfs_peb_kmalloc(size_t size, gfp_t flags)
+ * void *ssdfs_peb_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_peb_kcalloc(size_t n, size_t size, gfp_t flags)
+ * void ssdfs_peb_kfree(void *kaddr)
+ * struct page *ssdfs_peb_alloc_page(gfp_t gfp_mask)
+ * struct page *ssdfs_peb_add_pagevec_page(struct pagevec *pvec)
+ * void ssdfs_peb_free_page(struct page *page)
+ * void ssdfs_peb_pagevec_release(struct pagevec *pvec)
+ */
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	SSDFS_MEMORY_LEAKS_CHECKER_FNS(peb)
+#else
+	SSDFS_MEMORY_ALLOCATOR_FNS(peb)
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
+void ssdfs_peb_memory_leaks_init(void)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&ssdfs_peb_page_leaks, 0);
+	atomic64_set(&ssdfs_peb_memory_leaks, 0);
+	atomic64_set(&ssdfs_peb_cache_leaks, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+void ssdfs_peb_check_memory_leaks(void)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&ssdfs_peb_page_leaks) != 0) {
+		SSDFS_ERR("PEB: "
+			  "memory leaks include %lld pages\n",
+			  atomic64_read(&ssdfs_peb_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_peb_memory_leaks) != 0) {
+		SSDFS_ERR("PEB: "
+			  "memory allocator suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_peb_memory_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_peb_cache_leaks) != 0) {
+		SSDFS_ERR("PEB: "
+			  "caches suffers from %lld leaks\n",
+			  atomic64_read(&ssdfs_peb_cache_leaks));
+	}
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
 /*
  * ssdfs_create_clean_peb_object() - create "clean" PEB object
  * @pebi: pointer on unitialized PEB object
@@ -164,6 +220,98 @@ int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 	return 0;
 }
 
+static inline
+size_t ssdfs_peb_temp_buffer_default_size(u32 pagesize)
+{
+	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	size_t size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(pagesize > SSDFS_128KB);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	size = (SSDFS_128KB / pagesize) * blk_desc_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("page_size %u, default_size %zu\n",
+		  pagesize, size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return size;
+}
+
+/*
+ * ssdfs_peb_realloc_read_buffer() - realloc temporary read buffer
+ * @buf: pointer on read buffer
+ */
+int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
+				  size_t new_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (buf->size >= PAGE_SIZE) {
+		SSDFS_DBG("unable to realloc buffer: "
+			  "old_size %zu\n",
+			  buf->size);
+		return -E2BIG;
+	}
+
+	if (buf->size == new_size) {
+		SSDFS_DBG("do nothing: old_size %zu, new_size %zu\n",
+			  buf->size, new_size);
+		return 0;
+	}
+
+	if (buf->size > new_size) {
+		SSDFS_ERR("shrink not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
+	if (!buf->ptr) {
+		SSDFS_ERR("fail to allocate buffer\n");
+		return -ENOMEM;
+	}
+
+	buf->size = new_size;
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_realloc_write_buffer() - realloc temporary write buffer
+ * @buf: pointer on write buffer
+ */
+int ssdfs_peb_realloc_write_buffer(struct ssdfs_peb_temp_buffer *buf)
+{
+	size_t new_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (buf->size >= PAGE_SIZE) {
+		SSDFS_DBG("unable to realloc buffer: "
+			  "old_size %zu\n",
+			  buf->size);
+		return -E2BIG;
+	}
+
+	new_size = min_t(size_t, buf->size * 2, (size_t)PAGE_SIZE);
+
+	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
+	if (!buf->ptr) {
+		SSDFS_ERR("fail to allocate buffer\n");
+		return -ENOMEM;
+	}
+
+	buf->size = new_size;
+
+	return 0;
+}
+
 /*
  * ssdfs_peb_current_log_prepare() - prepare current log object
  * @pebi: pointer on PEB object
@@ -173,6 +321,10 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_area *area;
+	struct ssdfs_peb_temp_buffer *write_buf;
+	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	size_t buf_size;
+	u16 flags;
 	int i;
 	int err = 0;
 
@@ -182,6 +334,8 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
+	flags = fsi->metadata_options.blk2off_tbl.flags;
+	buf_size = ssdfs_peb_temp_buffer_default_size(fsi->pagesize);
 
 	mutex_init(&pebi->current_log.lock);
 	atomic_set(&pebi->current_log.sequence_id, 0);
@@ -195,17 +349,41 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 		  pebi->current_log.free_data_pages);
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
+		struct ssdfs_peb_area_metadata *metadata;
 		size_t metadata_size = sizeof(struct ssdfs_peb_area_metadata);
 		size_t blk_table_size = sizeof(struct ssdfs_area_block_table);
 
 		area = &pebi->current_log.area[i];
+		metadata = &area->metadata;
 		memset(&area->metadata, 0, metadata_size);
 
 		switch (i) {
 		case SSDFS_LOG_BLK_DESC_AREA:
+			write_buf = &area->metadata.area.blk_desc.flush_buf;
+
 			area->has_metadata = true;
 			area->write_offset = blk_table_size;
+			area->compressed_offset = blk_table_size;
 			area->metadata.reserved_offset = blk_table_size;
+
+			if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
+				write_buf->ptr = ssdfs_peb_kzalloc(buf_size,
+								   GFP_KERNEL);
+				if (!write_buf->ptr) {
+					err = -ENOMEM;
+					SSDFS_ERR("unable to allocate\n");
+					goto fail_init_current_log;
+				}
+
+				write_buf->write_offset = 0;
+				write_buf->granularity = blk_desc_size;
+				write_buf->size = buf_size;
+			} else {
+				write_buf->ptr = NULL;
+				write_buf->write_offset = 0;
+				write_buf->granularity = 0;
+				write_buf->size = 0;
+			}
 			break;
 
 		case SSDFS_LOG_MAIN_AREA:
@@ -213,6 +391,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 		case SSDFS_LOG_JOURNAL_AREA:
 			area->has_metadata = false;
 			area->write_offset = 0;
+			area->compressed_offset = 0;
 			area->metadata.reserved_offset = 0;
 			break;
 
@@ -238,8 +417,15 @@ fail_init_current_log:
 		area = &pebi->current_log.area[i];
 
 		if (i == SSDFS_LOG_BLK_DESC_AREA) {
+			write_buf = &area->metadata.area.blk_desc.flush_buf;
+
 			area->metadata.area.blk_desc.capacity = 0;
 			area->metadata.area.blk_desc.items_count = 0;
+
+			if (write_buf->ptr) {
+				ssdfs_peb_kfree(write_buf->ptr);
+				write_buf->ptr = NULL;
+			}
 		}
 
 		ssdfs_destroy_page_array(&area->array);
@@ -255,6 +441,7 @@ fail_init_current_log:
 static inline
 int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 {
+	struct ssdfs_peb_temp_buffer *write_buf;
 	int i;
 	int err = 0;
 
@@ -286,6 +473,15 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 			area = &pebi->current_log.area[i];
 			area->metadata.area.blk_desc.capacity = 0;
 			area->metadata.area.blk_desc.items_count = 0;
+
+			write_buf = &area->metadata.area.blk_desc.flush_buf;
+
+			if (write_buf->ptr) {
+				ssdfs_peb_kfree(write_buf->ptr);
+				write_buf->ptr = NULL;
+				write_buf->write_offset = 0;
+				write_buf->size = 0;
+			}
 		}
 
 		ssdfs_destroy_page_array(area_pages);
@@ -321,6 +517,8 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	int peb_type;
+	size_t buf_size;
+	u16 flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -349,6 +547,8 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		  peb_state, peb_migration_id);
 
 	fsi = pebc->parent_si->fsi;
+	flags = fsi->metadata_options.blk2off_tbl.flags;
+	buf_size = ssdfs_peb_temp_buffer_default_size(fsi->pagesize);
 
 	atomic_set(&pebi->state, SSDFS_PEB_OBJECT_UNKNOWN_STATE);
 
@@ -368,6 +568,25 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	atomic_set(&pebi->reserved_bytes.blk_bmap, 0);
 	atomic_set(&pebi->reserved_bytes.blk2off_tbl, 0);
 	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, 0);
+
+	init_rwsem(&pebi->read_buffer.lock);
+	if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
+		pebi->read_buffer.blk_desc.ptr = ssdfs_peb_kzalloc(buf_size,
+								  GFP_KERNEL);
+		if (!pebi->read_buffer.blk_desc.ptr) {
+			err = -ENOMEM;
+			SSDFS_ERR("unable to allocate\n");
+			goto fail_conctruct_peb_obj;
+		}
+
+		pebi->read_buffer.blk_desc.offset = U32_MAX;
+		pebi->read_buffer.blk_desc.size = buf_size;
+	} else {
+		pebi->read_buffer.blk_desc.ptr = NULL;
+		pebi->read_buffer.blk_desc.offset = U32_MAX;
+		pebi->read_buffer.blk_desc.size = 0;
+	}
+
 	pebi->pebc = pebc;
 
 	err = ssdfs_create_page_array(fsi->pages_per_peb,
@@ -481,6 +700,15 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	SSDFS_DBG("peb_id %llu\n", pebi->peb_id);
 
 	err = ssdfs_peb_current_log_destroy(pebi);
+
+	down_write(&pebi->read_buffer.lock);
+	if (pebi->read_buffer.blk_desc.ptr) {
+		ssdfs_peb_kfree(pebi->read_buffer.blk_desc.ptr);
+		pebi->read_buffer.blk_desc.ptr = NULL;
+		pebi->read_buffer.blk_desc.offset = U32_MAX;
+		pebi->read_buffer.blk_desc.size = 0;
+	}
+	up_write(&pebi->read_buffer.lock);
 
 	state = atomic_read(&pebi->cache.state);
 	if (state == SSDFS_PAGE_ARRAY_DIRTY) {

@@ -116,7 +116,7 @@ struct ssdfs_thread_descriptor thread_desc[SSDFS_GC_THREAD_TYPE_MAX] = {
  * @pebi: pointer on PEB object
  * @desc_off: physical offset descriptor
  * @desc_array: array of metadata descriptors
- * @blk_desc: block descriptor
+ * @pos: position offset
  * @req: request
  *
  * This function tries to define extent for request.
@@ -133,21 +133,15 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 			      struct ssdfs_peb_info *pebi,
 			      struct ssdfs_phys_offset_descriptor *desc_off,
 			      struct ssdfs_metadata_descriptor *desc_array,
-			      struct ssdfs_block_descriptor *blk_desc,
+			      struct ssdfs_offset_position *pos,
 			      struct ssdfs_segment_request *req)
 {
-	struct ssdfs_blk_state_offset *blk_state = NULL;
-	u8 peb_migration_id;
-	u16 log_start_page;
-	int area_index;
-	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
-	u32 area_offset;
-	u32 blk_desc_off;
+	struct ssdfs_block_descriptor *blk_desc = NULL;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !desc_off || !req);
-	BUG_ON(!desc_array || !blk_desc);
+	BUG_ON(!desc_array);
 
 	SSDFS_DBG("peb %llu, "
 		  "class %#x, cmd %#x, type %#x\n",
@@ -167,63 +161,16 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		  req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	peb_migration_id = desc_off->blk_state.peb_migration_id;
-
-	if (peb_migration_id != ssdfs_get_peb_migration_id_checked(pebi)) {
-		err = -ERANGE;
-		SSDFS_ERR("migration_id1 %u != migration_id2 %u\n",
-			  peb_migration_id,
-			  ssdfs_get_peb_migration_id(pebi));
-		goto finish_define_extent;
-	}
-
-	blk_state = &desc_off->blk_state;
-	log_start_page = le16_to_cpu(blk_state->log_start_page);
-
-	if (log_start_page >= fsi->pages_per_peb) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid log start page %u\n", log_start_page);
-		goto finish_define_extent;
-	}
-
-	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req, log_start_page,
-						desc_array,
-						SSDFS_SEG_HDR_DESC_MAX);
+	err = ssdfs_blk_desc_buffer_init(pebi->pebc, req, desc_off, pos,
+					 desc_array,
+					 SSDFS_SEG_HDR_DESC_MAX);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to read log's header desc array: "
-			  "peb %llu, log_start_page %u, err %d\n",
-			  pebi->peb_id, log_start_page, err);
+		SSDFS_ERR("fail to init blk desc buffer: err %d\n",
+			  err);
 		goto finish_define_extent;
 	}
 
-	area_index = SSDFS_AREA_TYPE2INDEX(blk_state->log_area);
-
-	if (area_index >= SSDFS_SEG_HDR_DESC_MAX) {
-		err = -ERANGE;
-		SSDFS_ERR("invalid area index %#x\n", area_index);
-		goto finish_define_extent;
-	}
-
-	area_offset = le32_to_cpu(desc_array[area_index].offset);
-	blk_desc_off = le32_to_cpu(blk_state->byte_offset);
-
-	err = ssdfs_unaligned_read_cache(pebi,
-					 area_offset + blk_desc_off,
-					 blk_desc_size,
-					 blk_desc);
-	if (err) {
-		err = ssdfs_unaligned_read_buffer(fsi, pebi->peb_id,
-						  area_offset + blk_desc_off,
-						  blk_desc, blk_desc_size);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to read buffer: "
-				  "peb %llu, area_offset %u, byte_offset %u, "
-				  "buf_size %zu, err %d\n",
-				  pebi->peb_id, area_offset, blk_desc_off,
-				  blk_desc_size, err);
-			goto finish_define_extent;
-		}
-	}
+	blk_desc = &pos->blk_desc.buf;
 
 	if (req->extent.ino >= U64_MAX) {
 		req->extent.ino = le64_to_cpu(blk_desc->ino);
@@ -348,7 +295,7 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	}
 
 	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
-					desc_array, &pos->blk_desc, req);
+					desc_array, pos, req);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("unable to add block of another inode\n");
 		goto finish_copy_page;
@@ -367,7 +314,7 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		goto finish_copy_page;
 	}
 
-	err = ssdfs_peb_read_block_state(pebc, req, pos,
+	err = ssdfs_peb_read_block_state(pebc, req, desc_off, pos,
 					 desc_array,
 					 SSDFS_SEG_HDR_DESC_MAX);
 	if (unlikely(err)) {
@@ -1603,10 +1550,10 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pebc || !array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (have_flush_requests(pebc)) {
 		SSDFS_DBG("Do nothing: request queue is not empty: "

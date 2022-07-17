@@ -192,6 +192,9 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 				u64 peb_id, u32 bytes_off,
 				struct page *page);
+int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
+				   u64 peb_id, u32 bytes_off,
+				   struct pagevec *pvec);
 int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 			      u64 peb_id, u32 bytes_off,
 			      void *buf, size_t size,
@@ -327,6 +330,8 @@ void ssdfs_map_thread_memory_leaks_init(void);
 void ssdfs_map_thread_check_memory_leaks(void);
 void ssdfs_migration_memory_leaks_init(void);
 void ssdfs_migration_check_memory_leaks(void);
+void ssdfs_peb_memory_leaks_init(void);
+void ssdfs_peb_check_memory_leaks(void);
 void ssdfs_read_memory_leaks_init(void);
 void ssdfs_read_check_memory_leaks(void);
 void ssdfs_recovery_memory_leaks_init(void);

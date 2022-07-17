@@ -4627,10 +4627,10 @@ int ssdfs_segment_invalidate_logical_block(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("si %p, seg %llu, blk_offset %u\n",
 		  si, si->seg_id, blk_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_segment_invalidate_logical_extent(si, blk_offset, 1);
 }

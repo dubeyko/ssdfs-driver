@@ -109,6 +109,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA
 int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
+				 struct ssdfs_phys_offset_descriptor *desc_off,
 				 struct ssdfs_offset_position *pos,
 				 struct ssdfs_segment_request *req);
 int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
@@ -116,6 +117,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 #else
 static inline
 int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
+				 struct ssdfs_phys_offset_descriptor *desc_off,
 				 struct ssdfs_offset_position *pos,
 				 struct ssdfs_segment_request *req)
 {

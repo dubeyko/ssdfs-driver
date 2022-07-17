@@ -984,10 +984,10 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	logical_blk = le32_to_cpu(ptr->index.extent.logical_blk);
 	len = le32_to_cpu(ptr->index.extent.len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, logical_blk %u, len %u\n",
 		  seg_id, logical_blk, len);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(seg_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1061,10 +1061,29 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		res = wait_for_completion_timeout(end, SSDFS_DEFAULT_TIMEOUT);
 		if (res == 0) {
 			err = -ERANGE;
+
 			SSDFS_ERR("blk2off init failed: "
 				  "seg_id %llu, logical_blk %u, "
 				  "len %u, err %d\n",
 				  seg_id, logical_blk, len, err);
+
+			for (i = 0; i < (*si)->pebs_count; i++) {
+				u64 peb_id1 = U64_MAX;
+				u64 peb_id2 = U64_MAX;
+
+				pebc = &(*si)->peb_array[i];
+
+				if (pebc->src_peb)
+					peb_id1 = pebc->src_peb->peb_id;
+
+				if (pebc->dst_peb)
+					peb_id2 = pebc->dst_peb->peb_id;
+
+				SSDFS_ERR("seg_id %llu, peb_index %u, "
+					  "src_peb %llu, dst_peb %llu\n",
+					  seg_id, i, peb_id1, peb_id2);
+			}
+
 			goto fail_read_node;
 		}
 
@@ -13284,7 +13303,7 @@ try_lock_checking_item:
 
 		if (err == -EAGAIN)
 			continue;
-		else if (err)
+		else if (unlikely(err))
 			goto finish_extract_range;
 		else if (found_index != U16_MAX)
 			break;

@@ -57,8 +57,45 @@ struct ssdfs_peb_journal_area_metadata {
 };
 
 /*
+ * struct ssdfs_peb_read_buffer - read buffer
+ * @ptr: pointer on buffer
+ * @offset: logical offset in metadata structure
+ * @size: buffer size in bytes
+ */
+struct ssdfs_peb_read_buffer {
+	void *ptr;
+	u32 offset;
+	size_t size;
+};
+
+/*
+ * struct ssdfs_peb_temp_read_buffers - read temporary buffers
+ * @lock: temporary buffers lock
+ * @blk_desc: block descriptor table's temp read buffer
+ */
+struct ssdfs_peb_temp_read_buffers {
+	struct rw_semaphore lock;
+	struct ssdfs_peb_read_buffer blk_desc;
+};
+
+/*
+ * struct ssdfs_peb_temp_buffer - temporary (write) buffer
+ * @ptr: pointer on buffer
+ * @write_offset: current write offset into buffer
+ * @granularity: size of one item in bytes
+ * @size: buffer size in bytes
+ */
+struct ssdfs_peb_temp_buffer {
+	void *ptr;
+	u32 write_offset;
+	size_t granularity;
+	size_t size;
+};
+
+/*
  * struct ssdfs_peb_area_metadata - descriptor of area's items chain
  * @area.blk_desc.table: block descriptors area table
+ * @area.blk_desc.flush_buf: write block descriptors buffer (compression case)
  * @area.blk_desc.capacity: max number of block descriptors in reserved space
  * @area.blk_desc.items_count: number of items in the whole table
  * @area.diffs.table: diffs area's table
@@ -71,6 +108,7 @@ struct ssdfs_peb_area_metadata {
 	union {
 		struct {
 			struct ssdfs_area_block_table table;
+			struct ssdfs_peb_temp_buffer flush_buf;
 			int capacity;
 			int items_count;
 		} blk_desc;
@@ -97,6 +135,7 @@ struct ssdfs_peb_area_metadata {
  * @has_metadata: does area contain metadata?
  * @metadata: descriptor of area's items chain
  * @write_offset: current write offset
+ * @compressed_offset: current write offset for compressed data
  * @array: area's memory pages
  */
 struct ssdfs_peb_area {
@@ -104,6 +143,7 @@ struct ssdfs_peb_area {
 	struct ssdfs_peb_area_metadata metadata;
 
 	u32 write_offset;
+	u32 compressed_offset;
 	struct ssdfs_page_array array;
 };
 
@@ -151,6 +191,7 @@ struct ssdfs_peb_log {
  * @reserved_bytes.blk2off_tbl: reserved bytes for blk2off table
  * @reserved_bytes.blk_desc_tbl: reserved bytes for block descriptor table
  * @current_log: PEB's current log
+ * @read_buffer: temporary read buffers (compression case)
  * @cache: PEB's memory pages
  * @pebc: pointer on parent container
  */
@@ -197,6 +238,9 @@ struct ssdfs_peb_info {
 
 	/* Current log */
 	struct ssdfs_peb_log current_log;
+
+	/* Read buffer */
+	struct ssdfs_peb_temp_read_buffers read_buffer;
 
 	/* PEB's memory pages */
 	struct ssdfs_page_array cache;
@@ -741,5 +785,8 @@ bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_peb_info *pebi);
 bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_peb_info *pebi);
+int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
+				  size_t new_size);
+int ssdfs_peb_realloc_write_buffer(struct ssdfs_peb_temp_buffer *buf);
 
 #endif /* _SSDFS_PEB_H */

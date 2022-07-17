@@ -809,11 +809,11 @@ int ssdfs_page_array_set_page_dirty(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -928,11 +928,11 @@ int ssdfs_page_array_clear_dirty_page(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -1039,11 +1039,11 @@ int ssdfs_page_array_clear_dirty_range(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, start %lu, end %lu, state %#x\n",
 		  array, start, end,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
