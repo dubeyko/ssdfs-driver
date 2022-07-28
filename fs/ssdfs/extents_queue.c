@@ -1701,5 +1701,9 @@ revert_invalidation_state:
 finish_invalidate_extent:
 	ssdfs_segment_put_object(si);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }

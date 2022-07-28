@@ -492,26 +492,14 @@ fail_create_shared_dict_tree:
  */
 void ssdfs_shared_dict_btree_destroy(struct ssdfs_fs_info *fsi)
 {
-	int err;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("shdictree %p\n", fsi->shdictree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!fsi->shdictree)
 		return;
-
-	err = ssdfs_shared_dict_stop_thread(fsi->shdictree);
-	if (err == -EIO) {
-		ssdfs_fs_error(fsi->sb,
-				__FILE__, __func__, __LINE__,
-				"thread I/O issue\n");
-	} else if (unlikely(err)) {
-		SSDFS_WARN("thread stopping issue: err %d\n",
-			   err);
-	}
 
 	ssdfs_names_queue_remove_all(&fsi->shdictree->requests.queue);
 

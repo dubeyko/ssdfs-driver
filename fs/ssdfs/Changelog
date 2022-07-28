@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.16 [July 28, 2022]
+    (*) Fix bugs in logic of block descriptor table compression.
+
 v.4.15 [July 16, 2022]
     (*) Implement logic of block descriptor table compression.
 

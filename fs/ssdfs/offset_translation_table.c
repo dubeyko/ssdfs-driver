@@ -1564,8 +1564,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	int phys_off_index;
 	bool is_partially_processed = false;
 	int i;
-#ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_blk_state_offset *state_off;
+#ifdef CONFIG_SSDFS_DEBUG
 	int j;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err;
@@ -1709,6 +1709,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		u16 id = offset_id + i;
 		u16 cur_blk;
 		u32 byte_offset;
+		bool is_invalid = false;
 
 		phys_off = &frag->phys_offs[phys_off_index + i];
 
@@ -1788,6 +1789,53 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			goto finish_process_fragment;
 		} else
 			pos->blk_desc.status = SSDFS_BLK_DESC_BUF_INITIALIZED;
+
+		state_off = &pos->blk_desc.buf.state[0];
+
+		switch (pos->blk_desc.status) {
+		case SSDFS_BLK_DESC_BUF_INITIALIZED:
+			is_invalid =
+				IS_SSDFS_BLK_STATE_OFFSET_INVALID(state_off);
+			break;
+
+		default:
+			is_invalid = false;
+			break;
+		}
+
+		if (is_invalid) {
+			err = -ERANGE;
+			SSDFS_ERR("block state offset invalid\n");
+
+			SSDFS_ERR("status %#x, ino %llu, "
+				  "logical_offset %u, peb_index %u, "
+				  "peb_page %u\n",
+				  pos->blk_desc.status,
+				  le64_to_cpu(pos->blk_desc.buf.ino),
+				  le32_to_cpu(pos->blk_desc.buf.logical_offset),
+				  le16_to_cpu(pos->blk_desc.buf.peb_index),
+				  le16_to_cpu(pos->blk_desc.buf.peb_page));
+
+			for (j = 0; j < SSDFS_BLK_STATE_OFF_MAX; j++) {
+				state_off = &pos->blk_desc.buf.state[j];
+
+				SSDFS_ERR("BLK STATE OFFSET %d: "
+					  "log_start_page %u, log_area %#x, "
+					  "byte_offset %u, "
+					  "peb_migration_id %u\n",
+					  j,
+					  le16_to_cpu(state_off->log_start_page),
+					  state_off->log_area,
+					  le32_to_cpu(state_off->byte_offset),
+					  state_off->peb_migration_id);
+			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			goto finish_process_fragment;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("status %#x, ino %llu, "
@@ -4593,6 +4641,7 @@ int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 {
 	unsigned long *lbmap = NULL;
 	struct ssdfs_offset_position *old_pos = NULL;
+	struct ssdfs_blk_state_offset *state_off;
 	size_t desc_size = sizeof(struct ssdfs_block_descriptor_state);
 	int err = 0;
 
@@ -4638,6 +4687,20 @@ int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 		err = -ERANGE;
 		SSDFS_ERR("invalid state %#x of blk desc buffer\n",
 			  old_pos->blk_desc.status);
+		goto finish_init;
+	}
+
+	state_off = &pos->blk_desc.buf.state[0];
+
+	if (IS_SSDFS_BLK_STATE_OFFSET_INVALID(state_off)) {
+		err = -ERANGE;
+		SSDFS_ERR("block state offset invalid\n");
+		SSDFS_ERR("log_start_page %u, log_area %u, "
+			  "peb_migration_id %u, byte_offset %u\n",
+			  le16_to_cpu(state_off->log_start_page),
+			  state_off->log_area,
+			  state_off->peb_migration_id,
+			  le32_to_cpu(state_off->byte_offset));
 		goto finish_init;
 	}
 
@@ -5361,15 +5424,25 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 			     sizeof(struct ssdfs_block_descriptor));
 
 #ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("logical_blk %u, id %d, "
+			  "peb_index %u, sequence_id %u, offset_index %u\n",
+			  logical_blk, id, peb_index,
+			  *last_sequence_id, offset_index);
+
 		for (i = 0; i < SSDFS_BLK_STATE_OFF_MAX; i++) {
+			struct ssdfs_blk_state_offset *offset = NULL;
+
+			offset = &blk_desc->state[i];
+
 			SSDFS_DBG("BLK STATE OFFSET %d: "
 				  "log_start_page %u, log_area %#x, "
-				  "byte_offset %u, peb_migration_id %u\n",
+				  "byte_offset %u, "
+				  "peb_migration_id %u\n",
 				  i,
-				  le16_to_cpu(blk_desc->state[i].log_start_page),
-				  blk_desc->state[i].log_area,
-				  le32_to_cpu(blk_desc->state[i].byte_offset),
-				  blk_desc->state[i].peb_migration_id);
+				  le16_to_cpu(offset->log_start_page),
+				  offset->log_area,
+				  le32_to_cpu(offset->byte_offset),
+				  offset->peb_migration_id);
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 	}

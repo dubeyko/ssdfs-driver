@@ -184,7 +184,6 @@ fail_create_snapshots_tree:
 void ssdfs_snapshots_btree_destroy(struct ssdfs_fs_info *fsi)
 {
 	struct ssdfs_snapshots_btree_info *tree;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -202,16 +201,6 @@ void ssdfs_snapshots_btree_destroy(struct ssdfs_fs_info *fsi)
 	tree = fsi->snapshots.tree;
 
 	ssdfs_debug_snapshots_btree_object(tree);
-
-	err = ssdfs_stop_snapshots_btree_thread(fsi);
-	if (err == -EIO) {
-		ssdfs_fs_error(fsi->sb,
-				__FILE__, __func__, __LINE__,
-				"thread I/O issue\n");
-	} else if (unlikely(err)) {
-		SSDFS_WARN("thread stopping issue: err %d\n",
-			   err);
-	}
 
 	ssdfs_snapshot_reqs_queue_remove_all(&tree->requests.queue);
 

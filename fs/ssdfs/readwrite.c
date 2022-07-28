@@ -503,6 +503,11 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 					(size_t)(size - read_bytes),
 					(size_t)(PAGE_SIZE - cur_off));
 
+		SSDFS_DBG("page_off %u, cur_off %zu, "
+			  "iter_read_bytes %zu\n",
+			  page_off, cur_off,
+			  iter_read_bytes);
+
 		if (page_off >= pagevec_count(pvec)) {
 			SSDFS_DBG("page out of range: index %u: "
 				  "offset %zu, pagevec_count %u\n",
@@ -537,6 +542,13 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 
 		read_bytes += iter_read_bytes;
 	} while (read_bytes < size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("BUF DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     buf, size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }

@@ -220,7 +220,6 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
 {
 	struct ssdfs_shared_extents_tree *tree;
 	int i;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -239,19 +238,8 @@ void ssdfs_shextree_destroy(struct ssdfs_fs_info *fsi)
 
 	ssdfs_debug_shextree_object(tree);
 
-	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
-		err = ssdfs_shextree_stop_thread(fsi->shextree, i);
-		if (err == -EIO) {
-			ssdfs_fs_error(fsi->sb,
-					__FILE__, __func__, __LINE__,
-					"thread I/O issue\n");
-		} else if (unlikely(err)) {
-			SSDFS_WARN("thread stopping issue: ID %d, err %d\n",
-				   i, err);
-		}
-
+	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++)
 		ssdfs_extents_queue_remove_all(&fsi->shextree->array[i].queue);
-	}
 
 	ssdfs_btree_destroy(&tree->generic_tree);
 

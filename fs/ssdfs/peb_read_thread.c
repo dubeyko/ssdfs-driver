@@ -2713,14 +2713,19 @@ int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,
 	struct ssdfs_blk2off_table *table;
 	u8 peb_migration_id;
 	u16 logical_blk;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_blk_state_offset *state_off;
+	int j;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!desc_off || !pos);
 
-	SSDFS_DBG("seg %llu, peb_index %u\n",
-		  pebc->parent_si->seg_id, pebc->peb_index);
+	SSDFS_DBG("seg %llu, peb_index %u, blk_desc.status %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  pos->blk_desc.status);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (pos->blk_desc.status) {
@@ -2752,6 +2757,29 @@ int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,
 
 		pos->blk_desc.status = SSDFS_BLK_DESC_BUF_INITIALIZED;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("status %#x, ino %llu, "
+			  "logical_offset %u, peb_index %u, peb_page %u\n",
+			  pos->blk_desc.status,
+			  le64_to_cpu(pos->blk_desc.buf.ino),
+			  le32_to_cpu(pos->blk_desc.buf.logical_offset),
+			  le16_to_cpu(pos->blk_desc.buf.peb_index),
+			  le16_to_cpu(pos->blk_desc.buf.peb_page));
+
+		for (j = 0; j < SSDFS_BLK_STATE_OFF_MAX; j++) {
+			state_off = &pos->blk_desc.buf.state[j];
+
+			SSDFS_DBG("BLK STATE OFFSET %d: "
+				  "log_start_page %u, log_area %#x, "
+				  "byte_offset %u, peb_migration_id %u\n",
+				  j,
+				  le16_to_cpu(state_off->log_start_page),
+				  state_off->log_area,
+				  le32_to_cpu(state_off->byte_offset),
+				  state_off->peb_migration_id);
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		table = pebi->pebc->parent_si->blk2off_table;
 		logical_blk = req->place.start.blk_index +
 					req->result.processed_blks;
@@ -2768,6 +2796,7 @@ int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,
 
 	case SSDFS_BLK_DESC_BUF_INITIALIZED:
 		/* do nothing */
+		SSDFS_DBG("descriptor buffer is initialized already\n");
 		break;
 
 	default:
@@ -2839,6 +2868,12 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 	if (IS_SSDFS_BLK_STATE_OFFSET_INVALID(offset)) {
 		err = -ERANGE;
 		SSDFS_ERR("block state offset invalid\n");
+		SSDFS_ERR("log_start_page %u, log_area %u, "
+			  "peb_migration_id %u, byte_offset %u\n",
+			  le16_to_cpu(offset->log_start_page),
+			  offset->log_area,
+			  offset->peb_migration_id,
+			  le32_to_cpu(offset->byte_offset));
 		goto finish_prepare_pvec;
 	}
 

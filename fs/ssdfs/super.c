@@ -2965,6 +2965,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	u64 fs_feature_compat;
 	u16 fs_state;
 	bool can_commit_super = true;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3007,6 +3008,38 @@ static void ssdfs_put_super(struct super_block *sb)
 	if (err) {
 		SSDFS_ERR("fail to stop GC dirty seg thread: "
 			  "err %d\n", err);
+	}
+
+	err = ssdfs_shared_dict_stop_thread(fsi->shdictree);
+	if (err == -EIO) {
+		ssdfs_fs_error(fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"thread I/O issue\n");
+	} else if (unlikely(err)) {
+		SSDFS_WARN("thread stopping issue: err %d\n",
+			   err);
+	}
+
+	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
+		err = ssdfs_shextree_stop_thread(fsi->shextree, i);
+		if (err == -EIO) {
+			ssdfs_fs_error(fsi->sb,
+					__FILE__, __func__, __LINE__,
+					"thread I/O issue\n");
+		} else if (unlikely(err)) {
+			SSDFS_WARN("thread stopping issue: ID %d, err %d\n",
+				   i, err);
+		}
+	}
+
+	err = ssdfs_stop_snapshots_btree_thread(fsi);
+	if (err == -EIO) {
+		ssdfs_fs_error(fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"thread I/O issue\n");
+	} else if (unlikely(err)) {
+		SSDFS_WARN("thread stopping issue: err %d\n",
+			   err);
 	}
 
 	err = ssdfs_maptbl_stop_thread(fsi->maptbl);

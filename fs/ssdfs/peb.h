@@ -676,8 +676,25 @@ bool IS_SSDFS_BLK_STATE_OFFSET_INVALID(struct ssdfs_blk_state_offset *desc)
 	if (le16_to_cpu(desc->log_start_page) == U16_MAX &&
 	    desc->log_area == U8_MAX &&
 	    desc->peb_migration_id == U8_MAX &&
-	    le32_to_cpu(desc->byte_offset) == U32_MAX)
+	    le32_to_cpu(desc->byte_offset) == U32_MAX) {
+		SSDFS_DBG("log_start_page %u, log_area %u, "
+			  "peb_migration_id %u, byte_offset %u\n",
+			  le16_to_cpu(desc->log_start_page),
+			  desc->log_area,
+			  desc->peb_migration_id,
+			  le32_to_cpu(desc->byte_offset));
 		return true;
+	}
+
+	if (desc->peb_migration_id == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+		SSDFS_DBG("log_start_page %u, log_area %u, "
+			  "peb_migration_id %u, byte_offset %u\n",
+			  le16_to_cpu(desc->log_start_page),
+			  desc->log_area,
+			  desc->peb_migration_id,
+			  le32_to_cpu(desc->byte_offset));
+		return true;
+	}
 
 	return false;
 }
