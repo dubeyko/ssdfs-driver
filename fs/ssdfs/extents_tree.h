@@ -115,9 +115,17 @@ int ssdfs_extents_tree_add_updated_seg_id(struct ssdfs_extents_btree_info *tree,
 
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req);
+int ssdfs_recommend_migration_extent(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_segment_request *req,
+				     struct ssdfs_zone_fragment *fragment);
 bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode);
 int ssdfs_extents_tree_add_extent(struct inode *inode,
 				  struct ssdfs_segment_request *req);
+int ssdfs_extents_tree_move_extent(struct ssdfs_extents_btree_info *tree,
+				   u64 blk,
+				   struct ssdfs_raw_extent *old_extent,
+				   struct ssdfs_raw_extent *new_extent,
+				   struct ssdfs_btree_search *search);
 int ssdfs_extents_tree_truncate(struct inode *inode);
 
 /*

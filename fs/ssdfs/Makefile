@@ -11,7 +11,7 @@ obj-$(CONFIG_SSDFS)			+= ssdfs.o
 ssdfs-y	:= super.o fs_error.o recovery.o \
 		recovery_fast_search.o recovery_slow_search.o \
 		recovery_thread.o \
-		options.o page_array.o \
+		options.o page_array.o page_vector.o \
 		volume_header.o log_footer.o \
 		block_bitmap.o block_bitmap_tables.o \
 		peb_block_bitmap.o segment_block_bitmap.o \
@@ -32,6 +32,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		xattr_tree.o \
 		snapshot_requests_queue.o snapshot_rules.o \
 		snapshot.o snapshots_tree.o snapshots_tree_thread.o \
+		invalidated_extents_tree.o \
 		inode.o file.o dir.o ioctl.o \
 		sysfs.o \
 		xattr.o xattr_user.o xattr_trusted.o \
@@ -42,7 +43,7 @@ ssdfs-$(CONFIG_SSDFS_SECURITY)			+= xattr_security.o
 ssdfs-$(CONFIG_SSDFS_ZLIB)			+= compr_zlib.o
 ssdfs-$(CONFIG_SSDFS_LZO)			+= compr_lzo.o
 ssdfs-$(CONFIG_SSDFS_MTD_DEVICE)		+= dev_mtd.o
-ssdfs-$(CONFIG_SSDFS_BLOCK_DEVICE)		+= dev_bdev.o
+ssdfs-$(CONFIG_SSDFS_BLOCK_DEVICE)		+= dev_bdev.o dev_zns.c
 ssdfs-$(CONFIG_SSDFS_TESTING)			+= testing.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE)		+= diff_on_write.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_METADATA)	+= diff_on_write_metadata.o

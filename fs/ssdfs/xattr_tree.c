@@ -1615,10 +1615,10 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !value || !ii || !desc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, ino %lu, value %p, size %zu, desc %p\n",
 		  fsi, ii->vfs_inode.i_ino, value, size, desc);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(desc, 0xFF, sizeof(struct ssdfs_blob_extent));
 

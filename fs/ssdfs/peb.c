@@ -326,6 +326,9 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	size_t buf_size;
 	u16 flags;
 	int i;
+	size_t bmap_bytes;
+	size_t bmap_pages;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -347,6 +350,18 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 
 	SSDFS_DBG("free_data_pages %u\n",
 		  pebi->current_log.free_data_pages);
+
+	bmap_bytes = BLK_BMAP_BYTES(fsi->pages_per_peb);
+	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	err = ssdfs_page_vector_create(&pebi->current_log.bmap_snapshot,
+					bmap_pages);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create page vector: "
+			  "bmap_pages %zu, err %d\n",
+			  bmap_pages, err);
+		return err;
+	}
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		struct ssdfs_peb_area_metadata *metadata;
@@ -431,6 +446,8 @@ fail_init_current_log:
 		ssdfs_destroy_page_array(&area->array);
 	}
 
+	ssdfs_page_vector_destroy(&pebi->current_log.bmap_snapshot);
+
 	return err;
 }
 
@@ -486,6 +503,9 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 
 		ssdfs_destroy_page_array(area_pages);
 	}
+
+	ssdfs_page_vector_release(&pebi->current_log.bmap_snapshot);
+	ssdfs_page_vector_destroy(&pebi->current_log.bmap_snapshot);
 
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_UNKNOWN);
 	ssdfs_peb_current_log_unlock(pebi);

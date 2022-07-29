@@ -92,6 +92,7 @@ bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
 
 /*
  * is_ssdfs_volume_header_consistent() - check volume header consistency
+ * @fsi: pointer on shared file system object
  * @vh: volume header
  * @dev_size: partition size in bytes
  *
@@ -99,7 +100,8 @@ bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
  * [true]  - volume header is consistent.
  * [false] - volume header is corrupted.
  */
-bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
+bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
+					struct ssdfs_volume_header *vh,
 					u64 dev_size)
 {
 	u32 page_size;
@@ -127,11 +129,10 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 	}
 
 	switch (page_size) {
-	case SSDFS_512B:
-	case SSDFS_2KB:
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
+	case SSDFS_32KB:
 		/* do nothing */
 		break;
 
@@ -146,12 +147,39 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 	case SSDFS_512KB:
 	case SSDFS_2MB:
 	case SSDFS_8MB:
+	case SSDFS_16MB:
+	case SSDFS_32MB:
+	case SSDFS_64MB:
+	case SSDFS_128MB:
+	case SSDFS_256MB:
+	case SSDFS_512MB:
+	case SSDFS_1GB:
+	case SSDFS_2GB:
+	case SSDFS_8GB:
+	case SSDFS_16GB:
+	case SSDFS_32GB:
+	case SSDFS_64GB:
 		/* do nothing */
 		break;
 
 	default:
-		SSDFS_DBG("unexpected erase_size %u\n", erase_size);
-		return false;
+		if (fsi->is_zns_device) {
+			u64 zone_size = le16_to_cpu(vh->megabytes_per_peb);
+
+			zone_size *= SSDFS_1MB;
+
+			if (fsi->zone_size != zone_size) {
+				SSDFS_ERR("invalid zone size: "
+					  "size1 %llu != size2 %llu\n",
+					  fsi->zone_size, zone_size);
+				return -ERANGE;
+			}
+
+			erase_size = (u32)zone_size;
+		} else {
+			SSDFS_DBG("unexpected erase_size %u\n", erase_size);
+			return false;
+		}
 	};
 
 	if (seg_size < erase_size) {
@@ -353,6 +381,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 
 /*
  * is_ssdfs_partial_log_header_consistent() - check partial header consistency
+ * @fsi: pointer on shared file system object
  * @ph: partial log header
  * @dev_size: partition size in bytes
  *
@@ -360,7 +389,8 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
  * [true]  - partial log header is consistent.
  * [false] - partial log header is corrupted.
  */
-bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
+bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
+					    struct ssdfs_partial_log_header *ph,
 					    u64 dev_size)
 {
 	u32 page_size;
@@ -389,11 +419,10 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 	}
 
 	switch (page_size) {
-	case SSDFS_512B:
-	case SSDFS_2KB:
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
+	case SSDFS_32KB:
 		/* do nothing */
 		break;
 
@@ -408,12 +437,39 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 	case SSDFS_512KB:
 	case SSDFS_2MB:
 	case SSDFS_8MB:
+	case SSDFS_16MB:
+	case SSDFS_32MB:
+	case SSDFS_64MB:
+	case SSDFS_128MB:
+	case SSDFS_256MB:
+	case SSDFS_512MB:
+	case SSDFS_1GB:
+	case SSDFS_2GB:
+	case SSDFS_8GB:
+	case SSDFS_16GB:
+	case SSDFS_32GB:
+	case SSDFS_64GB:
 		/* do nothing */
 		break;
 
 	default:
-		SSDFS_DBG("unexpected erase_size %u\n", erase_size);
-		return false;
+		if (fsi->is_zns_device) {
+			u64 zone_size = le16_to_cpu(vh->megabytes_per_peb);
+
+			zone_size *= SSDFS_1MB;
+
+			if (fsi->zone_size != zone_size) {
+				SSDFS_ERR("invalid zone size: "
+					  "size1 %llu != size2 %llu\n",
+					  fsi->zone_size, zone_size);
+				return -ERANGE;
+			}
+
+			erase_size = (u32)zone_size;
+		} else {
+			SSDFS_DBG("unexpected erase_size %u\n", erase_size);
+			return false;
+		}
 	};
 
 	if (seg_size < erase_size) {
@@ -787,6 +843,11 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 		     &fsi->vh->xattr_btree,
 		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
 		     sizeof(struct ssdfs_xattr_btree_descriptor));
+	ssdfs_memcpy(&vh->invalidated_extents_btree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     &fsi->vh->invalidated_extents_btree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     sizeof(struct ssdfs_invalidated_extents_btree));
 }
 
 /*
@@ -1000,6 +1061,16 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 		     &fsi->vs->shared_dict_btree,
 		     0, sizeof(struct ssdfs_shared_dictionary_btree),
 		     sizeof(struct ssdfs_shared_dictionary_btree));
+	ssdfs_memcpy(&hdr->snapshots_btree,
+		     0, sizeof(struct ssdfs_snapshots_btree),
+		     &fsi->vs->snapshots_btree,
+		     0, sizeof(struct ssdfs_snapshots_btree),
+		     sizeof(struct ssdfs_snapshots_btree));
+	ssdfs_memcpy(&hdr->invalidated_extents_btree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     &fsi->vh->invalidated_extents_btree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     sizeof(struct ssdfs_invalidated_extents_btree));
 
 	hdr->sequence_id = cpu_to_le32(sequence_id);
 

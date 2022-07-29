@@ -108,16 +108,31 @@ static __u64 ssdfs_bdev_device_size(struct super_block *sb)
 	return i_size_read(sb->s_bdev->bd_inode);
 }
 
+static int ssdfs_bdev_open_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
+static int ssdfs_bdev_close_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
 /*
  * ssdfs_bdev_bio_alloc() - allocate bio object
- * @gfp_mask: mask of creation flags
+ * @bdev: block device
  * @nr_iovecs: number of items in biovec
+ * @op: direction of I/O
+ * @gfp_mask: mask of creation flags
  */
-static struct bio *ssdfs_bdev_bio_alloc(gfp_t gfp_mask, unsigned int nr_iovecs)
+static struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
+					unsigned int nr_iovecs,
+					unsigned int op,
+					gfp_t gfp_mask)
 {
 	struct bio *bio;
 
-	bio = bio_alloc(gfp_mask, nr_iovecs);
+	bio = bio_alloc(bdev, nr_iovecs, op, gfp_mask);
 	if (!bio) {
 		SSDFS_ERR("fail to allocate bio\n");
 		return ERR_PTR(-ENOMEM);
@@ -177,7 +192,7 @@ static int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
 static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 					struct page *page,
 					loff_t offset,
-					int op, int op_flags)
+					unsigned int op, int op_flags)
 {
 	struct bio *bio;
 	pgoff_t index = (pgoff_t)(offset >> PAGE_SHIFT);
@@ -187,7 +202,7 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOIO, 1);
+	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, 1, op, GFP_NOIO);
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -235,7 +250,7 @@ finish_sync_page_request:
 static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 					struct pagevec *pvec,
 					loff_t offset,
-					int op, int op_flags)
+					unsigned int op, int op_flags)
 {
 	struct bio *bio;
 	pgoff_t index = (pgoff_t)(offset >> PAGE_SHIFT);
@@ -254,7 +269,8 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 		return 0;
 	}
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOIO, pagevec_count(pvec));
+	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, pagevec_count(pvec),
+				   op, GFP_NOIO);
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -316,17 +332,10 @@ finish_sync_pvec_request:
  *
  * %-EIO         - I/O error.
  */
-static int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
-				loff_t offset)
+int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
+			loff_t offset)
 {
 	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (bdi_read_congested(sb->s_bdi)) {
-		SSDFS_WARN("read queue is congested!!!\n");
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_bdev_sync_page_request(sb, page, offset,
 					   REQ_OP_READ, REQ_SYNC);
@@ -360,18 +369,11 @@ static int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
  *
  * %-EIO         - I/O error.
  */
-static int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
-				loff_t offset)
+int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
+			 loff_t offset)
 {
 	int i;
 	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (bdi_read_congested(sb->s_bdi)) {
-		SSDFS_WARN("read queue is congested!!!\n");
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_bdev_sync_pvec_request(sb, pvec, offset,
 					   REQ_OP_READ, REQ_RAHEAD);
@@ -433,13 +435,6 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 
 	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
 		  sb, (unsigned long long)offset, len, buf);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (bdi_read_congested(sb->s_bdi)) {
-		SSDFS_WARN("read queue is congested!!!\n");
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	*read_bytes = 0;
 
@@ -557,8 +552,8 @@ finish_bdev_read_pvec:
  *
  * %-EIO         - I/O error.
  */
-static int ssdfs_bdev_read(struct super_block *sb, loff_t offset, size_t len,
-			   void *buf)
+int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
+		    size_t len, void *buf)
 {
 	size_t read_bytes = 0;
 	loff_t cur_offset = offset;
@@ -612,8 +607,8 @@ static int ssdfs_bdev_read(struct super_block *sb, loff_t offset, size_t len,
  * %-ENOMEM      - fail to allocate memory.
  * %-EIO         - I/O error.
  */
-static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
-				     bool need_check)
+int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
+			      bool need_check)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	void *buf;
@@ -624,13 +619,6 @@ static int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 
 	if (!need_check)
 		return 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (bdi_read_congested(sb->s_bdi)) {
-		SSDFS_WARN("read queue is congested!!!\n");
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	buf = ssdfs_dev_bdev_kzalloc(fsi->pagesize, GFP_KERNEL);
 	if (!buf) {
@@ -673,8 +661,8 @@ free_buf:
  * %-EROFS       - file system in RO mode.
  * %-EIO         - I/O error.
  */
-static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
-				struct page *page, u32 from_off, size_t len)
+int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
+			 struct page *page, u32 from_off, size_t len)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -700,13 +688,6 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	BUG_ON((from_off + len) > PAGE_SIZE);
 	BUG_ON(!PageDirty(page));
 	BUG_ON(PageLocked(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (bdi_write_congested(sb->s_bdi)) {
-		SSDFS_WARN("write queue is congested!!!\n");
-		BUG();
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
@@ -754,9 +735,9 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
  * %-EROFS       - file system in RO mode.
  * %-EIO         - I/O error.
  */
-static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
-				 struct pagevec *pvec,
-				 u32 from_off, size_t len)
+int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
+			  struct pagevec *pvec,
+			  u32 from_off, size_t len)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct page *page;
@@ -787,13 +768,6 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 		SSDFS_WARN("empty pagevec\n");
 		return 0;
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (bdi_write_congested(sb->s_bdi)) {
-		SSDFS_WARN("write queue is congested!!!\n");
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		page = pvec->pages[i];
@@ -899,9 +873,10 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 		return 0;
 	}
 
-	max_pages = min_t(unsigned int, nr_iovecs, BIO_MAX_PAGES);
+	max_pages = min_t(unsigned int, nr_iovecs, BIO_MAX_VECS);
 
-	bio = ssdfs_bdev_bio_alloc(GFP_NOFS, max_pages);
+	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, max_pages,
+				   REQ_OP_DISCARD, GFP_NOFS);
 	if (IS_ERR_OR_NULL(bio)) {
 		err = !bio ? -ERANGE : PTR_ERR(bio);
 		SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -923,7 +898,8 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 			nr_iovecs -= i;
 			i = 0;
 
-			bio = ssdfs_bdev_bio_alloc(GFP_NOFS, max_pages);
+			bio = ssdfs_bdev_bio_alloc(sb->s_bdev, max_pages,
+						   REQ_OP_DISCARD, GFP_NOFS);
 			if (IS_ERR_OR_NULL(bio)) {
 				err = !bio ? -ERANGE : PTR_ERR(bio);
 				SSDFS_ERR("fail to allocate bio: err %d\n",
@@ -1165,17 +1141,19 @@ static void ssdfs_bdev_sync(struct super_block *sb)
 }
 
 const struct ssdfs_device_ops ssdfs_bdev_devops = {
-	.device_name = ssdfs_bdev_device_name,
-	.device_size = ssdfs_bdev_device_size,
-	.read = ssdfs_bdev_read,
-	.readpage = ssdfs_bdev_readpage,
-	.readpages = ssdfs_bdev_readpages,
-	.can_write_page = ssdfs_bdev_can_write_page,
-	.writepage = ssdfs_bdev_writepage,
-	.writepages = ssdfs_bdev_writepages,
-	.erase = ssdfs_bdev_erase,
-	.trim = ssdfs_bdev_trim,
-	.peb_isbad = ssdfs_bdev_peb_isbad,
-	.mark_peb_bad = ssdfs_bdev_mark_peb_bad,
-	.sync = ssdfs_bdev_sync,
+	.device_name		= ssdfs_bdev_device_name,
+	.device_size		= ssdfs_bdev_device_size,
+	.open_zone		= ssdfs_bdev_open_zone,
+	.close_zone		= ssdfs_bdev_close_zone,
+	.read			= ssdfs_bdev_read,
+	.readpage		= ssdfs_bdev_readpage,
+	.readpages		= ssdfs_bdev_readpages,
+	.can_write_page		= ssdfs_bdev_can_write_page,
+	.writepage		= ssdfs_bdev_writepage,
+	.writepages		= ssdfs_bdev_writepages,
+	.erase			= ssdfs_bdev_erase,
+	.trim			= ssdfs_bdev_trim,
+	.peb_isbad		= ssdfs_bdev_peb_isbad,
+	.mark_peb_bad		= ssdfs_bdev_mark_peb_bad,
+	.sync			= ssdfs_bdev_sync,
 };

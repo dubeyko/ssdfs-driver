@@ -787,6 +787,11 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 		     &fsi->vs->shared_dict_btree,
 		     0, sizeof(struct ssdfs_shared_dictionary_btree),
 		     sizeof(struct ssdfs_shared_dictionary_btree));
+	ssdfs_memcpy(&vs->snapshots_btree,
+		     0, sizeof(struct ssdfs_snapshots_btree),
+		     &fsi->vs->snapshots_btree,
+		     0, sizeof(struct ssdfs_snapshots_btree),
+		     sizeof(struct ssdfs_snapshots_btree));
 
 	return 0;
 }

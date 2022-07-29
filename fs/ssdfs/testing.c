@@ -39,11 +39,11 @@
 #include "testing.h"
 
 static
-void ssdfs_testing_invalidatepage(struct page *page, unsigned int offset,
-				  unsigned int length)
+void ssdfs_testing_invalidate_folio(struct folio *folio, size_t offset,
+				    size_t length)
 {
-	SSDFS_DBG("do nothing: page_index %llu, offset %u, length %u\n",
-		  (u64)page_index(page), offset, length);
+	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
+		  offset, length);
 }
 
 static
@@ -56,9 +56,9 @@ int ssdfs_testing_releasepage(struct page *page, gfp_t mask)
 }
 
 const struct address_space_operations ssdfs_testing_aops = {
-	.invalidatepage	= ssdfs_testing_invalidatepage,
-	.releasepage	= ssdfs_testing_releasepage,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
+	.invalidate_folio	= ssdfs_testing_invalidate_folio,
+	.releasepage		= ssdfs_testing_releasepage,
+	.dirty_folio		= filemap_dirty_folio,
 };
 
 /*
@@ -399,7 +399,8 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		  (u64)dentry_inode->d_name.hash,
 		  dentry_inode->d_parent);
 
-	err = ssdfs_create(root_i, dentry_inode, S_IFREG | S_IRWXU, false);
+	err = ssdfs_create(&init_user_ns, root_i,
+			   dentry_inode, S_IFREG | S_IRWXU, false);
 	if (err) {
 		SSDFS_ERR("fail to create file: "
 			  "file_index %llu\n",

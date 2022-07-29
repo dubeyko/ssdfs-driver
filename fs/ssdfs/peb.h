@@ -176,6 +176,7 @@ struct ssdfs_peb_log {
 	u16 reserved_pages; /* metadata pages in the log */
 	u16 free_data_pages; /* free data pages capacity */
 	u32 seg_flags;
+	struct ssdfs_page_vector bmap_snapshot;
 	struct ssdfs_peb_area area[SSDFS_LOG_AREA_MAX];
 };
 

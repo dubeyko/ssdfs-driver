@@ -147,12 +147,12 @@ int SSDFS_GET_CACHE_TYPE(int blk_state)
 /*
  * struct ssdfs_block_bmap_storage - block bitmap's storage
  * @state: storage state
- * @pvec: vector of pages (14 pages maximum)
+ * @array: vector of pages
  * @buf: pointer on memory buffer
  */
 struct ssdfs_block_bmap_storage {
 	int state;
-	struct pagevec pvec;
+	struct ssdfs_page_vector array;
 	void *buf;
 };
 
@@ -206,10 +206,10 @@ int compare_block_bmap_ranges(struct ssdfs_block_bmap_range *range1,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!range1 || !range2);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("range1 (start %u, len %u), range2 (start %u, len %u)\n",
 		  range1->start, range1->len, range2->start, range2->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range1->start == range2->start) {
 		if (range1->len == range2->len)
@@ -272,17 +272,17 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 			    int flag, int init_state);
 void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
-			  struct pagevec *source,
+			  struct ssdfs_page_vector *source,
 			  u16 last_free_blk,
 			  u16 metadata_blks,
 			  u16 invalid_blks);
 int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
-				struct pagevec *snapshot,
+				struct ssdfs_page_vector *snapshot,
 				u32 *last_free_page,
 				u32 *metadata_blks,
 				u32 *invalid_blks,
 				size_t *bytes_count);
-void ssdfs_block_bmap_forget_snapshot(struct pagevec *snapshot);
+void ssdfs_block_bmap_forget_snapshot(struct ssdfs_page_vector *snapshot);
 
 int ssdfs_block_bmap_lock(struct ssdfs_block_bmap *blk_bmap);
 bool ssdfs_block_bmap_is_locked(struct ssdfs_block_bmap *blk_bmap);

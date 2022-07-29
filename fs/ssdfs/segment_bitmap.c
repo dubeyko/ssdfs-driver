@@ -104,11 +104,11 @@ extern const bool detect_clean_using_mask[U8_MAX + 1];
 extern const bool detect_used_dirty_mask[U8_MAX + 1];
 
 static
-void ssdfs_segbmap_invalidatepage(struct page *page, unsigned int offset,
-				  unsigned int length)
+void ssdfs_segbmap_invalidate_folio(struct folio *folio, size_t offset,
+				    size_t length)
 {
-	SSDFS_DBG("do nothing: page_index %llu, offset %u, length %u\n",
-		  (u64)page_index(page), offset, length);
+	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
+		  offset, length);
 }
 
 static
@@ -121,9 +121,9 @@ int ssdfs_segbmap_releasepage(struct page *page, gfp_t mask)
 }
 
 const struct address_space_operations ssdfs_segbmap_aops = {
-	.invalidatepage	= ssdfs_segbmap_invalidatepage,
-	.releasepage	= ssdfs_segbmap_releasepage,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
+	.invalidate_folio	= ssdfs_segbmap_invalidate_folio,
+	.releasepage		= ssdfs_segbmap_releasepage,
+	.dirty_folio		= filemap_dirty_folio,
 };
 
 /*
@@ -820,14 +820,17 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	for (i = 0; i < fsi->segbmap->fragments_count; i++) {
 		struct page *page;
 
-		xa_lock_irq(&fsi->segbmap->pages.i_pages);
-		page = __xa_erase(&fsi->segbmap->pages.i_pages, i);
-		xa_unlock_irq(&fsi->segbmap->pages.i_pages);
-
+		page = find_lock_page(&fsi->segbmap->pages, i);
 		if (!page) {
 			SSDFS_DBG("page %d is NULL\n", i);
 			continue;
 		}
+
+		ssdfs_account_locked_page(page);
+
+		ClearPageDirty(page);
+		ClearPageUptodate(page);
+		delete_from_page_cache(page);
 
 		page->mapping = NULL;
 
@@ -835,6 +838,7 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 			  page, page_ref_count(page));
 
 		ssdfs_put_page(page);
+		ssdfs_unlock_page(page);
 		ssdfs_seg_bmap_free_page(page);
 	}
 
@@ -1156,9 +1160,12 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 
 	desc = &segbmap->desc_array[sequence_id];
 
-	xa_lock_irq(&segbmap->pages.i_pages);
-	err = __xa_insert(&segbmap->pages.i_pages,
-			 sequence_id, page, GFP_NOFS);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!PageLocked(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = add_to_page_cache_lru(page, &segbmap->pages,
+				    sequence_id, GFP_NOFS);
 	if (unlikely(err < 0)) {
 		SSDFS_DBG("fail to add page %u into address space: err %d\n",
 			  sequence_id, err);
@@ -1171,7 +1178,6 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		page->mapping = &segbmap->pages;
 		segbmap->pages.nrpages++;
 	}
-	xa_unlock_irq(&segbmap->pages.i_pages);
 
 	if (unlikely(err))
 		goto unlock_search_lock;
@@ -1218,6 +1224,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	}
 
 	ssdfs_seg_bmap_account_page(page);
+	ssdfs_put_page(page);
 
 unlock_search_lock:
 	complete_all(&desc->init_end);
@@ -1419,7 +1426,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	SetPageUptodate(dpage);
 	if (!PageDirty(dpage))
-		__set_page_dirty_nobuffers(dpage);
+		set_page_dirty(dpage);
 	set_page_writeback(dpage);
 
 	ssdfs_clear_dirty_page(spage);
@@ -1483,7 +1490,7 @@ void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_request *req1,
 
 	SetPageUptodate(dpage);
 	if (!PageDirty(dpage))
-		__set_page_dirty_nobuffers(dpage);
+		set_page_dirty(dpage);
 	set_page_writeback(dpage);
 }
 
@@ -3140,7 +3147,7 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 	} else {
 		SetPageUptodate(page);
 		if (!PageDirty(page))
-			__set_page_dirty_nobuffers(page);
+			set_page_dirty(page);
 	}
 
 free_page:

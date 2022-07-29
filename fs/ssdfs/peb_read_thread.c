@@ -128,7 +128,7 @@ struct ssdfs_segbmap_extent {
  * @frag_hdr: block bitmap fragment header
  * @frag_hdr_buf: block bitmap fragment header buffer
  * @fragment_index: index of bmap fragment
- * @pvec: pagevec that stores block bitmap content
+ * @array: page vector that stores block bitmap content
  * @read_bytes: counter of all read bytes
  */
 struct ssdfs_blk_bmap_init_env {
@@ -136,20 +136,28 @@ struct ssdfs_blk_bmap_init_env {
 	struct ssdfs_block_bitmap_fragment *frag_hdr;
 	u8 bmap_hdr_buf[SSDFS_BLKBMAP_HDR_CAPACITY];
 	int fragment_index;
-	struct pagevec pvec;
+	struct ssdfs_page_vector array;
 	u32 read_bytes;
 };
 
 static
-void ssdfs_prepare_blk_bmap_init_env(struct ssdfs_blk_bmap_init_env *env)
+void ssdfs_prepare_blk_bmap_init_env(struct ssdfs_blk_bmap_init_env *env,
+				     u32 pages_per_peb)
 {
+	size_t bmap_bytes;
+	size_t bmap_pages;
+
 	memset(env->bmap_hdr_buf, 0, SSDFS_BLKBMAP_HDR_CAPACITY);
 	env->bmap_hdr = (struct ssdfs_block_bitmap_header *)env->bmap_hdr_buf;
 	env->frag_hdr =
 		(struct ssdfs_block_bitmap_fragment *)(env->bmap_hdr_buf +
 				    sizeof(struct ssdfs_block_bitmap_header));
 	env->fragment_index = -1;
-	pagevec_init(&env->pvec);
+
+	bmap_bytes = BLK_BMAP_BYTES(pages_per_peb);
+	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	ssdfs_page_vector_create(&env->array, bmap_pages);
+
 	env->read_bytes = 0;
 }
 
@@ -235,7 +243,8 @@ struct ssdfs_read_init_env {
 };
 
 static
-int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env)
+int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env,
+				u32 pages_per_peb)
 {
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	size_t footer_buf_size;
@@ -267,7 +276,7 @@ int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env)
 	env->log_pages = U16_MAX;
 	env->log_bytes = U32_MAX;
 
-	ssdfs_prepare_blk_bmap_init_env(&env->b_init);
+	ssdfs_prepare_blk_bmap_init_env(&env->b_init, pages_per_peb);
 	ssdfs_prepare_blk2off_table_init_env(&env->t_init);
 	ssdfs_prepare_blk_desc_table_init_env(&env->bdt_init);
 
@@ -291,7 +300,9 @@ void ssdfs_destroy_init_env(struct ssdfs_read_init_env *env)
 	env->footer = NULL;
 	env->has_footer = false;
 
-	ssdfs_read_pagevec_release(&env->b_init.pvec);
+	ssdfs_page_vector_release(&env->b_init.array);
+	ssdfs_page_vector_destroy(&env->b_init.array);
+
 	ssdfs_read_pagevec_release(&env->t_init.pvec);
 	ssdfs_read_pagevec_release(&env->bdt_init.pvec);
 
@@ -5647,7 +5658,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 			pebi->pebc->parent_si->fsi->pages_per_peb);
 	BUG_ON(env->log_offset >
 			pebi->pebc->parent_si->fsi->pages_per_peb);
-	BUG_ON(pagevec_count(&env->b_init.pvec) != 0);
+	BUG_ON(ssdfs_page_vector_count(&env->b_init.array) != 0);
 
 	SSDFS_DBG("seg %llu, peb %llu, log_offset %u, log_pages %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
@@ -5820,7 +5831,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 		frag_desc = &frag_array[i];
 
-		page = ssdfs_read_add_pagevec_page(&env->b_init.pvec);
+		page = ssdfs_page_vector_allocate(&env->b_init.array);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			err = !page ? -ENOMEM : PTR_ERR(page);
 			SSDFS_ERR("fail to add pagevec page: "
@@ -5894,7 +5905,6 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!env || !env->log_hdr || !env->footer);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
 		  "log_offset %u, log_pages %u, "
@@ -5902,11 +5912,18 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, pebi->peb_index,
 		  env->log_offset, env->log_pages,
-		  env->b_init.fragment_index, env->b_init.read_bytes);
+		  env->b_init.fragment_index,
+		  env->b_init.read_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("pvec %p\n", &env->b_init.pvec);
-
-	pagevec_init(&env->b_init.pvec);
+	err = ssdfs_page_vector_init(&env->b_init.array);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init page vector: "
+			  "seg %llu, peb %llu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, err);
+		goto fail_init_blk_bmap_fragment;
+	}
 
 	err = ssdfs_read_checked_block_bitmap(pebi, req, env);
 	if (unlikely(err)) {
@@ -5933,7 +5950,7 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 
 	err = ssdfs_segment_blk_bmap_partial_init(seg_blkbmap,
 						  pebi->peb_index,
-						  &env->b_init.pvec,
+						  &env->b_init.array,
 						  env->b_init.frag_hdr,
 						  cno);
 	if (unlikely(err)) {
@@ -5945,7 +5962,7 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 	}
 
 fail_init_blk_bmap_fragment:
-	ssdfs_read_pagevec_release(&env->b_init.pvec);
+	ssdfs_page_vector_release(&env->b_init.array);
 
 	return err;
 }
@@ -6385,6 +6402,138 @@ fail_read_blk2off_fragments:
 }
 
 /*
+ * ssdfs_correct_zone_block_bitmap() - set all migrated blocks as invalidated
+ * @pebi: pointer on PEB object
+ *
+ * This function tries to mark all migrated blocks as
+ * invalidated for the case of source zone. Actually, invalidated
+ * extents will be added into the queue. Invalidation operation
+ * happens after complete intialization of segment object.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_invalid_extents_btree_info *invextree;
+	struct ssdfs_shared_extents_tree *shextree;
+	struct ssdfs_btree_search *search;
+	struct ssdfs_raw_extent extent;
+	struct ssdfs_raw_extent *found;
+	size_t item_size = sizeof(struct ssdfs_raw_extent);
+	u32 logical_blk = 0;
+	u32 len;
+	u32 count;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+
+	SSDFS_DBG("seg %llu, peb %llu, peb_index %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebi->pebc->parent_si;
+	fsi = si->fsi;
+	len = fsi->pages_per_seg;
+
+	invextree = fsi->invextree;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!invextree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	shextree = fsi->shextree;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!shextree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	do {
+		extent.seg_id = cpu_to_le64(si->seg_id);
+		extent.logical_blk = cpu_to_le32(logical_blk);
+		extent.len = cpu_to_le32(len);
+
+		ssdfs_btree_search_init(search);
+		err = ssdfs_invextree_find(invextree, &extent, search);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find invalidated extents: "
+				  "seg_id %llu, logical_blk %u, len %u\n",
+				  si->seg_id, logical_blk, len);
+			break;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find invalidated extents: "
+				  "seg_id %llu, logical_blk %u, len %u\n",
+				  si->seg_id, logical_blk, len);
+			goto finish_correct_zone_block_bmap;
+		}
+
+		count = search->result.items_in_buffer;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->result.buf);
+		BUG_ON(count == 0);
+		BUG_ON((count * item_size) != search->result.buf_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		for (i = 0; i < count; i++) {
+			found = (struct ssdfs_raw_extent *)search->result.buf;
+			found += i;
+
+			err = ssdfs_shextree_add_pre_invalid_extent(shextree,
+						SSDFS_INVALID_EXTENTS_BTREE_INO,
+						found);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add pre-invalid extent: "
+					  "seg_id %llu, logical_blk %u, "
+					  "len %u, err %d\n",
+					  le64_to_cpu(found->seg_id),
+					  le32_to_cpu(found->logical_blk),
+					  le32_to_cpu(found->len),
+					  err);
+				goto finish_correct_zone_block_bmap;
+			}
+		}
+
+		found = (struct ssdfs_raw_extent *)search->result.buf;
+		found += count - 1;
+
+		logical_blk = le32_to_cpu(found->logical_blk) +
+				le32_to_cpu(found->len);
+
+		if (logical_blk >= fsi->pages_per_seg)
+			len = 0;
+		else
+			len = fsi->pages_per_seg - logical_blk;
+	} while (len > 0);
+
+	if (err == -ENODATA) {
+		/* all extents have beedn processed */
+		err = 0;
+	}
+
+finish_correct_zone_block_bmap:
+	ssdfs_btree_search_free(search);
+	return err;
+}
+
+/*
  * ssdfs_peb_init_using_metadata_state() - initialize "using" PEB
  * @pebi: pointer on PEB object
  * @env: read operation's init environment
@@ -6501,6 +6650,20 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 			   bytes_count, env->b_init.read_bytes);
 		err = -EIO;
 		goto fail_init_using_blk_bmap;
+	}
+
+	if (fsi->is_zns_device &&
+	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
+		err = ssdfs_correct_zone_block_bitmap(pebi);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to correct zone's block bitmap: "
+				  "seg %llu, peb %llu, peb_index %u, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, pebi->peb_index,
+				  err);
+			goto fail_init_using_blk_bmap;
+		}
 	}
 
 	BUG_ON(new_log_start_page >= U16_MAX);
@@ -6672,7 +6835,6 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !env || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
@@ -6680,6 +6842,7 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 		  pebi->peb_id, pebi->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebi->pebc->parent_si;
 	fsi = si->fsi;
@@ -6754,6 +6917,20 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 			   bytes_count, env->b_init.read_bytes);
 		err = -EIO;
 		goto fail_init_used_blk_bmap;
+	}
+
+	if (fsi->is_zns_device &&
+	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
+		err = ssdfs_correct_zone_block_bitmap(pebi);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to correct zone's block bitmap: "
+				  "seg %llu, peb %llu, peb_index %u, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, pebi->peb_index,
+				  err);
+			goto fail_init_used_blk_bmap;
+		}
 	}
 
 	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
@@ -6867,7 +7044,7 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
+	err = ssdfs_prepare_read_init_env(&env, fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init read environment: err %d\n",
 			  err);
@@ -6986,7 +7163,7 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
+	err = ssdfs_prepare_read_init_env(&env, fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init read environment: err %d\n",
 			  err);
@@ -7140,7 +7317,7 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
+	err = ssdfs_prepare_read_init_env(&env, fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init read environment: err %d\n",
 			  err);
@@ -7310,7 +7487,7 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
+	err = ssdfs_prepare_read_init_env(&env, fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init read environment: err %d\n",
 			  err);
@@ -7727,7 +7904,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		break;
 	}
 
-	err = ssdfs_prepare_read_init_env(&env);
+	err = ssdfs_prepare_read_init_env(&env, fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init read environment: err %d\n",
 			  err);

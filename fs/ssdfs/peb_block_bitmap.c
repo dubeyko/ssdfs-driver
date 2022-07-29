@@ -222,7 +222,7 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
  * %-ERANGE     - invalid internal calculations.
  */
 int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
-			    struct pagevec *source,
+			    struct ssdfs_page_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno)
 {
@@ -249,7 +249,7 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
 	BUG_ON(!bmap->parent->parent_si->peb_array);
 	BUG_ON(!source || !hdr);
-	BUG_ON(pagevec_count(source) == 0);
+	BUG_ON(ssdfs_page_vector_count(source) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = bmap->parent->parent_si->fsi;
@@ -748,6 +748,62 @@ int ssdfs_peb_define_reserved_pages_per_log(struct ssdfs_peb_blk_bmap *bmap)
 						     log_pages,
 						     pebs_per_seg,
 						     is_migrating);
+}
+
+bool has_ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *bmap)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  bmap->parent->parent_si->seg_id,
+		  bmap->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return ssdfs_peb_blk_bmap_initialized(bmap);
+}
+
+int ssdfs_peb_blk_bmap_wait_init_end(struct ssdfs_peb_blk_bmap *bmap)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  bmap->parent->parent_si->seg_id,
+		  bmap->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (ssdfs_peb_blk_bmap_initialized(bmap))
+		return 0;
+	else {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&bmap->init_end,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("PEB block bitmap init failed: "
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
+			return err;
+		}
+
+		if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
+			err = -ERANGE;
+			SSDFS_ERR("PEB block bitmap init failed: "
+				  "seg_id %llu, peb_index %u, "
+				  "err %d\n",
+				  bmap->parent->parent_si->seg_id,
+				  bmap->peb_index, err);
+			return err;
+		}
+	}
+
+	return 0;
 }
 
 /*
@@ -1455,25 +1511,12 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 		  atomic_read(&bmap->peb_invalid_blks));
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
-init_failed:
-			SSDFS_ERR("PEB block bitmap init failed: "
-				  "seg_id %llu, peb_index %u, "
-				  "err %d\n",
-				  bmap->parent->parent_si->seg_id,
-				  bmap->peb_index, err);
-			return err;
-		}
-
-		if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-			err = -ERANGE;
-			goto init_failed;
-		}
+		SSDFS_ERR("PEB block bitmap init failed: "
+			  "seg_id %llu, peb_index %u, "
+			  "err %d\n",
+			  bmap->parent->parent_si->seg_id,
+			  bmap->peb_index, err);
+		return err;
 	}
 
 	if (bmap_index < 0 || bmap_index >= SSDFS_PEB_BLK_BMAP_INDEX_MAX) {

@@ -97,11 +97,11 @@ void ssdfs_seg_tree_check_memory_leaks(void)
  ******************************************************************************/
 
 static
-void ssdfs_segment_tree_invalidatepage(struct page *page, unsigned int offset,
-					unsigned int length)
+void ssdfs_segment_tree_invalidate_folio(struct folio *folio, size_t offset,
+					 size_t length)
 {
-	SSDFS_DBG("do nothing: page_index %llu, offset %u, length %u\n",
-		  (u64)page_index(page), offset, length);
+	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
+		  offset, length);
 }
 
 static
@@ -114,9 +114,9 @@ int ssdfs_segment_tree_releasepage(struct page *page, gfp_t mask)
 }
 
 const struct address_space_operations ssdfs_segment_tree_aops = {
-	.invalidatepage	= ssdfs_segment_tree_invalidatepage,
-	.releasepage	= ssdfs_segment_tree_releasepage,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
+	.invalidate_folio	= ssdfs_segment_tree_invalidate_folio,
+	.releasepage		= ssdfs_segment_tree_releasepage,
+	.dirty_folio		= filemap_dirty_folio,
 };
 
 /*
@@ -507,7 +507,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 
 	SetPageUptodate(page);
 	if (!PageDirty(page))
-		__set_page_dirty_nobuffers(page);
+		set_page_dirty(page);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
@@ -590,7 +590,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 
 	SetPageUptodate(page);
 	if (!PageDirty(page))
-		__set_page_dirty_nobuffers(page);
+		set_page_dirty(page);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);

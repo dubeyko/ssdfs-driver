@@ -103,10 +103,13 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 			      int init_flag, int init_state);
 void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
-			    struct pagevec *source,
+			    struct ssdfs_page_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno);
 void ssdfs_peb_blk_bmap_init_failed(struct ssdfs_peb_blk_bmap *bmap);
+
+bool has_ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *bmap);
+int ssdfs_peb_blk_bmap_wait_init_end(struct ssdfs_peb_blk_bmap *bmap);
 
 bool ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *ptr);
 bool is_ssdfs_peb_blk_bmap_dirty(struct ssdfs_peb_blk_bmap *ptr);

@@ -87,12 +87,31 @@ int ssdfs_compressors_init(void);
 void ssdfs_free_workspaces(void);
 void ssdfs_compressors_exit(void);
 
+/* dev_bdev.c */
+int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
+			loff_t offset);
+int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
+			 loff_t offset);
+int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
+		    size_t len, void *buf);
+int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
+			      bool need_check);
+int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
+			 struct page *page, u32 from_off, size_t len);
+int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
+			  struct pagevec *pvec,
+			  u32 from_off, size_t len);
+
+/* dev_zns.c */
+u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
+
 /* dir.c */
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
 			ino_t *ino);
-int ssdfs_create(struct inode *dir, struct dentry *dentry,
-			umode_t mode, bool excl);
+int ssdfs_create(struct user_namespace *mnt_userns,
+		 struct inode *dir, struct dentry *dentry,
+		 umode_t mode, bool excl);
 
 /* file.c */
 int ssdfs_allocate_inline_file_buffer(struct inode *inode);
@@ -113,9 +132,11 @@ bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 struct inode *ssdfs_iget(struct super_block *sb, ino_t ino);
 struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 			      const struct qstr *qstr);
-int ssdfs_getattr(const struct path *path, struct kstat *stat,
+int ssdfs_getattr(struct user_namespace *mnt_userns,
+		  const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int query_flags);
-int ssdfs_setattr(struct dentry *dentry, struct iattr *attr);
+int ssdfs_setattr(struct user_namespace *mnt_userns,
+		  struct dentry *dentry, struct iattr *attr);
 void ssdfs_evict_inode(struct inode *inode);
 int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc);
 int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf);
@@ -274,6 +295,8 @@ void ssdfs_acl_memory_leaks_init(void);
 void ssdfs_acl_check_memory_leaks(void);
 void ssdfs_block_bmap_memory_leaks_init(void);
 void ssdfs_block_bmap_check_memory_leaks(void);
+void ssdfs_blk2off_memory_leaks_init(void);
+void ssdfs_blk2off_check_memory_leaks(void);
 void ssdfs_btree_memory_leaks_init(void);
 void ssdfs_btree_check_memory_leaks(void);
 void ssdfs_btree_hierarchy_memory_leaks_init(void);
@@ -294,6 +317,8 @@ void ssdfs_dentries_memory_leaks_init(void);
 void ssdfs_dentries_check_memory_leaks(void);
 void ssdfs_dev_bdev_memory_leaks_init(void);
 void ssdfs_dev_bdev_check_memory_leaks(void);
+void ssdfs_dev_zns_memory_leaks_init(void);
+void ssdfs_dev_zns_check_memory_leaks(void);
 void ssdfs_dev_mtd_memory_leaks_init(void);
 void ssdfs_dev_mtd_check_memory_leaks(void);
 void ssdfs_dir_memory_leaks_init(void);
@@ -312,10 +337,12 @@ void ssdfs_inode_memory_leaks_init(void);
 void ssdfs_inode_check_memory_leaks(void);
 void ssdfs_ino_tree_memory_leaks_init(void);
 void ssdfs_ino_tree_check_memory_leaks(void);
-void ssdfs_blk2off_memory_leaks_init(void);
-void ssdfs_blk2off_check_memory_leaks(void);
+void ssdfs_invext_tree_memory_leaks_init(void)
+void ssdfs_invext_tree_check_memory_leaks(void);
 void ssdfs_parray_memory_leaks_init(void);
 void ssdfs_parray_check_memory_leaks(void);
+void ssdfs_page_vector_memory_leaks_init(void);
+void ssdfs_page_vector_check_memory_leaks(void);
 void ssdfs_flush_memory_leaks_init(void);
 void ssdfs_flush_check_memory_leaks(void);
 void ssdfs_gc_memory_leaks_init(void);

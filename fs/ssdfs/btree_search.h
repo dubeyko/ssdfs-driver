@@ -30,6 +30,7 @@ enum {
 	SSDFS_BTREE_SEARCH_ADD_ITEM,
 	SSDFS_BTREE_SEARCH_ADD_RANGE,
 	SSDFS_BTREE_SEARCH_CHANGE_ITEM,
+	SSDFS_BTREE_SEARCH_MOVE_ITEM,
 	SSDFS_BTREE_SEARCH_DELETE_ITEM,
 	SSDFS_BTREE_SEARCH_DELETE_RANGE,
 	SSDFS_BTREE_SEARCH_DELETE_ALL,
@@ -266,6 +267,7 @@ enum {
  * @raw.xattr.header: raw xattr entry header
  * @raw.shared_extent: shared extent buffer
  * @raw.snapshot: raw snapshot info buffer
+ * @raw.invalidated_extent: invalidated extent buffer
  * @name: name string
  */
 struct ssdfs_btree_search {
@@ -283,6 +285,7 @@ struct ssdfs_btree_search {
 		} xattr;
 		struct ssdfs_shared_extent shared_extent;
 		struct ssdfs_snapshot snapshot;
+		struct ssdfs_raw_extent invalidated_extent;
 	} raw;
 	struct ssdfs_name_string name;
 };

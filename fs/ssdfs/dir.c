@@ -368,8 +368,9 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
  * The ssdfs_create() is called by the open(2) and
  * creat(2) system calls.
  */
-int ssdfs_create(struct inode *dir, struct dentry *dentry,
-			umode_t mode, bool excl)
+int ssdfs_create(struct user_namespace *mnt_userns,
+		 struct inode *dir, struct dentry *dentry,
+		 umode_t mode, bool excl)
 {
 	struct inode *inode;
 	int err;
@@ -394,7 +395,8 @@ failed_create:
  * to create a device (char, block) inode or a named pipe
  * (FIFO) or socket.
  */
-static int ssdfs_mknod(struct inode *dir, struct dentry *dentry,
+static int ssdfs_mknod(struct user_namespace *mnt_userns,
+			struct inode *dir, struct dentry *dentry,
 			umode_t mode, dev_t rdev)
 {
 	struct inode *inode;
@@ -419,7 +421,8 @@ static int ssdfs_mknod(struct inode *dir, struct dentry *dentry,
  * Create symlink.
  * The ssdfs_symlink() is called by the symlink(2) system call.
  */
-static int ssdfs_symlink(struct inode *dir, struct dentry *dentry,
+static int ssdfs_symlink(struct user_namespace *mnt_userns,
+			 struct inode *dir, struct dentry *dentry,
 			 const char *target)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(dir->i_sb);
@@ -611,7 +614,8 @@ finish_make_empty_dir:
  * Create subdirectory.
  * The ssdfs_mkdir() is called by the mkdir(2) system call.
  */
-static int ssdfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+static int ssdfs_mkdir(struct user_namespace *mnt_userns,
+			struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
 	int err = 0;
@@ -1245,7 +1249,8 @@ out:
  * to rename the object to have the parent and name given by
  * the second inode and dentry.
  */
-static int ssdfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+static int ssdfs_rename(struct user_namespace *mnt_userns,
+			struct inode *old_dir, struct dentry *old_dentry,
 			struct inode *new_dir, struct dentry *new_dentry,
 			unsigned int flags)
 {

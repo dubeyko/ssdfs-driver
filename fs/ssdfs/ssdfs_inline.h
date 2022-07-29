@@ -350,40 +350,12 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 		if (!page)
 			continue;
 
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-		if (PageLocked(page)) {
-			SSDFS_WARN("page %p is still locked\n",
-				   page);
-		}
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+		ssdfs_free_page(page);
 
-		ssdfs_put_page(page);
-
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
-
-		if (page_ref_count(page) <= 0 ||
-		    page_ref_count(page) > 1) {
-			SSDFS_WARN("page %p, count %d\n",
-				  page, page_ref_count(page));
-		}
-
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-		atomic64_dec(&ssdfs_allocated_pages);
-
-		SSDFS_DBG("page %p, allocated_pages %lld\n",
-			  page,
-			  atomic64_read(&ssdfs_allocated_pages));
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-		SSDFS_DBG("page %p, count %d, "
-			  "flags %#lx, page_index %lu\n",
-			  page, page_ref_count(page),
-			  page->flags, page_index(page));
+		pvec->pages[i] = NULL;
 	}
 
-	pagevec_release(pvec);
-	memset(pvec->pages, 0, sizeof(struct page *) * PAGEVEC_SIZE);
+	pagevec_reinit(pvec);
 }
 
 #define SSDFS_MEMORY_LEAKS_CHECKER_FNS(name)				\

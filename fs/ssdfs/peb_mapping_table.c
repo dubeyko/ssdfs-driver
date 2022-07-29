@@ -1504,6 +1504,7 @@ void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 				      struct ssdfs_maptbl_area *area,
 				      u16 pages_count)
 {
+	struct page *page;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1514,12 +1515,25 @@ void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 		  req, area);
 
 	for (i = 0; i < pages_count; i++) {
-		struct page *page = req->result.pvec.pages[i];
+		page = req->result.pvec.pages[i];
 		area->pages[area->pages_count] = page;
 		area->pages_count++;
 		ssdfs_map_tbl_account_page(page);
 		ssdfs_request_unlock_and_remove_page(req, i);
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
+		page = req->result.pvec.pages[i];
+
+		if (page) {
+			SSDFS_ERR("page %d is valid\n", i);
+			BUG_ON(page);
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pagevec_reinit(&req->result.pvec);
 }
 
 /*
@@ -7231,6 +7245,22 @@ finish_mapping:
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	if (!err) {
+		u64 peb_id = pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id;
+		loff_t offset = peb_id * fsi->erasesize;
+
+		err = fsi->devops->open_zone(fsi->sb, offset);
+		if (err == -EOPNOTSUPP && !bdev_is_zoned(sb->s_bdev)) {
+			/* ignore error */
+			err = 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to open zone: "
+				  "offset %llu, err %d\n",
+				  offset, err);
+			return err;
+		}
+	}
+
 	return err;
 }
 
@@ -7545,7 +7575,8 @@ finish_check:
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
  * @selected_index: index of item in the whole fragment
- * @peb_state: new state of the PEB
+ * @new_peb_state: new state of the PEB
+ * @old_peb_state: old state of the PEB [out]
  *
  * This method tries to change the state of the PEB
  * in the mapping table.
@@ -7564,7 +7595,8 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_maptbl_fragment_desc *fdesc,
 				    u64 leb_id,
 				    u16 selected_index,
-				    int peb_state)
+				    int new_peb_state,
+				    int *old_peb_state)
 {
 	struct ssdfs_peb_table_fragment_header *hdr;
 	struct ssdfs_peb_descriptor *peb_desc;
@@ -7580,18 +7612,20 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 		  selected_index, peb_state);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tbl || !fdesc);
+	BUG_ON(!tbl || !fdesc || !old_peb_state);
 	BUG_ON(selected_index >= U16_MAX);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
 
-	if (peb_state <= SSDFS_MAPTBL_UNKNOWN_PEB_STATE ||
-	    peb_state >= SSDFS_MAPTBL_PEB_STATE_MAX) {
+	if (new_peb_state <= SSDFS_MAPTBL_UNKNOWN_PEB_STATE ||
+	    new_peb_state >= SSDFS_MAPTBL_PEB_STATE_MAX) {
 		SSDFS_ERR("invalid PEB state %#x\n",
-			  peb_state);
+			  new_peb_state);
 		return -EINVAL;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	*old_peb_state = SSDFS_MAPTBL_PEB_STATE_MAX;
 
 	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
 						     leb_id, selected_index);
@@ -7637,7 +7671,9 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 
 	SSDFS_DBG("leb_id %llu, item_index %u, "
 		  "old_peb_state %#x, new_peb_state %#x\n",
-		  leb_id, item_index, peb_desc->state, peb_state);
+		  leb_id, item_index, peb_desc->state, new_peb_state);
+
+	*old_peb_state = peb_desc->state;
 
 	if (peb_desc->state == (u8)peb_state) {
 		err = -EEXIST;
@@ -7702,9 +7738,11 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	struct ssdfs_maptbl_cache *cache;
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	struct ssdfs_leb_descriptor leb_desc;
+	struct ssdfs_maptbl_peb_relation pebr;
 	int state;
 	u16 selected_index;
 	int consistency;
+	int old_peb_state = SSDFS_MAPTBL_PEB_STATE_MAX;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -7781,8 +7819,6 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	}
 
 	if (should_cache_peb_info(peb_type)) {
-		struct ssdfs_maptbl_peb_relation pebr;
-
 		/* resolve potential inconsistency */
 		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
 						   &pebr, end);
@@ -7861,6 +7897,14 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		goto finish_fragment_change;
 	}
 
+	err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get peb relation: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_fragment_change;
+	}
+
 	switch (peb_state) {
 	case SSDFS_MAPTBL_BAD_PEB_STATE:
 	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
@@ -7897,7 +7941,8 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 
 	err = __ssdfs_maptbl_change_peb_state(tbl, fdesc, leb_id,
 					      selected_index,
-					      peb_state);
+					      peb_state,
+					      &old_peb_state);
 	if (err == -EEXIST) {
 		/*
 		 * PEB has this state already.
@@ -7967,6 +8012,69 @@ finish_change_state:
 					  leb_id, peb_state, err);
 			}
 		}
+	}
+
+	if (!err && bdev_is_zoned(fsi->sb->s_bdev)) {
+		u64 peb_id = U64_MAX;
+
+		err = -ENODATA;
+
+		switch (old_peb_state) {
+		case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+		case SSDFS_MAPTBL_USING_PEB_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_USED_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_PRE_ERASE_STATE:
+			case SSDFS_MAPTBL_RECOVERING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				err = 0;
+				selected_index = SSDFS_MAPTBL_MAIN_INDEX;
+				peb_id = pebr->pebs[selected_index].peb_id;
+				break;
+
+			default:
+				/* do nothing */
+				break;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
+				err = 0;
+				selected_index = SSDFS_MAPTBL_RELATION_INDEX;
+				peb_id = pebr->pebs[selected_index].peb_id;
+				break;
+
+			default:
+				/* do nothing */
+				break;
+			}
+
+		default:
+			/* do nothing */
+			break;
+		};
+
+		if (!err) {
+			loff_t offset = peb_id * fsi->erasesize;
+
+			err = fsi->devops->close_zone(fsi->sb, offset);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to close zone: "
+					  "offset %llu, err %d\n",
+					  offset, err);
+				return err;
+			}
+		} else
+			err = 0;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -8864,6 +8972,22 @@ finish_add_migrating_peb:
 				pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
 				err);
 			err = -EFAULT;
+		}
+	}
+
+	if (!err) {
+		u64 peb_id = pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id;
+		loff_t offset = peb_id * fsi->erasesize;
+
+		err = fsi->devops->open_zone(fsi->sb, offset);
+		if (err == -EOPNOTSUPP && !bdev_is_zoned(sb->s_bdev)) {
+			/* ignore error */
+			err = 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to open zone: "
+				  "offset %llu, err %d\n",
+				  offset, err);
+			return err;
 		}
 	}
 
@@ -9911,11 +10035,11 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !end);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, "
 		  "peb_type %#x, dst_peb_index %u\n",
 		  tbl, leb_id, peb_type, dst_peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
 	fsi = tbl->fsi;
@@ -9963,6 +10087,296 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 
 	err = __ssdfs_maptbl_set_indirect_relation(tbl, leb_id, peb_type,
 						   dst_peb_index, end);
+	if (err == -EAGAIN) {
+		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
+			  leb_id);
+		goto finish_set_indirect_relation;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to set indirect relation: "
+			  "leb_id %llu, err %u\n",
+			  leb_id, err);
+		goto finish_set_indirect_relation;
+	}
+
+finish_set_indirect_relation:
+	up_read(&tbl->tbl_lock);
+
+	SSDFS_DBG("finished\n");
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_set_zns_external_peb_ptr() - define zone as external pointer
+ * @fdesc: fragment descriptor
+ * @index: PEB index in the fragment
+ * @peb_type: PEB type
+ *
+ * This method tries to set SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR flag.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static int
+ssdfs_maptbl_set_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
+				      u16 index, u8 peb_type)
+{
+	struct ssdfs_peb_descriptor *ptr;
+	pgoff_t page_index;
+	u16 item_index;
+	struct page *page;
+	void *kaddr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fdesc);
+
+	SSDFS_DBG("fdesc %p, index %u\n",
+		  fdesc, index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	item_index = index % fdesc->pebs_per_page;
+
+	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
+		SSDFS_ERR("fail to find page: page_index %lu\n",
+			  page_index);
+		return err;
+	}
+
+	kaddr = kmap_atomic(page);
+
+	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
+	if (IS_ERR_OR_NULL(ptr)) {
+		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
+		SSDFS_ERR("fail to get peb_descriptor: "
+			  "page_index %lu, item_index %u, err %d\n",
+			  page_index, item_index, err);
+		goto finish_page_processing;
+	}
+
+	if (peb_type != ptr->type) {
+		err = -ERANGE;
+		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
+			  peb_type, ptr->type);
+		goto finish_page_processing;
+	}
+
+	if (ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB) {
+		err = -ERANGE;
+		SSDFS_ERR("corrupted PEB desriptor\n");
+		goto finish_page_processing;
+	}
+
+	switch (ptr->state) {
+	case SSDFS_MAPTBL_USED_PEB_STATE:
+		ptr->state = SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE;
+		break;
+
+	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
+		ptr->state = SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid PEB state %#x\n",
+			  ptr->state);
+		goto finish_page_processing;
+	}
+
+	ptr->shared_peb_index = U8_MAX;
+	ptr->flags |= SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR;
+
+finish_page_processing:
+	kunmap_atomic(kaddr);
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
+	return err;
+}
+
+/*
+ * __ssdfs_maptbl_set_zns_indirect_relation() - set PEBs indirect relation
+ * @tbl: pointer on mapping table object
+ * @leb_id: LEB ID number
+ * @peb_type: PEB type
+ * @end: pointer on completion for waiting init ending [out]
+ *
+ * This method tries to set SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR flag.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EFAULT     - maptbl has inconsistent state.
+ * %-EAGAIN     - fragment is under initialization yet.
+ * %-ERANGE     - internal error.
+ */
+static int
+__ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
+					 u64 leb_id, u8 peb_type,
+					 struct completion **end)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	int state;
+	struct ssdfs_leb_descriptor leb_desc;
+	u16 physical_index;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !end);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+
+	SSDFS_DBG("maptbl %p, leb_id %llu, peb_type %#x\n",
+		  tbl, leb_id, peb_type, dst_peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
+	if (IS_ERR_OR_NULL(fdesc)) {
+		err = IS_ERR(fdesc) ? PTR_ERR(fdesc) : -ERANGE;
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		return err;
+	}
+
+	*end = &fdesc->init_end;
+
+	state = atomic_read(&fdesc->state);
+	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
+		err = -EFAULT;
+		SSDFS_ERR("fragment is corrupted: leb_id %llu\n", leb_id);
+		return err;
+	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+		err = -EAGAIN;
+		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
+			  leb_id);
+		return err;
+	}
+
+	down_write(&fdesc->lock);
+
+	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get leb descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_fragment_change;
+	}
+
+	if (!__is_mapped_leb2peb(&leb_desc)) {
+		err = -ERANGE;
+		SSDFS_ERR("leb %llu doesn't be mapped yet\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	if (is_leb_migrating(&leb_desc)) {
+		err = -ERANGE;
+		SSDFS_ERR("leb %llu has direct relation\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	physical_index = le16_to_cpu(leb_desc.physical_index);
+
+	if (physical_index == U16_MAX) {
+		err = -ENODATA;
+		SSDFS_DBG("unitialized leb descriptor\n");
+		goto finish_fragment_change;
+	}
+
+	err = ssdfs_maptbl_set_zns_external_peb_ptr(fdesc, physical_index,
+						    peb_type);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set external PEB pointer: "
+			  "physical_index %u, err %d\n",
+			  physical_index, err);
+		goto finish_fragment_change;
+	}
+
+finish_fragment_change:
+	up_write(&fdesc->lock);
+
+	if (!err)
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_set_zns_indirect_relation() - set PEBs indirect relation
+ * @tbl: pointer on mapping table object
+ * @leb_id: source LEB ID number
+ * @peb_type: PEB type
+ * @end: pointer on completion for waiting init ending [out]
+ *
+ * This method tries to set SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR flag.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EFAULT     - maptbl has inconsistent state.
+ * %-EAGAIN     - fragment is under initialization yet.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
+					   u64 leb_id, u8 peb_type,
+					   struct completion **end)
+{
+	struct ssdfs_fs_info *fsi;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !end);
+
+	SSDFS_DBG("maptbl %p, leb_id %llu, "
+		  "peb_type %#x, dst_peb_index %u\n",
+		  tbl, leb_id, peb_type, dst_peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*end = NULL;
+	fsi = tbl->fsi;
+
+	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
+		ssdfs_fs_error(tbl->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"maptbl has corrupted state\n");
+		return -EFAULT;
+	}
+
+	if (should_cache_peb_info(peb_type)) {
+		struct ssdfs_maptbl_peb_relation prev_pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &prev_pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			return err;
+		}
+	}
+
+	down_read(&tbl->tbl_lock);
+
+	err = __ssdfs_maptbl_set_zns_indirect_relation(tbl, leb_id,
+							peb_type, end);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
 			  leb_id);
@@ -10337,10 +10751,10 @@ int __ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !end);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, peb_type %#x\n",
 		  tbl, leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
 	if (IS_ERR_OR_NULL(fdesc)) {
@@ -10465,13 +10879,13 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !end);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, "
 		  "peb_type %#x, dst_leb_id %llu, "
 		  "dst_peb_refs %d\n",
 		  tbl, leb_id, peb_type,
 		  dst_leb_id, dst_peb_refs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 	*end = NULL;
@@ -10528,6 +10942,332 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 break_indirect_relation:
 	err = __ssdfs_maptbl_break_indirect_relation(tbl, leb_id,
 						     peb_type, end);
+	if (err == -EAGAIN) {
+		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
+			  leb_id);
+		goto finish_break_indirect_relation;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to break indirect relation: "
+			  "leb_id %llu, err %u\n",
+			  leb_id, err);
+		goto finish_break_indirect_relation;
+	}
+
+finish_break_indirect_relation:
+	up_read(&tbl->tbl_lock);
+
+	SSDFS_DBG("finished\n");
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_break_zns_external_peb_ptr() - forget shared zone
+ * @fdesc: fragment descriptor
+ * @index: PEB index in the fragment
+ * @peb_type: PEB type
+ * @peb_state: pointer on PEB state value [out]
+ *
+ * This method tries to clear SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR flag.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static int
+ssdfs_maptbl_break_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
+					u16 index, u8 peb_type,
+					u8 *peb_state)
+{
+	struct ssdfs_peb_descriptor *ptr;
+	pgoff_t page_index;
+	u16 item_index;
+	struct page *page;
+	void *kaddr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fdesc || !peb_state);
+
+	SSDFS_DBG("fdesc %p, index %u\n",
+		  fdesc, index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
+
+	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	item_index = index % fdesc->pebs_per_page;
+
+	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = page == NULL ? -ERANGE : PTR_ERR(page);
+		SSDFS_ERR("fail to find page: page_index %lu\n",
+			  page_index);
+		return err;
+	}
+
+	kaddr = kmap_atomic(page);
+
+	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
+	if (IS_ERR_OR_NULL(ptr)) {
+		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
+		SSDFS_ERR("fail to get peb_descriptor: "
+			  "page_index %lu, item_index %u, err %d\n",
+			  page_index, item_index, err);
+		goto finish_page_processing;
+	}
+
+	if (peb_type != ptr->type) {
+		err = -ERANGE;
+		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
+			  peb_type, ptr->type);
+		goto finish_page_processing;
+	}
+
+	if (ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB) {
+		err = -ERANGE;
+		SSDFS_ERR("corrupted PEB desriptor\n");
+		goto finish_page_processing;
+	}
+
+	if (!(ptr->flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR))
+		SSDFS_WARN("PEB hasn't indirect relation\n");
+
+	switch (ptr->state) {
+	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+		ptr->state = SSDFS_MAPTBL_USED_PEB_STATE;
+		*peb_state = SSDFS_MAPTBL_USED_PEB_STATE;
+		break;
+
+	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+		ptr->state = SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE;
+		*peb_state = SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE;
+		break;
+
+	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+		ptr->state = SSDFS_MAPTBL_DIRTY_PEB_STATE;
+		*peb_state = SSDFS_MAPTBL_DIRTY_PEB_STATE;
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid PEB state %#x\n",
+			  ptr->state);
+		goto finish_page_processing;
+	}
+
+	ptr->shared_peb_index = U8_MAX;
+	ptr->flags &= ~SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR;
+
+finish_page_processing:
+	kunmap_atomic(kaddr);
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
+	return err;
+}
+
+/*
+ * __ssdfs_maptbl_break_zns_indirect_relation() - forget shared zone
+ * @tbl: pointer on mapping table object
+ * @leb_id: LEB ID number
+ * @peb_type: PEB type
+ * @end: pointer on completion for waiting init ending [out]
+ *
+ * This method tries to clear SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR flag.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EFAULT     - maptbl has inconsistent state.
+ * %-EAGAIN     - fragment is under initialization yet.
+ * %-ERANGE     - internal error.
+ */
+static int
+__ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
+					   u64 leb_id, u8 peb_type,
+					   struct completion **end)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	int state;
+	struct ssdfs_leb_descriptor leb_desc;
+	u16 physical_index;
+	u8 peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !end);
+	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
+
+	SSDFS_DBG("maptbl %p, leb_id %llu, peb_type %#x\n",
+		  tbl, leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
+	if (IS_ERR_OR_NULL(fdesc)) {
+		err = IS_ERR(fdesc) ? PTR_ERR(fdesc) : -ERANGE;
+		SSDFS_ERR("fail to get fragment descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		return err;
+	}
+
+	*end = &fdesc->init_end;
+
+	state = atomic_read(&fdesc->state);
+	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED) {
+		err = -EFAULT;
+		SSDFS_ERR("fragment is corrupted: leb_id %llu\n", leb_id);
+		return err;
+	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
+		err = -EAGAIN;
+		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
+			  leb_id);
+		return err;
+	}
+
+	down_write(&fdesc->lock);
+
+	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to get leb descriptor: "
+			  "leb_id %llu, err %d\n",
+			  leb_id, err);
+		goto finish_fragment_change;
+	}
+
+	if (!__is_mapped_leb2peb(&leb_desc)) {
+		err = -ERANGE;
+		SSDFS_ERR("leb %llu doesn't be mapped yet\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	if (is_leb_migrating(&leb_desc)) {
+		err = -ERANGE;
+		SSDFS_ERR("leb %llu has direct relation\n",
+			  leb_id);
+		goto finish_fragment_change;
+	}
+
+	physical_index = le16_to_cpu(leb_desc.physical_index);
+
+	if (physical_index == U16_MAX) {
+		err = -ENODATA;
+		SSDFS_DBG("unitialized leb descriptor\n");
+		goto finish_fragment_change;
+	}
+
+	err = ssdfs_maptbl_break_zns_external_peb_ptr(fdesc, physical_index,
+							peb_type, &peb_state);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to break external PEB pointer: "
+			  "physical_index %u, err %d\n",
+			  physical_index, err);
+		goto finish_fragment_change;
+	}
+
+	if (peb_state == SSDFS_MAPTBL_DIRTY_PEB_STATE) {
+		err = ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move PEB into pre-erase state: "
+				  "index %u, err %d\n",
+				  physical_index, err);
+			goto finish_fragment_change;
+		}
+
+		fdesc->pre_erase_pebs++;
+		atomic_inc(&tbl->pre_erase_pebs);
+
+		SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+			  fdesc->pre_erase_pebs,
+			  atomic_read(&tbl->pre_erase_pebs));
+
+		wake_up(&tbl->wait_queue);
+	}
+
+finish_fragment_change:
+	up_write(&fdesc->lock);
+
+	if (!err)
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_break_zns_indirect_relation() - break PEBs indirect relation
+ * @tbl: pointer on mapping table object
+ * @leb_id: source LEB ID number
+ * @peb_type: PEB type
+ * @end: pointer on completion for waiting init ending [out]
+ *
+ * This method tries to clear SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR flag.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EFAULT     - maptbl has inconsistent state.
+ * %-EAGAIN     - fragment is under initialization yet.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
+					     u64 leb_id, u8 peb_type,
+					     struct completion **end)
+{
+	struct ssdfs_fs_info *fsi;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !end);
+
+	SSDFS_DBG("maptbl %p, leb_id %llu, "
+		  "peb_type %#x, dst_leb_id %llu, "
+		  "dst_peb_refs %d\n",
+		  tbl, leb_id, peb_type,
+		  dst_leb_id, dst_peb_refs);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = tbl->fsi;
+	*end = NULL;
+
+	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
+		ssdfs_fs_error(tbl->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"maptbl has corrupted state\n");
+		return -EFAULT;
+	}
+
+	if (should_cache_peb_info(peb_type)) {
+		struct ssdfs_maptbl_peb_relation prev_pebr;
+
+		/* resolve potential inconsistency */
+		err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id, peb_type,
+						   &prev_pebr, end);
+		if (err == -EAGAIN) {
+			SSDFS_DBG("fragment is under initialization: "
+				  "leb_id %llu\n",
+				  leb_id);
+			return err;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to resolve inconsistency: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			return err;
+		}
+	}
+
+	down_read(&tbl->tbl_lock);
+
+	err = __ssdfs_maptbl_break_zns_indirect_relation(tbl, leb_id,
+							 peb_type, end);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("fragment is under initialization: leb_id %llu\n",
 			  leb_id);

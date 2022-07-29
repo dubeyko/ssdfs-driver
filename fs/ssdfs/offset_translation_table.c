@@ -1564,8 +1564,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	int phys_off_index;
 	bool is_partially_processed = false;
 	int i;
-	struct ssdfs_blk_state_offset *state_off;
 #ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_blk_state_offset *state_off;
 	int j;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err;

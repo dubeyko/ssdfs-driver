@@ -225,6 +225,10 @@ int CUR_SEG_TYPE(int req_class)
 		cur_seg_type = SSDFS_CUR_IDXNODE_SEG;
 		break;
 
+	case SSDFS_ZONE_USER_DATA_MIGRATE_REQ:
+		cur_seg_type = SSDFS_CUR_DATA_UPDATE_SEG;
+		break;
+
 	default:
 		BUG();
 	}
@@ -770,6 +774,16 @@ int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req,
 					u64 *seg_id,
 					struct ssdfs_blk2off_range *extent);
+int ssdfs_segment_migrate_zone_block_sync(struct ssdfs_fs_info *fsi,
+					  int req_type,
+					  struct ssdfs_segment_request *req,
+					  u64 *seg_id,
+					  struct ssdfs_blk2off_range *extent);
+int ssdfs_segment_migrate_zone_block_async(struct ssdfs_fs_info *fsi,
+					   int req_type,
+					   struct ssdfs_segment_request *req,
+					   u64 *seg_id,
+					   struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req,
 					u64 *seg_id,
@@ -836,6 +850,16 @@ int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req,
 					u64 *seg_id,
 					struct ssdfs_blk2off_range *extent);
+int ssdfs_segment_migrate_zone_extent_sync(struct ssdfs_fs_info *fsi,
+					   int req_type,
+					   struct ssdfs_segment_request *req,
+					   u64 *seg_id,
+					   struct ssdfs_blk2off_range *extent);
+int ssdfs_segment_migrate_zone_extent_async(struct ssdfs_fs_info *fsi,
+					    int req_type,
+					    struct ssdfs_segment_request *req,
+					    u64 *seg_id,
+					    struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_leaf_node_extent_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req,
 					u64 *seg_id,

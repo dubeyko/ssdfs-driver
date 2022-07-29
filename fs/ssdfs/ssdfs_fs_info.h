@@ -57,6 +57,18 @@ struct ssdfs_peb_extent {
 };
 
 /*
+ * struct ssdfs_zone_fragment - zone fragment
+ * @ino: inode identification number
+ * @logical_blk_offset: logical offset from file's beginning in blocks
+ * @extent: zone fragment descriptor
+ */
+struct ssdfs_zone_fragment {
+	u64 ino;
+	u64 logical_blk_offset;
+	struct ssdfs_raw_extent extent;
+};
+
+/*
  * struct ssdfs_metadata_options - metadata options
  * @blk_bmap.flags: block bitmap's flags
  * @blk_bmap.compression: compression type
@@ -102,6 +114,8 @@ struct ssdfs_sb_info {
  * struct ssdfs_device_ops - device operations
  * @device_name: get device name
  * @device_size: get device size in bytes
+ * @open_zone: open zone
+ * @close_zone: close zone
  * @read: read from device
  * @readpage: read page
  * @readpages: read sequence of pages
@@ -116,6 +130,8 @@ struct ssdfs_sb_info {
 struct ssdfs_device_ops {
 	const char * (*device_name)(struct super_block *sb);
 	__u64 (*device_size)(struct super_block *sb);
+	int (*open_zone)(struct super_block *sb, loff_t offset);
+	int (*close_zone)(struct super_block *sb, loff_t offset);
 	int (*read)(struct super_block *sb, loff_t offset, size_t len,
 		    void *buf);
 	int (*readpage)(struct super_block *sb, struct page *page,
@@ -212,6 +228,7 @@ struct ssdfs_snapshot_subsystem {
  * @shextree: shared extents tree
  * @shdictree: shared dictionary
  * @inodes_tree: inodes btree
+ * @invextree: invalidated extents btree
  * @snapshots: snapshots subsystem
  * @gc_thread: array of GC threads
  * @gc_wait_queue: array of GC threads' wait queues
@@ -222,6 +239,9 @@ struct ssdfs_snapshot_subsystem {
  * @devops: device access operations
  * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
  * @erase_page: page with content for erase operation (dev_bdev.c ONLY)
+ * @is_zns_device: file system volume is on ZNS device
+ * @max_open_zones: open zones limitation (upper bound)
+ * @open_zones: current number of opened zones
  * @dev_kobj: /sys/fs/ssdfs/<device> kernel object
  * @dev_kobj_unregister: completion state for <device> kernel object
  * @maptbl_kobj: /sys/fs/<ssdfs>/<device>/maptbl kernel object
@@ -307,6 +327,7 @@ struct ssdfs_fs_info {
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_shared_dict_btree_info *shdictree;
 	struct ssdfs_inodes_btree_info *inodes_tree;
+	struct ssdfs_invalid_extents_btree_info *invextree;
 
 	struct ssdfs_snapshot_subsystem snapshots;
 
@@ -321,6 +342,11 @@ struct ssdfs_fs_info {
 	const struct ssdfs_device_ops *devops;
 	atomic_t pending_bios;			/* for dev_bdev.c */
 	struct page *erase_page;		/* for dev_bdev.c */
+
+	bool is_zns_device;
+	u64 zone_size;
+	u32 max_open_zones;
+	atomic_t open_zones;
 
 	/* /sys/fs/ssdfs/<device> */
 	struct kobject dev_kobj;
@@ -363,5 +389,6 @@ int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type);
  */
 extern const struct ssdfs_device_ops ssdfs_mtd_devops;
 extern const struct ssdfs_device_ops ssdfs_bdev_devops;
+extern const struct ssdfs_device_ops ssdfs_zns_devops;
 
 #endif /* _SSDFS_FS_INFO_H */

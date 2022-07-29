@@ -506,8 +506,15 @@ try_again:
 		goto try_again;
 
 	fsi->pagesize = 1 << vh->log_pagesize;
-	fsi->erasesize = 1 << vh->log_erasesize;
-	fsi->segsize = 1 << vh->log_segsize;
+
+	if (fsi->is_zns_device) {
+		fsi->erasesize = fsi->zone_size;
+		fsi->segsize = fsi->erasesize * le16_to_cpu(vh->pebs_per_seg);
+	} else {
+		fsi->erasesize = 1 << vh->log_erasesize;
+		fsi->segsize = 1 << vh->log_segsize;
+	}
+
 	fsi->pages_per_seg = fsi->segsize / fsi->pagesize;
 	fsi->pages_per_peb = fsi->erasesize / fsi->pagesize;
 	fsi->pebs_per_seg = 1 << vh->log_pebs_per_seg;
@@ -1543,8 +1550,15 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->log_pagesize = fsi->vh->log_pagesize;
 	fsi->pagesize = 1 << fsi->vh->log_pagesize;
 	fsi->log_erasesize = fsi->vh->log_erasesize;
-	fsi->erasesize = 1 << fsi->vh->log_erasesize;
-	fsi->log_segsize = fsi->vh->log_segsize;
+
+	if (fsi->is_zns_device) {
+		fsi->erasesize = fsi->zone_size;
+		fsi->segsize = fsi->erasesize * le16_to_cpu(vh->pebs_per_seg);
+	} else {
+		fsi->erasesize = 1 << vh->log_erasesize;
+		fsi->segsize = 1 << vh->log_segsize;
+	}
+
 	fsi->segsize = 1 << fsi->vh->log_segsize;
 	fsi->log_pebs_per_seg = fsi->vh->log_pebs_per_seg;
 	fsi->pebs_per_seg = 1 << fsi->vh->log_pebs_per_seg;
