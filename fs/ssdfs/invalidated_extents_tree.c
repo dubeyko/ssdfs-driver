@@ -170,7 +170,6 @@ fail_create_invextree:
 void ssdfs_invextree_destroy(struct ssdfs_fs_info *fsi)
 {
 	struct ssdfs_invextree_info *tree;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
@@ -879,8 +878,10 @@ int ssdfs_invextree_add(struct ssdfs_invextree_info *tree,
 		 */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the invalidated extent: "
-			  "seg_id %llu, err %d\n",
-			  seg_id, err);
+			  "seg_id %llu, logical_blk %u, err %d\n",
+			  le64_to_cpu(extent->seg_id),
+			  le32_to_cpu(extent->logical_blk),
+			  err);
 		goto finish_add_invalidated_extent;
 	}
 
@@ -986,11 +987,11 @@ int ssdfs_invextree_delete(struct ssdfs_invextree_info *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, snr %p, search %p\n",
-		  tree, snr, search);
+	SSDFS_ERR("tree %p, extent %p, search %p\n",
+		  tree, extent, search);
 #else
-	SSDFS_DBG("tree %p, snr %p, search %p\n",
-		  tree, snr, search);
+	SSDFS_DBG("tree %p, extent %p, search %p\n",
+		  tree, extent, search);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (atomic_read(&tree->state)) {
@@ -2350,7 +2351,7 @@ int ssdfs_invextree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	ssdfs_memcpy(&invextree_header, 0, hdr_size),
+	ssdfs_memcpy(&invextree_header, 0, hdr_size,
 		     &node->raw.invextree_header, 0, hdr_size,
 		     hdr_size);
 
@@ -3555,6 +3556,7 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 	u64 seg_id;
 	u32 logical_blk;
 	u64 start_hash;
+	u32 req_flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3908,9 +3910,9 @@ void ssdfs_show_extent_items(struct ssdfs_btree_node *node,
 
 	fsi = node->tree->fsi;
 
-	for (i = 0; i < items_area.items_count; i++) {
+	for (i = 0; i < items_area->items_count; i++) {
 		err = ssdfs_invextree_node_get_extent(node,
-						      &items_area,
+						      items_area,
 						      i,
 						      &extent);
 		if (unlikely(err)) {
@@ -3967,6 +3969,7 @@ int ssdfs_invextree_node_do_insert_range(struct ssdfs_invextree_info *tree,
 	u64 seg_id;
 	u32 logical_blk;
 	u16 extents_count = 0;
+	u64 start_hash, end_hash;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3993,7 +3996,7 @@ int ssdfs_invextree_node_do_insert_range(struct ssdfs_invextree_info *tree,
 		return -ERANGE;
 	}
 
-	range_len = items_area.items_count - search->result.start_index;
+	range_len = items_area->items_count - search->result.start_index;
 	extents_count = range_len + search->request.count;
 
 	err = ssdfs_shift_range_right(node, items_area, item_size,
@@ -4031,8 +4034,8 @@ int ssdfs_invextree_node_do_insert_range(struct ssdfs_invextree_info *tree,
 	}
 
 	SSDFS_DBG("items_capacity %u, items_count %u\n",
-		  items_area.items_capacity,
-		  items_area.items_count);
+		  items_area->items_capacity,
+		  items_area->items_count);
 
 	used_space = (u32)search->request.count * item_size;
 	if (used_space > node->items_area.free_space) {
@@ -4137,8 +4140,8 @@ int ssdfs_invextree_node_merge_range_left(struct ssdfs_invextree_info *tree,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_invextree_node_header *hdr;
-	struct ssdfs_raw_extent found;
 	struct ssdfs_raw_extent *prepared = NULL;
+	struct ssdfs_raw_extent extent;
 	size_t item_size = sizeof(struct ssdfs_raw_extent);
 	u16 item_index;
 	u16 range_len;
@@ -4147,6 +4150,8 @@ int ssdfs_invextree_node_merge_range_left(struct ssdfs_invextree_info *tree,
 	u32 logical_blk;
 	u32 added_extents = 0;
 	u16 extents_count = 0;
+	u32 len;
+	u64 start_hash, end_hash;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4181,7 +4186,7 @@ int ssdfs_invextree_node_merge_range_left(struct ssdfs_invextree_info *tree,
 		return -ERANGE;
 	}
 
-	range_len = items_area.items_count - search->result.start_index;
+	range_len = items_area->items_count - search->result.start_index;
 	extents_count = range_len + search->request.count;
 
 	prepared = (struct ssdfs_raw_extent *)search->result.buf;
@@ -4190,16 +4195,16 @@ int ssdfs_invextree_node_merge_range_left(struct ssdfs_invextree_info *tree,
 	err = ssdfs_invextree_node_get_extent(node,
 					      items_area,
 					      item_index - 1,
-					      &found);
+					      &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get extent: err %d\n", err);
 		return err;
 	}
 
-	le32_add_cpu(&found.len, len);
+	le32_add_cpu(&extent.len, len);
 
 	ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
-		     &found, 0, item_size,
+		     &extent, 0, item_size,
 		     item_size);
 
 	added_extents = search->request.count - 1;
@@ -4219,7 +4224,7 @@ int ssdfs_invextree_node_merge_range_left(struct ssdfs_invextree_info *tree,
 
 	ssdfs_debug_btree_node_object(node);
 
-	err = ssdfs_generic_insert_range(node, &items_area,
+	err = ssdfs_generic_insert_range(node, items_area,
 					 item_size, search);
 	if (unlikely(err)) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -4242,8 +4247,8 @@ int ssdfs_invextree_node_merge_range_left(struct ssdfs_invextree_info *tree,
 		}
 
 		SSDFS_DBG("items_capacity %u, items_count %u\n",
-			  items_area.items_capacity,
-			  items_area.items_count);
+			  items_area->items_capacity,
+			  items_area->items_count);
 
 		used_space = added_extents * item_size;
 		if (used_space > node->items_area.free_space) {
@@ -4351,7 +4356,7 @@ int ssdfs_invextree_node_merge_range_right(struct ssdfs_invextree_info *tree,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_invextree_node_header *hdr;
-	struct ssdfs_raw_extent found;
+	struct ssdfs_raw_extent extent;
 	struct ssdfs_raw_extent *prepared = NULL;
 	size_t item_size = sizeof(struct ssdfs_raw_extent);
 	u16 item_index;
@@ -4360,8 +4365,10 @@ int ssdfs_invextree_node_merge_range_right(struct ssdfs_invextree_info *tree,
 	u64 seg_id;
 	u32 logical_blk;
 	u32 offset;
+	u32 len;
 	u32 added_extents = 0;
 	u16 extents_count = 0;
+	u64 start_hash, end_hash;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4388,7 +4395,7 @@ int ssdfs_invextree_node_merge_range_right(struct ssdfs_invextree_info *tree,
 		return -ERANGE;
 	}
 
-	range_len = items_area.items_count - search->result.start_index;
+	range_len = items_area->items_count - search->result.start_index;
 	extents_count = range_len + search->request.count;
 
 	offset = (search->result.items_in_buffer - 1) *
@@ -4401,17 +4408,17 @@ int ssdfs_invextree_node_merge_range_right(struct ssdfs_invextree_info *tree,
 	err = ssdfs_invextree_node_get_extent(node,
 						items_area,
 						item_index,
-						&found);
+						&extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get extent: err %d\n", err);
 		return err;
 	}
 
-	found.logical_blk = prepared->logical_blk;
-	le32_add_cpu(&found.len, len);
+	extent.logical_blk = prepared->logical_blk;
+	le32_add_cpu(&extent.len, len);
 
 	ssdfs_memcpy(search->result.buf, offset, search->result.buf_size,
-		     &found, 0, item_size,
+		     &extent, 0, item_size,
 		     item_size);
 
 	item_index = search->result.start_index + 1;
@@ -4432,7 +4439,7 @@ int ssdfs_invextree_node_merge_range_right(struct ssdfs_invextree_info *tree,
 
 	ssdfs_debug_btree_node_object(node);
 
-	err = ssdfs_generic_insert_range(node, &items_area,
+	err = ssdfs_generic_insert_range(node, items_area,
 					 item_size, search);
 	if (unlikely(err)) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -4455,8 +4462,8 @@ int ssdfs_invextree_node_merge_range_right(struct ssdfs_invextree_info *tree,
 		}
 
 		SSDFS_DBG("items_capacity %u, items_count %u\n",
-			  items_area.items_capacity,
-			  items_area.items_count);
+			  items_area->items_capacity,
+			  items_area->items_count);
 
 		used_space = added_extents * item_size;
 		if (used_space > node->items_area.free_space) {
@@ -4564,7 +4571,7 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_invextree_node_header *hdr;
-	struct ssdfs_raw_extent found;
+	struct ssdfs_raw_extent extent;
 	struct ssdfs_raw_extent *prepared = NULL;
 	size_t item_size = sizeof(struct ssdfs_raw_extent);
 	u16 item_index;
@@ -4573,8 +4580,10 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 	u64 seg_id;
 	u32 logical_blk;
 	u32 offset;
+	u32 len;
 	int added_extents = 0;
 	u16 extents_count = 0;
+	u64 start_hash, end_hash;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4612,16 +4621,16 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 	err = ssdfs_invextree_node_get_extent(node,
 					      items_area,
 					      item_index - 1,
-					      &found);
+					      &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get extent: err %d\n", err);
 		return err;
 	}
 
-	le32_add_cpu(&found.len, len);
+	le32_add_cpu(&extent.len, len);
 
 	ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
-		     &found, 0, item_size,
+		     &extent, 0, item_size,
 		     item_size);
 
 	item_index = search->result.start_index + search->request.count - 1;
@@ -4636,22 +4645,22 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 	err = ssdfs_invextree_node_get_extent(node,
 						items_area,
 						item_index,
-						&found);
+						&extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get extent: err %d\n", err);
 		return err;
 	}
 
 	if (search->request.count > 1)
-		found.logical_blk = prepared->logical_blk;
+		extent.logical_blk = prepared->logical_blk;
 
-	le32_add_cpu(&found.len, len);
+	le32_add_cpu(&extent.len, len);
 
 	ssdfs_memcpy(search->result.buf, offset, search->result.buf_size,
-		     &found, 0, item_size,
+		     &extent, 0, item_size,
 		     item_size);
 
-	range_len = items_area.items_count - search->result.start_index;
+	range_len = items_area->items_count - search->result.start_index;
 	extents_count = range_len + search->request.count;
 	added_extents = search->request.count - 2;
 
@@ -4694,7 +4703,7 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 
 	ssdfs_debug_btree_node_object(node);
 
-	err = ssdfs_generic_insert_range(node, &items_area,
+	err = ssdfs_generic_insert_range(node, items_area,
 					 item_size, search);
 	if (unlikely(err)) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
@@ -4721,8 +4730,8 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 		node->items_area.items_count--;
 
 		SSDFS_DBG("items_capacity %u, items_count %u\n",
-			  items_area.items_capacity,
-			  items_area.items_count);
+			  items_area->items_capacity,
+			  items_area->items_count);
 
 		node->items_area.free_space += item_size;
 	} else if (search->request.count == 2) {
@@ -4741,8 +4750,8 @@ ssdfs_invextree_node_merge_left_and_right(struct ssdfs_invextree_info *tree,
 		}
 
 		SSDFS_DBG("items_capacity %u, items_count %u\n",
-			  items_area.items_capacity,
-			  items_area.items_count);
+			  items_area->items_capacity,
+			  items_area->items_count);
 
 		used_space = added_extents * item_size;
 		if (used_space > node->items_area.free_space) {
@@ -4856,7 +4865,6 @@ int __ssdfs_invextree_node_insert_range(struct ssdfs_btree_node *node,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree *tree;
 	struct ssdfs_invextree_info *tree_info;
-	struct ssdfs_invextree_node_header *hdr;
 	struct ssdfs_btree_node_items_area items_area;
 	struct ssdfs_raw_extent found;
 	struct ssdfs_raw_extent *prepared = NULL;
@@ -4868,14 +4876,12 @@ int __ssdfs_invextree_node_insert_range(struct ssdfs_btree_node *node,
 	int free_items;
 	u16 range_len;
 	u16 extents_count = 0;
-	u32 used_space;
 	u64 seg_id1, seg_id2;
 	u32 logical_blk1, logical_blk2;
 	u32 len;
 	int direction;
 	bool need_merge_with_left = false;
 	bool need_merge_with_right = false;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5132,7 +5138,7 @@ int __ssdfs_invextree_node_insert_range(struct ssdfs_btree_node *node,
 				/*
 				 * Right and prepared extents need to be merged
 				 */
-				need_merge_with_rigth = true;
+				need_merge_with_right = true;
 			}
 		} else {
 			SSDFS_ERR("invalid range: item_index %u, "
@@ -6094,6 +6100,7 @@ static
 int __ssdfs_invextree_node_delete_range(struct ssdfs_btree_node *node,
 					struct ssdfs_btree_search *search)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree *tree;
 	struct ssdfs_invextree_info *tree_info;
 	struct ssdfs_invextree_node_header *hdr;
@@ -6131,6 +6138,8 @@ int __ssdfs_invextree_node_delete_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = node->tree->fsi;
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
@@ -6535,7 +6544,7 @@ finish_detect_affected_items:
 
 	hdr = &node->raw.invextree_header;
 
-	old_extents_count = le32_to_cpu(hdr->extents);
+	old_extents_count = le32_to_cpu(hdr->extents_count);
 
 	if (node->items_area.items_count == 0) {
 		hdr->extents_count = cpu_to_le32(0);
@@ -6549,7 +6558,7 @@ finish_detect_affected_items:
 		}
 	}
 
-	extents_count = le32_to_cpu(hdr->snapshots_count);
+	extents_count = le32_to_cpu(hdr->extents_count);
 	extents_diff = old_extents_count - extents_count;
 	atomic64_sub(extents_diff, &tree_info->extents_count);
 

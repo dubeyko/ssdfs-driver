@@ -27,6 +27,7 @@
 #include "ssdfs.h"
 #include "offset_translation_table.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "page_array.h"
 #include "peb.h"
@@ -540,7 +541,6 @@ finish_copy_page:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to extract the whole range.
  */
-static
 int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 			u32 logical_blk,
 			struct ssdfs_segment_request *req)

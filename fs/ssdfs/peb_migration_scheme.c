@@ -24,11 +24,13 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb.h"
 #include "peb_container.h"
 #include "peb_mapping_table.h"
@@ -1058,7 +1060,7 @@ check_migration_state:
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
 
-		if (!fsi->is_zns_device()) {
+		if (!fsi->is_zns_device) {
 			pebi = pebc->dst_peb;
 			if (!pebi) {
 				err = -ERANGE;

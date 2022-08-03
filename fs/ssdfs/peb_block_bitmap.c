@@ -24,6 +24,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "page_vector.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
 #include "offset_translation_table.h"

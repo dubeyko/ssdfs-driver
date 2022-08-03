@@ -27,10 +27,16 @@
 #include "ssdfs.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
+#include "current_segment.h"
 #include "peb_mapping_table.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
+#include "invalidated_extents_tree.h"
 
 enum {
 	SSDFS_SRC_PEB,
@@ -2478,12 +2484,8 @@ int ssdfs_peb_container_prepare_zns_destination(struct ssdfs_peb_container *ptr)
 	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_info *dest_si = NULL;
 	struct ssdfs_peb_mapping_table *maptbl;
-	struct ssdfs_migration_destination *destination;
-	struct ssdfs_peb_container *relation;
 	u64 start = U64_MAX;
 	int seg_type = SSDFS_USER_DATA_SEG_TYPE;
-	int shared_index;
-	int destination_state;
 	u16 peb_index, dst_peb_index;
 	u64 leb_id, dst_leb_id;
 	struct completion *end;
@@ -3130,7 +3132,7 @@ int ssdfs_peb_container_break_zns_relation(struct ssdfs_peb_container *ptr,
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_mapping_table *maptbl;
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
-	struct ssdfs_invalid_extents_btree_info *invextree;
+	struct ssdfs_invextree_info *invextree;
 	struct ssdfs_btree_search *search;
 	struct ssdfs_raw_extent extent;
 	u64 leb_id;
@@ -3438,7 +3440,7 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 			goto finish_forget_source;
 		}
 
-		if (fsi->is_zns_device()) {
+		if (fsi->is_zns_device) {
 			err = ssdfs_peb_container_break_zns_relation(ptr,
 								 items_state,
 								 new_state);

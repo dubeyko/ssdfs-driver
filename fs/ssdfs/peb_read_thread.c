@@ -26,6 +26,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
@@ -36,11 +37,14 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 #include "peb_mapping_table.h"
+#include "extents_queue.h"
 #include "request_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
 #include "btree.h"
 #include "diff_on_write.h"
+#include "shared_extents_tree.h"
+#include "invalidated_extents_tree.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -6422,7 +6426,7 @@ int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
-	struct ssdfs_invalid_extents_btree_info *invextree;
+	struct ssdfs_invextree_info *invextree;
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_btree_search *search;
 	struct ssdfs_raw_extent extent;

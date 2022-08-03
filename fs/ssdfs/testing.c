@@ -20,6 +20,7 @@
 #include "extents_queue.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb.h"
 #include "peb_container.h"
 #include "segment_bitmap.h"

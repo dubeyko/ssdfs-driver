@@ -327,7 +327,7 @@ struct ssdfs_fs_info {
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_shared_dict_btree_info *shdictree;
 	struct ssdfs_inodes_btree_info *inodes_tree;
-	struct ssdfs_invalid_extents_btree_info *invextree;
+	struct ssdfs_invextree_info *invextree;
 
 	struct ssdfs_snapshot_subsystem snapshots;
 

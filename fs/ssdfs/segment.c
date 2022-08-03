@@ -24,6 +24,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
@@ -1809,7 +1810,7 @@ int CHECKED_SEG_TYPE(struct ssdfs_fs_info *fsi, int cur_seg_type)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!bdev_is_zoned(fsi->sb->s_bdev))
+	if (!fsi->is_zns_device)
 		return cur_seg_type;
 
 	if (threshold < (fsi->max_open_zones / 2))
@@ -1848,7 +1849,7 @@ bool can_current_segment_be_added(struct ssdfs_segment_info *si)
 
 	fsi = si->fsi;
 
-	if (!bdev_is_zoned(fsi->sb->s_bdev))
+	if (!fsi->is_zns_device)
 		return true;
 
 	switch (si->seg_type) {
@@ -2344,7 +2345,6 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 
 	switch (req_type) {
 	case SSDFS_REQ_SYNC:
-	case SSDFS_REQ_SYNC_NO_FREE:
 		/* expected request type */
 		break;
 
@@ -2741,7 +2741,6 @@ int ssdfs_segment_migrate_zone_block_sync(struct ssdfs_fs_info *fsi,
 
 	switch (req_type) {
 	case SSDFS_REQ_SYNC:
-	case SSDFS_REQ_SYNC_NO_FREE:
 		/* expected request type */
 		break;
 
@@ -2848,6 +2847,7 @@ int ssdfs_segment_add_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2874,6 +2874,7 @@ int ssdfs_segment_add_leaf_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
 }
 
@@ -2901,6 +2902,7 @@ int ssdfs_segment_add_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2928,6 +2930,7 @@ int ssdfs_segment_add_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
 }
 
@@ -2955,6 +2958,7 @@ int ssdfs_segment_add_index_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2982,6 +2986,7 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
 }
 
@@ -3389,7 +3394,6 @@ int ssdfs_segment_migrate_zone_extent_sync(struct ssdfs_fs_info *fsi,
 
 	switch (req_type) {
 	case SSDFS_REQ_SYNC:
-	case SSDFS_REQ_SYNC_NO_FREE:
 		/* expected request type */
 		break;
 

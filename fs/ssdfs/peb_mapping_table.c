@@ -29,6 +29,7 @@
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb.h"
 #include "peb_container.h"
 #include "segment.h"
@@ -7250,7 +7251,7 @@ finish_mapping:
 		loff_t offset = peb_id * fsi->erasesize;
 
 		err = fsi->devops->open_zone(fsi->sb, offset);
-		if (err == -EOPNOTSUPP && !bdev_is_zoned(sb->s_bdev)) {
+		if (err == -EOPNOTSUPP && !fsi->is_zns_device) {
 			/* ignore error */
 			err = 0;
 		} else if (unlikely(err)) {
@@ -7607,9 +7608,9 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	int err = 0;
 
 	SSDFS_DBG("tbl %p, fdesc %p, leb_id %llu, "
-		  "selected_index %u, peb_state %#x\n",
+		  "selected_index %u, new_peb_state %#x\n",
 		  tbl, fdesc, leb_id,
-		  selected_index, peb_state);
+		  selected_index, new_peb_state);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !fdesc || !old_peb_state);
@@ -7675,14 +7676,14 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 
 	*old_peb_state = peb_desc->state;
 
-	if (peb_desc->state == (u8)peb_state) {
+	if (peb_desc->state == (u8)new_peb_state) {
 		err = -EEXIST;
 		SSDFS_DBG("peb_state1 %#x == peb_state2 %#x\n",
 			  peb_desc->state,
-			  (u8)peb_state);
+			  (u8)new_peb_state);
 		goto finish_page_processing;
 	} else
-		peb_desc->state = (u8)peb_state;
+		peb_desc->state = (u8)new_peb_state;
 
 finish_page_processing:
 	kunmap(page);
@@ -7897,7 +7898,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		goto finish_fragment_change;
 	}
 
-	err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, pebr);
+	err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, &pebr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get peb relation: "
 			  "leb_id %llu, err %d\n",
@@ -8014,7 +8015,7 @@ finish_change_state:
 		}
 	}
 
-	if (!err && bdev_is_zoned(fsi->sb->s_bdev)) {
+	if (!err && fsi->is_zns_device) {
 		u64 peb_id = U64_MAX;
 
 		err = -ENODATA;
@@ -8033,7 +8034,7 @@ finish_change_state:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
 				err = 0;
 				selected_index = SSDFS_MAPTBL_MAIN_INDEX;
-				peb_id = pebr->pebs[selected_index].peb_id;
+				peb_id = pebr.pebs[selected_index].peb_id;
 				break;
 
 			default:
@@ -8050,7 +8051,7 @@ finish_change_state:
 			case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
 				err = 0;
 				selected_index = SSDFS_MAPTBL_RELATION_INDEX;
-				peb_id = pebr->pebs[selected_index].peb_id;
+				peb_id = pebr.pebs[selected_index].peb_id;
 				break;
 
 			default:
@@ -8980,7 +8981,7 @@ finish_add_migrating_peb:
 		loff_t offset = peb_id * fsi->erasesize;
 
 		err = fsi->devops->open_zone(fsi->sb, offset);
-		if (err == -EOPNOTSUPP && !bdev_is_zoned(sb->s_bdev)) {
+		if (err == -EOPNOTSUPP && !fsi->is_zns_device) {
 			/* ignore error */
 			err = 0;
 		} else if (unlikely(err)) {
@@ -10236,7 +10237,7 @@ __ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, peb_type %#x\n",
-		  tbl, leb_id, peb_type, dst_peb_index);
+		  tbl, leb_id, peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fdesc = ssdfs_maptbl_get_fragment_descriptor(tbl, leb_id);
@@ -10339,9 +10340,8 @@ int ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !end);
 
-	SSDFS_DBG("maptbl %p, leb_id %llu, "
-		  "peb_type %#x, dst_peb_index %u\n",
-		  tbl, leb_id, peb_type, dst_peb_index);
+	SSDFS_DBG("maptbl %p, leb_id %llu, peb_type %#x\n",
+		  tbl, leb_id, peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
@@ -11229,10 +11229,8 @@ int ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl
 	BUG_ON(!tbl || !end);
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, "
-		  "peb_type %#x, dst_leb_id %llu, "
-		  "dst_peb_refs %d\n",
-		  tbl, leb_id, peb_type,
-		  dst_leb_id, dst_peb_refs);
+		  "peb_type %#x\n",
+		  tbl, leb_id, peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;

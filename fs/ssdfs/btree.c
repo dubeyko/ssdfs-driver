@@ -29,6 +29,7 @@
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb_container.h"
 #include "segment.h"
 #include "btree_search.h"

@@ -1692,7 +1692,7 @@ struct ssdfs_partial_log_header {
 	__le8 reserved2[0x30];
 
 /* 0x0400 */
-	struct ssdfs_invalidated_extents_btree invalidated_extents_btree;
+	struct ssdfs_invalidated_extents_btree invextree;
 
 /* 0x0480 */
 	__le8 payload[0x380];

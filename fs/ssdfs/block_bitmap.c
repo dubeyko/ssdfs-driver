@@ -24,6 +24,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -573,13 +574,13 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		if (pagevec_count(source) > 1) {
+		if (ssdfs_page_vector_count(source)  > 1) {
 			SSDFS_ERR("invalid source pvec size %u\n",
-				  pagevec_count(source));
+				  ssdfs_page_vector_count(source));
 			return -ERANGE;
 		}
 
-		page = source->pages[0];
+		page = ssdfs_page_vector_remove(source, 0);
 
 		if (!page) {
 			SSDFS_WARN("page %d is NULL\n", 0);
@@ -604,6 +605,13 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_unlock_page(page);
+
+		err = ssdfs_page_vector_reinit(source);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to reinit page vector: "
+				  "err %d\n", err);
+			return err;
+		}
 		break;
 
 	default:
@@ -614,7 +622,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pvec %p, pagevec count %u\n",
-		  source, pagevec_count(source));
+		  source, ssdfs_page_vector_count(source));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -699,7 +707,7 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		clear_block_bmap_initialized(blk_bmap);
 	}
 
-	if (pagevec_count(source) == 0) {
+	if (ssdfs_page_vector_count(source) == 0) {
 		SSDFS_ERR("fail to init because of empty pagevec\n");
 		return -EINVAL;
 	}
@@ -1048,7 +1056,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap || !snapshot);
 	BUG_ON(!last_free_page || !metadata_blks || !bytes_count);
-	BUG_ON(pagevec_count(snapshot) != 0);
+	BUG_ON(ssdfs_page_vector_count(snapshot) != 0);
 
 	if (!mutex_is_locked(&blk_bmap->lock)) {
 		SSDFS_WARN("block bitmap's mutex should be locked\n");
@@ -2163,7 +2171,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 
 	*found_blk = U32_MAX;
 
-	array = &&blk_bmap->storage.array;
+	array = &blk_bmap->storage.array;
 
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);

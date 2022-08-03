@@ -34,6 +34,7 @@
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb_container.h"
 #include "segment.h"
 #include "segment_tree.h"
@@ -52,6 +53,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include "snapshots_tree.h"
+#include "invalidated_extents_tree.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -2623,7 +2625,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	} else
 		fs_info->devops = &ssdfs_bdev_devops;
 
-	sb->s_bdi = bdi_get(sb->s_bdev->bd_bdi);
+	sb->s_bdi = bdi_get(sb->s_bdev->bd_disk->bdi);
 	atomic_set(&fs_info->pending_bios, 0);
 	fs_info->erase_page = ssdfs_super_alloc_page(GFP_KERNEL);
 	if (IS_ERR_OR_NULL(fs_info->erase_page)) {

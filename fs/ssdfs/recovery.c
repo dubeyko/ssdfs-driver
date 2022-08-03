@@ -25,6 +25,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "segment_bitmap.h"
@@ -502,7 +503,7 @@ try_again:
 		}
 	}
 
-	if (!is_ssdfs_volume_header_consistent(vh, dev_size))
+	if (!is_ssdfs_volume_header_consistent(fsi, vh, dev_size))
 		goto try_again;
 
 	fsi->pagesize = 1 << vh->log_pagesize;
@@ -1553,10 +1554,11 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 
 	if (fsi->is_zns_device) {
 		fsi->erasesize = fsi->zone_size;
-		fsi->segsize = fsi->erasesize * le16_to_cpu(vh->pebs_per_seg);
+		fsi->segsize = fsi->erasesize *
+				le16_to_cpu(fsi->vh->pebs_per_seg);
 	} else {
-		fsi->erasesize = 1 << vh->log_erasesize;
-		fsi->segsize = 1 << vh->log_segsize;
+		fsi->erasesize = 1 << fsi->vh->log_erasesize;
+		fsi->segsize = 1 << fsi->vh->log_segsize;
 	}
 
 	fsi->segsize = 1 << fsi->vh->log_segsize;

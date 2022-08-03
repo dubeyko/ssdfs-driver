@@ -26,6 +26,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
@@ -325,7 +326,6 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	size_t buf_size;
 	u16 flags;
-	int i;
 	size_t bmap_bytes;
 	size_t bmap_pages;
 	int i;

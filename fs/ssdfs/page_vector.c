@@ -95,8 +95,8 @@ int ssdfs_page_vector_create(struct ssdfs_page_vector *array,
 	size *= capacity;
 	array->pages = ssdfs_page_vector_kzalloc(size, GFP_KERNEL);
 	if (!array->pages) {
-		SSDFS_ERR("fail to allocate memory: size %zu, err %d\n",
-			  size, err);
+		SSDFS_ERR("fail to allocate memory: size %zu\n",
+			  size);
 		return -ENOMEM;
 	}
 
@@ -181,6 +181,8 @@ int ssdfs_page_vector_init(struct ssdfs_page_vector *array)
 int ssdfs_page_vector_reinit(struct ssdfs_page_vector *array)
 {
 #ifdef CONFIG_SSDFS_DEBUG
+	int i;
+
 	BUG_ON(!array);
 
 	if (!array->pages) {
@@ -334,7 +336,6 @@ struct page *ssdfs_page_vector_remove(struct ssdfs_page_vector *array,
 				      u8 page_index)
 {
 	struct page *page;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);

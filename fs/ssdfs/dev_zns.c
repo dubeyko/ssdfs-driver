@@ -212,7 +212,7 @@ u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset)
 		return U64_MAX;
 	}
 
-	return zone->capacity << SECTOR_SHIFT;
+	return (u64)zone.capacity << SECTOR_SHIFT;
 }
 
 /*
@@ -234,7 +234,6 @@ u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset)
 static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 				    bool need_check)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct blk_zone zone;
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	int res;
@@ -305,10 +304,10 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 		break;
 	}
 
-	if (zone_sector < zone->wp) {
+	if (zone_sector < zone.wp) {
 		SSDFS_DBG("cannot be written: "
-			  "zone_sector %llu, zone->wp %llu\n",
-			  zone_sector, zone->wp);
+			  "zone_sector %llu, zone.wp %llu\n",
+			  zone_sector, zone.wp);
 		return -EIO;
 	}
 
