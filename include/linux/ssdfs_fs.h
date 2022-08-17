@@ -1228,19 +1228,19 @@ struct ssdfs_volume_state {
 /* 0x0070 */
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
 
-/* 0x0090 */
+/* 0x0098 */
 	__le16 migration_threshold;
 	__le16 reserved1;
 
-/* 0x0094 */
+/* 0x009C */
 	struct ssdfs_blk_bmap_options blkbmap;
 	struct ssdfs_blk2off_tbl_options blk2off_tbl;
 
-/* 0x009C */
+/* 0x00A4 */
 	struct ssdfs_user_data_options user_data;
 
-/* 0x00A4 */
-	__le8 reserved2[0xC];
+/* 0x00AC */
+	__le8 reserved2[0x4];
 
 /* 0x00B0 */
 	struct ssdfs_inode root_folder;

@@ -4300,11 +4300,11 @@ int ssdfs_shared_dict_node_find_lookup1_index(struct ssdfs_btree_node *node,
 	switch (err) {
 	case -EEXIST:
 		err = 0;
-		/* pass through */
-
+		/* FALLTHRU */
+		fallthrough;
 	case -ENODATA:
-		/* pass through */
-
+		/* FALLTHRU */
+		fallthrough;
 	default:
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(*index >= array_size);

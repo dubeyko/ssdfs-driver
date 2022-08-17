@@ -834,7 +834,7 @@ static void ssdfs_bdev_erase_end_io(struct bio *bio)
  */
 static inline bool ssdfs_bdev_support_discard(struct block_device *bdev)
 {
-	return blk_queue_discard(bdev_get_queue(bdev)) ||
+	return bdev_max_discard_sectors(bdev) ||
 		bdev_is_zoned(bdev);
 }
 
@@ -1080,7 +1080,7 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
 		err = blkdev_issue_discard(sb->s_bdev,
 					   start_sector, sectors_count,
-					   GFP_NOFS, 0);
+					   GFP_NOFS);
 		if (unlikely(err))
 			goto try_zeroout;
 	} else {

@@ -525,13 +525,10 @@ fail_read_page:
 	return err;
 }
 
-/*
- * The ssdfs_readpage() is called by the VM
- * to read a page from backing store.
- */
-static inline
-int ssdfs_readpage(struct file *file, struct page *page)
+static
+int ssdfs_read_folio(struct file *file, struct folio *folio)
 {
+	struct page *page = &folio->page;
 	int err;
 
 	SSDFS_DBG("ino %lu, page_index %lu\n",
@@ -2143,7 +2140,7 @@ static void ssdfs_write_failed(struct address_space *mapping, loff_t to)
  */
 static
 int ssdfs_write_begin(struct file *file, struct address_space *mapping,
-		      loff_t pos, unsigned len, unsigned flags,
+		      loff_t pos, unsigned len,
 		      struct page **pagep, void **fsdata)
 {
 	struct inode *inode = mapping->host;
@@ -2158,19 +2155,19 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	bool is_new_blk = false;
 	int err = 0;
 
-	SSDFS_DBG("ino %lu, pos %llu, len %u, flags %#x\n",
-		  inode->i_ino, pos, len, flags);
+	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
+		  inode->i_ino, pos, len);
 
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
-	SSDFS_DBG("ino %lu, index %lu, flags %#x\n",
-		  inode->i_ino, index, flags);
+	SSDFS_DBG("ino %lu, index %lu\n",
+		  inode->i_ino, index);
 
-	page = grab_cache_page_write_begin(mapping, index, flags);
+	page = grab_cache_page_write_begin(mapping, index);
 	if (!page) {
-		SSDFS_ERR("fail to grab page: index %lu, flags %#x\n",
-			  index, flags);
+		SSDFS_ERR("fail to grab page: index %lu\n",
+			  index);
 		return -ENOMEM;
 	}
 
@@ -2436,7 +2433,7 @@ const struct inode_operations ssdfs_symlink_inode_operations = {
 };
 
 const struct address_space_operations ssdfs_aops = {
-	.readpage		= ssdfs_readpage,
+	.read_folio		= ssdfs_read_folio,
 	.readahead		= ssdfs_readahead,
 	.writepage		= ssdfs_writepage,
 	.writepages		= ssdfs_writepages,

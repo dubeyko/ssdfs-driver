@@ -857,9 +857,11 @@ void ssdfs_btree_node_destroy(struct ssdfs_btree_node *node)
 			SSDFS_WARN("node %u is dirty\n", node->node_id);
 			break;
 		}
-		/* pass through */
-
+		/* FALLTHRU */
+		fallthrough;
 	case SSDFS_BTREE_NODE_CREATED:
+		/* FALLTHRU */
+		fallthrough;
 	case SSDFS_BTREE_NODE_INITIALIZED:
 		atomic_set(&node->state, SSDFS_BTREE_NODE_UNKNOWN_STATE);
 		wake_up_all(&node->wait_queue);
@@ -3546,7 +3548,7 @@ bool is_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 	default:
 		SSDFS_WARN("invalid node state %#x\n",
 			   state);
-		/* pass through */
+		/* FALLTHRU */
 	};
 
 	return false;
@@ -3580,7 +3582,7 @@ void set_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 	default:
 		SSDFS_WARN("invalid node state %#x\n",
 			   state);
-		/* pass through */
+		/* FALLTHRU */
 	};
 }
 
@@ -3622,7 +3624,7 @@ void clear_ssdfs_btree_node_dirty(struct ssdfs_btree_node *node)
 	default:
 		SSDFS_WARN("invalid node state %#x\n",
 			   state);
-		/* pass through */
+		/* FALLTHRU */
 	};
 }
 
@@ -3651,7 +3653,7 @@ bool is_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
 	default:
 		SSDFS_WARN("invalid node state %#x\n",
 			   state);
-		/* pass through */
+		/* FALLTHRU */
 	};
 
 	return false;
@@ -3686,7 +3688,7 @@ void set_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
 	default:
 		SSDFS_WARN("invalid node state %#x\n",
 			   state);
-		/* pass through */
+		/* FALLTHRU */
 	};
 }
 
@@ -3728,7 +3730,7 @@ void clear_ssdfs_btree_node_pre_deleted(struct ssdfs_btree_node *node)
 	default:
 		SSDFS_WARN("invalid node state %#x\n",
 			   state);
-		/* pass through */
+		/* FALLTHRU */
 	};
 }
 

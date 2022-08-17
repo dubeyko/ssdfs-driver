@@ -1938,8 +1938,8 @@ int ssdfs_invextree_init_node(struct ssdfs_btree_node *node)
 				  node->node_id, flags);
 			goto finish_header_init;
 		}
-		/* pass through */
-
+		/* FALLTHRU */
+		fallthrough;
 	case SSDFS_BTREE_LEAF_NODE:
 		if (extents_count > 0 &&
 		    (start_hash >= U64_MAX || end_hash >= U64_MAX)) {

@@ -86,7 +86,7 @@ int ssdfs_page_vector_create(struct ssdfs_page_vector *array,
 	size_t size = sizeof(struct page *);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!array || array->pages);
+	BUG_ON(!array);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	array->count = 0;

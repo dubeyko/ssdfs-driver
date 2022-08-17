@@ -1678,6 +1678,18 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 
 	ssdfs_maptbl_cache_init(&fsi->maptbl_cache);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("VOLUME HEADER DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     fsi->vh, fsi->pagesize);
+	SSDFS_DBG("END\n");
+
+	SSDFS_DBG("VOLUME STATE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     fsi->vs, fsi->pagesize);
+	SSDFS_DBG("END\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_check_fs_state(fsi);
 	if (err && err != -EROFS)
 		return err;

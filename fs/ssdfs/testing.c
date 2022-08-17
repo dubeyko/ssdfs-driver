@@ -47,18 +47,32 @@ void ssdfs_testing_invalidate_folio(struct folio *folio, size_t offset,
 		  offset, length);
 }
 
+/*
+ * ssdfs_testing_release_folio() - Release fs-specific metadata on a folio.
+ * @folio: The folio which the kernel is trying to free.
+ * @gfp: Memory allocation flags (and I/O mode).
+ *
+ * The address_space is trying to release any data attached to a folio
+ * (presumably at folio->private).
+ *
+ * This will also be called if the private_2 flag is set on a page,
+ * indicating that the folio has other metadata associated with it.
+ *
+ * The @gfp argument specifies whether I/O may be performed to release
+ * this page (__GFP_IO), and whether the call may block
+ * (__GFP_RECLAIM & __GFP_FS).
+ *
+ * Return: %true if the release was successful, otherwise %false.
+ */
 static
-int ssdfs_testing_releasepage(struct page *page, gfp_t mask)
+bool ssdfs_testing_release_folio(struct folio *folio, gfp_t gfp)
 {
-	SSDFS_DBG("do nothing: page_index %llu, mask %#x\n",
-		  (u64)page_index(page), mask);
-
-	return 0;
+	return false;
 }
 
 const struct address_space_operations ssdfs_testing_aops = {
 	.invalidate_folio	= ssdfs_testing_invalidate_folio,
-	.releasepage		= ssdfs_testing_releasepage,
+	.release_folio		= ssdfs_testing_release_folio,
 	.dirty_folio		= filemap_dirty_folio,
 };
 

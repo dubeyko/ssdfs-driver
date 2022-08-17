@@ -5801,13 +5801,6 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		goto fail_read_blk_bmap;
 	}
 
-	if (fragments_count > SSDFS_FRAGMENTS_CHAIN_MAX) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"fragments_count %u\n", fragments_count);
-		err = -EIO;
-		goto fail_read_blk_bmap;
-	}
-
 	env->b_init.read_bytes += hdr_size + (fragments_count * desc_size);
 
 	chain_compr_bytes = le32_to_cpu(frag_hdr->chain_hdr.compr_bytes);

@@ -212,7 +212,14 @@ u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset)
 		return U64_MAX;
 	}
 
-	return (u64)zone.capacity << SECTOR_SHIFT;
+	SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+		  "type %#x, cond %#x, non_seq %#x, "
+		  "reset %#x, capacity %llu\n",
+		  zone.start, zone.len, zone.wp,
+		  zone.type, zone.cond, zone.non_seq,
+		  zone.reset, zone.capacity);
+
+	return (u64)zone.len << SECTOR_SHIFT;
 }
 
 /*

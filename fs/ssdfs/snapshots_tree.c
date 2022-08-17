@@ -1637,10 +1637,10 @@ int ssdfs_snapshots_btree_desc_init(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !tree);
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, tree %p\n",
 		  fsi, tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	erasesize = fsi->erasesize;
 
@@ -2424,8 +2424,8 @@ int ssdfs_snapshots_btree_init_node(struct ssdfs_btree_node *node)
 				  node->node_id, flags);
 			goto finish_header_init;
 		}
-		/* pass through */
-
+		/* FALLTHRU */
+		fallthrough;
 	case SSDFS_BTREE_LEAF_NODE:
 		if (snapshots_count > 0 &&
 		    (start_hash >= U64_MAX || end_hash >= U64_MAX)) {
