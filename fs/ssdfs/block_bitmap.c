@@ -547,11 +547,11 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			ssdfs_lock_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 			SSDFS_DBG("BMAP INIT\n");
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr, 32);
-			kunmap(page);
+			kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_page_vector_add(array, page);
@@ -597,11 +597,11 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 		kunmap_atomic(kaddr);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("BMAP INIT\n");
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr, 32);
-		kunmap(page);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_unlock_page(page);
@@ -967,11 +967,11 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 			kunmap_atomic(kaddr1);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			kaddr1 = kmap(page);
+			kaddr1 = kmap_local_page(page);
 			SSDFS_DBG("BMAP SNAPSHOT\n");
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr1, 32);
-			kunmap(page);
+			kunmap_local(kaddr1);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_page_vector_add(snapshot, page);
@@ -1000,11 +1000,11 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 		kunmap_atomic(kaddr2);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr1 = kmap(page);
+		kaddr1 = kmap_local_page(page);
 		SSDFS_DBG("BMAP SNAPSHOT\n");
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr1, 32);
-		kunmap(page);
+		kunmap_local(kaddr1);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_page_vector_add(snapshot, page);
@@ -2204,14 +2204,14 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 			return err;
 		}
 
-		kaddr = kmap(array->pages[page_index]);
+		kaddr = kmap_local_page(array->pages[page_index]);
 		err = ssdfs_block_bmap_find_block_in_memory_range(kaddr,
 								  blk_state,
 								  &byte_index,
 								  search_bytes,
 								  start_off,
 								  &found_off);
-		kunmap(array->pages[page_index]);
+		kunmap_local(kaddr);
 
 		if (err == -ENODATA) {
 			/* no item has been found */
@@ -2836,14 +2836,14 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 			return err;
 		}
 
-		kaddr = kmap(array->pages[page_index]);
+		kaddr = kmap_local_page(array->pages[page_index]);
 		err = ssdfs_block_bmap_find_state_area_end_in_memory(kaddr,
 								blk_state,
 								&byte_index,
 								search_bytes,
 								start_off,
 								&found_off);
-		kunmap(array->pages[page_index]);
+		kunmap_local(kaddr);
 
 		if (err == -ENODATA) {
 			/* nothing has been found */
@@ -3930,7 +3930,6 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, count %u\n",
 		  blk_bmap, count);
@@ -3939,6 +3938,7 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -3949,12 +3949,8 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
 		return err;
-	} else if (unlikely(err >= U16_MAX)) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get free pages: err %d\n", err);
-		return err;
 	} else {
-		free_pages = (u16)err;
+		free_pages = err;
 		err = 0;
 	}
 
@@ -3969,12 +3965,8 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get used pages: err %d\n", err);
 		return err;
-	} else if (unlikely(err >= U16_MAX)) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get used pages: err %d\n", err);
-		return err;
 	} else {
-		used_pages = (u16)err;
+		used_pages = err;
 		err = 0;
 	}
 
@@ -3982,12 +3974,8 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
 		return err;
-	} else if (unlikely(err >= U16_MAX)) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
-		return err;
 	} else {
-		invalid_pages = (u16)err;
+		invalid_pages = err;
 		err = 0;
 	}
 
@@ -4035,7 +4023,6 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, count %u\n",
 		  blk_bmap, count);
@@ -4044,6 +4031,7 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4092,9 +4080,9 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4192,7 +4180,6 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
 	SSDFS_DBG("items_count %zu, used_blks %u, "
@@ -4201,6 +4188,7 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4259,7 +4247,6 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
 	SSDFS_DBG("items_count %zu, used_blks %u, "
@@ -4268,6 +4255,7 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4356,12 +4344,8 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
 		return err;
-	} else if (unlikely(err >= U16_MAX)) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get free pages: err %d\n", err);
-		return err;
 	} else {
-		free_pages = (u16)err;
+		free_pages = err;
 		err = 0;
 	}
 
@@ -4530,12 +4514,8 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
 		return err;
-	} else if (unlikely(err >= U16_MAX)) {
-		err = -ERANGE;
-		SSDFS_ERR("fail to get free pages: err %d\n", err);
-		return err;
 	} else {
-		free_pages = (u16)err;
+		free_pages = err;
 		err = 0;
 	}
 
@@ -4658,12 +4638,6 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("range (start %u, len %u)\n",
-		  range->start, range->len);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
 		  blk_bmap, range->start, range->len);
@@ -4673,6 +4647,12 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("range (start %u, len %u)\n",
+		  range->start, range->len);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4768,12 +4748,6 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("start %u, max_len %u, blk_state %#x\n",
-		  start, max_len, blk_state);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	SSDFS_DBG("blk_bmap %p, start %u, max_len %u\n",
 		  blk_bmap, start, max_len);
@@ -4783,6 +4757,12 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("start %u, max_len %u, blk_state %#x\n",
+		  start, max_len, blk_state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4851,9 +4831,9 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4934,11 +4914,11 @@ void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap)
 				continue;
 			}
 
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 			SSDFS_DBG("BMAP CONTENT: page %d\n", i);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr, PAGE_SIZE);
-			kunmap(page);
+			kunmap_local(kaddr);
 		}
 		break;
 

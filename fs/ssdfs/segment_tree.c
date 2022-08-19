@@ -308,7 +308,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	ssdfs_lock_page(page);
 
-	kaddr = (struct ssdfs_segment_info **)kmap(page);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
 
 	for (i = 0; i < ptrs_per_page; i++) {
 		struct ssdfs_segment_info *si = *(kaddr + i);
@@ -343,7 +343,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	}
 
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	ssdfs_clear_dirty_page(page);
 
@@ -510,7 +510,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 
 	ssdfs_account_locked_page(page);
 
-	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
 	object = *(kaddr + object_index);
 	if (object) {
 		err = -EEXIST;
@@ -518,7 +518,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 			  si->seg_id);
 	} else
 		*(kaddr + object_index) = si;
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	SetPageUptodate(page);
 	if (!PageDirty(page))
@@ -588,7 +588,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	}
 
 	ssdfs_account_locked_page(page);
-	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
 	object = *(kaddr + object_index);
 	if (!object) {
 		err = -ENODATA;
@@ -601,7 +601,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 		*(kaddr + object_index) = NULL;
 	}
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	SetPageUptodate(page);
 	if (!PageDirty(page))
@@ -681,7 +681,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 	}
 
 	ssdfs_account_locked_page(page);
-	kaddr = (struct ssdfs_segment_info **)kmap_atomic(page);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
 	object = *(kaddr + object_index);
 	if (!object) {
 		object = ERR_PTR(-ENODATA);
@@ -689,7 +689,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 			  "seg %llu\n",
 			  seg_id);
 	}
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

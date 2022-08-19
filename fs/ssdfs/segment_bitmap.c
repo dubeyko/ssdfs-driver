@@ -951,7 +951,7 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 
@@ -1118,7 +1118,7 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 fragment_hdr_corrupted:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	return err;
 }
@@ -1356,7 +1356,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	ssdfs_account_locked_page(spage);
 
-	kaddr1 = kmap(spage);
+	kaddr1 = kmap_local_page(spage);
 	hdr = SSDFS_SBMP_FRAG_HDR(kaddr1);
 
 	if (le32_to_cpu(hdr->magic) != SSDFS_SEGBMAP_HDR_MAGIC) {
@@ -1450,7 +1450,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 	desc->state = SSDFS_SEGBMAP_FRAG_TOWRITE;
 
 fail_copy_fragment:
-	kunmap(spage);
+	kunmap_local(kaddr1);
 	ssdfs_unlock_page(spage);
 	ssdfs_put_page(spage);
 
@@ -1693,13 +1693,13 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 		}
 
 		fragments_count = (u16)pagevec_count(&req1->result.pvec);
-		kaddr = kmap(req1->result.pvec.pages[0]);
+		kaddr = kmap_local_page(req1->result.pvec.pages[0]);
 		hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 		err = ssdfs_segbmap_define_volume_extent(segbmap, req1,
 							 hdr,
 							 fragments_count,
 							 &seg_index);
-		kunmap(req1->result.pvec.pages[0]);
+		kunmap_local(kaddr);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define volume extent: "
@@ -2088,7 +2088,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			}
 
 			ssdfs_account_locked_page(page);
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 
 			hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 
@@ -2101,7 +2101,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 					  err);
 			}
 
-			kunmap(page);
+			kunmap_local(kaddr);
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
@@ -4053,7 +4053,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 	}
 
 	ssdfs_account_locked_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	bmap = (unsigned long *)((u8 *)kaddr + hdr_size);
 
 	err = FIND_FIRST_ITEM_IN_FRAGMENT(SSDFS_SBMP_FRAG_HDR(kaddr),
@@ -4061,7 +4061,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 					  found_seg, found_for_mask,
 					  found_state_for_mask);
 
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

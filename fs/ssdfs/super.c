@@ -1615,14 +1615,14 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		bytes_count = le16_to_cpu(hdr->bytes_count);
 
 		csum = crc32(csum, kaddr, bytes_count);
 
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 	}
 
@@ -1898,11 +1898,11 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			  page_ref_count(payload_page));
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap(payload_page);
+		kaddr = kmap_local_page(payload_page);
 		SSDFS_DBG("PAYLOAD PAGE %d\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr, PAGE_SIZE);
-		kunmap(payload_page);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(payload_page);

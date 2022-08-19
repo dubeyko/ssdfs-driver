@@ -557,7 +557,6 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 			  pebc->parent_si->pebs_count);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebi %p, seg %llu, peb_id %llu, "
 		  "peb_index %u, pebc %p, "
@@ -565,6 +564,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		  pebi, pebc->parent_si->seg_id,
 		  pebi->peb_id, pebc->peb_index, pebc,
 		  peb_state, peb_migration_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 	flags = fsi->metadata_options.blk2off_tbl.flags;

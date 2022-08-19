@@ -862,7 +862,6 @@ int ssdfs_memcpy(void *dst, u32 dst_off, u32 dst_size,
 			  dst_off, copy_size, dst_size);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("dst %p, dst_off %u, dst_size %u, "
 		  "src %p, src_off %u, src_size %u, "
@@ -870,8 +869,73 @@ int ssdfs_memcpy(void *dst, u32 dst_off, u32 dst_size,
 		  dst, dst_off, dst_size,
 		  src, src_off, src_size,
 		  copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memcpy((u8 *)dst + dst_off, (u8 *)src + src_off, copy_size);
+	return 0;
+}
+
+static inline
+int ssdfs_memcpy_from_page(void *dst, u32 dst_off, u32 dst_size,
+			   struct page *page, u32 src_off, u32 src_size,
+			   u32 copy_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((src_off + copy_size) > src_size) {
+		SSDFS_ERR("fail to copy: "
+			  "src_off %u, copy_size %u, src_size %u\n",
+			  src_off, copy_size, src_size);
+		return -ERANGE;
+	}
+
+	if ((dst_off + copy_size) > dst_size) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_off %u, copy_size %u, dst_size %u\n",
+			  dst_off, copy_size, dst_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("dst %p, dst_off %u, dst_size %u, "
+		  "page %p, src_off %u, src_size %u, "
+		  "copy_size %u\n",
+		  dst, dst_off, dst_size,
+		  page, src_off, src_size,
+		  copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memcpy_from_page((u8 *)dst + dst_off, page, src_off, copy_size);
+	return 0;
+}
+
+static inline
+int ssdfs_memcpy_to_page(struct page *page, u32 dst_off, u32 dst_size,
+			 void *src, u32 src_off, u32 src_size,
+			 u32 copy_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((src_off + copy_size) > src_size) {
+		SSDFS_ERR("fail to copy: "
+			  "src_off %u, copy_size %u, src_size %u\n",
+			  src_off, copy_size, src_size);
+		return -ERANGE;
+	}
+
+	if ((dst_off + copy_size) > dst_size) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_off %u, copy_size %u, dst_size %u\n",
+			  dst_off, copy_size, dst_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("page %p, dst_off %u, dst_size %u, "
+		  "src %p, src_off %u, src_size %u, "
+		  "copy_size %u\n",
+		  page, dst_off, dst_size,
+		  src, src_off, src_size,
+		  copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memcpy_to_page(page, dst_off, (u8 *)src + src_off, copy_size);
 	return 0;
 }
 
@@ -894,7 +958,6 @@ int ssdfs_memmove(void *dst, u32 dst_off, u32 dst_size,
 			  dst_off, move_size, dst_size);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("dst %p, dst_off %u, dst_size %u, "
 		  "src %p, src_off %u, src_size %u, "
@@ -902,8 +965,84 @@ int ssdfs_memmove(void *dst, u32 dst_off, u32 dst_size,
 		  dst, dst_off, dst_size,
 		  src, src_off, src_size,
 		  move_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memmove((u8 *)dst + dst_off, (u8 *)src + src_off, move_size);
+	return 0;
+}
+
+static inline
+int ssdfs_memmove_page(struct page *dst_page, u32 dst_off, u32 dst_size,
+			struct page *src_page, u32 src_off, u32 src_size,
+			u32 move_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((src_off + move_size) > src_size) {
+		SSDFS_ERR("fail to move: "
+			  "src_off %u, move_size %u, src_size %u\n",
+			  src_off, move_size, src_size);
+		return -ERANGE;
+	}
+
+	if ((dst_off + move_size) > dst_size) {
+		SSDFS_ERR("fail to move: "
+			  "dst_off %u, move_size %u, dst_size %u\n",
+			  dst_off, move_size, dst_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("dst_page %p, dst_off %u, dst_size %u, "
+		  "src_page %p, src_off %u, src_size %u, "
+		  "move_size %u\n",
+		  dst_page, dst_off, dst_size,
+		  src_page, src_off, src_size,
+		  move_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memmove_page(dst_page, dst_off, src_page, src_off, move_size);
+	return 0;
+}
+
+static inline
+int ssdfs_memset_page(struct page *page, u32 dst_off, u32 dst_size,
+		      int value, u32 set_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((dst_off + set_size) > dst_size) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_off %u, set_size %u, dst_size %u\n",
+			  dst_off, set_size, dst_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("page %p, dst_off %u, dst_size %u, "
+		  "value %#x, set_size %u\n",
+		  page, dst_off, dst_size,
+		  value, set_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memset_page(page, dst_off, value, set_size);
+	return 0;
+}
+
+static inline
+int ssdfs_memzero_page(struct page *page, u32 dst_off, u32 dst_size,
+		       u32 set_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((dst_off + set_size) > dst_size) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_off %u, set_size %u, dst_size %u\n",
+			  dst_off, set_size, dst_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("page %p, dst_off %u, dst_size %u, "
+		  "set_size %u\n",
+		  page, dst_off, dst_size, set_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memzero_page(page, dst_off, set_size);
 	return 0;
 }
 

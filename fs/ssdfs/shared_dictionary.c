@@ -2346,7 +2346,7 @@ int ssdfs_shared_dict_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_shared_dictionary_node_header *)kaddr;
 
@@ -2573,7 +2573,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;
@@ -6865,14 +6865,14 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 	SSDFS_DBG("area_offset %u, page_index %d\n",
 		  area_offset, page_index);
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("PAGE DUMP: index %d\n",
 		  page_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
 	SSDFS_DBG("\n");
-	kunmap(page);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -7107,14 +7107,14 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 	SSDFS_DBG("area_offset %u, page_index %d\n",
 		  area_offset, page_index);
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("PAGE DUMP: index %d\n",
 		  page_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
 	SSDFS_DBG("\n");
-	kunmap(page);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;

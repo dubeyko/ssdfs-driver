@@ -225,7 +225,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			return err;
 		}
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 		hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 		dirty_bmap =
@@ -304,7 +304,7 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 		};
 
 finish_page_processing:
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -579,7 +579,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 	dirty_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
@@ -681,7 +681,8 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 finish_page_processing:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -1070,7 +1071,7 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -1159,7 +1160,7 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 	};
 
 finish_page_processing:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -1433,7 +1434,7 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 	dirty_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
@@ -1530,7 +1531,8 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 finish_page_processing:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

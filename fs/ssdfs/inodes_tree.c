@@ -2166,7 +2166,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("PAGE DUMP\n");
@@ -2415,7 +2415,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;
@@ -2855,10 +2855,10 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_debug_btree_node_object(node);
 
@@ -2898,11 +2898,9 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	ssdfs_memcpy(&inodes_header,
-		     0, sizeof(struct ssdfs_inodes_btree_node_header),
-		     &node->raw.inodes_header,
-		     0, sizeof(struct ssdfs_inodes_btree_node_header),
-		     sizeof(struct ssdfs_inodes_btree_node_header));
+	ssdfs_memcpy(&inodes_header, 0, hdr_size,
+		     &node->raw.inodes_header, 0, hdr_size,
+		     hdr_size);
 
 	inodes_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	inodes_header.node.magic.key = cpu_to_le16(SSDFS_INODES_BNODE_MAGIC);
@@ -2943,11 +2941,9 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 		goto finish_inodes_header_preparation;
 	}
 
-	ssdfs_memcpy(&node->raw.inodes_header,
-		     0, sizeof(struct ssdfs_inodes_btree_node_header),
-		     &inodes_header,
-		     0, sizeof(struct ssdfs_inodes_btree_node_header),
-		     sizeof(struct ssdfs_inodes_btree_node_header));
+	ssdfs_memcpy(&node->raw.inodes_header, 0, hdr_size,
+		     &inodes_header, 0, hdr_size,
+		     hdr_size);
 
 finish_inodes_header_preparation:
 	up_write(&node->header_lock);
@@ -2962,13 +2958,9 @@ finish_inodes_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr,
-		     0, PAGE_SIZE,
-		     &inodes_header,
-		     0, sizeof(struct ssdfs_inodes_btree_node_header),
-		     sizeof(struct ssdfs_inodes_btree_node_header));
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &inodes_header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -3493,14 +3485,11 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 
 	buf_offset = buf_index * item_size;
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr,
-			   item_offset, PAGE_SIZE,
-			   search->result.buf,
-			   buf_offset, search->result.buf_size,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page,
+				   item_offset, PAGE_SIZE,
+				   search->result.buf,
+				   buf_offset, search->result.buf_size,
+				   item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy item: "
 			  "buf_offset %u, item_offset %u, "

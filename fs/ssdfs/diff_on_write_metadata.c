@@ -2047,14 +2047,14 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 		if (!page)
 			continue;
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2106,14 +2106,14 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 		if (!page)
 			continue;
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("DIFF DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2515,7 +2515,7 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("req %p, page %p\n", req, page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_metadata_diff_blob_header *)kaddr;
 
@@ -2639,7 +2639,8 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 	}
 
 finish_apply_diff_page:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to apply diff page: err %d\n",
@@ -2680,14 +2681,14 @@ finish_apply_diff_page:
 			if (!content_page)
 				continue;
 
-			kaddr = kmap(content_page);
+			kaddr = kmap_local_page(content_page);
 			SSDFS_DBG("PAGE DUMP: index %d\n",
 				  i);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr,
 					     PAGE_SIZE);
 			SSDFS_DBG("\n");
-			kunmap(content_page);
+			kunmap_local(kaddr);
 		}
 
 		BUG();
@@ -2763,14 +2764,14 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 		if (!page)
 			continue;
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2785,14 +2786,14 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 		WARN_ON(!PageLocked(page));
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("DIFF DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_btree_node_apply_diff_page(fsi, req, page);
@@ -2821,14 +2822,14 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 		if (!page)
 			continue;
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 

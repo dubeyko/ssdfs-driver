@@ -1823,7 +1823,7 @@ int ssdfs_invextree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_invextree_node_header *)kaddr;
 
@@ -2096,7 +2096,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;
@@ -2421,11 +2421,9 @@ finish_invextree_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, hdr_size,
-		     &invextree_header, 0, hdr_size,
-		     hdr_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &invextree_header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -3381,12 +3379,9 @@ int __ssdfs_invextree_node_get_extent(struct pagevec *pvec,
 
 	page = pvec->pages[page_index];
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(extent, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(extent, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;

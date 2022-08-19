@@ -1053,11 +1053,9 @@ int ssdfs_get_checked_table_header(struct ssdfs_blk2off_init *portion)
 	page = portion->blk2off_pvec->pages[page_index];
 
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(&portion->tbl_hdr, 0, hdr_size,
-			   kaddr, page_off, PAGE_SIZE,
-			   hdr_size);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_from_page(&portion->tbl_hdr, 0, hdr_size,
+				     page, page_off, PAGE_SIZE,
+				     hdr_size);
 	ssdfs_unlock_page(page);
 
 	if (unlikely(err)) {
@@ -1201,12 +1199,11 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 			page = portion->blk2off_pvec->pages[page_index];
 
 			ssdfs_lock_page(page);
-			kaddr = kmap_atomic(page);
-			err = ssdfs_memcpy(portion->extent_array,
-					   read_bytes, ext_array_size,
-					   kaddr, page_off, PAGE_SIZE,
-					   size);
-			kunmap_atomic(kaddr);
+			err = ssdfs_memcpy_from_page(portion->extent_array,
+						     read_bytes, ext_array_size,
+						     page,
+						     page_off, PAGE_SIZE,
+						     size);
 			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
@@ -1387,12 +1384,10 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 			  read_bytes, fragment->buf_size, page_off, page_off);
 
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(fragment->buf,
-				   read_bytes, fragment->buf_size,
-				   kaddr, page_off, PAGE_SIZE,
-				   size);
-		kunmap_atomic(kaddr);
+		err = ssdfs_memcpy_from_page(fragment->buf,
+					     read_bytes, fragment->buf_size,
+					     page, page_off, PAGE_SIZE,
+					     size);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -1692,14 +1687,14 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		void *kaddr;
 		struct page *page = portion->blk_desc_pvec->pages[j];
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  j);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4013,12 +4008,9 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-			   hdr, 0, hdr_sz,
-			   hdr_sz);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+				   hdr, 0, hdr_sz,
+				   hdr_sz);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		goto finish_copy;
@@ -4120,12 +4112,9 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		SSDFS_DBG("cur_off %u, written_bytes %u, bytes %u\n",
 			  cur_off, written_bytes, bytes);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, cur_off, PAGE_SIZE,
-				   array, written_bytes, array_size,
-				   bytes);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
+					   array, written_bytes, array_size,
+					   bytes);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			goto finish_copy;
@@ -4275,12 +4264,9 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 			goto finish_fragment_copy;
 		}
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, cur_off, PAGE_SIZE,
-				   hdr, written_bytes, fragment_size,
-				   bytes);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
+					   hdr, written_bytes, fragment_size,
+					   bytes);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			goto finish_cur_copy;

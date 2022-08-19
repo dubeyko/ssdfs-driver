@@ -183,9 +183,10 @@ static int ssdfs_mtd_readpage(struct super_block *sb, struct page *page,
 		  sb, (unsigned long long)offset, page,
 		  (unsigned long long)page_index(page));
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	err = ssdfs_mtd_read(sb, offset, PAGE_SIZE, kaddr);
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (err) {
 		ClearPageUptodate(page);
@@ -359,9 +360,9 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	ret = mtd_write(mtd, to_off, len, &retlen, kaddr + from_off);
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (ret || (retlen != len)) {
 		SetPageError(page);

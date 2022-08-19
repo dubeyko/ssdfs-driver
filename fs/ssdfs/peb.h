@@ -22,6 +22,96 @@
 
 #include "request_queue.h"
 
+#define SSDFS_BLKBMAP_FRAG_HDR_CAPACITY \
+	(sizeof(struct ssdfs_block_bitmap_fragment) + \
+	 (sizeof(struct ssdfs_fragment_desc) * \
+	  SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX))
+
+#define SSDFS_BLKBMAP_HDR_CAPACITY \
+	(sizeof(struct ssdfs_block_bitmap_header) + \
+	 SSDFS_BLKBMAP_FRAG_HDR_CAPACITY)
+
+/*
+ * struct ssdfs_blk_bmap_init_env - block bitmap init environment
+ * @bmap_hdr: pointer on block bitmap header
+ * @bmap_hdr_buf: block bitmap header buffer
+ * @frag_hdr: block bitmap fragment header
+ * @frag_hdr_buf: block bitmap fragment header buffer
+ * @fragment_index: index of bmap fragment
+ * @array: page vector that stores block bitmap content
+ * @read_bytes: counter of all read bytes
+ */
+struct ssdfs_blk_bmap_init_env {
+	struct ssdfs_block_bitmap_header *bmap_hdr;
+	struct ssdfs_block_bitmap_fragment *frag_hdr;
+	u8 bmap_hdr_buf[SSDFS_BLKBMAP_HDR_CAPACITY];
+	int fragment_index;
+	struct ssdfs_page_vector array;
+	u32 read_bytes;
+};
+
+/*
+ * struct ssdfs_blk2off_table_init_env - blk2off table init environment
+ * @tbl_hdr: blk2off table header
+ * @pvec: pagevec with blk2off table fragment
+ * @read_off: current read offset
+ * @write_off: current write offset
+ */
+struct ssdfs_blk2off_table_init_env {
+	struct ssdfs_blk2off_table_header tbl_hdr;
+	struct pagevec pvec;
+	u32 read_off;
+	u32 write_off;
+};
+
+/*
+ * struct ssdfs_blk_desc_table_init_env - blk desc table init environment
+ * @tbl_hdr: blk2off table header
+ * @pvec: pagevec with blk2off table fragment
+ * @compressed_buf: buffer for compressed blk2off table fragment
+ * @buf_size: size of compressed buffer
+ * @read_off: current read offset
+ * @write_off: current write offset
+ */
+struct ssdfs_blk_desc_table_init_env {
+	struct pagevec pvec;
+	void *compressed_buf;
+	u32 buf_size;
+	u32 read_off;
+	u32 write_off;
+};
+
+/*
+ * struct ssdfs_read_init_env - read operation init environment
+ * @log_hdr: log header
+ * @has_seg_hdr: does log have segment header?
+ * @footer: log footer
+ * @has_footer: does log have footer?
+ * @cur_migration_id: current PEB's migration ID
+ * @prev_migration_id: previous PEB's migration ID
+ * @log_offset: offset in pages of the requested log
+ * @log_pages: pages count in every log of segment
+ * @log_bytes: number of bytes in the requested log
+ * @b_init: block bitmap init environment
+ * @t_init: blk2off table init environment
+ * @bdt_init: blk desc table init environment
+ */
+struct ssdfs_read_init_env {
+	void *log_hdr;
+	bool has_seg_hdr;
+	struct ssdfs_log_footer *footer;
+	bool has_footer;
+	int cur_migration_id;
+	int prev_migration_id;
+	u32 log_offset;
+	u32 log_pages;
+	u32 log_bytes;
+
+	struct ssdfs_blk_bmap_init_env b_init;
+	struct ssdfs_blk2off_table_init_env t_init;
+	struct ssdfs_blk_desc_table_init_env bdt_init;
+};
+
 /*
  * struct ssdfs_protection_window - protection window length
  * @cno_lock: lock of checkpoints set
@@ -193,6 +283,7 @@ struct ssdfs_peb_log {
  * @reserved_bytes.blk_desc_tbl: reserved bytes for block descriptor table
  * @current_log: PEB's current log
  * @read_buffer: temporary read buffers (compression case)
+ * @env: init environment
  * @cache: PEB's memory pages
  * @pebc: pointer on parent container
  */
@@ -242,6 +333,9 @@ struct ssdfs_peb_info {
 
 	/* Read buffer */
 	struct ssdfs_peb_temp_read_buffers read_buffer;
+
+	/* Init environment */
+	struct ssdfs_read_init_env env;
 
 	/* PEB's memory pages */
 	struct ssdfs_page_array cache;

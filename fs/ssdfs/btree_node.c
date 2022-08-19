@@ -1132,14 +1132,14 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		void *kaddr;
 		struct page *page = req->result.pvec.pages[i];
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 
 		WARN_ON(!PageLocked(page));
 	}
@@ -1505,10 +1505,10 @@ int __ssdfs_init_index_area_hash_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ptr = (struct ssdfs_btree_index_key *)((u8 *)kaddr + page_off);
 	*start_hash = le64_to_cpu(ptr->index.hash);
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	position = index_count - 1;
@@ -1547,10 +1547,10 @@ int __ssdfs_init_index_area_hash_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ptr = (struct ssdfs_btree_index_key *)((u8 *)kaddr + page_off);
 	*end_hash = le64_to_cpu(ptr->index.hash);
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	return 0;
@@ -2839,7 +2839,6 @@ int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
 					struct page *page,
 					u32 *write_offset)
 {
-	void *kaddr;
 	size_t hdr_size;
 	int err;
 
@@ -2861,13 +2860,10 @@ int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
 		return -EINVAL;
 	}
 
-	kaddr = kmap_atomic(page);
 	/* all btrees have the same node's header size */
-	err = ssdfs_memcpy(kaddr, *write_offset, PAGE_SIZE,
-			   &node->raw, 0, hdr_size,
-			   hdr_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, *write_offset, PAGE_SIZE,
+				   &node->raw, 0, hdr_size,
+				   hdr_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy node's header: "
 			  "write_offset %u, size %zu, err %d\n",
@@ -2906,7 +2902,6 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 	struct ssdfs_segment_info *si;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr1, *kaddr2;
 	u64 logical_offset;
 	u32 data_bytes;
 	u64 seg_id;
@@ -3030,13 +3025,12 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 			  page, page_ref_count(page),
 			  page->flags, page_index(page));
 
-		kaddr1 = kmap_atomic(node->flush_req.result.pvec.pages[i]);
-		kaddr2 = kmap_atomic(node->content.pvec.pages[i]);
-		ssdfs_memcpy(kaddr1, 0, PAGE_SIZE,
-			     kaddr2, 0, PAGE_SIZE,
-			     PAGE_SIZE);
-		kunmap_atomic(kaddr2);
-		kunmap_atomic(kaddr1);
+		ssdfs_memmove_page(node->flush_req.result.pvec.pages[i],
+				   0, PAGE_SIZE,
+				   node->content.pvec.pages[i],
+				   0, PAGE_SIZE,
+				   PAGE_SIZE);
+
 		ssdfs_unlock_page(node->content.pvec.pages[i]);
 	}
 
@@ -5601,7 +5595,7 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 	range_end = upper_index = index_count - 1;
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	prev_found = *found_index;
 	while (lower_index <= upper_index) {
@@ -5722,7 +5716,7 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 	};
 
 finish_search:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (!err || err == -EEXIST) {
 		*found_index += processed_indexes;
@@ -6008,7 +6002,6 @@ int ssdfs_btree_node_get_index(struct pagevec *pvec,
 {
 	size_t index_size = sizeof(struct ssdfs_btree_index_key);
 	struct page *page;
-	void *kaddr;
 	u32 page_index;
 	u32 page_off;
 	int err;
@@ -6045,12 +6038,9 @@ int ssdfs_btree_node_get_index(struct pagevec *pvec,
 	}
 
 	page = pvec->pages[page_index];
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(ptr, 0, index_size,
-			   kaddr, page_off, PAGE_SIZE,
-			   index_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(ptr, 0, index_size,
+				     page, page_off, PAGE_SIZE,
+				     index_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("invalid page_off %u, err %d\n",
 			  page_off, err);
@@ -6090,7 +6080,6 @@ int __ssdfs_btree_common_node_extract_index(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_index_key *ptr)
 {
 	struct page *page;
-	void *kaddr;
 	size_t index_key_len = sizeof(struct ssdfs_btree_index_key);
 	u32 page_index;
 	u32 page_off;
@@ -6134,12 +6123,9 @@ int __ssdfs_btree_common_node_extract_index(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(ptr, 0, index_key_len,
-			   kaddr, page_off, PAGE_SIZE,
-			   index_key_len);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(ptr, 0, index_key_len,
+				     page, page_off, PAGE_SIZE,
+				     index_key_len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -6805,7 +6791,6 @@ int __ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 					struct ssdfs_btree_index_key *ptr)
 {
 	struct page *page;
-	void *kaddr;
 	size_t index_key_len = sizeof(struct ssdfs_btree_index_key);
 	u32 page_index;
 	u32 page_off;
@@ -6853,11 +6838,9 @@ int __ssdfs_btree_common_node_add_index(struct ssdfs_btree_node *node,
 	page = node->content.pvec.pages[page_index];
 
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-			   ptr, 0, index_key_len,
-			   index_key_len);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+				   ptr, 0, index_key_len,
+				   index_key_len);
 	ssdfs_unlock_page(page);
 
 	if (unlikely(err)) {
@@ -6974,7 +6957,6 @@ int ssdfs_btree_common_node_change_index(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_index_key *new_index)
 {
 	struct page *page;
-	void *kaddr;
 	size_t index_key_len = sizeof(struct ssdfs_btree_index_key);
 	u32 page_index;
 	u32 page_off;
@@ -7027,12 +7009,9 @@ int ssdfs_btree_common_node_change_index(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-			   new_index, 0, index_key_len,
-			   index_key_len);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+				   new_index, 0, index_key_len,
+				   index_key_len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -7080,11 +7059,9 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !ptr);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, position %u\n",
 		  node->node_id, position);
-
 	SSDFS_DBG("node_id %u, node_type %#x, hash %llx, "
 		  "seg_id %llu, logical_blk %u, len %u\n",
 		  le32_to_cpu(ptr->node_id),
@@ -7093,6 +7070,7 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 		  le64_to_cpu(ptr->index.extent.seg_id),
 		  le32_to_cpu(ptr->index.extent.logical_blk),
 		  le32_to_cpu(ptr->index.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(position < node->index_area.index_count)) {
 		SSDFS_ERR("cannot insert index: "
@@ -7191,7 +7169,7 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 		page = node->content.pvec.pages[page_index];
 
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 
 		if (moving_count == 0) {
 			err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
@@ -7254,7 +7232,8 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 		}
 
 finish_copy:
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		SSDFS_DBG("cur_pos %u, index_area.index_count %u, "
@@ -8181,9 +8160,8 @@ int ssdfs_btree_common_node_delete_tail_index(struct ssdfs_btree_node *node,
 
 	page = node->content.pvec.pages[page_index];
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	memset((u8 *)kaddr + page_off, 0xFF, index_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memset_page(page, page_off, PAGE_SIZE,
+			  0xFF, index_size);
 	ssdfs_unlock_page(page);
 
 	if (position == 0)
@@ -8213,11 +8191,9 @@ int ssdfs_btree_common_node_delete_tail_index(struct ssdfs_btree_node *node,
 
 		page = node->content.pvec.pages[page_index];
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(ptr, 0, index_size,
-				   kaddr, page_off, PAGE_SIZE,
-				   index_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memcpy_from_page(ptr, 0, index_size,
+					page, page_off, PAGE_SIZE,
+					index_size);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -8347,7 +8323,7 @@ int ssdfs_btree_common_node_remove_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 
 		if (moving_count == 0) {
 			err = ssdfs_memcpy(&buffer, 0, index_size,
@@ -8393,7 +8369,8 @@ int ssdfs_btree_common_node_remove_index(struct ssdfs_btree_node *node,
 		}
 
 finish_copy:
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err))
@@ -8439,11 +8416,9 @@ finish_copy:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_lock_page(page);
-			kaddr = kmap_atomic(page);
-			err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-					   &buffer, 0, index_size,
-					   index_size);
-			kunmap_atomic(kaddr);
+			err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+						   &buffer, 0, index_size,
+						   index_size);
 			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
@@ -9080,12 +9055,9 @@ int ssdfs_copy_index_range_in_buffer(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(buf, 0, PAGE_SIZE,
-			   kaddr, page_off, PAGE_SIZE,
-			   copy_bytes);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(buf, 0, PAGE_SIZE,
+				     page, page_off, PAGE_SIZE,
+				     copy_bytes);
 	if (unlikely(err)) {
 		SSDFS_ERR("buffer is too small: "
 			  "range_len %u, index_size %u, "
@@ -9225,12 +9197,9 @@ int ssdfs_save_index_range_in_node(struct ssdfs_btree_node *node,
 			  i, count, page_index,
 			  page_off, copied, sub_range_len);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-				   buf, copied * index_size, PAGE_SIZE,
-				   sub_range_len * index_size);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+					   buf, copied * index_size, PAGE_SIZE,
+					   sub_range_len * index_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("out of page: "
 				  "sub_range_len %u, index_size %u, "
@@ -9366,9 +9335,8 @@ int ssdfs_clear_index_range_in_node(struct ssdfs_btree_node *node,
 			  start, count, page_index,
 			  page_off, sub_range_len);
 
-		kaddr = kmap_atomic(page);
-		memset(kaddr + page_off, 0xFF, sub_range_len * index_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memset_page(page, page_off, PAGE_SIZE,
+				  0xFF, sub_range_len * index_size);
 
 		i += sub_range_len;
 		count -= sub_range_len;
@@ -11725,11 +11693,8 @@ int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 		}
 
 		page = node->content.pvec.pages[page_index];
-		kaddr = kmap_atomic(page);
-		memset((u8 *)kaddr + item_offset,
-			0x0,
-			clearing_items * item_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memset_page(page, item_offset, PAGE_SIZE,
+				  0x0, clearing_items * item_size);
 
 		dst_index += clearing_items;
 		cleared_items += clearing_items;
@@ -12281,13 +12246,10 @@ try_lock_area:
 
 	buf_offset = search->result.items_in_buffer * item_size;
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(search->result.buf,
-			   buf_offset, search->result.buf_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(search->result.buf,
+				     buf_offset, search->result.buf_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		goto unlock_area;
@@ -13282,13 +13244,13 @@ try_lock_checking_item:
 			goto finish_extract_range;
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		err = check_item(fsi, search,
 				 (u8 *)kaddr + item_offset,
 				 index,
 				 &start_hash, &end_hash,
 				 &found_index);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 
 		down_read(&node->bmap_array.lock);
 		spin_lock(&bmap->lock);
@@ -13444,11 +13406,11 @@ try_lock_extracting_item:
 		SSDFS_DBG("item_offset %u, item_size %zu\n",
 			  item_offset, item_size);
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		err = extract_item(fsi, search, item_size,
 				   (u8 *)kaddr + item_offset,
 				   &start_hash, &end_hash);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 
 		down_read(&node->bmap_array.lock);
 		spin_lock(&bmap->lock);
@@ -13784,13 +13746,9 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 			page2 = node->content.pvec.pages[page_index2];
 			ssdfs_lock_page(page1);
 			ssdfs_lock_page(page2);
-			kaddr1 = kmap_atomic(page1);
-			kaddr2 = kmap_atomic(page2);
-			err = ssdfs_memmove(kaddr2, item_offset2, PAGE_SIZE,
-					    kaddr1, item_offset1, PAGE_SIZE,
-					    moving_bytes);
-			kunmap_atomic(kaddr1);
-			kunmap_atomic(kaddr2);
+			err = ssdfs_memmove_page(page2, item_offset2, PAGE_SIZE,
+						 page1, item_offset1, PAGE_SIZE,
+						 moving_bytes);
 			ssdfs_unlock_page(page1);
 			ssdfs_unlock_page(page2);
 
@@ -13801,11 +13759,12 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		} else {
 			page1 = node->content.pvec.pages[page_index1];
 			ssdfs_lock_page(page1);
-			kaddr1 = kmap_atomic(page1);
+			kaddr1 = kmap_local_page(page1);
 			err = ssdfs_memmove(kaddr1, item_offset2, PAGE_SIZE,
 					    kaddr1, item_offset1, PAGE_SIZE,
 					    moving_bytes);
-			kunmap_atomic(kaddr1);
+			flush_dcache_page(page1);
+			kunmap_local(kaddr1);
 			ssdfs_unlock_page(page1);
 
 			if (unlikely(err)) {
@@ -14114,25 +14073,21 @@ int __ssdfs_shift_range_left(struct ssdfs_btree_node *node,
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
-			kaddr1 = kmap_atomic(page1);
-			kaddr2 = kmap_atomic(page2);
-			err = ssdfs_memmove(kaddr2, item_offset2, PAGE_SIZE,
-					    kaddr1, item_offset1, PAGE_SIZE,
-					    moving_bytes);
-			kunmap_atomic(kaddr1);
-			kunmap_atomic(kaddr2);
-
+			err = ssdfs_memmove_page(page2, item_offset2, PAGE_SIZE,
+						 page1, item_offset1, PAGE_SIZE,
+						moving_bytes);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
 				return err;
 			}
 		} else {
 			page1 = node->content.pvec.pages[page_index1];
-			kaddr1 = kmap_atomic(page1);
+			kaddr1 = kmap_local_page(page1);
 			err = ssdfs_memmove(kaddr1, item_offset2, PAGE_SIZE,
 					    kaddr1, item_offset1, PAGE_SIZE,
 					    moving_bytes);
-			kunmap_atomic(kaddr1);
+			flush_dcache_page(page1);
+			kunmap_local(kaddr1);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
@@ -14418,25 +14373,23 @@ int __ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
-			kaddr1 = kmap_atomic(page1);
-			kaddr2 = kmap_atomic(page2);
-			err = ssdfs_memmove(kaddr2, range_offset2, PAGE_SIZE,
-					    kaddr1, range_offset1, PAGE_SIZE,
-					    moving_range);
-			kunmap_atomic(kaddr1);
-			kunmap_atomic(kaddr2);
-
+			err = ssdfs_memmove_page(page2,
+						 range_offset2, PAGE_SIZE,
+						 page1,
+						 range_offset1, PAGE_SIZE,
+						 moving_range);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
 				return err;
 			}
 		} else {
 			page1 = node->content.pvec.pages[page_index1];
-			kaddr1 = kmap_atomic(page1);
+			kaddr1 = kmap_local_page(page1);
 			err = ssdfs_memmove(kaddr1, range_offset2, PAGE_SIZE,
 					    kaddr1, range_offset1, PAGE_SIZE,
 					    moving_range);
-			kunmap_atomic(kaddr1);
+			flush_dcache_page(page1);
+			kunmap_local(kaddr1);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
@@ -14711,25 +14664,23 @@ int __ssdfs_shift_memory_range_left(struct ssdfs_btree_node *node,
 		if (page_index1 != page_index2) {
 			page1 = node->content.pvec.pages[page_index1];
 			page2 = node->content.pvec.pages[page_index2];
-			kaddr1 = kmap_atomic(page1);
-			kaddr2 = kmap_atomic(page2);
-			err = ssdfs_memmove(kaddr2, range_offset2, PAGE_SIZE,
-					    kaddr1, range_offset1, PAGE_SIZE,
-					    moving_range);
-			kunmap_atomic(kaddr1);
-			kunmap_atomic(kaddr2);
-
+			err = ssdfs_memmove_page(page2,
+						 range_offset2, PAGE_SIZE,
+						 page1,
+						 range_offset1, PAGE_SIZE,
+						 moving_range);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
 				return err;
 			}
 		} else {
 			page1 = node->content.pvec.pages[page_index1];
-			kaddr1 = kmap_atomic(page1);
+			kaddr1 = kmap_local_page(page1);
 			err = ssdfs_memmove(kaddr1, range_offset2, PAGE_SIZE,
 					    kaddr1, range_offset1, PAGE_SIZE,
 					    moving_range);
-			kunmap_atomic(kaddr1);
+			flush_dcache_page(page1);
+			kunmap_local(kaddr1);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
@@ -15035,14 +14986,13 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 			  page, page_ref_count(page),
 			  page->flags, page_index);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr,
-				   item_offset1, PAGE_SIZE,
-				   search->result.buf,
-				   item_offset2, search->result.buf_size,
-				   copying_bytes);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page,
+					   item_offset1,
+					   PAGE_SIZE,
+					   search->result.buf,
+					   item_offset2,
+					   search->result.buf_size,
+					  copying_bytes);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move: err %d\n", err);
 			return err;
@@ -15467,13 +15417,13 @@ try_lock_item:
 			goto finish_extract_range;
 		}
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(search->result.buf,
-				   calculated, search->result.buf_size,
-				   kaddr, item_offset, PAGE_SIZE,
-				   item_size);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_from_page(search->result.buf,
+					     calculated,
+					     search->result.buf_size,
+					     page,
+					     item_offset,
+					     PAGE_SIZE,
+					     item_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n",
 				  err);
@@ -16528,14 +16478,14 @@ void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node)
 		if (!page)
 			continue;
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 }

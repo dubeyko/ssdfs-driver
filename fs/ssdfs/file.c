@@ -394,9 +394,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 	BUG_ON(data_bytes > U32_MAX);
 
-	kaddr = kmap_atomic(page);
-	memset(kaddr, 0, PAGE_SIZE);
-	kunmap_atomic(kaddr);
+	ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
 
 	if (logical_offset >= file_size) {
 		/* Reading beyond inode */
@@ -422,12 +420,9 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 			return -E2BIG;
 		}
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-				   ii->inline_file, 0, inline_capacity,
-				   data_bytes);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+					   ii->inline_file, 0, inline_capacity,
+					   data_bytes);
 		if (unlikely(err)) {
 			ClearPageUptodate(page);
 			ClearPagePrivate(page);
@@ -572,9 +567,7 @@ ssdfs_issue_read_request(struct file *file, struct page *page)
 
 	BUG_ON(data_bytes > U32_MAX);
 
-	kaddr = kmap_atomic(page);
-	memset(kaddr, 0, PAGE_SIZE);
-	kunmap_atomic(kaddr);
+	ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
 
 	if (logical_offset >= file_size) {
 		/* Reading beyond inode */
@@ -1762,12 +1755,11 @@ int ssdfs_writepage_wrapper(struct page *page,
 
 		set_page_writeback(page);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(ii->inline_file, 0, inline_capacity,
-				   kaddr, 0, PAGE_SIZE,
-				   len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_from_page(ii->inline_file,
+					     0, inline_capacity,
+					     page,
+					     0, PAGE_SIZE,
+					     len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy file's content: "
 				  "err %d\n", err);

@@ -5045,7 +5045,7 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("PAGE DUMP\n");
@@ -5320,7 +5320,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;

@@ -1130,9 +1130,9 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, res);
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		SSDFS_DBG("leb_id %llu, page_index %u, err %d\n",
@@ -1183,11 +1183,11 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_lock_page(page);
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 			err = ssdfs_maptbl_cache_get_peb_state(kaddr,
 								item_index,
 								&peb_state);
-			kunmap(page);
+			kunmap_local(kaddr);
 			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
@@ -1856,7 +1856,7 @@ int ssdfs_maptbl_cache_add_page(struct ssdfs_maptbl_cache *cache,
 	}
 
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	err = ssdfs_maptbl_cache_init_page(kaddr, page_index);
 	if (unlikely(err)) {
@@ -1877,7 +1877,8 @@ int ssdfs_maptbl_cache_add_page(struct ssdfs_maptbl_cache *cache,
 	}
 
 finish_add_page:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	return err;
@@ -2234,15 +2235,15 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cache);
 	BUG_ON(page_index >= pagevec_count(&cache->pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("cache %p, page_index %u, item_index %u\n",
 		  cache, page_index, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = cache->pvec.pages[page_index];
 
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
@@ -2326,7 +2327,8 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_remove_item:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	return err;
@@ -2379,7 +2381,7 @@ int ssdfs_check_pre_deleted_peb_state(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	err = ssdfs_maptbl_cache_get_leb2peb_pair(kaddr, item_index, &cur_pair);
 	if (unlikely(err)) {
@@ -2419,7 +2421,7 @@ int ssdfs_check_pre_deleted_peb_state(struct ssdfs_maptbl_cache *cache,
 	}
 
 finish_check_pre_deleted_state:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	if (err)
@@ -2523,7 +2525,7 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 		need_move_item = is_fragment_full(kaddr);
 
@@ -2600,7 +2602,8 @@ int ssdfs_maptbl_cache_insert_leb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_page_modification:
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (err || !need_move_item)
@@ -2712,11 +2715,11 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, &res);
 		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
 		tmp_pair = &res.pebs[SSDFS_MAPTBL_MAIN_INDEX].found;
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (err == -EEXIST) {
@@ -2764,10 +2767,11 @@ int ssdfs_maptbl_cache_map_leb2peb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_maptbl_cache_add_leb(kaddr, item_index,
 						 &cur_pair, &cur_state);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -2843,7 +2847,7 @@ int __ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 
 	page = cache->pvec.pages[page_index];
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	err = ssdfs_maptbl_cache_get_peb_state(kaddr, item_index,
 						&found_state);
@@ -2888,7 +2892,8 @@ int __ssdfs_maptbl_cache_change_peb_state(struct ssdfs_maptbl_cache *cache,
 	}
 
 finish_page_modification:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	return err;
@@ -3826,13 +3831,14 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		items_count = le16_to_cpu(hdr->items_count);
 		err = __ssdfs_maptbl_cache_find_leb(kaddr, i, leb_id, &res);
 		item_index = res.pebs[SSDFS_MAPTBL_MAIN_INDEX].item_index;
 		tmp_pair = &res.pebs[SSDFS_MAPTBL_MAIN_INDEX].found;
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (err == -EEXIST || err == -EFAULT)
@@ -3878,10 +3884,11 @@ int ssdfs_maptbl_cache_add_migration_peb(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_maptbl_cache_add_leb(kaddr, item_index,
 						 &cur_pair, &cur_state);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -4185,7 +4192,7 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		items_count = le16_to_cpu(hdr->items_count);
@@ -4255,7 +4262,8 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 			err = -EEXIST;
 		}
 
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (err == -EEXIST || err == -EFAULT)
@@ -4293,11 +4301,11 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_lock_page(page);
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 			err = ssdfs_maptbl_cache_get_first_item(kaddr,
 							       &saved_pair,
 							       &saved_state);
-			kunmap(page);
+			kunmap_local(kaddr);
 			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
@@ -4313,7 +4321,7 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_lock_page(page);
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 
 			hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 			items_count = le16_to_cpu(hdr->items_count);
@@ -4326,7 +4334,8 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 							 &saved_pair,
 							 &saved_state);
 
-			kunmap(page);
+			flush_dcache_page(page);
+			kunmap_local(kaddr);
 			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
@@ -4372,10 +4381,10 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		items_count = le16_to_cpu(hdr->items_count);
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (items_count == 0) {
@@ -4427,11 +4436,11 @@ int ssdfs_maptbl_cache_forget_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_maptbl_cache_get_peb_state(kaddr,
 						       deleted_item,
 						       &found_state);
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {

@@ -1394,12 +1394,12 @@ int ssdfs_peb_store_fragment(struct ssdfs_fragment_source *from,
 
 	to->compr_size = to->free_space;
 
-	src = kmap(from->page);
+	src = kmap_local_page(from->page);
 	src += from->start_offset;
 	to->desc->checksum = ssdfs_crc32_le(src, from->data_bytes);
 	err = ssdfs_compress(compr_type, src, to->store,
 			     &from->data_bytes, &to->compr_size);
-	kunmap(from->page);
+	kunmap_local(src);
 
 	if (err == -E2BIG || err == -EOPNOTSUPP) {
 		BUG_ON(from->data_bytes > PAGE_SIZE);
@@ -2077,14 +2077,14 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap(stream->pvec->pages[i]);
+		kaddr = kmap_local_page(stream->pvec->pages[i]);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(stream->pvec->pages[i]);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		from.page = stream->pvec->pages[i];
@@ -4316,11 +4316,12 @@ int ssdfs_peb_compress_blk_descs_fragment(struct ssdfs_peb_info *pebi,
 	page_off = area->compressed_offset % PAGE_SIZE;
 	*compr_size = PAGE_SIZE - page_off;
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	err = ssdfs_compress(compr_type,
 			     buf->ptr, (u8 *)kaddr + page_off,
 			     &uncompr_size, compr_size);
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (err == -E2BIG) {
 		void *compr_buf = NULL;
@@ -8541,7 +8542,7 @@ try_get_next_page:
 		dst_page_off = *(desc->write_offset) % PAGE_SIZE;
 		dst_free_space = PAGE_SIZE - dst_page_off;
 
-		kaddr = kmap(dst_page);
+		kaddr = kmap_local_page(dst_page);
 
 		from.page = src_page;
 		from.start_offset = 0;
@@ -8559,7 +8560,8 @@ try_get_next_page:
 
 		err = ssdfs_peb_store_fragment(&from, &to);
 
-		kunmap(dst_page);
+		flush_dcache_page(dst_page);
+		kunmap_local(kaddr);
 
 		if (!err) {
 			SetPagePrivate(dst_page);
@@ -8712,7 +8714,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	pvec_desc.page_vec = desc->snapshot;
 	pvec_desc.bytes_count = desc->bytes_count;
 	pvec_desc.desc_array = frag_desc_array;
-	pvec_desc.array_capacity = SSDFS_FRAGMENTS_CHAIN_MAX;
+	pvec_desc.array_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	pvec_desc.cur_page = desc->cur_page;
 	pvec_desc.write_offset = desc->write_offset;
 
@@ -8771,7 +8773,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	frag_hdr->chain_hdr.uncompr_bytes = cpu_to_le32(pvec_desc.uncompr_size);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(pvec_desc.fragments_count > SSDFS_FRAGMENTS_CHAIN_MAX);
+	WARN_ON(pvec_desc.fragments_count > SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 	frag_hdr->chain_hdr.fragments_count =
 		cpu_to_le16(pvec_desc.fragments_count);
@@ -9664,7 +9666,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_block_bitmap;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	bmap_hdr = SSDFS_BLKBMP_HDR((u8 *)kaddr +
 				    (bmap_hdr_off % PAGE_SIZE));
@@ -9716,7 +9718,8 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	pebi->current_log.seg_flags |= SSDFS_SEG_HDR_HAS_BLK_BMAP;
 
 finish_bmap_hdr_preparation:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	SetPagePrivate(page);
 	SetPageUptodate(page);
@@ -10631,7 +10634,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	footer = kmap(page);
+	footer = kmap_local_page(page);
 	memset(footer, 0xFF, PAGE_SIZE);
 	ssdfs_memcpy(footer->desc_array, 0, array_bytes,
 		     lf_desc, 0, array_bytes,
@@ -10659,7 +10662,8 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 			     sizeof(struct ssdfs_metadata_check));
 	}
 
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(footer);
 
 	SetPagePrivate(page);
 	SetPageUptodate(page);
@@ -10989,7 +10993,7 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	hdr = kmap(page);
+	hdr = kmap_local_page(page);
 
 	ssdfs_memcpy(hdr->desc_array, 0, array_bytes,
 		     desc_array, 0, array_bytes,
@@ -11014,7 +11018,8 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 		goto finish_segment_header_preparation;
 
 finish_segment_header_preparation:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(hdr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -11585,7 +11590,7 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	pl_hdr = kmap(page);
+	pl_hdr = kmap_local_page(page);
 	memset(pl_hdr, 0xFF, PAGE_SIZE);
 	ssdfs_memcpy(pl_hdr->desc_array, 0, array_bytes,
 		     plh_desc, 0, array_bytes,
@@ -11609,7 +11614,8 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 			     sizeof(struct ssdfs_metadata_check));
 	}
 
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(pl_hdr);
 
 	SetPagePrivate(page);
 	SetPageUptodate(page);
@@ -11725,7 +11731,7 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	pl_hdr = kmap(page);
+	pl_hdr = kmap_local_page(page);
 
 	ssdfs_memcpy(pl_hdr->desc_array, 0, array_bytes,
 		     plh_desc, 0, array_bytes,
@@ -11741,7 +11747,8 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 		goto finish_pl_header_preparation;
 
 finish_pl_header_preparation:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(pl_hdr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

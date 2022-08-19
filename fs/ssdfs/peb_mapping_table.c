@@ -1167,7 +1167,6 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 			  page_index, fdesc->lebtbl_pages);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("page %p, portion_id %u, fragment_id %u, "
 		  "fdesc %p, page_index %d, "
@@ -1175,9 +1174,10 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 		  page, portion_id, fragment_id,
 		  fdesc, page_index,
 		  *lebs_per_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 
 	if (le16_to_cpu(hdr->magic) != SSDFS_LEB_TABLE_MAGIC) {
@@ -1263,7 +1263,7 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 		  fdesc->mapped_lebs, fdesc->migrating_lebs);
 
 finish_lebtbl_check:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	return err;
@@ -1335,7 +1335,7 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 	fsi = pebc->parent_si->fsi;
 
 	ssdfs_lock_page(page);
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
 	if (le16_to_cpu(hdr->magic) != SSDFS_PEB_TABLE_MAGIC) {
@@ -1454,7 +1454,7 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 		  reserved_pebs, unused_pebs);
 
 finish_pebtbl_check:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 
 	if (!err) {
@@ -1908,7 +1908,7 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 	spage = pvec->pages[spage_index];
 
 	ssdfs_lock_page(spage);
-	kaddr1 = kmap(spage);
+	kaddr1 = kmap_local_page(spage);
 
 	magic = (__le16 *)kaddr1;
 	if (*magic == cpu_to_le16(SSDFS_LEB_TABLE_MAGIC)) {
@@ -1967,7 +1967,8 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 	set_page_writeback(dpage);
 
 end_copy_dirty_page:
-	kunmap(spage);
+	flush_dcache_page(spage);
+	kunmap_local(kaddr1);
 	ssdfs_unlock_page(spage);
 
 	return err;
@@ -2470,11 +2471,11 @@ define_update_area:
 		goto fail_issue_fragment_updates;
 	}
 
-	kaddr = kmap(req1->result.pvec.pages[0]);
+	kaddr = kmap_local_page(req1->result.pvec.pages[0]);
 	err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
 						area_start, area_size,
 						&seg_index);
-	kunmap(req1->result.pvec.pages[0]);
+	kunmap_local(kaddr);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define volume extent: "
@@ -3030,11 +3031,11 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_issue_commit_request;
 		}
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
 							area_start, area_size,
 							&seg_index);
-		kunmap(page);
+		kunmap_local(kaddr);
 
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
@@ -3365,11 +3366,11 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_issue_prepare_migration_request;
 		}
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
 							area_start, area_size,
 							&seg_index);
-		kunmap(page);
+		kunmap_local(kaddr);
 
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
@@ -4367,7 +4368,7 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -4428,7 +4429,7 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 	peb_desc->shared_peb_index = cached->shared_peb_index;
 
 finish_physical_index_processing:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (!err) {
 		SetPagePrivate(page);
@@ -4482,7 +4483,7 @@ finish_physical_index_processing:
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -4541,7 +4542,7 @@ finish_physical_index_processing:
 	peb_desc->shared_peb_index = cached->shared_peb_index;
 
 finish_relation_index_processing:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (!err) {
 		SetPagePrivate(page);
@@ -6833,7 +6834,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_fragment_change;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -6952,7 +6953,8 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  le16_to_cpu(hdr->reserved_pebs));
 
 finish_page_processing:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (!err) {
 		SetPagePrivate(page);
@@ -7377,7 +7379,7 @@ try_next_page:
 		goto finish_fragment_change;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -7409,7 +7411,8 @@ try_next_page:
 		  fdesc->recovering_pebs);
 
 finish_page_processing:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
@@ -7645,7 +7648,7 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_fragment_change;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -7686,7 +7689,8 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 		peb_desc->state = (u8)new_peb_state;
 
 finish_page_processing:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (!err) {
 		SetPagePrivate(page);
@@ -8597,7 +8601,7 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -8632,7 +8636,8 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 finish_set_peb_descriptor:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -8694,7 +8699,7 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		return err;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	leb_desc = GET_LEB_DESCRIPTOR(kaddr, leb_id);
 	if (IS_ERR_OR_NULL(leb_desc)) {
@@ -8729,7 +8734,8 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 finish_page_processing:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

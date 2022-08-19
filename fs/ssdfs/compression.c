@@ -399,7 +399,7 @@ bool ssdfs_can_compress_data(struct page *page,
 	min = SSDFS_DICT_SIZE;
 	max = 0;
 
-	kaddr = (u8 *)kmap_atomic(page);
+	kaddr = (u8 *)kmap_local_page(page);
 	for (i = 0; i < data_size; i++) {
 		u8 *value = kaddr + i;
 		counts[*value]++;
@@ -410,7 +410,7 @@ bool ssdfs_can_compress_data(struct page *page,
 		if (counts[*value] > max)
 			max = counts[*value];
 	}
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	ssdfs_compr_kfree(counts);
 
