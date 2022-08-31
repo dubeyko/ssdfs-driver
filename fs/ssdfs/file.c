@@ -379,7 +379,6 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 	loff_t logical_offset;
 	loff_t data_bytes;
 	loff_t file_size;
-	void *kaddr;
 	unsigned long res;
 	int err;
 
@@ -553,7 +552,6 @@ ssdfs_issue_read_request(struct file *file, struct page *page)
 	loff_t logical_offset;
 	loff_t data_bytes;
 	loff_t file_size;
-	void *kaddr;
 	int err;
 
 	SSDFS_DBG("ino %lu, page_index %lu\n",
@@ -1742,7 +1740,6 @@ int ssdfs_writepage_wrapper(struct page *page,
 	}
 
 	if (is_ssdfs_file_inline(ii)) {
-		void *kaddr;
 		size_t inline_capacity =
 				ssdfs_inode_inline_file_capacity(inode);
 

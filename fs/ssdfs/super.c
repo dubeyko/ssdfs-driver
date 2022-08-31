@@ -541,10 +541,10 @@ u32 ssdfs_sb_payload_size(struct pagevec *pvec)
 		page = pvec->pages[i];
 
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		fragment_bytes_count = le16_to_cpu(hdr->bytes_count);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -596,7 +596,6 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 	unsigned pages_count;
 	unsigned i;
 	struct page *spage, *dpage;
-	void *kaddr1, *kaddr2;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -634,13 +633,9 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 
 		ssdfs_lock_page(spage);
 		ssdfs_lock_page(dpage);
-		kaddr1 = kmap_atomic(spage);
-		kaddr2 = kmap_atomic(dpage);
-		ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
-			     kaddr1, 0, PAGE_SIZE,
-			     PAGE_SIZE);
-		kunmap_atomic(kaddr1);
-		kunmap_atomic(kaddr2);
+		ssdfs_memcpy_page(dpage, 0, PAGE_SIZE,
+				  spage, 0, PAGE_SIZE,
+				  PAGE_SIZE);
 		ssdfs_unlock_page(dpage);
 		ssdfs_unlock_page(spage);
 	}
@@ -1846,11 +1841,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	/* write segment header */
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-		     fsi->sbi.vh_buf, 0, hdr_size,
-		     hdr_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     fsi->sbi.vh_buf, 0, hdr_size,
+			     hdr_size);
 	SetPagePrivate(page);
 	SetPageUptodate(page);
 	SetPageDirty(page);
@@ -1943,12 +1936,13 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	while (written < fsi->pagesize) {
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
 			     fsi->sbi.vs_buf, written, fsi->pagesize,
 			     PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		SetPagePrivate(page);
 		SetPageUptodate(page);
 		SetPageDirty(page);
@@ -2143,11 +2137,9 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	}
 
 	ssdfs_lock_page(payload_page);
-	kaddr = kmap_atomic(payload_page);
-	err = ssdfs_memcpy(payload_buf, 0, inline_capacity,
-			   kaddr, 0, PAGE_SIZE,
-			   payload_size);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_from_page(payload_buf, 0, inline_capacity,
+				     page, 0, PAGE_SIZE,
+				     payload_size);
 	ssdfs_unlock_page(payload_page);
 
 	if (unlikely(err)) {
@@ -2157,14 +2149,15 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 
 	/* write segment header + payload */
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
 		     fsi->sbi.vh_buf, 0, hdr_size,
 		     hdr_size);
 	err = ssdfs_memcpy(kaddr, hdr_size, PAGE_SIZE,
 			   payload_buf, 0, inline_capacity,
 			   payload_size);
-	kunmap_atomic(kaddr);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	if (!err) {
 		SetPagePrivate(page);
 		SetPageUptodate(page);
@@ -2222,12 +2215,13 @@ free_payload_buffer:
 
 	while (written < fsi->pagesize) {
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
 			     fsi->sbi.vs_buf, written, fsi->pagesize,
 			     PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		SetPagePrivate(page);
 		SetPageUptodate(page);
 		SetPageDirty(page);
@@ -2604,6 +2598,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_info->max_open_zones = 0;
 	fs_info->is_zns_device = false;
 	fs_info->zone_size = U64_MAX;
+	fs_info->zone_capacity = U64_MAX;
 	atomic_set(&fs_info->open_zones, 0);
 
 #ifdef CONFIG_SSDFS_MTD_DEVICE
@@ -2620,6 +2615,19 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 						SSDFS_RESERVED_VBR_SIZE);
 		if (fs_info->zone_size >= U64_MAX) {
 			SSDFS_ERR("fail to get zone size\n");
+			return -ERANGE;
+		}
+
+		fs_info->zone_capacity = ssdfs_zns_zone_capacity(sb,
+						SSDFS_RESERVED_VBR_SIZE);
+		if (fs_info->zone_capacity >= U64_MAX) {
+			SSDFS_ERR("fail to get zone capacity\n");
+			return -ERANGE;
+		} else if (fs_info->zone_capacity > fs_info->zone_size) {
+			SSDFS_ERR("invalid zone capacity: "
+				  "capacity %llu, size %llu\n",
+				  fs_info->zone_capacity,
+				  fs_info->zone_size);
 			return -ERANGE;
 		}
 	} else
@@ -3351,6 +3359,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_free_workspaces();
 
 	ssdfs_super_kfree(fsi);
+	sb->s_fs_info = NULL;
 
 	rcu_barrier();
 

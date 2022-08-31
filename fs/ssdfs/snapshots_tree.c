@@ -2773,7 +2773,6 @@ int ssdfs_snapshots_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_snapshots_btree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 items_count;
 	u32 items_area_size;
 	u16 snapshots_count;
@@ -2836,11 +2835,9 @@ int ssdfs_snapshots_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
 
-	ssdfs_memcpy(&snapshots_header,
-		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
-		     &node->raw.snapshots_header,
-		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
-		     sizeof(struct ssdfs_snapshots_btree_node_header));
+	ssdfs_memcpy(&snapshots_header, 0, hdr_size,
+		     &node->raw.snapshots_header, 0, hdr_size,
+		     hdr_size);
 
 	snapshots_header.node.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	snapshots_header.node.magic.key =
@@ -2891,11 +2888,9 @@ int ssdfs_snapshots_btree_pre_flush_node(struct ssdfs_btree_node *node)
 		goto finish_snapshots_header_preparation;
 	}
 
-	ssdfs_memcpy(&node->raw.snapshots_header,
-		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
-		     &snapshots_header,
-		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
-		     sizeof(struct ssdfs_snapshots_btree_node_header));
+	ssdfs_memcpy(&node->raw.snapshots_header, 0, hdr_size,
+		     &snapshots_header, 0, hdr_size,
+		     hdr_size);
 
 finish_snapshots_header_preparation:
 	up_write(&node->header_lock);
@@ -2910,13 +2905,9 @@ finish_snapshots_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr,
-		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
-		     &snapshots_header,
-		     0, sizeof(struct ssdfs_snapshots_btree_node_header),
-		     sizeof(struct ssdfs_snapshots_btree_node_header));
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &snapshots_header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -4052,7 +4043,6 @@ int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4090,13 +4080,9 @@ int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
 	}
 
 	page = pvec->pages[page_index];
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(snapshot, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(snapshot, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;

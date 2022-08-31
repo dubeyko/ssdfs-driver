@@ -45,8 +45,10 @@ atomic64_t ssdfs_blk2off_cache_leaks;
  * void ssdfs_blk2off_cache_leaks_decrement(void *kaddr)
  * void *ssdfs_blk2off_kmalloc(size_t size, gfp_t flags)
  * void *ssdfs_blk2off_kzalloc(size_t size, gfp_t flags)
+ * void *ssdfs_blk2off_kvzalloc(size_t size, gfp_t flags)
  * void *ssdfs_blk2off_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_blk2off_kfree(void *kaddr)
+ * void ssdfs_blk2off_kvfree(void *kaddr)
  * struct page *ssdfs_blk2off_alloc_page(gfp_t gfp_mask)
  * struct page *ssdfs_blk2off_add_pagevec_page(struct pagevec *pvec)
  * void ssdfs_blk2off_free_page(struct page *page)
@@ -270,12 +272,12 @@ ssdfs_blk2off_table_init_fragment(struct ssdfs_phys_offset_table_fragment *ptr,
 	size_t fragment_size = 0;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ptr %p, sequence_id %u, start_id %u, "
 		  "pages_per_peb %u, state %#x, buf_size %p\n",
 		  ptr, sequence_id, start_id, pages_per_peb,
 		  state, buf_size);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr);
 	BUG_ON(sequence_id > SSDFS_BLK2OFF_TBL_REVERT_THRESHOLD);
 	BUG_ON(state < SSDFS_BLK2OFF_FRAG_CREATED ||
@@ -351,14 +353,14 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table);
 	BUG_ON(logical_blk >= table->lblk2off_capacity);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("logical_blk %u, need_allocate %#x\n",
 		  logical_blk, need_allocate);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!table->migrating_blks) {
 		table->migrating_blks =
-			ssdfs_blk2off_kzalloc(ptr_size * items_count,
+			ssdfs_blk2off_kvzalloc(ptr_size * items_count,
 						GFP_KERNEL);
 		if (!table->migrating_blks) {
 			err = -ENOMEM;
@@ -424,7 +426,7 @@ void ssdfs_destroy_migrating_blocks_array(struct ssdfs_blk2off_table *table)
 		}
 	}
 
-	ssdfs_blk2off_kfree(table->migrating_blks);
+	ssdfs_blk2off_kvfree(table->migrating_blks);
 	table->migrating_blks = NULL;
 }
 
@@ -463,10 +465,10 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	BUG_ON(items_count > (2 * fsi->pages_per_seg));
 	BUG_ON(type <= SSDFS_UNKNOWN_OFF_TABLE_TYPE ||
 		type >= SSDFS_OFF_TABLE_MAX_TYPE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, items_count %u, type %u, state %#x\n",
 		  fsi, items_count, type,  state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ptr = (struct ssdfs_blk2off_table *)ssdfs_blk2off_kzalloc(table_size,
 								  GFP_KERNEL);
@@ -494,7 +496,7 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 
 	bytes = ssdfs_blk2off_table_bmap_bytes(items_count);
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		ptr->lbmap[i] = (unsigned long *)ssdfs_blk2off_kzalloc(bytes,
+		ptr->lbmap[i] = (unsigned long *)ssdfs_blk2off_kvzalloc(bytes,
 								    GFP_KERNEL);
 		if (!ptr->lbmap[i]) {
 			err = -ENOMEM;
@@ -510,11 +512,13 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 
 	ptr->lblk2off_capacity = items_count;
 
-	ptr->lblk2off = ssdfs_blk2off_kzalloc(off_pos_size * items_count,
+	ptr->lblk2off = ssdfs_blk2off_kvzalloc(off_pos_size * items_count,
 						GFP_KERNEL);
 	if (!ptr->lblk2off) {
 		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate translation array\n");
+		SSDFS_ERR("fail to allocate translation array: "
+			  "off_pos_size %zu, items_count %u\n",
+			  off_pos_size, items_count);
 		goto free_bmap;
 	}
 	memset(ptr->lblk2off, 0xFF, off_pos_size * items_count);
@@ -618,11 +622,11 @@ free_phys_offs_array:
 	ssdfs_blk2off_kfree(ptr->peb);
 
 free_translation_array:
-	ssdfs_blk2off_kfree(ptr->lblk2off);
+	ssdfs_blk2off_kvfree(ptr->lblk2off);
 
 free_bmap:
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++)
-		ssdfs_blk2off_kfree(ptr->lbmap[i]);
+		ssdfs_blk2off_kvfree(ptr->lbmap[i]);
 
 	ssdfs_blk2off_kfree(ptr);
 
@@ -699,13 +703,13 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_blk2off_kfree(table->lblk2off);
+	ssdfs_blk2off_kvfree(table->lblk2off);
 	table->lblk2off = NULL;
 
 	ssdfs_destroy_migrating_blocks_array(table);
 
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		ssdfs_blk2off_kfree(table->lbmap[i]);
+		ssdfs_blk2off_kvfree(table->lbmap[i]);
 		table->lbmap[i] = NULL;
 	}
 
@@ -722,10 +726,10 @@ void ssdfs_blk2off_table_bmap_set(unsigned long *lbmap, u16 logical_blk)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("lbmap %p, logical_blk %u\n",
 		  lbmap, logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	bitmap_set(lbmap, logical_blk, 1);
 }
@@ -740,10 +744,10 @@ void ssdfs_blk2off_table_bmap_clear(unsigned long *lbmap, u16 logical_blk)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("lbmap %p, logical_blk %u\n",
 		  lbmap, logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	bitmap_clear(lbmap, logical_blk, 1);
 }
@@ -763,10 +767,10 @@ bool ssdfs_blk2off_table_bmap_vacant(unsigned long *lbmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("lbmap %p, lbmap_bits %u, logical_blk %u\n",
 		  lbmap, lbmap_bits, logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	found = find_next_zero_bit(lbmap, lbmap_bits, logical_blk);
 
@@ -788,10 +792,10 @@ bool ssdfs_blk2off_table_extent_vacant(unsigned long *lbmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap || !extent);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("lbmap %p, lbmap_bits %u, extent (start %u, len %u)\n",
 		  lbmap, lbmap_bits, extent->start_lblk, extent->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (extent->start_lblk >= lbmap_bits) {
 		SSDFS_ERR("invalid extent start %u\n",
@@ -983,7 +987,8 @@ int ssdfs_check_fragment(struct ssdfs_blk2off_table *table,
 		return -EIO;
 	}
 
-	items_size = id_count * sizeof(struct ssdfs_phys_offset_descriptor);
+	items_size = (u32)id_count *
+			sizeof(struct ssdfs_phys_offset_descriptor);
 
 	if (byte_size < items_size) {
 		SSDFS_ERR("invalid byte_size %u for peb_index %u\n",
@@ -1024,7 +1029,6 @@ int ssdfs_get_checked_table_header(struct ssdfs_blk2off_init *portion)
 {
 	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	struct page *page;
-	void *kaddr;
 	int page_index;
 	u32 page_off;
 	int err;
@@ -1089,7 +1093,8 @@ int ssdfs_blk2off_prepare_temp_bmap(struct ssdfs_blk2off_init *portion)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	portion->bmap_bytes = ssdfs_blk2off_table_bmap_bytes(portion->capacity);
-	portion->bmap = ssdfs_blk2off_kzalloc(portion->bmap_bytes, GFP_KERNEL);
+	portion->bmap = ssdfs_blk2off_kvzalloc(portion->bmap_bytes,
+						GFP_KERNEL);
 	if (unlikely(!portion->bmap)) {
 		SSDFS_ERR("fail to allocate memory\n");
 		return -ENOMEM;
@@ -1114,7 +1119,8 @@ int ssdfs_blk2off_prepare_pos_array(struct ssdfs_blk2off_init *portion)
 
 	portion->pos_count = portion->capacity;
 	pos_array_bytes = portion->capacity * pos_size;
-	portion->pos_array = ssdfs_blk2off_kzalloc(pos_array_bytes, GFP_KERNEL);
+	portion->pos_array = ssdfs_blk2off_kvzalloc(pos_array_bytes,
+						    GFP_KERNEL);
 	if (unlikely(!portion->pos_array)) {
 		SSDFS_ERR("fail to allocate memory\n");
 		return -ENOMEM;
@@ -1184,7 +1190,6 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 		while (array_size > 0) {
 			u32 size;
 			struct page *page;
-			void *kaddr;
 
 			if (page_index >= pagevec_count(portion->blk2off_pvec)) {
 				SSDFS_ERR("invalid request: "
@@ -2489,9 +2494,9 @@ unlock_translation_table:
 
 	SSDFS_DBG("finished: err %d\n", err);
 
-	ssdfs_blk2off_kfree(portion.bmap);
+	ssdfs_blk2off_kvfree(portion.bmap);
 	portion.bmap = NULL;
-	ssdfs_blk2off_kfree(portion.pos_array);
+	ssdfs_blk2off_kvfree(portion.pos_array);
 	portion.pos_array = NULL;
 	ssdfs_blk2off_kfree(portion.extent_array);
 	portion.extent_array = NULL;
@@ -2637,6 +2642,7 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 	size_t blk_desc_ptr_size = sizeof(struct ssdfs_migrating_block *);
 	u16 *off_ptr;
 	void *migrating_ptr;
+	u32 old_bytes;
 	u32 new_bytes;
 	u16 last_blk;
 	int diff;
@@ -2668,11 +2674,13 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 		}
 	}
 
+	old_bytes = ssdfs_blk2off_table_bmap_bytes(table->lblk2off_capacity);
 	new_bytes = ssdfs_blk2off_table_bmap_bytes(new_items_count);
 
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		bmap_ptr = krealloc(table->lbmap[i], new_bytes,
-				    GFP_KERNEL | __GFP_ZERO);
+		bmap_ptr = kvrealloc(table->lbmap[i],
+				     old_bytes, new_bytes,
+				     GFP_KERNEL | __GFP_ZERO);
 		if (!bmap_ptr) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate bitmaps\n");
@@ -2681,8 +2689,11 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 			table->lbmap[i] = (unsigned long *)bmap_ptr;
 	}
 
-	off_ptr = krealloc(table->lblk2off, off_pos_size * new_items_count,
-			   GFP_KERNEL | __GFP_ZERO);
+	old_bytes = off_pos_size * table->lblk2off_capacity;
+
+	off_ptr = kvrealloc(table->lblk2off,
+			    old_bytes, off_pos_size * new_items_count,
+			    GFP_KERNEL | __GFP_ZERO);
 	if (!off_ptr) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate translation array\n");
@@ -2697,9 +2708,12 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 		0xFF, off_pos_size * diff);
 
 	if (table->migrating_blks) {
-		migrating_ptr = krealloc(table->migrating_blks,
-					 blk_desc_ptr_size * new_items_count,
-					 GFP_KERNEL | __GFP_ZERO);
+		old_bytes = blk_desc_ptr_size * table->lblk2off_capacity;
+
+		migrating_ptr = kvrealloc(table->migrating_blks,
+					  old_bytes,
+					  blk_desc_ptr_size * new_items_count,
+					  GFP_KERNEL | __GFP_ZERO);
 		if (!migrating_ptr) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate migrating blocks array\n");
@@ -2941,7 +2955,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 	capacity = table->lblk2off_capacity;
 
 	bmap_bytes = ssdfs_blk2off_table_bmap_bytes(capacity);
-	snapshot->bmap_copy = ssdfs_blk2off_kzalloc(bmap_bytes, GFP_KERNEL);
+	snapshot->bmap_copy = ssdfs_blk2off_kvzalloc(bmap_bytes, GFP_KERNEL);
 	if (!snapshot->bmap_copy) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocated bytes %zu\n",
@@ -2950,7 +2964,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 	}
 
 	tbl_bytes = capacity * off_pos_size;
-	snapshot->tbl_copy = ssdfs_blk2off_kzalloc(tbl_bytes, GFP_KERNEL);
+	snapshot->tbl_copy = ssdfs_blk2off_kvzalloc(tbl_bytes, GFP_KERNEL);
 	if (!snapshot->tbl_copy) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocated bytes %zu\n",
@@ -3063,12 +3077,12 @@ finish_snapshoting:
 
 	if (err) {
 		if (snapshot->bmap_copy) {
-			ssdfs_blk2off_kfree(snapshot->bmap_copy);
+			ssdfs_blk2off_kvfree(snapshot->bmap_copy);
 			snapshot->bmap_copy = NULL;
 		}
 
 		if (snapshot->tbl_copy) {
-			ssdfs_blk2off_kfree(snapshot->tbl_copy);
+			ssdfs_blk2off_kvfree(snapshot->tbl_copy);
 			snapshot->tbl_copy = NULL;
 		}
 	}
@@ -3088,12 +3102,12 @@ void ssdfs_blk2off_table_free_snapshot(struct ssdfs_blk2off_table_snapshot *sp)
 		return;
 
 	if (sp->bmap_copy) {
-		ssdfs_blk2off_kfree(sp->bmap_copy);
+		ssdfs_blk2off_kvfree(sp->bmap_copy);
 		sp->bmap_copy = NULL;
 	}
 
 	if (sp->tbl_copy) {
-		ssdfs_blk2off_kfree(sp->tbl_copy);
+		ssdfs_blk2off_kvfree(sp->tbl_copy);
 		sp->tbl_copy = NULL;
 	}
 
@@ -3980,20 +3994,19 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 {
 	size_t hdr_sz = sizeof(struct ssdfs_blk2off_table_header);
 	struct page *page;
-	void *kaddr;
 	u32 page_off, cur_offset;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!hdr || !cur_page || !write_offset);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, current_log.start_page %u, "
 		  "hdr %p, cur_page %lu, write_offset %u\n",
 		  pebi->peb_id,
 		  pebi->current_log.start_page,
 		  hdr, *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_off = *write_offset % PAGE_SIZE;
 
@@ -4067,7 +4080,6 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 				      u32 *write_offset)
 {
 	struct page *page;
-	void *kaddr;
 	size_t extent_size = sizeof(struct ssdfs_translation_extent);
 	size_t array_size = extent_size * extent_count;
 	u32 rest_bytes, written_bytes = 0;
@@ -6585,7 +6597,8 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 	start_page = logical_blk - req->place.start.blk_index;
 	for (i = start_page; i < (start_page + pages_per_lblk); i++) {
 		struct page *page;
-		void *kaddr1, *kaddr2;
+#ifdef CONFIG_SSDFS_DEBUG
+		void *kaddr;
 
 		SSDFS_DBG("start_page %u, logical_blk %u, "
 			  "blk_index %u, i %d, "
@@ -6594,6 +6607,7 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 			  req->place.start.blk_index,
 			  i,
 			  pagevec_count(&req->result.pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		page = ssdfs_blk2off_alloc_page(GFP_KERNEL);
 		if (IS_ERR_OR_NULL(page)) {
@@ -6611,21 +6625,17 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		BUG_ON(!req->result.pvec.pages[i]);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		kaddr1 = kmap_atomic(req->result.pvec.pages[i]);
-		kaddr2 = kmap_atomic(page);
-		ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
-			     kaddr1, 0, PAGE_SIZE,
-			     PAGE_SIZE);
-		kunmap_atomic(kaddr2);
-		kunmap_atomic(kaddr1);
+		ssdfs_memcpy_page(page, 0, PAGE_SIZE,
+				  req->result.pvec.pages[i], 0, PAGE_SIZE,
+				  PAGE_SIZE);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr1 = kmap_atomic(req->result.pvec.pages[i]);
+		kaddr = kmap_local_page(req->result.pvec.pages[i]);
 		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr1, PAGE_SIZE);
+				     kaddr, PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap_atomic(kaddr1);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		pagevec_add(&blk->pvec, page);
@@ -6780,11 +6790,13 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 	for (i = 0; i < pagevec_count(&blk->pvec); i++) {
 		int page_index = start_page + i;
 		struct page *page;
-		void *kaddr1, *kaddr2;
+#ifdef CONFIG_SSDFS_DEBUG
+		void *kaddr;
 
 		SSDFS_DBG("index %d, read_bytes %u, "
 			  "start_page %u, page_index %d\n",
 			  i, read_bytes, start_page, page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_index >= pagevec_count(&req->result.pvec)) {
 			err = -ERANGE;
@@ -6797,21 +6809,17 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		page = req->result.pvec.pages[page_index];
 		ssdfs_lock_page(blk->pvec.pages[i]);
 
-		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
-		kaddr2 = kmap_atomic(page);
-		ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
-			     kaddr1, 0, PAGE_SIZE,
-			     PAGE_SIZE);
-		kunmap_atomic(kaddr2);
-		kunmap_atomic(kaddr1);
+		ssdfs_memcpy_page(page, 0, PAGE_SIZE,
+				  blk->pvec.pages[i], 0, PAGE_SIZE,
+				  PAGE_SIZE);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
+		kaddr = kmap_local_page(blk->pvec.pages[i]);
 		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr1, PAGE_SIZE);
+				     kaddr, PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap_atomic(kaddr1);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_unlock_page(blk->pvec.pages[i]);
@@ -6924,11 +6932,13 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 	for (i = 0; i < pagevec_count(&blk->pvec); i++) {
 		int page_index = start_page + i;
 		struct page *page;
-		void *kaddr1, *kaddr2;
+#ifdef CONFIG_SSDFS_DEBUG
+		void *kaddr;
 
 		SSDFS_DBG("index %d, read_bytes %u, "
 			  "start_page %u, page_index %d\n",
 			  i, read_bytes, start_page, page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_index >= pagevec_count(&req->result.pvec)) {
 			err = -ERANGE;
@@ -6941,21 +6951,17 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 		page = req->result.pvec.pages[page_index];
 		ssdfs_lock_page(blk->pvec.pages[i]);
 
-		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
-		kaddr2 = kmap_atomic(page);
-		ssdfs_memcpy(kaddr1, 0, PAGE_SIZE,
-			     kaddr2, 0, PAGE_SIZE,
-			     PAGE_SIZE);
-		kunmap_atomic(kaddr2);
-		kunmap_atomic(kaddr1);
+		ssdfs_memcpy_page(blk->pvec.pages[i], 0, PAGE_SIZE,
+				  page, 0, PAGE_SIZE,
+				  PAGE_SIZE);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr1 = kmap_atomic(blk->pvec.pages[i]);
+		kaddr = kmap_local_page(blk->pvec.pages[i]);
 		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr1, PAGE_SIZE);
+				     kaddr, PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap_atomic(kaddr1);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_unlock_page(blk->pvec.pages[i]);

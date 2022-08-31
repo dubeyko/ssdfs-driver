@@ -1202,7 +1202,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		err = -ERANGE;
 		SSDFS_ERR("fail to initialize segbmap fragment\n");
 	} else {
-		hdr = SSDFS_SBMP_FRAG_HDR(kmap_atomic(page));
+		hdr = SSDFS_SBMP_FRAG_HDR(kmap_local_page(page));
 		desc->total_segs = le16_to_cpu(hdr->total_segs);
 
 		SSDFS_DBG("total_segs %u, clean_or_using_segs %u, "
@@ -1236,7 +1236,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 			bitmap_set(fbmap, sequence_id, 1);
 
 		desc->state = state;
-		kunmap_atomic(hdr);
+		kunmap_local(hdr);
 	}
 
 	ssdfs_seg_bmap_account_page(page);
@@ -1320,7 +1320,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 	struct ssdfs_segbmap_fragment_desc *desc;
 	struct ssdfs_segbmap_fragment_header *hdr;
 	struct page *dpage, *spage;
-	void *kaddr1, *kaddr2;
+	void *kaddr;
 	u16 fragment_bytes;
 	__le32 old_csum, csum;
 	u16 total_segs;
@@ -1333,11 +1333,11 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 	BUG_ON(!segbmap || !req);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
 	BUG_ON(page_index >= PAGEVEC_SIZE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragment_index %u, "
 		  "page_index %u, req %p\n",
 		  segbmap, fragment_index, page_index, req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	desc = &segbmap->desc_array[fragment_index];
 
@@ -1356,8 +1356,8 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	ssdfs_account_locked_page(spage);
 
-	kaddr1 = kmap_local_page(spage);
-	hdr = SSDFS_SBMP_FRAG_HDR(kaddr1);
+	kaddr = kmap_local_page(spage);
+	hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 
 	if (le32_to_cpu(hdr->magic) != SSDFS_SEGBMAP_HDR_MAGIC) {
 		err = -ERANGE;
@@ -1370,7 +1370,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	old_csum = hdr->checksum;
 	hdr->checksum = 0;
-	csum = ssdfs_crc32_le(kaddr1, fragment_bytes);
+	csum = ssdfs_crc32_le(kaddr, fragment_bytes);
 	hdr->checksum = old_csum;
 
 	if (old_csum != csum) {
@@ -1434,11 +1434,9 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 		goto fail_copy_fragment;
 	}
 
-	kaddr2 = kmap_atomic(dpage);
-	ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
-		     kaddr1, 0, PAGE_SIZE,
-		     PAGE_SIZE);
-	kunmap_atomic(kaddr2);
+	ssdfs_memcpy_to_page(dpage, 0, PAGE_SIZE,
+			     kaddr, 0, PAGE_SIZE,
+			     PAGE_SIZE);
 
 	SetPageUptodate(dpage);
 	if (!PageDirty(dpage))
@@ -1450,7 +1448,7 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 	desc->state = SSDFS_SEGBMAP_FRAG_TOWRITE;
 
 fail_copy_fragment:
-	kunmap_local(kaddr1);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(spage);
 	ssdfs_put_page(spage);
 
@@ -1474,35 +1472,32 @@ void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_request *req1,
 	struct ssdfs_segbmap_fragment_header *hdr;
 	u16 fragment_bytes;
 	struct page *spage, *dpage;
-	void *kaddr1, *kaddr2;
+	void *kaddr;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req1 || !req2);
 	BUG_ON(page_index >= pagevec_count(&req1->result.pvec));
 	BUG_ON(page_index >= pagevec_count(&req2->result.pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req1 %p, req2 %p, page_index %u\n",
 		  req1, req2, page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spage = req1->result.pvec.pages[page_index];
 	dpage = req2->result.pvec.pages[page_index];
 
-	kaddr1 = kmap_atomic(spage);
+	ssdfs_memcpy_page(dpage, 0, PAGE_SIZE,
+			  spage, 0, PAGE_SIZE,
+			  PAGE_SIZE);
 
-	kaddr2 = kmap_atomic(dpage);
-	ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
-		     kaddr1, 0, PAGE_SIZE,
-		     PAGE_SIZE);
-	kunmap_atomic(kaddr1);
-
-	hdr = SSDFS_SBMP_FRAG_HDR(kaddr2);
+	kaddr = kmap_local_page(dpage);
+	hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 	hdr->seg_type = SSDFS_COPY_SEGBMAP_SEG;
 	fragment_bytes = le16_to_cpu(hdr->fragment_bytes);
 	hdr->checksum = 0;
-	hdr->checksum = ssdfs_crc32_le(kaddr2, fragment_bytes);
-
-	kunmap_atomic(kaddr2);
+	hdr->checksum = ssdfs_crc32_le(kaddr, fragment_bytes);
+	flush_dcache_page(dpage);
+	kunmap_local(kaddr);
 
 	SetPageUptodate(dpage);
 	if (!PageDirty(dpage))
@@ -2632,10 +2627,10 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 
 	byte_item = page_item - ((byte_offset - hdr_size) * items_per_byte);
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	byte_ptr = (u8 *)kaddr + byte_offset;
 	state = ssdfs_segbmap_get_state_from_byte(byte_ptr, byte_item);
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 free_page:
 	ssdfs_unlock_page(page);
@@ -3139,7 +3134,7 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 
 	div_u64_rem(page_item, items_per_byte, &byte_item);
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	byte_ptr = (u8 *)kaddr + byte_offset;
 	err = ssdfs_segbmap_set_state_in_byte(byte_ptr, byte_item,
 					      &old_state, new_state);
@@ -3148,7 +3143,7 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 							old_state, new_state,
 							kaddr);
 	}
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	if (err == -EEXIST) {
 		err = 0;

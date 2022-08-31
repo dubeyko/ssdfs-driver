@@ -1142,13 +1142,13 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, src_peb_state %#x, "
 		  "dst_peb_state %#x, src_peb_flags %#x\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, src_peb_state,
 		  dst_peb_state, src_peb_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	peb_has_ext_ptr = src_peb_flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR;
 
@@ -1454,7 +1454,7 @@ fail_start_threads:
 int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 				u64 seg, u32 peb_index,
 				u8 peb_type,
-				u16 log_pages,
+				u32 log_pages,
 				struct ssdfs_segment_info *si)
 {
 	struct ssdfs_peb_container *pebc;
@@ -2175,7 +2175,7 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	u64 leb_id;
 	u64 peb_id;
 	u64 seg;
-	u16 log_pages;
+	u32 log_pages;
 	u8 peb_migration_id;
 	struct completion *end;
 	int err = 0;
@@ -2888,7 +2888,6 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!rwsem_is_locked(&ptr->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u, "
@@ -2898,6 +2897,7 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 		  ptr->peb_type,
 		  ptr->log_pages,
 		  state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -3271,7 +3271,6 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
@@ -3279,6 +3278,7 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 		  ptr->peb_index,
 		  ptr->peb_type,
 		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -3412,10 +3412,6 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 				  ptr->peb_index, err);
 			goto finish_forget_source;
 		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(used_blks >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		has_valid_blks = used_blks > 0;
 
@@ -3570,7 +3566,7 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 	int items_state;
 	u64 leb_id;
 	int new_state = SSDFS_PEB_CONTAINER_STATE_MAX;
-	u16 used_blks;
+	int used_blks;
 	bool has_valid_blks = true;
 	int err = 0;
 
@@ -3612,10 +3608,6 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 			  ptr->peb_index, err);
 		goto finish_forget_relation;
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(used_blks >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	has_valid_blks = used_blks > 0;
 
@@ -3900,12 +3892,12 @@ int ssdfs_peb_get_free_pages(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
@@ -3935,12 +3927,12 @@ int ssdfs_peb_get_used_data_pages(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
@@ -4014,7 +4006,7 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range;
 	u16 peb_index;
-	u16 peb_page;
+	u32 peb_page;
 	u8 peb_migration_id;
 	int id;
 	int items_state;
@@ -4025,7 +4017,6 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !desc);
 	BUG_ON(!pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, peb_migration_id %u, "
 		  "logical_offset %u, logical_blk %u, peb_page %u\n",
@@ -4035,6 +4026,7 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 		  le32_to_cpu(desc->page_desc.logical_offset),
 		  le16_to_cpu(desc->page_desc.logical_blk),
 		  le16_to_cpu(desc->page_desc.peb_page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	peb_index = pebc->peb_index;
 	peb_page = le16_to_cpu(desc->page_desc.peb_page);

@@ -476,7 +476,8 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		goto destroy_seg_obj;
 	}
 
-	si->blk2off_table = ssdfs_blk2off_table_create(fsi, fsi->pages_per_seg,
+	si->blk2off_table = ssdfs_blk2off_table_create(fsi,
+							fsi->leb_pages_capacity,
 							SSDFS_SEG_OFF_TABLE,
 							state);
 	if (!si->blk2off_table) {

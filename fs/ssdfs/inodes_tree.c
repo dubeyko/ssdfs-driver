@@ -2850,7 +2850,6 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	size_t hdr_size = sizeof(struct ssdfs_inodes_btree_node_header);
 	u32 bmap_bytes;
 	struct page *page;
-	void *kaddr;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3427,7 +3426,6 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 	u32 buf_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG

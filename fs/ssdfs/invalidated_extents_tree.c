@@ -2288,7 +2288,6 @@ int ssdfs_invextree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_invextree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 items_count;
 	u32 items_area_size;
 	u16 extents_count;
@@ -3340,7 +3339,6 @@ int __ssdfs_invextree_node_get_extent(struct pagevec *pvec,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG

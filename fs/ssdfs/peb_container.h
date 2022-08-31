@@ -98,7 +98,7 @@ struct ssdfs_peb_container {
 	/* Static data */
 	u8 peb_type;
 	u16 peb_index;
-	u16 log_pages;
+	u32 log_pages;
 
 	/* PEB container's threads */
 	struct ssdfs_thread_info thread[SSDFS_PEB_THREAD_TYPE_MAX];
@@ -211,7 +211,7 @@ bool is_ssdfs_peb_containing_user_data(struct ssdfs_peb_container *pebc)
 int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 				u64 seg, u32 peb_index,
 				u8 peb_type,
-				u16 log_pages,
+				u32 log_pages,
 				struct ssdfs_segment_info *si);
 void ssdfs_peb_container_destroy(struct ssdfs_peb_container *pebc);
 

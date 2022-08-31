@@ -135,13 +135,13 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("si %p, seg_id %llu, "
 		  "pages_per_peb %u, "
 		  "init_flag %#x, init_state %#x\n",
 		  si, si->seg_id, pages_per_peb,
 		  init_flag, init_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = si->fsi;
 	bmap = &si->blk_bmap;
@@ -523,7 +523,7 @@ int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
  */
 int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					     struct ssdfs_peb_container *pebc,
-					     u16 count)
+					     u32 count)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
@@ -590,7 +590,7 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
  */
 int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					  struct ssdfs_peb_container *pebc,
-					  u16 count)
+					  u32 count)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
@@ -649,7 +649,7 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
  * %-E2BIG      - segment hasn't enough free space.
  */
 int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
-					  u16 count)
+					  u32 count)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;

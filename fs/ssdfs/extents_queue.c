@@ -631,7 +631,6 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	struct ssdfs_btree_node_header *hdr_ptr;
 	struct pagevec pvec;
 	struct page *page;
-	void *kaddr;
 	u32 node_id1, node_id2;
 	int node_type1, node_type2;
 	u8 height1, height2;

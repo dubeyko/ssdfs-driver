@@ -1551,21 +1551,36 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->log_pagesize = fsi->vh->log_pagesize;
 	fsi->pagesize = 1 << fsi->vh->log_pagesize;
 	fsi->log_erasesize = fsi->vh->log_erasesize;
-
-	if (fsi->is_zns_device) {
-		fsi->erasesize = fsi->zone_size;
-		fsi->segsize = fsi->erasesize *
-				le16_to_cpu(fsi->vh->pebs_per_seg);
-	} else {
-		fsi->erasesize = 1 << fsi->vh->log_erasesize;
-		fsi->segsize = 1 << fsi->vh->log_segsize;
-	}
-
 	fsi->segsize = 1 << fsi->vh->log_segsize;
 	fsi->log_pebs_per_seg = fsi->vh->log_pebs_per_seg;
 	fsi->pebs_per_seg = 1 << fsi->vh->log_pebs_per_seg;
 	fsi->pages_per_peb = fsi->erasesize / fsi->pagesize;
 	fsi->pages_per_seg = fsi->segsize / fsi->pagesize;
+
+	if (fsi->is_zns_device) {
+		u64 peb_pages_capacity =
+			fsi->zone_capacity >> fsi->vh->log_pagesize;
+
+		fsi->erasesize = fsi->zone_size;
+		fsi->segsize = fsi->erasesize *
+				le16_to_cpu(fsi->vh->pebs_per_seg);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(peb_pages_capacity >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		fsi->peb_pages_capacity = (u32)peb_pages_capacity;
+	} else {
+		fsi->erasesize = 1 << fsi->vh->log_erasesize;
+		fsi->segsize = 1 << fsi->vh->log_segsize;
+		fsi->peb_pages_capacity = fsi->pages_per_peb;
+	}
+
+	if (fsi->pages_per_peb > U16_MAX)
+		fsi->leb_pages_capacity = U16_MAX;
+	else
+		fsi->leb_pages_capacity = fsi->pages_per_peb;
+
 	fsi->fs_ctime = le64_to_cpu(fsi->vh->create_time);
 	fsi->fs_cno = le64_to_cpu(fsi->vh->create_cno);
 	fsi->raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
@@ -1575,6 +1590,10 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 		  fsi->pagesize, fsi->erasesize, fsi->segsize);
 	SSDFS_DBG("pebs_per_seg %u, pages_per_peb %u, pages_per_seg %u\n",
 		  fsi->pebs_per_seg, fsi->pages_per_peb, fsi->pages_per_seg);
+	SSDFS_DBG("zone_size %llu, zone_capacity %llu, "
+		  "leb_pages_capacity %u, peb_pages_capacity %u\n",
+		  fsi->zone_size, fsi->zone_capacity,
+		  fsi->leb_pages_capacity, fsi->peb_pages_capacity);
 	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, raw_inode_size %u\n",
 		  (u64)fsi->fs_ctime, (u64)fsi->fs_cno,
 		  fsi->raw_inode_size);
@@ -1694,7 +1713,38 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	if (err && err != -EROFS)
 		return err;
 
-	return ssdfs_check_feature_compatibility(fsi);
+	err = ssdfs_check_feature_compatibility(fsi);
+	if (err)
+		return err;
+
+	if (fsi->leb_pages_capacity >= U16_MAX) {
+#ifdef CONFIG_SSDFS_TESTING
+		SSDFS_DBG("Continue in testing mode: "
+			  "leb_pages_capacity %u, peb_pages_capacity %u\n",
+			  fsi->leb_pages_capacity,
+			  fsi->peb_pages_capacity);
+		return 0;
+#else
+		SSDFS_NOTICE("unable to mount in RW mode: "
+			     "Please, format volume with bigger logical block size.\n");
+		SSDFS_NOTICE("STATIC VOLUME INFO:\n");
+		SSDFS_NOTICE("pagesize %u, erasesize %u, segsize %u\n",
+			     fsi->pagesize, fsi->erasesize, fsi->segsize);
+		SSDFS_NOTICE("pebs_per_seg %u, pages_per_peb %u, "
+			     "pages_per_seg %u\n",
+			     fsi->pebs_per_seg, fsi->pages_per_peb,
+			     fsi->pages_per_seg);
+		SSDFS_NOTICE("zone_size %llu, zone_capacity %llu, "
+			     "leb_pages_capacity %u, peb_pages_capacity %u\n",
+			     fsi->zone_size, fsi->zone_capacity,
+			     fsi->leb_pages_capacity, fsi->peb_pages_capacity);
+
+		fsi->sb->s_flags |= SB_RDONLY;
+		return -EROFS;
+#endif /* CONFIG_SSDFS_TESTING */
+	}
+
+	return 0;
 }
 
 static

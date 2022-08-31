@@ -105,6 +105,17 @@ void *ssdfs_kzalloc(size_t size, gfp_t flags)
 }
 
 static inline
+void *ssdfs_kvzalloc(size_t size, gfp_t flags)
+{
+	void *kaddr = kvzalloc(size, flags);
+
+	if (kaddr)
+		ssdfs_memory_leaks_increment(kaddr);
+
+	return kaddr;
+}
+
+static inline
 void *ssdfs_kcalloc(size_t n, size_t size, gfp_t flags)
 {
 	void *kaddr = kcalloc(n, size, flags);
@@ -121,6 +132,15 @@ void ssdfs_kfree(void *kaddr)
 	if (kaddr) {
 		ssdfs_memory_leaks_decrement(kaddr);
 		kfree(kaddr);
+	}
+}
+
+static inline
+void ssdfs_kvfree(void *kaddr)
+{
+	if (kaddr) {
+		ssdfs_memory_leaks_decrement(kaddr);
+		kvfree(kaddr);
 	}
 }
 
@@ -363,7 +383,7 @@ static inline								\
 void ssdfs_##name##_cache_leaks_increment(void *kaddr)			\
 {									\
 	atomic64_inc(&ssdfs_##name##_cache_leaks);			\
-	SSDFS_DBG("memory %p, allocation count %lld\n",		\
+	SSDFS_DBG("memory %p, allocation count %lld\n",			\
 		  kaddr,						\
 		  atomic64_read(&ssdfs_##name##_cache_leaks));		\
 	ssdfs_memory_leaks_increment(kaddr);				\
@@ -372,7 +392,7 @@ static inline								\
 void ssdfs_##name##_cache_leaks_decrement(void *kaddr)			\
 {									\
 	atomic64_dec(&ssdfs_##name##_cache_leaks);			\
-	SSDFS_DBG("memory %p, allocation count %lld\n",		\
+	SSDFS_DBG("memory %p, allocation count %lld\n",			\
 		  kaddr,						\
 		  atomic64_read(&ssdfs_##name##_cache_leaks));		\
 	ssdfs_memory_leaks_decrement(kaddr);				\
@@ -393,6 +413,18 @@ static inline								\
 void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
 {									\
 	void *kaddr = ssdfs_kzalloc(size, flags);			\
+	if (kaddr) {							\
+		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	return kaddr;							\
+}									\
+static inline								\
+void *ssdfs_##name##_kvzalloc(size_t size, gfp_t flags)			\
+{									\
+	void *kaddr = ssdfs_kvzalloc(size, flags);			\
 	if (kaddr) {							\
 		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
 		SSDFS_DBG("memory %p, allocation count %lld\n",		\
@@ -423,6 +455,17 @@ void ssdfs_##name##_kfree(void *kaddr)					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
 	ssdfs_kfree(kaddr);						\
+}									\
+static inline								\
+void ssdfs_##name##_kvfree(void *kaddr)					\
+{									\
+	if (kaddr) {							\
+		atomic64_dec(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	ssdfs_kvfree(kaddr);						\
 }									\
 static inline								\
 struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
@@ -521,6 +564,11 @@ void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
 	return ssdfs_kzalloc(size, flags);				\
 }									\
 static inline								\
+void *ssdfs_##name##_kvzalloc(size_t size, gfp_t flags)			\
+{									\
+	return ssdfs_kvzalloc(size, flags);				\
+}									\
+static inline								\
 void *ssdfs_##name##_kcalloc(size_t n, size_t size, gfp_t flags)	\
 {									\
 	return ssdfs_kcalloc(n, size, flags);				\
@@ -529,6 +577,11 @@ static inline								\
 void ssdfs_##name##_kfree(void *kaddr)					\
 {									\
 	ssdfs_kfree(kaddr);						\
+}									\
+static inline								\
+void ssdfs_##name##_kvfree(void *kaddr)					\
+{									\
+	ssdfs_kvfree(kaddr);						\
 }									\
 static inline								\
 struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
@@ -876,6 +929,38 @@ int ssdfs_memcpy(void *dst, u32 dst_off, u32 dst_size,
 }
 
 static inline
+int ssdfs_memcpy_page(struct page *dst_page, u32 dst_off, u32 dst_size,
+		      struct page *src_page, u32 src_off, u32 src_size,
+		      u32 copy_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((src_off + copy_size) > src_size) {
+		SSDFS_ERR("fail to copy: "
+			  "src_off %u, copy_size %u, src_size %u\n",
+			  src_off, copy_size, src_size);
+		return -ERANGE;
+	}
+
+	if ((dst_off + copy_size) > dst_size) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_off %u, copy_size %u, dst_size %u\n",
+			  dst_off, copy_size, dst_size);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("dst_page %p, dst_off %u, dst_size %u, "
+		  "src_page %p, src_off %u, src_size %u, "
+		  "copy_size %u\n",
+		  dst_page, dst_off, dst_size,
+		  src_page, src_off, src_size,
+		  copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memcpy_page(dst_page, dst_off, src_page, src_off, copy_size);
+	return 0;
+}
+
+static inline
 int ssdfs_memcpy_from_page(void *dst, u32 dst_off, u32 dst_size,
 			   struct page *page, u32 src_off, u32 src_size,
 			   u32 copy_size)
@@ -999,7 +1084,7 @@ int ssdfs_memmove_page(struct page *dst_page, u32 dst_off, u32 dst_size,
 		  move_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	memmove_page(dst_page, dst_off, src_page, src_off, move_size);
+	memcpy_page(dst_page, dst_off, src_page, src_off, move_size);
 	return 0;
 }
 

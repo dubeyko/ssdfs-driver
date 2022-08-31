@@ -262,9 +262,9 @@ struct ssdfs_peb_log {
 	struct mutex lock;
 	atomic_t state;
 	atomic_t sequence_id;
-	u16 start_page;
-	u16 reserved_pages; /* metadata pages in the log */
-	u16 free_data_pages; /* free data pages capacity */
+	u32 start_page;
+	u32 reserved_pages; /* metadata pages in the log */
+	u32 free_data_pages; /* free data pages capacity */
 	u32 seg_flags;
 	struct ssdfs_page_vector bmap_snapshot;
 	struct ssdfs_peb_area area[SSDFS_LOG_AREA_MAX];
@@ -291,7 +291,7 @@ struct ssdfs_peb_info {
 	/* Static data */
 	u64 peb_id;
 	u16 peb_index;
-	u16 log_pages;
+	u32 log_pages;
 
 	/*
 	 * The peb_migration_id is stored in two places:
@@ -514,18 +514,18 @@ void ssdfs_peb_set_current_log_state(struct ssdfs_peb_info *pebi,
  */
 static inline
 void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
-				u16 free_pages,
-				u16 start_page,
+				u32 free_pages,
+				u32 start_page,
 				int sequence_id)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, "
 		  "pebi->current_log.start_page %u, "
 		  "free_pages %u\n",
 		  pebi->peb_id, start_page, free_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_lock(pebi);
 	pebi->current_log.start_page = start_page;
@@ -560,10 +560,10 @@ u64 ssdfs_get_leb_id_for_peb_index(struct ssdfs_fs_info *fsi,
 			  peb_index, fsi->pebs_per_seg);
 		return U64_MAX;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg %llu, peb_index %u\n",
 		  fsi, seg, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (seg * fsi->pebs_per_seg) + peb_index;
 }
@@ -708,10 +708,10 @@ int ssdfs_define_next_peb_migration_id(struct ssdfs_peb_info *src_peb)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!src_peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, peb_index %u\n",
 		  src_peb->peb_id, src_peb->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	id = ssdfs_get_peb_migration_id_checked(src_peb);
 	if (id < 0) {
@@ -736,10 +736,10 @@ int ssdfs_define_prev_peb_migration_id(struct ssdfs_peb_info *pebi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, peb_index %u\n",
 		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	id = ssdfs_get_peb_migration_id_checked(pebi);
 	if (id < 0) {

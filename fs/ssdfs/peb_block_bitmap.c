@@ -233,17 +233,17 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	struct ssdfs_block_bmap *blk_bmap = NULL;
 	int bmap_state = SSDFS_PEB_BLK_BMAP_STATE_UNKNOWN;
 	bool is_dst_peb_clean = false;
-	u16 flags;
-	u16 type;
+	u8 flags;
+	u8 type;
 	bool under_migration = false;
 	bool has_ext_ptr = false;
 	bool has_relation = false;
 	u64 old_cno = U64_MAX;
-	u16 last_free_blk;
-	u16 metadata_blks;
-	u16 free_blks;
-	u16 used_blks;
-	u16 invalid_blks;
+	u32 last_free_blk;
+	u32 metadata_blks;
+	u32 free_blks;
+	u32 used_blks;
+	u32 invalid_blks;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -289,8 +289,8 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 
 	pebc = &si->peb_array[bmap->peb_index];
 
-	flags = le16_to_cpu(hdr->flags);
-	type = le16_to_cpu(hdr->type);
+	flags = hdr->flags;
+	type = hdr->type;
 
 	if (flags & ~SSDFS_FRAG_BLK_BMAP_FLAG_MASK) {
 		SSDFS_ERR("invalid flags set: %#x\n", flags);
@@ -377,9 +377,9 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 		BUG();
 	}
 
-	last_free_blk = le16_to_cpu(hdr->last_free_blk);
-	metadata_blks = le16_to_cpu(hdr->metadata_blks);
-	invalid_blks = le16_to_cpu(hdr->invalid_blks);
+	last_free_blk = le32_to_cpu(hdr->last_free_blk);
+	metadata_blks = le32_to_cpu(hdr->metadata_blks);
+	invalid_blks = le32_to_cpu(hdr->invalid_blks);
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu, "
 		  "last_free_blk %u, metadata_blks %u, invalid_blks %u\n",
@@ -1480,7 +1480,7 @@ finish_get_dst_invalid_pages:
  */
 int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 					 int bmap_index,
-					 u16 count)
+					 u32 count)
 {
 	struct ssdfs_block_bmap *cur_bmap = NULL;
 	int reserving_blks = 0;
@@ -1665,7 +1665,7 @@ finish_reserve_metapages:
  */
 int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 				      int bmap_index,
-				      u16 count)
+				      u32 count)
 {
 	struct ssdfs_block_bmap *cur_bmap = NULL;
 	int err = 0;

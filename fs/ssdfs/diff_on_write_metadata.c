@@ -102,9 +102,9 @@ int ssdfs_calculate_block_checksum(struct ssdfs_fs_info *fsi,
 		if (!page)
 			BUG();
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		csum = crc32(csum, kaddr, PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 	}
 
 	*checksum = cpu_to_le32(csum);
@@ -713,14 +713,15 @@ int ssdfs_btree_node_save_diff_blob_metadata(struct ssdfs_btree_node *node,
 		  le32_to_cpu(csum));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	csum_ptr = GET_CHECKSUM(kaddr);
 	*csum_ptr = csum;
 	*write_offset += sizeof(__le32);
 	bmap_bytes = node->bmap_array.bmap_bytes;
 	memset(GET_BMAP(kaddr), 0, bmap_bytes);
 	*write_offset += bmap_bytes;
-	kunmap_atomic(kaddr);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 unlock_bmap:
 	spin_unlock(&bmap->lock);
@@ -1076,13 +1077,13 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 	BUG_ON(start >= U16_MAX);
 	BUG_ON(max >= U16_MAX);
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("BMAP DUMP\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     GET_BMAP(kaddr),
 			     bmap_bytes);
 	SSDFS_DBG("\n");
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start == max) {
@@ -1128,7 +1129,7 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 			goto finish_copy_indexes;
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 
 		if (!is_deleted_index) {
 			err = ssdfs_memcpy(kaddr, *write_offset, PAGE_SIZE,
@@ -1149,7 +1150,8 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy index: "
@@ -1300,13 +1302,13 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 	BUG_ON(start >= U16_MAX);
 	BUG_ON(max >= U16_MAX);
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("BMAP DUMP\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     GET_BMAP(kaddr),
 			     bmap_bytes);
 	SSDFS_DBG("\n");
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start == max) {
@@ -1363,7 +1365,7 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 			goto finish_copy_items;
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 
 		if (!is_deleted_item) {
 			err = ssdfs_memcpy(kaddr, *write_offset, PAGE_SIZE,
@@ -1399,7 +1401,8 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy item: "
@@ -1956,12 +1959,9 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 
 	hdr.diff.blob_size = cpu_to_le16((u16)blob_size);
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-			   &hdr, 0, hdr_size,
-			   hdr_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+				   &hdr, 0, hdr_size,
+				   hdr_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy diff blob's header: "
 			  "err %d\n", err);

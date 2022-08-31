@@ -175,6 +175,8 @@ struct ssdfs_snapshot_subsystem {
  * @pebs_per_seg: physical erase blocks per segment
  * @pages_per_peb: pages per physical erase block
  * @pages_per_seg: pages per segment
+ * @leb_pages_capacity: maximal number of logical blocks per LEB
+ * @peb_pages_capacity: maximal number of NAND pages can be written per PEB
  * @fs_ctime: volume create timestamp (mkfs phase)
  * @fs_cno: volume create checkpoint
  * @raw_inode_size: raw inode size in bytes
@@ -240,6 +242,8 @@ struct ssdfs_snapshot_subsystem {
  * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
  * @erase_page: page with content for erase operation (dev_bdev.c ONLY)
  * @is_zns_device: file system volume is on ZNS device
+ * @zone_size: zone size in bytes
+ * @zone_capacity: zone capacity in bytes available for write operations
  * @max_open_zones: open zones limitation (upper bound)
  * @open_zones: current number of opened zones
  * @dev_kobj: /sys/fs/ssdfs/<device> kernel object
@@ -262,6 +266,8 @@ struct ssdfs_fs_info {
 	u32 pebs_per_seg;
 	u32 pages_per_peb;
 	u32 pages_per_seg;
+	u32 leb_pages_capacity;
+	u32 peb_pages_capacity;
 	u64 fs_ctime;
 	u64 fs_cno;
 	u16 raw_inode_size;
@@ -345,6 +351,7 @@ struct ssdfs_fs_info {
 
 	bool is_zns_device;
 	u64 zone_size;
+	u64 zone_capacity;
 	u32 max_open_zones;
 	atomic_t open_zones;
 

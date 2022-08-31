@@ -8025,7 +8025,6 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 items_count;
 	u32 forks_count;
 	u32 allocated_extents;
@@ -9054,7 +9053,6 @@ int __ssdfs_extents_btree_node_get_fork(struct pagevec *pvec,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG

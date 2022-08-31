@@ -104,6 +104,7 @@ int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 
 /* dev_zns.c */
 u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
+u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset);
 
 /* dir.c */
 int ssdfs_inode_by_name(struct inode *dir,
