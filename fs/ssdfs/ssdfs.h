@@ -270,8 +270,23 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 					struct ssdfs_partial_log_header *hdr);
 
 /* memory leaks checker */
+
+#ifdef CONFIG_SSDFS_POSIX_ACL
 void ssdfs_acl_memory_leaks_init(void);
 void ssdfs_acl_check_memory_leaks(void);
+#else
+static inline
+void ssdfs_acl_memory_leaks_init(void)
+{
+	return;
+}
+static inline
+void ssdfs_acl_check_memory_leaks(void)
+{
+	return;
+}
+#endif  /* CONFIG_SSDFS_POSIX_ACL */
+
 void ssdfs_block_bmap_memory_leaks_init(void);
 void ssdfs_block_bmap_check_memory_leaks(void);
 void ssdfs_btree_memory_leaks_init(void);
@@ -344,6 +359,8 @@ void ssdfs_seg_bmap_memory_leaks_init(void);
 void ssdfs_seg_bmap_check_memory_leaks(void);
 void ssdfs_seg_blk_memory_leaks_init(void);
 void ssdfs_seg_blk_check_memory_leaks(void);
+void ssdfs_peb_group_array_memory_leaks_init(void);
+void ssdfs_peb_group_array_check_memory_leaks(void);
 void ssdfs_seg_tree_memory_leaks_init(void);
 void ssdfs_seg_tree_check_memory_leaks(void);
 void ssdfs_seq_arr_memory_leaks_init(void);

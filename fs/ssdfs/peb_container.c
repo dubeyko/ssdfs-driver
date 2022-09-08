@@ -31,21 +31,12 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 #include "peb_mapping_table.h"
+#include "peb_group_array.h"
 
 enum {
 	SSDFS_SRC_PEB,
 	SSDFS_DST_PEB,
 	SSDFS_SRC_AND_DST_PEB
-};
-
-static
-struct ssdfs_thread_descriptor thread_desc[SSDFS_PEB_THREAD_TYPE_MAX] = {
-	{.threadfn = ssdfs_peb_read_thread_func,
-	 .fmt = "ssdfs-r%llu-%u",},
-	{.threadfn = ssdfs_peb_flush_thread_func,
-	 .fmt = "ssdfs-f%llu-%u",},
-	{.threadfn = ssdfs_peb_gc_thread_func,
-	 .fmt = "ssdfs-gc%llu-%u",},
 };
 
 /*
@@ -121,130 +112,6 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 				  page->index, page->flags);
 		}
 	}
-}
-
-/*
- * ssdfs_peb_start_thread() - start PEB's thread
- * @pebc: pointer on PEB container
- * @type: thread type
- *
- * This function tries to start PEB's thread of @type.
- *
- * RETURN:
- * [success] - PEB's thread has been started.
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- */
-static
-int ssdfs_peb_start_thread(struct ssdfs_peb_container *pebc, int type)
-{
-	struct ssdfs_segment_info *si;
-	ssdfs_threadfn threadfn;
-	const char *fmt;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebc || !pebc->parent_si);
-
-	if (type >= SSDFS_PEB_THREAD_TYPE_MAX) {
-		SSDFS_ERR("invalid thread type %d\n", type);
-		return -EINVAL;
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("seg_id %llu, peb_index %u, thread_type %d\n",
-		  pebc->parent_si->seg_id,
-		  pebc->peb_index,
-		  type);
-
-	si = pebc->parent_si;
-	threadfn = thread_desc[type].threadfn;
-	fmt = thread_desc[type].fmt;
-
-	pebc->thread[type].task = kthread_create(threadfn, pebc, fmt,
-						 pebc->parent_si->seg_id,
-						 pebc->peb_index);
-	if (IS_ERR_OR_NULL(pebc->thread[type].task)) {
-		err = PTR_ERR(pebc->thread[type].task);
-		SSDFS_ERR("fail to start thread: "
-			  "seg_id %llu, peb_index %u, thread_type %d\n",
-			  pebc->parent_si->seg_id, pebc->peb_index, type);
-		return err;
-	}
-
-	init_waitqueue_entry(&pebc->thread[type].wait,
-				pebc->thread[type].task);
-	add_wait_queue(&si->wait_queue[type],
-			&pebc->thread[type].wait);
-	init_completion(&pebc->thread[type].full_stop);
-
-	wake_up_process(pebc->thread[type].task);
-
-	return 0;
-}
-
-/*
- * ssdfs_peb_stop_thread() - stop PEB's thread
- * @pebc: pointer on PEB container
- * @type: thread type
- *
- * This function tries to stop PEB's thread of @type.
- *
- * RETURN:
- * [success] - PEB's thread has been stopped.
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- */
-static
-int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
-{
-	unsigned long res;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebc || !pebc->parent_si);
-
-	if (type >= SSDFS_PEB_THREAD_TYPE_MAX) {
-		SSDFS_ERR("invalid thread type %d\n", type);
-		return -EINVAL;
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("type %#x, task %p\n",
-		  type, pebc->thread[type].task);
-
-	if (!pebc->thread[type].task)
-		return 0;
-
-	err = kthread_stop(pebc->thread[type].task);
-	if (err == -EINTR) {
-		/*
-		 * Ignore this error.
-		 * The wake_up_process() was never called.
-		 */
-		return 0;
-	} else if (unlikely(err)) {
-		SSDFS_WARN("thread function had some issue: err %d\n",
-			    err);
-		return err;
-	}
-
-	finish_wait(&pebc->parent_si->wait_queue[type],
-			&pebc->thread[type].wait);
-
-	pebc->thread[type].task = NULL;
-
-	res = wait_for_completion_timeout(&pebc->thread[type].full_stop,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
-		SSDFS_ERR("stop thread fails: err %d\n", err);
-		return err;
-	}
-
-	return 0;
 }
 
 /*
@@ -444,6 +311,147 @@ int ssdfs_peb_convert_leb2peb(struct ssdfs_fs_info *fsi,
 }
 
 /*
+ * ssdfs_join_peb_group() - join PEB group
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to get PEB group and to add the pointer
+ * on PEB container into the group.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_join_peb_group(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_fs_info *fsi;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+
+SSDFS_ERR("seg %llu, peb_index %u, peb_type %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebc->parent_si->fsi;
+
+	pebc->thread_state[SSDFS_PEB_FLUSH_THREAD].state =
+				SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	pebc->group = ssdfs_peb_group_array_get(fsi,
+			SSDFS_LEB2GROUP_ID(fsi, SSDFS_SEG2LEB(pebc)));
+	if (IS_ERR_OR_NULL(pebc->group)) {
+		err = (pebc->group == NULL ? -ENOMEM : PTR_ERR(pebc->group));
+		SSDFS_ERR("fail to get PEB group object: "
+			  "err %d\n", err);
+		pebc->group = NULL;
+		goto fail_join_peb_group;
+	}
+
+	err = ssdfs_peb_group_add_peb(pebc->group, pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add PEB container into group: "
+			  "err %d\n", err);
+		goto fail_join_peb_group;
+	}
+#else
+	pebc->group = &pebc->group_buf;
+
+	err = ssdfs_peb_group_create(fsi, pebc->group,
+			SSDFS_LEB2GROUP_ID(fsi, SSDFS_SEG2LEB(pebc)));
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to initialize PEB group object: "
+			  "err %d\n", err);
+		goto fail_join_peb_group;
+	}
+
+	err = ssdfs_peb_group_add_peb(pebc->group, pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add PEB container into group: "
+			  "err %d\n", err);
+		goto fail_join_peb_group;
+	}
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
+
+	return 0;
+
+fail_join_peb_group:
+	return err;
+}
+
+/*
+ * ssdfs_forget_peb_group() - forget PEB group
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to remove the PEB from group.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_forget_peb_group(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_fs_info *fsi;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+
+SSDFS_ERR("seg %llu, peb_index %u, peb_type %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebc->parent_si->fsi;
+
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	err = ssdfs_peb_group_remove_peb(pebc->group, pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to remove PEB container from group: "
+			  "err %d\n", err);
+		goto fail_forget_peb_group;
+	}
+#else
+	err = ssdfs_peb_group_remove_peb(pebc->group, pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to remove PEB container from group: "
+			  "err %d\n", err);
+		goto fail_forget_peb_group;
+	}
+
+	ssdfs_peb_group_destroy(pebc->group);
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
+
+	pebc->group = NULL;
+
+	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		SSDFS_THREAD_STATE_INIT(&pebc->thread_state[i]);
+		pebc->destroy_req[i] = NULL;
+	}
+
+	return 0;
+
+fail_forget_peb_group:
+	pebc->group = NULL;
+
+	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		SSDFS_THREAD_STATE_INIT(&pebc->thread_state[i]);
+		pebc->destroy_req[i] = NULL;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_create_clean_peb_container() - create "clean" PEB container
  * @pebc: pointer on PEB container
  * @selected_peb: source or destination PEB?
@@ -498,26 +506,14 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 	} else
 		BUG();
 
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
+	err = ssdfs_join_peb_group(pebc);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to start read thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
+		SSDFS_ERR("fail to join PEB container: "
+			  "err %d\n", err);
 		goto fail_create_clean_peb_obj;
 	}
 
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start flush thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		goto stop_read_thread;
-	}
-
 	return 0;
-
-stop_read_thread:
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
 fail_create_clean_peb_obj:
 	return err;
@@ -559,6 +555,13 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 
+	err = ssdfs_join_peb_group(pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to join PEB container: "
+			  "err %d\n", err);
+		goto fail_create_using_peb_obj;
+	}
+
 	if (selected_peb == SSDFS_SRC_PEB)
 		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
 	else if (selected_peb == SSDFS_DST_PEB)
@@ -587,6 +590,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -616,6 +620,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -640,6 +645,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 						    SSDFS_REQ_ASYNC,
 						    req3);
 		ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+		SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 	}
@@ -670,25 +676,11 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req4);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start read thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
-		goto fail_create_using_peb_obj;
-	}
-
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start flush thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		goto stop_read_thread;
-	}
+	wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
@@ -701,7 +693,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 			err = -ERANGE;
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
-			goto stop_flush_thread;
+			goto fail_join_peb_group;
 		}
 
 		/*
@@ -724,17 +716,14 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	 * Wake up read request if it waits zeroing
 	 * of reference counter.
 	 */
-	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+	wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
 
-stop_flush_thread:
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
-
-stop_read_thread:
+fail_join_peb_group:
 	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
-	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
+	if (pebc->group)
+		wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 fail_create_using_peb_obj:
 	return err;
@@ -775,6 +764,13 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 
+	err = ssdfs_join_peb_group(pebc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to join PEB container: "
+			  "err %d\n", err);
+		goto fail_create_used_peb_obj;
+	}
+
 	if (selected_peb == SSDFS_SRC_PEB)
 		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
 	else if (selected_peb == SSDFS_DST_PEB)
@@ -801,6 +797,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -828,6 +825,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -855,25 +853,11 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req3);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start read thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
-		goto fail_create_used_peb_obj;
-	}
-
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to start flush thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
-		goto stop_read_thread;
-	}
+	wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
@@ -886,7 +870,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 			err = -ERANGE;
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
-			goto stop_flush_thread;
+			goto fail_join_peb_group;
 		}
 
 		/*
@@ -909,17 +893,14 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	 * Wake up read request if it waits zeroing
 	 * of reference counter.
 	 */
-	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+	wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
 
-stop_flush_thread:
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
-
-stop_read_thread:
+fail_join_peb_group:
 	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
-	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
+	if (pebc->group)
+		wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 fail_create_used_peb_obj:
 	return err;
@@ -1459,6 +1440,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	int dst_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 	u8 src_peb_flags = 0;
 	u8 dst_peb_flags = 0;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1484,6 +1466,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	pebc = &si->peb_array[peb_index];
 
 	memset(pebc, 0, sizeof(struct ssdfs_peb_container));
+	pebc->group = NULL;
 	mutex_init(&pebc->migration_lock);
 	atomic_set(&pebc->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
 	atomic_set(&pebc->migration_phase, SSDFS_PEB_MIGRATION_STATUS_UNKNOWN);
@@ -1492,6 +1475,11 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	init_waitqueue_head(&pebc->migration_wq);
 	init_rwsem(&pebc->lock);
 	atomic_set(&pebc->dst_peb_refs, 0);
+
+	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		SSDFS_THREAD_STATE_INIT(&pebc->thread_state[i]);
+		pebc->destroy_req[i] = NULL;
+	}
 
 	SSDFS_DBG("shared_free_dst_blks %d\n",
 		  atomic_read(&pebc->shared_free_dst_blks));
@@ -1756,6 +1744,62 @@ fail_init_peb_container:
 	return err;
 }
 
+static
+int ssdfs_check_destroy_request(struct ssdfs_segment_request *req)
+{
+	wait_queue_head_t *wq = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("req %p\n", req);
+
+check_req_state:
+	switch (atomic_read(&req->result.state)) {
+	case SSDFS_REQ_CREATED:
+	case SSDFS_REQ_STARTED:
+		wq = &req->private.wait_queue;
+
+		err = wait_event_killable_timeout(*wq,
+					has_request_been_executed(req),
+					SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0)
+			WARN_ON(err < 0);
+		else
+			err = 0;
+
+		goto check_req_state;
+		break;
+
+	case SSDFS_REQ_FINISHED:
+		/* do nothing */
+		break;
+
+	case SSDFS_REQ_FAILED:
+		err = req->result.err;
+
+		if (!err) {
+			SSDFS_ERR("error code is absent: "
+				  "req %p, err %d\n",
+				  req, err);
+			err = -ERANGE;
+		}
+
+		SSDFS_ERR("destroy request is failed: "
+			  "err %d\n", err);
+		return err;
+
+	default:
+		SSDFS_ERR("invalid result's state %#x\n",
+		    atomic_read(&req->result.state));
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
 /*
  * ssdfs_peb_container_destroy() - destroy PEB's container object
  * @ptr: pointer on container placement
@@ -1792,18 +1836,35 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
 		int err2;
 
-		err2 = ssdfs_peb_stop_thread(ptr, i);
-		if (err2 == -EIO) {
+		if (!ptr->destroy_req[i]) {
+			SSDFS_ERR("destroy request is NULL: "
+				  "peb_index %u, thread type %#x\n",
+				  ptr->peb_index, i);
+			continue;
+		}
+
+		err2 = ssdfs_check_destroy_request(ptr->destroy_req[i]);
+		if (unlikely(err2)) {
 			ssdfs_fs_error(ptr->parent_si->fsi->sb,
 					__FILE__, __func__, __LINE__,
-					"thread I/O issue: "
-					"peb_index %u, thread type %#x\n",
-					ptr->peb_index, i);
-		} else if (unlikely(err2)) {
-			SSDFS_WARN("thread stopping issue: "
-				   "peb_index %u, thread type %#x, err %d\n",
-				   ptr->peb_index, i, err2);
+					"destroy request failed: "
+					"peb_index %u, thread type %#x, "
+					"err %d\n",
+					ptr->peb_index, i, err2);
 		}
+
+		ssdfs_request_free(ptr->destroy_req[i]);
+		ptr->destroy_req[i] = NULL;
+	}
+
+	err = ssdfs_forget_peb_group(ptr);
+	if (unlikely(err)) {
+		ssdfs_fs_error(ptr->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to forget PEB group: "
+				"peb_index %u, thread type %#x, "
+				"err %d\n",
+				ptr->peb_index, i, err);
 	}
 
 	if (!is_ssdfs_requests_queue_empty(&ptr->read_rq)) {
@@ -3140,7 +3201,8 @@ finish_forget_source:
 			return err;
 		}
 	} else if (err == -ENODATA) {
-		wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+		wake_up_all(&ptr->group->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+		wake_up_all(&si->fsi->pending_wq);
 
 		SSDFS_DBG("dst_peb_refs %d\n",
 			  atomic_read(&ptr->dst_peb_refs));
@@ -3853,7 +3915,7 @@ int ssdfs_peb_join_create_requests_queue(struct ssdfs_peb_container *pebc,
 		return -EINVAL;
 	}
 
-	if (pebc->thread[SSDFS_PEB_FLUSH_THREAD].task == NULL) {
+	if (pebc->group->thread[SSDFS_PEB_FLUSH_THREAD].task == NULL) {
 		SSDFS_ERR("PEB hasn't flush thread: "
 			  "seg %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id, pebc->peb_index);

@@ -711,55 +711,6 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 	return 0;
 }
 
-/* TODO: add condition of presence of items for processing  */
-#define GC_THREAD_WAKE_CONDITION(pebi) \
-	(kthread_should_stop())
-
-/*
- * ssdfs_peb_gc_thread_func() - main fuction of GC thread
- * @data: pointer on data object
- *
- * This function is main fuction of GC thread.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- */
-int ssdfs_peb_gc_thread_func(void *data)
-{
-	struct ssdfs_peb_container *pebc = data;
-	wait_queue_head_t *wait_queue;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (!pebc) {
-		SSDFS_ERR("pointer on PEB container is NULL\n");
-		return -EINVAL;
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("GC thread: seg %llu, peb_index %u\n",
-		  pebc->parent_si->seg_id, pebc->peb_index);
-
-	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_GC_THREAD];
-
-repeat:
-	if (kthread_should_stop()) {
-		complete_all(&pebc->thread[SSDFS_PEB_GC_THREAD].full_stop);
-		return 0;
-	}
-
-	/* TODO: collect garbage */
-	SSDFS_DBG("TODO: implement %s\n", __func__);
-	goto sleep_gc_thread;
-	/*return -ENOSYS;*/
-
-sleep_gc_thread:
-	wait_event_interruptible(*wait_queue, GC_THREAD_WAKE_CONDITION(pebi));
-	goto repeat;
-}
-
 /*
  * ssdfs_gc_find_next_seg_id() - find next victim segment ID
  * @fsi: pointer on shared file system object

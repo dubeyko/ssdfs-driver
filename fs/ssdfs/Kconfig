@@ -173,6 +173,38 @@ config SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 
 	  If unsure, say N.
 
+config SSDFS_ERASE_BLOCKS_GROUP
+	bool "SSDFS erase blocks group support"
+	depends on SSDFS
+	help
+	  This option enables the erase blocks group support. Contiguous
+	  sequence of erase blocks can be grouped into the entity with
+	  the goal to use one read/flush thread for the several objects
+	  of erase blocks. It can decrease number of existing threads
+	  for a particular mounted volume. However, it could potentially
+	  degrade the file system perfomance because some erase blocks
+	  group can be under more heavy load than other ones.
+
+	  If unsure, say N.
+
+config SSDFS_PEB_PER_GROUP_SHIFT
+	int "PEBs per group number (1 => 2 PEBs, 8 => 256 PEBs)"
+	range 1 8
+	default 3
+	depends on SSDFS_ERASE_BLOCKS_GROUP
+	help
+	  Select number of PEBs per group as power of 2.
+
+	  Examples:
+			1 => 2   PEBs per group
+			2 => 4   PEBs per group
+			3 => 8   PEBs per group
+			4 => 16  PEBs per group
+			5 => 32  PEBs per group
+			6 => 64  PEBs per group
+			7 => 128 PEBs per group
+			8 => 256 PEBs per group
+
 endmenu
 
 menu "Reliability"

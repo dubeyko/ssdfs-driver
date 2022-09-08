@@ -18,11 +18,15 @@
  * @task: task descriptor
  * @wait: wait queue
  * @full_stop: ending of thread's activity
+ * @peb_index: current index of PEB in group
  */
 struct ssdfs_thread_info {
 	struct task_struct *task;
 	struct wait_queue_entry wait;
 	struct completion full_stop;
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	u32 peb_index;
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
 };
 
 /* function prototype */

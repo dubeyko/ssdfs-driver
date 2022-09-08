@@ -18,7 +18,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		sequence_array.o offset_translation_table.o \
 		request_queue.o readwrite.o  \
 		peb.o peb_gc_thread.o peb_read_thread.o peb_flush_thread.o \
-		peb_container.o \
+		peb_group.o peb_container.o \
 		segment.o segment_tree.o current_segment.o \
 		segment_bitmap.o segment_bitmap_tables.o \
 		peb_mapping_queue.o \
@@ -47,3 +47,4 @@ ssdfs-$(CONFIG_SSDFS_TESTING)			+= testing.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE)		+= diff_on_write.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_METADATA)	+= diff_on_write_metadata.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA)	+= diff_on_write_user_data.o
+ssdfs-$(CONFIG_SSDFS_ERASE_BLOCKS_GROUP)	+= peb_group_array.o

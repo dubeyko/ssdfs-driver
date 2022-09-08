@@ -1553,6 +1553,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->fs_ctime = le64_to_cpu(fsi->vh->create_time);
 	fsi->fs_cno = le64_to_cpu(fsi->vh->create_cno);
 	fsi->raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
+	fsi->pebs_per_group = SSDFS_DEFAULT_PEBS_PER_GROUP;
 
 	SSDFS_DBG("STATIC VOLUME INFO:\n");
 	SSDFS_DBG("pagesize %u, erasesize %u, segsize %u\n",

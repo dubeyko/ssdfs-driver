@@ -3511,10 +3511,12 @@ int ssdfs_btree_deleted_node_commit_log(struct ssdfs_btree_node *node)
 		ssdfs_segment_create_request_cno(si);
 
 		rq = &pebc->update_rq;
+		SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_FLUSH_THREAD);
 		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
 
-		wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+		wait = &pebc->group->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 		wake_up_all(wait);
+		wake_up_all(&si->fsi->pending_wq);
 	}
 
 	return 0;

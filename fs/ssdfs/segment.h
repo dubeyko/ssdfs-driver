@@ -83,7 +83,6 @@ struct ssdfs_segment_migration_info {
  * @pending_lock: lock of pending pages' counter
  * @pending_new_user_data_pages: counter of pending new user data pages
  * @invalidated_user_data_pages: counter of invalidated user data pages
- * @wait_queue: array of PEBs' wait queues
  * @blk_bmap: segment's block bitmap
  * @blk2off_table: offset translation table
  * @fsi: pointer on shared file system object
@@ -123,13 +122,11 @@ struct ssdfs_segment_info {
 	 * requests queue, wait queue
 	 */
 	struct ssdfs_requests_queue create_rq;
+	atomic64_t create_reqs;
 
 	spinlock_t pending_lock;
 	u32 pending_new_user_data_pages;
 	u32 invalidated_user_data_pages;
-
-	/* Threads' wait queues */
-	wait_queue_head_t wait_queue[SSDFS_PEB_THREAD_TYPE_MAX];
 
 	struct ssdfs_segment_blk_bmap blk_bmap;
 	struct ssdfs_blk2off_table *blk2off_table;
@@ -701,6 +698,35 @@ bool is_it_time_free_peb_cache_memory(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return !dont_touch;
+}
+
+static inline
+void SSDFS_CREATE_REQ_COUNTER_INC(struct ssdfs_segment_info *si)
+{
+	atomic64_inc(&si->create_reqs);
+}
+
+static inline
+void SSDFS_CREATE_REQ_COUNTER_DEC(struct ssdfs_segment_info *si)
+{
+	s64 count;
+
+	count = atomic64_dec_return(&si->create_reqs);
+	if (count < 0) {
+		SSDFS_WARN("invalid count %lld\n", count);
+	}
+}
+
+static inline
+s64 SSDFS_CREATE_READ_REQ_COUNTER(struct ssdfs_segment_info *si)
+{
+	return atomic64_read(&si->create_reqs);
+}
+
+static inline
+bool IS_SSDFS_CREATE_REQUEST_QUEUE_EMPTY(struct ssdfs_segment_info *si)
+{
+	return SSDFS_CREATE_READ_REQ_COUNTER(si) <= 0;
 }
 
 /*

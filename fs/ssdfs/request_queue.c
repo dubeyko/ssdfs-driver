@@ -306,6 +306,11 @@ bool is_request_command_valid(int class, int cmd)
 				cmd < SSDFS_COLLECT_GARBAGE_CMD_MAX;
 		break;
 
+	case SSDFS_PEB_DESTROY_REQ:
+		is_valid = cmd == SSDFS_READ_DESTROY_PEB ||
+				cmd == SSDFS_FLUSH_DESTROY_PEB;
+		break;
+
 	default:
 		is_valid = false;
 	}

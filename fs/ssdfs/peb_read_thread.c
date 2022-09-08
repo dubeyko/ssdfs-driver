@@ -9306,6 +9306,13 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 		}
 		break;
 
+	case SSDFS_READ_DESTROY_PEB:
+		if (!is_ssdfs_requests_queue_empty(&pebc->read_rq)) {
+			ssdfs_requests_queue_remove_all(&pebc->read_rq,
+							-EFAULT);
+		}
+		break;
+
 	default:
 		BUG();
 	}
@@ -9443,9 +9450,9 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 	ssdfs_peb_finish_read_request_cno(pebc);
 }
 
-#define READ_THREAD_WAKE_CONDITION(pebc) \
+#define READ_THREAD_WAKE_CONDITION(group) \
 	(kthread_should_stop() || \
-	 !is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc)))
+	 !IS_SSDFS_GROUP_RQ_EMPTY(group, SSDFS_PEB_READ_THREAD))
 #define READ_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
 #define READ_THREAD_WAKEUP_TIMEOUT	(msecs_to_jiffies(3000))
@@ -9464,85 +9471,179 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
  */
 int ssdfs_peb_read_thread_func(void *data)
 {
-	struct ssdfs_peb_container *pebc = data;
+	struct ssdfs_peb_group *group = data;
+	struct ssdfs_peb_container *pebc = NULL;
+	struct ssdfs_thread_state *state = NULL;
 	wait_queue_head_t *wait_queue;
-	struct ssdfs_segment_request *req;
+	s64 need2process;
+	s64 total;
 	u64 timeout = READ_THREAD_WAKEUP_TIMEOUT;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	if (!pebc) {
-		SSDFS_ERR("pointer on PEB container is NULL\n");
+	if (!group) {
+		SSDFS_ERR("pointer on PEB group is NULL\n");
 		BUG();
 	}
+
+	SSDFS_DBG("read thread: start_leb %llu, lebs_count %u\n",
+		  group->start_leb, group->lebs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("read thread: seg %llu, peb_index %u\n",
-		  pebc->parent_si->seg_id, pebc->peb_index);
-
-	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD];
+	wait_queue = &group->wait_queue[SSDFS_PEB_READ_THREAD];
 
 repeat:
 	if (kthread_should_stop()) {
-		complete_all(&pebc->thread[SSDFS_PEB_READ_THREAD].full_stop);
+		SSDFS_DBG("read thread: kthread_should_stop\n");
+
+		for (i = 0; i < SSDFS_DEFAULT_PEBS_PER_GROUP; i++) {
+			spin_lock(&group->group_lock);
+			pebc = group->pebs[i];
+			spin_unlock(&group->group_lock);
+
+			if (!pebc)
+				continue;
+
+			if (!is_ssdfs_requests_queue_empty(&pebc->read_rq)) {
+				err = -EFAULT;
+				ssdfs_requests_queue_remove_all(&pebc->read_rq,
+								err);
+			}
+		}
+
+		SSDFS_DBG("FINISHED: read thread: start_leb %llu, lebs_count %u\n",
+			  group->start_leb, group->lebs_count);
+
+		complete_all(&group->thread[SSDFS_PEB_READ_THREAD].full_stop);
 		return err;
 	}
 
-	if (is_ssdfs_requests_queue_empty(&pebc->read_rq))
+	if (IS_SSDFS_GROUP_RQ_EMPTY(group, SSDFS_PEB_READ_THREAD))
 		goto sleep_read_thread;
 
-	do {
-		err = ssdfs_requests_queue_remove_first(&pebc->read_rq,
-							&req);
-		if (err == -ENODATA) {
-			/* empty queue */
-			err = 0;
-			break;
-		} else if (err == -ENOENT) {
-			SSDFS_WARN("request queue contains NULL request\n");
-			err = 0;
-			continue;
-		} else if (unlikely(err < 0)) {
-			SSDFS_CRIT("fail to get request from the queue: "
-				   "err %d\n",
-				   err);
+	need2process = SSDFS_GROUP_READ_REQS(group, SSDFS_PEB_READ_THREAD);
+	total = 0;
+
+	while (total < need2process) {
+		s64 processed = 0;
+		u32 active_pebs = 0;
+
+		for (i = 0; i < SSDFS_DEFAULT_PEBS_PER_GROUP; i++) {
+			spin_lock(&group->group_lock);
+			active_pebs = group->active_pebs;
+			pebc = group->pebs[i];
+			spin_unlock(&group->group_lock);
+
+			SSDFS_DBG("need2process %lld, active_pebs %u\n",
+				  need2process, active_pebs);
+
+			if (!pebc)
+				continue;
+
+			if (is_ssdfs_requests_queue_empty(&pebc->read_rq))
+				continue;
+
+			state = &pebc->thread_state[SSDFS_PEB_READ_THREAD];
+
+			if (unlikely(state->err))
+				continue;
+
+			err = ssdfs_requests_queue_remove_first(&pebc->read_rq,
+								&state->req);
+			if (err == -ENODATA) {
+				/* empty queue */
+				err = 0;
+				continue;
+			} else if (err == -ENOENT) {
+				SSDFS_WARN("request queue contains NULL request\n");
+				err = 0;
+				continue;
+			} else if (unlikely(err < 0)) {
+				state->err = err;
+				SSDFS_CRIT("fail to get request from the queue: "
+					   "err %d\n",
+					   err);
+				continue;
+			}
+
+			err = ssdfs_process_read_request(pebc, state->req);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to process read request: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index, err);
+			}
+
+			ssdfs_finish_read_request(pebc, state->req,
+						  wait_queue, err);
+
+			SSDFS_GROUP_REQS_DEC(group, SSDFS_PEB_READ_THREAD);
+			processed++;
+		}
+
+		SSDFS_DBG("processed %lld, active_pebs %u\n",
+			  processed, active_pebs);
+
+		if (processed == 0 && active_pebs > 0) {
+			err = -ERANGE;
+			SSDFS_CRIT("invalid number of processed requests: "
+				   "read thread: start_leb %llu, lebs_count %u, "
+				   "need2process %lld, total %lld\n",
+				   group->start_leb, group->lebs_count,
+				   need2process, total);
 			goto sleep_failed_read_thread;
 		}
 
-		err = ssdfs_process_read_request(pebc, req);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to process read request: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
-		}
+		total += processed;
+	}
 
-		ssdfs_finish_read_request(pebc, req, wait_queue, err);
-	} while (!is_ssdfs_requests_queue_empty(&pebc->read_rq));
+	if (!IS_SSDFS_GROUP_RQ_EMPTY(group, SSDFS_PEB_READ_THREAD))
+		goto repeat;
+	else
+		goto sleep_read_thread;
 
 sleep_read_thread:
+	SSDFS_DBG("sleep_read_thread\n");
+
 	wait_event_interruptible_timeout(*wait_queue,
-					 READ_THREAD_WAKE_CONDITION(pebc),
+					 READ_THREAD_WAKE_CONDITION(group),
 					 timeout);
-	if (!is_ssdfs_requests_queue_empty(&pebc->read_rq)) {
+
+	if (!IS_SSDFS_GROUP_RQ_EMPTY(group, SSDFS_PEB_READ_THREAD)) {
 		/* do requests processing */
 		goto repeat;
 	} else {
-		if (is_it_time_free_peb_cache_memory(pebc)) {
-			err = ssdfs_peb_release_pages(pebc);
-			if (err == -ENODATA) {
-				err = 0;
-				timeout = min_t(u64, timeout * 2,
+		for (i = 0; i < SSDFS_DEFAULT_PEBS_PER_GROUP; i++) {
+			spin_lock(&group->group_lock);
+			pebc = group->pebs[i];
+			spin_unlock(&group->group_lock);
+
+			if (!pebc) {
+				if (!IS_SSDFS_GROUP_RQ_EMPTY(group,
+						SSDFS_PEB_READ_THREAD) ||
+				    kthread_should_stop())
+					goto repeat;
+				else
+					continue;
+			}
+
+			if (is_it_time_free_peb_cache_memory(pebc)) {
+				err = ssdfs_peb_release_pages(pebc);
+				if (err == -ENODATA) {
+					err = 0;
+					timeout = min_t(u64, timeout * 2,
 						(u64)SSDFS_DEFAULT_TIMEOUT);
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to release pages: "
-					  "err %d\n", err);
-				err = 0;
-			} else
-				timeout = READ_THREAD_WAKEUP_TIMEOUT;
+				} else if (unlikely(err)) {
+					SSDFS_ERR("fail to release pages: "
+						  "err %d\n", err);
+					err = 0;
+				} else
+					timeout = READ_THREAD_WAKEUP_TIMEOUT;
+			}
 		}
 
-		if (!is_ssdfs_requests_queue_empty(&pebc->read_rq) ||
+		if (!IS_SSDFS_GROUP_RQ_EMPTY(group, SSDFS_PEB_READ_THREAD) ||
 		    kthread_should_stop())
 			goto repeat;
 		else
@@ -9550,7 +9651,17 @@ sleep_read_thread:
 	}
 
 sleep_failed_read_thread:
-	ssdfs_peb_release_pages(pebc);
+	for (i = 0; i < SSDFS_DEFAULT_PEBS_PER_GROUP; i++) {
+		spin_lock(&group->group_lock);
+		pebc = group->pebs[i];
+		spin_unlock(&group->group_lock);
+
+		if (!pebc)
+			continue;
+
+		ssdfs_peb_release_pages(pebc);
+	}
+
 	wait_event_interruptible(*wait_queue,
 			READ_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;

@@ -221,6 +221,86 @@ void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
 }
 
 /*
+ * ssdfs_segment_prepare_peb_for_destroy() - prepare PEB for destroy
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to request the processing of all
+ * requests in PEB container's queues before destruction.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM      - failure to allocate memory.
+ */
+static
+int ssdfs_segment_prepare_peb_for_destroy(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_requests_queue *rq;
+	wait_queue_head_t *wait;
+	int cmd;
+	int i;
+	int err = 0;
+
+	if (!pebc)
+		return 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		pebc->destroy_req[i] = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(pebc->destroy_req[i])) {
+			err = (pebc->destroy_req[i] == NULL ? -ENOMEM :
+						PTR_ERR(pebc->destroy_req[i]));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			return err;
+		}
+
+		ssdfs_request_init(pebc->destroy_req[i]);
+		ssdfs_get_request(pebc->destroy_req[i]);
+
+		switch (i) {
+		case SSDFS_PEB_READ_THREAD:
+			cmd = SSDFS_READ_DESTROY_PEB;
+			rq = &pebc->read_rq;
+			break;
+
+		case SSDFS_PEB_FLUSH_THREAD:
+			cmd = SSDFS_FLUSH_DESTROY_PEB;
+			rq = &pebc->update_rq;
+			ssdfs_segment_create_request_cno(pebc->parent_si);
+			break;
+
+		default:
+			BUG();
+		}
+
+		ssdfs_request_prepare_internal_data(SSDFS_PEB_DESTROY_REQ,
+						    cmd,
+						    SSDFS_REQ_ASYNC_NO_FREE,
+						    pebc->destroy_req[i]);
+		ssdfs_request_define_segment(pebc->parent_si->seg_id,
+					     pebc->destroy_req[i]);
+
+		SSDFS_GROUP_REQS_INC(pebc->group, i);
+		ssdfs_requests_queue_add_tail_inc(pebc->parent_si->fsi, rq,
+						  pebc->destroy_req[i]);
+
+		wait = &pebc->group->wait_queue[i];
+		wake_up_all(wait);
+	}
+
+	wake_up_all(&pebc->parent_si->fsi->pending_wq);
+
+	return 0;
+}
+
+/*
  * ssdfs_segment_destroy_object() - destroy segment object
  * @si: pointer on segment object
  *
@@ -299,6 +379,16 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	if (si->peb_array) {
 		struct ssdfs_peb_container *pebc;
 		int i;
+
+		for (i = 0; i < si->pebs_count; i++) {
+			pebc = &si->peb_array[i];
+			err = ssdfs_segment_prepare_peb_for_destroy(pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare PEB for destroy: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  si->seg_id, i, err);
+			}
+		}
 
 		for (i = 0; i < si->pebs_count; i++) {
 			pebc = &si->peb_array[i];
@@ -428,6 +518,7 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	si->protection.protected_range = 0;
 	si->protection.future_request_cno = si->protection.create_cno;
 
+	atomic64_set(&si->create_reqs, 0);
 	spin_lock_init(&si->pending_lock);
 	si->pending_new_user_data_pages = 0;
 	si->invalidated_user_data_pages = 0;
@@ -454,9 +545,6 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	destination->state = SSDFS_EMPTY_DESTINATION;
 	destination->destination_pebs = 0;
 	destination->shared_peb_index = -1;
-
-	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++)
-		init_waitqueue_head(&si->wait_queue[i]);
 
 	if (seg_state == SSDFS_SEG_CLEAN) {
 		state = SSDFS_BLK2OFF_OBJECT_COMPLETE_INIT;
@@ -1289,12 +1377,12 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 
 	pebc = &si->peb_array[peb_index];
 
-	ssdfs_peb_read_request_cno(pebc);
-
 	rq = &pebc->read_rq;
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
+	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(rq, req);
 
-	wait = &si->wait_queue[SSDFS_PEB_READ_THREAD];
+	wait = &pebc->group->wait_queue[SSDFS_PEB_READ_THREAD];
 	wake_up_all(wait);
 
 	return 0;
@@ -1804,6 +1892,8 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 	struct ssdfs_segment_info *si;
 	int seg_type;
 	u64 start = U64_MAX;
+	int type = SSDFS_PEB_FLUSH_THREAD;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1936,11 +2026,22 @@ add_new_current_segment:
 			ssdfs_segment_create_request_cno(si);
 
 			create_rq = &si->create_rq;
+			SSDFS_CREATE_REQ_COUNTER_INC(si);
 			ssdfs_requests_queue_add_tail_inc(si->fsi,
 							create_rq, req);
 
-			wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-			wake_up_all(wait);
+			for (i = 0; i < si->pebs_count; i++) {
+				struct ssdfs_peb_container *pebc;
+				struct ssdfs_peb_group *group;
+
+				pebc = &si->peb_array[i];
+				group = pebc->group;
+				SSDFS_PLEASE_CHECK_CREATE_RQ(group);
+				wait = &group->wait_queue[type];
+				wake_up_all(wait);
+			}
+
+			wake_up_all(&si->fsi->pending_wq);
 		}
 	}
 
@@ -1991,6 +2092,8 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 	struct ssdfs_segment_info *si;
 	int seg_type;
 	u64 start = U64_MAX;
+	int type = SSDFS_PEB_FLUSH_THREAD;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2087,6 +2190,7 @@ add_new_current_segment:
 		} else {
 			struct ssdfs_blk2off_table *table;
 			struct ssdfs_requests_queue *create_rq;
+			wait_queue_head_t *wait;
 
 			table = si->blk2off_table;
 
@@ -2140,9 +2244,22 @@ add_new_current_segment:
 			ssdfs_segment_create_request_cno(si);
 
 			create_rq = &si->create_rq;
+			SSDFS_CREATE_REQ_COUNTER_INC(si);
 			ssdfs_requests_queue_add_tail_inc(si->fsi,
 							create_rq, req);
-			wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+
+			for (i = 0; i < si->pebs_count; i++) {
+				struct ssdfs_peb_container *pebc;
+				struct ssdfs_peb_group *group;
+
+				pebc = &si->peb_array[i];
+				group = pebc->group;
+				SSDFS_PLEASE_CHECK_CREATE_RQ(group);
+				wait = &group->wait_queue[type];
+				wake_up_all(wait);
+			}
+
+			wake_up_all(&si->fsi->pending_wq);
 		}
 	}
 
@@ -3392,6 +3509,8 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	ssdfs_account_user_data_flush_request(si);
 	ssdfs_segment_create_request_cno(si);
 
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_FLUSH_THREAD);
+
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
@@ -3402,8 +3521,9 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 		break;
 	}
 
-	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+	wait = &pebc->group->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
+	wake_up_all(&pebc->parent_si->fsi->pending_wq);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -3637,6 +3757,8 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	ssdfs_account_user_data_flush_request(si);
 	ssdfs_segment_create_request_cno(si);
 
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_FLUSH_THREAD);
+
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
@@ -3647,8 +3769,9 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 		break;
 	}
 
-	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+	wait = &pebc->group->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
+	wake_up_all(&pebc->parent_si->fsi->pending_wq);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -4307,6 +4430,8 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 	pebc = &si->peb_array[peb_index];
 	rq = &pebc->update_rq;
 
+	SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_FLUSH_THREAD);
+
 	switch (req->private.class) {
 	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 		ssdfs_requests_queue_add_head_inc(si->fsi, rq, req);
@@ -4317,8 +4442,9 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 		break;
 	}
 
-	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+	wait = &pebc->group->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 	wake_up_all(wait);
+	wake_up_all(&pebc->parent_si->fsi->pending_wq);
 
 	return 0;
 }
@@ -4580,6 +4706,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		ssdfs_segment_create_request_cno(si);
 
 		rq = &pebc->update_rq;
+		SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_FLUSH_THREAD);
 		ssdfs_requests_queue_add_tail_inc(si->fsi, rq, req);
 
 finish_invalidate_block:
@@ -4588,8 +4715,9 @@ finish_invalidate_block:
 		if (unlikely(err))
 			return err;
 
-		wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+		wait = &pebc->group->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 		wake_up_all(wait);
+		wake_up_all(&pebc->parent_si->fsi->pending_wq);
 	}
 
 	err = ssdfs_segment_change_state(si);

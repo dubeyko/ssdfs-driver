@@ -793,11 +793,12 @@ int ssdfs_maptbl_segment_init(struct ssdfs_segment_info *si)
 						    SSDFS_READ_INIT_MAPTBL,
 						    SSDFS_REQ_ASYNC,
 						    req);
+		SSDFS_GROUP_REQS_INC(pebc->group, SSDFS_PEB_READ_THREAD);
 		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
-	}
 
-	wake_up_all(&si->wait_queue[SSDFS_PEB_READ_THREAD]);
+		wake_up_all(&pebc->group->wait_queue[SSDFS_PEB_READ_THREAD]);
+	}
 
 	return 0;
 }

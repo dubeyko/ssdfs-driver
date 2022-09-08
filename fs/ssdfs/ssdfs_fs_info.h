@@ -162,6 +162,7 @@ struct ssdfs_snapshot_subsystem {
  * @fs_ctime: volume create timestamp (mkfs phase)
  * @fs_cno: volume create checkpoint
  * @raw_inode_size: raw inode size in bytes
+ * @pebs_per_group: number of PEBs in PEB group
  * @mount_opts: mount options
  * @metadata_options: metadata options
  * @volume_sem: volume semaphore
@@ -207,7 +208,9 @@ struct ssdfs_snapshot_subsystem {
  * @maptbl: PEB mapping table object
  * @maptbl_cache: maptbl cache
  * @segs_tree: tree of segment objects
- * @segs_tree_inode: segment tree inode
+ * @segs_tree_inode: segment tree's inode
+ * @peb_group_array: array of PEB group objects
+ * @peb_group_array_inode: PEB group array's inode
  * @cur_segs: array of current segments
  * @shextree: shared extents tree
  * @shdictree: shared dictionary
@@ -245,6 +248,7 @@ struct ssdfs_fs_info {
 	u64 fs_ctime;
 	u64 fs_cno;
 	u16 raw_inode_size;
+	u32 pebs_per_group;
 
 	unsigned long mount_opts;
 	struct ssdfs_metadata_options metadata_options;
@@ -301,6 +305,9 @@ struct ssdfs_fs_info {
 
 	struct ssdfs_segment_tree *segs_tree;
 	struct inode *segs_tree_inode;
+
+	struct ssdfs_peb_group_array *peb_group_array;
+	struct inode *peb_group_array_inode;
 
 	struct ssdfs_current_segs_array *cur_segs;
 

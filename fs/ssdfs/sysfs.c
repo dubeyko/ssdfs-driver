@@ -177,10 +177,10 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 	int i;
 
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
-		if (!pebc->thread[i].task)
+		if (!pebc->group->thread[i].task)
 			continue;
-		pid = task_pid_nr(pebc->thread[i].task);
-		state = get_task_state(pebc->thread[i].task);
+		pid = task_pid_nr(pebc->group->thread[i].task);
+		state = get_task_state(pebc->group->thread[i].task);
 		type = thread_type_array[i];
 		count += snprintf(buf + count, PAGE_SIZE - count,
 				  "%s: pid %d, state %s\n",

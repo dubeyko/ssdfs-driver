@@ -52,6 +52,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include "snapshots_tree.h"
+#include "peb_group_array.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -2451,6 +2452,9 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_seg_obj_memory_leaks_init();
 	ssdfs_seg_bmap_memory_leaks_init();
 	ssdfs_seg_blk_memory_leaks_init();
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	ssdfs_peb_group_array_memory_leaks_init();
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
 	ssdfs_seg_tree_memory_leaks_init();
 	ssdfs_seq_arr_memory_leaks_init();
 	ssdfs_dict_memory_leaks_init();
@@ -2522,6 +2526,9 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_seg_obj_check_memory_leaks();
 	ssdfs_seg_bmap_check_memory_leaks();
 	ssdfs_seg_blk_check_memory_leaks();
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	ssdfs_peb_group_array_check_memory_leaks();
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
 	ssdfs_seg_tree_check_memory_leaks();
 	ssdfs_seq_arr_check_memory_leaks();
 	ssdfs_dict_check_memory_leaks();
@@ -2659,6 +2666,25 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	set_posix_acl_flag(sb);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create PEB group array started...\n");
+#else
+	SSDFS_DBG("create PEB group array started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	down_write(&fs_info->volume_sem);
+	err = ssdfs_peb_group_array_create(fs_info);
+	up_write(&fs_info->volume_sem);
+	if (err)
+		goto destroy_sysfs_device_group;
+#else
+	down_write(&fs_info->volume_sem);
+	fs_info->peb_group_array = NULL;
+	fs_info->peb_group_array_inode = NULL;
+	up_write(&fs_info->volume_sem);
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create snapshots subsystem started...\n");
 #else
 	SSDFS_DBG("create snapshots subsystem started...\n");
@@ -2666,7 +2692,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	err = ssdfs_snapshot_subsystem_init(fs_info);
 	if (err)
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+		goto destroy_peb_group_array;
+#else
 		goto destroy_sysfs_device_group;
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create segment tree started...\n");
@@ -2932,6 +2962,13 @@ destroy_segments_tree:
 
 destroy_snapshot_subsystem:
 	ssdfs_snapshot_subsystem_destroy(fs_info);
+
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+destroy_peb_group_array:
+	ssdfs_peb_group_array_destroy(fs_info);
+#else
+	/* do nothing */
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
 
 destroy_sysfs_device_group:
 	ssdfs_sysfs_delete_device_group(fs_info);
@@ -3267,6 +3304,11 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_destroy_all_curent_segments(fsi);
 	ssdfs_segment_tree_destroy(fsi);
 	ssdfs_current_segment_array_destroy(fsi);
+#ifdef CONFIG_SSDFS_ERASE_BLOCKS_GROUP
+	ssdfs_peb_group_array_destroy(fsi);
+#else
+	/* do nothing */
+#endif /* CONFIG_SSDFS_ERASE_BLOCKS_GROUP */
 	ssdfs_maptbl_destroy(fsi);
 	ssdfs_sysfs_delete_device_group(fsi);
 
@@ -3349,6 +3391,7 @@ static void ssdfs_destroy_caches(void)
 	ssdfs_destroy_peb_mapping_info_cache();
 	ssdfs_destroy_blk2off_frag_obj_cache();
 	ssdfs_destroy_name_info_cache();
+	ssdfs_destroy_peb_group_cache();
 }
 
 static int ssdfs_init_caches(void)
@@ -3441,6 +3484,14 @@ static int ssdfs_init_caches(void)
 	err = ssdfs_init_name_info_cache();
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to create name info cache: "
+			  "err %d\n",
+			  err);
+		goto destroy_caches;
+	}
+
+	err = ssdfs_init_peb_group_cache();
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to create PEB groups cache: "
 			  "err %d\n",
 			  err);
 		goto destroy_caches;
