@@ -719,6 +719,47 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 		  search->result.name_string_size,
 		  search->result.names_in_buffer);
 
+	SSDFS_DBG("LOOKUP: index %u, hash_lo %u, "
+		  "start_index %u, range_len %u\n",
+		  search->name.lookup.index,
+		  le32_to_cpu(search->name.lookup.desc.hash_lo),
+		  le16_to_cpu(search->name.lookup.desc.start_index),
+		  le16_to_cpu(search->name.lookup.desc.range_len));
+
+	ltbl2_item = &search->name.strings_range.desc;
+	SSDFS_DBG("STRINGS_RANGE: index %u, hash_lo %u, "
+		  "prefix_len %u, str_count %u, "
+		  "hash_index %u\n",
+		  search->name.strings_range.index,
+		  le32_to_cpu(ltbl2_item->hash_lo),
+		  ltbl2_item->prefix_len,
+		  ltbl2_item->str_count,
+		  le16_to_cpu(ltbl2_item->hash_index));
+
+	SSDFS_DBG("PREFIX: index %u, hash_hi %u, "
+		  "str_offset %u, str_len %u, type %#x\n",
+		  search->name.prefix.index,
+		  le32_to_cpu(search->name.prefix.desc.hash_hi),
+		  le16_to_cpu(search->name.prefix.desc.str_offset),
+		  search->name.prefix.desc.str_len,
+		  search->name.prefix.desc.type);
+
+	SSDFS_DBG("LEFT_NAME: index %u, hash_hi %u, "
+		  "str_offset %u, str_len %u, type %#x\n",
+		  search->name.left_name.index,
+		  le32_to_cpu(search->name.left_name.desc.hash_hi),
+		  le16_to_cpu(search->name.left_name.desc.str_offset),
+		  search->name.left_name.desc.str_len,
+		  search->name.left_name.desc.type);
+
+	SSDFS_DBG("RIGHT_NAME: index %u, hash_hi %u, "
+		  "str_offset %u, str_len %u, type %#x\n",
+		  search->name.right_name.index,
+		  le32_to_cpu(search->name.right_name.desc.hash_hi),
+		  le16_to_cpu(search->name.right_name.desc.str_offset),
+		  search->name.right_name.desc.str_len,
+		  search->name.right_name.desc.type);
+
 	if (search->result.name) {
 		count = search->result.names_in_buffer;
 
