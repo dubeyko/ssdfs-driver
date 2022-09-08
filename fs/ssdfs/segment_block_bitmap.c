@@ -152,7 +152,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	bmap->pages_per_peb = fsi->pages_per_peb;
 	bmap->pages_per_seg = fsi->pages_per_seg;
 
-	spin_lock_init(&bmap->modification_lock);
+	init_rwsem(&bmap->modification_lock);
 	atomic_set(&bmap->seg_valid_blks, 0);
 	atomic_set(&bmap->seg_invalid_blks, 0);
 	atomic_set(&bmap->seg_free_blks, 0);
@@ -675,7 +675,7 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	spin_lock(&ptr->modification_lock);
+	down_read(&ptr->modification_lock);
 
 	free_blks = atomic_read(&ptr->seg_free_blks);
 
@@ -690,7 +690,7 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		atomic_sub(count, &ptr->seg_free_blks);
 	}
 
-	spin_unlock(&ptr->modification_lock);
+	up_read(&ptr->modification_lock);
 
 	if (err)
 		goto finish_reserve_extent;

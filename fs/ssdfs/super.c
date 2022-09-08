@@ -26,6 +26,7 @@
 #include <linux/pagevec.h>
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
+#include <linux/delay.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -154,7 +155,7 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 {
 	struct ssdfs_inode_info *ii;
 
-	ii = kmem_cache_alloc(ssdfs_inode_cachep, GFP_KERNEL);
+	ii = alloc_inode_sb(sb, ssdfs_inode_cachep, GFP_KERNEL);
 	if (!ii)
 		return NULL;
 
@@ -2020,12 +2021,12 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
 	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
 		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
 		  last_sb_log->page_offset, last_sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 	hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
@@ -2138,7 +2139,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 
 	ssdfs_lock_page(payload_page);
 	err = ssdfs_memcpy_from_page(payload_buf, 0, inline_capacity,
-				     page, 0, PAGE_SIZE,
+				     payload_page, 0, PAGE_SIZE,
 				     payload_size);
 	ssdfs_unlock_page(payload_page);
 
@@ -2859,6 +2860,13 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (IS_ERR(root_i)) {
 		SSDFS_DBG("getting root inode failed\n");
 		err = PTR_ERR(root_i);
+		goto destroy_invext_btree;
+	}
+
+	if (!S_ISDIR(root_i->i_mode) || !root_i->i_blocks || !root_i->i_size) {
+		err = -ERANGE;
+		iput(root_i);
+		SSDFS_ERR("corrupted root inode\n");
 		goto destroy_invext_btree;
 	}
 
@@ -3594,4 +3602,4 @@ module_exit(ssdfs_exit);
 MODULE_DESCRIPTION("SSDFS -- SSD-oriented File System");
 MODULE_AUTHOR("HGST, San Jose Research Center, Storage Architecture Group");
 MODULE_AUTHOR("Vyacheslav Dubeyko <slava@dubeyko.com>");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");

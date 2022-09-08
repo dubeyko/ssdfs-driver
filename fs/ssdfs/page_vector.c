@@ -194,7 +194,7 @@ int ssdfs_page_vector_reinit(struct ssdfs_page_vector *array)
 		struct page *page = array->pages[i];
 
 		if (page)
-			SSDFS_ERR("page %d is not released\n", i);
+			SSDFS_WARN("page %d is not released\n", i);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -381,6 +381,7 @@ struct page *ssdfs_page_vector_remove(struct ssdfs_page_vector *array,
  */
 void ssdfs_page_vector_release(struct ssdfs_page_vector *array)
 {
+	struct page *page;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -395,7 +396,7 @@ void ssdfs_page_vector_release(struct ssdfs_page_vector *array)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < ssdfs_page_vector_count(array); i++) {
-		struct page *page = array->pages[i];
+		page = array->pages[i];
 
 		if (!page)
 			continue;
@@ -413,6 +414,11 @@ void ssdfs_page_vector_release(struct ssdfs_page_vector *array)
 		ssdfs_page_vector_reinit(array);
 	} else {
 		release_pages(array->pages, ssdfs_page_vector_count(array));
+		for (i = 0; i < ssdfs_page_vector_count(array); i++) {
+			page = array->pages[i];
+			if (page)
+				array->pages[i] = NULL;
+		}
 		ssdfs_page_vector_reinit(array);
 	}
 }

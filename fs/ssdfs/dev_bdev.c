@@ -125,10 +125,10 @@ static int ssdfs_bdev_close_zone(struct super_block *sb, loff_t offset)
  * @op: direction of I/O
  * @gfp_mask: mask of creation flags
  */
-static struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
-					unsigned int nr_iovecs,
-					unsigned int op,
-					gfp_t gfp_mask)
+struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
+				 unsigned int nr_iovecs,
+				 unsigned int op,
+				 gfp_t gfp_mask)
 {
 	struct bio *bio;
 
@@ -144,7 +144,7 @@ static struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
 /*
  * ssdfs_bdev_bio_put() - free bio object
  */
-static void ssdfs_bdev_bio_put(struct bio *bio)
+void ssdfs_bdev_bio_put(struct bio *bio)
 {
 	if (!bio)
 		return;
@@ -159,17 +159,17 @@ static void ssdfs_bdev_bio_put(struct bio *bio)
  * @len: size of data into memory page
  * @offset: vec entry offset
  */
-static int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
-				   unsigned int len, unsigned int offset)
+int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
+			    unsigned int len, unsigned int offset)
 {
 	int res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bio || !page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	res = bio_add_page(bio, page, len, offset);
 	if (res != len) {
@@ -289,8 +289,8 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 		BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
 
 		err = ssdfs_bdev_bio_add_page(bio, page,
 					      PAGE_SIZE,

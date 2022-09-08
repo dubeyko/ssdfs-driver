@@ -53,7 +53,7 @@ struct ssdfs_peb_blk_bmap {
 	u16 peb_index;
 	u32 pages_per_peb;
 
-	spinlock_t modification_lock;
+	struct rw_semaphore modification_lock;
 	atomic_t peb_valid_blks;
 	atomic_t peb_invalid_blks;
 	atomic_t peb_free_blks;

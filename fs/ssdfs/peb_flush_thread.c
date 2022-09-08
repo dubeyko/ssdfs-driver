@@ -8610,7 +8610,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	size_t allocation_size = 0;
 	u32 frag_hdr_off;
 	struct ssdfs_pagevec_descriptor pvec_desc;
-	u16 pages_per_peb;
+	u32 pages_per_peb;
 	struct page *page;
 	pgoff_t index;
 	u32 page_off;

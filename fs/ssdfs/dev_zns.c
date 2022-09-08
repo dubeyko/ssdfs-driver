@@ -260,6 +260,355 @@ u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset)
 }
 
 /*
+ * ssdfs_zns_sync_page_request() - submit page request
+ * @sb: superblock object
+ * @page: memory page
+ * @zone_start: first sector of zone
+ * @offset: offset in bytes from partition's begin
+ * @op: direction of I/O
+ * @op_flags: request op flags
+ */
+static int ssdfs_zns_sync_page_request(struct super_block *sb,
+					struct page *page,
+					sector_t zone_start,
+					loff_t offset,
+					unsigned int op, int op_flags)
+{
+	struct bio *bio;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+	op |= REQ_OP_ZONE_APPEND | REQ_IDLE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+
+	SSDFS_DBG("offset %llu, zone_start %llu, "
+		  "op %#x, op_flags %#x\n",
+		  offset, zone_start, op, op_flags);
+
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+
+	BUG_ON(zone_start != zone.start);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, 1, op, GFP_NOFS);
+	if (IS_ERR_OR_NULL(bio)) {
+		err = !bio ? -ERANGE : PTR_ERR(bio);
+		SSDFS_ERR("fail to allocate bio: err %d\n",
+			  err);
+		return err;
+	}
+
+	bio->bi_iter.bi_sector = zone_start;
+	bio_set_dev(bio, sb->s_bdev);
+	bio_set_op_attrs(bio, op, op_flags);
+
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
+	err = ssdfs_bdev_bio_add_page(bio, page, PAGE_SIZE, 0);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add page into bio: "
+			  "err %d\n",
+			  err);
+		goto finish_sync_page_request;
+	}
+
+	err = submit_bio_wait(bio);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to process request: "
+			  "err %d\n",
+			  err);
+		goto finish_sync_page_request;
+	}
+
+finish_sync_page_request:
+	ssdfs_bdev_bio_put(bio);
+
+	return err;
+}
+
+/*
+ * ssdfs_zns_sync_pvec_request() - submit pagevec request
+ * @sb: superblock object
+ * @pvec: pagevec
+ * @zone_start: first sector of zone
+ * @offset: offset in bytes from partition's begin
+ * @op: direction of I/O
+ * @op_flags: request op flags
+ */
+static int ssdfs_zns_sync_pvec_request(struct super_block *sb,
+					struct pagevec *pvec,
+					sector_t zone_start,
+					loff_t offset,
+					unsigned int op, int op_flags)
+{
+	struct bio *bio;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+	op |= REQ_OP_ZONE_APPEND | REQ_IDLE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pvec);
+
+	SSDFS_DBG("offset %llu, zone_start %llu, "
+		  "op %#x, op_flags %#x\n",
+		  offset, zone_start, op, op_flags);
+
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+
+	BUG_ON(zone_start != zone.start);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_count(pvec) == 0) {
+		SSDFS_WARN("empty page vector\n");
+		return 0;
+	}
+
+	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, pagevec_count(pvec),
+				   op, GFP_NOFS);
+	if (IS_ERR_OR_NULL(bio)) {
+		err = !bio ? -ERANGE : PTR_ERR(bio);
+		SSDFS_ERR("fail to allocate bio: err %d\n",
+			  err);
+		return err;
+	}
+
+	bio->bi_iter.bi_sector = zone_start;
+	bio_set_dev(bio, sb->s_bdev);
+	bio_set_op_attrs(bio, op, op_flags);
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		struct page *page = pvec->pages[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
+
+		err = ssdfs_bdev_bio_add_page(bio, page,
+					      PAGE_SIZE,
+					      0);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add page %d into bio: "
+				  "err %d\n",
+				  i, err);
+			goto finish_sync_pvec_request;
+		}
+	}
+
+	err = submit_bio_wait(bio);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to process request: "
+			  "err %d\n",
+			  err);
+		goto finish_sync_pvec_request;
+	}
+
+finish_sync_pvec_request:
+	ssdfs_bdev_bio_put(bio);
+
+	return err;
+}
+
+/*
+ * ssdfs_zns_readpage() - read page from the volume
+ * @sb: superblock object
+ * @page: memory page
+ * @offset: offset in bytes from partition's begin
+ *
+ * This function tries to read data on @offset
+ * from partition's begin in memory page.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EIO         - I/O error.
+ */
+int ssdfs_zns_readpage(struct super_block *sb, struct page *page,
+			loff_t offset)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu\n",
+		  sb, (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_bdev_readpage(sb, page, offset);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * ssdfs_zns_readpages() - read pages from the volume
+ * @sb: superblock object
+ * @pvec: pagevec
+ * @offset: offset in bytes from partition's begin
+ *
+ * This function tries to read data on @offset
+ * from partition's begin in memory page.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EIO         - I/O error.
+ */
+int ssdfs_zns_readpages(struct super_block *sb, struct pagevec *pvec,
+			 loff_t offset)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu\n",
+		  sb, (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_bdev_readpages(sb, pvec, offset);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * ssdfs_zns_read() - read from volume into buffer
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ * @len: size of buffer in bytes
+ * @buf: buffer
+ *
+ * This function tries to read data on @offset
+ * from partition's begin with @len bytes in size
+ * from the volume into @buf.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EIO         - I/O error.
+ */
+int ssdfs_zns_read(struct super_block *sb, loff_t offset,
+		   size_t len, void *buf)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
+		  sb, (unsigned long long)offset, len, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_bdev_read(sb, offset, len, buf);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
  * ssdfs_zns_can_write_page() - check that page can be written
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
@@ -281,6 +630,7 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 	struct blk_zone zone;
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	int res;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, need_check %d\n",
@@ -298,6 +648,15 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 			  zone_sector, res);
 		return res;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("zone before: start %llu, len %llu, wp %llu, "
+		  "type %#x, cond %#x, non_seq %#x, "
+		  "reset %#x, capacity %llu\n",
+		  zone.start, zone.len, zone.wp,
+		  zone.type, zone.cond, zone.non_seq,
+		  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (zone.type) {
 	case BLK_ZONE_TYPE_CONVENTIONAL:
@@ -349,13 +708,253 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 	}
 
 	if (zone_sector < zone.wp) {
+		err = -EIO;
 		SSDFS_DBG("cannot be written: "
 			  "zone_sector %llu, zone.wp %llu\n",
 			  zone_sector, zone.wp);
-		return -EIO;
 	}
 
-	return 0;
+#ifdef CONFIG_SSDFS_DEBUG
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone after: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * ssdfs_zns_writepage() - write memory page on volume
+ * @sb: superblock object
+ * @to_off: offset in bytes from partition's begin
+ * @page: memory page
+ * @from_off: offset in bytes from page's begin
+ * @len: size of data in bytes
+ *
+ * This function tries to write from @page data of @len size
+ * on @offset from partition's begin in memory page.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EROFS       - file system in RO mode.
+ * %-EIO         - I/O error.
+ */
+int ssdfs_zns_writepage(struct super_block *sb, loff_t to_off,
+			struct page *page, u32 from_off, size_t len)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	loff_t zone_start;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	sector_t zone_sector = to_off >> SECTOR_SHIFT;
+	u32 remainder;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, to_off %llu, page %p, from_off %u, len %zu\n",
+		  sb, to_off, page, from_off, len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (sb->s_flags & SB_RDONLY) {
+		SSDFS_WARN("unable to write on RO file system\n");
+		return -EROFS;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+	BUG_ON((to_off >= ssdfs_zns_device_size(sb)) ||
+		(len > (ssdfs_zns_device_size(sb) - to_off)));
+	BUG_ON(len == 0);
+	div_u64_rem((u64)to_off, (u64)fsi->pagesize, &remainder);
+	BUG_ON(remainder);
+	BUG_ON((from_off + len) > PAGE_SIZE);
+	BUG_ON(!PageDirty(page));
+	BUG_ON(PageLocked(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_lock_page(page);
+	atomic_inc(&fsi->pending_bios);
+
+	zone_start = (to_off / fsi->erasesize) * fsi->erasesize;
+	zone_start >>= SECTOR_SHIFT;
+
+	err = ssdfs_zns_sync_page_request(sb, page, zone_start, to_off,
+					  REQ_OP_WRITE, REQ_SYNC);
+	if (err) {
+		SetPageError(page);
+		SSDFS_ERR("failed to write (err %d): offset %llu\n",
+			  err, (unsigned long long)to_off);
+	} else {
+		ssdfs_clear_dirty_page(page);
+		SetPageUptodate(page);
+		ClearPageError(page);
+	}
+
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
+	if (atomic_dec_and_test(&fsi->pending_bios))
+		wake_up_all(&zns_wq);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * ssdfs_zns_writepages() - write pagevec on volume
+ * @sb: superblock object
+ * @to_off: offset in bytes from partition's begin
+ * @pvec: memory pages vector
+ * @from_off: offset in bytes from page's begin
+ * @len: size of data in bytes
+ *
+ * This function tries to write from @pvec data of @len size
+ * on @offset from partition's begin.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EROFS       - file system in RO mode.
+ * %-EIO         - I/O error.
+ */
+int ssdfs_zns_writepages(struct super_block *sb, loff_t to_off,
+			 struct pagevec *pvec,
+			 u32 from_off, size_t len)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct page *page;
+	loff_t zone_start;
+	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct blk_zone zone;
+	sector_t zone_sector = to_off >> SECTOR_SHIFT;
+	u32 remainder;
+	int res;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, to_off %llu, pvec %p, from_off %u, len %zu\n",
+		  sb, to_off, pvec, from_off, len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (sb->s_flags & SB_RDONLY) {
+		SSDFS_WARN("unable to write on RO file system\n");
+		return -EROFS;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pvec);
+	BUG_ON((to_off >= ssdfs_zns_device_size(sb)) ||
+		(len > (ssdfs_zns_device_size(sb) - to_off)));
+	BUG_ON(len == 0);
+	div_u64_rem((u64)to_off, (u64)fsi->pagesize, &remainder);
+	BUG_ON(remainder);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_count(pvec) == 0) {
+		SSDFS_WARN("empty pagevec\n");
+		return 0;
+	}
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		page = pvec->pages[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!page);
+		BUG_ON(!PageDirty(page));
+		BUG_ON(PageLocked(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_lock_page(page);
+	}
+
+	atomic_inc(&fsi->pending_bios);
+
+	zone_start = (to_off / fsi->erasesize) * fsi->erasesize;
+	zone_start >>= SECTOR_SHIFT;
+
+	err = ssdfs_zns_sync_pvec_request(sb, pvec, zone_start, to_off,
+					  REQ_OP_WRITE, REQ_SYNC);
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		page = pvec->pages[i];
+
+		if (err) {
+			SetPageError(page);
+			SSDFS_ERR("failed to write (err %d): "
+				  "page_index %llu\n",
+				  err,
+				  (unsigned long long)page_index(page));
+		} else {
+			ssdfs_clear_dirty_page(page);
+			SetPageUptodate(page);
+			ClearPageError(page);
+		}
+
+		ssdfs_unlock_page(page);
+		ssdfs_put_page(page);
+
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
+	}
+
+	if (atomic_dec_and_test(&fsi->pending_bios))
+		wake_up_all(&zns_wq);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+	} else {
+		SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+			  "type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
 }
 
 /*
@@ -384,10 +983,10 @@ static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
 	sector_t sectors_count;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
 		  sb, (unsigned long long)offset, len);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	div_u64_rem((u64)len, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
 	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
@@ -473,12 +1072,12 @@ const struct ssdfs_device_ops ssdfs_zns_devops = {
 	.device_size		= ssdfs_zns_device_size,
 	.open_zone		= ssdfs_zns_open_zone,
 	.close_zone		= ssdfs_zns_close_zone,
-	.read			= ssdfs_bdev_read,
-	.readpage		= ssdfs_bdev_readpage,
-	.readpages		= ssdfs_bdev_readpages,
+	.read			= ssdfs_zns_read,
+	.readpage		= ssdfs_zns_readpage,
+	.readpages		= ssdfs_zns_readpages,
 	.can_write_page		= ssdfs_zns_can_write_page,
-	.writepage		= ssdfs_bdev_writepage,
-	.writepages		= ssdfs_bdev_writepages,
+	.writepage		= ssdfs_zns_writepage,
+	.writepages		= ssdfs_zns_writepages,
 	.erase			= ssdfs_zns_trim,
 	.trim			= ssdfs_zns_trim,
 	.peb_isbad		= ssdfs_zns_peb_isbad,

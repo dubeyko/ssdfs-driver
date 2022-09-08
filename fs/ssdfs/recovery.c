@@ -109,7 +109,8 @@ int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
 	sbi->vh_buf = NULL;
 	sbi->vs_buf = NULL;
 
-	footer_size = max_t(size_t, footer_size, (size_t)fsi->pagesize);
+	hdr_size = max_t(size_t, hdr_size, (size_t)SSDFS_32KB);
+	footer_size = max_t(size_t, footer_size, (size_t)SSDFS_32KB);
 
 	vh_buf = ssdfs_recovery_kzalloc(hdr_size, GFP_KERNEL);
 	vs_buf = ssdfs_recovery_kzalloc(footer_size, GFP_KERNEL);
@@ -1551,6 +1552,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->log_pagesize = fsi->vh->log_pagesize;
 	fsi->pagesize = 1 << fsi->vh->log_pagesize;
 	fsi->log_erasesize = fsi->vh->log_erasesize;
+	fsi->log_segsize = fsi->vh->log_segsize;
 	fsi->segsize = 1 << fsi->vh->log_segsize;
 	fsi->log_pebs_per_seg = fsi->vh->log_pebs_per_seg;
 	fsi->pebs_per_seg = 1 << fsi->vh->log_pebs_per_seg;

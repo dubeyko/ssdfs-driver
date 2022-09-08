@@ -41,7 +41,7 @@ struct ssdfs_segment_blk_bmap {
 	u32 pages_per_peb;
 	u32 pages_per_seg;
 
-	spinlock_t modification_lock;
+	struct rw_semaphore modification_lock;
 	atomic_t seg_valid_blks;
 	atomic_t seg_invalid_blks;
 	atomic_t seg_free_blks;

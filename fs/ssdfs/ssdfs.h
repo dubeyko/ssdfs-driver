@@ -88,6 +88,13 @@ void ssdfs_free_workspaces(void);
 void ssdfs_compressors_exit(void);
 
 /* dev_bdev.c */
+struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
+				 unsigned int nr_iovecs,
+				 unsigned int op,
+				 gfp_t gfp_mask);
+void ssdfs_bdev_bio_put(struct bio *bio);
+int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
+			    unsigned int len, unsigned int offset);
 int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
 			loff_t offset);
 int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
