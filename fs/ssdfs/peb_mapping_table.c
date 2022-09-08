@@ -1319,7 +1319,6 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 			  page_index, fdesc->stripe_pages);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
@@ -1330,6 +1329,7 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 		  page, portion_id, fragment_id,
 		  fdesc, stripe_id, page_index,
 		  *pebs_per_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -1549,19 +1549,22 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 	int page_index;
 	int fragment_id;
 	int i, j;
+#ifdef CONFIG_SSDFS_DEBUG
+	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->maptbl || !area);
 	BUG_ON(!rwsem_is_locked(&pebc->parent_si->fsi->maptbl->tbl_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, portion_id %u, "
 		  "pages_count %zu, pages_capacity %zu\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, area->portion_id,
 		  area->pages_count, area->pages_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 	tbl = fsi->maptbl;
@@ -1628,6 +1631,17 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 			goto finish_fragment_init;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		kaddr = kmap_atomic(page);
+		SSDFS_DBG("LEBTBL PAGE DUMP: index %d\n",
+			  page_index);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr,
+				     PAGE_SIZE);
+		SSDFS_DBG("\n");
+		kunmap_atomic(kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_check_lebtbl_page(page,
 						     area->portion_id, i,
 						     fdesc, i,
@@ -1676,6 +1690,17 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 				SSDFS_ERR("page %d is absent\n", i);
 				goto finish_fragment_init;
 			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			kaddr = kmap_atomic(page);
+			SSDFS_DBG("PEBTBL PAGE DUMP: index %d\n",
+				  page_index);
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr,
+					     PAGE_SIZE);
+			SSDFS_DBG("\n");
+			kunmap_atomic(kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_maptbl_check_pebtbl_page(pebc, page,
 							    area->portion_id,

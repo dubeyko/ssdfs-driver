@@ -817,6 +817,24 @@ pgoff_t ssdfs_mem_page_to_phys_page(struct ssdfs_fs_info *fsi,
 #define SSDFS_BYTES2MEMPAGE(offset) \
 	((pgoff_t)offset >> PAGE_SHIFT)
 
+/*
+ * ssdfs_write_offset_to_mem_page_index() - convert write offset into mem page
+ * @fsi: pointer on shared file system object
+ * @start_page: index of log's start physical page
+ * @write_offset: offset in bytes from log's beginning
+ */
+static inline
+pgoff_t ssdfs_write_offset_to_mem_page_index(struct ssdfs_fs_info *fsi,
+					     u16 start_page,
+					     u32 write_offset)
+{
+	u32 page_off;
+
+	page_off = ssdfs_phys_page_to_mem_page(fsi, start_page);
+	page_off = SSDFS_MEMPAGE2BYTES(page_off) + write_offset;
+	return SSDFS_BYTES2MEMPAGE(page_off);
+}
+
 #define SSDFS_BLKBMP_HDR(ptr) \
 	((struct ssdfs_block_bitmap_header *)(ptr))
 #define SSDFS_SBMP_FRAG_HDR(ptr) \

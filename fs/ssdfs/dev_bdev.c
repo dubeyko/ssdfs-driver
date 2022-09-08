@@ -695,7 +695,7 @@ static int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	BUG_ON((to_off >= ssdfs_bdev_device_size(sb)) ||
 		(len > (ssdfs_bdev_device_size(sb) - to_off)));
 	BUG_ON(len == 0);
-	div_u64_rem((u64)to_off, (u64)fsi->pagesize, &remainder);
+	div_u64_rem((u64)to_off, (u64)SSDFS_4KB, &remainder);
 	BUG_ON(remainder);
 	BUG_ON((from_off + len) > PAGE_SIZE);
 	BUG_ON(!PageDirty(page));
@@ -779,7 +779,7 @@ static int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 	BUG_ON((to_off >= ssdfs_bdev_device_size(sb)) ||
 		(len > (ssdfs_bdev_device_size(sb) - to_off)));
 	BUG_ON(len == 0);
-	div_u64_rem((u64)to_off, (u64)fsi->pagesize, &remainder);
+	div_u64_rem((u64)to_off, (u64)SSDFS_4KB, &remainder);
 	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 

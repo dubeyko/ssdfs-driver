@@ -592,11 +592,11 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!array);
 	BUG_ON(array_size != SSDFS_SEG_HDR_DESC_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, log_start_page %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  log_start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	page_off = log_start_page;
@@ -1703,16 +1703,17 @@ int ssdfs_peb_unaligned_read_fragment(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(byte_off > pebi->pebc->parent_si->fsi->erasesize);
-	BUG_ON(size > PAGE_SIZE);
-	WARN_ON(size == 0);
-	BUG_ON(!buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, "
 		  "offset %u, size %zu, buf %p\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  byte_off, size, buf);
+
+	BUG_ON(byte_off > pebi->pebc->parent_si->fsi->erasesize);
+	BUG_ON(size > PAGE_SIZE);
+	WARN_ON(size == 0);
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 read_next_page:
 	if (byte_off > pebi->pebc->parent_si->fsi->erasesize) {
@@ -1986,16 +1987,17 @@ int ssdfs_peb_read_main_area_page(struct ssdfs_peb_info *pebi,
 	int page_index;
 	struct page *page;
 	void *kaddr;
+	u32 pvec_size;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !array || !blk_state_off);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -2018,53 +2020,67 @@ int ssdfs_peb_read_main_area_page(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	data_bytes = req->extent.data_bytes - read_bytes;
-
-	if (fsi->pagesize > PAGE_SIZE)
-		data_bytes = min_t(u32, data_bytes, fsi->pagesize);
-	else
-		data_bytes = min_t(u32, data_bytes, PAGE_SIZE);
-
 	area_offset = le32_to_cpu(array[area_index].offset);
 	byte_offset = le32_to_cpu(blk_state_off->byte_offset);
 
-	page_index = (int)(read_bytes >> PAGE_SHIFT);
-	BUG_ON(page_index >= U16_MAX);
+	while (read_bytes < req->extent.data_bytes) {
+		data_bytes = req->extent.data_bytes - read_bytes;
+		data_bytes = min_t(u32, data_bytes, PAGE_SIZE);
 
-	if (req->private.flags & SSDFS_REQ_PREPARE_DIFF) {
-		if (pagevec_count(&req->result.old_state) <= page_index) {
-			SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-				  page_index,
-				  pagevec_count(&req->result.old_state));
-			return -EIO;
+		page_index = (int)(read_bytes >> PAGE_SHIFT);
+		BUG_ON(page_index >= U16_MAX);
+
+		if (req->private.flags & SSDFS_REQ_PREPARE_DIFF) {
+			pvec_size = pagevec_count(&req->result.old_state);
+
+			if (pvec_size <= page_index) {
+				SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+					  page_index, pvec_size);
+				return -EIO;
+			}
+
+			page = req->result.old_state.pages[page_index];
+		} else {
+			pvec_size = pagevec_count(&req->result.pvec);
+
+			if (pvec_size <= page_index) {
+				SSDFS_ERR("page_index %d >= pagevec_count %u\n",
+					  page_index, pvec_size);
+				return -EIO;
+			}
+
+			page = req->result.pvec.pages[page_index];
 		}
 
-		page = req->result.old_state.pages[page_index];
-	} else {
-		if (pagevec_count(&req->result.pvec) <= page_index) {
-			SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-				  page_index,
-				  pagevec_count(&req->result.pvec));
-			return -EIO;
-		}
+		SSDFS_DBG("area_offset %u, byte_offset %u, "
+			  "page_index %d, data_bytes %u, "
+			  "req->extent.data_bytes %u, "
+			  "read_bytes %u, page_size %u\n",
+			  area_offset, byte_offset,
+			  page_index, data_bytes,
+			  req->extent.data_bytes,
+			  read_bytes, fsi->pagesize);
 
-		page = req->result.pvec.pages[page_index];
-	}
-
-	kaddr = kmap(page);
-	err = ssdfs_peb_unaligned_read_fragment(pebi, req,
+		kaddr = kmap(page);
+		err = ssdfs_peb_unaligned_read_fragment(pebi, req,
 						area_offset + byte_offset,
-						data_bytes,
-						kaddr);
-	kunmap(page);
+						data_bytes, kaddr);
+		kunmap(page);
 
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read page: "
-			  "seg %llu, peb %llu, offset %u, size %u, "
-			  "err %d\n",
-			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-			  area_offset + byte_offset, data_bytes, err);
-		return err;
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read page: "
+				  "seg %llu, peb %llu, offset %u, size %u, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  area_offset + byte_offset,
+				  data_bytes,
+				  err);
+			return err;
+		}
+
+		read_bytes += data_bytes;
+		byte_offset += data_bytes;
 	}
 
 	return 0;
@@ -2117,10 +2133,10 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !array || !blk_state_off);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -2130,6 +2146,9 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 			  area_index, array_size);
 		return -EIO;
 	}
+
+	SSDFS_DBG("log_area %u, area_index %u\n",
+		  blk_state_off->log_area, area_index);
 
 	read_bytes = req->result.processed_blks * fsi->pagesize;
 
@@ -2345,10 +2364,10 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !array || !offset);
 	BUG_ON(array_size != SSDFS_SEG_HDR_DESC_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req,
 					le16_to_cpu(offset->log_start_page),
@@ -8354,6 +8373,8 @@ u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_bmap *segbmap;
 	u16 peb_index;
+	u32 fragments_per_peb;
+	u32 fragment_size;
 	u32 blks_per_peb;
 	u32 peb_blk_off, blk_off;
 	u32 logical_blk;
@@ -8361,25 +8382,35 @@ u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, "
 		  "logical_offset %llu\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 	segbmap = fsi->segbmap;
 	peb_index = pebc->peb_index;
 
 	down_read(&segbmap->resize_lock);
-	blks_per_peb = (u32)segbmap->fragments_per_peb * segbmap->fragment_size;
+	fragments_per_peb = segbmap->fragments_per_peb;
+	fragment_size = segbmap->fragment_size;
+	blks_per_peb = fragments_per_peb * fragment_size;
+	blks_per_peb += fsi->pagesize - 1;
 	blks_per_peb >>= fsi->log_pagesize;
 	up_read(&segbmap->resize_lock);
 
 	peb_blk_off = blks_per_peb * peb_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fragments_per_peb %u, fragment_size %u, "
+		  "pagesize %u, blks_per_peb %u, "
+		  "peb_blk_off %u\n",
+		  fragments_per_peb, fragment_size,
+		  fsi->pagesize, blks_per_peb,
+		  peb_blk_off);
+
 	BUG_ON(peb_blk_off >= U16_MAX);
 	BUG_ON((logical_offset >> fsi->log_pagesize) >= U32_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -8437,7 +8468,6 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
 	BUG_ON(extent->fragment_size != PAGE_SIZE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "
@@ -8445,6 +8475,7 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  extent->logical_offset, extent->data_size,
 		  extent->fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8911,10 +8942,10 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !area);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, index %d, fragment_bytes %u, area %p\n",
 		  pebc, index, fragment_bytes, area);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8928,6 +8959,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		u32 logical_blk;
 		u32 size;
 		u16 pages_count;
+		u16 logical_blk_count;
 		int i;
 
 		req = ssdfs_request_alloc();
@@ -8941,16 +8973,13 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		ssdfs_request_init(req);
 		ssdfs_get_request(req);
 
-		if (logical_offset == 0)
-			size = PAGE_SIZE;
-		else
-			size = min_t(u32, fragment_bytes, pagevec_bytes);
+		size = min_t(u32, fragment_bytes, pagevec_bytes);
 
 		ssdfs_request_prepare_logical_extent(SSDFS_MAPTBL_INO,
 						     logical_offset, size,
 						     0, 0, req);
 
-		pages_count = (size + fsi->pagesize - 1) >> PAGE_SHIFT;
+		pages_count = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(pages_count > PAGEVEC_SIZE);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -8977,8 +9006,11 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		BUG_ON(logical_blk >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		logical_blk_count =
+			(size + fsi->pagesize - 1) >> fsi->log_pagesize;
+
 		ssdfs_request_define_volume_extent((u16)logical_blk,
-						   pages_count, req);
+						   logical_blk_count, req);
 
 		err = ssdfs_peb_readahead_pages(pebc, req, NULL);
 		if (unlikely(err)) {
@@ -9060,13 +9092,13 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 

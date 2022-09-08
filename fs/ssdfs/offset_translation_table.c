@@ -3982,22 +3982,25 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 					 pgoff_t *cur_page,
 					 u32 *write_offset)
 {
+	struct ssdfs_fs_info *fsi;
 	size_t hdr_sz = sizeof(struct ssdfs_blk2off_table_header);
 	struct page *page;
 	void *kaddr;
 	u32 page_off, cur_offset;
+	pgoff_t mem_page_idx;
+	pgoff_t phys_page_idx;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!hdr || !cur_page || !write_offset);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, current_log.start_page %u, "
 		  "hdr %p, cur_page %lu, write_offset %u\n",
 		  pebi->peb_id,
 		  pebi->current_log.start_page,
 		  hdr, *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_off = *write_offset % PAGE_SIZE;
 
@@ -4005,10 +4008,23 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 	BUG_ON((PAGE_SIZE - page_off) < hdr_sz);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_page_array_grab_page(&pebi->cache, *cur_page);
+	fsi = pebi->pebc->parent_si->fsi;
+	mem_page_idx = ssdfs_write_offset_to_mem_page_index(fsi,
+					pebi->current_log.start_page,
+					*write_offset);
+
+	phys_page_idx = ssdfs_mem_page_to_phys_page(fsi, mem_page_idx);
+	if (phys_page_idx != *cur_page) {
+		SSDFS_ERR("invalid page index: "
+			  "phys_page_idx %lu, cur_page %lu\n",
+			  phys_page_idx, *cur_page);
+		return -ERANGE;
+	}
+
+	page = ssdfs_page_array_grab_page(&pebi->cache, mem_page_idx);
 	if (IS_ERR_OR_NULL(page)) {
 		SSDFS_ERR("fail to get cache page: index %lu\n",
-			  *cur_page);
+			  mem_page_idx);
 		return -ENOMEM;
 	}
 
@@ -4026,10 +4042,10 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 	SetPagePrivate(page);
 	SetPageUptodate(page);
 
-	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
+	err = ssdfs_page_array_set_page_dirty(&pebi->cache, mem_page_idx);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-			  *cur_page, err);
+			  mem_page_idx, err);
 	}
 
 finish_copy:
@@ -4044,8 +4060,10 @@ finish_copy:
 
 	*write_offset += hdr_sz;
 
-	cur_offset = (*cur_page << PAGE_SHIFT) + page_off + hdr_sz;
-	*cur_page = cur_offset >> PAGE_SHIFT;
+	cur_offset = (mem_page_idx << PAGE_SHIFT) + page_off + hdr_sz;
+	mem_page_idx = cur_offset >> PAGE_SHIFT;
+
+	*cur_page = ssdfs_mem_page_to_phys_page(fsi, mem_page_idx);
 
 	return 0;
 }
@@ -4073,11 +4091,14 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 				      pgoff_t *cur_page,
 				      u32 *write_offset)
 {
+	struct ssdfs_fs_info *fsi;
 	struct page *page;
 	void *kaddr;
 	size_t extent_size = sizeof(struct ssdfs_translation_extent);
 	size_t array_size = extent_size * extent_count;
 	u32 rest_bytes, written_bytes = 0;
+	pgoff_t mem_page_idx;
+	pgoff_t phys_page_idx;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4094,6 +4115,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		  *cur_page, *write_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = pebi->pebc->parent_si->fsi;
 	rest_bytes = extent_count * extent_size;
 
 	while (rest_bytes > 0) {
@@ -4108,11 +4130,23 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		BUG_ON(written_bytes > (extent_count * extent_size));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		mem_page_idx = ssdfs_write_offset_to_mem_page_index(fsi,
+					    pebi->current_log.start_page,
+					    *write_offset);
+
+		phys_page_idx = ssdfs_mem_page_to_phys_page(fsi, mem_page_idx);
+		if (phys_page_idx != *cur_page) {
+			SSDFS_ERR("invalid page index: "
+				  "phys_page_idx %lu, cur_page %lu\n",
+				  phys_page_idx, *cur_page);
+			return -ERANGE;
+		}
+
 		page = ssdfs_page_array_grab_page(&pebi->cache,
-						  *cur_page);
+						  mem_page_idx);
 		if (IS_ERR_OR_NULL(page)) {
 			SSDFS_ERR("fail to get cache page: index %lu\n",
-				  *cur_page);
+				  mem_page_idx);
 			return -ENOMEM;
 		}
 
@@ -4134,10 +4168,10 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		SetPageUptodate(page);
 
 		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
-						      *cur_page);
+						      mem_page_idx);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-				  *cur_page, err);
+				  mem_page_idx, err);
 		}
 
 finish_copy:
@@ -4152,8 +4186,10 @@ finish_copy:
 
 		*write_offset += bytes;
 
-		new_off = (*cur_page << PAGE_SHIFT) + cur_off + bytes;
-		*cur_page = new_off >> PAGE_SHIFT;
+		new_off = (mem_page_idx << PAGE_SHIFT) + cur_off + bytes;
+		mem_page_idx = new_off >> PAGE_SHIFT;
+
+		*cur_page = ssdfs_mem_page_to_phys_page(fsi, mem_page_idx);
 
 		rest_bytes -= bytes;
 		written_bytes += bytes;
@@ -4187,6 +4223,7 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 					   pgoff_t *cur_page,
 					   u32 *write_offset)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_phys_offset_table_array *pot_table;
 	struct ssdfs_sequence_array *sequence;
 	struct ssdfs_phys_offset_table_fragment *fragment;
@@ -4196,13 +4233,14 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 	void *kaddr;
 	u32 fragment_size;
 	u32 rest_bytes, written_bytes = 0;
+	pgoff_t mem_page_idx;
+	pgoff_t phys_page_idx;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!table || !cur_page || !write_offset);
 	BUG_ON(peb_index >= table->pebs_count);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, current_log.start_page %u, "
 		  "peb_index %u, sequence_id %u, "
@@ -4211,6 +4249,9 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		  pebi->current_log.start_page,
 		  peb_index, sequence_id,
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
 
 	down_read(&table->translation_lock);
 
@@ -4265,12 +4306,25 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		BUG_ON(written_bytes > fragment_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		mem_page_idx = ssdfs_write_offset_to_mem_page_index(fsi,
+					    pebi->current_log.start_page,
+					    *write_offset);
+
+		phys_page_idx = ssdfs_mem_page_to_phys_page(fsi, mem_page_idx);
+		if (phys_page_idx != *cur_page) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid page index: "
+				  "phys_page_idx %lu, cur_page %lu\n",
+				  phys_page_idx, *cur_page);
+			goto finish_fragment_copy;
+		}
+
 		page = ssdfs_page_array_grab_page(&pebi->cache,
-						  *cur_page);
+						  mem_page_idx);
 		if (IS_ERR_OR_NULL(page)) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to get cache page: index %lu\n",
-				  *cur_page);
+				  mem_page_idx);
 			goto finish_fragment_copy;
 		}
 
@@ -4289,10 +4343,10 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		SetPageUptodate(page);
 
 		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
-						      *cur_page);
+						      mem_page_idx);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-				  *cur_page, err);
+				  mem_page_idx, err);
 		}
 
 finish_cur_copy:
@@ -4307,8 +4361,10 @@ finish_cur_copy:
 
 		*write_offset += bytes;
 
-		new_off = (*cur_page << PAGE_SHIFT) + cur_off + bytes;
-		*cur_page = new_off >> PAGE_SHIFT;
+		new_off = (mem_page_idx << PAGE_SHIFT) + cur_off + bytes;
+		mem_page_idx = new_off >> PAGE_SHIFT;
+
+		*cur_page = ssdfs_mem_page_to_phys_page(fsi, mem_page_idx);
 
 		rest_bytes -= bytes;
 		written_bytes += bytes;

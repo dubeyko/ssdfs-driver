@@ -89,12 +89,16 @@ struct ssdfs_metadata_options {
 /*
  * struct ssdfs_sb_info - superblock info
  * @vh_buf: volume header buffer
+ * @vh_buf_size: size of volume header buffer in bytes
  * @vs_buf: volume state buffer
+ * @vs_buf_size: size of volume state buffer in bytes
  * @last_log: latest sb log
  */
 struct ssdfs_sb_info {
 	void *vh_buf;
+	size_t vh_buf_size;
 	void *vs_buf;
+	size_t vs_buf_size;
 	struct ssdfs_peb_extent last_log;
 };
 

@@ -1747,12 +1747,12 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
 	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
 		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
 		  last_sb_log->page_offset, last_sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 	hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
@@ -1870,7 +1870,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ClearPagePrivate(page);
 	ssdfs_unlock_page(page);
 
-	offset += PAGE_SIZE;
+	offset += fsi->pagesize;
 
 	for (i = 0; i < pagevec_count(&payload->maptbl_cache.pvec); i++) {
 		struct page *payload_page = payload->maptbl_cache.pvec.pages[i];
@@ -1930,12 +1930,12 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	/* write log footer */
 	written = 0;
 
-	while (written < fsi->pagesize) {
+	while (written < fsi->sbi.vs_buf_size) {
 		ssdfs_lock_page(page);
 		kaddr = kmap_atomic(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-			     fsi->sbi.vs_buf, written, fsi->pagesize,
+			     fsi->sbi.vs_buf, written, fsi->sbi.vs_buf_size,
 			     PAGE_SIZE);
 		kunmap_atomic(kaddr);
 		SetPagePrivate(page);
@@ -2015,12 +2015,12 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
 	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
 		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
 		  last_sb_log->page_offset, last_sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 	hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
@@ -2198,7 +2198,7 @@ free_payload_buffer:
 	ClearPagePrivate(page);
 	ssdfs_unlock_page(page);
 
-	offset += PAGE_SIZE;
+	offset += fsi->pagesize;
 
 	/* ->writepage() calls put_page() */
 	ssdfs_get_page(page);
@@ -2209,12 +2209,12 @@ free_payload_buffer:
 	/* write log footer */
 	written = 0;
 
-	while (written < fsi->pagesize) {
+	while (written < fsi->sbi.vs_buf_size) {
 		ssdfs_lock_page(page);
 		kaddr = kmap_atomic(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-			     fsi->sbi.vs_buf, written, fsi->pagesize,
+			     fsi->sbi.vs_buf, written, fsi->sbi.vs_buf_size,
 			     PAGE_SIZE);
 		kunmap_atomic(kaddr);
 		SetPagePrivate(page);

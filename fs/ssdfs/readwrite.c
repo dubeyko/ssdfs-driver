@@ -394,12 +394,12 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sb || !sb_log);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u\n",
 		  sb_log->leb_id, sb_log->peb_id,
 		  sb_log->page_offset, sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 

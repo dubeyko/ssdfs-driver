@@ -132,6 +132,7 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
+	case SSDFS_32KB:
 		/* do nothing */
 		break;
 
@@ -394,6 +395,7 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
+	case SSDFS_32KB:
 		/* do nothing */
 		break;
 

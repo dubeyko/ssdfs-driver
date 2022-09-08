@@ -1432,11 +1432,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !start);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, start %lu, end %lu, state %#x\n",
 		  array, *start, end,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
