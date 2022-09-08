@@ -602,12 +602,17 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
 					 u64 leb_id, u8 peb_type,
 					 struct completion **end);
+int ssdfs_maptbl_set_pre_erased_snapshot_peb(struct ssdfs_fs_info *fsi,
+					     u64 peb_id,
+					     struct completion **end);
 int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 				   u64 leb_id, u8 peb_type,
 				   struct ssdfs_maptbl_peb_relation *pebr,
 				   struct completion **end);
 int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 					u64 leb_id, u8 peb_type,
+					u64 peb_create_time,
+					u64 last_log_time,
 					struct completion **end);
 int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 					u64 leb_id, u8 peb_type,

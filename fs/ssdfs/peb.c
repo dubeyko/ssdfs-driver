@@ -563,6 +563,8 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	pebi->peb_id = peb_id;
 	pebi->peb_index = pebc->peb_index;
 	pebi->log_pages = pebc->log_pages;
+	pebi->peb_create_time = ssdfs_current_timestamp();
+	pebi->last_log_time = U64_MAX;
 	ssdfs_set_peb_migration_id(pebi, peb_migration_id);
 	init_completion(&pebi->init_end);
 	atomic_set(&pebi->reserved_bytes.blk_bmap, 0);

@@ -159,6 +159,26 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 }
 
 /*
+ * does_peb_contain_snapshot() - check that PEB contains snapshot
+ * @ptr: PEB descriptor
+ */
+static inline
+bool does_peb_contain_snapshot(struct ssdfs_peb_descriptor *ptr)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr);
+
+	SSDFS_DBG("ptr->state %#x\n",
+		  ptr->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (ptr->state == SSDFS_MAPTBL_SNAPSHOT_STATE)
+		return true;
+
+	return false;
+}
+
+/*
  * ssdfs_maptbl_collect_stripe_dirty_pebs() - collect dirty PEBs in stripe
  * @tbl: mapping table object
  * @fdesc: fragment descriptor
@@ -278,6 +298,13 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 			if (ptr->state == SSDFS_MAPTBL_UNDER_ERASE_STATE) {
 				SSDFS_DBG("PEB %llu is under erase\n",
+					  GET_PEB_ID(kaddr, found_item));
+				found_item++;
+				continue;
+			}
+
+			if (does_peb_contain_snapshot(ptr)) {
+				SSDFS_DBG("PEB %llu contains snapshot\n",
 					  GET_PEB_ID(kaddr, found_item));
 				found_item++;
 				continue;

@@ -4058,6 +4058,10 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 			}
 
 			env->log_offset = (u16)i;
+			pebi->peb_create_time =
+				le64_to_cpu(seg_hdr->peb_create_time);
+			pebi->last_log_time =
+				le64_to_cpu(seg_hdr->timestamp);
 			goto finish_last_log_search;
 		} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 			u32 flags;
@@ -4131,6 +4135,10 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 				}
 
 				env->log_offset = (u16)i;
+				pebi->peb_create_time =
+					le64_to_cpu(pl_hdr->peb_create_time);
+				pebi->last_log_time =
+					le64_to_cpu(pl_hdr->timestamp);
 				goto finish_last_log_search;
 			} else {
 				/* intermediate partial log */
@@ -4154,6 +4162,10 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 
 				*new_log_start_page = (u16)page_offset;
 				env->log_offset = (u16)i;
+				pebi->peb_create_time =
+					le64_to_cpu(pl_hdr->peb_create_time);
+				pebi->last_log_time =
+					le64_to_cpu(pl_hdr->timestamp);
 				goto finish_last_log_search;
 			}
 		} else if (__is_ssdfs_log_footer_magic_valid(magic)) {

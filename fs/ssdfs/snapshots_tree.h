@@ -29,6 +29,7 @@ struct ssdfs_snapshots_btree_queue {
  * @lock: snapshots btree lock
  * @generic_tree: generic btree description
  * @snapshots_count: count of the snapshots in the whole tree
+ * @deleted_snapshots: current number of snapshot delete operations
  * @requests: snapshot requests queue
  * @wait_queue: wait queue of snapshots tree's thread
  * @fsi: pointer on shared file system object
@@ -39,6 +40,7 @@ struct ssdfs_snapshots_btree_info {
 	struct ssdfs_btree generic_tree;
 
 	atomic64_t snapshots_count;
+	atomic64_t deleted_snapshots;
 
 	struct ssdfs_snapshots_btree_queue requests;
 	wait_queue_head_t wait_queue;
@@ -136,6 +138,44 @@ void SHOW_SNAPSHOT_INFO(struct ssdfs_snapshot_request *snr)
 		  snr->info.time_range.year);
 }
 
+static inline
+bool is_item_snapshot(void *kaddr)
+{
+	struct ssdfs_snapshot *snapshot;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	snapshot = (struct ssdfs_snapshot *)kaddr;
+
+	return le16_to_cpu(snapshot->magic) == SSDFS_SNAPSHOT_RECORD_MAGIC;
+}
+
+static inline
+bool is_item_peb2time_record(void *kaddr)
+{
+	struct ssdfs_peb2time_set *peb2time;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb2time = (struct ssdfs_peb2time_set *)kaddr;
+
+	return le16_to_cpu(peb2time->magic) == SSDFS_PEB2TIME_RECORD_MAGIC;
+}
+
+static inline
+bool is_peb2time_record_requested(struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return search->request.flags & SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR;
+}
+
 /*
  * Snapshots tree API
  */
@@ -149,19 +189,28 @@ int ssdfs_snapshots_btree_find(struct ssdfs_snapshots_btree_info *tree,
 int ssdfs_snapshots_btree_find_range(struct ssdfs_snapshots_btree_info *tree,
 				     struct ssdfs_timestamp_range *range,
 				     struct ssdfs_btree_search *search);
+int ssdfs_snapshots_btree_check_range(struct ssdfs_snapshots_btree_info *tree,
+				      struct ssdfs_timestamp_range *range,
+				      struct ssdfs_btree_search *search);
 int ssdfs_snapshots_btree_add(struct ssdfs_snapshots_btree_info *tree,
 			     struct ssdfs_snapshot_request *snr,
 			     struct ssdfs_btree_search *search);
+int ssdfs_snapshots_btree_add_peb2time(struct ssdfs_snapshots_btree_info *tree,
+					struct ssdfs_peb_timestamps *peb2time,
+					struct ssdfs_btree_search *search);
 int ssdfs_snapshots_btree_change(struct ssdfs_snapshots_btree_info *tree,
 				 struct ssdfs_snapshot_request *snr,
 				 struct ssdfs_btree_search *search);
 int ssdfs_snapshots_btree_delete(struct ssdfs_snapshots_btree_info *tree,
 				 struct ssdfs_snapshot_request *snr,
 				 struct ssdfs_btree_search *search);
+int ssdfs_snapshots_btree_delete_peb2time(struct ssdfs_snapshots_btree_info *,
+					  struct ssdfs_peb_timestamps *peb2time,
+					  struct ssdfs_btree_search *search);
 int ssdfs_snapshots_btree_delete_all(struct ssdfs_snapshots_btree_info *tree);
 
 /*
- * Internal dentries tree API
+ * Internal snapshots tree API
  */
 int ssdfs_start_snapshots_btree_thread(struct ssdfs_fs_info *fsi);
 int ssdfs_stop_snapshots_btree_thread(struct ssdfs_fs_info *fsi);

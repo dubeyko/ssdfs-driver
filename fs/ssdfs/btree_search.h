@@ -38,6 +38,18 @@ enum {
 };
 
 /*
+ * struct ssdfs_peb_timestamps - PEB timestamps
+ * @peb_id: PEB ID
+ * @create_time: PEB's create timestamp
+ * @last_log_time: PEB's last log create timestamp
+ */
+struct ssdfs_peb_timestamps {
+	u64 peb_id;
+	u64 create_time;
+	u64 last_log_time;
+};
+
+/*
  * struct ssdfs_btree_search_hash - btree search hash
  * @name: name of the searching object
  * @name_len: length of the name in bytes
@@ -45,6 +57,7 @@ enum {
  * @hash: hash value
  * @ino: inode ID
  * @fingerprint: fingerprint value
+ * @peb2time: PEB timestamps
  */
 struct ssdfs_btree_search_hash {
 	const char *name;
@@ -53,6 +66,7 @@ struct ssdfs_btree_search_hash {
 	u64 hash;
 	u64 ino;
 	struct ssdfs_fingerprint *fingerprint;
+	struct ssdfs_peb_timestamps *peb2time;
 };
 
 /*
@@ -75,7 +89,9 @@ struct ssdfs_btree_search_request {
 #define SSDFS_BTREE_SEARCH_INCREMENT_REF_COUNT		(1 << 7)
 #define SSDFS_BTREE_SEARCH_DECREMENT_REF_COUNT		(1 << 8)
 #define SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM	(1 << 9)
-#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x3FF
+#define SSDFS_BTREE_SEARCH_DONT_EXTRACT_RECORD		(1 << 10)
+#define SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR		(1 << 11)
+#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0xFFF
 	u32 flags;
 
 	struct ssdfs_btree_search_hash start;
@@ -266,6 +282,7 @@ enum {
  * @raw.xattr.header: raw xattr entry header
  * @raw.shared_extent: shared extent buffer
  * @raw.snapshot: raw snapshot info buffer
+ * @raw.peb2time: raw PEB2time set
  * @name: name string
  */
 struct ssdfs_btree_search {
@@ -283,6 +300,7 @@ struct ssdfs_btree_search {
 		} xattr;
 		struct ssdfs_shared_extent shared_extent;
 		struct ssdfs_snapshot snapshot;
+		struct ssdfs_peb2time_set peb2time;
 	} raw;
 	struct ssdfs_name_string name;
 };

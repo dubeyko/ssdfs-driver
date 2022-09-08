@@ -9391,6 +9391,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 							 &footer->volume_state);
 
 	if (!err) {
+		footer->peb_create_time = cpu_to_le64(pebi->peb_create_time);
 		err = ssdfs_prepare_log_footer_for_commit(fsi, log_pages,
 							  flags, footer);
 	}
@@ -9752,6 +9753,9 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 	err = ssdfs_store_peb_migration_id(pebi, hdr);
 	if (unlikely(err))
 		goto finish_segment_header_preparation;
+
+	hdr->peb_create_time = cpu_to_le64(pebi->peb_create_time);
+	pebi->last_log_time = le64_to_cpu(fsi->vs->timestamp);
 
 	err = ssdfs_prepare_segment_header_for_commit(fsi,
 						      log_pages,
@@ -10339,6 +10343,9 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 		     plh_desc, 0, array_bytes,
 		     array_bytes);
 
+	pl_hdr->peb_create_time = cpu_to_le64(pebi->peb_create_time);
+	pebi->last_log_time = le64_to_cpu(fsi->vs->timestamp);
+
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
 							  sequence_id,
 							  log_pages,
@@ -10478,6 +10485,9 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 	ssdfs_memcpy(pl_hdr->desc_array, 0, array_bytes,
 		     plh_desc, 0, array_bytes,
 		     array_bytes);
+
+	pl_hdr->peb_create_time = cpu_to_le64(pebi->peb_create_time);
+	pebi->last_log_time = le64_to_cpu(fsi->vs->timestamp);
 
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
 							  sequence_id,

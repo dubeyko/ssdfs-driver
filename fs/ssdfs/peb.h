@@ -184,6 +184,8 @@ struct ssdfs_peb_log {
  * @peb_id: PEB number
  * @peb_index: PEB index
  * @log_pages: count of pages in full partial log
+ * @peb_create_time: PEB creation timestamp
+ * @last_log_time: creation timestamp of last log
  * @peb_migration_id: identification number of PEB in migration sequence
  * @state: PEB object state
  * @init_end: wait of full init ending
@@ -200,6 +202,9 @@ struct ssdfs_peb_info {
 	u64 peb_id;
 	u16 peb_index;
 	u16 log_pages;
+
+	u64 peb_create_time;
+	u64 last_log_time;
 
 	/*
 	 * The peb_migration_id is stored in two places:

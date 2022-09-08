@@ -146,6 +146,14 @@ int ssdfs_snapshots_btree_create(struct ssdfs_fs_info *fsi)
 
 	atomic64_set(&ptr->snapshots_count, 0);
 
+	/*
+	 * Unmount operation could interrupt and stop
+	 * process of converting PEBs from
+	 * snapshot into pre-erase state. So, initiate
+	 * the continuation of converting process here.
+	 */
+	atomic64_set(&ptr->deleted_snapshots, 1);
+
 	init_waitqueue_head(&ptr->wait_queue);
 	ssdfs_snapshot_reqs_queue_init(&ptr->requests.queue);
 
@@ -377,6 +385,47 @@ int ssdfs_snapshots_btree_find_range(struct ssdfs_snapshots_btree_info *tree,
 		ssdfs_btree_search_init(search);
 		search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
 		search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE;
+		search->request.start.hash = range->start;
+		search->request.end.hash = range->end;
+	}
+
+	return ssdfs_btree_find_range(&tree->generic_tree, search);
+}
+
+/*
+ * ssdfs_snapshots_btree_check_range() - check range of snapshots
+ * @tree: pointer on snapshots btree object
+ * @range: timestamp range
+ * @search: pointer on search request object
+ *
+ * This method tries to check that there is any snapshot for
+ * the time range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_snapshots_btree_check_range(struct ssdfs_snapshots_btree_info *tree,
+				      struct ssdfs_timestamp_range *range,
+				      struct ssdfs_btree_search *search)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !range || !search);
+
+	SSDFS_DBG("tree %p, range (start %llu, end %llu), search %p\n",
+		  tree, range->start, range->end, search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
+
+	if (need_initialize_snapshots_btree_search(NULL, range, search)) {
+		ssdfs_btree_search_init(search);
+		search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
+		search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+					SSDFS_BTREE_SEARCH_DONT_EXTRACT_RECORD;
 		search->request.start.hash = range->start;
 		search->request.end.hash = range->end;
 	}
@@ -763,6 +812,7 @@ int ssdfs_snapshots_tree_get_next_hash(struct ssdfs_snapshots_btree_info *tree,
 
 /*
  * ssdfs_prepare_snapshot_info() - prepare snapshot info
+ * @tree: pointer on snapshots btree object
  * @snr: snapshot request
  * @create_time: create timestamp
  * @create_cno: create checkpoint
@@ -778,7 +828,8 @@ int ssdfs_snapshots_tree_get_next_hash(struct ssdfs_snapshots_btree_info *tree,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
+int ssdfs_prepare_snapshot_info(struct ssdfs_snapshots_btree_info *tree,
+				struct ssdfs_snapshot_request *snr,
 				u64 create_time,
 				u64 create_cno,
 				struct ssdfs_btree_search *search)
@@ -786,9 +837,10 @@ int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
 	struct ssdfs_snapshot *desc;
 	u64 name_hash = U64_MAX;
 	size_t len;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!snr || !search);
+	BUG_ON(!tree || !tree->fsi || !snr || !search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.buf_state) {
@@ -821,6 +873,8 @@ int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
 
 	memset(desc, 0, sizeof(struct ssdfs_snapshot));
 
+	desc->magic = cpu_to_le16(SSDFS_SNAPSHOT_RECORD_MAGIC);
+
 	ssdfs_memcpy(desc->uuid, 0, SSDFS_UUID_SIZE,
 		     snr->info.uuid, 0, SSDFS_UUID_SIZE,
 		     SSDFS_UUID_SIZE);
@@ -843,7 +897,6 @@ int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
 	}
 
 	desc->expiration = (u8)snr->info.expiration;
-	desc->flags = 0;
 
 	desc->create_time = cpu_to_le64(create_time);
 	desc->create_cno = cpu_to_le64(create_cno);
@@ -853,14 +906,36 @@ int ssdfs_prepare_snapshot_info(struct ssdfs_snapshot_request *snr,
 	len = strnlen(snr->info.name, SSDFS_MAX_NAME_LEN);
 
 	if (len != 0) {
-		name_hash = __ssdfs_generate_name_hash(snr->info.name, len,
-						SSDFS_MAX_SNAPSHOT_NAME_LEN);
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
 		if (name_hash == U64_MAX) {
 			SSDFS_ERR("fail to generate name hash\n");
 			return -ERANGE;
 		}
 
 		desc->name_hash = cpu_to_le64(name_hash);
+
+		if (len > SSDFS_MAX_SNAPSHOT_NAME_LEN) {
+			struct ssdfs_shared_dict_btree_info *dict;
+			struct qstr str = QSTR_INIT(snr->info.name, len);
+
+			dict = tree->fsi->shdictree;
+			if (!dict) {
+				SSDFS_ERR("shared dict is absent\n");
+				return -ERANGE;
+			}
+
+			err = ssdfs_shared_dict_save_name(dict,
+							  name_hash,
+							  &str);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to store name: "
+					  "hash %llx, err %d\n",
+					  name_hash, err);
+				return err;
+			}
+
+			desc->flags |= SSDFS_SNAPSHOT_HAS_EXTERNAL_STRING;
+		}
 	} else
 		desc->name_hash = cpu_to_le64(U64_MAX);
 
@@ -949,7 +1024,8 @@ int ssdfs_snapshots_btree_add(struct ssdfs_snapshots_btree_info *tree,
 	}
 
 	if (err == -ENODATA) {
-		err = ssdfs_prepare_snapshot_info(snr, create_time,
+		err = ssdfs_prepare_snapshot_info(tree,
+						  snr, create_time,
 						  create_cno, search);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare snapshot info: "
@@ -1006,6 +1082,455 @@ int ssdfs_snapshots_btree_add(struct ssdfs_snapshots_btree_info *tree,
 
 finish_add_snapshot:
 	up_read(&tree->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	ssdfs_debug_snapshots_btree_object(tree);
+
+	return err;
+}
+
+/*
+ * ssdfs_prepare_empty_peb2time_set() - prepare empty PEB2time set
+ * @search: search object
+ *
+ * This method tries to prepare empty PEB2time set into
+ * @search object.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_prepare_empty_peb2time_set(struct ssdfs_btree_search *search)
+{
+	size_t item_size = sizeof(struct ssdfs_peb2time_set);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+
+	SSDFS_DBG("search %p\n", search);
+	SSDFS_DBG("search->result: (state %#x, err %d, "
+		  "start_index %u, count %u, buf_state %#x, buf %p, "
+		  "buf_size %zu, items_in_buffer %u)\n",
+		  search->result.state,
+		  search->result.err,
+		  search->result.start_index,
+		  search->result.count,
+		  search->result.buf_state,
+		  search->result.buf,
+		  search->result.buf_size,
+		  search->result.items_in_buffer);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->result.err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(search->result.start_index >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (search->result.buf_state) {
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.buf = &search->raw.peb2time;
+		search->result.buf_size = item_size;
+		search->result.items_in_buffer = 1;
+		break;
+
+	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+		ssdfs_btree_search_free_result_buf(search);
+		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.buf = &search->raw.peb2time;
+		search->result.buf_size = item_size;
+		search->result.items_in_buffer = 1;
+		break;
+
+	default:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.buf = &search->raw.peb2time;
+		search->result.buf_size = item_size;
+		search->result.items_in_buffer = 1;
+		break;
+	}
+
+	memset(&search->raw.peb2time, 0xFF, item_size);
+
+	search->raw.peb2time.magic = cpu_to_le16(SSDFS_PEB2TIME_RECORD_MAGIC);
+	search->raw.peb2time.pairs_count = 0;
+
+	SSDFS_DBG("search->result: (state %#x, err %d, "
+		  "start_index %u, count %u, buf_state %#x, buf %p, "
+		  "buf_size %zu, items_in_buffer %u)\n",
+		  search->result.state,
+		  search->result.err,
+		  search->result.start_index,
+		  search->result.count,
+		  search->result.buf_state,
+		  search->result.buf,
+		  search->result.buf_size,
+		  search->result.items_in_buffer);
+
+	return 0;
+}
+
+/*
+ * ssdfs_add_peb2time_into_set() - add PEB2time into the set
+ * @peb2time: PEB2time pair
+ * @search: search object
+ *
+ * This method tries to add PEB2time pair into the set.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - PEB2time set doesn't exist.
+ * %-ENOSPC     - need to add a new PEB2time set in the tree.
+ * %-EEXIST     - PEB2time pair exists in the set.
+ */
+static
+int ssdfs_add_peb2time_into_set(struct ssdfs_peb_timestamps *peb2time,
+				struct ssdfs_btree_search *search)
+{
+	struct ssdfs_peb2time_set *set;
+	struct ssdfs_peb2time_pair *pair;
+	size_t set_size = sizeof(struct ssdfs_peb2time_set);
+	size_t pair_size = sizeof(struct ssdfs_peb2time_pair);
+	size_t array_size = pair_size * SSDFS_PEB2TIME_ARRAY_CAPACITY;
+	u64 peb_id;
+	u64 create_time;
+	u64 last_log_time;
+	u16 magic;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!peb2time || !search);
+
+	SSDFS_DBG("peb_id %llu, create_time %llu, "
+		  "last_log_time %llu, search %p\n",
+		  peb2time->peb_id, peb2time->create_time,
+		  peb2time->last_log_time, search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb_id = peb2time->peb_id;
+	create_time = peb2time->create_time;
+	last_log_time = peb2time->last_log_time;
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_EMPTY_RESULT:
+		SSDFS_DBG("no PEB2time set in search object\n");
+		return -ENODATA;
+
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid search object state %#x\n",
+			  search->result.state);
+		return -ERANGE;
+	}
+
+	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+		SSDFS_DBG("search buffer state %#x\n",
+			  search->result.buf_state);
+		return -ENODATA;
+	}
+
+	if (search->result.buf_size != set_size ||
+	    search->result.items_in_buffer != 1) {
+		SSDFS_ERR("invalid search buffer state %#x\n",
+			  search->result.buf_state);
+		return -ERANGE;
+	}
+
+	set = &search->raw.peb2time;
+
+	magic = le16_to_cpu(set->magic);
+	if (magic != SSDFS_PEB2TIME_RECORD_MAGIC) {
+		SSDFS_ERR("invalid magic %#x\n", magic);
+		return -ERANGE;
+	}
+
+	if (set->pairs_count == 0) {
+		set->create_time = cpu_to_le64(create_time);
+
+		pair = &set->array[0];
+		pair->peb_id = cpu_to_le64(peb_id);
+		pair->last_log_time = cpu_to_le64(last_log_time);
+
+		set->pairs_count++;
+	} else if (set->pairs_count == SSDFS_PEB2TIME_ARRAY_CAPACITY) {
+		SSDFS_DBG("set is full: create_time %llu, pairs_count %u\n",
+			  le64_to_cpu(set->create_time),
+			  set->pairs_count);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		for (i = 0; i < SSDFS_PEB2TIME_ARRAY_CAPACITY; i++) {
+			pair = &set->array[i];
+
+			SSDFS_DBG("PAIR #%d: peb_id %llu, "
+				  "last_log_time %llu\n",
+				  i,
+				  le64_to_cpu(pair->peb_id),
+				  le64_to_cpu(pair->last_log_time));
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		return -ENOSPC;
+	} else if (set->pairs_count > SSDFS_PEB2TIME_ARRAY_CAPACITY) {
+		SSDFS_ERR("corrupted set: create_time %llu, pairs_count %u\n",
+			  le64_to_cpu(set->create_time),
+			  set->pairs_count);
+
+		for (i = 0; i < SSDFS_PEB2TIME_ARRAY_CAPACITY; i++) {
+			pair = &set->array[i];
+
+			SSDFS_DBG("PAIR #%d: peb_id %llu, "
+				  "last_log_time %llu\n",
+				  i,
+				  le64_to_cpu(pair->peb_id),
+				  le64_to_cpu(pair->last_log_time));
+		}
+
+		return -ERANGE;
+	} else {
+		for (i = 0; i < set->pairs_count; i++) {
+			pair = &set->array[i];
+
+			if (peb_id == le64_to_cpu(pair->peb_id)) {
+				SSDFS_DBG("PEB2time pair exists already: "
+					  "index %d, peb_id %llu, "
+					  "last_log_time %llu\n",
+					  i, peb_id,
+					  le64_to_cpu(pair->last_log_time));
+				return -EEXIST;
+			}
+
+			if (le64_to_cpu(pair->last_log_time) < last_log_time) {
+				SSDFS_DBG("found pair: (index %d, peb_id %llu, "
+					  "last_log_time %llu), "
+					  "requested: (peb_id %llu, "
+					  "last_log_time %llu)\n",
+					  i, le64_to_cpu(pair->peb_id),
+					  le64_to_cpu(pair->last_log_time),
+					  peb_id, last_log_time);
+				break;
+			}
+		}
+
+		if (i < set->pairs_count) {
+			size_t len;
+
+			len = SSDFS_PEB2TIME_ARRAY_CAPACITY - set->pairs_count;
+			len *= pair_size;
+
+			if (len == 0 || len >= array_size) {
+				SSDFS_ERR("invalid length %zu\n", len);
+				return -ERANGE;
+			}
+
+			memmove(&set->array[i + 1], &set->array[i], len);
+		}
+
+		pair = &set->array[i];
+		pair->peb_id = cpu_to_le64(peb_id);
+		pair->last_log_time = cpu_to_le64(last_log_time);
+
+		set->pairs_count++;
+	}
+
+	search->request.start.hash = le64_to_cpu(set->create_time);
+	pair = &set->array[set->pairs_count - 1];
+	search->request.end.hash = le64_to_cpu(pair->last_log_time);
+	search->request.count = 1;
+
+	SSDFS_DBG("search (request.start.hash %llx, "
+		  "request.end.hash %llx, request.count %d)\n",
+		  search->request.start.hash,
+		  search->request.end.hash,
+		  search->request.count);
+
+	return 0;
+}
+
+/*
+ * ssdfs_snapshots_btree_add_peb2time() - add PEB2time pair into the tree
+ * @tree: pointer on snapshots btree object
+ * @peb2time: PEB2time pair
+ * @search: search object
+ *
+ * This method tries to add PEB2time pair into the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EEXIST     - PEB2time pair exists in the tree.
+ */
+int ssdfs_snapshots_btree_add_peb2time(struct ssdfs_snapshots_btree_info *tree,
+					struct ssdfs_peb_timestamps *peb2time,
+					struct ssdfs_btree_search *search)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !tree->fsi || !peb2time || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, peb2time %p, search %p\n",
+		  tree, peb2time, search);
+#else
+	SSDFS_DBG("tree %p, peb2time %p, search %p\n",
+		  tree, peb2time, search);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	ssdfs_btree_search_init(search);
+	search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
+	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR;
+	search->request.start.hash = peb2time->create_time;
+	search->request.start.peb2time = peb2time;
+	search->request.end.hash = peb2time->last_log_time;
+	search->request.end.peb2time = peb2time;
+	search->request.count = 1;
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	down_write(&tree->lock);
+
+	err = ssdfs_btree_find_item(&tree->generic_tree, search);
+	if (err == -ENODATA) {
+		/*
+		 * PEB to time pair doesn't exist.
+		 */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find the peb2time pair: "
+			  "timestamp %llu, err %d\n",
+			  peb2time->create_time, err);
+		goto finish_add_peb2time;
+	}
+
+	if (err == -ENODATA) {
+		search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
+
+		switch (search->result.state) {
+		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+		case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
+		case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+			/* expected state */
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid search result's state %#x\n",
+				  search->result.state);
+			goto finish_add_peb2time;
+		}
+
+		if (search->result.buf_state !=
+					SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid buf_state %#x\n",
+				  search->result.buf_state);
+			goto finish_add_peb2time;
+		}
+
+		ssdfs_debug_btree_search_object(search);
+
+		err = ssdfs_prepare_empty_peb2time_set(search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare empty fork: "
+				  "err %d\n",
+				  err);
+			goto finish_add_peb2time;
+		}
+
+		ssdfs_debug_btree_search_object(search);
+
+		err = ssdfs_add_peb2time_into_set(peb2time, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add extent into fork: "
+				  "err %d\n",
+				  err);
+			goto finish_add_peb2time;
+		}
+
+		ssdfs_debug_btree_search_object(search);
+
+		err = ssdfs_btree_add_item(&tree->generic_tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add PEB2time pair into the tree: "
+				  "err %d\n", err);
+			goto finish_add_peb2time;
+		}
+
+		atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_DIRTY);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add PEB2time pair: "
+				  "err %d\n", err);
+			goto finish_add_peb2time;
+		}
+	} else {
+		ssdfs_debug_btree_search_object(search);
+
+		err = ssdfs_add_peb2time_into_set(peb2time, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add extent into fork: "
+				  "err %d\n",
+				  err);
+			goto finish_add_peb2time;
+		}
+
+		ssdfs_debug_btree_search_object(search);
+
+		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+		err = ssdfs_btree_change_item(&tree->generic_tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change PEB2time set in the tree: "
+				  "err %d\n", err);
+			goto finish_add_peb2time;
+		}
+	}
+
+finish_add_peb2time:
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -1191,8 +1716,7 @@ int ssdfs_modify_snapshot(struct ssdfs_snapshot_request *snr,
 			     snr->info.name, 0, SSDFS_MAX_NAME_LEN,
 			     SSDFS_MAX_SNAPSHOT_NAME_LEN);
 
-		name_hash = __ssdfs_generate_name_hash(snr->info.name, len,
-						SSDFS_MAX_SNAPSHOT_NAME_LEN);
+		name_hash = __ssdfs_generate_name_hash(snr->info.name, len);
 		if (name_hash == U64_MAX) {
 			SSDFS_ERR("fail to generate name hash\n");
 			return -ERANGE;
@@ -1529,6 +2053,7 @@ int ssdfs_snapshots_btree_delete(struct ssdfs_snapshots_btree_info *tree,
 	ssdfs_btree_search_forget_parent_node(search);
 	ssdfs_btree_search_forget_child_node(search);
 
+	atomic64_inc(&tree->deleted_snapshots);
 	snapshots_count = atomic64_read(&tree->snapshots_count);
 
 	if (snapshots_count == 0) {
@@ -1545,6 +2070,328 @@ int ssdfs_snapshots_btree_delete(struct ssdfs_snapshots_btree_info *tree,
 
 finish_delete_snapshot:
 	up_read(&tree->lock);
+
+	wake_up_all(&tree->wait_queue);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	ssdfs_debug_snapshots_btree_object(tree);
+
+	return err;
+}
+
+/*
+ * ssdfs_delete_peb2time_from_set() - remove PEB2time from the set
+ * @peb2time: PEB2time pair
+ * @search: search object
+ *
+ * This method tries to remove PEB2time pair from the set.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - PEB2time set needs to be deleted.
+ */
+static
+int ssdfs_delete_peb2time_from_set(struct ssdfs_peb_timestamps *peb2time,
+				   struct ssdfs_btree_search *search)
+{
+	struct ssdfs_peb2time_set *set;
+	struct ssdfs_peb2time_pair *pair;
+	size_t set_size = sizeof(struct ssdfs_peb2time_set);
+	size_t pair_size = sizeof(struct ssdfs_peb2time_pair);
+	size_t array_size = pair_size * SSDFS_PEB2TIME_ARRAY_CAPACITY;
+	u64 peb_id;
+	u64 create_time;
+	u64 last_log_time;
+	u16 magic;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!peb2time || !search);
+
+	SSDFS_DBG("peb_id %llu, create_time %llu, "
+		  "last_log_time %llu, search %p\n",
+		  peb2time->peb_id, peb2time->create_time,
+		  peb2time->last_log_time, search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb_id = peb2time->peb_id;
+	create_time = peb2time->create_time;
+	last_log_time = peb2time->last_log_time;
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid search object state %#x\n",
+			  search->result.state);
+		return -ERANGE;
+	}
+
+	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+		SSDFS_DBG("search buffer state %#x\n",
+			  search->result.buf_state);
+		return -ERANGE;
+	}
+
+	if (search->result.buf_size != set_size ||
+	    search->result.items_in_buffer != 1) {
+		SSDFS_ERR("invalid search buffer state %#x\n",
+			  search->result.buf_state);
+		return -ERANGE;
+	}
+
+	set = &search->raw.peb2time;
+
+	magic = le16_to_cpu(set->magic);
+	if (magic != SSDFS_PEB2TIME_RECORD_MAGIC) {
+		SSDFS_ERR("invalid magic %#x\n", magic);
+		return -ERANGE;
+	}
+
+	if (set->pairs_count == 0) {
+		SSDFS_ERR("set is empty\n");
+		return -ERANGE;
+	} else if (set->pairs_count > SSDFS_PEB2TIME_ARRAY_CAPACITY) {
+		SSDFS_ERR("corrupted set: create_time %llu, pairs_count %u\n",
+			  le64_to_cpu(set->create_time),
+			  set->pairs_count);
+
+		for (i = 0; i < SSDFS_PEB2TIME_ARRAY_CAPACITY; i++) {
+			pair = &set->array[i];
+
+			SSDFS_DBG("PAIR #%d: peb_id %llu, "
+				  "last_log_time %llu\n",
+				  i,
+				  le64_to_cpu(pair->peb_id),
+				  le64_to_cpu(pair->last_log_time));
+		}
+
+		return -ERANGE;
+	} else {
+		for (i = 0; i < set->pairs_count; i++) {
+			pair = &set->array[i];
+
+			if (peb_id == le64_to_cpu(pair->peb_id)) {
+				SSDFS_DBG("PEB2time pair has been found: "
+					  "index %d, peb_id %llu, "
+					  "last_log_time %llu\n",
+					  i, peb_id,
+					  le64_to_cpu(pair->last_log_time));
+				break;
+			}
+		}
+
+		if (i > 0 && i < set->pairs_count) {
+			size_t len;
+
+			len = SSDFS_PEB2TIME_ARRAY_CAPACITY - set->pairs_count;
+			len *= pair_size;
+
+			if (len == 0 || len >= array_size) {
+				SSDFS_ERR("invalid length %zu\n", len);
+				return -ERANGE;
+			}
+
+			memmove(&set->array[i - 1], &set->array[i], len);
+		}
+
+		set->pairs_count--;
+
+		memset(&set->array[set->pairs_count], 0xFF, pair_size);
+	}
+
+	if (set->pairs_count == 0) {
+		/* delete empty set */
+		err = -ENODATA;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_snapshots_btree_delete_peb2time() - delete PEB2time pair from the tree
+ * @tree: snapshots tree
+ * @peb2time: PEB2time pair
+ * @search: search object
+ *
+ * This method tries to delete PEB2time pair from the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - PEB2time pair doesn't exist in the tree.
+ */
+int
+ssdfs_snapshots_btree_delete_peb2time(struct ssdfs_snapshots_btree_info *tree,
+					struct ssdfs_peb_timestamps *peb2time,
+					struct ssdfs_btree_search *search)
+{
+	struct ssdfs_fs_info *fsi;
+	s64 snapshots_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !tree->fsi || !peb2time || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, peb2time %p, search %p\n",
+		  tree, peb2time, search);
+#else
+	SSDFS_DBG("tree %p, peb2time %p, search %p\n",
+		  tree, peb2time, search);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid snapshots tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	fsi = tree->fsi;
+
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+
+	ssdfs_btree_search_init(search);
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+				SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR;
+	search->request.start.hash = peb2time->create_time;
+	search->request.start.peb2time = peb2time;
+	search->request.end.hash = peb2time->last_log_time;
+	search->request.end.peb2time = peb2time;
+	search->request.count = 1;
+
+	down_write(&tree->lock);
+
+	err = ssdfs_btree_find_item(&tree->generic_tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find PEB2time set: "
+			  "peb_id %llu, create_time %llu, "
+			  "last_log_time %llu, err %d\n",
+			  peb2time->peb_id, peb2time->create_time,
+			  peb2time->last_log_time, err);
+		goto finish_delete_peb2time_pair;
+	}
+
+	if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid search result's state %#x\n",
+			  search->result.state);
+		goto finish_delete_peb2time_pair;
+	}
+
+	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid buf_state %#x\n",
+			  search->result.buf_state);
+		goto finish_delete_peb2time_pair;
+	}
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+		/* continue logic */
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_WARN("unexpected result state %#x\n",
+			   search->result.state);
+		goto finish_delete_peb2time_pair;
+	}
+
+	ssdfs_debug_btree_search_object(search);
+
+	err = ssdfs_delete_peb2time_from_set(peb2time, search);
+	if (err == -ENODATA) {
+		search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+
+		ssdfs_debug_btree_search_object(search);
+
+		snapshots_count = atomic64_read(&tree->snapshots_count);
+		if (snapshots_count == 0) {
+			err = -ENOENT;
+			SSDFS_DBG("empty tree\n");
+			goto finish_delete_peb2time_pair;
+		}
+
+		if (search->result.start_index >= snapshots_count) {
+			err = -ENODATA;
+			SSDFS_ERR("invalid search result: "
+				  "start_index %u, snapshots_count %lld\n",
+				  search->result.start_index,
+				  snapshots_count);
+			goto finish_delete_peb2time_pair;
+		}
+
+		err = ssdfs_btree_delete_item(&tree->generic_tree,
+					      search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to delete PEB2time set from the tree: "
+				  "err %d\n", err);
+			goto finish_delete_peb2time_pair;
+		}
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to delete PEB2tine pair from set: "
+			  "peb_id %llu, create_time %llu, "
+			  "last_log_time %llu, err %d\n",
+			  peb2time->peb_id, peb2time->create_time,
+			  peb2time->last_log_time, err);
+		goto finish_delete_peb2time_pair;
+	} else {
+		ssdfs_debug_btree_search_object(search);
+
+		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+
+		err = ssdfs_btree_change_item(&tree->generic_tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change PEB2time set in the tree: "
+				  "err %d\n", err);
+			goto finish_delete_peb2time_pair;
+		}
+	}
+
+	atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_DIRTY);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
+	snapshots_count = atomic64_read(&tree->snapshots_count);
+
+	if (snapshots_count == 0) {
+		err = -ENOENT;
+		SSDFS_DBG("tree is empty now\n");
+		goto finish_delete_peb2time_pair;
+	} else if (snapshots_count < 0) {
+		err = -ERANGE;
+		SSDFS_WARN("invalid snapshots_count %lld\n",
+			   snapshots_count);
+		atomic_set(&tree->state, SSDFS_SNAPSHOTS_BTREE_CORRUPTED);
+		goto finish_delete_peb2time_pair;
+	}
+
+finish_delete_peb2time_pair:
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -3133,14 +3980,19 @@ int __ssdfs_check_snapshot_for_request(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !snapshot || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, snapshot %p, search %p\n",
 		  fsi, snapshot, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dict = fsi->shdictree;
 	if (!dict) {
 		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
+
+	if (!is_item_snapshot(snapshot)) {
+		SSDFS_ERR("item is not snapshot\n");
 		return -ERANGE;
 	}
 
@@ -3157,7 +4009,7 @@ int __ssdfs_check_snapshot_for_request(struct ssdfs_fs_info *fsi,
 	ino = le64_to_cpu(snapshot->ino);
 	create_time = le64_to_cpu(snapshot->create_time);
 	name_hash = le64_to_cpu(snapshot->name_hash);
-	flags = le16_to_cpu(snapshot->flags);
+	flags = snapshot->flags;
 
 	SSDFS_DBG("create_time %llx, ino %llu\n",
 		  create_time, ino);
@@ -3277,7 +4129,7 @@ finish_check_snapshot:
  * %-EAGAIN     - continue the search.
  * %-ENODATA    - possible place was found.
  */
-static
+static inline
 int ssdfs_check_snapshot_for_request(struct ssdfs_fs_info *fsi,
 				     struct ssdfs_snapshot *snapshot,
 				     struct ssdfs_btree_search *search)
@@ -3387,6 +4239,11 @@ int ssdfs_check_found_snapshot(struct ssdfs_fs_info *fsi,
 	*end_hash = U64_MAX;
 	*found_index = U16_MAX;
 
+	if (!is_item_snapshot(kaddr)) {
+		SSDFS_DBG("item is not snapshot\n");
+		return -EAGAIN;
+	}
+
 	snapshot = (struct ssdfs_snapshot *)kaddr;
 	ino = le64_to_cpu(snapshot->ino);
 	mode = snapshot->mode;
@@ -3468,8 +4325,286 @@ int ssdfs_check_found_snapshot(struct ssdfs_fs_info *fsi,
 			search->result.items_in_buffer = 0;
 			break;
 		}
-
+	} else if (err == -EAGAIN) {
+		/* continue to search */
+		err = 0;
+		*found_index = U16_MAX;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to check snapshot: err %d\n",
+			  err);
+	} else {
 		*found_index = item_index;
+		search->result.state =
+			SSDFS_BTREE_SEARCH_VALID_ITEM;
+	}
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "found_index %u\n",
+		  *start_hash, *end_hash,
+		  *found_index);
+
+	return err;
+}
+
+/*
+ * ssdfs_get_peb2time_hash_range() - get PEB2time set's hash range
+ * @kaddr: pointer on PEB2time set object
+ * @start_hash: pointer on start_hash value [out]
+ * @end_hash: pointer on end_hash value [out]
+ */
+static
+void ssdfs_get_peb2time_hash_range(void *kaddr,
+				   u64 *start_hash,
+				   u64 *end_hash)
+{
+	struct ssdfs_peb2time_set *peb2time;
+	struct ssdfs_peb2time_pair *pair;
+	u8 pairs_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!kaddr || !start_hash || !end_hash);
+
+	SSDFS_DBG("kaddr %p\n", kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb2time = (struct ssdfs_peb2time_set *)kaddr;
+	*start_hash = le64_to_cpu(peb2time->create_time);
+	*end_hash = *start_hash;
+
+	pairs_count = peb2time->pairs_count;
+	if (pairs_count > 0) {
+		if (pairs_count > SSDFS_PEB2TIME_ARRAY_CAPACITY) {
+			pairs_count = SSDFS_PEB2TIME_ARRAY_CAPACITY;
+			SSDFS_WARN("pairs_count %u is bigger than limit\n",
+				   pairs_count);
+		}
+
+		pair = &peb2time->array[pairs_count - 1];
+		*end_hash = le64_to_cpu(pair->last_log_time);
+	}
+}
+
+/*
+ * __ssdfs_check_peb2time_for_request() - check PEB to time pair
+ * @fsi:  pointer on shared file system object
+ * @peb2time: pointer on PEB to time pair object
+ * @search: search object
+ *
+ * This method tries to check @peb2time for the @search request.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue the search.
+ * %-ENODATA    - possible place was found.
+ */
+static
+int __ssdfs_check_peb2time_for_request(struct ssdfs_fs_info *fsi,
+					struct ssdfs_peb2time_set *peb2time,
+					struct ssdfs_btree_search *search)
+{
+	u64 found_create_time;
+	u64 found_last_log_time;
+	u64 req_create_time;
+	u64 req_last_log_time;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !peb2time || !search);
+	BUG_ON(!search->request.start.peb2time ||
+		!search->request.end.peb2time);
+
+	SSDFS_DBG("fsi %p, peb2time %p, search %p\n",
+		  fsi, peb2time, search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_item_peb2time_record(peb2time)) {
+		SSDFS_ERR("item is not PEB2time set\n");
+		return -ERANGE;
+	}
+
+	if (!is_peb2time_record_requested(search)) {
+		SSDFS_ERR("invalid set of flags: req_flags %#x\n",
+			  search->request.flags);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search->request.start.peb2time ||
+		!search->request.end.peb2time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	req_create_time = search->request.start.peb2time->create_time;
+	req_last_log_time = search->request.end.peb2time->last_log_time;
+
+	ssdfs_get_peb2time_hash_range(peb2time,
+					&found_create_time,
+					&found_last_log_time);
+
+	SSDFS_DBG("req_create_time %llx, req_last_log_time %llx, "
+		  "found_create_time %llx, found_last_log_time %llx\n",
+		  req_create_time, req_last_log_time,
+		  found_create_time, found_last_log_time);
+
+	if (req_last_log_time < found_create_time) {
+		err = -ENODATA;
+		goto finish_check_peb2time;
+	} else if (req_create_time > found_last_log_time) {
+		/* continue the search */
+		err = -EAGAIN;
+		goto finish_check_peb2time;
+	} else {
+		/* create_time is inside [start_hash, end_hash] */
+	}
+
+finish_check_peb2time:
+	return err;
+}
+
+/*
+ * ssdfs_check_peb2time_for_request() - check PEB2time set
+ * @fsi:  pointer on shared file system object
+ * @peb2time: pointer on PEB2time set
+ * @search: search object
+ *
+ * This method tries to check @peb2time for the @search request.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue the search.
+ * %-ENODATA    - possible place was found.
+ */
+static inline
+int ssdfs_check_peb2time_for_request(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_peb2time_set *peb2time,
+				     struct ssdfs_btree_search *search)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !peb2time || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("fsi %p, peb2time %p, search %p\n",
+		  fsi, peb2time, search);
+
+	err = __ssdfs_check_peb2time_for_request(fsi, peb2time, search);
+	if (err == -EAGAIN) {
+		/* continue the search */
+		return err;
+	} else if (err == -ENODATA) {
+		search->result.err = -ENODATA;
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to check peb2time: err %d\n",
+			  err);
+		return err;
+	} else {
+		/* valid item found */
+		search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_check_found_peb2time() - check found PEB2time set
+ * @fsi: pointer on shared file system object
+ * @search: search object
+ * @kaddr: pointer on PEB2time set object
+ * @item_index: index of the PEB2time set
+ * @start_hash: pointer on start_hash value [out]
+ * @end_hash: pointer on end_hash value [out]
+ * @found_index: pointer on found index [out]
+ *
+ * This method tries to check the found PEB2time set.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - corrupted PEB2time set.
+ * %-EAGAIN     - continue the search.
+ * %-ENODATA    - possible place was found.
+ */
+static
+int ssdfs_check_found_peb2time(struct ssdfs_fs_info *fsi,
+			       struct ssdfs_btree_search *search,
+			       void *kaddr,
+			       u16 item_index,
+			       u64 *start_hash,
+			       u64 *end_hash,
+			       u16 *found_index)
+{
+	struct ssdfs_peb2time_set *peb2time;
+	u8 pairs_count;
+	u64 create_time;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search || !kaddr || !found_index);
+	BUG_ON(!start_hash || !end_hash);
+
+	SSDFS_DBG("item_index %u\n", item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*start_hash = U64_MAX;
+	*end_hash = U64_MAX;
+	*found_index = U16_MAX;
+
+	if (!is_item_peb2time_record(kaddr)) {
+		SSDFS_DBG("item is not PEB2time set\n");
+		return -EAGAIN;
+	}
+
+	peb2time = (struct ssdfs_peb2time_set *)kaddr;
+	pairs_count = peb2time->pairs_count;
+	create_time = le64_to_cpu(peb2time->create_time);
+
+	SSDFS_DBG("pairs_count %u, create_time %llu\n",
+		  pairs_count, create_time);
+
+	if (!is_peb2time_record_requested(search)) {
+		SSDFS_ERR("invalid request: peb2time is absent\n");
+		return -ERANGE;
+	}
+
+	ssdfs_get_peb2time_hash_range(kaddr, start_hash, end_hash);
+
+	err = ssdfs_check_peb2time_for_request(fsi, peb2time, search);
+	if (err == -ENODATA) {
+		search->result.state =
+			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+		search->result.err = err;
+		search->result.start_index = item_index;
+		search->result.count = 1;
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+			ssdfs_btree_search_free_result_buf(search);
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
 	} else if (err == -EAGAIN) {
 		/* continue to search */
 		err = 0;
@@ -3583,6 +4718,86 @@ int ssdfs_prepare_snapshots_buffer(struct ssdfs_btree_search *search,
 }
 
 /*
+ * ssdfs_prepare_peb2time_buffer() - prepare buffer for PEB to time pairs
+ * @search: search object
+ * @found_index: found index of peb2time pair
+ * @start_hash: starting hash
+ * @end_hash: ending hash
+ * @items_count: count of items in the sequence
+ * @item_size: size of the item
+ */
+static
+int ssdfs_prepare_peb2time_buffer(struct ssdfs_btree_search *search,
+				   u16 found_index,
+				   u64 start_hash,
+				   u64 end_hash,
+				   u16 items_count,
+				   size_t item_size)
+{
+	u64 req_create_time;
+	u64 req_last_log_time;
+	u16 found_peb2time_sets = 0;
+	size_t buf_size = sizeof(struct ssdfs_peb2time_set);
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+
+	SSDFS_DBG("found_index %u, start_hash %llx, end_hash %llx, "
+		  "items_count %u, item_size %zu\n",
+		   found_index, start_hash, end_hash,
+		   items_count, item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_btree_search_free_result_buf(search);
+
+	req_create_time = search->request.start.peb2time->create_time;
+	req_last_log_time = search->request.end.peb2time->last_log_time;
+
+	if (start_hash == req_create_time && req_last_log_time == end_hash) {
+		/* use inline buffer */
+		found_peb2time_sets = 1;
+	} else {
+		/* use external buffer */
+		if (found_index >= items_count) {
+			SSDFS_ERR("found_index %u >= items_count %u\n",
+				  found_index, items_count);
+			return -ERANGE;
+		}
+		found_peb2time_sets = items_count - found_index;
+	}
+
+	if (found_peb2time_sets == 1) {
+		search->result.buf_state =
+			SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.buf = &search->raw.peb2time;
+		search->result.buf_size = buf_size;
+		search->result.items_in_buffer = 0;
+	} else {
+		if (search->result.buf) {
+			SSDFS_WARN("search->result.buf %p, "
+				   "search->result.buf_state %#x\n",
+				   search->result.buf,
+				   search->result.buf_state);
+		}
+
+		err = ssdfs_btree_search_alloc_result_buf(search,
+						buf_size * found_peb2time_sets);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to allocate memory for buffer\n");
+			return err;
+		}
+	}
+
+	SSDFS_DBG("found_peb2pime_sets %u, "
+		  "search->result.items_in_buffer %u\n",
+		  found_peb2time_sets,
+		  search->result.items_in_buffer);
+
+	return 0;
+}
+
+/*
  * ssdfs_extract_found_snapshot() - extract found snapshot
  * @fsi: pointer on shared file system object
  * @search: search object
@@ -3620,12 +4835,17 @@ int ssdfs_extract_found_snapshot(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !search || !kaddr);
 	BUG_ON(!start_hash || !end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p\n", kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = U64_MAX;
 	*end_hash = U64_MAX;
+
+	if (!is_item_snapshot(kaddr)) {
+		SSDFS_DBG("item is not snapshot\n");
+		return 0;
+	}
 
 	dict = fsi->shdictree;
 	if (!dict) {
@@ -3715,6 +4935,104 @@ int ssdfs_extract_found_snapshot(struct ssdfs_fs_info *fsi,
 }
 
 /*
+ * ssdfs_extract_found_peb2time() - extract found PEB2time set
+ * @fsi: pointer on shared file system object
+ * @search: search object
+ * @item_size: size of the item
+ * @kaddr: pointer on PEB2time set
+ * @start_hash: pointer on start_hash value [out]
+ * @end_hash: pointer on end_hash value [out]
+ *
+ * This method tries to extract the found PEB2time set.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_extract_found_peb2time(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_btree_search *search,
+				 size_t item_size,
+				 void *kaddr,
+				 u64 *start_hash,
+				 u64 *end_hash)
+{
+	struct ssdfs_peb2time_set *peb2time;
+	size_t buf_size = sizeof(struct ssdfs_peb2time_set);
+	u32 calculated;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !search || !kaddr);
+	BUG_ON(!start_hash || !end_hash);
+
+	SSDFS_DBG("kaddr %p\n", kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*start_hash = U64_MAX;
+	*end_hash = U64_MAX;
+
+	if (!is_item_peb2time_record(kaddr)) {
+		SSDFS_DBG("item is not PEB2time set\n");
+		return 0;
+	}
+
+	calculated = search->result.items_in_buffer * buf_size;
+	if (calculated > search->result.buf_size) {
+		SSDFS_ERR("calculated %u > buf_size %zu\n",
+			  calculated, search->result.buf_size);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("search->result.items_in_buffer %u, "
+		  "calculated %u\n",
+		  search->result.items_in_buffer,
+		  calculated);
+
+	BUG_ON(!search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb2time = (struct ssdfs_peb2time_set *)kaddr;
+	ssdfs_get_peb2time_hash_range(peb2time, start_hash, end_hash);
+
+	err = __ssdfs_check_peb2time_for_request(fsi, peb2time, search);
+	if (err == -ENODATA) {
+		SSDFS_DBG("current peb2time set is out of requested range\n");
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to check peb2time set: err %d\n",
+			  err);
+		return err;
+	}
+
+	err = ssdfs_memcpy(search->result.buf,
+			   calculated, search->result.buf_size,
+			   peb2time, 0, item_size,
+			   item_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: calculated %u, "
+			  "search->result.buf_size %zu, err %d\n",
+			  calculated, search->result.buf_size, err);
+		return err;
+	}
+
+	search->result.items_in_buffer++;
+
+	search->result.count++;
+	search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "search->result.count %u\n",
+		  *start_hash, *end_hash,
+		  search->result.count);
+
+	return 0;
+}
+
+/*
  * ssdfs_extract_range_by_lookup_index() - extract a range of items
  * @node: pointer on node object
  * @lookup_index: lookup index for requested range
@@ -3736,13 +5054,26 @@ int ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 {
 	int capacity = SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE;
 	size_t item_size = sizeof(struct ssdfs_snapshot);
+	size_t peb2time_size = sizeof(struct ssdfs_peb2time_set);
+	int err = 0;
 
-	return __ssdfs_extract_range_by_lookup_index(node, lookup_index,
+	if (is_peb2time_record_requested(search)) {
+		err = __ssdfs_extract_range_by_lookup_index(node, lookup_index,
+						capacity, peb2time_size,
+						search,
+						ssdfs_check_found_peb2time,
+						ssdfs_prepare_peb2time_buffer,
+						ssdfs_extract_found_peb2time);
+	} else {
+		err = __ssdfs_extract_range_by_lookup_index(node, lookup_index,
 						capacity, item_size,
 						search,
 						ssdfs_check_found_snapshot,
 						ssdfs_prepare_snapshots_buffer,
 						ssdfs_extract_found_snapshot);
+	}
+
+	return err;
 }
 
 /*
@@ -3924,8 +5255,11 @@ try_extract_range_by_lookup_index:
 	BUG_ON(lookup_index >= SSDFS_SNAPSHOTS_BTREE_LOOKUP_TABLE_SIZE);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_extract_range_by_lookup_index(node, lookup_index,
-						  search);
+	if (!(search->request.flags & SSDFS_BTREE_SEARCH_DONT_EXTRACT_RECORD)) {
+		err = ssdfs_extract_range_by_lookup_index(node, lookup_index,
+							  search);
+	}
+
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
 	if (err == -EAGAIN) {
@@ -3983,7 +5317,6 @@ int ssdfs_snapshots_btree_node_find_item(struct ssdfs_btree_node *node,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -3994,6 +5327,7 @@ int ssdfs_snapshots_btree_node_find_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->request.count != 1) {
 		SSDFS_ERR("invalid request state: "
@@ -4024,15 +5358,15 @@ int ssdfs_snapshots_btree_node_allocate_range(struct ssdfs_btree_node *node,
 }
 
 /*
- * __ssdfs_snapshots_btree_node_get_snapshot() - extract the snapshot
+ * __ssdfs_snapshots_btree_node_get_item() - extract the snapshot item
  * @pvec: pointer on pagevec
  * @area_offset: area offset from the node's beginning
  * @area_size: area size
  * @node_size: size of the node
- * @item_index: index of the snapshot in the node
- * @snapshot: pointer on snapshot's buffer [out]
+ * @item_index: index of the item in the node
+ * @item: pointer on snapshot item's buffer [out]
  *
- * This method tries to extract the snapshot from the node.
+ * This method tries to extract the snapshot item from the node.
  *
  * RETURN:
  * [success]
@@ -4041,14 +5375,14 @@ int ssdfs_snapshots_btree_node_allocate_range(struct ssdfs_btree_node *node,
  * %-ERANGE     - internal error.
  */
 static
-int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
-					      u32 area_offset,
-					      u32 area_size,
-					      u32 node_size,
-					      u16 item_index,
-					      struct ssdfs_snapshot *snapshot)
+int __ssdfs_snapshots_btree_node_get_item(struct pagevec *pvec,
+					  u32 area_offset,
+					  u32 area_size,
+					  u32 node_size,
+					  u16 item_index,
+					  union ssdfs_snapshot_item *item)
 {
-	size_t item_size = sizeof(struct ssdfs_snapshot);
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	u32 item_offset;
 	int page_index;
 	struct page *page;
@@ -4056,11 +5390,11 @@ int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !snapshot);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!pvec || !item);
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
 		  area_offset, area_size, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_offset = (u32)item_index * item_size;
 	if (item_offset >= area_size) {
@@ -4092,7 +5426,7 @@ int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
 	page = pvec->pages[page_index];
 
 	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(snapshot, 0, item_size,
+	err = ssdfs_memcpy(item, 0, item_size,
 			   kaddr, item_offset, PAGE_SIZE,
 			   item_size);
 	kunmap_atomic(kaddr);
@@ -4106,13 +5440,13 @@ int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
 }
 
 /*
- * ssdfs_snapshots_btree_node_get_snapshot() - extract snapshot from the node
+ * ssdfs_snapshots_btree_node_get_item() - extract snapshot item from the node
  * @node: pointer on node object
  * @area: items area descriptor
- * @item_index: index of the snapshot
- * @snapshot: pointer on extracted snapshot [out]
+ * @item_index: index of the item
+ * @item: pointer on extracted snapshot item [out]
  *
- * This method tries to extract the snapshot from the node.
+ * This method tries to extract the snapshot item from the node.
  *
  * RETURN:
  * [success]
@@ -4121,25 +5455,194 @@ int __ssdfs_snapshots_btree_node_get_snapshot(struct pagevec *pvec,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_snapshots_btree_node_get_snapshot(struct ssdfs_btree_node *node,
+int ssdfs_snapshots_btree_node_get_item(struct ssdfs_btree_node *node,
 				struct ssdfs_btree_node_items_area *area,
 				u16 item_index,
-				struct ssdfs_snapshot *snapshot)
+				union ssdfs_snapshot_item *item)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node || !area || !snapshot);
+	BUG_ON(!node || !area || !item);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	return __ssdfs_snapshots_btree_node_get_snapshot(&node->content.pvec,
-							 area->offset,
-							 area->area_size,
-							 node->node_size,
-							 item_index,
-							 snapshot);
+	return __ssdfs_snapshots_btree_node_get_item(&node->content.pvec,
+						     area->offset,
+						     area->area_size,
+						     node->node_size,
+						     item_index,
+						     item);
+}
+
+/*
+ * is_requested_snapshot_position_correct() - is requested position correct?
+ * @snapshot: snapshot item
+ * @search: search object
+ *
+ * This method tries to check that requested position of a snapshot
+ * into the node is correct.
+ *
+ * RETURN:
+ * [success]
+ *
+ * %SSDFS_CORRECT_POSITION        - requested position is correct.
+ * %SSDFS_SEARCH_LEFT_DIRECTION   - correct position from the left.
+ * %SSDFS_SEARCH_RIGHT_DIRECTION  - correct position from the right.
+ *
+ * [failure] - error code:
+ *
+ * %SSDFS_CHECK_POSITION_FAILURE  - internal error.
+ */
+static
+int is_requested_snapshot_position_correct(struct ssdfs_snapshot *snapshot,
+					   struct ssdfs_btree_search *search)
+{
+	u64 ino;
+	u64 create_time;
+	u64 name_hash;
+	u32 req_flags;
+	int direction = SSDFS_CHECK_POSITION_FAILURE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!snapshot || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ino = le64_to_cpu(snapshot->ino);
+	create_time = le64_to_cpu(snapshot->create_time);
+	name_hash = le64_to_cpu(snapshot->name_hash);
+	req_flags = search->request.flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, create_time %llx, "
+		  "name_hash %llx, req_flags %#x\n",
+		  ino, create_time, name_hash, req_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->request.end.hash < create_time)
+		direction = SSDFS_SEARCH_LEFT_DIRECTION;
+	else if (create_time < search->request.start.hash)
+		direction = SSDFS_SEARCH_RIGHT_DIRECTION;
+	else {
+		/* search->request.start.hash == create_time */
+
+		if (is_peb2time_record_requested(search)) {
+			direction = SSDFS_SEARCH_RIGHT_DIRECTION;
+			goto finish_check_position;
+		}
+
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
+			if (search->request.start.ino < ino)
+				direction = SSDFS_SEARCH_LEFT_DIRECTION;
+			else if (ino < search->request.start.ino)
+				direction = SSDFS_SEARCH_RIGHT_DIRECTION;
+			else
+				direction = SSDFS_CORRECT_POSITION;
+		} else {
+			SSDFS_ERR("invalid request: "
+				  "req_flags %#x\n",
+				  req_flags);
+			return SSDFS_CHECK_POSITION_FAILURE;
+		}
+
+		if (direction != SSDFS_CORRECT_POSITION)
+			goto finish_check_position;
+
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
+			if (is_uuids_identical(search->request.start.uuid,
+						snapshot->uuid)) {
+				direction = SSDFS_CORRECT_POSITION;
+				goto finish_check_position;
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "UUID1 %pUb, UUID2 %pUb\n",
+					  search->request.start.uuid,
+					  snapshot->uuid);
+				return SSDFS_CHECK_POSITION_FAILURE;
+			}
+		}
+	}
+
+finish_check_position:
+	SSDFS_DBG("ino %llu, create_time %llx, "
+		  "search (start_hash %llx, ino %llu; "
+		  "end_hash %llx, ino %llu), "
+		  "direction %#x\n",
+		  ino, create_time,
+		  search->request.start.hash,
+		  search->request.start.ino,
+		  search->request.end.hash,
+		  search->request.end.ino,
+		  direction);
+
+	return direction;
+}
+
+/*
+ * is_requested_peb2time_position_correct() - is requested position correct?
+ * @peb2time: PEB2time item
+ * @search: search object
+ *
+ * This method tries to check that requested position of a PEB2time record
+ * into the node is correct.
+ *
+ * RETURN:
+ * [success]
+ *
+ * %SSDFS_CORRECT_POSITION        - requested position is correct.
+ * %SSDFS_SEARCH_LEFT_DIRECTION   - correct position from the left.
+ * %SSDFS_SEARCH_RIGHT_DIRECTION  - correct position from the right.
+ *
+ * [failure] - error code:
+ *
+ * %SSDFS_CHECK_POSITION_FAILURE  - internal error.
+ */
+static
+int is_requested_peb2time_position_correct(struct ssdfs_peb2time_set *peb2time,
+					   struct ssdfs_btree_search *search)
+{
+	u64 create_time;
+	u32 req_flags;
+	int direction = SSDFS_CHECK_POSITION_FAILURE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!peb2time || !search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	create_time = le64_to_cpu(peb2time->create_time);
+	req_flags = search->request.flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create_time %llx, req_flags %#x\n",
+		  create_time, req_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->request.end.hash < create_time)
+		direction = SSDFS_SEARCH_LEFT_DIRECTION;
+	else if (create_time < search->request.start.hash)
+		direction = SSDFS_SEARCH_RIGHT_DIRECTION;
+	else {
+		/* search->request.start.hash == create_time */
+
+		if (!is_peb2time_record_requested(search))
+			direction = SSDFS_SEARCH_LEFT_DIRECTION;
+		else
+			direction = SSDFS_CORRECT_POSITION;
+	}
+
+	SSDFS_DBG("create_time %llx, "
+		  "search (start_hash %llx, ino %llu; "
+		  "end_hash %llx, ino %llu), "
+		  "direction %#x\n",
+		  create_time,
+		  search->request.start.hash,
+		  search->request.start.ino,
+		  search->request.end.hash,
+		  search->request.end.ino,
+		  direction);
+
+	return direction;
 }
 
 /*
@@ -4167,22 +5670,18 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 				  struct ssdfs_btree_node_items_area *area,
 				  struct ssdfs_btree_search *search)
 {
-	struct ssdfs_snapshot snapshot;
+	union ssdfs_snapshot_item item;
 	u16 item_index;
-	u64 ino;
-	u64 create_time;
-	u64 name_hash;
-	u32 req_flags;
 	int direction = SSDFS_CHECK_POSITION_FAILURE;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, search->result.start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
 	if ((item_index + search->request.count) > area->items_capacity) {
@@ -4201,72 +5700,165 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 		search->result.start_index = item_index;
 	}
 
-	err = ssdfs_snapshots_btree_node_get_snapshot(node, area,
-						      item_index, &snapshot);
+	err = ssdfs_snapshots_btree_node_get_item(node, area,
+						  item_index, &item);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to extract the snapshot: "
+		SSDFS_ERR("fail to extract the snapshot item: "
 			  "item_index %u, err %d\n",
 			  item_index, err);
 		return SSDFS_CHECK_POSITION_FAILURE;
 	}
 
-	ino = le64_to_cpu(snapshot.ino);
-	create_time = le64_to_cpu(snapshot.create_time);
-	name_hash = le64_to_cpu(snapshot.name_hash);
+	if (is_item_snapshot(&item)) {
+		direction =
+			is_requested_snapshot_position_correct(&item.snapshot,
+								search);
+	} else if (is_item_peb2time_record(&item)) {
+		direction =
+			is_requested_peb2time_position_correct(&item.peb2time,
+								search);
+	} else {
+		SSDFS_ERR("corrupted record: magic %#x\n",
+			  le16_to_cpu(item.magic));
+		return SSDFS_CHECK_POSITION_FAILURE;
+	}
+
+	return direction;
+}
+
+/*
+ * ssdfs_check_snapshot_from_left() - check snapshot from the left
+ * @snapshot: snapshot record
+ * @item_index: index of item
+ * @search: search object
+ *
+ * This method tries to check the snapshot record from the left.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue search.
+ */
+static
+int ssdfs_check_snapshot_from_left(struct ssdfs_snapshot *snapshot,
+				   int item_index,
+				   struct ssdfs_btree_search *search)
+{
+	u64 ino;
+	u64 create_time;
+	u32 req_flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!snapshot || !search);
+	BUG_ON(!is_item_snapshot(snapshot));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ino = le64_to_cpu(snapshot->ino);
+	create_time = le64_to_cpu(snapshot->create_time);
 	req_flags = search->request.flags;
 
-	if (search->request.end.hash < create_time)
-		direction = SSDFS_SEARCH_LEFT_DIRECTION;
-	else if (create_time < search->request.start.hash)
-		direction = SSDFS_SEARCH_RIGHT_DIRECTION;
-	else {
-		/* search->request.start.hash == create_time */
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, create_time %llx, "
+		  "req_flags %#x\n",
+		  ino, create_time, req_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	if (search->request.start.hash == create_time) {
 		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
-			if (search->request.start.ino < ino)
-				direction = SSDFS_SEARCH_LEFT_DIRECTION;
-			else if (ino < search->request.start.ino)
-				direction = SSDFS_SEARCH_RIGHT_DIRECTION;
-			else
-				direction = SSDFS_CORRECT_POSITION;
+			if (ino == search->request.start.ino) {
+				/* continue logic */
+				goto check_uuid;
+			} else if (ino < search->request.start.ino) {
+				search->result.start_index =
+						(u16)(item_index + 1);
+				return 0;
+			} else
+				return -EAGAIN;
 		} else {
 			SSDFS_ERR("invalid request: "
 				  "req_flags %#x\n",
 				  req_flags);
-			return SSDFS_CHECK_POSITION_FAILURE;
+			return -ERANGE;
 		}
 
-		if (direction != SSDFS_CORRECT_POSITION)
-			goto finish_check_position;
-
+check_uuid:
 		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
-			if (is_uuids_identical(search->request.start.uuid,
-						snapshot.uuid)) {
-				direction = SSDFS_CORRECT_POSITION;
-				goto finish_check_position;
+			u8 *uuid = search->request.start.uuid;
+			if (is_uuids_identical(uuid, snapshot->uuid)) {
+				/*
+				 * continue logic.
+				 */
 			} else {
 				SSDFS_ERR("invalid request: "
 					  "UUID1 %pUb, UUID2 %pUb\n",
 					  search->request.start.uuid,
-					  snapshot.uuid);
-				return SSDFS_CHECK_POSITION_FAILURE;
+					  snapshot->uuid);
+				return -ERANGE;
 			}
+		} else {
+			SSDFS_ERR("invalid request: "
+				  "req_flags %#x\n",
+				  req_flags);
+			return -ERANGE;
 		}
+
+		search->result.start_index = (u16)item_index;
+		return 0;
+	} else if (create_time < search->request.start.hash) {
+		search->result.start_index = (u16)(item_index + 1);
+		return 0;
 	}
 
-finish_check_position:
-	SSDFS_DBG("ino %llu, create_time %llx, "
-		  "search (start_hash %llx, ino %llu; "
-		  "end_hash %llx, ino %llu), "
-		  "direction %#x\n",
-		  ino, create_time,
-		  search->request.start.hash,
-		  search->request.start.ino,
-		  search->request.end.hash,
-		  search->request.end.ino,
-		  direction);
+	return -EAGAIN;
+}
 
-	return direction;
+/*
+ * ssdfs_check_peb2time_from_left() - check PEB2time from the left
+ * @peb2time: PEB2time record
+ * @item_index: index of item
+ * @search: search object
+ *
+ * This method tries to check the PEB2time record from the left.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue search.
+ */
+static
+int ssdfs_check_peb2time_from_left(struct ssdfs_peb2time_set *peb2time,
+				   int item_index,
+				   struct ssdfs_btree_search *search)
+{
+	u64 create_time;
+	u32 req_flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!peb2time || !search);
+	BUG_ON(!is_item_peb2time_record(peb2time));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	create_time = le64_to_cpu(peb2time->create_time);
+	req_flags = search->request.flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create_time %llx, req_flags %#x\n",
+		  create_time, req_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->request.start.hash == create_time) {
+		search->result.start_index = (u16)item_index;
+		return 0;
+	} else if (create_time < search->request.start.hash) {
+		search->result.start_index = (u16)(item_index + 1);
+		return 0;
+	}
+
+	return -EAGAIN;
 }
 
 /*
@@ -4289,23 +5881,21 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_node_items_area *area,
 				    struct ssdfs_btree_search *search)
 {
-	struct ssdfs_snapshot snapshot;
+	union ssdfs_snapshot_item item;
 	int item_index;
-	u64 ino;
-	u64 create_time;
 	u32 req_flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, search->result.start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
-	if ((item_index + search->request.count) >= area->items_capacity) {
+	if ((item_index + search->request.count) > area->items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "item_index %u, count %u\n",
 			  item_index, search->request.count);
@@ -4325,63 +5915,55 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 	req_flags = search->request.flags;
 
 	for (; item_index >= 0; item_index--) {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node, area,
-							   (u16)item_index,
-							   &snapshot);
+		err = ssdfs_snapshots_btree_node_get_item(node, area,
+							  (u16)item_index,
+							  &item);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to extract the snapshot: "
+			SSDFS_ERR("fail to extract the snapshot item: "
 				  "item_index %d, err %d\n",
 				  item_index, err);
 			return err;
 		}
 
-		ino = le64_to_cpu(snapshot.ino);
-		create_time = le64_to_cpu(snapshot.create_time);
-
-		if (search->request.start.hash == create_time) {
-			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
-				if (ino == search->request.start.ino) {
-					/* continue logic */
-					goto check_uuid;
-				} else if (ino < search->request.start.ino) {
-					search->result.start_index =
-							(u16)(item_index + 1);
-					return 0;
-				} else
-					continue;
+		if (is_item_snapshot(&item)) {
+			err = ssdfs_check_snapshot_from_left(&item.snapshot,
+							     item_index,
+							     search);
+			if (err == -EAGAIN) {
+				err = 0;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to check item: "
+					  "item_index %d, err %d\n",
+					  item_index, err);
+				return err;
 			} else {
-				SSDFS_ERR("invalid request: "
-					  "req_flags %#x\n",
-					  req_flags);
-				return -ERANGE;
+				SSDFS_DBG("found snapshot: item_index %d\n",
+					  item_index);
+				return 0;
 			}
-
-check_uuid:
-			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
-				u8 *uuid = search->request.start.uuid;
-				if (is_uuids_identical(uuid, snapshot.uuid)) {
-					/*
-					 * continue logic.
-					 */
-				} else {
-					SSDFS_ERR("invalid request: "
-						  "UUID1 %pUb, UUID2 %pUb\n",
-						  search->request.start.uuid,
-						  snapshot.uuid);
-					return -ERANGE;
-				}
+		} else if (is_item_peb2time_record(&item)) {
+			err = ssdfs_check_peb2time_from_left(&item.peb2time,
+							     item_index,
+							     search);
+			if (err == -EAGAIN) {
+				err = 0;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to check item: "
+					  "item_index %d, err %d\n",
+					  item_index, err);
+				return err;
 			} else {
-				SSDFS_ERR("invalid request: "
-					  "req_flags %#x\n",
-					  req_flags);
-				return -ERANGE;
+				SSDFS_DBG("found peb2time record: "
+					  "item_index %d\n",
+					  item_index);
+				return 0;
 			}
-
-			search->result.start_index = (u16)item_index;
-			return 0;
-		} else if (create_time < search->request.start.hash) {
-			search->result.start_index = (u16)(item_index + 1);
-			return 0;
+		} else {
+			SSDFS_ERR("corrupted record: magic %#x\n",
+				  le16_to_cpu(item.magic));
+			return -ERANGE;
 		}
 	}
 
@@ -4390,13 +5972,168 @@ check_uuid:
 }
 
 /*
+ * ssdfs_check_snapshot_from_right() - check snapshot from the right
+ * @snapshot: snapshot record
+ * @item_index: index of item
+ * @search: search object
+ *
+ * This method tries to check the snapshot record from the right.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue search.
+ */
+static
+int ssdfs_check_snapshot_from_right(struct ssdfs_snapshot *snapshot,
+				    int item_index,
+				    struct ssdfs_btree_search *search)
+{
+	u64 ino;
+	u64 create_time;
+	u32 req_flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!snapshot || !search);
+	BUG_ON(!is_item_snapshot(snapshot));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ino = le64_to_cpu(snapshot->ino);
+	create_time = le64_to_cpu(snapshot->create_time);
+	req_flags = search->request.flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, create_time %llx, "
+		  "req_flags %#x\n",
+		  ino, create_time, req_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->request.start.hash == create_time) {
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
+			if (ino == search->request.start.ino) {
+				/* continue logic */
+				goto check_uuid;
+			} else if (search->request.start.ino < ino) {
+				if (item_index == 0) {
+					search->result.start_index =
+							(u16)item_index;
+				} else {
+					search->result.start_index =
+							(u16)(item_index - 1);
+				}
+
+				return 0;
+			} else
+				return -EAGAIN;
+		} else {
+			SSDFS_ERR("invalid request: "
+				  "req_flags %#x\n",
+				  req_flags);
+			return -ERANGE;
+		}
+
+check_uuid:
+		if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
+			u8 *uuid = search->request.start.uuid;
+			if (is_uuids_identical(uuid, snapshot->uuid)) {
+				/*
+				 * continue logic.
+				 */
+			} else {
+				SSDFS_ERR("invalid request: "
+					  "UUID1 %pUb, UUID2 %pUb\n",
+					  search->request.start.uuid,
+					  snapshot->uuid);
+				return -ERANGE;
+			}
+		} else {
+			SSDFS_ERR("invalid request: "
+				  "req_flags %#x\n",
+				  req_flags);
+			return -ERANGE;
+		}
+
+		search->result.start_index = (u16)item_index;
+		return 0;
+	} else if (search->request.end.hash < create_time) {
+		if (item_index == 0) {
+			search->result.start_index =
+					(u16)item_index;
+		} else {
+			search->result.start_index =
+					(u16)(item_index - 1);
+		}
+
+		return 0;
+	}
+
+	return -EAGAIN;
+}
+
+/*
+ * ssdfs_check_peb2time_from_right() - check PEB2time from the right
+ * @peb2time: PEB2time record
+ * @item_index: index of item
+ * @search: search object
+ *
+ * This method tries to check the PEB2time record from the right.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - continue search.
+ */
+static
+int ssdfs_check_peb2time_from_right(struct ssdfs_peb2time_set *peb2time,
+				    int item_index,
+				    struct ssdfs_btree_search *search)
+{
+	u64 create_time;
+	u32 req_flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!peb2time || !search);
+	BUG_ON(!is_item_peb2time_record(peb2time));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	create_time = le64_to_cpu(peb2time->create_time);
+	req_flags = search->request.flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create_time %llx, req_flags %#x\n",
+		  create_time, req_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (search->request.start.hash == create_time) {
+		search->result.start_index = (u16)item_index;
+		return 0;
+	} else if (search->request.end.hash < create_time) {
+		if (item_index == 0) {
+			search->result.start_index =
+					(u16)item_index;
+		} else {
+			search->result.start_index =
+					(u16)(item_index - 1);
+		}
+
+		return 0;
+	}
+
+	return -EAGAIN;
+}
+
+/*
  * ssdfs_find_correct_position_from_right() - find position from the right
  * @node: pointer on node object
  * @area: items area descriptor
  * @search: search object
  *
- * This method tries to find a correct position of the snapshot
- * from the right side of snapshots' sequence in the node.
+ * This method tries to find a correct position of the snapshot item
+ * from the right side of snapshot items' sequence in the node.
  *
  * RETURN:
  * [success]
@@ -4409,23 +6146,21 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 				    struct ssdfs_btree_node_items_area *area,
 				    struct ssdfs_btree_search *search)
 {
-	struct ssdfs_snapshot snapshot;
+	union ssdfs_snapshot_item item;
 	int item_index;
-	u64 ino;
-	u64 create_time;
 	u32 req_flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, search->result.start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
-	if ((item_index + search->request.count) >= area->items_capacity) {
+	if ((item_index + search->request.count) > area->items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "item_index %u, count %u\n",
 			  item_index, search->request.count);
@@ -4439,81 +6174,61 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 			item_index = area->items_count - 1;
 
 		search->result.start_index = (u16)item_index;
-
 		return 0;
 	}
 
 	req_flags = search->request.flags;
 
-	for (; item_index < area->items_count; item_index++) {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node, area,
-							      (u16)item_index,
-							      &snapshot);
+	for (; item_index >= 0; item_index--) {
+		err = ssdfs_snapshots_btree_node_get_item(node, area,
+							  (u16)item_index,
+							  &item);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to extract the snapshot: "
+			SSDFS_ERR("fail to extract the snapshot item: "
 				  "item_index %d, err %d\n",
 				  item_index, err);
 			return err;
 		}
 
-		ino = le64_to_cpu(snapshot.ino);
-		create_time = le64_to_cpu(snapshot.create_time);
-
-		if (search->request.start.hash == create_time) {
-			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
-				if (ino == search->request.start.ino) {
-					/* continue logic */
-					goto check_uuid;
-				} else if (search->request.start.ino < ino) {
-					if (item_index == 0) {
-						search->result.start_index =
-								(u16)item_index;
-					} else {
-						search->result.start_index =
-							(u16)(item_index - 1);
-					}
-					return 0;
-				} else
-					continue;
+		if (is_item_snapshot(&item)) {
+			err = ssdfs_check_snapshot_from_right(&item.snapshot,
+							      item_index,
+							      search);
+			if (err == -EAGAIN) {
+				err = 0;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to check item: "
+					  "item_index %d, err %d\n",
+					  item_index, err);
+				return err;
 			} else {
-				SSDFS_ERR("invalid request: "
-					  "req_flags %#x\n",
-					  req_flags);
-				return -ERANGE;
+				SSDFS_DBG("found snapshot: item_index %d\n",
+					  item_index);
+				return 0;
 			}
-
-check_uuid:
-			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_UUID) {
-				u8 *uuid = search->request.start.uuid;
-				if (is_uuids_identical(uuid, snapshot.uuid)) {
-					/*
-					 * continue logic.
-					 */
-				} else {
-					SSDFS_ERR("invalid request: "
-						  "UUID1 %pUb, UUID2 %pUb\n",
-						  search->request.start.uuid,
-						  snapshot.uuid);
-					return -ERANGE;
-				}
+		} else if (is_item_peb2time_record(&item)) {
+			err = ssdfs_check_peb2time_from_right(&item.peb2time,
+							      item_index,
+							      search);
+			if (err == -EAGAIN) {
+				err = 0;
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to check item: "
+					  "item_index %d, err %d\n",
+					  item_index, err);
+				return err;
 			} else {
-				SSDFS_ERR("invalid request: "
-					  "req_flags %#x\n",
-					  req_flags);
-				return -ERANGE;
+				SSDFS_DBG("found peb2time record: "
+					  "item_index %d\n",
+					  item_index);
+				return 0;
 			}
-
-			search->result.start_index = (u16)item_index;
-			return 0;
-		} else if (search->request.end.hash < create_time) {
-			if (item_index == 0) {
-				search->result.start_index =
-						(u16)item_index;
-			} else {
-				search->result.start_index =
-						(u16)(item_index - 1);
-			}
-			return 0;
+		} else {
+			SSDFS_ERR("corrupted record: magic %#x\n",
+				  le16_to_cpu(item.magic));
+			return -ERANGE;
 		}
 	}
 
@@ -4619,7 +6334,7 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 				u16 start_index, u16 range_len)
 {
 	__le64 *lookup_table;
-	struct ssdfs_snapshot snapshot;
+	union ssdfs_snapshot_item item;
 	int i;
 	int err;
 
@@ -4627,10 +6342,10 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
 		  node->node_id, start_index, range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range_len == 0) {
 		SSDFS_DBG("range_len == 0\n");
@@ -4648,18 +6363,27 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 				ssdfs_convert_item2lookup_index(node->node_size,
 								item_index);
 
-			err = ssdfs_snapshots_btree_node_get_snapshot(node,
-								   area,
-								   item_index,
-								   &snapshot);
+			err = ssdfs_snapshots_btree_node_get_item(node, area,
+								(u16)item_index,
+								&item);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to extract snapshot: "
+				SSDFS_ERR("fail to extract snapshot item: "
 					  "item_index %d, err %d\n",
 					  item_index, err);
 				return err;
 			}
 
-			lookup_table[lookup_index] = snapshot.create_time;
+			if (is_item_snapshot(&item)) {
+				lookup_table[lookup_index] =
+					item.snapshot.create_time;
+			} else if (is_item_peb2time_record(&item)) {
+				lookup_table[lookup_index] =
+					item.peb2time.create_time;
+			} else {
+				SSDFS_ERR("corrupted record: magic %#x\n",
+					  le16_to_cpu(item.magic));
+				return -ERANGE;
+			}
 		}
 	}
 
@@ -4688,11 +6412,55 @@ void ssdfs_initialize_lookup_table(struct ssdfs_btree_node *node)
 }
 
 /*
- * __ssdfs_snapshots_btree_node_insert_range() - insert range into node
+ * ssdfs_show_snapshot_items() - show snapshot items
+ * @node: pointer on node object
+ * @items_area: items area descriptor
+ */
+static inline
+void ssdfs_show_snapshot_items(struct ssdfs_btree_node *node,
+				struct ssdfs_btree_node_items_area *items_area)
+{
+	union ssdfs_snapshot_item item;
+	int i;
+	int err;
+
+	for (i = 0; i < items_area->items_count; i++) {
+		err = ssdfs_snapshots_btree_node_get_item(node,
+							  items_area,
+							  i,
+							  &item);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get snapshot item: "
+				  "err %d\n", err);
+			return;
+		}
+
+		if (is_item_snapshot(&item)) {
+			SSDFS_ERR("SNAPSHOT: index %d, "
+				  "ino %llu, create_time %llx\n",
+				  i,
+				  le64_to_cpu(item.snapshot.ino),
+				  le64_to_cpu(item.snapshot.create_time));
+		} else if (is_item_peb2time_record(&item)) {
+			SSDFS_ERR("PEB2TIME: index %d, "
+				  "create_time %llx, pairs_count %u\n",
+				  i,
+				  le64_to_cpu(item.peb2time.create_time),
+				  item.peb2time.pairs_count);
+		} else {
+			SSDFS_ERR("corrupted record: magic %#x\n",
+				  le16_to_cpu(item.magic));
+			return;
+		}
+	}
+}
+
+/*
+ * __ssdfs_snapshots_btree_node_insert() - insert range into node
  * @node: pointer on node object
  * @search: search object
  *
- * This method tries to insert the range of snapshots into the node.
+ * This method tries to insert the range of items into the node.
  *
  * RETURN:
  * [success]
@@ -4702,31 +6470,29 @@ void ssdfs_initialize_lookup_table(struct ssdfs_btree_node *node)
  * %-EFAULT     - node is corrupted.
  */
 static
-int __ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
-					      struct ssdfs_btree_search *search)
+int __ssdfs_snapshots_btree_node_insert(struct ssdfs_btree_node *node,
+					struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree *tree;
 	struct ssdfs_snapshots_btree_info *tree_info;
 	struct ssdfs_snapshots_btree_node_header *hdr;
 	struct ssdfs_btree_node_items_area items_area;
-	struct ssdfs_snapshot snapshot;
-	size_t item_size = sizeof(struct ssdfs_snapshot);
+	union ssdfs_snapshot_item item;
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	u64 old_hash;
 	u64 start_hash = U64_MAX, end_hash = U64_MAX;
 	u64 cur_hash;
 	u16 item_index;
 	int free_items;
 	u16 range_len;
-	u16 snapshots_count = 0;
+	u16 selected_items = 0;
 	u32 used_space;
 	u64 ino;
 	int direction;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -4737,6 +6503,7 @@ int __ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->items_area.state)) {
 	case SSDFS_BTREE_NODE_ITEMS_AREA_EXIST:
@@ -4883,15 +6650,15 @@ int __ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 	}
 
 	range_len = items_area.items_count - search->result.start_index;
-	snapshots_count = range_len + search->request.count;
+	selected_items = range_len + search->request.count;
 
 	item_index = search->result.start_index;
-	if ((item_index + snapshots_count) > items_area.items_capacity) {
+	if ((item_index + selected_items) > items_area.items_capacity) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid snapshots_count: "
 			  "item_index %u, snapshots_count %u, "
 			  "items_capacity %u\n",
-			  item_index, snapshots_count,
+			  item_index, selected_items,
 			  items_area.items_capacity);
 		goto finish_detect_affected_items;
 	}
@@ -4903,99 +6670,123 @@ int __ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 	end_hash = search->request.end.hash;
 
 	if (item_index > 0) {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node,
-							   &items_area,
-							   item_index - 1,
-							   &snapshot);
+		err = ssdfs_snapshots_btree_node_get_item(node,
+							  &items_area,
+							  item_index - 1,
+							  &item);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get snapshot: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot item: "
+				  "err %d\n", err);
 			goto finish_detect_affected_items;
 		}
 
-		ino = le64_to_cpu(snapshot.ino);
-		cur_hash = le64_to_cpu(snapshot.create_time);
+		if (is_item_snapshot(&item)) {
+			ino = le64_to_cpu(item.snapshot.ino);
+			cur_hash = le64_to_cpu(item.snapshot.create_time);
 
-		if (cur_hash <= start_hash && ino < search->request.start.ino) {
-			/*
-			 * expected state
-			 */
-		} else {
-			SSDFS_ERR("invalid range: item_index %u, "
-				  "cur_hash %llx, "
-				  "start_hash %llx, end_hash %llx\n",
-				  item_index, cur_hash,
-				  start_hash, end_hash);
+			if (cur_hash <= start_hash &&
+			    ino < search->request.start.ino) {
+				/*
+				 * expected state
+				 */
+			} else {
+				SSDFS_ERR("invalid range: item_index %u, "
+					  "cur_hash %llx, "
+					  "start_hash %llx, end_hash %llx\n",
+					  item_index, cur_hash,
+					  start_hash, end_hash);
 
-			for (i = 0; i < items_area.items_count; i++) {
-				err =
-				   ssdfs_snapshots_btree_node_get_snapshot(node,
-								  &items_area,
-								  i, &snapshot);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to get snapshot: "
-						  "err %d\n", err);
-					goto finish_detect_affected_items;
-				}
+				ssdfs_show_snapshot_items(node, &items_area);
 
-				SSDFS_ERR("index %d, ino %llu, hash %llx\n",
-					  i,
-					  le64_to_cpu(snapshot.ino),
-					  le64_to_cpu(snapshot.create_time));
+				err = -ERANGE;
+				goto finish_detect_affected_items;
 			}
+		} else if (is_item_peb2time_record(&item)) {
+			cur_hash = le64_to_cpu(item.peb2time.create_time);
 
-			err = -ERANGE;
-			goto finish_detect_affected_items;
+			if (cur_hash <= start_hash) {
+				/*
+				 * expected state
+				 */
+			} else {
+				SSDFS_ERR("invalid range: item_index %u, "
+					  "cur_hash %llx, "
+					  "start_hash %llx, end_hash %llx\n",
+					  item_index, cur_hash,
+					  start_hash, end_hash);
+
+				ssdfs_show_snapshot_items(node, &items_area);
+
+				err = -ERANGE;
+				goto finish_detect_affected_items;
+			}
+		} else {
+			SSDFS_ERR("corrupted record: magic %#x\n",
+				  le16_to_cpu(item.magic));
+			return -ERANGE;
 		}
 	}
 
 	if (item_index < items_area.items_count) {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node,
-							      &items_area,
-							      item_index,
-							      &snapshot);
+		err = ssdfs_snapshots_btree_node_get_item(node,
+							  &items_area,
+							  item_index,
+							  &item);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to get snapshot: err %d\n", err);
+			SSDFS_ERR("fail to get snapshot item: "
+				  "err %d\n", err);
 			goto finish_detect_affected_items;
 		}
 
-		ino = le64_to_cpu(snapshot.ino);
-		cur_hash = le64_to_cpu(snapshot.create_time);
+		if (is_item_snapshot(&item)) {
+			ino = le64_to_cpu(item.snapshot.ino);
+			cur_hash = le64_to_cpu(item.snapshot.create_time);
 
-		if (end_hash <= cur_hash && search->request.end.ino < ino) {
-			/*
-			 * expected state
-			 */
-		} else {
-			SSDFS_ERR("invalid range: item_index %u, "
-				  "cur_hash %llx, "
-				  "start_hash %llx, end_hash %llx\n",
-				  item_index, cur_hash,
-				  start_hash, end_hash);
+			if (end_hash <= cur_hash &&
+			    search->request.end.ino < ino) {
+				/*
+				 * expected state
+				 */
+			} else {
+				SSDFS_ERR("invalid range: item_index %u, "
+					  "cur_hash %llx, "
+					  "start_hash %llx, end_hash %llx\n",
+					  item_index, cur_hash,
+					  start_hash, end_hash);
 
-			for (i = 0; i < items_area.items_count; i++) {
-				err =
-				   ssdfs_snapshots_btree_node_get_snapshot(node,
-								  &items_area,
-								  i, &snapshot);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to get snapshot: "
-						  "err %d\n", err);
-					goto finish_detect_affected_items;
-				}
+				ssdfs_show_snapshot_items(node, &items_area);
 
-				SSDFS_ERR("index %d, ino %llu, hash %llx\n",
-					  i,
-					  le64_to_cpu(snapshot.ino),
-					  le64_to_cpu(snapshot.create_time));
+				err = -ERANGE;
+				goto finish_detect_affected_items;
 			}
+		} else if (is_item_peb2time_record(&item)) {
+			cur_hash = le64_to_cpu(item.peb2time.create_time);
 
-			err = -ERANGE;
-			goto finish_detect_affected_items;
+			if (end_hash <= cur_hash) {
+				/*
+				 * expected state
+				 */
+			} else {
+				SSDFS_ERR("invalid range: item_index %u, "
+					  "cur_hash %llx, "
+					  "start_hash %llx, end_hash %llx\n",
+					  item_index, cur_hash,
+					  start_hash, end_hash);
+
+				ssdfs_show_snapshot_items(node, &items_area);
+
+				err = -ERANGE;
+				goto finish_detect_affected_items;
+			}
+		} else {
+			SSDFS_ERR("corrupted record: magic %#x\n",
+				  le16_to_cpu(item.magic));
+			return -ERANGE;
 		}
 	}
 
 lock_items_range:
-	err = ssdfs_lock_items_range(node, item_index, snapshots_count);
+	err = ssdfs_lock_items_range(node, item_index, selected_items);
 	if (err == -ENOENT) {
 		up_write(&node->full_lock);
 		wake_up_all(&node->wait_queue);
@@ -5061,23 +6852,37 @@ finish_detect_affected_items:
 	}
 	node->items_area.free_space -= used_space;
 
-	err = ssdfs_snapshots_btree_node_get_snapshot(node, &node->items_area,
-						      0, &snapshot);
+	err = ssdfs_snapshots_btree_node_get_item(node, &node->items_area,
+						  0, &item);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to get snapshot: err %d\n", err);
+		SSDFS_ERR("fail to get snapshot item: "
+			  "err %d\n", err);
 		goto finish_items_area_correction;
 	}
-	start_hash = le64_to_cpu(snapshot.create_time);
 
-	err = ssdfs_snapshots_btree_node_get_snapshot(node,
+	if (is_item_snapshot(&item))
+		start_hash = le64_to_cpu(item.snapshot.create_time);
+	else if (is_item_peb2time_record(&item))
+		start_hash = le64_to_cpu(item.peb2time.create_time);
+	else
+		start_hash = U64_MAX;
+
+	err = ssdfs_snapshots_btree_node_get_item(node,
 					&node->items_area,
 					node->items_area.items_count - 1,
-					&snapshot);
+					&item);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to get snapshot: err %d\n", err);
+		SSDFS_ERR("fail to get snapshot item: "
+			  "err %d\n", err);
 		goto finish_items_area_correction;
 	}
-	end_hash = le64_to_cpu(snapshot.create_time);
+
+	if (is_item_snapshot(&item))
+		end_hash = le64_to_cpu(item.snapshot.create_time);
+	else if (is_item_peb2time_record(&item))
+		end_hash = le64_to_cpu(item.peb2time.create_time);
+	else
+		end_hash = U64_MAX;
 
 	if (start_hash >= U64_MAX || end_hash >= U64_MAX) {
 		err = -ERANGE;
@@ -5098,7 +6903,7 @@ finish_detect_affected_items:
 		  node->node_id, start_hash, end_hash);
 
 	err = ssdfs_correct_lookup_table(node, &node->items_area,
-					 item_index, snapshots_count);
+					 item_index, selected_items);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct lookup table: "
 			  "err %d\n", err);
@@ -5126,16 +6931,16 @@ finish_items_area_correction:
 	}
 
 	err = ssdfs_set_dirty_items_range(node, items_area.items_capacity,
-					  item_index, snapshots_count);
+					  item_index, selected_items);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set items range as dirty: "
 			  "start %u, count %u, err %d\n",
-			  item_index, snapshots_count, err);
+			  item_index, selected_items, err);
 		goto unlock_items_range;
 	}
 
 unlock_items_range:
-	ssdfs_unlock_items_range(node, item_index, snapshots_count);
+	ssdfs_unlock_items_range(node, item_index, selected_items);
 
 finish_insert_item:
 	up_read(&node->full_lock);
@@ -5230,7 +7035,6 @@ int ssdfs_snapshots_btree_node_insert_item(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -5241,8 +7045,8 @@ int ssdfs_snapshots_btree_node_insert_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
-
 	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
@@ -5310,7 +7114,7 @@ int ssdfs_snapshots_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	err = __ssdfs_snapshots_btree_node_insert_range(node, search);
+	err = __ssdfs_snapshots_btree_node_insert(node, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
 			  "node_id %u, err %d\n",
@@ -5318,7 +7122,9 @@ int ssdfs_snapshots_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -5347,7 +7153,6 @@ int ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -5358,8 +7163,8 @@ int ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
-
 	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
@@ -5395,7 +7200,7 @@ int ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	err = __ssdfs_snapshots_btree_node_insert_range(node, search);
+	err = __ssdfs_snapshots_btree_node_insert(node, search);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to insert range: "
 			  "node_id %u, err %d\n",
@@ -5403,7 +7208,9 @@ int ssdfs_snapshots_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -5428,8 +7235,8 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 			   struct ssdfs_btree_node_items_area *area,
 			   struct ssdfs_btree_search *search)
 {
-	struct ssdfs_snapshot snapshot;
-	size_t item_size = sizeof(struct ssdfs_snapshot);
+	union ssdfs_snapshot_item item;
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	u16 range_len;
 	u16 item_index;
 	u64 start_hash, end_hash;
@@ -5438,7 +7245,6 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -5449,6 +7255,7 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	range_len = search->request.count;
 
@@ -5468,8 +7275,8 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	err = ssdfs_snapshots_btree_node_get_snapshot(node, area, item_index,
-						      &snapshot);
+	err = ssdfs_snapshots_btree_node_get_item(node, area,
+						  item_index, &item);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get snapshot: err %d\n", err);
 		return err;
@@ -5490,27 +7297,38 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 	end_hash = node->items_area.end_hash;
 
 	if (item_index == 0) {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node,
-							   &node->items_area,
-							   item_index,
-							   &snapshot);
+		err = ssdfs_snapshots_btree_node_get_item(node,
+							  &node->items_area,
+							  item_index, &item);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		start_hash = le64_to_cpu(snapshot.create_time);
+
+		if (is_item_snapshot(&item))
+			start_hash = le64_to_cpu(item.snapshot.create_time);
+		else if (is_item_peb2time_record(&item))
+			start_hash = le64_to_cpu(item.peb2time.create_time);
+		else
+			BUG();
 	}
 
 	if ((item_index + range_len) == node->items_area.items_count) {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node,
-						    &node->items_area,
-						    item_index + range_len - 1,
-						    &snapshot);
+		err = ssdfs_snapshots_btree_node_get_item(node,
+						&node->items_area,
+						item_index + range_len - 1,
+						&item);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		end_hash = le64_to_cpu(snapshot.create_time);
+
+		if (is_item_snapshot(&item))
+			end_hash = le64_to_cpu(item.snapshot.create_time);
+		else if (is_item_peb2time_record(&item))
+			end_hash = le64_to_cpu(item.peb2time.create_time);
+		else
+			BUG();
 	} else if ((item_index + range_len) > node->items_area.items_count) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid range_len: "
@@ -5558,8 +7376,8 @@ static
 int ssdfs_snapshots_btree_node_change_item(struct ssdfs_btree_node *node,
 					   struct ssdfs_btree_search *search)
 {
-	size_t item_size = sizeof(struct ssdfs_snapshot);
 	struct ssdfs_btree_node_items_area items_area;
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	u16 item_index;
 	int direction;
 	u16 range_len;
@@ -5567,7 +7385,6 @@ int ssdfs_snapshots_btree_node_change_item(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -5578,6 +7395,7 @@ int ssdfs_snapshots_btree_node_change_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
 		SSDFS_ERR("invalid result's state %#x\n",
@@ -5828,10 +7646,10 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
 		  node->node_id, start_index, range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (((u32)start_index + range_len) > area->items_count) {
 		SSDFS_ERR("start_index %u, range_len %u, items_count %u\n",
@@ -5982,10 +7800,10 @@ int ssdfs_invalidate_whole_items_area(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, area %p, search %p\n",
 		  node->node_id, area, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_invalidate_items_area(node, area,
 					     0, area->items_count,
@@ -6017,10 +7835,10 @@ int ssdfs_invalidate_items_area_partially(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
 		  node->node_id, start_index, range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_invalidate_items_area(node, area,
 					     start_index, range_len,
@@ -6050,8 +7868,8 @@ int __ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
 	struct ssdfs_snapshots_btree_info *tree_info;
 	struct ssdfs_snapshots_btree_node_header *hdr;
 	struct ssdfs_btree_node_items_area items_area;
-	struct ssdfs_snapshot snapshot;
-	size_t item_size = sizeof(struct ssdfs_snapshot);
+	union ssdfs_snapshot_item item;
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	u16 index_count = 0;
 	int free_items;
 	u16 item_index;
@@ -6069,7 +7887,6 @@ int __ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -6080,6 +7897,7 @@ int __ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
@@ -6400,24 +8218,36 @@ finish_detect_affected_items:
 		start_hash = U64_MAX;
 		end_hash = U64_MAX;
 	} else {
-		err = ssdfs_snapshots_btree_node_get_snapshot(node,
-						    &node->items_area,
-						    0, &snapshot);
+		err = ssdfs_snapshots_btree_node_get_item(node,
+							  &node->items_area,
+							  0, &item);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		start_hash = le64_to_cpu(snapshot.create_time);
 
-		err = ssdfs_snapshots_btree_node_get_snapshot(node,
+		if (is_item_snapshot(&item))
+			start_hash = le64_to_cpu(item.snapshot.create_time);
+		else if (is_item_peb2time_record(&item))
+			start_hash = le64_to_cpu(item.peb2time.create_time);
+		else
+			BUG();
+
+		err = ssdfs_snapshots_btree_node_get_item(node,
 					&node->items_area,
 					node->items_area.items_count - 1,
-					&snapshot);
+					&item);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get snapshot: err %d\n", err);
 			goto finish_items_area_correction;
 		}
-		end_hash = le64_to_cpu(snapshot.create_time);
+
+		if (is_item_snapshot(&item))
+			end_hash = le64_to_cpu(item.snapshot.create_time);
+		else if (is_item_peb2time_record(&item))
+			end_hash = le64_to_cpu(item.peb2time.create_time);
+		else
+			BUG();
 	}
 
 	SSDFS_DBG("BEFORE: node_id %u, items_area.start_hash %llx, "
@@ -6644,7 +8474,6 @@ int ssdfs_snapshots_btree_node_delete_item(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -6658,7 +8487,6 @@ int ssdfs_snapshots_btree_node_delete_item(struct ssdfs_btree_node *node,
 		  search->node.child,
 		  search->result.count);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.count != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6694,7 +8522,6 @@ int ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -6705,6 +8532,7 @@ int ssdfs_snapshots_btree_node_delete_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = __ssdfs_snapshots_btree_node_delete_range(node, search);
 	if (unlikely(err)) {
@@ -6739,12 +8567,12 @@ int ssdfs_snapshots_btree_node_extract_range(struct ssdfs_btree_node *node,
 					     u16 start_index, u16 count,
 					     struct ssdfs_btree_search *search)
 {
-	struct ssdfs_snapshot *snapshot;
+	union ssdfs_snapshot_item *item;
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_index %u, count %u, "
@@ -6755,11 +8583,11 @@ int ssdfs_snapshots_btree_node_extract_range(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->full_lock);
 	err = __ssdfs_btree_node_extract_range(node, start_index, count,
-						sizeof(struct ssdfs_snapshot),
-						search);
+						item_size, search);
 	up_read(&node->full_lock);
 
 	if (unlikely(err)) {
@@ -6772,10 +8600,28 @@ int ssdfs_snapshots_btree_node_extract_range(struct ssdfs_btree_node *node,
 	search->request.flags =
 			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-	snapshot = (struct ssdfs_snapshot *)search->result.buf;
-	search->request.start.hash = le64_to_cpu(snapshot->create_time);
-	snapshot += search->result.count - 1;
-	search->request.end.hash = le64_to_cpu(snapshot->create_time);
+	item = (union ssdfs_snapshot_item *)search->result.buf;
+
+	if (is_item_snapshot(&item)) {
+		search->request.start.hash =
+			le64_to_cpu(item->snapshot.create_time);
+	} else if (is_item_peb2time_record(&item)) {
+		search->request.start.hash =
+			le64_to_cpu(item->peb2time.create_time);
+	} else
+		BUG();
+
+	item += search->result.count - 1;
+
+	if (is_item_snapshot(&item)) {
+		search->request.end.hash =
+			le64_to_cpu(item->snapshot.create_time);
+	} else if (is_item_peb2time_record(&item)) {
+		search->request.end.hash =
+			le64_to_cpu(item->peb2time.create_time);
+	} else
+		BUG();
+
 	search->request.count = count;
 
 	return 0;
@@ -6807,7 +8653,7 @@ int ssdfs_snapshots_btree_resize_items_area(struct ssdfs_btree_node *node,
 					    u32 new_size)
 {
 	struct ssdfs_fs_info *fsi;
-	size_t item_size = sizeof(struct ssdfs_snapshot);
+	size_t item_size = sizeof(union ssdfs_snapshot_item);
 	size_t index_size;
 	int err;
 
@@ -6815,10 +8661,10 @@ int ssdfs_snapshots_btree_resize_items_area(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !node->tree || !node->tree->fsi);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, new_size %u\n",
 		  node->node_id, new_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = node->tree->fsi;
 	index_size = le16_to_cpu(fsi->vs->snapshots_btree.desc.index_size);

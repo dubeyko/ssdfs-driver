@@ -2676,6 +2676,8 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	struct ssdfs_migration_destination *mdest;
 	int new_state;
 	u64 leb_id;
+	u64 peb_create_time = U64_MAX;
+	u64 last_log_time = U64_MAX;
 	struct completion *end;
 	int err;
 
@@ -2728,8 +2730,18 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 		return -ERANGE;
 	}
 
+	if (ptr->src_peb) {
+		peb_create_time = ptr->src_peb->peb_create_time;
+		last_log_time = ptr->src_peb->last_log_time;
+	} else {
+		peb_create_time = ptr->dst_peb->peb_create_time;
+		last_log_time = ptr->dst_peb->last_log_time;
+	}
+
 	err = ssdfs_maptbl_exclude_migration_peb(fsi, leb_id,
 						 ptr->peb_type,
+						 peb_create_time,
+						 last_log_time,
 						 &end);
 	if (err == -EAGAIN) {
 		unsigned long res;
@@ -2745,6 +2757,8 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 
 		err = ssdfs_maptbl_exclude_migration_peb(fsi, leb_id,
 							 ptr->peb_type,
+							 peb_create_time,
+							 last_log_time,
 							 &end);
 	}
 

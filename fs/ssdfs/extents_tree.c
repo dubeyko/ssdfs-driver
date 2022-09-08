@@ -3016,7 +3016,6 @@ int ssdfs_prepare_empty_fork(u64 blk,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk %llu, search %p\n",
 		  blk, search);
@@ -3031,6 +3030,7 @@ int ssdfs_prepare_empty_fork(u64 blk,
 		  search->result.buf,
 		  search->result.buf_size,
 		  search->result.items_in_buffer);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search->result.err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3916,10 +3916,10 @@ int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !extent || !search);
 	BUG_ON(!tree->owner);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, blk %llu\n",
 		  tree, search, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ii = tree->owner;
 
