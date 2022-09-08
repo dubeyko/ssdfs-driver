@@ -173,6 +173,15 @@ config SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 
 	  If unsure, say N.
 
+config SSDFS_QAT_COMPRESSION_ACCELERATION
+	bool "Intel QuickAssist compression acceleration"
+	depends on CRYPTO_DEV_QAT && SSDFS
+	help
+	  This option enables Intel QuickAssist compression
+	  hardware acceleration.
+
+	  If unsure, say N.
+
 endmenu
 
 menu "Reliability"

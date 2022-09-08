@@ -420,8 +420,9 @@ bool ssdfs_can_compress_data(struct page *page,
 	return (max - min) >= SSDFS_MIN_MAX_DIFF_THRESHOLD;
 }
 
-int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
-		    size_t *srclen, size_t *destlen)
+int __ssdfs_compress(int type,
+		     unsigned char *data_in, unsigned char *cdata_out,
+		     size_t *srclen, size_t *destlen)
 {
 	const struct ssdfs_compress_ops *ops;
 	struct list_head *workspace = NULL;
@@ -480,7 +481,279 @@ failed_compress:
 	return err;
 }
 
-int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
+int ssdfs_qat_compress(int type,
+			unsigned char *data_in, unsigned char *cdata_out,
+			size_t *srclen, size_t *destlen)
+{
+	int err = 0;
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	struct scatterlist input, output;
+	struct crypto_acomp *acomp;
+	struct crypto_wait wait;
+	struct acomp_req *req;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, data_in, cdata_out, *srclen, *destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (*srclen < SSDFS_COMPR_ACCELERATOR_THRESHOLD) {
+		SSDFS_DBG("srclen %zu is small for QAT compression\n",
+			  *srclen);
+
+		return __ssdfs_compress(type, data_in, data_out, srclen, dstlen);
+	}
+
+	switch (type) {
+	case SSDFS_COMPR_NONE:
+	case SSDFS_COMPR_LZO:
+		SSDFS_DBG("QAT device doesn't support compression type %#x\n",
+			  type);
+		return __ssdfs_compress(type, data_in, data_out, srclen, dstlen);
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	acomp = crypto_alloc_acomp("qat_deflate", 0, 0);
+	if (IS_ERR_OR_NULL(acomp)) {
+		SSDFS_DBG("unable to allocate QAT compression object: "
+			  "err %d\n", err);
+
+		return __ssdfs_compress(type, data_in, data_out, srclen, dstlen);
+	}
+
+	req = acomp_request_alloc(acomp);
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate compression request: "
+			  "err %d\n", err);
+		goto free_acomp;
+	}
+
+	sg_init_one(&input, data_in, *srclen);
+	sg_init_one(&output, data_out, *dstlen);
+
+	acomp_request_set_params(req, &input, &output, *srclen, *dstlen);
+
+	crypto_init_wait(&wait);
+
+	acomp_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+				   crypto_req_done, &wait);
+
+	err = crypto_wait_req(crypto_acomp_compress(req), &wait);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to make QAT-based compression: "
+			  "err %d\n", err);
+		goto free_acomp_requst;
+	}
+
+	*destlen = req->dlen;
+
+free_acomp_requst:
+	acomp_request_free(req);
+
+free_acomp:
+	crypto_free_acomp(acomp);
+#else
+	err = -EOPNOTSUPP;
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int ssdfs_compress(int type,
+		   unsigned char *data_in, unsigned char *cdata_out,
+		   size_t *srclen, size_t *destlen)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, data_in, cdata_out, *srclen, *destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	err = ssdfs_qat_compress(type, data_in, cdata_out, srclen, destlen);
+#else
+	err = __ssdfs_compress(type, data_in, cdata_out, srclen, destlen);
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int ssdfs_qat_compress_page(int type,
+			    struct page *data_in, struct page *cdata_out,
+			    size_t *srclen, size_t *destlen)
+{
+	int err = 0;
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	struct scatterlist input, output;
+	struct crypto_acomp *acomp;
+	struct crypto_wait wait;
+	struct acomp_req *req;
+	unsigned char *kaddr_in;
+	unsigned char *kaddr_out;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, data_in, cdata_out, *srclen, *destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (*srclen < SSDFS_COMPR_ACCELERATOR_THRESHOLD) {
+		SSDFS_DBG("srclen %zu is small for QAT compression\n",
+			  *srclen);
+
+		kaddr_in = kmap_local_page(data_in);
+		kaddr_out = kmap_local_page(data_out);
+		err = __ssdfs_compress(type, kaddr_in, kaddr_out,
+					srclen, dstlen);
+		flush_dcache_page(kaddr_out);
+		kunmap_local(kaddr_out);
+		kunmap_local(kaddr_in);
+
+		return err;
+	}
+
+	switch (type) {
+	case SSDFS_COMPR_NONE:
+	case SSDFS_COMPR_LZO:
+		SSDFS_DBG("QAT device doesn't support compression type %#x\n",
+			  type);
+
+		kaddr_in = kmap_local_page(data_in);
+		kaddr_out = kmap_local_page(data_out);
+		err = __ssdfs_compress(type, kaddr_in, kaddr_out,
+					srclen, dstlen);
+		flush_dcache_page(kaddr_out);
+		kunmap_local(kaddr_out);
+		kunmap_local(kaddr_in);
+		return err;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	acomp = crypto_alloc_acomp("qat_deflate", 0, 0);
+	if (IS_ERR_OR_NULL(acomp)) {
+		SSDFS_DBG("unable to allocate QAT compression object: "
+			  "err %d\n", err);
+
+		kaddr_in = kmap_local_page(data_in);
+		kaddr_out = kmap_local_page(data_out);
+		err = __ssdfs_compress(type, kaddr_in, kaddr_out,
+					srclen, dstlen);
+		flush_dcache_page(kaddr_out);
+		kunmap_local(kaddr_out);
+		kunmap_local(kaddr_in);
+
+		return err;
+	}
+
+	req = acomp_request_alloc(acomp);
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate compression request: "
+			  "err %d\n", err);
+		goto free_acomp;
+	}
+
+	sg_init_table(&input, 1);
+	sg_set_page(&input, data_in, *srclen, 0);
+
+	sg_init_table(&output, 1);
+	sg_set_page(&output, data_out, *dstlen, 0);
+
+	acomp_request_set_params(req, &input, &output, *srclen, *dstlen);
+
+	crypto_init_wait(&wait);
+
+	acomp_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+				   crypto_req_done, &wait);
+
+	err = crypto_wait_req(crypto_acomp_compress(req), &wait);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to make QAT-based compression: "
+			  "err %d\n", err);
+		goto free_acomp_requst;
+	}
+
+	*destlen = req->dlen;
+
+free_acomp_requst:
+	acomp_request_free(req);
+
+free_acomp:
+	crypto_free_acomp(acomp);
+#else
+	err = -EOPNOTSUPP;
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int ssdfs_compress_page(int type,
+			struct page *data_in, struct page *cdata_out,
+			size_t *srclen, size_t *destlen)
+{
+	unsigned char *kaddr_in;
+	unsigned char *kaddr_out;
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	struct scatterlist input, output;
+	struct crypto_acomp *acomp;
+	struct crypto_wait wait;
+	struct acomp_req *req;
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, data_in, cdata_out, *srclen, *destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	err = ssdfs_qat_compress_page(type, data_in, cdata_out,
+				      srclen, destlen);
+#else
+	kaddr_in = kmap_local_page(data_in);
+	kaddr_out = kmap_local_page(cdata_out);
+	err = __ssdfs_compress(type, kaddr_in, kaddr_out, srclen, destlen);
+	flush_dcache_page(cdata_out);
+	kunmap_local(kaddr_out);
+	kunmap_local(kaddr_in);
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int __ssdfs_decompress(int type,
+			unsigned char *cdata_in, unsigned char *data_out,
 			size_t srclen, size_t destlen)
 {
 	const struct ssdfs_compress_ops *ops;
@@ -531,5 +804,244 @@ int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 	return 0;
 
 failed_decompress:
+	return err;
+}
+
+int ssdfs_qat_decompress(int type,
+			 unsigned char *cdata_in, unsigned char *data_out,
+			 size_t srclen, size_t destlen)
+{
+	int err = 0;
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	struct scatterlist input, output;
+	struct crypto_acomp *acomp;
+	struct crypto_wait wait;
+	struct acomp_req *req;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, data_in, cdata_out, srclen, destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (type) {
+	case SSDFS_COMPR_NONE:
+	case SSDFS_COMPR_LZO:
+		SSDFS_DBG("QAT device doesn't support compression type %#x\n",
+			  type);
+		return __ssdfs_decompress(type, data_in, data_out, srclen, dstlen);
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	acomp = crypto_alloc_acomp("qat_deflate", 0, 0);
+	if (IS_ERR_OR_NULL(acomp)) {
+		SSDFS_DBG("unable to allocate QAT compression object: "
+			  "err %d\n", err);
+
+		return __ssdfs_decompress(type, data_in, data_out, srclen, dstlen);
+	}
+
+	req = acomp_request_alloc(acomp);
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate compression request: "
+			  "err %d\n", err);
+		goto free_acomp;
+	}
+
+	sg_init_one(&input, data_in, srclen);
+	sg_init_one(&output, data_out, dstlen);
+
+	acomp_request_set_params(req, &input, &output, srclen, dstlen);
+
+	crypto_init_wait(&wait);
+
+	acomp_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+				   crypto_req_done, &wait);
+
+	err = crypto_wait_req(crypto_acomp_decompress(req), &wait);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to make QAT-based decompression: "
+			  "err %d\n", err);
+		goto free_acomp_requst;
+	}
+
+free_acomp_requst:
+	acomp_request_free(req);
+
+free_acomp:
+	crypto_free_acomp(acomp);
+#else
+	err = -EOPNOTSUPP;
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int ssdfs_decompress(int type,
+		     unsigned char *cdata_in, unsigned char *data_out,
+		     size_t srclen, size_t destlen)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, cdata_in %p, data_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, cdata_in, data_out, srclen, destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	err = ssdfs_qat_decompress(type, cdata_in, data_out, srclen, destlen);
+#else
+	err = __ssdfs_decompress(type, cdata_in, data_out, srclen, destlen);
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int ssdfs_qat_decompress_page(int type,
+			      struct page *data_in, struct page *cdata_out,
+			      size_t srclen, size_t destlen)
+{
+	int err = 0;
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	struct scatterlist input, output;
+	struct crypto_acomp *acomp;
+	struct crypto_wait wait;
+	struct acomp_req *req;
+	unsigned char *kaddr_in;
+	unsigned char *kaddr_out;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, data_in %p, cdata_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, data_in, cdata_out, srclen, destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (type) {
+	case SSDFS_COMPR_NONE:
+	case SSDFS_COMPR_LZO:
+		SSDFS_DBG("QAT device doesn't support compression type %#x\n",
+			  type);
+
+		kaddr_in = kmap_local_page(data_in);
+		kaddr_out = kmap_local_page(data_out);
+		err = __ssdfs_decompress(type, kaddr_in, kaddr_out,
+					 srclen, dstlen);
+		flush_dcache_page(kaddr_out);
+		kunmap_local(kaddr_out);
+		kunmap_local(kaddr_in);
+		return err;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	acomp = crypto_alloc_acomp("qat_inflate", 0, 0);
+	if (IS_ERR_OR_NULL(acomp)) {
+		SSDFS_DBG("unable to allocate QAT compression object: "
+			  "err %d\n", err);
+
+		kaddr_in = kmap_local_page(data_in);
+		kaddr_out = kmap_local_page(data_out);
+		err = __ssdfs_decompress(type, kaddr_in, kaddr_out,
+					 srclen, dstlen);
+		flush_dcache_page(kaddr_out);
+		kunmap_local(kaddr_out);
+		kunmap_local(kaddr_in);
+
+		return err;
+	}
+
+	req = acomp_request_alloc(acomp);
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate compression request: "
+			  "err %d\n", err);
+		goto free_acomp;
+	}
+
+	sg_init_table(&input, 1);
+	sg_set_page(&input, data_in, srclen, 0);
+
+	sg_init_table(&output, 1);
+	sg_set_page(&output, data_out, dstlen, 0);
+
+	acomp_request_set_params(req, &input, &output, srclen, dstlen);
+
+	crypto_init_wait(&wait);
+
+	acomp_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+				   crypto_req_done, &wait);
+
+	err = crypto_wait_req(crypto_acomp_decompress(req), &wait);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to make QAT-based compression: "
+			  "err %d\n", err);
+		goto free_acomp_requst;
+	}
+
+free_acomp_requst:
+	acomp_request_free(req);
+
+free_acomp:
+	crypto_free_acomp(acomp);
+#else
+	err = -EOPNOTSUPP;
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
+	return err;
+}
+
+int ssdfs_decompress_page(int type,
+			  struct page *cdata_in, struct page *data_out,
+			  size_t srclen, size_t destlen)
+{
+	unsigned char *kaddr_in;
+	unsigned char *kaddr_out;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("type %d, cdata_in %p, data_out %p, "
+		  "srclen %zu, destlen %zu\n",
+		  type, cdata_in, data_out, srclen, destlen);
+
+	if (unknown_compression(type)) {
+		SSDFS_ERR("unknown compression type %d\n", type);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION
+	err = ssdfs_qat_decompress_page(type, data_in, cdata_out,
+					srclen, destlen);
+#else
+	kaddr_in = kmap_local_page(cdata_in);
+	kaddr_out = kmap_local_page(data_out);
+	err = __ssdfs_decompress(type, kaddr_in, kaddr_out, srclen, destlen);
+	flush_dcache_page(data_out);
+	kunmap_local(kaddr_out);
+	kunmap_local(kaddr_in);
+#endif /* CONFIG_SSDFS_QAT_COMPRESSION_ACCELERATION */
+
 	return err;
 }

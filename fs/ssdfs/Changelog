@@ -3,6 +3,12 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.18 [September 07, 2022]
+    (*) Fix bugs in shared dictionary (step 7).
+
+v.4.17 [August 08, 2022]
+    (*) Fix bugs in shared dictionary (step 6).
+
 v.4.16 [July 28, 2022]
     (*) Fix bugs in logic of block descriptor table compression.
 

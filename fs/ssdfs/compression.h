@@ -35,6 +35,8 @@ enum {
 	SSDFS_COMPR_TYPES_CNT,
 };
 
+#define SSDFS_COMPR_ACCELERATOR_THRESHOLD	SSDFS_1KB
+
 /*
  * struct ssdfs_compress_ops - compressor operations
  * @alloc_workspace - prepare workspace for (de)compression
@@ -78,8 +80,14 @@ int ssdfs_unregister_compressor(struct ssdfs_compressor *);
 bool ssdfs_can_compress_data(struct page *page, unsigned data_size);
 int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 		    size_t *srclen, size_t *destlen);
+int ssdfs_compress_page(int type,
+			struct page *data_in, struct page *cdata_out,
+			size_t *srclen, size_t *destlen);
 int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 			size_t srclen, size_t destlen);
+int ssdfs_decompress_page(int type,
+			  struct page *cdata_in, struct page *data_out,
+			  size_t srclen, size_t destlen);
 
 #ifdef CONFIG_SSDFS_ZLIB
 /* compr_zlib.c */
