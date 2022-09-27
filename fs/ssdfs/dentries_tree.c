@@ -2087,10 +2087,10 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
@@ -2126,6 +2126,7 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 	case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 	case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+	case SSDFS_BTREE_SEARCH_OBSOLETE_RESULT:
 		/* expected state */
 		break;
 

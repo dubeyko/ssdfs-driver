@@ -455,17 +455,36 @@ bool is_btree_search_node_desc_consistent(struct ssdfs_btree_search *search)
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (search->node.state != SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC)
+	if (search->node.state != SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC) {
+		SSDFS_ERR("unexpected search->node.state %#x\n",
+			  search->node.state);
 		return false;
+	}
 
-	if (!search->node.parent || !search->node.child)
+	if (!search->node.parent) {
+		SSDFS_ERR("search->node.parent is NULL\n");
 		return false;
+	}
 
-	if (search->node.id != search->node.child->node_id)
+	if (!search->node.child) {
+		SSDFS_ERR("search->node.child is NULL\n");
 		return false;
+	}
 
-	if (search->node.height != atomic_read(&search->node.child->height))
+	if (search->node.id != search->node.child->node_id) {
+		SSDFS_ERR("search->node.id %u != search->node.child->node_id %u\n",
+			  search->node.id, search->node.child->node_id);
 		return false;
+	}
+
+	if (search->node.height != atomic_read(&search->node.child->height)) {
+		SSDFS_ERR("invalid height: "
+			  "search->node.height %u, "
+			  "search->node.child->height %d\n",
+			  search->node.height,
+			  atomic_read(&search->node.child->height));
+		return false;
+	}
 
 	return true;
 }

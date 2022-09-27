@@ -4264,7 +4264,6 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 		return -EINVAL;
 	}
 
-try_next_search:
 	err = ssdfs_btree_find_leaf_node(tree, search);
 	if (err == -EEXIST) {
 		err = 0;
@@ -4372,10 +4371,9 @@ try_find_item_again:
 			search->result.err = 0;
 			goto finish_search_item;
 		} else {
-			err = 0;
-			search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
-			SSDFS_DBG("try next search\n");
-			goto try_next_search;
+			err = -ENODATA;
+			SSDFS_DBG("node hasn't requested data\n");
+			goto finish_search_item;
 		}
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("unable to find item: "
@@ -4426,7 +4424,6 @@ int ssdfs_btree_find_item(struct ssdfs_btree *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, type %#x, "
 		  "request->type %#x, request->flags %#x, "
@@ -4435,6 +4432,7 @@ int ssdfs_btree_find_item(struct ssdfs_btree *tree,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash,
 		  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&tree->lock);
 	err = __ssdfs_btree_find_item(tree, search);

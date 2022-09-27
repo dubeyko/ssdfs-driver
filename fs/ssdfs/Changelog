@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.19 [September 26, 2022]
+    (*) Fix bugs in shared dictionary (step 8).
+
 v.4.18 [September 07, 2022]
     (*) Fix bugs in shared dictionary (step 7).
 

@@ -963,6 +963,7 @@ int ssdfs_snapshots_btree_add(struct ssdfs_snapshots_btree_info *tree,
 		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
 		case SSDFS_BTREE_SEARCH_OUT_OF_RANGE:
 		case SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE:
+		case SSDFS_BTREE_SEARCH_OBSOLETE_RESULT:
 			/* expected state */
 			break;
 

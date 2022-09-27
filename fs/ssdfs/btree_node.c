@@ -4368,6 +4368,18 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 	return 0;
 }
 
+static inline
+void ssdfs_set_node_update_cno(struct ssdfs_btree_node *node)
+{
+	u64 current_cno = ssdfs_current_cno(node->tree->fsi->sb);
+
+	spin_lock(&node->descriptor_lock);
+	node->update_cno = current_cno;
+	spin_unlock(&node->descriptor_lock);
+
+	SSDFS_DBG("current_cno %llu\n", current_cno);
+}
+
 /*
  * ssdfs_btree_node_resize_index_area() - resize the node's index area
  * @node: node object
@@ -4654,10 +4666,7 @@ finish_resize_operation:
 	else if (unlikely(err))
 		return err;
 
-	spin_lock(&node->descriptor_lock);
-	node->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&node->descriptor_lock);
-
+	ssdfs_set_node_update_cno(node);
 	set_ssdfs_btree_node_dirty(node);
 
 	return 0;
@@ -7628,10 +7637,7 @@ finish_change_root_node:
 		}
 	}
 
-	spin_lock(&node->descriptor_lock);
-	node->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&node->descriptor_lock);
-
+	ssdfs_set_node_update_cno(node);
 	set_ssdfs_btree_node_dirty(node);
 
 	return 0;
@@ -7875,10 +7881,7 @@ finish_change_root_node:
 		}
 	}
 
-	spin_lock(&node->descriptor_lock);
-	node->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&node->descriptor_lock);
-
+	ssdfs_set_node_update_cno(node);
 	set_ssdfs_btree_node_dirty(node);
 
 	return 0;
@@ -8795,10 +8798,7 @@ finish_change_root_node:
 		}
 	}
 
-	spin_lock(&node->descriptor_lock);
-	node->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&node->descriptor_lock);
-
+	ssdfs_set_node_update_cno(node);
 	set_ssdfs_btree_node_dirty(node);
 
 	if (node_type != SSDFS_BTREE_ROOT_NODE) {
@@ -8966,16 +8966,10 @@ int ssdfs_move_root2common_node_index_range(struct ssdfs_btree_node *src,
 		}
 	}
 
-	spin_lock(&src->descriptor_lock);
-	src->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&src->descriptor_lock);
-
+	ssdfs_set_node_update_cno(src);
 	set_ssdfs_btree_node_dirty(src);
 
-	spin_lock(&dst->descriptor_lock);
-	dst->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&dst->descriptor_lock);
-
+	ssdfs_set_node_update_cno(dst);
 	set_ssdfs_btree_node_dirty(dst);
 
 	return 0;
@@ -9694,14 +9688,10 @@ finish_index_moving:
 		atomic_set(&src->state, SSDFS_BTREE_NODE_CORRUPTED);
 		atomic_set(&dst->state, SSDFS_BTREE_NODE_CORRUPTED);
 	} else {
-		spin_lock(&src->descriptor_lock);
-		src->update_cno = ssdfs_current_cno(fsi->sb);
-		spin_unlock(&src->descriptor_lock);
+		ssdfs_set_node_update_cno(src);
 		set_ssdfs_btree_node_dirty(src);
 
-		spin_lock(&dst->descriptor_lock);
-		dst->update_cno = ssdfs_current_cno(fsi->sb);
-		spin_unlock(&dst->descriptor_lock);
+		ssdfs_set_node_update_cno(dst);
 		set_ssdfs_btree_node_dirty(dst);
 	}
 
@@ -9851,6 +9841,16 @@ int ssdfs_btree_node_check_result_for_search(struct ssdfs_btree_search *search)
 	end_hash = node->items_area.end_hash;
 	up_read(&node->header_lock);
 
+	SSDFS_DBG("search (state %#x, search_cno %llu, "
+		  "start_hash %llx, end_hash %llx), "
+		  "node (update_cno %llu, "
+		  "start_hash %llx, end_hash %llx)\n",
+		  search->result.state,
+		  search->result.search_cno,
+		  search->request.start.hash,
+		  search->request.end.hash,
+		  update_cno, start_hash, end_hash);
+
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
 		if (search->result.search_cno < update_cno) {
@@ -9901,6 +9901,9 @@ int ssdfs_btree_node_check_result_for_search(struct ssdfs_btree_search *search)
 		SSDFS_WARN("invalid search result state\n");
 		return -ERANGE;
 	}
+
+	SSDFS_DBG("search->result.state %#x\n",
+		  search->result.state);
 
 	return 0;
 }
@@ -10587,6 +10590,9 @@ int ssdfs_btree_node_allocate_item(struct ssdfs_btree_search *search)
 	node->node_index.flags = cpu_to_le16(flags);
 	spin_unlock(&node->descriptor_lock);
 
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
+
 	set_ssdfs_btree_node_dirty(node);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -10724,6 +10730,9 @@ int ssdfs_btree_node_allocate_range(struct ssdfs_btree_search *search)
 	flags &= ~SSDFS_BTREE_INDEX_SHOW_EMPTY_NODE;
 	node->node_index.flags = cpu_to_le16(flags);
 	spin_unlock(&node->descriptor_lock);
+
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
 
 	set_ssdfs_btree_node_dirty(node);
 
@@ -10902,6 +10911,9 @@ int ssdfs_btree_node_insert_item(struct ssdfs_btree_search *search)
 	node->node_index.flags = cpu_to_le16(flags);
 	spin_unlock(&node->descriptor_lock);
 
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
+
 	set_ssdfs_btree_node_dirty(node);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -11046,6 +11058,9 @@ int ssdfs_btree_node_insert_range(struct ssdfs_btree_search *search)
 	flags &= ~SSDFS_BTREE_INDEX_SHOW_EMPTY_NODE;
 	node->node_index.flags = cpu_to_le16(flags);
 	spin_unlock(&node->descriptor_lock);
+
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
 
 	set_ssdfs_btree_node_dirty(node);
 
@@ -11211,6 +11226,9 @@ int ssdfs_btree_node_change_item(struct ssdfs_btree_search *search)
 	search->result.search_cno = ssdfs_current_cno(fsi->sb);
 	node->update_cno = search->result.search_cno;
 	spin_unlock(&node->descriptor_lock);
+
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
 
 	set_ssdfs_btree_node_dirty(node);
 
@@ -11410,6 +11428,9 @@ int ssdfs_btree_node_delete_item(struct ssdfs_btree_search *search)
 	}
 	spin_unlock(&node->descriptor_lock);
 
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
+
 	set_ssdfs_btree_node_dirty(node);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -11583,6 +11604,9 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
 		node->node_index.flags = cpu_to_le16(flags);
 	}
 	spin_unlock(&node->descriptor_lock);
+
+	SSDFS_DBG("node->update_cno %llu\n",
+		  search->result.search_cno);
 
 	set_ssdfs_btree_node_dirty(node);
 
@@ -12150,16 +12174,11 @@ int ssdfs_btree_node_move_items_range(struct ssdfs_btree_node *src,
 		return err;
 	}
 
-	spin_lock(&src->descriptor_lock);
-	src->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&src->descriptor_lock);
-
-	spin_lock(&dst->descriptor_lock);
-	dst->update_cno = ssdfs_current_cno(fsi->sb);
-	spin_unlock(&dst->descriptor_lock);
-
+	ssdfs_set_node_update_cno(src);
+	ssdfs_set_node_update_cno(dst);
 	set_ssdfs_btree_node_dirty(src);
 	set_ssdfs_btree_node_dirty(dst);
+
 	return 0;
 }
 
