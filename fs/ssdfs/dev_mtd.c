@@ -179,7 +179,7 @@ static int ssdfs_mtd_readpage(struct super_block *sb, struct page *page,
 
 	if (err) {
 		ClearPageUptodate(page);
-		ClearPagePrivate(page);
+		ssdfs_clear_page_private(page, 0);
 		SetPageError(page);
 	} else {
 		SetPageUptodate(page);

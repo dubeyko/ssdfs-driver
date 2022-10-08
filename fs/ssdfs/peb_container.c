@@ -1978,7 +1978,8 @@ try_define_relation:
 		break;
 
 	case SSDFS_DESTINATION_UNDER_CREATION:
-		/* pass through */
+		/* FALLTHRU */
+		fallthrough;
 	case SSDFS_OBSOLETE_DESTINATION: {
 			DEFINE_WAIT(wait);
 

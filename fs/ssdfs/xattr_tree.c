@@ -5470,8 +5470,8 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 				  node->node_id, flags);
 			goto finish_header_init;
 		}
-		/* pass through */
-
+		/* FALLTHRU */
+		fallthrough;
 	case SSDFS_BTREE_LEAF_NODE:
 		if (xattrs_count > 0 &&
 		    (start_hash >= U64_MAX || end_hash >= U64_MAX)) {

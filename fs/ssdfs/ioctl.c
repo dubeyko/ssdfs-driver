@@ -49,7 +49,7 @@ static int ssdfs_ioctl_setflags(struct file *file, void __user *arg)
 	if (err)
 		return err;
 
-	if (!inode_owner_or_capable(inode))
+	if (!inode_owner_or_capable(&init_user_ns, inode))
 		return -EACCES;
 
 	if (get_user(flags, (int __user *)arg))

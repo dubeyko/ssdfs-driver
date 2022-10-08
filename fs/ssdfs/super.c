@@ -152,7 +152,7 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 {
 	struct ssdfs_inode_info *ii;
 
-	ii = kmem_cache_alloc(ssdfs_inode_cachep, GFP_KERNEL);
+	ii = alloc_inode_sb(sb, ssdfs_inode_cachep, GFP_KERNEL);
 	if (!ii)
 		return NULL;
 
@@ -1747,12 +1747,12 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
 	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
 		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
 		  last_sb_log->page_offset, last_sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 	hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
@@ -1840,7 +1840,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		     fsi->sbi.vh_buf, 0, hdr_size,
 		     hdr_size);
 	kunmap_atomic(kaddr);
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 	SetPageDirty(page);
 	ssdfs_unlock_page(page);
@@ -1867,7 +1867,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	ssdfs_lock_page(page);
 	ClearPageUptodate(page);
-	ClearPagePrivate(page);
+	ssdfs_clear_page_private(page, 0);
 	ssdfs_unlock_page(page);
 
 	offset += PAGE_SIZE;
@@ -1895,7 +1895,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(payload_page);
-		SetPagePrivate(payload_page);
+		ssdfs_set_page_private(payload_page, 0);
 		SetPageUptodate(payload_page);
 		SetPageDirty(payload_page);
 		ssdfs_unlock_page(payload_page);
@@ -1913,7 +1913,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 		ssdfs_lock_page(payload_page);
 		ClearPageUptodate(payload_page);
-		ClearPagePrivate(payload_page);
+		ssdfs_clear_page_private(page, 0);
 		ssdfs_unlock_page(payload_page);
 
 		offset += PAGE_SIZE;
@@ -1938,7 +1938,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			     fsi->sbi.vs_buf, written, fsi->pagesize,
 			     PAGE_SIZE);
 		kunmap_atomic(kaddr);
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		SetPageDirty(page);
 		ssdfs_unlock_page(page);
@@ -1955,7 +1955,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 		ssdfs_lock_page(page);
 		ClearPageUptodate(page);
-		ClearPagePrivate(page);
+		ssdfs_clear_page_private(page, 0);
 		ssdfs_unlock_page(page);
 
 		written += PAGE_SIZE;
@@ -2155,7 +2155,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 			   payload_size);
 	kunmap_atomic(kaddr);
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		SetPageDirty(page);
 	}
@@ -2195,7 +2195,7 @@ free_payload_buffer:
 
 	ssdfs_lock_page(page);
 	ClearPageUptodate(page);
-	ClearPagePrivate(page);
+	ssdfs_clear_page_private(page, 0);
 	ssdfs_unlock_page(page);
 
 	offset += PAGE_SIZE;
@@ -2217,7 +2217,7 @@ free_payload_buffer:
 			     fsi->sbi.vs_buf, written, fsi->pagesize,
 			     PAGE_SIZE);
 		kunmap_atomic(kaddr);
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		SetPageDirty(page);
 		ssdfs_unlock_page(page);
@@ -2234,7 +2234,7 @@ free_payload_buffer:
 
 		ssdfs_lock_page(page);
 		ClearPageUptodate(page);
-		ClearPagePrivate(page);
+		ssdfs_clear_page_private(page, 0);
 		ssdfs_unlock_page(page);
 
 		written += PAGE_SIZE;
@@ -2590,7 +2590,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_bdi = sb->s_mtd->backing_dev_info;
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
 	fs_info->devops = &ssdfs_bdev_devops;
-	sb->s_bdi = bdi_get(sb->s_bdev->bd_bdi);
+	sb->s_bdi = bdi_get(sb->s_bdev->bd_disk->bdi);
 	atomic_set(&fs_info->pending_bios, 0);
 	fs_info->erase_page = ssdfs_super_alloc_page(GFP_KERNEL);
 	if (IS_ERR_OR_NULL(fs_info->erase_page)) {
@@ -3322,10 +3322,11 @@ static void kill_ssdfs_sb(struct super_block *sb)
 }
 
 static struct file_system_type ssdfs_fs_type = {
-	.name    = "ssdfs",
-	.owner   = THIS_MODULE,
-	.mount   = ssdfs_mount,
-	.kill_sb = kill_ssdfs_sb,
+	.name		= "ssdfs",
+	.owner		= THIS_MODULE,
+	.mount		= ssdfs_mount,
+	.kill_sb	= kill_ssdfs_sb,
+	.fs_flags	= FS_REQUIRES_DEV,
 };
 MODULE_ALIAS_FS(SSDFS_VERSION);
 

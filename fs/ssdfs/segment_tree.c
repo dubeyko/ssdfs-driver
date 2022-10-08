@@ -97,26 +97,47 @@ void ssdfs_seg_tree_check_memory_leaks(void)
  ******************************************************************************/
 
 static
-void ssdfs_segment_tree_invalidatepage(struct page *page, unsigned int offset,
-					unsigned int length)
+void ssdfs_segment_tree_invalidate_folio(struct folio *folio, size_t offset,
+					 size_t length)
 {
-	SSDFS_DBG("do nothing: page_index %llu, offset %u, length %u\n",
-		  (u64)page_index(page), offset, length);
+	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
+		  offset, length);
+}
+
+/*
+ * ssdfs_segment_tree_release_folio() - Release fs-specific metadata on a folio.
+ * @folio: The folio which the kernel is trying to free.
+ * @gfp: Memory allocation flags (and I/O mode).
+ *
+ * The address_space is trying to release any data attached to a folio
+ * (presumably at folio->private).
+ *
+ * This will also be called if the private_2 flag is set on a page,
+ * indicating that the folio has other metadata associated with it.
+ *
+ * The @gfp argument specifies whether I/O may be performed to release
+ * this page (__GFP_IO), and whether the call may block
+ * (__GFP_RECLAIM & __GFP_FS).
+ *
+ * Return: %true if the release was successful, otherwise %false.
+ */
+static
+bool ssdfs_segment_tree_release_folio(struct folio *folio, gfp_t gfp)
+{
+	return false;
 }
 
 static
-int ssdfs_segment_tree_releasepage(struct page *page, gfp_t mask)
+bool ssdfs_segment_tree_noop_dirty_folio(struct address_space *mapping,
+					 struct folio *folio)
 {
-	SSDFS_DBG("do nothing: page_index %llu, mask %#x\n",
-		  (u64)page_index(page), mask);
-
-	return 0;
+	return true;
 }
 
 const struct address_space_operations ssdfs_segment_tree_aops = {
-	.invalidatepage	= ssdfs_segment_tree_invalidatepage,
-	.releasepage	= ssdfs_segment_tree_releasepage,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
+	.invalidate_folio	= ssdfs_segment_tree_invalidate_folio,
+	.release_folio		= ssdfs_segment_tree_release_folio,
+	.dirty_folio		= ssdfs_segment_tree_noop_dirty_folio,
 };
 
 /*
@@ -330,7 +351,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	kunmap(page);
 
-	ssdfs_clear_dirty_page(page);
+	__ssdfs_clear_dirty_page(page);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
@@ -507,7 +528,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 
 	SetPageUptodate(page);
 	if (!PageDirty(page))
-		__set_page_dirty_nobuffers(page);
+		ssdfs_set_page_dirty(page);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
@@ -590,7 +611,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 
 	SetPageUptodate(page);
 	if (!PageDirty(page))
-		__set_page_dirty_nobuffers(page);
+		ssdfs_set_page_dirty(page);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);

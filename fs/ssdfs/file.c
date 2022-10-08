@@ -414,7 +414,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 		if (file_size > inline_capacity) {
 			ClearPageUptodate(page);
-			ClearPagePrivate(page);
+			ssdfs_clear_page_private(page, 0);
 			SetPageError(page);
 			SSDFS_ERR("file_size %llu is greater capacity %zu\n",
 				  file_size, inline_capacity);
@@ -429,7 +429,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 		if (unlikely(err)) {
 			ClearPageUptodate(page);
-			ClearPagePrivate(page);
+			ssdfs_clear_page_private(page, 0);
 			SetPageError(page);
 			SSDFS_ERR("fail to copy file's content: "
 				  "err %d\n", err);
@@ -516,7 +516,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 
 fail_read_page:
 	ClearPageUptodate(page);
-	ClearPagePrivate(page);
+	ssdfs_clear_page_private(page, 0);
 	SetPageError(page);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
@@ -524,13 +524,10 @@ fail_read_page:
 	return err;
 }
 
-/*
- * The ssdfs_readpage() is called by the VM
- * to read a page from backing store.
- */
-static inline
-int ssdfs_readpage(struct file *file, struct page *page)
+static
+int ssdfs_read_folio(struct file *file, struct folio *folio)
 {
+	struct page *page = &folio->page;
 	int err;
 
 	SSDFS_DBG("ino %lu, page_index %lu\n",
@@ -656,7 +653,7 @@ ssdfs_issue_read_request(struct file *file, struct page *page)
 
 fail_issue_read_request:
 	ClearPageUptodate(page);
-	ClearPagePrivate(page);
+	ssdfs_clear_page_private(page, 0);
 	SetPageError(page);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
@@ -797,51 +794,61 @@ int ssdfs_readahead_page(void *data, struct page *page)
 }
 
 /*
- * The ssdfs_readpages() is called by the VM to read pages
- * associated with the address_space object. This is essentially
- * just a vector version of ssdfs_readpage(). Instead of just one
- * page, several pages are requested. The ssdfs_readpages() is only
- * used for read-ahead, so read errors are ignored.
+ * The ssdfs_readahead() is called by the VM to read pages
+ * associated with the address_space object. The pages are
+ * consecutive in the page cache and are locked.
+ * The implementation should decrement the page refcount
+ * after starting I/O on each page. Usually the page will be
+ * unlocked by the I/O completion handler. The ssdfs_readahead()
+ * is only used for read-ahead, so read errors are ignored.
  */
 static
-int ssdfs_readpages(struct file *file, struct address_space *mapping,
-		    struct list_head *pages, unsigned nr_pages)
+void ssdfs_readahead(struct readahead_control *rac)
 {
-	struct inode *inode = file_inode(file);
+	struct inode *inode = file_inode(rac->file);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct ssdfs_readahead_env env;
+	struct page *page;
 	unsigned i;
 	int res;
 	int err = 0;
 
 	SSDFS_DBG("ino %lu, nr_pages %u\n",
-		  file_inode(file)->i_ino, nr_pages);
+		  file_inode(rac->file)->i_ino, readahead_count(rac));
 
 	if (is_ssdfs_file_inline(ii)) {
 		/* do nothing */
-		return 0;
+		return;
 	}
 
-	env.file = file;
+	env.file = rac->file;
 	env.count = 0;
-	env.capacity = nr_pages;
+	env.capacity = readahead_count(rac);
 
-	env.reqs = ssdfs_file_kcalloc(nr_pages,
+	env.reqs = ssdfs_file_kcalloc(readahead_count(rac),
 				  sizeof(struct ssdfs_segment_request *),
 				  GFP_KERNEL);
 	if (!env.reqs) {
 		SSDFS_ERR("fail to allocate requests array\n");
-		return -ENOMEM;
+		return;
 	}
 
-	err = read_cache_pages(mapping, pages,
-				(void *)ssdfs_readahead_page, &env);
+	while ((page = readahead_page(rac))) {
+		prefetchw(&page->flags);
+		err = ssdfs_readahead_page((void *)&env, page);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to process page: "
+				  "index %u, err %d\n",
+				  env.count, err);
+			break;
+		}
+	};
 
-	for (i = 0; i < nr_pages; i++) {
+	for (i = 0; i < readahead_count(rac); i++) {
 		res = ssdfs_wait_read_request_end(env.reqs[i]);
 		if (res) {
 			SSDFS_DBG("waiting has finished with issue: "
-				  "index %d, err %d\n",
+				  "index %u, err %d\n",
 				  i, res);
 		}
 
@@ -857,10 +864,11 @@ int ssdfs_readpages(struct file *file, struct address_space *mapping,
 	if (err) {
 		SSDFS_DBG("readahead fails: "
 			  "ino %lu, nr_pages %u, err %d\n",
-			  file_inode(file)->i_ino, nr_pages, err);
+			  file_inode(rac->file)->i_ino,
+			  readahead_count(rac), err);
 	}
 
-	return err;
+	return;
 }
 
 /*
@@ -1929,8 +1937,8 @@ int ssdfs_writepages(struct address_space *mapping,
 			  "nr_pages %d, tag %#x\n",
 			  (u64)index, (u64)end, nr_pages, tag);
 
-		nr_pages = pagevec_lookup_range_nr_tag(&pvec, mapping, &index,
-							end, tag, nr_pages);
+		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
+						    end, tag);
 		if (nr_pages == 0)
 			break;
 
@@ -2131,7 +2139,7 @@ static void ssdfs_write_failed(struct address_space *mapping, loff_t to)
  */
 static
 int ssdfs_write_begin(struct file *file, struct address_space *mapping,
-		      loff_t pos, unsigned len, unsigned flags,
+		      loff_t pos, unsigned len,
 		      struct page **pagep, void **fsdata)
 {
 	struct inode *inode = mapping->host;
@@ -2146,19 +2154,19 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	bool is_new_blk = false;
 	int err = 0;
 
-	SSDFS_DBG("ino %lu, pos %llu, len %u, flags %#x\n",
-		  inode->i_ino, pos, len, flags);
+	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
+		  inode->i_ino, pos, len);
 
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
-	SSDFS_DBG("ino %lu, index %lu, flags %#x\n",
-		  inode->i_ino, index, flags);
+	SSDFS_DBG("ino %lu, index %lu\n",
+		  inode->i_ino, index);
 
-	page = grab_cache_page_write_begin(mapping, index, flags);
+	page = grab_cache_page_write_begin(mapping, index);
 	if (!page) {
-		SSDFS_ERR("fail to grab page: index %lu, flags %#x\n",
-			  index, flags);
+		SSDFS_ERR("fail to grab page: index %lu\n",
+			  index);
 		return -ENOMEM;
 	}
 
@@ -2381,7 +2389,7 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 	inode_lock(inode);
 	sync_inode_metadata(inode, 1);
-	blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+	blkdev_issue_flush(inode->i_sb->s_bdev);
 	inode_unlock(inode);
 
 	trace_ssdfs_sync_file_exit(file, datasync, err);
@@ -2424,8 +2432,8 @@ const struct inode_operations ssdfs_symlink_inode_operations = {
 };
 
 const struct address_space_operations ssdfs_aops = {
-	.readpage		= ssdfs_readpage,
-	.readpages		= ssdfs_readpages,
+	.read_folio		= ssdfs_read_folio,
+	.readahead		= ssdfs_readahead,
 	.writepage		= ssdfs_writepage,
 	.writepages		= ssdfs_writepages,
 	.write_begin		= ssdfs_write_begin,

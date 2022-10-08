@@ -1747,7 +1747,7 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 			  i, page);
 
 		ssdfs_lock_page(page);
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_add_page(&fdesc->array,
 						page, i);
@@ -4416,7 +4416,7 @@ finish_physical_index_processing:
 	kunmap(page);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -4529,7 +4529,7 @@ finish_relation_index_processing:
 	kunmap(page);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -4641,7 +4641,7 @@ finish_page_processing:
 	kunmap_atomic(kaddr);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -4723,7 +4723,7 @@ finish_page_processing:
 	kunmap_atomic(kaddr);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -4847,7 +4847,7 @@ finish_page_processing:
 	kunmap_atomic(kaddr);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -4949,7 +4949,7 @@ finish_page_processing:
 	kunmap_atomic(kaddr);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&ptr->array,
 						      page_index);
@@ -6612,7 +6612,7 @@ finish_page_processing:
 			  le64_to_cpu(hdr->start_peb),
 			  ptr->peb_id);
 
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      lebtbl_page);
@@ -6940,7 +6940,7 @@ finish_page_processing:
 	kunmap(page);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -7652,7 +7652,7 @@ finish_page_processing:
 	kunmap(page);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 						      page_index);
@@ -8049,7 +8049,7 @@ finish_page_processing:
 	kunmap_atomic(kaddr);
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&ptr->array,
 						      page_index);
@@ -8513,7 +8513,7 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 	peb_desc->type = peb_type;
 	peb_desc->state = SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE;
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 	err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 					      pebtbl_page);
@@ -8610,7 +8610,7 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 	lebtbl_hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 	le16_add_cpu(&lebtbl_hdr->migrating_lebs, 1);
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 	err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 					      lebtbl_page);

@@ -639,7 +639,7 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 	kaddr = kmap_atomic(page);
 	memset(kaddr, 0, PAGE_SIZE);
 	kunmap_atomic(kaddr);
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	ssdfs_put_page(page);
 	ssdfs_unlock_page(page);
 
@@ -1277,7 +1277,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		kaddr = kmap_atomic(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		kunmap_atomic(kaddr);
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		ssdfs_put_page(page);
 		ssdfs_unlock_page(page);
 
@@ -7338,7 +7338,7 @@ try_get_next_page:
 		kunmap(dst_page);
 
 		if (!err) {
-			SetPagePrivate(dst_page);
+			ssdfs_set_page_private(dst_page, 0);
 			SetPageUptodate(dst_page);
 
 			err =
@@ -7582,7 +7582,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 		goto finish_copy;
 	}
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 
 	err = ssdfs_page_array_set_page_dirty(&desc->pebi->cache, index);
@@ -8466,7 +8466,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 finish_bmap_hdr_preparation:
 	kunmap(page);
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 
 	err = ssdfs_page_array_set_page_dirty(&pebi->cache, index);
@@ -9351,7 +9351,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 			memset(kaddr, 0xFF, PAGE_SIZE);
 			kunmap_atomic(kaddr);
 
-			SetPagePrivate(page);
+			ssdfs_set_page_private(page, 0);
 			SetPageUptodate(page);
 
 			err = ssdfs_page_array_set_page_dirty(&pebi->cache,
@@ -9409,7 +9409,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 
 	kunmap(page);
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 
 	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
@@ -9956,7 +9956,7 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 			if (i < written_pages) {
 				ssdfs_lock_page(page);
 				ClearPageUptodate(page);
-				ClearPagePrivate(page);
+				ssdfs_clear_page_private(page, 0);
 				pvec.pages[i] = NULL;
 				ssdfs_unlock_page(page);
 			} else {
@@ -10359,7 +10359,7 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 
 	kunmap(page);
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 
 	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);

@@ -83,7 +83,7 @@ void ssdfs_acl_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
-struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
+struct posix_acl *ssdfs_get_acl(struct inode *inode, int type, bool rcu)
 {
 	struct posix_acl *acl;
 	char *xattr_name;
@@ -93,6 +93,9 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 
 	SSDFS_DBG("ino %lu, type %#x\n",
 		  (unsigned long)inode->i_ino, type);
+
+	if (rcu)
+		return ERR_PTR(-ECHILD);
 
 	switch (type) {
 	case ACL_TYPE_ACCESS:
@@ -131,7 +134,8 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type)
 	return acl;
 }
 
-int ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+static
+int __ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 {
 	int name_index;
 	char *xattr_name;
@@ -142,19 +146,10 @@ int ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	SSDFS_DBG("ino %lu, type %#x, acl %p\n",
 		  (unsigned long)inode->i_ino, type, acl);
 
-	if (S_ISLNK(inode->i_mode))
-		return -EOPNOTSUPP;
-
 	switch (type) {
 	case ACL_TYPE_ACCESS:
 		name_index = SSDFS_POSIX_ACL_ACCESS_XATTR_ID;
 		xattr_name = XATTR_NAME_POSIX_ACL_ACCESS;
-		if (acl) {
-			err = posix_acl_equiv_mode(acl, &inode->i_mode);
-			if (err < 0)
-				return err;
-		}
-		err = 0;
 		break;
 
 	case ACL_TYPE_DEFAULT:
@@ -194,6 +189,36 @@ end_set_acl:
 	return err;
 }
 
+int ssdfs_set_acl(struct user_namespace *mnt_userns, struct inode *inode,
+		  struct posix_acl *acl, int type)
+{
+	int update_mode = 0;
+	umode_t mode = inode->i_mode;
+	int err;
+
+	SSDFS_DBG("ino %lu, type %#x, acl %p\n",
+		  (unsigned long)inode->i_ino, type, acl);
+
+	if (type == ACL_TYPE_ACCESS && acl) {
+		err = posix_acl_update_mode(&init_user_ns, inode, &mode, &acl);
+		if (err)
+			goto end_set_acl;
+
+		if (mode != inode->i_mode)
+			update_mode = 1;
+	}
+
+	err = __ssdfs_set_acl(inode, acl, type);
+	if (!err && update_mode) {
+		inode->i_mode = mode;
+		inode->i_ctime = current_time(inode);
+		mark_inode_dirty(inode);
+	}
+
+end_set_acl:
+	return err;
+}
+
 int ssdfs_init_acl(struct inode *inode, struct inode *dir)
 {
 	struct posix_acl *default_acl, *acl;
@@ -207,13 +232,13 @@ int ssdfs_init_acl(struct inode *inode, struct inode *dir)
 		return err;
 
 	if (default_acl) {
-		err = ssdfs_set_acl(inode, default_acl, ACL_TYPE_DEFAULT);
+		err = __ssdfs_set_acl(inode, default_acl, ACL_TYPE_DEFAULT);
 		posix_acl_release(default_acl);
 	}
 
 	if (acl) {
 		if (!err)
-			err = ssdfs_set_acl(inode, acl, ACL_TYPE_ACCESS);
+			err = __ssdfs_set_acl(inode, acl, ACL_TYPE_ACCESS);
 		posix_acl_release(acl);
 	}
 	return err;

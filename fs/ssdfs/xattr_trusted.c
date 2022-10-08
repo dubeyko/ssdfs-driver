@@ -53,6 +53,7 @@ int ssdfs_trusted_getxattr(const struct xattr_handler *handler,
 
 static
 int ssdfs_trusted_setxattr(const struct xattr_handler *handler,
+			   struct user_namespace *mnt_userns,
 			   struct dentry *unused, struct inode *inode,
 			   const char *name, const void *value,
 			   size_t size, int flags)

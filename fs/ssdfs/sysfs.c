@@ -34,10 +34,10 @@
 static struct kset *ssdfs_kset;
 
 #define SSDFS_SHOW_TIME(ns, buf) ({ \
-	struct timespec timespec_val; \
+	struct timespec64 timespec_val; \
 	struct tm res; \
 	int count = 0; \
-	timespec_val = ns_to_timespec(ns); \
+	timespec_val = ns_to_timespec64(ns); \
 	time64_to_tm(timespec_val.tv_sec, 0, &res); \
 	res.tm_year += 1900; \
 	res.tm_mon += 1; \
@@ -149,7 +149,7 @@ static const char * const task_state_array[] = {
 
 static inline const char *get_task_state(struct task_struct *tsk)
 {
-	unsigned int state = (tsk->state | tsk->exit_state) & TASK_REPORT;
+	unsigned int state = (tsk->__state | tsk->exit_state) & TASK_REPORT;
 
 	BUILD_BUG_ON(1 + ilog2(TASK_REPORT) != ARRAY_SIZE(task_state_array)-1);
 
@@ -208,6 +208,7 @@ static struct attribute *ssdfs_peb_attrs[] = {
 	SSDFS_PEB_ATTR_LIST(threads_info),
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_peb);
 
 static ssize_t ssdfs_peb_attr_show(struct kobject *kobj,
 				    struct attribute *attr, char *buf)
@@ -249,7 +250,7 @@ static const struct sysfs_ops ssdfs_peb_attr_ops = {
 };
 
 static struct kobj_type ssdfs_peb_ktype = {
-	.default_attrs	= ssdfs_peb_attrs,
+	.default_groups = ssdfs_peb_groups,
 	.sysfs_ops	= &ssdfs_peb_attr_ops,
 	.release	= ssdfs_peb_attr_release,
 };
@@ -290,6 +291,7 @@ void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc)
 static struct attribute *ssdfs_pebs_attrs[] = {
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_pebs);
 
 static ssize_t ssdfs_pebs_attr_show(struct kobject *kobj,
 				    struct attribute *attr, char *buf)
@@ -331,7 +333,7 @@ static const struct sysfs_ops ssdfs_pebs_attr_ops = {
 };
 
 static struct kobj_type ssdfs_pebs_ktype = {
-	.default_attrs	= ssdfs_pebs_attrs,
+	.default_groups = ssdfs_pebs_groups,
 	.sysfs_ops	= &ssdfs_pebs_attr_ops,
 	.release	= ssdfs_pebs_attr_release,
 };
@@ -525,6 +527,7 @@ static struct attribute *ssdfs_seg_attrs[] = {
 	SSDFS_SEG_ATTR_LIST(seg_state),
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_seg);
 
 static ssize_t ssdfs_seg_attr_show(struct kobject *kobj,
 				    struct attribute *attr, char *buf)
@@ -566,7 +569,7 @@ static const struct sysfs_ops ssdfs_seg_attr_ops = {
 };
 
 static struct kobj_type ssdfs_seg_ktype = {
-	.default_attrs	= ssdfs_seg_attrs,
+	.default_groups = ssdfs_seg_groups,
 	.sysfs_ops	= &ssdfs_seg_attr_ops,
 	.release	= ssdfs_seg_attr_release,
 };
@@ -750,6 +753,7 @@ static struct attribute *ssdfs_segments_attrs[] = {
 	SSDFS_SEGMENTS_ATTR_LIST(current_segments),
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_segments);
 
 static ssize_t ssdfs_segments_attr_show(struct kobject *kobj,
 					struct attribute *attr, char *buf)
@@ -788,7 +792,7 @@ static const struct sysfs_ops ssdfs_segments_attr_ops = {
 };
 
 static struct kobj_type ssdfs_segments_ktype = {
-	.default_attrs	= ssdfs_segments_attrs,
+	.default_groups = ssdfs_segments_groups,
 	.sysfs_ops	= &ssdfs_segments_attr_ops,
 	.release	= ssdfs_segments_attr_release,
 };
@@ -1045,6 +1049,7 @@ static struct attribute *ssdfs_segbmap_attrs[] = {
 	SSDFS_SEGBMAP_ATTR_LIST(seg_numbers),
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_segbmap);
 
 static ssize_t ssdfs_segbmap_attr_show(struct kobject *kobj,
 					struct attribute *attr, char *buf)
@@ -1083,7 +1088,7 @@ static const struct sysfs_ops ssdfs_segbmap_attr_ops = {
 };
 
 static struct kobj_type ssdfs_segbmap_ktype = {
-	.default_attrs	= ssdfs_segbmap_attrs,
+	.default_groups = ssdfs_segbmap_groups,
 	.sysfs_ops	= &ssdfs_segbmap_attr_ops,
 	.release	= ssdfs_segbmap_attr_release,
 };
@@ -1359,6 +1364,7 @@ static struct attribute *ssdfs_maptbl_attrs[] = {
 	SSDFS_MAPTBL_ATTR_LIST(stripes_per_fragment),
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_maptbl);
 
 static ssize_t ssdfs_maptbl_attr_show(struct kobject *kobj,
 					struct attribute *attr, char *buf)
@@ -1397,7 +1403,7 @@ static const struct sysfs_ops ssdfs_maptbl_attr_ops = {
 };
 
 static struct kobj_type ssdfs_maptbl_ktype = {
-	.default_attrs	= ssdfs_maptbl_attrs,
+	.default_groups = ssdfs_maptbl_groups,
 	.sysfs_ops	= &ssdfs_maptbl_attr_ops,
 	.release	= ssdfs_maptbl_attr_release,
 };
@@ -1775,6 +1781,7 @@ static struct attribute *ssdfs_dev_attrs[] = {
 	SSDFS_DEV_ATTR_LIST(error_behavior),
 	NULL,
 };
+ATTRIBUTE_GROUPS(ssdfs_dev);
 
 static ssize_t ssdfs_dev_attr_show(struct kobject *kobj,
 				    struct attribute *attr, char *buf)
@@ -1813,7 +1820,7 @@ static const struct sysfs_ops ssdfs_dev_attr_ops = {
 };
 
 static struct kobj_type ssdfs_dev_ktype = {
-	.default_attrs	= ssdfs_dev_attrs,
+	.default_groups = ssdfs_dev_groups,
 	.sysfs_ops	= &ssdfs_dev_attr_ops,
 	.release	= ssdfs_dev_attr_release,
 };

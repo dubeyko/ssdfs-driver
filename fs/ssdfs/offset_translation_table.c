@@ -4023,7 +4023,7 @@ int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 		goto finish_copy;
 	}
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 
 	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
@@ -4130,7 +4130,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 			goto finish_copy;
 		}
 
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 
 		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
@@ -4285,7 +4285,7 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 			goto finish_cur_copy;
 		}
 
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 
 		err = ssdfs_page_array_set_page_dirty(&pebi->cache,

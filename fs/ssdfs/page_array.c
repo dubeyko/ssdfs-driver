@@ -1532,7 +1532,7 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		if (page) {
 			ssdfs_lock_page(page);
 			ClearPageUptodate(page);
-			ClearPagePrivate(page);
+			ssdfs_clear_page_private(page, 0);
 			ssdfs_unlock_page(page);
 
 			ssdfs_put_page(page);

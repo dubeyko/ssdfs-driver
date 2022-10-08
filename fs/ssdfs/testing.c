@@ -39,26 +39,47 @@
 #include "testing.h"
 
 static
-void ssdfs_testing_invalidatepage(struct page *page, unsigned int offset,
-				  unsigned int length)
+void ssdfs_testing_invalidate_folio(struct folio *folio, size_t offset,
+				    size_t length)
 {
-	SSDFS_DBG("do nothing: page_index %llu, offset %u, length %u\n",
-		  (u64)page_index(page), offset, length);
+	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
+		  offset, length);
+}
+
+/*
+ * ssdfs_testing_release_folio() - Release fs-specific metadata on a folio.
+ * @folio: The folio which the kernel is trying to free.
+ * @gfp: Memory allocation flags (and I/O mode).
+ *
+ * The address_space is trying to release any data attached to a folio
+ * (presumably at folio->private).
+ *
+ * This will also be called if the private_2 flag is set on a page,
+ * indicating that the folio has other metadata associated with it.
+ *
+ * The @gfp argument specifies whether I/O may be performed to release
+ * this page (__GFP_IO), and whether the call may block
+ * (__GFP_RECLAIM & __GFP_FS).
+ *
+ * Return: %true if the release was successful, otherwise %false.
+ */
+static
+bool ssdfs_testing_release_folio(struct folio *folio, gfp_t gfp)
+{
+	return false;
 }
 
 static
-int ssdfs_testing_releasepage(struct page *page, gfp_t mask)
+bool ssdfs_testing_noop_dirty_folio(struct address_space *mapping,
+				    struct folio *folio)
 {
-	SSDFS_DBG("do nothing: page_index %llu, mask %#x\n",
-		  (u64)page_index(page), mask);
-
-	return 0;
+	return true;
 }
 
 const struct address_space_operations ssdfs_testing_aops = {
-	.invalidatepage	= ssdfs_testing_invalidatepage,
-	.releasepage	= ssdfs_testing_releasepage,
-	.set_page_dirty	= __set_page_dirty_nobuffers,
+	.invalidate_folio	= ssdfs_testing_invalidate_folio,
+	.release_folio		= ssdfs_testing_release_folio,
+	.dirty_folio		= ssdfs_testing_noop_dirty_folio,
 };
 
 /*
@@ -399,7 +420,8 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		  (u64)dentry_inode->d_name.hash,
 		  dentry_inode->d_parent);
 
-	err = ssdfs_create(root_i, dentry_inode, S_IFREG | S_IRWXU, false);
+	err = ssdfs_create(&init_user_ns, root_i, dentry_inode,
+			   S_IFREG | S_IRWXU, false);
 	if (err) {
 		SSDFS_ERR("fail to create file: "
 			  "file_index %llu\n",

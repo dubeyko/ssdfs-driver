@@ -87,12 +87,35 @@ int ssdfs_compressors_init(void);
 void ssdfs_free_workspaces(void);
 void ssdfs_compressors_exit(void);
 
+/* dev_bdev.c */
+struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
+				 unsigned int nr_iovecs,
+				 unsigned int op,
+				 gfp_t gfp_mask);
+void ssdfs_bdev_bio_put(struct bio *bio);
+int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
+			    unsigned int len, unsigned int offset);
+int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
+			loff_t offset);
+int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
+			 loff_t offset);
+int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
+		    size_t len, void *buf);
+int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
+			      bool need_check);
+int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
+			 struct page *page, u32 from_off, size_t len);
+int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
+			  struct pagevec *pvec,
+			  u32 from_off, size_t len);
+
 /* dir.c */
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
 			ino_t *ino);
-int ssdfs_create(struct inode *dir, struct dentry *dentry,
-			umode_t mode, bool excl);
+int ssdfs_create(struct user_namespace *mnt_userns,
+		 struct inode *dir, struct dentry *dentry,
+		 umode_t mode, bool excl);
 
 /* file.c */
 int ssdfs_allocate_inline_file_buffer(struct inode *inode);
@@ -104,6 +127,8 @@ extern __printf(5, 6)
 void ssdfs_fs_error(struct super_block *sb, const char *file,
 		    const char *function, unsigned int line,
 		    const char *fmt, ...);
+int ssdfs_set_page_dirty(struct page *page);
+int __ssdfs_clear_dirty_page(struct page *page);
 int ssdfs_clear_dirty_page(struct page *page);
 void ssdfs_clear_dirty_pages(struct address_space *mapping);
 
@@ -113,9 +138,11 @@ bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 struct inode *ssdfs_iget(struct super_block *sb, ino_t ino);
 struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 			      const struct qstr *qstr);
-int ssdfs_getattr(const struct path *path, struct kstat *stat,
+int ssdfs_getattr(struct user_namespace *mnt_userns,
+		  const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int query_flags);
-int ssdfs_setattr(struct dentry *dentry, struct iattr *attr);
+int ssdfs_setattr(struct user_namespace *mnt_userns,
+		  struct dentry *dentry, struct iattr *attr);
 void ssdfs_evict_inode(struct inode *inode);
 int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc);
 int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf);

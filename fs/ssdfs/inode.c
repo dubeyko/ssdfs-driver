@@ -529,10 +529,9 @@ static void ssdfs_init_inode(struct inode *dir,
 	ii->birthtime = current_time(inode);
 	ii->raw_inode_size = fsi->raw_inode_size;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = ii->birthtime;
-	inode_init_owner(inode, dir, mode);
-	ii->flags =
-		ssdfs_mask_flags(mode,
-				 SSDFS_I(dir)->flags & SSDFS_FL_INHERITED);
+	inode_init_owner(&init_user_ns, inode, dir, mode);
+	ii->flags = ssdfs_mask_flags(mode,
+			 SSDFS_I(dir)->flags & SSDFS_FL_INHERITED);
 	ssdfs_set_inode_flags(inode);
 	inode->i_generation = prandom_u32();
 	inode->i_blkbits = fsi->log_pagesize;
@@ -648,7 +647,8 @@ failed_new_inode:
 	return ERR_PTR(err);
 }
 
-int ssdfs_getattr(const struct path *path, struct kstat *stat,
+int ssdfs_getattr(struct user_namespace *mnt_userns,
+		  const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int query_flags)
 {
 	struct inode *inode = d_inode(path->dentry);
@@ -673,7 +673,7 @@ int ssdfs_getattr(const struct path *path, struct kstat *stat,
 				  STATX_ATTR_IMMUTABLE |
 				  STATX_ATTR_NODUMP);
 
-	generic_fillattr(inode, stat);
+	generic_fillattr(&init_user_ns, inode, stat);
 	return 0;
 }
 
@@ -765,14 +765,15 @@ int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 	return 0;
 }
 
-int ssdfs_setattr(struct dentry *dentry, struct iattr *attr)
+int ssdfs_setattr(struct user_namespace *mnt_userns,
+		  struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = dentry->d_inode;
 	int err = 0;
 
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
 
-	err = setattr_prepare(dentry, attr);
+	err = setattr_prepare(&init_user_ns, dentry, attr);
 	if (err)
 		return err;
 
@@ -785,11 +786,13 @@ int ssdfs_setattr(struct dentry *dentry, struct iattr *attr)
 	}
 
 	if (attr->ia_valid) {
-		setattr_copy(inode, attr);
+		setattr_copy(&init_user_ns, inode, attr);
 		mark_inode_dirty(inode);
 
-		if (attr->ia_valid & ATTR_MODE)
-			err = posix_acl_chmod(inode, inode->i_mode);
+		if (attr->ia_valid & ATTR_MODE) {
+			err = posix_acl_chmod(&init_user_ns,
+					      inode, inode->i_mode);
+		}
 	}
 
 	return err;

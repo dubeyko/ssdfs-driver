@@ -671,7 +671,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		BUG();
 	};
 
-	SetPagePrivate(page);
+	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 	err = ssdfs_page_array_set_page_dirty(&fdesc->array,
 					      page_index);
@@ -1519,7 +1519,7 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (!err) {
-		SetPagePrivate(page);
+		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		err = ssdfs_page_array_set_page_dirty(&ptr->array,
 						      page_index);

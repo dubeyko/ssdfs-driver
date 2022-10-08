@@ -123,9 +123,37 @@ void ssdfs_fs_error(struct super_block *sb, const char *file,
 	ssdfs_handle_error(sb);
 }
 
-int ssdfs_clear_dirty_page(struct page *page)
+int ssdfs_set_page_dirty(struct page *page)
 {
 	struct address_space *mapping = page->mapping;
+	unsigned long flags;
+
+	SSDFS_DBG("page_index: %llu, mapping %p\n",
+		  (u64)page_index(page), mapping);
+
+	if (!PageLocked(page)) {
+		SSDFS_WARN("page isn't locked: "
+			   "page_index %llu, mapping %p\n",
+			   (u64)page_index(page), mapping);
+		return -ERANGE;
+	}
+
+	SetPageDirty(page);
+
+	if (mapping) {
+		xa_lock_irqsave(&mapping->i_pages, flags);
+		__xa_set_mark(&mapping->i_pages, page_index(page),
+				PAGECACHE_TAG_DIRTY);
+		xa_unlock_irqrestore(&mapping->i_pages, flags);
+	}
+
+	return 0;
+}
+
+int __ssdfs_clear_dirty_page(struct page *page)
+{
+	struct address_space *mapping = page->mapping;
+	unsigned long flags;
 
 	SSDFS_DBG("page_index: %llu, mapping %p\n",
 		  (u64)page_index(page), mapping);
@@ -138,15 +166,45 @@ int ssdfs_clear_dirty_page(struct page *page)
 	}
 
 	if (mapping) {
-		xa_lock_irq(&mapping->i_pages);
+		xa_lock_irqsave(&mapping->i_pages, flags);
 		if (test_bit(PG_dirty, &page->flags)) {
 			__xa_clear_mark(&mapping->i_pages,
 					page_index(page),
 					PAGECACHE_TAG_DIRTY);
-			xa_unlock_irq(&mapping->i_pages);
+		}
+		xa_unlock_irqrestore(&mapping->i_pages, flags);
+	}
+
+	TestClearPageDirty(page);
+
+	return 0;
+}
+
+int ssdfs_clear_dirty_page(struct page *page)
+{
+	struct address_space *mapping = page->mapping;
+	unsigned long flags;
+
+	SSDFS_DBG("page_index: %llu, mapping %p\n",
+		  (u64)page_index(page), mapping);
+
+	if (!PageLocked(page)) {
+		SSDFS_WARN("page isn't locked: "
+			   "page_index %llu, mapping %p\n",
+			   (u64)page_index(page), mapping);
+		return -ERANGE;
+	}
+
+	if (mapping) {
+		xa_lock_irqsave(&mapping->i_pages, flags);
+		if (test_bit(PG_dirty, &page->flags)) {
+			__xa_clear_mark(&mapping->i_pages,
+					page_index(page),
+					PAGECACHE_TAG_DIRTY);
+			xa_unlock_irqrestore(&mapping->i_pages, flags);
 			return clear_page_dirty_for_io(page);
 		}
-		xa_unlock_irq(&mapping->i_pages);
+		xa_unlock_irqrestore(&mapping->i_pages, flags);
 		return 0;
 	}
 
