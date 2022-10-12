@@ -262,10 +262,10 @@ bool ssdfs_segbmap_fragment_has_content(struct page *page)
 
 	SSDFS_DBG("page %p\n", page);
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	if (memchr_inv(kaddr, 0xff, PAGE_SIZE) != NULL)
 		has_content = true;
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	return has_content;
 }
@@ -396,10 +396,10 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		SSDFS_DBG("page_index %llu, flags %#lx\n",
 			  (u64)page_index(page), page->flags);
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					kaddr, PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);

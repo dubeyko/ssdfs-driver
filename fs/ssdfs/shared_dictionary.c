@@ -1886,11 +1886,11 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ptr = (struct ssdfs_shdict_ltbl2_item *)((u8 *)kaddr + page_off);
 	hash32_lo = le32_to_cpu(ptr->hash_lo);
 	*start_hash = SSDFS_NAME_HASH(hash32_lo, 0);
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	position = desc_count - 1;
 
@@ -1925,11 +1925,11 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ptr = (struct ssdfs_shdict_ltbl2_item *)((u8 *)kaddr + page_off);
 	hash32_lo = le32_to_cpu(ptr->hash_lo);
 	*end_hash = SSDFS_NAME_HASH(hash32_lo, 0);
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	return 0;
 }
@@ -2012,10 +2012,10 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ptr = (struct ssdfs_shdict_htbl_item *)((u8 *)kaddr + page_off);
 	*start_hash = SSDFS_NAME_HASH(0, le32_to_cpu(ptr->hash_hi));
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	position = desc_count - 1;
 
@@ -2050,10 +2050,10 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ptr = (struct ssdfs_shdict_htbl_item *)((u8 *)kaddr + page_off);
 	*end_hash = SSDFS_NAME_HASH(0, le32_to_cpu(ptr->hash_hi));
-	kunmap_atomic(kaddr);
+	kunmap_local(kaddr);
 
 	return 0;
 }
@@ -2347,7 +2347,7 @@ int ssdfs_shared_dict_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_shared_dictionary_node_header *)kaddr;
 
@@ -2574,7 +2574,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;
@@ -2863,7 +2863,6 @@ int ssdfs_shared_dict_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_btree *tree;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 index_area_size;
 	u16 strings_count;
 	u32 str_area_offset;
@@ -3169,12 +3168,9 @@ finish_shared_dict_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-		     &dict_header,
-		     0, sizeof(struct ssdfs_shared_dictionary_node_header),
-		     sizeof(struct ssdfs_shared_dictionary_node_header));
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &dict_header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -3571,7 +3567,6 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl2_item);
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3619,13 +3614,9 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(desc, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(desc, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -3702,7 +3693,6 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl2_item);
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3750,13 +3740,9 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, item_offset, PAGE_SIZE,
-			   desc, 0, item_size,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, item_offset, PAGE_SIZE,
+				   desc, 0, item_size,
+				   item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -3793,7 +3779,6 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 	size_t item_size = sizeof(struct ssdfs_shdict_htbl_item);
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3848,12 +3833,9 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(desc, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_from_page(desc, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 
 	SSDFS_DBG("item_offset %u, hash_hi %#x, str_offset %u\n",
 		  item_offset,
@@ -3936,7 +3918,6 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 	size_t item_size = sizeof(struct ssdfs_shdict_htbl_item);
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3984,13 +3965,9 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 	}
 
 	page = node->content.pvec.pages[page_index];
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, item_offset, PAGE_SIZE,
-			   desc, 0, item_size,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, item_offset, PAGE_SIZE,
+				   desc, 0, item_size,
+				   item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -5077,7 +5054,6 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	u32 copied_len = 0;
 	u32 cur_len;
 	int err;
@@ -5138,12 +5114,11 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 		cur_len = min_t(u32, (u32)desc->str_len - copied_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(buf, copied_len, SSDFS_MAX_NAME_LEN,
-				   kaddr, item_offset, PAGE_SIZE,
-				   cur_len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_from_page(buf,
+					     copied_len, SSDFS_MAX_NAME_LEN,
+					     page,
+					     item_offset, PAGE_SIZE,
+					     cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			return err;
@@ -6160,7 +6135,7 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 		cur_len = min_t(u32, (u32)full_len - processed_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 
 		for (i = 0; i < cur_len; i++) {
 			const char *symbol1, *symbol2;
@@ -6174,7 +6149,7 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 				break;
 		}
 
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 
 		processed_len += cur_len;
 	}
@@ -7100,14 +7075,14 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 	SSDFS_DBG("area_offset %u, page_index %d\n",
 		  area_offset, page_index);
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("PAGE DUMP: index %d\n",
 		  page_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
 	SSDFS_DBG("\n");
-	kunmap(page);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -7342,14 +7317,14 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 	SSDFS_DBG("area_offset %u, page_index %d\n",
 		  area_offset, page_index);
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("PAGE DUMP: index %d\n",
 		  page_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
 	SSDFS_DBG("\n");
-	kunmap(page);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -7428,7 +7403,6 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	u32 copied_len = 0;
 	u32 cur_len;
 	int err;
@@ -7485,12 +7459,9 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 		cur_len = min_t(u32, (u32)name_len - copied_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, item_offset, PAGE_SIZE,
-				   name, copied_len, name_len,
-				   cur_len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, item_offset, PAGE_SIZE,
+					   (char *)name, copied_len, name_len,
+					   cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			return err;
@@ -7638,7 +7609,7 @@ int __ssdfs_insert_full_string(struct ssdfs_btree_node *node,
 	}
 
 	err = ssdfs_copy_string_from_buffer(node,
-					    name, name_len,
+					    (char *)name, name_len,
 					    str_offset);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy string: "
@@ -7712,7 +7683,7 @@ int ssdfs_add_string_in_empty_node(struct ssdfs_btree_node *node,
 	str_offset = 0;
 
 	err = ssdfs_copy_string_from_buffer(node,
-					    name, name_len,
+					    (char *)name, name_len,
 					    str_offset);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy string: "
@@ -7793,7 +7764,8 @@ int ssdfs_add_string_after_last_name(struct ssdfs_btree_node *node,
 	str_offset = le16_to_cpu(left_name->desc.str_offset);
 	str_offset += left_name->desc.str_len;
 
-	err = ssdfs_copy_string_from_buffer(node, name, name_len, str_offset);
+	err = ssdfs_copy_string_from_buffer(node, (char *)name,
+					    name_len, str_offset);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy string: "
 			  "node_id %u, str_offset %u, "
@@ -7892,7 +7864,8 @@ int ssdfs_add_string_before_first_name(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	err = ssdfs_copy_string_from_buffer(node, name, name_len, str_offset);
+	err = ssdfs_copy_string_from_buffer(node, (char *)name,
+					    name_len, str_offset);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy string: "
 			  "node_id %u, str_offset %u, "

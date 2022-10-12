@@ -630,7 +630,6 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	struct ssdfs_btree_node_header *hdr_ptr;
 	struct pagevec pvec;
 	struct page *page;
-	void *kaddr;
 	u32 node_id1, node_id2;
 	int node_type1, node_type2;
 	u8 height1, height2;
@@ -643,7 +642,6 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !hdr || !index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu, "
@@ -654,6 +652,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 		  owner_ino,
 		  node_size,
 		  hdr_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	shextree = fsi->shextree;
 
@@ -690,19 +689,15 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_atomic(page);
-
-	ssdfs_memcpy(hdr, 0, hdr_size,
-		     kaddr, 0, PAGE_SIZE,
-		     hdr_size);
+	ssdfs_memcpy_from_page(hdr, 0, hdr_size,
+				page, 0, PAGE_SIZE,
+				hdr_size);
 
 	if (!is_csum_valid(&hdr_ptr->check, hdr_ptr, hdr_size)) {
 		err = -EIO;
 		SSDFS_ERR("invalid checksum: node_id %u\n",
 			  le32_to_cpu(index->node_id));
 	}
-
-	kunmap_atomic(kaddr);
 
 	if (unlikely(err))
 		goto finish_invalidate_index;
@@ -965,7 +960,6 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -973,6 +967,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		  index->node_type,
 		  index->height,
 		  owner_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	shextree = fsi->shextree;
 
@@ -1010,7 +1005,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	ssdfs_memcpy(&hdr, 0, sizeof(struct ssdfs_btree_node_header),
 		     kaddr, 0, PAGE_SIZE,
@@ -1031,7 +1026,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	hdr_ptr = NULL;
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_invalidate_index;
@@ -1351,7 +1346,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	ssdfs_memcpy(&hdr, 0, sizeof(struct ssdfs_btree_node_header),
 		     kaddr, 0, PAGE_SIZE,
@@ -1368,7 +1363,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	hdr_ptr = NULL;
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_invalidate_index;

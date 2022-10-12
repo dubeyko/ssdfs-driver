@@ -1145,14 +1145,14 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		void *kaddr;
 		struct page *page = req->result.pvec.pages[i];
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(page);
+		kunmap_local(kaddr);
 
 		WARN_ON(!PageLocked(page));
 	}
@@ -1160,7 +1160,6 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 
 	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 		u32 cur_len;
-		void *kaddr;
 
 		if (copied_bytes >= blob_size)
 			break;
@@ -1168,12 +1167,11 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		cur_len = min_t(u32, (u32)PAGE_SIZE,
 				blob_size - copied_bytes);
 
-		kaddr = kmap_atomic(req->result.pvec.pages[i]);
-		err = ssdfs_memcpy(value, copied_bytes, size,
-				   kaddr, 0, PAGE_SIZE,
-				   cur_len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_from_page(value,
+					     copied_bytes, size,
+					     req->result.pvec.pages[i],
+					     0, PAGE_SIZE,
+					     cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
 				  "copied_bytes %u, cur_len %u\n",

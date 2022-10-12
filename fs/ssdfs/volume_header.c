@@ -103,7 +103,7 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 					u64 dev_size)
 {
 	u32 page_size;
-	u32 erase_size;
+	u64 erase_size;
 	u32 seg_size;
 	u32 pebs_per_seg;
 	u64 leb_array[SSDFS_SB_CHAIN_MAX * SSDFS_SB_SEG_COPY_MAX] = {0};
@@ -121,17 +121,16 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 	pebs_per_seg = 1 << vh->log_pebs_per_seg;
 
 	if (page_size >= erase_size) {
-		SSDFS_DBG("page_size %u >= erase_size %u\n",
+		SSDFS_DBG("page_size %u >= erase_size %llu\n",
 			  page_size, erase_size);
 		return false;
 	}
 
 	switch (page_size) {
-	case SSDFS_512B:
-	case SSDFS_2KB:
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
+	case SSDFS_32KB:
 		/* do nothing */
 		break;
 
@@ -146,22 +145,34 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 	case SSDFS_512KB:
 	case SSDFS_2MB:
 	case SSDFS_8MB:
+	case SSDFS_16MB:
+	case SSDFS_32MB:
+	case SSDFS_64MB:
+	case SSDFS_128MB:
+	case SSDFS_256MB:
+	case SSDFS_512MB:
+	case SSDFS_1GB:
+	case SSDFS_2GB:
+	case SSDFS_8GB:
+	case SSDFS_16GB:
+	case SSDFS_32GB:
+	case SSDFS_64GB:
 		/* do nothing */
 		break;
 
 	default:
-		SSDFS_DBG("unexpected erase_size %u\n", erase_size);
+		SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
 		return false;
 	};
 
 	if (seg_size < erase_size) {
-		SSDFS_DBG("seg_size %u < erase_size %u\n",
+		SSDFS_DBG("seg_size %u < erase_size %llu\n",
 			  seg_size, erase_size);
 		return false;
 	}
 
 	if (pebs_per_seg != (seg_size >> vh->log_erasesize)) {
-		SSDFS_DBG("pebs_per_seg %u != (seg_size %u / erase_size %u)\n",
+		SSDFS_DBG("pebs_per_seg %u != (seg_size %u / erase_size %llu)\n",
 			  pebs_per_seg, seg_size, erase_size);
 		return false;
 	}
@@ -364,7 +375,7 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 					    u64 dev_size)
 {
 	u32 page_size;
-	u32 erase_size;
+	u64 erase_size;
 	u32 seg_size;
 	u32 pebs_per_seg;
 	u64 nsegs;
@@ -383,17 +394,16 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 	pebs_per_seg = 1 << ph->log_pebs_per_seg;
 
 	if (page_size >= erase_size) {
-		SSDFS_DBG("page_size %u >= erase_size %u\n",
+		SSDFS_DBG("page_size %u >= erase_size %llu\n",
 			  page_size, erase_size);
 		return false;
 	}
 
 	switch (page_size) {
-	case SSDFS_512B:
-	case SSDFS_2KB:
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
+	case SSDFS_32KB:
 		/* do nothing */
 		break;
 
@@ -408,22 +418,34 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 	case SSDFS_512KB:
 	case SSDFS_2MB:
 	case SSDFS_8MB:
+	case SSDFS_16MB:
+	case SSDFS_32MB:
+	case SSDFS_64MB:
+	case SSDFS_128MB:
+	case SSDFS_256MB:
+	case SSDFS_512MB:
+	case SSDFS_1GB:
+	case SSDFS_2GB:
+	case SSDFS_8GB:
+	case SSDFS_16GB:
+	case SSDFS_32GB:
+	case SSDFS_64GB:
 		/* do nothing */
 		break;
 
 	default:
-		SSDFS_DBG("unexpected erase_size %u\n", erase_size);
+		SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
 		return false;
 	};
 
 	if (seg_size < erase_size) {
-		SSDFS_DBG("seg_size %u < erase_size %u\n",
+		SSDFS_DBG("seg_size %u < erase_size %llu\n",
 			  seg_size, erase_size);
 		return false;
 	}
 
 	if (pebs_per_seg != (seg_size >> ph->log_erasesize)) {
-		SSDFS_DBG("pebs_per_seg %u != (seg_size %u / erase_size %u)\n",
+		SSDFS_DBG("pebs_per_seg %u != (seg_size %u / erase_size %llu)\n",
 			  pebs_per_seg, seg_size, erase_size);
 		return false;
 	}

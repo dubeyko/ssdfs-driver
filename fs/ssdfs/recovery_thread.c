@@ -487,12 +487,12 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 	BUG_ON(!env->fsi->devops->read);
 	BUG_ON(!is_ssdfs_magic_valid(&SSDFS_VH(env->sbi.vh_buf)->magic));
 	BUG_ON(!is_ssdfs_volume_header_csum_valid(env->sbi.vh_buf, hdr_size));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("env %p, env->sbi.vh_buf %p, "
 		  "leb_id %llu, peb_id %llu\n",
 		  env, env->sbi.vh_buf,
 		  leb_id, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sb_seg_log_pages =
 		le16_to_cpu(SSDFS_VH(env->sbi.vh_buf)->sb_seg_log_pages);

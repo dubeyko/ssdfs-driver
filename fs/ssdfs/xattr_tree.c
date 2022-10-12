@@ -1599,12 +1599,11 @@ u64 generate_value_hash(const void *value, size_t size)
 static
 int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 			     struct ssdfs_inode_info *ii,
-			     const void *value, size_t size,
+			     void *value, size_t size,
 			     struct ssdfs_blob_extent *desc)
 {
 	struct ssdfs_segment_request *req;
 	struct page *page;
-	void *kaddr;
 	int pages_count;
 	size_t copied_data = 0;
 	size_t cur_len;
@@ -1615,10 +1614,10 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !value || !ii || !desc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, ino %lu, value %p, size %zu, desc %p\n",
 		  fsi, ii->vfs_inode.i_ino, value, size, desc);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(desc, 0xFF, sizeof(struct ssdfs_blob_extent));
 
@@ -1667,12 +1666,9 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		cur_len = min_t(size_t, PAGE_SIZE,
 				size - copied_data);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-				   value, copied_data, size,
-				   cur_len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+					   value, copied_data, size,
+					   cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			goto finish_copy;
@@ -1799,13 +1795,13 @@ static
 int ssdfs_prepare_xattr(struct ssdfs_fs_info *fsi,
 			struct ssdfs_inode_info *ii,
 			int name_index,
-			const char *name, size_t name_len,
-			const void *value, size_t size,
+			char *name, size_t name_len,
+			void *value, size_t size,
 			struct ssdfs_btree_search *search)
 {
 	struct ssdfs_shared_dict_btree_info *dict;
 	struct ssdfs_blob_extent extent;
-	const char *inline_name = NULL;
+	char *inline_name = NULL;
 	struct ssdfs_raw_xattr *xattr;
 	u64 name_hash;
 	u8 blob_type, name_type;
@@ -2701,8 +2697,8 @@ int ssdfs_xattrs_tree_add(struct ssdfs_xattrs_btree_info *tree,
 
 		if (err == -ENODATA) {
 			err = ssdfs_prepare_xattr(fsi, ii, name_index,
-						  name, name_len,
-						  value, size, search);
+						  (char *)name, name_len,
+						  (void *)value, size, search);
 			if (err == -ENOSPC) {
 				SSDFS_DBG("unable to prepare the xattr: "
 					  "name_hash %llx, ino %lu, "
@@ -2791,8 +2787,8 @@ try_to_add_into_generic_tree:
 
 		if (err == -ENODATA) {
 			err = ssdfs_prepare_xattr(fsi, ii, name_index,
-						  name, name_len,
-						  value, size, search);
+						  (char *)name, name_len,
+						  (void *)value, size, search);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare the xattr: "
 					  "name_hash %llx, ino %lu, "
@@ -2935,8 +2931,8 @@ int ssdfs_change_xattr(struct ssdfs_fs_info *fsi,
 
 	return ssdfs_prepare_xattr(fsi, ii,
 				   name_index,
-				   name, name_len,
-				   value, size,
+				   (char *)name, name_len,
+				   (void *)value, size,
 				   search);
 }
 
@@ -5368,7 +5364,7 @@ int ssdfs_xattrs_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_xattrs_btree_node_header *)kaddr;
 
@@ -5627,7 +5623,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 finish_init_node:
 	up_read(&node->full_lock);
@@ -5820,7 +5816,6 @@ int ssdfs_xattrs_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_xattrs_btree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 items_count;
 	u32 items_area_size;
 	u16 xattrs_count;
@@ -5830,10 +5825,10 @@ int ssdfs_xattrs_btree_pre_flush_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -5971,12 +5966,9 @@ finish_xattrs_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-		     &xattrs_header,
-		     0, sizeof(struct ssdfs_xattrs_btree_node_header),
-		     sizeof(struct ssdfs_xattrs_btree_node_header));
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &xattrs_header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -6928,7 +6920,6 @@ int __ssdfs_xattrs_btree_node_get_xattr(struct pagevec *pvec,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6967,12 +6958,9 @@ int __ssdfs_xattrs_btree_node_get_xattr(struct pagevec *pvec,
 
 	page = pvec->pages[page_index];
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(xattr, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(xattr, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d, err\n", err);
 		return err;

@@ -2304,7 +2304,7 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_shextree_node_header *)kaddr;
 
@@ -2577,7 +2577,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;
@@ -2768,7 +2768,6 @@ int ssdfs_shextree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_shared_extents_tree *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 items_count;
 	u32 items_area_size;
 	u16 shared_extents;
@@ -2777,12 +2776,12 @@ int ssdfs_shextree_pre_flush_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 
 	ssdfs_debug_btree_node_object(node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -2900,11 +2899,9 @@ finish_shextree_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, hdr_size,
-		     &header, 0, hdr_size,
-		     hdr_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -3784,15 +3781,14 @@ int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec || !extent);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
 		  area_offset, area_size, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_offset = (u32)item_index * item_size;
 	if (item_offset >= area_size) {
@@ -3823,12 +3819,9 @@ int __ssdfs_shextree_node_get_shared_extent(struct pagevec *pvec,
 
 	page = pvec->pages[page_index];
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(extent, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(extent, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;

@@ -134,13 +134,13 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("si %p, seg_id %llu, "
 		  "pages_per_peb %u, "
 		  "init_flag %#x, init_state %#x\n",
 		  si, si->seg_id, pages_per_peb,
 		  init_flag, init_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = si->fsi;
 	bmap = &si->blk_bmap;
@@ -328,11 +328,11 @@ int ssdfs_define_bmap_index(struct ssdfs_peb_container *pebc,
 	BUG_ON(!bmap_index || !peb_index);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
 	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	*bmap_index = -1;
@@ -456,7 +456,6 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
 		  ptr->parent_si->seg_id,
@@ -467,6 +466,7 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
@@ -523,11 +523,11 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
 	BUG_ON(!rwsem_is_locked(&pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
 		  ptr->parent_si->seg_id,
 		  pebc->peb_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
@@ -646,7 +646,6 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 		SSDFS_DBG("seg_id %llu, pending %u\n",
 			  si->seg_id, pending);
-
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1149,7 +1148,6 @@ finish_define_bmap_index:
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(need_migrate && need_move);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, migration_state %#x, items_state %#x, "
 		  "peb_migration_id %u, src_migration_id %d, "
@@ -1159,6 +1157,7 @@ finish_define_bmap_index:
 		  dst_migration_id, migration_phase);
 	SSDFS_DBG("seg_id %llu, need_migrate %#x, need_move %#x\n",
 		  si->seg_id, need_migrate, need_move);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_migrate) {
 #ifdef CONFIG_SSDFS_DEBUG

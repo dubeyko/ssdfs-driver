@@ -602,7 +602,6 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 	size_t count;
 	int buf_size;
 	struct page *page;
-	void *kaddr;
 
 	SSDFS_DBG("peb %llu, current_log.start_page %u\n",
 		  pebi->peb_id, pebi->current_log.start_page);
@@ -636,9 +635,8 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	kaddr = kmap_atomic(page);
-	memset(kaddr, 0, PAGE_SIZE);
-	kunmap_atomic(kaddr);
+	ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
+
 	ssdfs_set_page_private(page, 0);
 	ssdfs_put_page(page);
 	ssdfs_unlock_page(page);
@@ -1135,7 +1133,6 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	u32 write_offset;
 	pgoff_t index_start, index_end;
 	struct page *page;
-	void *kaddr;
 	u16 metadata_pages = 0;
 	u16 free_data_pages;
 	u16 reserved_pages;
@@ -1150,7 +1147,6 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, current_log.free_data_pages %u, "
 		  "area_type %#x, area.write_offset %u, "
@@ -1160,6 +1156,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		  area_type,
 		  pebi->current_log.area[area_type].write_offset,
 		  fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	si = pebi->pebc->parent_si;
@@ -1274,9 +1271,8 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			return -ENOMEM;
 		}
 
-		kaddr = kmap_atomic(page);
-		memset(kaddr, 0, PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
+
 		ssdfs_set_page_private(page, 0);
 		ssdfs_put_page(page);
 		ssdfs_unlock_page(page);
@@ -1389,12 +1385,12 @@ int ssdfs_peb_store_fragment(struct ssdfs_fragment_source *from,
 
 	to->compr_size = to->free_space;
 
-	src = kmap(from->page);
+	src = kmap_local_page(from->page);
 	src += from->start_offset;
 	to->desc->checksum = ssdfs_crc32_le(src, from->data_bytes);
 	err = ssdfs_compress(compr_type, src, to->store,
 			     &from->data_bytes, &to->compr_size);
-	kunmap(from->page);
+	kunmap_local(src);
 
 	if (err == -E2BIG || err == -EOPNOTSUPP) {
 		BUG_ON(from->data_bytes > PAGE_SIZE);
@@ -1402,11 +1398,11 @@ int ssdfs_peb_store_fragment(struct ssdfs_fragment_source *from,
 
 		from->fragment_type = SSDFS_FRAGMENT_UNCOMPR_BLOB;
 
-		src = kmap_atomic(from->page);
+		src = kmap_local_page(from->page);
 		err = ssdfs_memcpy(to->store, 0, to->free_space,
 				   src, from->start_offset, PAGE_SIZE,
 				   from->data_bytes);
-		kunmap_atomic(src);
+		kunmap_local(src);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
@@ -1524,13 +1520,13 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !from);
 	BUG_ON(type >= SSDFS_LOG_AREA_MAX);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("from->page %p, from->start_offset %u, "
 		  "from->data_bytes %zu, from->sequence_id %u, "
 		  "write_offset %u, type %#x\n",
 		  from->page, from->start_offset, from->data_bytes,
 		  from->sequence_id, write_offset, type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	to.area_offset = 0;
 	to.write_offset = write_offset;
@@ -1562,7 +1558,6 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 
 	do {
 		struct ssdfs_page_array *area_pages;
-		void *kaddr;
 		u32 size;
 
 		page_index = to.write_offset + written_bytes;
@@ -1611,12 +1606,11 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 		size = PAGE_SIZE - offset;
 		size = min_t(u32, size, to.compr_size - written_bytes);
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, offset, PAGE_SIZE,
-				   to.store, written_bytes, to.free_space,
-				   size);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page,
+					   offset, PAGE_SIZE,
+					   to.store,
+					   written_bytes, to.free_space,
+					   size);
 		if (unlikely(err)) {
 			SSDFS_ERR("failt to copy: err %d\n", err);
 			goto finish_copy;
@@ -1709,7 +1703,7 @@ int ssdfs_peb_store_block_state_desc(struct ssdfs_peb_info *pebi,
 
 	page_off = write_offset % PAGE_SIZE;
 
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 
 	err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
 			   desc, 0, desc_size,
@@ -1738,7 +1732,8 @@ int ssdfs_peb_store_block_state_desc(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 fail_copy:
-	kunmap_atomic(kaddr);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_copy;
@@ -2072,14 +2067,14 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap(stream->pvec->pages[i]);
+		kaddr = kmap_local_page(stream->pvec->pages[i]);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
 				     PAGE_SIZE);
 		SSDFS_DBG("\n");
-		kunmap(stream->pvec->pages[i]);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		from.page = stream->pvec->pages[i];
@@ -2493,7 +2488,6 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 	u16 hdr_flags;
 	struct page *page;
 	pgoff_t page_index;
-	unsigned char *kaddr;
 	u32 page_off;
 	bool is_compressed = false;
 	int err = 0;
@@ -2614,12 +2608,10 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 	}
 
 	page_off = reserved_offset % PAGE_SIZE;
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-			   table, 0, blk_table_size,
-			   blk_table_size);
-	kunmap_atomic(kaddr);
 
+	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+				   table, 0, blk_table_size,
+				   blk_table_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		goto finish_copy;
@@ -4025,7 +4017,6 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	struct page *page;
 	pgoff_t page_index;
-	unsigned char *kaddr;
 	u32 page_off;
 	int id;
 	int items_count, capacity;
@@ -4143,12 +4134,9 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 
 		page_off = *write_offset % PAGE_SIZE;
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-				   desc, 0, blk_desc_size,
-				   blk_desc_size);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+					   desc, 0, blk_desc_size,
+					   blk_desc_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
 				  "page_off %u, blk_desc_size %zu, err %d\n",
@@ -4311,11 +4299,12 @@ int ssdfs_peb_compress_blk_descs_fragment(struct ssdfs_peb_info *pebi,
 	page_off = area->compressed_offset % PAGE_SIZE;
 	*compr_size = PAGE_SIZE - page_off;
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	err = ssdfs_compress(compr_type,
 			     buf->ptr, (u8 *)kaddr + page_off,
 			     &uncompr_size, compr_size);
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (err == -E2BIG) {
 		void *compr_buf = NULL;
@@ -4341,12 +4330,9 @@ int ssdfs_peb_compress_blk_descs_fragment(struct ssdfs_peb_info *pebi,
 
 		copy_len = PAGE_SIZE - page_off;
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-				   compr_buf, 0, PAGE_SIZE,
-				   copy_len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+					   compr_buf, 0, PAGE_SIZE,
+					   copy_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			goto free_compr_buf;
@@ -4378,12 +4364,9 @@ int ssdfs_peb_compress_blk_descs_fragment(struct ssdfs_peb_info *pebi,
 			goto free_compr_buf;
 		}
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-				   compr_buf, copy_len, PAGE_SIZE,
-				   *compr_size - copy_len);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+					   compr_buf, copy_len, PAGE_SIZE,
+					   *compr_size - copy_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			goto free_compr_buf;
@@ -5788,10 +5771,10 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x\n",
 		  req, req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (req->private.cmd <= SSDFS_READ_CMD_MAX ||
 	    req->private.cmd >= SSDFS_CREATE_CMD_MAX) {
@@ -6787,10 +6770,10 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x\n",
 		  req, req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (req->private.cmd <= SSDFS_CREATE_CMD_MAX ||
 	    req->private.cmd >= SSDFS_COLLECT_GARBAGE_CMD_MAX) {
@@ -7107,14 +7090,12 @@ int ssdfs_reserve_segment_header(struct ssdfs_peb_info *pebi,
 				 pgoff_t *cur_page, u32 *write_offset)
 {
 	struct page *page;
-	void *kaddr;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(!cur_page || !write_offset);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u\n",
@@ -7122,7 +7103,6 @@ int ssdfs_reserve_segment_header(struct ssdfs_peb_info *pebi,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (*cur_page != pebi->current_log.start_page) {
 		SSDFS_ERR("cur_page %lu != start_page %u\n",
 			  *cur_page, pebi->current_log.start_page);
@@ -7143,10 +7123,8 @@ int ssdfs_reserve_segment_header(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	kaddr = kmap_atomic(page);
 	/* prepare header space */
-	memset(kaddr, 0xFF, PAGE_SIZE);
-	kunmap_atomic(kaddr);
+	ssdfs_memset_page(page, 0, PAGE_SIZE, 0xFF, PAGE_SIZE);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
@@ -7179,14 +7157,12 @@ int ssdfs_reserve_partial_log_header(struct ssdfs_peb_info *pebi,
 				     pgoff_t *cur_page, u32 *write_offset)
 {
 	struct page *page;
-	void *kaddr;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(!cur_page || !write_offset);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u\n",
@@ -7194,7 +7170,6 @@ int ssdfs_reserve_partial_log_header(struct ssdfs_peb_info *pebi,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (*cur_page != pebi->current_log.start_page) {
 		SSDFS_ERR("cur_page %lu != start_page %u\n",
 			  *cur_page, pebi->current_log.start_page);
@@ -7215,10 +7190,8 @@ int ssdfs_reserve_partial_log_header(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	kaddr = kmap_atomic(page);
 	/* prepare header space */
-	memset(kaddr, 0xFF, PAGE_SIZE);
-	kunmap_atomic(kaddr);
+	ssdfs_memset_page(page, 0, PAGE_SIZE, 0xFF, PAGE_SIZE);
 
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
@@ -7317,7 +7290,7 @@ try_get_next_page:
 		dst_page_off = *(desc->write_offset) % PAGE_SIZE;
 		dst_free_space = PAGE_SIZE - dst_page_off;
 
-		kaddr = kmap(dst_page);
+		kaddr = kmap_local_page(dst_page);
 
 		from.page = src_page;
 		from.start_offset = 0;
@@ -7335,7 +7308,8 @@ try_get_next_page:
 
 		err = ssdfs_peb_store_fragment(&from, &to);
 
-		kunmap(dst_page);
+		flush_dcache_page(dst_page);
+		kunmap_local(kaddr);
 
 		if (!err) {
 			ssdfs_set_page_private(dst_page, 0);
@@ -7414,7 +7388,6 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	u16 pages_per_peb;
 	struct page *page;
 	pgoff_t index;
-	void *kaddr;
 	u32 page_off;
 	int err = 0;
 
@@ -7569,12 +7542,9 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 
 	page_off = frag_hdr_off % PAGE_SIZE;
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-			   frag_hdr, 0, allocation_size,
-			   allocation_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+				   frag_hdr, 0, allocation_size,
+				   allocation_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: "
 			  "page_off %u, allocation_size %zu, err %d\n",
@@ -8412,7 +8382,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_block_bitmap;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	bmap_hdr = SSDFS_BLKBMP_HDR((u8 *)kaddr +
 				    (bmap_hdr_off % PAGE_SIZE));
@@ -8464,7 +8434,8 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	pebi->current_log.seg_flags |= SSDFS_SEG_HDR_HAS_BLK_BMAP;
 
 finish_bmap_hdr_preparation:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
@@ -8547,7 +8518,6 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 	pgoff_t page_index, end, pages_count, range_len;
 	struct page *page;
 	u32 area_offset, area_size = 0;
-	void *kaddr1, *kaddr2;
 	u16 log_start_page;
 	u32 read_bytes = 0;
 	u32 area_write_offset = 0;
@@ -8643,11 +8613,11 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 			return -ERANGE;
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		desc->check.bytes = cpu_to_le16(blk_table_size);
 		desc->check.flags = cpu_to_le16(metadata_flags);
 		err = ssdfs_calculate_csum(&desc->check, kaddr, blk_table_size);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -8738,14 +8708,9 @@ try_copy_area_data:
 				goto unlock_page1;
 			}
 
-			kaddr1 = kmap_atomic(page1);
-			kaddr2 = kmap_atomic(page2);
-			err = ssdfs_memcpy(kaddr2, dst_off, PAGE_SIZE,
-					   kaddr1, src_off, PAGE_SIZE,
-					   copy_len);
-			kunmap_atomic(kaddr2);
-			kunmap_atomic(kaddr1);
-
+			err = ssdfs_memcpy_page(page2, dst_off, PAGE_SIZE,
+						page1, src_off, PAGE_SIZE,
+						copy_len);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to copy: "
 					  "src_off %u, dst_off %u, "
@@ -8947,11 +8912,11 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 			return -ERANGE;
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		desc->check.bytes = cpu_to_le16(blk_table_size);
 		desc->check.flags = cpu_to_le16(SSDFS_CRC32);
 		err = ssdfs_calculate_csum(&desc->check, kaddr, blk_table_size);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -9301,13 +9266,13 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	BUG_ON(!cur_page || !write_offset);
 	BUG_ON(array_size != SSDFS_LOG_FOOTER_DESC_MAX);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -9337,8 +9302,6 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 		area_offset = *write_offset - fsi->pagesize;
 
 		for (i = 0; i < padding; i++) {
-			void *kaddr;
-
 			page = ssdfs_page_array_grab_page(&pebi->cache,
 							  *cur_page);
 			if (IS_ERR_OR_NULL(page)) {
@@ -9347,9 +9310,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 				return -ENOMEM;
 			}
 
-			kaddr = kmap_atomic(page);
-			memset(kaddr, 0xFF, PAGE_SIZE);
-			kunmap_atomic(kaddr);
+			ssdfs_memset_page(page, 0, PAGE_SIZE, 0xFF, PAGE_SIZE);
 
 			ssdfs_set_page_private(page, 0);
 			SetPageUptodate(page);
@@ -9379,7 +9340,7 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	footer = kmap(page);
+	footer = kmap_local_page(page);
 	memset(footer, 0xFF, PAGE_SIZE);
 	ssdfs_memcpy(footer->desc_array, 0, array_bytes,
 		     lf_desc, 0, array_bytes,
@@ -9407,7 +9368,8 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 			     sizeof(struct ssdfs_metadata_check));
 	}
 
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(footer);
 
 	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
@@ -9737,7 +9699,7 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	hdr = kmap(page);
+	hdr = kmap_local_page(page);
 
 	ssdfs_memcpy(hdr->desc_array, 0, array_bytes,
 		     desc_array, 0, array_bytes,
@@ -9762,7 +9724,8 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 		goto finish_segment_header_preparation;
 
 finish_segment_header_preparation:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(hdr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -10333,7 +10296,7 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 		return -ENOMEM;
 	}
 
-	pl_hdr = kmap(page);
+	pl_hdr = kmap_local_page(page);
 	memset(pl_hdr, 0xFF, PAGE_SIZE);
 	ssdfs_memcpy(pl_hdr->desc_array, 0, array_bytes,
 		     plh_desc, 0, array_bytes,
@@ -10357,7 +10320,8 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 			     sizeof(struct ssdfs_metadata_check));
 	}
 
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(pl_hdr);
 
 	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
@@ -10473,7 +10437,7 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	pl_hdr = kmap(page);
+	pl_hdr = kmap_local_page(page);
 
 	ssdfs_memcpy(pl_hdr->desc_array, 0, array_bytes,
 		     plh_desc, 0, array_bytes,
@@ -10489,7 +10453,8 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 		goto finish_pl_header_preparation;
 
 finish_pl_header_preparation:
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(pl_hdr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 

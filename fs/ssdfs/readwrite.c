@@ -394,12 +394,12 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sb || !sb_log);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u\n",
 		  sb_log->leb_id, sb_log->peb_id,
 		  sb_log->page_offset, sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 
@@ -411,6 +411,11 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 	log_size = sb_log->pages_count;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cur_peb %llu, page_offset %u, "
+		  "log_size %u, pages_per_peb %u\n",
+		  cur_peb, page_offset,
+		  log_size, fsi->pages_per_peb);
+
 	if (log_size > fsi->pages_per_seg) {
 		SSDFS_ERR("log_size value %u is too big\n",
 			  log_size);
@@ -478,7 +483,6 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 				 void *buf)
 {
 	struct page *page;
-	void *kaddr;
 	u32 page_off;
 	u32 bytes_off;
 	size_t read_bytes = 0;
@@ -519,11 +523,9 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 		page = pvec->pages[page_off];
 
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(buf, read_bytes, size,
-				   kaddr, cur_off, PAGE_SIZE,
-				   iter_read_bytes);
-		kunmap_atomic(kaddr);
+		err = ssdfs_memcpy_from_page(buf, read_bytes, size,
+					     page, cur_off, PAGE_SIZE,
+					     iter_read_bytes);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -558,7 +560,6 @@ int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 				  void *buf)
 {
 	struct page *page;
-	void *kaddr;
 	u32 page_off;
 	u32 bytes_off;
 	size_t written_bytes = 0;
@@ -604,12 +605,9 @@ int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 		WARN_ON(!PageLocked(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(kaddr, cur_off, PAGE_SIZE,
-				   buf, written_bytes, size,
-				   iter_write_bytes);
-		kunmap_atomic(kaddr);
-
+		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
+					   buf, written_bytes, size,
+					   iter_write_bytes);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
 				  "written_bytes %zu, offset %zu, "

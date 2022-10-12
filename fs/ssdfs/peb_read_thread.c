@@ -331,12 +331,12 @@ int __ssdfs_peb_release_pages(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->pebc->peb_index,
 		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&pebi->current_log.state)) {
 	case SSDFS_LOG_INITIALIZED:
@@ -406,10 +406,10 @@ int ssdfs_peb_release_pages(struct ssdfs_peb_container *pebc)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&pebc->lock);
 
@@ -489,7 +489,6 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct page *page;
-	void *kaddr;
 	u32 page_off;
 	u32 bytes_off;
 	size_t read_bytes = 0;
@@ -497,12 +496,12 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si || !buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, "
 		  "area_offset %u, area_size %u, buf %p\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  area_offset, area_size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -525,11 +524,10 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 			return -ERANGE;
 		}
 
-		kaddr = kmap_atomic(page);
-		err = ssdfs_memcpy(buf, read_bytes, area_size,
-				   kaddr, offset, PAGE_SIZE,
-				   iter_read_bytes);
-		kunmap_atomic(kaddr);
+		err = ssdfs_memcpy_from_page(buf, read_bytes, area_size,
+					     page, offset, PAGE_SIZE,
+					     iter_read_bytes);
+
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -592,11 +590,11 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!array);
 	BUG_ON(array_size != SSDFS_SEG_HDR_DESC_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, log_start_page %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  log_start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	page_off = log_start_page;
@@ -616,7 +614,7 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 			return -ENOMEM;
 		}
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 		err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
 						(page_off * PAGE_SIZE),
@@ -631,8 +629,9 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 		}
 
 		SetPageUptodate(page);
+		flush_dcache_page(page);
 	} else
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 	magic = (struct ssdfs_signature *)kaddr;
 
@@ -663,7 +662,7 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 	}
 
 fail_copy_desc_array:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -701,11 +700,11 @@ struct page *ssdfs_peb_read_page_locked(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, page_off %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  page_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -1540,10 +1539,10 @@ int ssdfs_peb_get_block_state_desc(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !area_desc || !desc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = __ssdfs_peb_get_block_state_desc(pebi, req, area_desc,
 						desc, &cno, &parent_snapshot);
@@ -1600,7 +1599,6 @@ int ssdfs_peb_get_fragment_desc_array(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	u32 page_index, page_off;
 	struct page *page;
-	void *kaddr;
 	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
 	size_t array_bytes = frag_desc_size * array_size;
 	size_t size = array_bytes;
@@ -1612,12 +1610,12 @@ int ssdfs_peb_get_fragment_desc_array(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, "
 		  "array_offset %u, array_size %zu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  array_offset, array_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -1639,11 +1637,10 @@ read_next_page:
 		return err;
 	}
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(array, buf_off, array_bytes,
-			   kaddr, page_off, PAGE_SIZE,
-			   read_size);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_from_page(array, buf_off, array_bytes,
+				     page, page_off, PAGE_SIZE,
+				     read_size);
+
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -1694,7 +1691,6 @@ int ssdfs_peb_unaligned_read_fragment(struct ssdfs_peb_info *pebi,
 {
 	u32 page_index, page_off;
 	struct page *page;
-	void *kaddr;
 	size_t read_size = 0;
 	u32 buf_off = 0;
 	size_t array_bytes = size;
@@ -1707,12 +1703,12 @@ int ssdfs_peb_unaligned_read_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(size > PAGE_SIZE);
 	WARN_ON(size == 0);
 	BUG_ON(!buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, "
 		  "offset %u, size %zu, buf %p\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  byte_off, size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 read_next_page:
 	if (byte_off > pebi->pebc->parent_si->fsi->erasesize) {
@@ -1739,11 +1735,10 @@ read_next_page:
 		return err;
 	}
 
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(buf, buf_off, array_bytes,
-			   kaddr, page_off, PAGE_SIZE,
-			   read_size);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_from_page(buf, buf_off, array_bytes,
+				     page, page_off, PAGE_SIZE,
+				     read_size);
+
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -1812,7 +1807,6 @@ int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!desc || !cdata_buf || !page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, area_offset %u, sequence_id %u, "
 		  "offset %u, compr_size %u, uncompr_size %u\n",
@@ -1822,6 +1816,7 @@ int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
 		  le32_to_cpu(desc->offset),
 		  le16_to_cpu(desc->compr_size),
 		  le16_to_cpu(desc->uncompr_size));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -1867,13 +1862,14 @@ int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
 			return -EIO;
 		}
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_peb_unaligned_read_fragment(pebi, req, offset,
 							uncompr_size,
 							kaddr);
 		if (!err)
 			checksum = ssdfs_crc32_le(kaddr, uncompr_size);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 
 		if (err == -ENOENT) {
 			SSDFS_DBG("cache hasn't requested page: "
@@ -1921,12 +1917,13 @@ int ssdfs_read_checked_fragment(struct ssdfs_peb_info *pebi,
 		else
 			BUG();
 
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_decompress(type, cdata_buf, kaddr,
 					compr_size, uncompr_size);
 		if (!err)
 			checksum = ssdfs_crc32_le(kaddr, uncompr_size);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to decompress fragment: "
@@ -1992,10 +1989,10 @@ int ssdfs_peb_read_main_area_page(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !array || !blk_state_off);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -2051,12 +2048,13 @@ int ssdfs_peb_read_main_area_page(struct ssdfs_peb_info *pebi,
 		page = req->result.pvec.pages[page_index];
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	err = ssdfs_peb_unaligned_read_fragment(pebi, req,
 						area_offset + byte_offset,
 						data_bytes,
 						kaddr);
-	kunmap(page);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read page: "
@@ -2117,10 +2115,10 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !array || !blk_state_off);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -2345,10 +2343,10 @@ int ssdfs_peb_read_base_block_state(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req || !array || !offset);
 	BUG_ON(array_size != SSDFS_SEG_HDR_DESC_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_read_log_hdr_desc_array(pebi, req,
 					le16_to_cpu(offset->log_start_page),
@@ -2471,11 +2469,11 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!array || !blk_state_off || !page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, sequence_id %d\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -2595,14 +2593,14 @@ int ssdfs_peb_read_area_diff_fragment(struct ssdfs_peb_info *pebi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 	SSDFS_DBG("DIFF DUMP: index %d\n",
 		  sequence_id);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
 	SSDFS_DBG("\n");
-	kunmap(page);
+	kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 free_bufs:
@@ -2646,11 +2644,11 @@ int ssdfs_peb_read_diff_block_state(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!array || !offset);
 	BUG_ON(array_size != SSDFS_SEG_HDR_DESC_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, pagevec_size %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  pagevec_count(&req->result.diffs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_request_allocate_and_add_diff_page(req);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
@@ -3286,7 +3284,6 @@ int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x, "
@@ -3295,6 +3292,7 @@ int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
 		  req->private.class, req->private.cmd, req->private.type,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -3360,11 +3358,11 @@ int __ssdfs_peb_read_log_footer(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!desc || !log_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_id %llu, page_off %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, page_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*log_bytes = U32_MAX;
 
@@ -3378,7 +3376,7 @@ int __ssdfs_peb_read_log_footer(struct ssdfs_fs_info *fsi,
 		return -ENOMEM;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	if (PageUptodate(page) || PageDirty(page))
 		goto check_footer_magic;
@@ -3420,7 +3418,7 @@ check_footer_magic:
 	}
 
 fail_read_footer:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -3484,11 +3482,11 @@ int __ssdfs_peb_read_log_header(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!log_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_id %llu, page_off %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, page_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*log_bytes = U32_MAX;
 
@@ -3499,7 +3497,7 @@ int __ssdfs_peb_read_log_header(struct ssdfs_fs_info *fsi,
 		return -ENOMEM;
 	}
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	if (PageUptodate(page) || PageDirty(page))
 		goto check_header_magic;
@@ -3616,7 +3614,7 @@ check_header_magic:
 	}
 
 fail_read_log_header:
-	kunmap(page);
+	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -3671,7 +3669,6 @@ int ssdfs_peb_read_all_log_headers(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x, "
@@ -3680,6 +3677,7 @@ int ssdfs_peb_read_all_log_headers(struct ssdfs_peb_info *pebi,
 		  req->private.class, req->private.cmd, req->private.type,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	page_off = 0;
@@ -3847,17 +3845,16 @@ int ssdfs_peb_get_log_pages_count(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_signature *magic;
 	struct page *page;
-	void *kaddr;
 	size_t hdr_buf_size = sizeof(struct ssdfs_segment_header);
-	u16 log_pages;
+	u32 log_pages;
 	u32 pages_off = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !env || !env->log_hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb %llu, env %p\n", pebi->peb_id, env);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_page_array_get_page_locked(&pebi->cache, 0);
 	if (IS_ERR_OR_NULL(page)) {
@@ -3873,11 +3870,10 @@ int ssdfs_peb_get_log_pages_count(struct ssdfs_fs_info *fsi,
 			return err;
 		}
 	} else {
-		kaddr = kmap_atomic(page);
-		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
-			     kaddr, 0, PAGE_SIZE,
-			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memcpy_from_page(env->log_hdr, 0, hdr_buf_size,
+					page, 0, PAGE_SIZE,
+					hdr_buf_size);
+
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -3994,19 +3990,29 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 			}
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
 			     kaddr, 0, PAGE_SIZE,
 			     hdr_buf_size);
 		ssdfs_memcpy(env->footer, 0, hdr_buf_size,
 			     kaddr, 0, PAGE_SIZE,
 			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("page_index %d, page %p, count %d\n",
+			  i, page, page_ref_count(page));
+
+		SSDFS_DBG("PAGE DUMP: cur_page %u\n",
+			  i);
+		kaddr = kmap_local_page(page);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr, PAGE_SIZE);
+		kunmap_local(kaddr);
+		SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		magic = (struct ssdfs_signature *)env->log_hdr;
 
@@ -4200,13 +4206,13 @@ finish_last_log_search:
 			   fsi->erasesize,
 			   env->log_bytes);
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
 		  "new_log_start_page %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, pebi->peb_index,
 		  *new_log_start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -4236,10 +4242,10 @@ int ssdfs_check_log_header(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || !env->log_hdr || !env->footer);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("log_offset %u, log_pages %u\n",
 		  env->log_offset, env->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	magic = (struct ssdfs_signature *)env->log_hdr;
 
@@ -4306,7 +4312,6 @@ int ssdfs_get_segment_header_blk_bmap_desc(struct ssdfs_peb_info *pebi,
 	u32 pages_off;
 	u32 bytes_off;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4353,11 +4358,10 @@ int ssdfs_get_segment_header_blk_bmap_desc(struct ssdfs_peb_info *pebi,
 				return err;
 			}
 		} else {
-			kaddr = kmap_atomic(page);
-			ssdfs_memcpy(env->footer, 0, footer_size,
-				     kaddr, 0, PAGE_SIZE,
-				     footer_size);
-			kunmap_atomic(kaddr);
+			ssdfs_memcpy_from_page(env->footer, 0, footer_size,
+						page, 0, PAGE_SIZE,
+						footer_size);
+
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
@@ -4405,7 +4409,6 @@ int ssdfs_get_partial_header_blk_bmap_desc(struct ssdfs_peb_info *pebi,
 	u32 pages_off;
 	u32 bytes_off;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4452,11 +4455,10 @@ int ssdfs_get_partial_header_blk_bmap_desc(struct ssdfs_peb_info *pebi,
 				return err;
 			}
 		} else {
-			kaddr = kmap_atomic(page);
-			ssdfs_memcpy(env->footer, 0, footer_size,
-				     kaddr, 0, PAGE_SIZE,
-				     footer_size);
-			kunmap_atomic(kaddr);
+			ssdfs_memcpy_from_page(env->footer, 0, footer_size,
+						page, 0, PAGE_SIZE,
+						footer_size);
+
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
@@ -4515,11 +4517,11 @@ int ssdfs_pre_fetch_block_bitmap(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !env);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	pages_off = env->log_offset;
@@ -4539,11 +4541,10 @@ int ssdfs_pre_fetch_block_bitmap(struct ssdfs_peb_info *pebi,
 			return err;
 		}
 	} else {
-		kaddr = kmap_atomic(page);
-		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
-			     kaddr, 0, PAGE_SIZE,
-			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memcpy_from_page(env->log_hdr, 0, hdr_buf_size,
+					page, 0, PAGE_SIZE,
+					hdr_buf_size);
+
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -4609,13 +4610,13 @@ int ssdfs_pre_fetch_block_bitmap(struct ssdfs_peb_info *pebi,
 				return -ENOMEM;
 			}
 
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 			err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
 							cur_page * PAGE_SIZE,
 							(u8 *)kaddr,
 							PAGE_SIZE,
 							&read_bytes);
-			kunmap(page);
+			kunmap_local(kaddr);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to read memory page: "
@@ -4889,11 +4890,11 @@ int ssdfs_pre_fetch_metadata_area(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !desc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -4917,13 +4918,14 @@ int ssdfs_pre_fetch_metadata_area(struct ssdfs_peb_info *pebi,
 				return -ENOMEM;
 			}
 
-			kaddr = kmap(page);
+			kaddr = kmap_local_page(page);
 			err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
 							cur_page * PAGE_SIZE,
 							(u8 *)kaddr,
 							PAGE_SIZE,
 							&read_bytes);
-			kunmap(page);
+			flush_dcache_page(page);
+			kunmap_local(kaddr);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to read memory page: "
@@ -4982,7 +4984,6 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_metadata_descriptor *desc = NULL;
 	struct page *page;
-	void *kaddr;
 	u32 pages_off;
 	size_t hdr_buf_size = sizeof(struct ssdfs_segment_header);
 	int err = 0;
@@ -5012,11 +5013,10 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 			return err;
 		}
 	} else {
-		kaddr = kmap_atomic(page);
-		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
-			     kaddr, 0, PAGE_SIZE,
-			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memcpy_from_page(env->log_hdr, 0, hdr_buf_size,
+					page, 0, PAGE_SIZE,
+					hdr_buf_size);
+
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -5147,11 +5147,12 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 			  offset, bytes);
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_unaligned_read_cache(pebi,
 						 env->bdt_init.read_off, bytes,
 						 (u8 *)kaddr + offset);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -5285,11 +5286,12 @@ int ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 		}
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = __ssdfs_decompress_blk_desc_fragment(pebi, frag,
 							   area_offset,
 							   kaddr, PAGE_SIZE);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -5334,7 +5336,6 @@ int ssdfs_pre_fetch_blk_desc_table_area(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_metadata_descriptor *desc = NULL;
 	struct page *page;
-	void *kaddr;
 	u32 pages_off;
 	size_t hdr_buf_size = sizeof(struct ssdfs_segment_header);
 	u16 flags;
@@ -5367,11 +5368,10 @@ int ssdfs_pre_fetch_blk_desc_table_area(struct ssdfs_peb_info *pebi,
 			return err;
 		}
 	} else {
-		kaddr = kmap_atomic(page);
-		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
-			     kaddr, 0, PAGE_SIZE,
-			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memcpy_from_page(env->log_hdr, 0, hdr_buf_size,
+					page, 0, PAGE_SIZE,
+					hdr_buf_size);
+
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -5477,7 +5477,6 @@ int ssdfs_read_checked_block_bitmap_header(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct page *page;
-	void *kaddr;
 	u32 pages_off;
 	u32 area_offset;
 	struct ssdfs_metadata_descriptor *desc = NULL;
@@ -5514,11 +5513,10 @@ int ssdfs_read_checked_block_bitmap_header(struct ssdfs_peb_info *pebi,
 			  "peb %llu\n", pebi->peb_id);
 		return -ERANGE;
 	} else {
-		kaddr = kmap_atomic(page);
-		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
-			     kaddr, 0, PAGE_SIZE,
-			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		ssdfs_memcpy_from_page(env->log_hdr, 0, hdr_buf_size,
+					page, 0, PAGE_SIZE,
+					hdr_buf_size);
+
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -5973,7 +5971,6 @@ int ssdfs_read_blk2off_table_header(struct ssdfs_peb_info *pebi,
 	struct ssdfs_blk2off_table_header *hdr = NULL;
 	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6039,11 +6036,9 @@ int ssdfs_read_blk2off_table_header(struct ssdfs_peb_info *pebi,
 	}
 
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-		     hdr, 0, hdr_size,
-		     hdr_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     hdr, 0, hdr_size,
+			     hdr_size);
 	ssdfs_unlock_page(page);
 
 	env->t_init.read_off += offsetof(struct ssdfs_blk2off_table_header,
@@ -6121,11 +6116,12 @@ int ssdfs_read_blk2off_byte_stream(struct ssdfs_peb_info *pebi,
 		bytes = min_t(u32, read_bytes, PAGE_SIZE - offset);
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 		err = ssdfs_unaligned_read_cache(pebi,
 						 env->t_init.read_off, bytes,
 						 (u8 *)kaddr + offset);
-		kunmap(page);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 		if (unlikely(err)) {
@@ -6672,7 +6668,6 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !env || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
@@ -6680,6 +6675,7 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 		  pebi->peb_id, pebi->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebi->pebc->parent_si;
 	fsi = si->fsi;
@@ -6847,10 +6843,10 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -6964,10 +6960,10 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7116,10 +7112,10 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7288,10 +7284,10 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7521,14 +7517,14 @@ int ssdfs_find_prev_partial_log(struct ssdfs_fs_info *fsi,
 			}
 		}
 
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		ssdfs_memcpy(env->log_hdr, 0, hdr_buf_size,
 			     kaddr, 0, PAGE_SIZE,
 			     hdr_buf_size);
 		ssdfs_memcpy(env->footer, 0, hdr_buf_size,
 			     kaddr, 0, PAGE_SIZE,
 			     hdr_buf_size);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
@@ -7869,10 +7865,10 @@ int ssdfs_start_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, peb_index %u\n",
 		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&pebi->current_log.state)) {
 	case SSDFS_LOG_INITIALIZED:
@@ -7937,10 +7933,10 @@ int ssdfs_finish_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !req);
 	BUG_ON(!pebi->pebc || !pebi->pebc->parent_si);
 	BUG_ON(!pebi->pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, peb_index %u\n",
 		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -8060,10 +8056,10 @@ int ssdfs_src_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&pebc->lock);
 
@@ -8116,10 +8112,10 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&pebc->lock);
 
@@ -8233,10 +8229,10 @@ u16 ssdfs_peb_define_segbmap_seg_index(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 
@@ -8279,11 +8275,11 @@ u16 ssdfs_peb_define_segbmap_sequence_id(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, logical_offset %llu\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 	peb_index = pebc->peb_index;
@@ -8319,11 +8315,11 @@ void ssdfs_peb_define_segbmap_logical_extent(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
 	BUG_ON(!ptr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, extent %p\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 	peb_index = pebc->peb_index;
@@ -8361,12 +8357,12 @@ u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, "
 		  "logical_offset %llu\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 	segbmap = fsi->segbmap;
@@ -8437,7 +8433,6 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
 	BUG_ON(extent->fragment_size != PAGE_SIZE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "
@@ -8445,6 +8440,7 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  extent->logical_offset, extent->data_size,
 		  extent->fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8591,7 +8587,6 @@ int ssdfs_peb_read_segbmap_pages(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
 	BUG_ON(extent->fragment_size != PAGE_SIZE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "
@@ -8599,6 +8594,7 @@ int ssdfs_peb_read_segbmap_pages(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  extent->logical_offset, extent->data_size,
 		  extent->fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8738,7 +8734,6 @@ int ssdfs_peb_read_segbmap_rest_pages(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
 	BUG_ON(extent->fragment_size != PAGE_SIZE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "
@@ -8746,6 +8741,7 @@ int ssdfs_peb_read_segbmap_rest_pages(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  extent->logical_offset, extent->data_size,
 		  extent->fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (extent->data_size == 0) {
 		SSDFS_DBG("extent->data_size == 0\n");
@@ -8794,7 +8790,6 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
@@ -8802,6 +8797,7 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 		  pebc->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8911,10 +8907,10 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !area);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, index %d, fragment_bytes %u, area %p\n",
 		  pebc, index, fragment_bytes, area);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8998,12 +8994,12 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 			void *kaddr;
 			bool is_fragment_valid = false;
 
-			kaddr = kmap_atomic(req->result.pvec.pages[0]);
+			kaddr = kmap_local_page(req->result.pvec.pages[0]);
 			hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 			magic = le16_to_cpu(hdr->magic);
 			is_fragment_valid = magic == SSDFS_LEB_TABLE_MAGIC;
 			area->portion_id = le16_to_cpu(hdr->portion_id);
-			kunmap_atomic(kaddr);
+			kunmap_local(kaddr);
 
 			if (!is_fragment_valid) {
 				err = -ENODATA;
@@ -9060,13 +9056,13 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -9167,11 +9163,11 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, class %#x, cmd %#x, type %#x\n",
 		  req, req->private.class, req->private.cmd,
 		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (req->private.cmd < SSDFS_READ_PAGE ||
 	    req->private.cmd >= SSDFS_READ_CMD_MAX) {
@@ -9334,11 +9330,11 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, class %#x, cmd %#x, type %#x, err %d\n",
 		  req, req->private.class, req->private.cmd,
 		  req->private.type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!err) {
 		for (i = 0; i < req->result.processed_blks; i++)

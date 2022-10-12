@@ -1821,7 +1821,6 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, req %p, ino %llu, "
 		  "logical_offset %llu, data_bytes %u, "
@@ -1831,6 +1830,7 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 		  req->extent.data_bytes,
 		  req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ii = SSDFS_I(req->result.pvec.pages[0]->mapping->host);
 
@@ -2424,10 +2424,10 @@ int ssdfs_extents_tree_find_fork(struct ssdfs_extents_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, blk %llu, search %p\n",
 		  tree, blk, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
@@ -4189,10 +4189,10 @@ int ssdfs_change_extent_in_fork(u64 blk,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!extent || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk %llu, extent %p, search %p\n",
 		  blk, extent, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_EMPTY_RESULT:
@@ -4348,10 +4348,10 @@ int ssdfs_extents_tree_change_extent(struct ssdfs_extents_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !extent || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, blk %llu\n",
 		  tree, search, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_EXTENTS_BTREE_CREATED:
@@ -5193,9 +5193,9 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_PRIVATE_EXTENTS_BTREE:
@@ -5793,10 +5793,10 @@ int ssdfs_extents_tree_delete_extent(struct ssdfs_extents_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !tree->fsi || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, blk %llu\n",
 		  tree, search, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tree->fsi;
 	shextree = fsi->shextree;
@@ -7075,7 +7075,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	BUG_ON(!page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap(page);
+	kaddr = kmap_local_page(page);
 
 	hdr = (struct ssdfs_extents_btree_node_header *)kaddr;
 
@@ -7277,7 +7277,7 @@ finish_header_init:
 
 	up_write(&node->bmap_array.lock);
 finish_init_operation:
-	kunmap(page);
+	kunmap_local(kaddr);
 
 	if (unlikely(err))
 		goto finish_init_node;
@@ -7456,7 +7456,6 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
 	struct page *page;
-	void *kaddr;
 	u16 items_count;
 	u32 forks_count;
 	u32 allocated_extents;
@@ -7611,11 +7610,9 @@ finish_extents_header_preparation:
 	}
 
 	page = node->content.pvec.pages[0];
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-		     &extents_header, 0, hdr_size,
-		     hdr_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     &extents_header, 0, hdr_size,
+			     hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -8487,7 +8484,6 @@ int __ssdfs_extents_btree_node_get_fork(struct pagevec *pvec,
 	u32 item_offset;
 	int page_index;
 	struct page *page;
-	void *kaddr;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8525,13 +8521,9 @@ int __ssdfs_extents_btree_node_get_fork(struct pagevec *pvec,
 	}
 
 	page = pvec->pages[page_index];
-
-	kaddr = kmap_atomic(page);
-	err = ssdfs_memcpy(fork, 0, item_size,
-			   kaddr, item_offset, PAGE_SIZE,
-			   item_size);
-	kunmap_atomic(kaddr);
-
+	err = ssdfs_memcpy_from_page(fork, 0, item_size,
+				     page, item_offset, PAGE_SIZE,
+				     item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;

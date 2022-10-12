@@ -530,10 +530,10 @@ u32 ssdfs_sb_payload_size(struct pagevec *pvec)
 		page = pvec->pages[i];
 
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		fragment_bytes_count = le16_to_cpu(hdr->bytes_count);
-		kunmap_atomic(kaddr);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -585,7 +585,6 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 	unsigned pages_count;
 	unsigned i;
 	struct page *spage, *dpage;
-	void *kaddr1, *kaddr2;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -623,13 +622,9 @@ static int ssdfs_snapshot_sb_log_payload(struct super_block *sb,
 
 		ssdfs_lock_page(spage);
 		ssdfs_lock_page(dpage);
-		kaddr1 = kmap_atomic(spage);
-		kaddr2 = kmap_atomic(dpage);
-		ssdfs_memcpy(kaddr2, 0, PAGE_SIZE,
-			     kaddr1, 0, PAGE_SIZE,
-			     PAGE_SIZE);
-		kunmap_atomic(kaddr1);
-		kunmap_atomic(kaddr2);
+		ssdfs_memcpy_page(dpage, 0, PAGE_SIZE,
+				  spage, 0, PAGE_SIZE,
+				  PAGE_SIZE);
 		ssdfs_unlock_page(dpage);
 		ssdfs_unlock_page(spage);
 	}
@@ -1604,14 +1599,14 @@ ssdfs_prepare_maptbl_cache_descriptor(struct ssdfs_metadata_descriptor *desc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(page);
-		kaddr = kmap(page);
+		kaddr = kmap_local_page(page);
 
 		hdr = (struct ssdfs_maptbl_cache_header *)kaddr;
 		bytes_count = le16_to_cpu(hdr->bytes_count);
 
 		csum = crc32(csum, kaddr, bytes_count);
 
-		kunmap(page);
+		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
 	}
 
@@ -1835,11 +1830,9 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	/* write segment header */
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
-	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-		     fsi->sbi.vh_buf, 0, hdr_size,
-		     hdr_size);
-	kunmap_atomic(kaddr);
+	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+			     fsi->sbi.vh_buf, 0, hdr_size,
+			     hdr_size);
 	ssdfs_set_page_private(page, 0);
 	SetPageUptodate(page);
 	SetPageDirty(page);
@@ -1887,11 +1880,11 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 			  page_ref_count(payload_page));
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap(payload_page);
+		kaddr = kmap_local_page(payload_page);
 		SSDFS_DBG("PAYLOAD PAGE %d\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr, PAGE_SIZE);
-		kunmap(payload_page);
+		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_lock_page(payload_page);
@@ -1932,12 +1925,13 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	while (written < fsi->pagesize) {
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
 			     fsi->sbi.vs_buf, written, fsi->pagesize,
 			     PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		SetPageDirty(page);
@@ -2015,12 +2009,12 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
 	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
 		  sb, last_sb_log->leb_id, last_sb_log->peb_id,
 		  last_sb_log->page_offset, last_sb_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = SSDFS_FS_I(sb);
 	hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
@@ -2132,11 +2126,9 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	}
 
 	ssdfs_lock_page(payload_page);
-	kaddr = kmap_atomic(payload_page);
-	err = ssdfs_memcpy(payload_buf, 0, inline_capacity,
-			   kaddr, 0, PAGE_SIZE,
-			   payload_size);
-	kunmap_atomic(kaddr);
+	err = ssdfs_memcpy_from_page(payload_buf, 0, inline_capacity,
+				     payload_page, 0, PAGE_SIZE,
+				     payload_size);
 	ssdfs_unlock_page(payload_page);
 
 	if (unlikely(err)) {
@@ -2146,14 +2138,15 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 
 	/* write segment header + payload */
 	ssdfs_lock_page(page);
-	kaddr = kmap_atomic(page);
+	kaddr = kmap_local_page(page);
 	ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
 		     fsi->sbi.vh_buf, 0, hdr_size,
 		     hdr_size);
 	err = ssdfs_memcpy(kaddr, hdr_size, PAGE_SIZE,
 			   payload_buf, 0, inline_capacity,
 			   payload_size);
-	kunmap_atomic(kaddr);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
 	if (!err) {
 		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
@@ -2211,12 +2204,13 @@ free_payload_buffer:
 
 	while (written < fsi->pagesize) {
 		ssdfs_lock_page(page);
-		kaddr = kmap_atomic(page);
+		kaddr = kmap_local_page(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
 			     fsi->sbi.vs_buf, written, fsi->pagesize,
 			     PAGE_SIZE);
-		kunmap_atomic(kaddr);
+		flush_dcache_page(page);
+		kunmap_local(kaddr);
 		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 		SetPageDirty(page);
@@ -3518,4 +3512,4 @@ module_exit(ssdfs_exit);
 MODULE_DESCRIPTION("SSDFS -- SSD-oriented File System");
 MODULE_AUTHOR("HGST, San Jose Research Center, Storage Architecture Group");
 MODULE_AUTHOR("Vyacheslav Dubeyko <slava@dubeyko.com>");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");

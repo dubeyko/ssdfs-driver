@@ -70,10 +70,10 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_index %d, processed_blocks %d\n",
 		  blk_index, req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (pagevec_count(&req->result.pvec) == 0) {
 		SSDFS_DBG("pagevec is empty\n");
@@ -151,12 +151,12 @@ int ssdfs_peb_start_thread(struct ssdfs_peb_container *pebc, int type)
 		SSDFS_ERR("invalid thread type %d\n", type);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, thread_type %d\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index,
 		  type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	threadfn = thread_desc[type].threadfn;
@@ -210,10 +210,10 @@ int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 		SSDFS_ERR("invalid thread type %d\n", type);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, task %p\n",
 		  type, pebc->thread[type].task);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!pebc->thread[type].task)
 		return 0;
@@ -276,10 +276,10 @@ int ssdfs_peb_map_leb2peb(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->maptbl || !pebr);
 	BUG_ON(leb_id == U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("leb_id %llu, peb_type %#x\n",
 		  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_maptbl_map_leb2peb(fsi, leb_id, peb_type,
 					pebr, &end);
@@ -382,10 +382,10 @@ int ssdfs_peb_convert_leb2peb(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->maptbl || !pebr);
 	BUG_ON(leb_id == U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("leb_id %llu, peb_type %#x\n",
 		  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
 					   peb_type,
@@ -467,12 +467,12 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
 		  "selected_peb %d\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 	atomic_set(&peb_blkbmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
@@ -552,12 +552,12 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB ||
 		selected_peb > SSDFS_SRC_AND_DST_PEB);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
 		  "selected_peb %d\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (selected_peb == SSDFS_SRC_PEB)
 		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
@@ -768,12 +768,12 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
 		  "selected_peb %u\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (selected_peb == SSDFS_SRC_PEB)
 		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
@@ -948,12 +948,12 @@ int ssdfs_create_pre_dirty_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
 		  "selected_peb %u\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_create_used_peb_container(pebc, selected_peb);
 }
@@ -980,12 +980,12 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
 		  "selected_peb %u\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1136,13 +1136,13 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, src_peb_state %#x, "
 		  "dst_peb_state %#x, src_peb_flags %#x\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, src_peb_state,
 		  dst_peb_state, src_peb_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	peb_has_ext_ptr = src_peb_flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR;
 
@@ -1950,7 +1950,6 @@ int ssdfs_peb_container_prepare_relation(struct ssdfs_peb_container *ptr)
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
@@ -1958,6 +1957,7 @@ int ssdfs_peb_container_prepare_relation(struct ssdfs_peb_container *ptr)
 		  ptr->peb_index,
 		  ptr->peb_type,
 		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	maptbl = fsi->maptbl;
@@ -2177,7 +2177,6 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
@@ -2185,6 +2184,7 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 		  ptr->peb_index,
 		  ptr->peb_type,
 		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -2489,7 +2489,6 @@ int ssdfs_peb_container_create_destination(struct ssdfs_peb_container *ptr)
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
@@ -2497,6 +2496,7 @@ int ssdfs_peb_container_create_destination(struct ssdfs_peb_container *ptr)
 		  ptr->peb_index,
 		  ptr->peb_type,
 		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -2684,7 +2684,6 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!rwsem_is_locked(&ptr->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u, "
@@ -2694,6 +2693,7 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 		  ptr->peb_type,
 		  ptr->log_pages,
 		  state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -2833,7 +2833,6 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 	BUG_ON(!ptr || !ptr->src_peb || !ptr->dst_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!rwsem_is_locked(&ptr->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u, "
@@ -2843,6 +2842,7 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 		  ptr->peb_type,
 		  ptr->log_pages,
 		  state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -2936,7 +2936,6 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 	BUG_ON(!ptr || !ptr->src_peb);
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
@@ -2944,6 +2943,7 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 		  ptr->peb_index,
 		  ptr->peb_type,
 		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -3237,7 +3237,6 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
 	BUG_ON(!ptr->dst_peb);
 	BUG_ON(atomic_read(&ptr->dst_peb_refs) != 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
@@ -3245,6 +3244,7 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 		  ptr->peb_index,
 		  ptr->peb_type,
 		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
@@ -3552,12 +3552,12 @@ int ssdfs_peb_get_free_pages(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
@@ -3587,12 +3587,12 @@ int ssdfs_peb_get_used_data_pages(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
@@ -3622,12 +3622,12 @@ int ssdfs_peb_get_invalid_pages(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebc %p, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;

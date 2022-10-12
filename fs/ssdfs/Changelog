@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.21 [October 08, 2022]
+    (*) Rework kmap/kunmap on kmap_local_page/kunmap_local.
+    (*) Employ memcpy_page() family of methods.
+
 v.4.20 [October 08, 2022]
     (*) Fix bugs in shared dictionary (step 9).
 

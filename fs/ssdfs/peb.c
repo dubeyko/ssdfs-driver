@@ -112,10 +112,10 @@ int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(pebi->peb_id == U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_init(pebi, pebi->log_pages, 0, 0);
 
@@ -142,12 +142,12 @@ int ssdfs_create_using_peb_object(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(pebi->peb_id == U64_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	/* Do nothing temporary */
+	/* Do nothing */
 
 	return 0;
 }
@@ -178,8 +178,10 @@ int ssdfs_create_used_peb_object(struct ssdfs_peb_info *pebi)
 
 	fsi = pebi->pebc->parent_si->fsi;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
 
@@ -448,9 +450,9 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(mutex_is_locked(&pebi->current_log.lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebi %p\n", pebi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_lock(pebi);
 
@@ -537,7 +539,6 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 			  pebc->parent_si->pebs_count);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pebi %p, seg %llu, peb_id %llu, "
 		  "peb_index %u, pebc %p, "
@@ -545,6 +546,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		  pebi, pebc->parent_si->seg_id,
 		  pebi->peb_id, pebc->peb_index, pebc,
 		  peb_state, peb_migration_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 	flags = fsi->metadata_options.blk2off_tbl.flags;

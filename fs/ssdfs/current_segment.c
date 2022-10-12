@@ -228,10 +228,10 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 	BUG_ON(max_free_pages->value <= 0);
 	BUG_ON(max_free_pages->pos < 0);
 	BUG_ON(max_free_pages->pos >= si->pebs_count);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, max free pages: value %d, pos %d\n",
 		  si->seg_id, max_free_pages->value, max_free_pages->pos);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_select_flush_threads(atomic_read(&si->seg_state)) ||
 	    atomic_read(&si->blk_bmap.seg_free_blks) == 0) {
@@ -350,11 +350,11 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 		SSDFS_WARN("current segment container should be locked\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, log_pages %u, create_threads %u, seg_type %#x\n",
 		  si->seg_id, si->log_pages,
 		  si->create_threads, si->seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	BUG_ON(!is_ssdfs_current_segment_empty(cur_seg));
 
@@ -447,11 +447,13 @@ void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 		return;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, log_pages %u, create_threads %u, seg_type %#x\n",
 		  cur_seg->real_seg->seg_id,
 		  cur_seg->real_seg->log_pages,
 		  cur_seg->real_seg->create_threads,
 		  cur_seg->real_seg->seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_cmpxchg(&cur_seg->real_seg->obj_state,
 				SSDFS_CURRENT_SEG_OBJECT,
