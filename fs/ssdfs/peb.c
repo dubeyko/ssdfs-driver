@@ -26,6 +26,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
@@ -327,6 +328,8 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	size_t buf_size;
 	u16 flags;
+	size_t bmap_bytes;
+	size_t bmap_pages;
 	int i;
 	int err = 0;
 
@@ -342,13 +345,25 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	mutex_init(&pebi->current_log.lock);
 	atomic_set(&pebi->current_log.sequence_id, 0);
 
-	pebi->current_log.start_page = U16_MAX;
+	pebi->current_log.start_page = U32_MAX;
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.free_data_pages = pebi->log_pages;
 	pebi->current_log.seg_flags = 0;
 
 	SSDFS_DBG("free_data_pages %u\n",
 		  pebi->current_log.free_data_pages);
+
+	bmap_bytes = BLK_BMAP_BYTES(fsi->pages_per_peb);
+	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	err = ssdfs_page_vector_create(&pebi->current_log.bmap_snapshot,
+					bmap_pages);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create page vector: "
+			  "bmap_pages %zu, err %d\n",
+			  bmap_pages, err);
+		return err;
+	}
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		struct ssdfs_peb_area_metadata *metadata;
@@ -433,6 +448,8 @@ fail_init_current_log:
 		ssdfs_destroy_page_array(&area->array);
 	}
 
+	ssdfs_page_vector_destroy(&pebi->current_log.bmap_snapshot);
+
 	return err;
 }
 
@@ -488,6 +505,9 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 
 		ssdfs_destroy_page_array(area_pages);
 	}
+
+	ssdfs_page_vector_release(&pebi->current_log.bmap_snapshot);
+	ssdfs_page_vector_destroy(&pebi->current_log.bmap_snapshot);
 
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_UNKNOWN);
 	ssdfs_peb_current_log_unlock(pebi);

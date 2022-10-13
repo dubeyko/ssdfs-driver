@@ -3,7 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
-v.4.21 [October 08, 2022]
+v.4.22 [October 13, 2022]
+    (*) Prepare block bitmap to support 2GB zone size.
+
+v.4.21 [October 12, 2022]
     (*) Rework kmap/kunmap on kmap_local_page/kunmap_local.
     (*) Employ memcpy_page() family of methods.
 

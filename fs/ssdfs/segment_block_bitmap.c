@@ -24,6 +24,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
+#include "page_vector.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
 #include "offset_translation_table.h"
@@ -151,7 +152,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	bmap->pages_per_peb = fsi->pages_per_peb;
 	bmap->pages_per_seg = fsi->pages_per_seg;
 
-	spin_lock_init(&bmap->modification_lock);
+	init_rwsem(&bmap->modification_lock);
 	atomic_set(&bmap->seg_valid_blks, 0);
 	atomic_set(&bmap->seg_invalid_blks, 0);
 	atomic_set(&bmap->seg_free_blks, 0);
@@ -229,18 +230,18 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
  */
 int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 					u16 peb_index,
-					struct pagevec *source,
+					struct ssdfs_page_vector *source,
 					struct ssdfs_block_bitmap_fragment *hdr,
 					u64 cno)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
 	BUG_ON(!source || !hdr);
-	BUG_ON(pagevec_count(source) == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(ssdfs_page_vector_count(source) == 0);
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu\n",
 		  bmap->parent_si->seg_id, peb_index, cno);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&bmap->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
@@ -429,6 +430,82 @@ finish_define_bmap_index:
 	return 0;
 }
 
+bool has_ssdfs_segment_blk_bmap_initialized(struct ssdfs_segment_blk_bmap *ptr,
+					    struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	u16 peb_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  ptr->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&ptr->state));
+		return false;
+	}
+
+	down_read(&pebc->lock);
+	if (pebc->dst_peb)
+		peb_index = pebc->dst_peb->peb_index;
+	else
+		peb_index = pebc->src_peb->peb_index;
+	up_read(&pebc->lock);
+
+	if (peb_index >= ptr->pebs_count) {
+		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
+			  peb_index, ptr->pebs_count);
+		return false;
+	}
+
+	peb_blkbmap = &ptr->peb[peb_index];
+
+	return has_ssdfs_peb_blk_bmap_initialized(peb_blkbmap);
+}
+
+int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
+					 struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	u16 peb_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  ptr->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&ptr->state));
+		return -ERANGE;
+	}
+
+	down_read(&pebc->lock);
+	if (pebc->dst_peb)
+		peb_index = pebc->dst_peb->peb_index;
+	else
+		peb_index = pebc->src_peb->peb_index;
+	up_read(&pebc->lock);
+
+	if (peb_index >= ptr->pebs_count) {
+		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
+			  peb_index, ptr->pebs_count);
+		return -ERANGE;
+	}
+
+	peb_blkbmap = &ptr->peb[peb_index];
+
+	return ssdfs_peb_blk_bmap_wait_init_end(peb_blkbmap);
+}
+
 /*
  * ssdfs_segment_blk_bmap_reserve_metapages() - reserve metapages
  * @ptr: segment block bitmap object
@@ -446,7 +523,7 @@ finish_define_bmap_index:
  */
 int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					     struct ssdfs_peb_container *pebc,
-					     u16 count)
+					     u32 count)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
@@ -513,7 +590,7 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
  */
 int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					  struct ssdfs_peb_container *pebc,
-					  u16 count)
+					  u32 count)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
@@ -572,7 +649,7 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
  * %-E2BIG      - segment hasn't enough free space.
  */
 int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
-					  u16 count)
+					  u32 count)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
@@ -598,7 +675,7 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	spin_lock(&ptr->modification_lock);
+	down_read(&ptr->modification_lock);
 
 	free_blks = atomic_read(&ptr->seg_free_blks);
 
@@ -613,7 +690,7 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		atomic_sub(count, &ptr->seg_free_blks);
 	}
 
-	spin_unlock(&ptr->modification_lock);
+	up_read(&ptr->modification_lock);
 
 	if (err)
 		goto finish_reserve_extent;

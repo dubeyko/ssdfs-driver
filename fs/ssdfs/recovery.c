@@ -25,6 +25,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "segment_bitmap.h"
@@ -108,6 +109,7 @@ int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
 	sbi->vh_buf = NULL;
 	sbi->vs_buf = NULL;
 
+	hdr_size = max_t(size_t, hdr_size, (size_t)fsi->pagesize);
 	footer_size = max_t(size_t, footer_size, (size_t)fsi->pagesize);
 
 	vh_buf = ssdfs_recovery_kzalloc(hdr_size, GFP_KERNEL);

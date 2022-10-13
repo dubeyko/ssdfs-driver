@@ -41,7 +41,7 @@ struct ssdfs_segment_blk_bmap {
 	u32 pages_per_peb;
 	u32 pages_per_seg;
 
-	spinlock_t modification_lock;
+	struct rw_semaphore modification_lock;
 	atomic_t seg_valid_blks;
 	atomic_t seg_invalid_blks;
 	atomic_t seg_free_blks;
@@ -68,7 +68,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr);
 int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 				    u16 peb_index,
-				    struct pagevec *source,
+				    struct ssdfs_page_vector *source,
 				    struct ssdfs_block_bitmap_fragment *hdr,
 				    u64 cno);
 void ssdfs_segment_blk_bmap_init_failed(struct ssdfs_segment_blk_bmap *bmap,
@@ -77,15 +77,20 @@ void ssdfs_segment_blk_bmap_init_failed(struct ssdfs_segment_blk_bmap *bmap,
 bool is_ssdfs_segment_blk_bmap_dirty(struct ssdfs_segment_blk_bmap *bmap,
 					u16 peb_index);
 
+bool has_ssdfs_segment_blk_bmap_initialized(struct ssdfs_segment_blk_bmap *ptr,
+					    struct ssdfs_peb_container *pebc);
+int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
+					 struct ssdfs_peb_container *pebc);
+
 int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					     struct ssdfs_peb_container *pebc,
-					     u16 count);
+					     u32 count);
 int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					  struct ssdfs_peb_container *pebc,
-					  u16 count);
+					  u32 count);
 int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr);
 int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
-					  u16 count);
+					  u32 count);
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 					struct ssdfs_peb_container *pebc,
 					u32 *len,

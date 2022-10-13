@@ -26,6 +26,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
@@ -112,60 +113,26 @@ struct ssdfs_segbmap_extent {
 	u16 fragment_size;
 };
 
-#define SSDFS_BLKBMAP_FRAG_HDR_CAPACITY \
-	(sizeof(struct ssdfs_block_bitmap_fragment) + \
-	 (sizeof(struct ssdfs_fragment_desc) * \
-	  SSDFS_FRAGMENTS_CHAIN_MAX))
-
-#define SSDFS_BLKBMAP_HDR_CAPACITY \
-	(sizeof(struct ssdfs_block_bitmap_header) + \
-	 SSDFS_BLKBMAP_FRAG_HDR_CAPACITY)
-
-/*
- * struct ssdfs_blk_bmap_init_env - block bitmap init environment
- * @bmap_hdr: pointer on block bitmap header
- * @bmap_hdr_buf: block bitmap header buffer
- * @frag_hdr: block bitmap fragment header
- * @frag_hdr_buf: block bitmap fragment header buffer
- * @fragment_index: index of bmap fragment
- * @pvec: pagevec that stores block bitmap content
- * @read_bytes: counter of all read bytes
- */
-struct ssdfs_blk_bmap_init_env {
-	struct ssdfs_block_bitmap_header *bmap_hdr;
-	struct ssdfs_block_bitmap_fragment *frag_hdr;
-	u8 bmap_hdr_buf[SSDFS_BLKBMAP_HDR_CAPACITY];
-	int fragment_index;
-	struct pagevec pvec;
-	u32 read_bytes;
-};
-
 static
-void ssdfs_prepare_blk_bmap_init_env(struct ssdfs_blk_bmap_init_env *env)
+void ssdfs_prepare_blk_bmap_init_env(struct ssdfs_blk_bmap_init_env *env,
+				     u32 pages_per_peb)
 {
+	size_t bmap_bytes;
+	size_t bmap_pages;
+
 	memset(env->bmap_hdr_buf, 0, SSDFS_BLKBMAP_HDR_CAPACITY);
 	env->bmap_hdr = (struct ssdfs_block_bitmap_header *)env->bmap_hdr_buf;
 	env->frag_hdr =
 		(struct ssdfs_block_bitmap_fragment *)(env->bmap_hdr_buf +
 				    sizeof(struct ssdfs_block_bitmap_header));
 	env->fragment_index = -1;
-	pagevec_init(&env->pvec);
+
+	bmap_bytes = BLK_BMAP_BYTES(pages_per_peb);
+	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	ssdfs_page_vector_create(&env->array, bmap_pages);
+
 	env->read_bytes = 0;
 }
-
-/*
- * struct ssdfs_blk2off_table_init_env - blk2off table init environment
- * @tbl_hdr: blk2off table header
- * @pvec: pagevec with blk2off table fragment
- * @read_off: current read offset
- * @write_off: current write offset
- */
-struct ssdfs_blk2off_table_init_env {
-	struct ssdfs_blk2off_table_header tbl_hdr;
-	struct pagevec pvec;
-	u32 read_off;
-	u32 write_off;
-};
 
 static void
 ssdfs_prepare_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
@@ -175,23 +142,6 @@ ssdfs_prepare_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
 	env->read_off = 0;
 	env->write_off = 0;
 }
-
-/*
- * struct ssdfs_blk_desc_table_init_env - blk desc table init environment
- * @tbl_hdr: blk2off table header
- * @pvec: pagevec with blk2off table fragment
- * @compressed_buf: buffer for compressed blk2off table fragment
- * @buf_size: size of compressed buffer
- * @read_off: current read offset
- * @write_off: current write offset
- */
-struct ssdfs_blk_desc_table_init_env {
-	struct pagevec pvec;
-	void *compressed_buf;
-	u32 buf_size;
-	u32 read_off;
-	u32 write_off;
-};
 
 static void
 ssdfs_prepare_blk_desc_table_init_env(struct ssdfs_blk_desc_table_init_env *env)
@@ -203,39 +153,9 @@ ssdfs_prepare_blk_desc_table_init_env(struct ssdfs_blk_desc_table_init_env *env)
 	env->write_off = 0;
 }
 
-/*
- * struct ssdfs_read_init_env - read operation init environment
- * @log_hdr: log header
- * @has_seg_hdr: does log have segment header?
- * @footer: log footer
- * @has_footer: does log have footer?
- * @cur_migration_id: current PEB's migration ID
- * @prev_migration_id: previous PEB's migration ID
- * @log_offset: offset in pages of the requested log
- * @log_pages: pages count in every log of segment
- * @log_bytes: number of bytes in the requested log
- * @b_init: block bitmap init environment
- * @t_init: blk2off table init environment
- * @bdt_init: blk desc table init environment
- */
-struct ssdfs_read_init_env {
-	void *log_hdr;
-	bool has_seg_hdr;
-	struct ssdfs_log_footer *footer;
-	bool has_footer;
-	int cur_migration_id;
-	int prev_migration_id;
-	u16 log_offset;
-	u16 log_pages;
-	u32 log_bytes;
-
-	struct ssdfs_blk_bmap_init_env b_init;
-	struct ssdfs_blk2off_table_init_env t_init;
-	struct ssdfs_blk_desc_table_init_env bdt_init;
-};
-
 static
-int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env)
+int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env,
+				u32 pages_per_peb)
 {
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	size_t footer_buf_size;
@@ -264,10 +184,10 @@ int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env)
 	env->prev_migration_id = -1;
 
 	env->log_offset = 0;
-	env->log_pages = U16_MAX;
+	env->log_pages = U32_MAX;
 	env->log_bytes = U32_MAX;
 
-	ssdfs_prepare_blk_bmap_init_env(&env->b_init);
+	ssdfs_prepare_blk_bmap_init_env(&env->b_init, pages_per_peb);
 	ssdfs_prepare_blk2off_table_init_env(&env->t_init);
 	ssdfs_prepare_blk_desc_table_init_env(&env->bdt_init);
 
@@ -291,7 +211,9 @@ void ssdfs_destroy_init_env(struct ssdfs_read_init_env *env)
 	env->footer = NULL;
 	env->has_footer = false;
 
-	ssdfs_read_pagevec_release(&env->b_init.pvec);
+	ssdfs_page_vector_release(&env->b_init.array);
+	ssdfs_page_vector_destroy(&env->b_init.array);
+
 	ssdfs_read_pagevec_release(&env->t_init.pvec);
 	ssdfs_read_pagevec_release(&env->bdt_init.pvec);
 
@@ -5645,7 +5567,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 			pebi->pebc->parent_si->fsi->pages_per_peb);
 	BUG_ON(env->log_offset >
 			pebi->pebc->parent_si->fsi->pages_per_peb);
-	BUG_ON(pagevec_count(&env->b_init.pvec) != 0);
+	BUG_ON(ssdfs_page_vector_count(&env->b_init.array) != 0);
 
 	SSDFS_DBG("seg %llu, peb %llu, log_offset %u, log_pages %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
@@ -5701,12 +5623,12 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		  "type %#x, last_free_blk %u, "
 		  "metadata_blks %u, invalid_blks %u\n",
 		  le16_to_cpu(frag_hdr->peb_index),
-		  le16_to_cpu(frag_hdr->sequence_id),
-		  le16_to_cpu(frag_hdr->flags),
-		  le16_to_cpu(frag_hdr->type),
-		  le16_to_cpu(frag_hdr->last_free_blk),
-		  le16_to_cpu(frag_hdr->metadata_blks),
-		  le16_to_cpu(frag_hdr->invalid_blks));
+		  frag_hdr->sequence_id,
+		  frag_hdr->flags,
+		  frag_hdr->type,
+		  le32_to_cpu(frag_hdr->last_free_blk),
+		  le32_to_cpu(frag_hdr->metadata_blks),
+		  le32_to_cpu(frag_hdr->invalid_blks));
 
 	SSDFS_DBG("FRAGMENT CHAIN HEADER: "
 		  "compr_bytes %u, uncompr_bytes %u, "
@@ -5784,13 +5706,6 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		goto fail_read_blk_bmap;
 	}
 
-	if (fragments_count > SSDFS_FRAGMENTS_CHAIN_MAX) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"fragments_count %u\n", fragments_count);
-		err = -EIO;
-		goto fail_read_blk_bmap;
-	}
-
 	env->b_init.read_bytes += hdr_size + (fragments_count * desc_size);
 
 	chain_compr_bytes = le32_to_cpu(frag_hdr->chain_hdr.compr_bytes);
@@ -5818,7 +5733,21 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 		frag_desc = &frag_array[i];
 
-		page = ssdfs_read_add_pagevec_page(&env->b_init.pvec);
+		SSDFS_DBG("FRAGMENT DESCRIPTOR: index %d, "
+			  "offset %u, compr_size %u, uncompr_size %u, "
+			  "checksum %#x, sequence_id %u, magic %#x, "
+			  "type %#x, flags %#x\n",
+			  i,
+			  le32_to_cpu(frag_desc->offset),
+			  le16_to_cpu(frag_desc->compr_size),
+			  le16_to_cpu(frag_desc->uncompr_size),
+			  le32_to_cpu(frag_desc->checksum),
+			  frag_desc->sequence_id,
+			  frag_desc->magic,
+			  frag_desc->type,
+			  frag_desc->flags);
+
+		page = ssdfs_page_vector_allocate(&env->b_init.array);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			err = !page ? -ENOMEM : PTR_ERR(page);
 			SSDFS_ERR("fail to add pagevec page: "
@@ -5846,6 +5775,15 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 				  le16_to_cpu(frag_desc->sequence_id),
 				  le16_to_cpu(frag_desc->flags),
 				  err);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("FRAG ARRAY DUMP: \n");
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     frag_array,
+					     fragments_count * desc_size);
+			SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			goto fail_read_blk_bmap;
 		}
 
@@ -5892,7 +5830,6 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!env || !env->log_hdr || !env->footer);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
 		  "log_offset %u, log_pages %u, "
@@ -5900,11 +5837,18 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, pebi->peb_index,
 		  env->log_offset, env->log_pages,
-		  env->b_init.fragment_index, env->b_init.read_bytes);
+		  env->b_init.fragment_index,
+		  env->b_init.read_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("pvec %p\n", &env->b_init.pvec);
-
-	pagevec_init(&env->b_init.pvec);
+	err = ssdfs_page_vector_init(&env->b_init.array);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init page vector: "
+			  "seg %llu, peb %llu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, err);
+		goto fail_init_blk_bmap_fragment;
+	}
 
 	err = ssdfs_read_checked_block_bitmap(pebi, req, env);
 	if (unlikely(err)) {
@@ -5931,7 +5875,7 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 
 	err = ssdfs_segment_blk_bmap_partial_init(seg_blkbmap,
 						  pebi->peb_index,
-						  &env->b_init.pvec,
+						  &env->b_init.array,
 						  env->b_init.frag_hdr,
 						  cno);
 	if (unlikely(err)) {
@@ -5943,7 +5887,7 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 	}
 
 fail_init_blk_bmap_fragment:
-	ssdfs_read_pagevec_release(&env->b_init.pvec);
+	ssdfs_page_vector_release(&env->b_init.array);
 
 	return err;
 }
@@ -6836,7 +6780,6 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi;
-	struct ssdfs_read_init_env env;
 	int items_state;
 	int id1, id2;
 	int err = 0;
@@ -6863,13 +6806,6 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to init read environment: err %d\n",
-			  err);
-		return err;
-	}
-
 	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
@@ -6879,7 +6815,14 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_using_metadata_state;
 	}
 
-	err = ssdfs_peb_init_using_metadata_state(pebi, &env, req);
+	err = ssdfs_prepare_read_init_env(&pebi->env, fsi->pages_per_peb);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init read environment: err %d\n",
+			  err);
+		goto finish_src_init_using_metadata_state;
+	}
+
+	err = ssdfs_peb_init_using_metadata_state(pebi, &pebi->env, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init using metadata state: "
 			  "peb_id %llu, peb_index %u, err %d\n",
@@ -6889,7 +6832,7 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_using_metadata_state;
 	}
 
-	id1 = env.cur_migration_id;
+	id1 = pebi->env.cur_migration_id;
 
 	if (!is_peb_migration_id_valid(id1)) {
 		err = -EIO;
@@ -6929,8 +6872,9 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 	complete_all(&pebi->init_end);
 
 finish_src_init_using_metadata_state:
+	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
-	ssdfs_destroy_init_env(&env);
+
 	return err;
 }
 
@@ -6953,7 +6897,6 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi;
-	struct ssdfs_read_init_env env;
 	int items_state;
 	int id1, id2;
 	int err = 0;
@@ -6982,13 +6925,6 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to init read environment: err %d\n",
-			  err);
-		return err;
-	}
-
 	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
@@ -6998,7 +6934,14 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_dst_init_using_metadata_state;
 	}
 
-	err = ssdfs_peb_init_using_metadata_state(pebi, &env, req);
+	err = ssdfs_prepare_read_init_env(&pebi->env, fsi->pages_per_peb);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init read environment: err %d\n",
+			  err);
+		goto finish_dst_init_using_metadata_state;
+	}
+
+	err = ssdfs_peb_init_using_metadata_state(pebi, &pebi->env, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init using metadata state: "
 			  "peb_id %llu, peb_index %u, err %d\n",
@@ -7008,7 +6951,7 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_dst_init_using_metadata_state;
 	}
 
-	id1 = env.cur_migration_id;
+	id1 = pebi->env.cur_migration_id;
 
 	if (!is_peb_migration_id_valid(id1)) {
 		err = -EIO;
@@ -7036,7 +6979,7 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 			goto finish_dst_init_using_metadata_state;
 		}
 
-		id1 = env.prev_migration_id;
+		id1 = pebi->env.prev_migration_id;
 
 		if (!is_peb_migration_id_valid(id1)) {
 			err = -EIO;
@@ -7081,8 +7024,8 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 	};
 
 finish_dst_init_using_metadata_state:
+	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
-	ssdfs_destroy_init_env(&env);
 	return err;
 }
 
@@ -7105,7 +7048,6 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi;
-	struct ssdfs_read_init_env env;
 	int items_state;
 	int id1, id2;
 	int err = 0;
@@ -7136,13 +7078,6 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to init read environment: err %d\n",
-			  err);
-		return err;
-	}
-
 	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
@@ -7152,7 +7087,14 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_used_metadata_state;
 	}
 
-	err = ssdfs_peb_init_used_metadata_state(pebi, &env, req);
+	err = ssdfs_prepare_read_init_env(&pebi->env, fsi->pages_per_peb);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init read environment: err %d\n",
+			  err);
+		goto finish_src_init_used_metadata_state;
+	}
+
+	err = ssdfs_peb_init_used_metadata_state(pebi, &pebi->env, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init used metadata state: "
 			  "peb_id %llu, peb_index %u, err %d\n",
@@ -7162,7 +7104,7 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_src_init_used_metadata_state;
 	}
 
-	id1 = env.cur_migration_id;
+	id1 = pebi->env.cur_migration_id;
 
 	if (!is_peb_migration_id_valid(id1)) {
 		err = -EIO;
@@ -7253,8 +7195,9 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 	};
 
 finish_src_init_used_metadata_state:
+	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
-	ssdfs_destroy_init_env(&env);
+
 	return err;
 }
 
@@ -7277,7 +7220,6 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi;
-	struct ssdfs_read_init_env env;
 	int items_state;
 	int id1, id2;
 	int err = 0;
@@ -7306,13 +7248,6 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	err = ssdfs_prepare_read_init_env(&env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to init read environment: err %d\n",
-			  err);
-		return err;
-	}
-
 	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
@@ -7322,7 +7257,14 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_dst_init_used_metadata_state;
 	}
 
-	err = ssdfs_peb_init_used_metadata_state(pebi, &env, req);
+	err = ssdfs_prepare_read_init_env(&pebi->env, fsi->pages_per_peb);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init read environment: err %d\n",
+			  err);
+		goto finish_dst_init_used_metadata_state;
+	}
+
+	err = ssdfs_peb_init_used_metadata_state(pebi, &pebi->env, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init used metadata state: "
 			  "peb_id %llu, peb_index %u, err %d\n",
@@ -7332,7 +7274,7 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		goto finish_dst_init_used_metadata_state;
 	}
 
-	id1 = env.cur_migration_id;
+	id1 = pebi->env.cur_migration_id;
 
 	if (!is_peb_migration_id_valid(id1)) {
 		err = -EIO;
@@ -7376,7 +7318,7 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 			goto finish_dst_init_used_metadata_state;
 		}
 
-		id1 = env.prev_migration_id;
+		id1 = pebi->env.prev_migration_id;
 
 		if (!is_peb_migration_id_valid(id1)) {
 			err = -EIO;
@@ -7425,8 +7367,9 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 	complete_all(&pebc->dst_peb->init_end);
 
 finish_dst_init_used_metadata_state:
+	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
-	ssdfs_destroy_init_env(&env);
+
 	return err;
 }
 
@@ -7690,7 +7633,6 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *blk2off_table = NULL;
-	struct ssdfs_read_init_env env;
 	u64 cno;
 	int err = 0;
 
@@ -7723,22 +7665,23 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		break;
 	}
 
-	err = ssdfs_prepare_read_init_env(&env);
+	err = ssdfs_prepare_read_init_env(&pebi->env, fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init read environment: err %d\n",
 			  err);
 		return err;
 	}
 
-	env.log_offset = fsi->pages_per_peb;
+	pebi->env.log_offset = fsi->pages_per_peb;
 
 	do {
-		err = ssdfs_find_prev_partial_log(fsi, pebi, &env, log_diff);
+		err = ssdfs_find_prev_partial_log(fsi, pebi,
+						  &pebi->env, log_diff);
 		if (err == -ENOENT) {
-			if (env.log_offset > 0) {
+			if (pebi->env.log_offset > 0) {
 				SSDFS_ERR("fail to find prev log: "
 					  "log_offset %u, err %d\n",
-					  env.log_offset, err);
+					  pebi->env.log_offset, err);
 				goto fail_init_blk2off_table;
 			} else {
 				/* no previous log exists */
@@ -7749,49 +7692,49 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find prev log: "
 				  "log_offset %u, err %d\n",
-				  env.log_offset, err);
+				  pebi->env.log_offset, err);
 			goto fail_init_blk2off_table;
 		}
 
-		err = ssdfs_pre_fetch_blk2off_table_area(pebi, &env);
+		err = ssdfs_pre_fetch_blk2off_table_area(pebi, &pebi->env);
 		if (err == -ENOENT) {
 			err = 0;
 			SSDFS_DBG("blk2off table's fragment is absent: "
 				  "seg %llu, peb %llu, log_offset %u\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id,
-				  env.log_offset);
+				  pebi->env.log_offset);
 			goto try_next_log;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to pre-fetch blk2off_table area: "
 				  "seg %llu, peb %llu, log_offset %u, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id,
-				  env.log_offset,
+				  pebi->env.log_offset,
 				  err);
 			goto fail_init_blk2off_table;
 		}
 
-		err = ssdfs_pre_fetch_blk_desc_table_area(pebi, &env);
+		err = ssdfs_pre_fetch_blk_desc_table_area(pebi, &pebi->env);
 		if (err == -ENOENT) {
 			err = 0;
 			SSDFS_DBG("blk desc table's fragment is absent: "
 				  "seg %llu, peb %llu, log_offset %u\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id,
-				  env.log_offset);
+				  pebi->env.log_offset);
 			goto try_next_log;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to pre-fetch blk desc table area: "
 				  "seg %llu, peb %llu, log_offset %u, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id,
-				  env.log_offset,
+				  pebi->env.log_offset,
 				  err);
 			goto fail_init_blk2off_table;
 		}
 
-		err = ssdfs_read_blk2off_table_fragment(pebi, &env);
+		err = ssdfs_read_blk2off_table_fragment(pebi, &pebi->env);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read translation table fragments: "
 				  "seg %llu, peb %llu, err %d\n",
@@ -7800,28 +7743,28 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 			goto fail_init_blk2off_table;
 		}
 
-		if (env.has_seg_hdr) {
+		if (pebi->env.has_seg_hdr) {
 			struct ssdfs_segment_header *seg_hdr = NULL;
 
-			seg_hdr = SSDFS_SEG_HDR(env.log_hdr);
+			seg_hdr = SSDFS_SEG_HDR(pebi->env.log_hdr);
 			cno = le64_to_cpu(seg_hdr->cno);
 		} else {
 			struct ssdfs_partial_log_header *pl_hdr = NULL;
 
-			pl_hdr = SSDFS_PLH(env.log_hdr);
+			pl_hdr = SSDFS_PLH(pebi->env.log_hdr);
 			cno = le64_to_cpu(pl_hdr->cno);
 		}
 
 		SSDFS_DBG("blk2off_table_partial_init: seg_id %llu, peb %llu, "
 			  "env.log_offset %u\n",
 			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-			  env.log_offset);
+			  pebi->env.log_offset);
 
 		err = ssdfs_blk2off_table_partial_init(blk2off_table,
-							&env.t_init.pvec,
-							&env.bdt_init.pvec,
-							pebi->peb_index,
-							cno);
+						       &pebi->env.t_init.pvec,
+						       &pebi->env.bdt_init.pvec,
+						       pebi->peb_index,
+						       cno);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to start init of offset table: "
 				  "seg %llu, peb %llu, err %d\n",
@@ -7831,13 +7774,13 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		}
 
 try_next_log:
-		ssdfs_read_pagevec_release(&env.t_init.pvec);
-		ssdfs_read_pagevec_release(&env.bdt_init.pvec);
+		ssdfs_read_pagevec_release(&pebi->env.t_init.pvec);
+		ssdfs_read_pagevec_release(&pebi->env.bdt_init.pvec);
 		log_diff = 0;
-	} while (env.log_offset > 0);
+	} while (pebi->env.log_offset > 0);
 
 fail_init_blk2off_table:
-	ssdfs_destroy_init_env(&env);
+	ssdfs_destroy_init_env(&pebi->env);
 	return err;
 }
 

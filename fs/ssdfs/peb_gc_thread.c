@@ -27,6 +27,7 @@
 #include "ssdfs.h"
 #include "offset_translation_table.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "page_array.h"
 #include "peb.h"

@@ -27,6 +27,7 @@
 #include "ssdfs.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
@@ -1448,7 +1449,7 @@ fail_start_threads:
 int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 				u64 seg, u32 peb_index,
 				u8 peb_type,
-				u16 log_pages,
+				u32 log_pages,
 				struct ssdfs_segment_info *si)
 {
 	struct ssdfs_peb_container *pebc;
@@ -2169,7 +2170,7 @@ int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 	u64 leb_id;
 	u64 peb_id;
 	u64 seg;
-	u16 log_pages;
+	u32 log_pages;
 	u8 peb_migration_id;
 	struct completion *end;
 	int err = 0;
@@ -3078,10 +3079,6 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 			goto finish_forget_source;
 		}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(used_blks >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		has_valid_blks = used_blks > 0;
 
 		switch (items_state) {
@@ -3228,7 +3225,7 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 	int items_state;
 	u64 leb_id;
 	int new_state = SSDFS_PEB_CONTAINER_STATE_MAX;
-	u16 used_blks;
+	int used_blks;
 	bool has_valid_blks = true;
 	int err = 0;
 
@@ -3270,10 +3267,6 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 			  ptr->peb_index, err);
 		goto finish_forget_relation;
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(used_blks >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	has_valid_blks = used_blks > 0;
 
@@ -3666,7 +3659,7 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range;
 	u16 peb_index;
-	u16 peb_page;
+	u32 peb_page;
 	u8 peb_migration_id;
 	int id;
 	int items_state;

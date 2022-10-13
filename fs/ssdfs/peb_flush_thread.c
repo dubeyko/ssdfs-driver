@@ -27,6 +27,7 @@
 #include "peb_mapping_table_cache.h"
 #include "ssdfs.h"
 #include "compression.h"
+#include "page_vector.h"
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
@@ -169,16 +170,16 @@ struct ssdfs_byte_stream_descriptor {
  */
 struct ssdfs_bmap_descriptor {
 	struct ssdfs_peb_info *pebi;
-	struct pagevec snapshot;
+	struct ssdfs_page_vector *snapshot;
 	u16 peb_index;
-	u16 flags;
-	u16 type;
+	u8 flags;
+	u8 type;
 	u8 compression_type;
 	u32 last_free_blk;
 	u32 metadata_blks;
 	u32 invalid_blks;
 	size_t bytes_count;
-	u16 *frag_id;
+	u8 *frag_id;
 	pgoff_t *cur_page;
 	u32 *write_offset;
 };
@@ -186,7 +187,7 @@ struct ssdfs_bmap_descriptor {
 /*
  * struct ssdfs_pagevec_descriptor - pagevec descriptor
  * @pebi: pointer on PEB object
- * @pvec: pagevec with saving data
+ * @page_vec: pagevec with saving data
  * @start_sequence_id: start sequence id
  * @area_offset: offset of area
  * @bytes_count: size in bytes of valid data in pagevec
@@ -201,7 +202,7 @@ struct ssdfs_bmap_descriptor {
  */
 struct ssdfs_pagevec_descriptor {
 	struct ssdfs_peb_info *pebi;
-	struct pagevec *pvec;
+	struct ssdfs_page_vector *page_vec;
 	u16 start_sequence_id;
 	u32 area_offset;
 	size_t bytes_count;
@@ -7229,7 +7230,7 @@ int ssdfs_peb_store_pagevec(struct ssdfs_pagevec_descriptor *desc)
 	BUG_ON(!desc);
 	BUG_ON(!desc->pebi || !desc->pebi->pebc->parent_si);
 	BUG_ON(!desc->pebi->pebc->parent_si->fsi);
-	BUG_ON(!desc->pvec || !desc->desc_array);
+	BUG_ON(!desc->page_vec || !desc->desc_array);
 	BUG_ON(!desc->cur_page || !desc->write_offset);
 
 	switch (desc->compression_type) {
@@ -7256,7 +7257,7 @@ int ssdfs_peb_store_pagevec(struct ssdfs_pagevec_descriptor *desc)
 	desc->uncompr_size = 0;
 	desc->fragments_count = 0;
 
-	for (i = 0; i < pagevec_count(desc->pvec); i++) {
+	for (i = 0; i < ssdfs_page_vector_count(desc->page_vec); i++) {
 		size_t iter_bytes;
 		size_t dst_page_off;
 		size_t dst_free_space;
@@ -7276,7 +7277,7 @@ int ssdfs_peb_store_pagevec(struct ssdfs_pagevec_descriptor *desc)
 		iter_bytes = min_t(size_t, PAGE_SIZE,
 				   desc->bytes_count - desc->uncompr_size);
 
-		src_page = desc->pvec->pages[i];
+		src_page = desc->page_vec->pages[i];
 
 try_get_next_page:
 		dst_page = ssdfs_page_array_grab_page(&desc->pebi->cache,
@@ -7385,7 +7386,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	size_t allocation_size = 0;
 	u32 frag_hdr_off;
 	struct ssdfs_pagevec_descriptor pvec_desc;
-	u16 pages_per_peb;
+	u32 pages_per_peb;
 	struct page *page;
 	pgoff_t index;
 	u32 page_off;
@@ -7394,7 +7395,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc);
 	BUG_ON(!desc->pebi || !desc->cur_page || !desc->write_offset);
-	BUG_ON(pagevec_count(&desc->snapshot) == 0);
+	BUG_ON(ssdfs_page_vector_count(desc->snapshot) == 0);
 
 	switch (desc->compression_type) {
 	case SSDFS_BLK_BMAP_NOCOMPR_TYPE:
@@ -7421,7 +7422,8 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	fsi = desc->pebi->pebc->parent_si->fsi;
 
 	allocation_size = frag_hdr_size;
-	allocation_size += pagevec_count(&desc->snapshot) * frag_desc_size;
+	allocation_size +=
+		ssdfs_page_vector_count(desc->snapshot) * frag_desc_size;
 
 	frag_hdr = ssdfs_flush_kzalloc(allocation_size, GFP_KERNEL);
 	if (!frag_hdr) {
@@ -7457,10 +7459,10 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	pvec_desc.pebi = desc->pebi;
 	pvec_desc.start_sequence_id = 0;
 	pvec_desc.area_offset = bmap_hdr_offset;
-	pvec_desc.pvec = &desc->snapshot;
+	pvec_desc.page_vec = desc->snapshot;
 	pvec_desc.bytes_count = desc->bytes_count;
 	pvec_desc.desc_array = frag_desc_array;
-	pvec_desc.array_capacity = SSDFS_FRAGMENTS_CHAIN_MAX;
+	pvec_desc.array_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	pvec_desc.cur_page = desc->cur_page;
 	pvec_desc.write_offset = desc->write_offset;
 
@@ -7476,10 +7478,10 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	}
 
 	frag_hdr->peb_index = cpu_to_le16(desc->peb_index);
-	frag_hdr->sequence_id = cpu_to_le16(*(desc->frag_id));
+	frag_hdr->sequence_id = *(desc->frag_id);
 	*(desc->frag_id) += 1;
-	frag_hdr->flags = cpu_to_le16(desc->flags);
-	frag_hdr->type = cpu_to_le16(desc->type);
+	frag_hdr->flags = desc->flags;
+	frag_hdr->type = desc->type;
 
 	pages_per_peb = fsi->pages_per_peb;
 
@@ -7501,9 +7503,9 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 		goto fail_store_bmap_fragment;
 	}
 
-	frag_hdr->last_free_blk = cpu_to_le16((u16)desc->last_free_blk);
-	frag_hdr->metadata_blks = cpu_to_le16((u16)desc->metadata_blks);
-	frag_hdr->invalid_blks = cpu_to_le16((u16)desc->invalid_blks);
+	frag_hdr->last_free_blk = cpu_to_le32(desc->last_free_blk);
+	frag_hdr->metadata_blks = cpu_to_le32(desc->metadata_blks);
+	frag_hdr->invalid_blks = cpu_to_le32(desc->invalid_blks);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	WARN_ON(pvec_desc.compr_size > pvec_desc.uncompr_size);
@@ -7519,7 +7521,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	frag_hdr->chain_hdr.uncompr_bytes = cpu_to_le32(pvec_desc.uncompr_size);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(pvec_desc.fragments_count > SSDFS_FRAGMENTS_CHAIN_MAX);
+	WARN_ON(pvec_desc.fragments_count > SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 	frag_hdr->chain_hdr.fragments_count =
 		cpu_to_le16(pvec_desc.fragments_count);
@@ -7570,7 +7572,7 @@ finish_copy:
 		  page, page_ref_count(page));
 
 fail_store_bmap_fragment:
-	ssdfs_block_bmap_forget_snapshot(&desc->snapshot);
+	ssdfs_block_bmap_forget_snapshot(desc->snapshot);
 	ssdfs_flush_kfree(frag_hdr);
 	return err;
 }
@@ -7599,7 +7601,7 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 				 int items_state,
 				 u8 compression,
 				 u32 bmap_hdr_off,
-				 u16 *frag_id,
+				 u8 *frag_id,
 				 pgoff_t *cur_page,
 				 u32 *write_offset)
 {
@@ -7615,6 +7617,7 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(!frag_id || !cur_page || !write_offset);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -7654,6 +7657,8 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 	desc.cur_page = cur_page;
 	desc.write_offset = write_offset;
 
+	desc.snapshot = &pebi->current_log.bmap_snapshot;
+
 	if (!pebi->pebc->src_peb || !pebi->pebc->dst_peb) {
 		SSDFS_WARN("empty src or dst PEB pointer\n");
 		return -ERANGE;
@@ -7673,7 +7678,13 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 
 	seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebi->pebc->peb_index];
-	pagevec_init(&desc.snapshot);
+
+	err = ssdfs_page_vector_init(desc.snapshot);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init page vector: "
+			  "err %d\n", err);
+		return err;
+	}
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
 		SSDFS_ERR("PEB's block bitmap isn't initialized\n");
@@ -7709,7 +7720,7 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_dst_blk_bmap;
 	}
 
-	err = ssdfs_block_bmap_snapshot(bmap, &desc.snapshot,
+	err = ssdfs_block_bmap_snapshot(bmap, desc.snapshot,
 					&desc.last_free_blk,
 					&desc.metadata_blks,
 					&desc.invalid_blks,
@@ -7730,7 +7741,7 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 		  pebi->peb_id, desc.last_free_blk,
 		  desc.metadata_blks, desc.invalid_blks);
 
-	if (pagevec_count(&desc.snapshot) == 0) {
+	if (ssdfs_page_vector_count(desc.snapshot) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty block bitmap\n");
 		goto finish_store_dst_blk_bmap;
@@ -7769,7 +7780,7 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 				    int items_state,
 				    u8 compression,
 				    u32 bmap_hdr_off,
-				    u16 *frag_id,
+				    u8 *frag_id,
 				    pgoff_t *cur_page,
 				    u32 *write_offset)
 {
@@ -7786,6 +7797,7 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 	BUG_ON(!frag_id || !cur_page || !write_offset);
 	BUG_ON(!pebi);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_CONTAINER:
@@ -7826,6 +7838,8 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 	desc.frag_id = frag_id;
 	desc.cur_page = cur_page;
 	desc.write_offset = write_offset;
+
+	desc.snapshot = &pebi->current_log.bmap_snapshot;
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_CONTAINER:
@@ -7873,7 +7887,13 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 
 	seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebi->peb_index];
-	pagevec_init(&desc.snapshot);
+
+	err = ssdfs_page_vector_init(desc.snapshot);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init page vector: "
+			  "err %d\n", err);
+		return err;
+	}
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
 		SSDFS_ERR("PEB's block bitmap isn't initialized\n");
@@ -7911,7 +7931,7 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_src_blk_bmap;
 	}
 
-	err = ssdfs_block_bmap_snapshot(bmap, &desc.snapshot,
+	err = ssdfs_block_bmap_snapshot(bmap, desc.snapshot,
 					&desc.last_free_blk,
 					&desc.metadata_blks,
 					&desc.invalid_blks,
@@ -7932,7 +7952,7 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 		  pebi->peb_id, desc.last_free_blk,
 		  desc.metadata_blks, desc.invalid_blks);
 
-	if (pagevec_count(&desc.snapshot) == 0) {
+	if (ssdfs_page_vector_count(desc.snapshot) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty block bitmap\n");
 		goto finish_store_src_blk_bmap;
@@ -7971,7 +7991,7 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 					int items_state,
 					u8 compression,
 					u32 bmap_hdr_off,
-					u16 *frag_id,
+					u8 *frag_id,
 					pgoff_t *cur_page,
 					u32 *write_offset)
 {
@@ -7987,6 +8007,7 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(!frag_id || !cur_page || !write_offset);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -8025,6 +8046,8 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 	desc.frag_id = frag_id;
 	desc.cur_page = cur_page;
 	desc.write_offset = write_offset;
+
+	desc.snapshot = &pebi->current_log.bmap_snapshot;
 
 	switch (items_state) {
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -8077,7 +8100,13 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 			continue;
 
 		peb_blkbmap = &seg_blkbmap->peb[i];
-		pagevec_init(&desc.snapshot);
+
+		err = ssdfs_page_vector_init(desc.snapshot);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to init page vector: "
+				  "err %d\n", err);
+			return err;
+		}
 
 		desc.peb_index = (u16)i;
 
@@ -8115,7 +8144,7 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 			goto finish_store_dependent_blk_bmap;
 		}
 
-		err = ssdfs_block_bmap_snapshot(bmap, &desc.snapshot,
+		err = ssdfs_block_bmap_snapshot(bmap, desc.snapshot,
 						&desc.last_free_blk,
 						&desc.metadata_blks,
 						&desc.invalid_blks,
@@ -8131,7 +8160,7 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 			goto finish_store_dependent_blk_bmap;
 		}
 
-		if (pagevec_count(&desc.snapshot) == 0) {
+		if (ssdfs_page_vector_count(desc.snapshot) == 0) {
 			err = -ERANGE;
 			SSDFS_ERR("empty block bitmap\n");
 			goto finish_store_dependent_blk_bmap;
@@ -8151,7 +8180,7 @@ finish_store_dependent_blk_bmap:
 			return err;
 		}
 
-		ssdfs_block_bmap_forget_snapshot(&desc.snapshot);
+		ssdfs_block_bmap_forget_snapshot(desc.snapshot);
 	}
 
 	return 0;
@@ -8211,7 +8240,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	struct ssdfs_block_bitmap_header *bmap_hdr = NULL;
 	size_t bmap_hdr_size = sizeof(struct ssdfs_block_bitmap_header);
 	int items_state;
-	u16 frag_id = 0;
+	u8 frag_id = 0;
 	u32 bmap_hdr_off;
 	u16 log_start_page = 0;
 	u16 flags = 0;
@@ -13112,6 +13141,19 @@ finish_process_free_space_absence:
 			}
 		}
 
+		if (!has_ssdfs_segment_blk_bmap_initialized(&si->blk_bmap,
+							    pebc)) {
+			err = ssdfs_segment_blk_bmap_wait_init_end(&si->blk_bmap,
+								   pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("block bitmap init failed: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  si->seg_id, pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+		}
+
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi)) {
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -13570,6 +13612,19 @@ process_flush_requests:
 
 		is_user_data = is_ssdfs_peb_containing_user_data(pebc);
 
+		if (!has_ssdfs_segment_blk_bmap_initialized(&si->blk_bmap,
+							    pebc)) {
+			err = ssdfs_segment_blk_bmap_wait_init_end(&si->blk_bmap,
+								   pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("block bitmap init failed: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  si->seg_id, pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+		}
+
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi)) {
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
@@ -13689,6 +13744,19 @@ finish_wait_next_create_request:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 		is_user_data = is_ssdfs_peb_containing_user_data(pebc);
+
+		if (!has_ssdfs_segment_blk_bmap_initialized(&si->blk_bmap,
+							    pebc)) {
+			err = ssdfs_segment_blk_bmap_wait_init_end(&si->blk_bmap,
+								   pebc);
+			if (unlikely(err)) {
+				SSDFS_ERR("block bitmap init failed: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  si->seg_id, pebc->peb_index, err);
+				thread_state = SSDFS_FLUSH_THREAD_ERROR;
+				goto repeat;
+			}
+		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
 		if (IS_ERR_OR_NULL(pebi)) {

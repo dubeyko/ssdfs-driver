@@ -34,6 +34,7 @@
 #include "segment_bitmap.h"
 #include "offset_translation_table.h"
 #include "page_array.h"
+#include "page_vector.h"
 #include "peb_container.h"
 #include "segment.h"
 #include "segment_tree.h"
@@ -2431,6 +2432,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_ino_tree_memory_leaks_init();
 	ssdfs_blk2off_memory_leaks_init();
 	ssdfs_parray_memory_leaks_init();
+	ssdfs_page_vector_memory_leaks_init();
 	ssdfs_flush_memory_leaks_init();
 	ssdfs_gc_memory_leaks_init();
 	ssdfs_map_queue_memory_leaks_init();
@@ -2502,6 +2504,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_ino_tree_check_memory_leaks();
 	ssdfs_blk2off_check_memory_leaks();
 	ssdfs_parray_check_memory_leaks();
+	ssdfs_page_vector_check_memory_leaks();
 	ssdfs_flush_check_memory_leaks();
 	ssdfs_gc_check_memory_leaks();
 	ssdfs_map_queue_check_memory_leaks();
@@ -3277,6 +3280,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_free_workspaces();
 
 	ssdfs_super_kfree(fsi);
+	sb->s_fs_info = NULL;
 
 	rcu_barrier();
 

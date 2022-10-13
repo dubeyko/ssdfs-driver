@@ -53,7 +53,7 @@ struct ssdfs_peb_blk_bmap {
 	u16 peb_index;
 	u32 pages_per_peb;
 
-	spinlock_t modification_lock;
+	struct rw_semaphore modification_lock;
 	atomic_t peb_valid_blks;
 	atomic_t peb_invalid_blks;
 	atomic_t peb_free_blks;
@@ -103,10 +103,13 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 			      int init_flag, int init_state);
 void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
-			    struct pagevec *source,
+			    struct ssdfs_page_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno);
 void ssdfs_peb_blk_bmap_init_failed(struct ssdfs_peb_blk_bmap *bmap);
+
+bool has_ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *bmap);
+int ssdfs_peb_blk_bmap_wait_init_end(struct ssdfs_peb_blk_bmap *bmap);
 
 bool ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *ptr);
 bool is_ssdfs_peb_blk_bmap_dirty(struct ssdfs_peb_blk_bmap *ptr);
@@ -118,10 +121,10 @@ int ssdfs_peb_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_define_reserved_pages_per_log(struct ssdfs_peb_blk_bmap *bmap);
 int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 					 int bmap_index,
-					 u16 count);
+					 u32 count);
 int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 				      int bmap_index,
-				      u16 count);
+				      u32 count);
 int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				    int bmap_index,
 				    u32 *len,
