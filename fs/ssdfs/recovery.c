@@ -99,21 +99,23 @@ int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
 	size_t footer_size = sizeof(struct ssdfs_log_footer);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sbi %p, hdr_size %zu, footer_size %zu\n",
 		  sbi, hdr_size, footer_size);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sbi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	sbi->vh_buf = NULL;
 	sbi->vs_buf = NULL;
 
-	hdr_size = max_t(size_t, hdr_size, (size_t)fsi->pagesize);
-	footer_size = max_t(size_t, footer_size, (size_t)fsi->pagesize);
+	hdr_size = max_t(size_t, hdr_size, (size_t)SSDFS_4KB);
+	sbi->vh_buf_size = hdr_size;
+	footer_size = max_t(size_t, footer_size, (size_t)SSDFS_4KB);
+	sbi->vs_buf_size = footer_size;
 
-	vh_buf = ssdfs_recovery_kzalloc(hdr_size, GFP_KERNEL);
-	vs_buf = ssdfs_recovery_kzalloc(footer_size, GFP_KERNEL);
+	vh_buf = ssdfs_recovery_kzalloc(sbi->vh_buf_size, GFP_KERNEL);
+	vs_buf = ssdfs_recovery_kzalloc(sbi->vs_buf_size, GFP_KERNEL);
 	if (unlikely(!vh_buf || !vs_buf)) {
 		SSDFS_ERR("unable to allocate superblock buffers\n");
 		err = -ENOMEM;
@@ -151,7 +153,9 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 	ssdfs_recovery_kfree(sbi->vh_buf);
 	ssdfs_recovery_kfree(sbi->vs_buf);
 	sbi->vh_buf = NULL;
+	sbi->vh_buf_size = 0;
 	sbi->vs_buf = NULL;
+	sbi->vs_buf_size = 0;
 	memset(&sbi->last_log, 0, sizeof(struct ssdfs_peb_extent));
 }
 
@@ -206,7 +210,6 @@ void ssdfs_copy_sb_info(struct ssdfs_fs_info *fsi,
 	BUG_ON(!env);
 	BUG_ON(!env->sbi.vh_buf || !env->sbi.vs_buf);
 	BUG_ON(!env->sbi_backup.vh_buf || !env->sbi_backup.vs_buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
@@ -220,6 +223,7 @@ void ssdfs_copy_sb_info(struct ssdfs_fs_info *fsi,
 		  le64_to_cpu(SSDFS_VS(env->sbi.vs_buf)->timestamp),
 		  le64_to_cpu(SSDFS_VS(env->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(env->sbi.vs_buf)->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(fsi->sbi.vh_buf, 0, hdr_size,
 		     env->sbi.vh_buf, 0, hdr_size,
@@ -254,7 +258,6 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->sbi.vh_buf || !fsi->sbi.vs_buf);
 	BUG_ON(!fsi->sbi_backup.vh_buf || !fsi->sbi_backup.vs_buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
@@ -268,6 +271,7 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->timestamp),
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(fsi->sbi.vh_buf, 0, hdr_size,
 		     fsi->sbi_backup.vh_buf, 0, hdr_size,
@@ -307,10 +311,12 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 	bool magic_valid = false;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, seg_size %zu, start_offset %llu, "
 		  "threshold %llu, silent %#x, op_type %#x\n",
 		  fsi, seg_size, (unsigned long long)*offset,
 		  threshold, silent, op_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (op_type) {
 	case SSDFS_USE_PEB_ISBAD_OP:
@@ -356,6 +362,14 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 			BUG();
 		};
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("HEADER DUMP: magic_valid %#x, err %d\n",
+			  magic_valid, err);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     fsi->sbi.vh_buf, hdr_size);
+		SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (!err) {
 			if (magic_valid) {
 				*offset = off;
@@ -383,6 +397,7 @@ static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 {
 	struct super_block *sb;
 	size_t seg_size = SSDFS_128KB;
+	loff_t start_offset = offset;
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	u64 dev_size;
 	u64 threshold;
@@ -394,14 +409,15 @@ static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->sbi.vh_buf);
 	BUG_ON(!fsi->devops->read);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p, silent %#x\n",
 		  fsi, fsi->sbi.vh_buf, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sb = fsi->sb;
 	dev_size = fsi->devops->device_size(sb);
 
+try_seg_size:
 	threshold = SSDFS_MAPTBL_PROTECTION_STEP;
 	threshold *= SSDFS_MAPTBL_PROTECTION_RANGE;
 	threshold *= seg_size;
@@ -427,8 +443,34 @@ static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 							silent,
 							SSDFS_USE_PEB_ISBAD_OP);
 			if (err) {
-				SSDFS_DBG("unable to find valid start PEB: "
-					  "err %d\n", err);
+				switch (seg_size) {
+				case SSDFS_128KB:
+					offset = start_offset;
+					seg_size = SSDFS_256KB;
+					goto try_seg_size;
+
+				case SSDFS_256KB:
+					offset = start_offset;
+					seg_size = SSDFS_512KB;
+					goto try_seg_size;
+
+				case SSDFS_512KB:
+					offset = start_offset;
+					seg_size = SSDFS_2MB;
+					goto try_seg_size;
+
+				case SSDFS_2MB:
+					offset = start_offset;
+					seg_size = SSDFS_8MB;
+					goto try_seg_size;
+
+				default:
+					/* finish search */
+					break;
+				}
+
+				SSDFS_NOTICE("unable to find valid start PEB: "
+					     "err %d\n", err);
 				return err;
 			}
 		}
@@ -438,15 +480,46 @@ static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 					    threshold, silent,
 					    SSDFS_USE_READ_OP);
 	if (unlikely(err)) {
-		SSDFS_DBG("unable to find valid start PEB: err %d\n", err);
+		switch (seg_size) {
+		case SSDFS_128KB:
+			offset = start_offset;
+			seg_size = SSDFS_256KB;
+			goto try_seg_size;
+
+		case SSDFS_256KB:
+			offset = start_offset;
+			seg_size = SSDFS_512KB;
+			goto try_seg_size;
+
+		case SSDFS_512KB:
+			offset = start_offset;
+			seg_size = SSDFS_2MB;
+			goto try_seg_size;
+
+		case SSDFS_2MB:
+			offset = start_offset;
+			seg_size = SSDFS_8MB;
+			goto try_seg_size;
+
+		default:
+			/* finish search */
+			break;
+		}
+
+		SSDFS_NOTICE("unable to find valid start PEB\n");
 		return err;
 	}
 
 	vh = SSDFS_VH(fsi->sbi.vh_buf);
 
+	seg_size = 1 << vh->log_segsize;
+
 	magic_valid = is_ssdfs_magic_valid(&vh->magic);
 	crc_valid = is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf,
 							hdr_size);
+
+	SSDFS_DBG("magic_valid %#x, crc_valid %#x\n",
+		  magic_valid, crc_valid);
 
 	if (!magic_valid && !crc_valid) {
 		if (!silent)
@@ -494,6 +567,9 @@ try_again:
 		magic_valid = is_ssdfs_magic_valid(&vh->magic);
 		crc_valid = is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf,
 								hdr_size);
+
+		SSDFS_DBG("magic_valid %#x, crc_valid %#x\n",
+			  magic_valid, crc_valid);
 
 		if (!(magic_valid && crc_valid)) {
 			if (!silent)
@@ -576,10 +652,10 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, peb_id %llu, pages_off %u, silent %#x\n",
 		  fsi, peb_id, pages_off, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	bytes_off = pages_off * fsi->pagesize;
 

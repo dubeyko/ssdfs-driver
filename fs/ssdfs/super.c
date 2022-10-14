@@ -1864,7 +1864,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ssdfs_clear_page_private(page, 0);
 	ssdfs_unlock_page(page);
 
-	offset += PAGE_SIZE;
+	offset += fsi->pagesize;
 
 	for (i = 0; i < pagevec_count(&payload->maptbl_cache.pvec); i++) {
 		struct page *payload_page = payload->maptbl_cache.pvec.pages[i];
@@ -1924,12 +1924,12 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	/* write log footer */
 	written = 0;
 
-	while (written < fsi->pagesize) {
+	while (written < fsi->sbi.vs_buf_size) {
 		ssdfs_lock_page(page);
 		kaddr = kmap_local_page(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-			     fsi->sbi.vs_buf, written, fsi->pagesize,
+			     fsi->sbi.vs_buf, written, fsi->sbi.vs_buf_size,
 			     PAGE_SIZE);
 		flush_dcache_page(page);
 		kunmap_local(kaddr);
@@ -2192,7 +2192,7 @@ free_payload_buffer:
 	ssdfs_clear_page_private(page, 0);
 	ssdfs_unlock_page(page);
 
-	offset += PAGE_SIZE;
+	offset += fsi->pagesize;
 
 	/* ->writepage() calls put_page() */
 	ssdfs_get_page(page);
@@ -2203,12 +2203,12 @@ free_payload_buffer:
 	/* write log footer */
 	written = 0;
 
-	while (written < fsi->pagesize) {
+	while (written < fsi->sbi.vs_buf_size) {
 		ssdfs_lock_page(page);
 		kaddr = kmap_local_page(page);
 		memset(kaddr, 0, PAGE_SIZE);
 		ssdfs_memcpy(kaddr, 0, PAGE_SIZE,
-			     fsi->sbi.vs_buf, written, fsi->pagesize,
+			     fsi->sbi.vs_buf, written, fsi->sbi.vs_buf_size,
 			     PAGE_SIZE);
 		flush_dcache_page(page);
 		kunmap_local(kaddr);

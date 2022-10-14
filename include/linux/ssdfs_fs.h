@@ -339,93 +339,6 @@ struct ssdfs_leb2peb_pair {
 } __packed;
 
 /*
- * struct ssdfs_volume_header - static part of superblock
- * @magic: magic signature + revision
- * @check: metadata checksum
- * @log_pagesize: log2(page size)
- * @log_erasesize: log2(erase block size)
- * @log_segsize: log2(segment size)
- * @log_pebs_per_seg: log2(erase blocks per segment)
- * @megabytes_per_peb: MBs in one PEB
- * @pebs_per_seg: number of PEBs per segment
- * @create_time: volume create timestamp (mkfs phase)
- * @create_cno: volume create checkpoint
- * @flags: volume creation flags
- * @sb_pebs: array of prev, cur and next superblock's PEB numbers
- * @segbmap: superblock's segment bitmap header
- * @maptbl: superblock's mapping table header
- * @sb_seg_log_pages: full log size in sb segment (pages count)
- * @segbmap_log_pages: full log size in segbmap segment (pages count)
- * @maptbl_log_pages: full log size in maptbl segment (pages count)
- * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
- * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
- * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
- * @user_data_log_pages: full log size in user data segment (pages count)
- * @dentries_btree: descriptor of all dentries btrees
- * @extents_btree: descriptor of all extents btrees
- * @xattr_btree: descriptor of all extended attributes btrees
- */
-struct ssdfs_volume_header {
-/* 0x0000 */
-	struct ssdfs_signature magic;
-
-/* 0x0008 */
-	struct ssdfs_metadata_check check;
-
-/* 0x0010 */
-	__le8 log_pagesize;
-	__le8 log_erasesize;
-	__le8 log_segsize;
-	__le8 log_pebs_per_seg;
-	__le16 megabytes_per_peb;
-	__le16 pebs_per_seg;
-
-/* 0x0018 */
-	__le64 create_time;
-	__le64 create_cno;
-#define SSDFS_VH_ZNS_BASED_VOLUME	(1 << 0)
-#define SSDFS_VH_UNALIGNED_ZONE		(1 << 1)
-#define SSDFS_VH_FLAGS_MASK		(0x3)
-	__le32 flags;
-	__le32 reserved2;
-
-/* 0x0030 */
-#define VH_LIMIT1	SSDFS_SB_CHAIN_MAX
-#define VH_LIMIT2	SSDFS_SB_SEG_COPY_MAX
-	struct ssdfs_leb2peb_pair sb_pebs[VH_LIMIT1][VH_LIMIT2];
-
-/* 0x00B0 */
-	struct ssdfs_segbmap_sb_header segbmap;
-
-/* 0x0140 */
-	struct ssdfs_maptbl_sb_header maptbl;
-
-/* 0x01D0 */
-	__le16 sb_seg_log_pages;
-	__le16 segbmap_log_pages;
-	__le16 maptbl_log_pages;
-	__le16 lnodes_seg_log_pages;
-	__le16 hnodes_seg_log_pages;
-	__le16 inodes_seg_log_pages;
-	__le16 user_data_log_pages;
-	__le16 reserved3;
-
-/* 0x01E0 */
-	struct ssdfs_dentries_btree_descriptor dentries_btree;
-
-/* 0x0200 */
-	struct ssdfs_extents_btree_descriptor extents_btree;
-
-/* 0x0220 */
-	struct ssdfs_xattr_btree_descriptor xattr_btree;
-
-/* 0x0240 */
-	__le8 reserved4[0x1C0];
-
-/* 0x0400 */
-} __packed;
-
-/*
  * struct ssdfs_btree_index - btree index
  * @hash: hash value
  * @extent: btree node's extent
@@ -1137,6 +1050,93 @@ struct ssdfs_inode {
 	 SSDFS_INODE_HAS_DENTRIES_BTREE | \
 	 SSDFS_INODE_HAS_INLINE_XATTR | \
 	 SSDFS_INODE_HAS_XATTR_BTREE)
+
+/*
+ * struct ssdfs_volume_header - static part of superblock
+ * @magic: magic signature + revision
+ * @check: metadata checksum
+ * @log_pagesize: log2(page size)
+ * @log_erasesize: log2(erase block size)
+ * @log_segsize: log2(segment size)
+ * @log_pebs_per_seg: log2(erase blocks per segment)
+ * @megabytes_per_peb: MBs in one PEB
+ * @pebs_per_seg: number of PEBs per segment
+ * @create_time: volume create timestamp (mkfs phase)
+ * @create_cno: volume create checkpoint
+ * @flags: volume creation flags
+ * @sb_pebs: array of prev, cur and next superblock's PEB numbers
+ * @segbmap: superblock's segment bitmap header
+ * @maptbl: superblock's mapping table header
+ * @sb_seg_log_pages: full log size in sb segment (pages count)
+ * @segbmap_log_pages: full log size in segbmap segment (pages count)
+ * @maptbl_log_pages: full log size in maptbl segment (pages count)
+ * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
+ * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
+ * @inodes_seg_log_pages: full log size in index nodes segment (pages count)
+ * @user_data_log_pages: full log size in user data segment (pages count)
+ * @dentries_btree: descriptor of all dentries btrees
+ * @extents_btree: descriptor of all extents btrees
+ * @xattr_btree: descriptor of all extended attributes btrees
+ */
+struct ssdfs_volume_header {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	struct ssdfs_metadata_check check;
+
+/* 0x0010 */
+	__le8 log_pagesize;
+	__le8 log_erasesize;
+	__le8 log_segsize;
+	__le8 log_pebs_per_seg;
+	__le16 megabytes_per_peb;
+	__le16 pebs_per_seg;
+
+/* 0x0018 */
+	__le64 create_time;
+	__le64 create_cno;
+#define SSDFS_VH_ZNS_BASED_VOLUME	(1 << 0)
+#define SSDFS_VH_UNALIGNED_ZONE		(1 << 1)
+#define SSDFS_VH_FLAGS_MASK		(0x3)
+	__le32 flags;
+	__le32 reserved2;
+
+/* 0x0030 */
+#define VH_LIMIT1	SSDFS_SB_CHAIN_MAX
+#define VH_LIMIT2	SSDFS_SB_SEG_COPY_MAX
+	struct ssdfs_leb2peb_pair sb_pebs[VH_LIMIT1][VH_LIMIT2];
+
+/* 0x00B0 */
+	struct ssdfs_segbmap_sb_header segbmap;
+
+/* 0x0140 */
+	struct ssdfs_maptbl_sb_header maptbl;
+
+/* 0x01D0 */
+	__le16 sb_seg_log_pages;
+	__le16 segbmap_log_pages;
+	__le16 maptbl_log_pages;
+	__le16 lnodes_seg_log_pages;
+	__le16 hnodes_seg_log_pages;
+	__le16 inodes_seg_log_pages;
+	__le16 user_data_log_pages;
+	__le16 reserved3;
+
+/* 0x01E0 */
+	struct ssdfs_dentries_btree_descriptor dentries_btree;
+
+/* 0x0200 */
+	struct ssdfs_extents_btree_descriptor extents_btree;
+
+/* 0x0220 */
+	struct ssdfs_xattr_btree_descriptor xattr_btree;
+
+/* 0x0240 */
+	__le8 reserved4[0x1C0];
+
+/* 0x0400 */
+} __packed;
 
 /*
  * struct ssdfs_volume_state - changeable part of superblock
