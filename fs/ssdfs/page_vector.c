@@ -320,8 +320,10 @@ struct page *ssdfs_page_vector_allocate(struct ssdfs_page_vector *array)
 		  array->pages, ssdfs_page_vector_count(array));
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_DBG("page %p, allocated_pages %lld\n",
 		  page, atomic64_read(&ssdfs_page_vector_page_leaks));
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return page;
@@ -405,9 +407,11 @@ void ssdfs_page_vector_release(struct ssdfs_page_vector *array)
 		array->pages[i] = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 		SSDFS_DBG("page %p, allocated_pages %lld\n",
 			  page,
 			  atomic64_read(&ssdfs_page_vector_page_leaks));
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
