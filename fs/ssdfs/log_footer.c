@@ -103,10 +103,10 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!buf || !footer);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("buf %p, footer %p, dev_size %llu\n",
 		  buf, footer, dev_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	magic = (struct ssdfs_signature *)buf;
 
@@ -231,10 +231,10 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !buf || !footer);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, buf %p, footer %p, silent %#x\n",
 		  fsi, buf, footer, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	vs = SSDFS_VS(footer);
 
@@ -330,10 +330,10 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !fsi->devops->read);
 	BUG_ON(!buf || !log_pages);
 	BUG_ON(bytes_off >= (fsi->pages_per_peb * fsi->pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, bytes_off %u, buf %p\n",
 		  peb_id, bytes_off, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*log_pages = U32_MAX;
 
@@ -502,10 +502,10 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 	BUG_ON(!fsi || !fsi->devops->read);
 	BUG_ON(!log_hdr || !buf);
 	BUG_ON(bytes_off >= (fsi->pages_per_peb * fsi->pagesize));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, bytes_off %u, buf %p\n",
 		  peb_id, bytes_off, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_unaligned_read_buffer(fsi, peb_id, bytes_off,
 					  buf, footer_size);
@@ -628,10 +628,10 @@ int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, array %p, size %zu\n",
 		  fsi, array, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (size != (sizeof(__le64) * SSDFS_CUR_SEGS_COUNT)) {
 		SSDFS_ERR("invalid array size %zu\n",

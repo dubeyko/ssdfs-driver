@@ -37,11 +37,14 @@
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
+#include "current_segment.h"
 #include "peb_mapping_table.h"
 #include "btree_search.h"
 #include "btree_node.h"
 #include "btree.h"
+#include "extents_tree.h"
 #include "diff_on_write.h"
+#include "invalidated_extents_tree.h"
 
 #include <trace/events/ssdfs.h>
 

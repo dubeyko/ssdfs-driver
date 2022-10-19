@@ -341,6 +341,8 @@ void ssdfs_inode_memory_leaks_init(void);
 void ssdfs_inode_check_memory_leaks(void);
 void ssdfs_ino_tree_memory_leaks_init(void);
 void ssdfs_ino_tree_check_memory_leaks(void);
+void ssdfs_invext_tree_memory_leaks_init(void);
+void ssdfs_invext_tree_check_memory_leaks(void);
 void ssdfs_parray_memory_leaks_init(void);
 void ssdfs_parray_check_memory_leaks(void);
 void ssdfs_page_vector_memory_leaks_init(void);

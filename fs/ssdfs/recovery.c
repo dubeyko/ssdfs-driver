@@ -1632,11 +1632,18 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->fs_cno = le64_to_cpu(fsi->vh->create_cno);
 	fsi->raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
 
+	fsi->peb_pages_capacity = fsi->pages_per_peb;
+	fsi->leb_pages_capacity = fsi->pages_per_peb;
+
 	SSDFS_DBG("STATIC VOLUME INFO:\n");
 	SSDFS_DBG("pagesize %u, erasesize %u, segsize %u\n",
 		  fsi->pagesize, fsi->erasesize, fsi->segsize);
 	SSDFS_DBG("pebs_per_seg %u, pages_per_peb %u, pages_per_seg %u\n",
 		  fsi->pebs_per_seg, fsi->pages_per_peb, fsi->pages_per_seg);
+	SSDFS_DBG("zone_size %llu, zone_capacity %llu, "
+		  "leb_pages_capacity %u, peb_pages_capacity %u\n",
+		  fsi->zone_size, fsi->zone_capacity,
+		  fsi->leb_pages_capacity, fsi->peb_pages_capacity);
 	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, raw_inode_size %u\n",
 		  (u64)fsi->fs_ctime, (u64)fsi->fs_cno,
 		  fsi->raw_inode_size);
@@ -1739,6 +1746,18 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->sb->s_blocksize_bits = blksize_bits(fsi->pagesize);
 
 	ssdfs_maptbl_cache_init(&fsi->maptbl_cache);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("VOLUME HEADER DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     fsi->vh, fsi->pagesize);
+	SSDFS_DBG("END\n");
+
+	SSDFS_DBG("VOLUME STATE DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     fsi->vs, fsi->pagesize);
+	SSDFS_DBG("END\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_check_fs_state(fsi);
 	if (err && err != -EROFS)

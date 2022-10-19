@@ -37,11 +37,14 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 #include "peb_mapping_table.h"
+#include "extents_queue.h"
 #include "request_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
 #include "btree.h"
 #include "diff_on_write.h"
+#include "shared_extents_tree.h"
+#include "invalidated_extents_tree.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -157,10 +160,13 @@ static
 int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env,
 				u32 pages_per_peb)
 {
-	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	size_t hdr_size;
 	size_t footer_buf_size;
 
 	SSDFS_DBG("env %p\n", env);
+
+	hdr_size = sizeof(struct ssdfs_segment_header);
+	hdr_size = max_t(size_t, hdr_size, (size_t)SSDFS_4KB);
 
 	env->log_hdr = ssdfs_read_kzalloc(hdr_size, GFP_KERNEL);
 	if (!env->log_hdr) {

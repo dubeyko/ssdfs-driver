@@ -268,9 +268,9 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, hdr %p, silent %#x\n", fsi, hdr, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	vh = SSDFS_VH(hdr);
 
@@ -757,11 +757,19 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 				struct ssdfs_volume_header *vh)
 {
+	u32 megabytes_per_peb;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !vh);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, vh %p\n", fsi, vh);
+	SSDFS_DBG("fsi->log_pagesize %u, fsi->log_erasesize %u, "
+		  "fsi->log_segsize %u, fsi->log_pebs_per_seg %u\n",
+		  fsi->log_pagesize,
+		  fsi->log_erasesize,
+		  fsi->log_segsize,
+		  fsi->log_pebs_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	vh->magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	vh->magic.key = cpu_to_le16(SSDFS_SEGMENT_HDR_MAGIC);
@@ -772,6 +780,17 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 	vh->log_erasesize = fsi->log_erasesize;
 	vh->log_segsize = fsi->log_segsize;
 	vh->log_pebs_per_seg = fsi->log_pebs_per_seg;
+
+	megabytes_per_peb = fsi->erasesize / SSDFS_1MB;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(megabytes_per_peb >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+	vh->megabytes_per_peb = cpu_to_le16((u16)megabytes_per_peb);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(fsi->pebs_per_seg >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+	vh->pebs_per_seg = cpu_to_le16((u16)fsi->pebs_per_seg);
 
 	vh->create_time = cpu_to_le64(fsi->fs_ctime);
 	vh->create_cno = cpu_to_le64(fsi->fs_cno);
@@ -809,6 +828,11 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 		     &fsi->vh->xattr_btree,
 		     0, sizeof(struct ssdfs_xattr_btree_descriptor),
 		     sizeof(struct ssdfs_xattr_btree_descriptor));
+	ssdfs_memcpy(&vh->invextree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     &fsi->vh->invextree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     sizeof(struct ssdfs_invalidated_extents_btree));
 }
 
 /*
@@ -1022,6 +1046,16 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 		     &fsi->vs->shared_dict_btree,
 		     0, sizeof(struct ssdfs_shared_dictionary_btree),
 		     sizeof(struct ssdfs_shared_dictionary_btree));
+	ssdfs_memcpy(&hdr->snapshots_btree,
+		     0, sizeof(struct ssdfs_snapshots_btree),
+		     &fsi->vs->snapshots_btree,
+		     0, sizeof(struct ssdfs_snapshots_btree),
+		     sizeof(struct ssdfs_snapshots_btree));
+	ssdfs_memcpy(&hdr->invextree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     &fsi->vh->invextree,
+		     0, sizeof(struct ssdfs_invalidated_extents_btree),
+		     sizeof(struct ssdfs_invalidated_extents_btree));
 
 	hdr->sequence_id = cpu_to_le32(sequence_id);
 

@@ -256,6 +256,9 @@ int ssdfs_peb_readahead_pages(struct ssdfs_peb_container *pebc,
 void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 					   struct ssdfs_segment_request *req,
 					   int blk_index);
+int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
+			u32 logical_blk,
+			struct ssdfs_segment_request *req);
 int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 				struct ssdfs_block_bmap_range *range,
 				struct ssdfs_segment_request *req);

@@ -53,6 +53,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include "snapshots_tree.h"
+#include "invalidated_extents_tree.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ssdfs.h>
@@ -371,6 +372,15 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	SSDFS_DBG("SSDFS_METADATA_UNDER_FLUSH\n");
 
 	down_write(&fsi->volume_sem);
+
+	if (fsi->fs_feature_compat &
+			SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
+		err = ssdfs_invextree_flush(fsi);
+		if (err) {
+			SSDFS_ERR("fail to flush invalidated extents btree: "
+				  "err %d\n", err);
+		}
+	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
 		err = ssdfs_shextree_flush(fsi);
@@ -2430,6 +2440,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_fs_error_memory_leaks_init();
 	ssdfs_inode_memory_leaks_init();
 	ssdfs_ino_tree_memory_leaks_init();
+	ssdfs_invext_tree_memory_leaks_init();
 	ssdfs_blk2off_memory_leaks_init();
 	ssdfs_parray_memory_leaks_init();
 	ssdfs_page_vector_memory_leaks_init();
@@ -2502,6 +2513,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_fs_error_check_memory_leaks();
 	ssdfs_inode_check_memory_leaks();
 	ssdfs_ino_tree_check_memory_leaks();
+	ssdfs_invext_tree_check_memory_leaks();
 	ssdfs_blk2off_check_memory_leaks();
 	ssdfs_parray_check_memory_leaks();
 	ssdfs_page_vector_check_memory_leaks();
@@ -2580,6 +2592,12 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 #ifdef CONFIG_SSDFS_TESTING
 	fs_info->do_fork_invalidation = true;
 #endif /* CONFIG_SSDFS_TESTING */
+
+	fs_info->max_open_zones = 0;
+	fs_info->is_zns_device = false;
+	fs_info->zone_size = U64_MAX;
+	fs_info->zone_capacity = U64_MAX;
+	atomic_set(&fs_info->open_zones, 0);
 
 #ifdef CONFIG_SSDFS_MTD_DEVICE
 	fs_info->mtd = sb->s_mtd;
@@ -2790,6 +2808,20 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create invalidated extents btree started...\n");
+#else
+	SSDFS_DBG("create invalidated extents btree started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (fs_feature_compat & SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
+		down_write(&fs_info->volume_sem);
+		err = ssdfs_invextree_create(fs_info);
+		up_write(&fs_info->volume_sem);
+		if (err)
+			goto destroy_inodes_btree;
+	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("getting root inode...\n");
 #else
 	SSDFS_DBG("getting root inode...\n");
@@ -2799,7 +2831,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (IS_ERR(root_i)) {
 		SSDFS_DBG("getting root inode failed\n");
 		err = PTR_ERR(root_i);
-		goto destroy_inodes_btree;
+		goto destroy_invext_btree;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -2903,6 +2935,9 @@ stop_gc_using_seg_thread:
 
 put_root_inode:
 	iput(root_i);
+
+destroy_invext_btree:
+	ssdfs_invextree_destroy(fs_info);
 
 destroy_inodes_btree:
 	ssdfs_inodes_btree_destroy(fs_info);
@@ -3082,6 +3117,21 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("Flush invalidated extents b-tree...\n");
+#else
+		SSDFS_DBG("Flush invalidated extents b-tree...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		if (fsi->fs_feature_compat &
+				SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
+			err = ssdfs_invextree_flush(fsi);
+			if (err) {
+				SSDFS_ERR("fail to flush invalidated extents btree: "
+					  "err %d\n", err);
+			}
+		}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
 		SSDFS_ERR("Flush shared extents b-tree...\n");
 #else
 		SSDFS_DBG("Flush shared extents b-tree...\n");
@@ -3257,6 +3307,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
 	fsi->devops->sync(sb);
 	ssdfs_snapshot_subsystem_destroy(fsi);
+	ssdfs_invextree_destroy(fsi);
 	ssdfs_shextree_destroy(fsi);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
@@ -3324,7 +3375,9 @@ static struct file_system_type ssdfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.mount		= ssdfs_mount,
 	.kill_sb	= kill_ssdfs_sb,
+#ifdef CONFIG_SSDFS_BLOCK_DEVICE
 	.fs_flags	= FS_REQUIRES_DEV,
+#endif
 };
 MODULE_ALIAS_FS(SSDFS_VERSION);
 

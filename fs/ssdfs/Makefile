@@ -32,6 +32,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		xattr_tree.o \
 		snapshot_requests_queue.o snapshot_rules.o \
 		snapshot.o snapshots_tree.o snapshots_tree_thread.o \
+		invalidated_extents_tree.o \
 		inode.o file.o dir.o ioctl.o \
 		sysfs.o \
 		xattr.o xattr_user.o xattr_trusted.o \
