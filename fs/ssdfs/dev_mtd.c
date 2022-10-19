@@ -105,6 +105,16 @@ static __u64 ssdfs_mtd_device_size(struct super_block *sb)
 	return SSDFS_FS_I(sb)->mtd->size;
 }
 
+static int ssdfs_mtd_open_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
+static int ssdfs_mtd_close_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
 /*
  * ssdfs_mtd_read() - read from volume into buffer
  * @sb: superblock object
@@ -592,17 +602,19 @@ static void ssdfs_mtd_sync(struct super_block *sb)
 }
 
 const struct ssdfs_device_ops ssdfs_mtd_devops = {
-	.device_name = ssdfs_mtd_device_name,
-	.device_size = ssdfs_mtd_device_size,
-	.read = ssdfs_mtd_read,
-	.readpage = ssdfs_mtd_readpage,
-	.readpages = ssdfs_mtd_readpages,
-	.can_write_page = ssdfs_mtd_can_write_page,
-	.writepage = ssdfs_mtd_writepage,
-	.writepages = ssdfs_mtd_writepages,
-	.erase = ssdfs_mtd_erase,
-	.trim = ssdfs_mtd_trim,
-	.peb_isbad = ssdfs_mtd_peb_isbad,
-	.mark_peb_bad = ssdfs_mtd_mark_peb_bad,
-	.sync = ssdfs_mtd_sync,
+	.device_name		= ssdfs_mtd_device_name,
+	.device_size		= ssdfs_mtd_device_size,
+	.open_zone		= ssdfs_mtd_open_zone,
+	.close_zone		= ssdfs_mtd_close_zone,
+	.read			= ssdfs_mtd_read,
+	.readpage		= ssdfs_mtd_readpage,
+	.readpages		= ssdfs_mtd_readpages,
+	.can_write_page		= ssdfs_mtd_can_write_page,
+	.writepage		= ssdfs_mtd_writepage,
+	.writepages		= ssdfs_mtd_writepages,
+	.erase			= ssdfs_mtd_erase,
+	.trim			= ssdfs_mtd_trim,
+	.peb_isbad		= ssdfs_mtd_peb_isbad,
+	.mark_peb_bad		= ssdfs_mtd_mark_peb_bad,
+	.sync			= ssdfs_mtd_sync,
 };

@@ -287,6 +287,7 @@ bool is_request_command_valid(int class, int cmd)
 	case SSDFS_PEB_CREATE_HNODE_REQ:
 	case SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ:
 	case SSDFS_PEB_CREATE_IDXNODE_REQ:
+	case SSDFS_ZONE_USER_DATA_MIGRATE_REQ:
 		is_valid = cmd > SSDFS_READ_CMD_MAX &&
 				cmd < SSDFS_CREATE_CMD_MAX;
 		break;

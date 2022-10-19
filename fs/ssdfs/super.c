@@ -26,6 +26,7 @@
 #include <linux/pagevec.h>
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
+#include <linux/delay.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -2424,6 +2425,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_dev_mtd_memory_leaks_init();
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
 	ssdfs_dev_bdev_memory_leaks_init();
+	ssdfs_dev_zns_memory_leaks_init();
 #else
 	BUILD_BUG();
 #endif
@@ -2497,6 +2499,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_dev_mtd_check_memory_leaks();
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
 	ssdfs_dev_bdev_check_memory_leaks();
+	ssdfs_dev_zns_check_memory_leaks();
 #else
 	BUILD_BUG();
 #endif
@@ -2582,6 +2585,15 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("segment header size %zu, "
+		  "partial log header size %zu, "
+		  "footer size %zu\n",
+		  sizeof(struct ssdfs_segment_header),
+		  sizeof(struct ssdfs_partial_log_header),
+		  sizeof(struct ssdfs_log_footer));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	ssdfs_memory_page_locks_checker_init();
 	ssdfs_memory_leaks_checker_init();
 
@@ -2604,7 +2616,33 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_info->devops = &ssdfs_mtd_devops;
 	sb->s_bdi = sb->s_mtd->backing_dev_info;
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
-	fs_info->devops = &ssdfs_bdev_devops;
+	if (bdev_is_zoned(sb->s_bdev)) {
+		fs_info->devops = &ssdfs_zns_devops;
+		fs_info->is_zns_device = true;
+		fs_info->max_open_zones = bdev_max_open_zones(sb->s_bdev);
+
+		fs_info->zone_size = ssdfs_zns_zone_size(sb,
+						SSDFS_RESERVED_VBR_SIZE);
+		if (fs_info->zone_size >= U64_MAX) {
+			SSDFS_ERR("fail to get zone size\n");
+			return -ERANGE;
+		}
+
+		fs_info->zone_capacity = ssdfs_zns_zone_capacity(sb,
+						SSDFS_RESERVED_VBR_SIZE);
+		if (fs_info->zone_capacity >= U64_MAX) {
+			SSDFS_ERR("fail to get zone capacity\n");
+			return -ERANGE;
+		} else if (fs_info->zone_capacity > fs_info->zone_size) {
+			SSDFS_ERR("invalid zone capacity: "
+				  "capacity %llu, size %llu\n",
+				  fs_info->zone_capacity,
+				  fs_info->zone_size);
+			return -ERANGE;
+		}
+	} else
+		fs_info->devops = &ssdfs_bdev_devops;
+
 	sb->s_bdi = bdi_get(sb->s_bdev->bd_disk->bdi);
 	atomic_set(&fs_info->pending_bios, 0);
 	fs_info->erase_page = ssdfs_super_alloc_page(GFP_KERNEL);
@@ -2831,6 +2869,13 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (IS_ERR(root_i)) {
 		SSDFS_DBG("getting root inode failed\n");
 		err = PTR_ERR(root_i);
+		goto destroy_invext_btree;
+	}
+
+	if (!S_ISDIR(root_i->i_mode) || !root_i->i_blocks || !root_i->i_size) {
+		err = -ERANGE;
+		iput(root_i);
+		SSDFS_ERR("corrupted root inode\n");
 		goto destroy_invext_btree;
 	}
 

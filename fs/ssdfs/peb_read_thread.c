@@ -6331,6 +6331,138 @@ fail_read_blk2off_fragments:
 }
 
 /*
+ * ssdfs_correct_zone_block_bitmap() - set all migrated blocks as invalidated
+ * @pebi: pointer on PEB object
+ *
+ * This function tries to mark all migrated blocks as
+ * invalidated for the case of source zone. Actually, invalidated
+ * extents will be added into the queue. Invalidation operation
+ * happens after complete intialization of segment object.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_invextree_info *invextree;
+	struct ssdfs_shared_extents_tree *shextree;
+	struct ssdfs_btree_search *search;
+	struct ssdfs_raw_extent extent;
+	struct ssdfs_raw_extent *found;
+	size_t item_size = sizeof(struct ssdfs_raw_extent);
+	u32 logical_blk = 0;
+	u32 len;
+	u32 count;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+
+	SSDFS_DBG("seg %llu, peb %llu, peb_index %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebi->pebc->parent_si;
+	fsi = si->fsi;
+	len = fsi->pages_per_seg;
+
+	invextree = fsi->invextree;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!invextree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	shextree = fsi->shextree;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!shextree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	do {
+		extent.seg_id = cpu_to_le64(si->seg_id);
+		extent.logical_blk = cpu_to_le32(logical_blk);
+		extent.len = cpu_to_le32(len);
+
+		ssdfs_btree_search_init(search);
+		err = ssdfs_invextree_find(invextree, &extent, search);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find invalidated extents: "
+				  "seg_id %llu, logical_blk %u, len %u\n",
+				  si->seg_id, logical_blk, len);
+			break;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find invalidated extents: "
+				  "seg_id %llu, logical_blk %u, len %u\n",
+				  si->seg_id, logical_blk, len);
+			goto finish_correct_zone_block_bmap;
+		}
+
+		count = search->result.items_in_buffer;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!search->result.buf);
+		BUG_ON(count == 0);
+		BUG_ON((count * item_size) != search->result.buf_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		for (i = 0; i < count; i++) {
+			found = (struct ssdfs_raw_extent *)search->result.buf;
+			found += i;
+
+			err = ssdfs_shextree_add_pre_invalid_extent(shextree,
+						SSDFS_INVALID_EXTENTS_BTREE_INO,
+						found);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add pre-invalid extent: "
+					  "seg_id %llu, logical_blk %u, "
+					  "len %u, err %d\n",
+					  le64_to_cpu(found->seg_id),
+					  le32_to_cpu(found->logical_blk),
+					  le32_to_cpu(found->len),
+					  err);
+				goto finish_correct_zone_block_bmap;
+			}
+		}
+
+		found = (struct ssdfs_raw_extent *)search->result.buf;
+		found += count - 1;
+
+		logical_blk = le32_to_cpu(found->logical_blk) +
+				le32_to_cpu(found->len);
+
+		if (logical_blk >= fsi->pages_per_seg)
+			len = 0;
+		else
+			len = fsi->pages_per_seg - logical_blk;
+	} while (len > 0);
+
+	if (err == -ENODATA) {
+		/* all extents have beedn processed */
+		err = 0;
+	}
+
+finish_correct_zone_block_bmap:
+	ssdfs_btree_search_free(search);
+	return err;
+}
+
+/*
  * ssdfs_peb_init_using_metadata_state() - initialize "using" PEB
  * @pebi: pointer on PEB object
  * @env: read operation's init environment
@@ -6447,6 +6579,20 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 			   bytes_count, env->b_init.read_bytes);
 		err = -EIO;
 		goto fail_init_using_blk_bmap;
+	}
+
+	if (fsi->is_zns_device &&
+	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
+		err = ssdfs_correct_zone_block_bitmap(pebi);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to correct zone's block bitmap: "
+				  "seg %llu, peb %llu, peb_index %u, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, pebi->peb_index,
+				  err);
+			goto fail_init_using_blk_bmap;
+		}
 	}
 
 	BUG_ON(new_log_start_page >= U16_MAX);
@@ -6700,6 +6846,20 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 			   bytes_count, env->b_init.read_bytes);
 		err = -EIO;
 		goto fail_init_used_blk_bmap;
+	}
+
+	if (fsi->is_zns_device &&
+	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
+		err = ssdfs_correct_zone_block_bitmap(pebi);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to correct zone's block bitmap: "
+				  "seg %llu, peb %llu, peb_index %u, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, pebi->peb_index,
+				  err);
+			goto fail_init_used_blk_bmap;
+		}
 	}
 
 	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);

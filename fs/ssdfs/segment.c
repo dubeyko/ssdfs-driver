@@ -476,7 +476,8 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		goto destroy_seg_obj;
 	}
 
-	si->blk2off_table = ssdfs_blk2off_table_create(fsi, fsi->pages_per_seg,
+	si->blk2off_table = ssdfs_blk2off_table_create(fsi,
+							fsi->leb_pages_capacity,
 							SSDFS_SEG_OFF_TABLE,
 							state);
 	if (!si->blk2off_table) {
@@ -1781,6 +1782,103 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 }
 
 /*
+ * ssdfs_calculate_zns_reservation_threshold() - reservation threshold
+ */
+static inline
+u32 ssdfs_calculate_zns_reservation_threshold(void)
+{
+	u32 threshold;
+
+	threshold = SSDFS_CUR_SEGS_COUNT * 2;
+	threshold += SSDFS_SB_CHAIN_MAX * SSDFS_SB_SEG_COPY_MAX;
+	threshold += SSDFS_SEGBMAP_SEGS * SSDFS_SEGBMAP_SEG_COPY_MAX;
+	threshold += SSDFS_MAPTBL_RESERVED_EXTENTS * SSDFS_MAPTBL_SEG_COPY_MAX;
+
+	return threshold;
+}
+
+/*
+ * CHECKED_SEG_TYPE() - correct segment type
+ * @fsi: pointer on shared file system object
+ * @cur_seg_type: checking segment type
+ */
+static inline
+int CHECKED_SEG_TYPE(struct ssdfs_fs_info *fsi, int cur_seg_type)
+{
+	u32 threshold = ssdfs_calculate_zns_reservation_threshold();
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!fsi->is_zns_device)
+		return cur_seg_type;
+
+	if (threshold < (fsi->max_open_zones / 2))
+		return cur_seg_type;
+
+	switch (cur_seg_type) {
+	case SSDFS_CUR_LNODE_SEG:
+	case SSDFS_CUR_HNODE_SEG:
+	case SSDFS_CUR_IDXNODE_SEG:
+		SSDFS_DBG("segment type %#x is corrected to %#x\n",
+			  cur_seg_type, SSDFS_CUR_LNODE_SEG);
+		return SSDFS_CUR_LNODE_SEG;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return cur_seg_type;
+}
+
+/*
+ * can_current_segment_be_added() - check that current segment can be added
+ * @si: pointer on segment object
+ */
+static inline
+bool can_current_segment_be_added(struct ssdfs_segment_info *si)
+{
+	struct ssdfs_fs_info *fsi;
+	u32 threshold = ssdfs_calculate_zns_reservation_threshold();
+	int open_zones;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = si->fsi;
+
+	if (!fsi->is_zns_device)
+		return true;
+
+	switch (si->seg_type) {
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		open_zones = atomic_read(&fsi->open_zones);
+
+		if (threshold < ((fsi->max_open_zones - open_zones) / 2))
+			return true;
+		else
+			return false;
+
+	case SSDFS_USER_DATA_SEG_TYPE:
+		return true;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	SSDFS_WARN("unexpected segment type %#x\n",
+		   si->seg_type);
+
+	return false;
+}
+
+/*
  * __ssdfs_segment_add_block() - add new block into segment
  * @cur_seg: current segment container
  * @req: segment request [in|out]
@@ -1802,6 +1900,7 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 			       u64 *seg_id,
 			       struct ssdfs_blk2off_range *extent)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
 	int seg_type;
 	u64 start = U64_MAX;
@@ -1825,11 +1924,12 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 		  req->extent.parent_snapshot);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	fsi = cur_seg->fsi;
 	*seg_id = U64_MAX;
 
 	ssdfs_current_segment_lock(cur_seg);
 
-	seg_type = SEG_TYPE(req->private.class);
+	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(req->private.class));
 
 try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
@@ -1839,9 +1939,14 @@ add_new_current_segment:
 					U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			SSDFS_ERR("fail to create segment object: "
-				  "err %d\n",
-				  err);
+			if (err == -ENOSPC) {
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
 			goto finish_add_block;
 		}
 
@@ -1874,8 +1979,16 @@ add_new_current_segment:
 				goto finish_add_block;
 			}
 
-			ssdfs_current_segment_remove(cur_seg);
-			goto add_new_current_segment;
+			if (can_current_segment_be_added(si)) {
+				err = 0;
+				ssdfs_current_segment_remove(cur_seg);
+				goto add_new_current_segment;
+			}
+
+			err = -ENOSPC;
+			SSDFS_DBG("unable to add current segment: "
+				  "err %d\n", err);
+			goto finish_add_block;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical block: "
 				  "seg %llu, err %d\n",
@@ -1956,7 +2069,12 @@ finish_add_block:
 		  cur_seg->real_seg->seg_id);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	if (err) {
+	if (err == -ENOSPC) {
+		SSDFS_DBG("unable to add block: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  req->extent.ino, req->extent.logical_offset, err);
+		return err;
+	} else if (err) {
 		SSDFS_ERR("fail to add block: "
 			  "ino %llu, logical_offset %llu, err %d\n",
 			  req->extent.ino, req->extent.logical_offset, err);
@@ -2017,7 +2135,7 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 
 	ssdfs_current_segment_lock(cur_seg);
 
-	seg_type = SEG_TYPE(req->private.class);
+	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(req->private.class));
 
 try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
@@ -2078,8 +2196,16 @@ add_new_current_segment:
 				goto finish_add_extent;
 			}
 
-			ssdfs_current_segment_remove(cur_seg);
-			goto add_new_current_segment;
+			if (can_current_segment_be_added(si)) {
+				err = 0;
+				ssdfs_current_segment_remove(cur_seg);
+				goto add_new_current_segment;
+			}
+
+			err = -ENOSPC;
+			SSDFS_DBG("unable to add current segment: "
+				  "err %d\n", err);
+			goto finish_add_extent;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical extent: "
 				  "seg %llu, err %d\n",
@@ -2181,6 +2307,7 @@ finish_add_extent:
  * __ssdfs_segment_add_block_sync() - add new block synchronously
  * @fsi: pointer on shared file system object
  * @req_class: request class
+ * @req_type: request type
  * @req: segment request [in|out]
  * @seg_id: segment ID [out]
  * @extent: (pre-)allocated extent [out]
@@ -2197,6 +2324,7 @@ finish_add_extent:
 static
 int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 				   int req_class,
+				   int req_type,
 				   struct ssdfs_segment_request *req,
 				   u64 *seg_id,
 				   struct ssdfs_blk2off_range *extent)
@@ -2208,18 +2336,28 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !req);
 	BUG_ON(req_class <= SSDFS_PEB_READ_REQ ||
 		req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_SYNC:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
 
 	ssdfs_request_prepare_internal_data(req_class,
 					    SSDFS_CREATE_BLOCK,
-					    SSDFS_REQ_SYNC,
-					    req);
+					    req_type, req);
 
 	down_read(&fsi->cur_segs->lock);
 	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
@@ -2233,6 +2371,7 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
  * __ssdfs_segment_add_block_async() - add new block asynchronously
  * @fsi: pointer on shared file system object
  * @req_class: request class
+ * @req_type: request type
  * @req: segment request [in|out]
  * @seg_id: segment ID [out]
  * @extent: (pre-)allocated extent [out]
@@ -2249,6 +2388,7 @@ int __ssdfs_segment_add_block_sync(struct ssdfs_fs_info *fsi,
 static
 int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
 				    int req_class,
+				    int req_type,
 				    struct ssdfs_segment_request *req,
 				    u64 *seg_id,
 				    struct ssdfs_blk2off_range *extent)
@@ -2260,18 +2400,29 @@ int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !req);
 	BUG_ON(req_class <= SSDFS_PEB_READ_REQ ||
 		req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
 
 	ssdfs_request_prepare_internal_data(req_class,
 					    SSDFS_CREATE_BLOCK,
-					    SSDFS_REQ_ASYNC,
-					    req);
+					    req_type, req);
 
 	down_read(&fsi->cur_segs->lock);
 	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
@@ -2304,6 +2455,7 @@ int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
+					      SSDFS_REQ_SYNC,
 					      req, seg_id, extent);
 }
 
@@ -2330,6 +2482,7 @@ int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
+					       SSDFS_REQ_ASYNC,
 					       req, seg_id, extent);
 }
 
@@ -2356,6 +2509,7 @@ int ssdfs_segment_pre_alloc_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ,
+					      SSDFS_REQ_SYNC,
 					      req, seg_id, extent);
 }
 
@@ -2382,6 +2536,7 @@ int ssdfs_segment_pre_alloc_leaf_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ,
+					       SSDFS_REQ_ASYNC,
 					       req, seg_id, extent);
 }
 
@@ -2408,6 +2563,7 @@ int ssdfs_segment_pre_alloc_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ,
+					      SSDFS_REQ_SYNC,
 					      req, seg_id, extent);
 }
 
@@ -2434,6 +2590,7 @@ int ssdfs_segment_pre_alloc_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ,
+					       SSDFS_REQ_ASYNC,
 					       req, seg_id, extent);
 }
 
@@ -2460,6 +2617,7 @@ int ssdfs_segment_pre_alloc_index_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 					     SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
+					     SSDFS_REQ_SYNC,
 					     req, seg_id, extent);
 }
 
@@ -2486,6 +2644,7 @@ int ssdfs_segment_pre_alloc_index_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 					     SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
+					     SSDFS_REQ_ASYNC,
 					     req, seg_id, extent);
 }
 
@@ -2512,6 +2671,7 @@ int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2538,7 +2698,131 @@ int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
+}
+
+/*
+ * ssdfs_segment_migrate_zone_block_sync() - migrate zone block synchronously
+ * @fsi: pointer on shared file system object
+ * @req_type: request type
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to migrate user data block from
+ * exhausted zone into current zone for user data updates.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_migrate_zone_block_sync(struct ssdfs_fs_info *fsi,
+					  int req_type,
+					  struct ssdfs_segment_request *req,
+					  u64 *seg_id,
+					  struct ssdfs_blk2off_range *extent)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int req_class = SSDFS_ZONE_USER_DATA_MIGRATE_REQ;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !req);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_SYNC:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(req_class,
+					    SSDFS_MIGRATE_ZONE_USER_BLOCK,
+					    req_type, req);
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
+	err = __ssdfs_segment_add_block(cur_seg, req, seg_id, extent);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_segment_migrate_zone_block_async() - migrate zone block asynchronously
+ * @fsi: pointer on shared file system object
+ * @req_type: request type
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to migrate user data block from
+ * exhausted zone into current zone for user data updates.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_migrate_zone_block_async(struct ssdfs_fs_info *fsi,
+					   int req_type,
+					   struct ssdfs_segment_request *req,
+					   u64 *seg_id,
+					   struct ssdfs_blk2off_range *extent)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int req_class = SSDFS_ZONE_USER_DATA_MIGRATE_REQ;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !req);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(req_class,
+					    SSDFS_MIGRATE_ZONE_USER_BLOCK,
+					    req_type, req);
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
+	err = __ssdfs_segment_add_block(cur_seg, req, seg_id, extent);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
 }
 
 /*
@@ -2564,6 +2848,7 @@ int ssdfs_segment_add_leaf_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2590,6 +2875,7 @@ int ssdfs_segment_add_leaf_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_LNODE_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
 }
 
@@ -2617,6 +2903,7 @@ int ssdfs_segment_add_hybrid_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2644,6 +2931,7 @@ int ssdfs_segment_add_hybrid_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_HNODE_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
 }
 
@@ -2671,6 +2959,7 @@ int ssdfs_segment_add_index_node_block_sync(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_sync(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
+						SSDFS_REQ_SYNC,
 						req, seg_id, extent);
 }
 
@@ -2698,6 +2987,7 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
 {
 	return __ssdfs_segment_add_block_async(fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
+						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
 }
 
@@ -2784,13 +3074,13 @@ int __ssdfs_segment_add_extent_async(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !req);
 	BUG_ON(req_class <= SSDFS_PEB_READ_REQ ||
 		req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(req_class,
 					    SSDFS_CREATE_EXTENT,
@@ -3063,6 +3353,129 @@ int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
 	return __ssdfs_segment_add_extent_async(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
 						req, seg_id, extent);
+}
+
+/*
+ * ssdfs_segment_migrate_zone_extent_sync() - migrate zone extent synchronously
+ * @fsi: pointer on shared file system object
+ * @req_type: request type
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to migrate user data extent from
+ * exhausted zone into current zone for user data updates.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_migrate_zone_extent_sync(struct ssdfs_fs_info *fsi,
+					   int req_type,
+					   struct ssdfs_segment_request *req,
+					   u64 *seg_id,
+					   struct ssdfs_blk2off_range *extent)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int req_class = SSDFS_ZONE_USER_DATA_MIGRATE_REQ;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !req);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_SYNC:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(req_class,
+					    SSDFS_MIGRATE_ZONE_USER_EXTENT,
+					    req_type, req);
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
+	err = __ssdfs_segment_add_extent(cur_seg, req, seg_id, extent);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_segment_migrate_zone_extent_async() - migrate zone extent asynchronously
+ * @fsi: pointer on shared file system object
+ * @req_type: request type
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to migrate user data exent from
+ * exhausted zone into current zone for user data updates.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_migrate_zone_extent_async(struct ssdfs_fs_info *fsi,
+					    int req_type,
+					    struct ssdfs_segment_request *req,
+					    u64 *seg_id,
+					    struct ssdfs_blk2off_range *extent)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int req_class = SSDFS_ZONE_USER_DATA_MIGRATE_REQ;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !req);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	ssdfs_request_prepare_internal_data(req_class,
+					    SSDFS_MIGRATE_ZONE_USER_EXTENT,
+					    req_type, req);
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(req_class)];
+	err = __ssdfs_segment_add_extent(cur_seg, req, seg_id, extent);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
 }
 
 /*

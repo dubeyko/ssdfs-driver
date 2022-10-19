@@ -617,6 +617,12 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 					 u64 leb_id, u8 peb_type,
 					 u64 dst_leb_id, int dst_peb_refs,
 					 struct completion **end);
+int ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
+					   u64 leb_id, u8 peb_type,
+					   struct completion **end);
+int ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
+					     u64 leb_id, u8 peb_type,
+					     struct completion **end);
 
 int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi,
 			     u32 count, int type);

@@ -882,6 +882,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		return -ENODATA;
 
 	case SSDFS_DST_PEB_RECEIVES_DATA:
+	case SSDFS_SHARED_ZONE_RECEIVES_DATA:
 		/* continue logic */
 		break;
 
@@ -1058,14 +1059,16 @@ check_migration_state:
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
 
-		pebi = pebc->dst_peb;
-		if (!pebi) {
-			err = -ERANGE;
-			SSDFS_ERR("PEB pointer is NULL: "
-				  "seg_id %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-			goto finish_migration_done;
+		if (!fsi->is_zns_device) {
+			pebi = pebc->dst_peb;
+			if (!pebi) {
+				err = -ERANGE;
+				SSDFS_ERR("PEB pointer is NULL: "
+					  "seg_id %llu, peb_index %u\n",
+					  pebc->parent_si->seg_id,
+					  pebc->peb_index);
+				goto finish_migration_done;
+			}
 		}
 
 		ssdfs_peb_current_log_lock(pebi);

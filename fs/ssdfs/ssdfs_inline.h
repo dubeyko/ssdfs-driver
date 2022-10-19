@@ -105,6 +105,17 @@ void *ssdfs_kzalloc(size_t size, gfp_t flags)
 }
 
 static inline
+void *ssdfs_kvzalloc(size_t size, gfp_t flags)
+{
+	void *kaddr = kvzalloc(size, flags);
+
+	if (kaddr)
+		ssdfs_memory_leaks_increment(kaddr);
+
+	return kaddr;
+}
+
+static inline
 void *ssdfs_kcalloc(size_t n, size_t size, gfp_t flags)
 {
 	void *kaddr = kcalloc(n, size, flags);
@@ -121,6 +132,15 @@ void ssdfs_kfree(void *kaddr)
 	if (kaddr) {
 		ssdfs_memory_leaks_decrement(kaddr);
 		kfree(kaddr);
+	}
+}
+
+static inline
+void ssdfs_kvfree(void *kaddr)
+{
+	if (kaddr) {
+		ssdfs_memory_leaks_decrement(kaddr);
+		kvfree(kaddr);
 	}
 }
 
@@ -402,6 +422,18 @@ void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
 	return kaddr;							\
 }									\
 static inline								\
+void *ssdfs_##name##_kvzalloc(size_t size, gfp_t flags)			\
+{									\
+	void *kaddr = ssdfs_kvzalloc(size, flags);			\
+	if (kaddr) {							\
+		atomic64_inc(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	return kaddr;							\
+}									\
+static inline								\
 void *ssdfs_##name##_kcalloc(size_t n, size_t size, gfp_t flags)	\
 {									\
 	void *kaddr = ssdfs_kcalloc(n, size, flags);			\
@@ -423,6 +455,17 @@ void ssdfs_##name##_kfree(void *kaddr)					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
 	ssdfs_kfree(kaddr);						\
+}									\
+static inline								\
+void ssdfs_##name##_kvfree(void *kaddr)					\
+{									\
+	if (kaddr) {							\
+		atomic64_dec(&ssdfs_##name##_memory_leaks);		\
+		SSDFS_DBG("memory %p, allocation count %lld\n",		\
+			  kaddr,					\
+			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
+	}								\
+	ssdfs_kvfree(kaddr);						\
 }									\
 static inline								\
 struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
@@ -521,6 +564,11 @@ void *ssdfs_##name##_kzalloc(size_t size, gfp_t flags)			\
 	return ssdfs_kzalloc(size, flags);				\
 }									\
 static inline								\
+void *ssdfs_##name##_kvzalloc(size_t size, gfp_t flags)			\
+{									\
+	return ssdfs_kvzalloc(size, flags);				\
+}									\
+static inline								\
 void *ssdfs_##name##_kcalloc(size_t n, size_t size, gfp_t flags)	\
 {									\
 	return ssdfs_kcalloc(n, size, flags);				\
@@ -529,6 +577,11 @@ static inline								\
 void ssdfs_##name##_kfree(void *kaddr)					\
 {									\
 	ssdfs_kfree(kaddr);						\
+}									\
+static inline								\
+void ssdfs_##name##_kvfree(void *kaddr)					\
+{									\
+	ssdfs_kvfree(kaddr);						\
 }									\
 static inline								\
 struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\

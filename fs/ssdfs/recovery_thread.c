@@ -199,8 +199,8 @@ int ssdfs_read_and_check_volume_header(struct ssdfs_recovery_env *env,
 	if (magic_valid) {
 		crc_valid = is_ssdfs_volume_header_csum_valid(env->sbi.vh_buf,
 								hdr_size);
-		hdr_consistent = is_ssdfs_volume_header_consistent(vh,
-								dev_size);
+		hdr_consistent = is_ssdfs_volume_header_consistent(env->fsi, vh,
+								   dev_size);
 
 		if (crc_valid && hdr_consistent) {
 			SSDFS_DBG("found offset %llu\n",

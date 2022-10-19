@@ -1973,6 +1973,204 @@ finish_prepare_volume_extent:
 }
 
 /*
+ * ssdfs_recommend_migration_extent() - recommend migration extent
+ * @fsi: pointer on shared file system object
+ * @req: request object
+ * @fragment: recommended fragment [out]
+ *
+ * This method tries to find an extent recommended to migration.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE      - internal error.
+ * %-ENOMEM      - fail to allocate memory.
+ * %-ENODATA     - unable to find a relevant extent.
+ */
+int ssdfs_recommend_migration_extent(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_segment_request *req,
+				     struct ssdfs_zone_fragment *fragment)
+{
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_extents_btree_info *tree;
+	struct ssdfs_btree_search *search;
+	struct ssdfs_raw_fork *fork = NULL;
+	struct ssdfs_raw_extent *found = NULL;
+	size_t item_size = sizeof(struct ssdfs_raw_extent);
+	u64 start_blk;
+	u64 blks_count;
+	u64 seg_id;
+	u32 logical_blk = U32_MAX, len;
+	u64 requested_blk, requested_len;
+	u64 processed_blks = 0;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !req || !fragment);
+	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
+
+	SSDFS_DBG("fsi %p, req %p, ino %llu, "
+		  "logical_offset %llu, data_bytes %u, "
+		  "cno %llu, parent_snapshot %llu\n",
+		  fsi, req, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes,
+		  req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memset(fragment, 0xFF, sizeof(struct ssdfs_zone_fragment));
+
+	ii = SSDFS_I(req->result.pvec.pages[0]->mapping->host);
+
+	tree = SSDFS_EXTREE(ii);
+	if (!tree) {
+		down_write(&ii->lock);
+		err = ssdfs_extents_tree_create(fsi, ii);
+		up_write(&ii->lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to create extents tree: "
+				  "err %d\n", err);
+			return err;
+		} else
+			tree = SSDFS_EXTREE(ii);
+	}
+
+	requested_blk = req->extent.logical_offset >> fsi->log_pagesize;
+
+	requested_blk = req->extent.logical_offset >> fsi->log_pagesize;
+	requested_len = (req->extent.data_bytes + fsi->pagesize - 1) >>
+				fsi->log_pagesize;
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_btree_search_init(search);
+
+	err = ssdfs_extents_tree_find_fork(tree, requested_blk, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the fork: "
+			  "blk %llu, err %d\n",
+			  requested_blk, err);
+		goto finish_recommend_migration_extent;
+	}
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+		/* expected state */
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid result state %#x\n",
+			  search->result.state);
+		goto finish_recommend_migration_extent;
+	}
+
+	switch (search->result.buf_state) {
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+		/* expected state */
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid buffer state %#x\n",
+			  search->result.buf_state);
+		goto finish_recommend_migration_extent;
+	}
+
+	if (!search->result.buf) {
+		err = -ERANGE;
+		SSDFS_ERR("empty result buffer pointer\n");
+		goto finish_recommend_migration_extent;
+	}
+
+	if (search->result.items_in_buffer == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("items_in_buffer %u\n",
+			  search->result.items_in_buffer);
+		goto finish_recommend_migration_extent;
+	}
+
+	fork = (struct ssdfs_raw_fork *)search->result.buf;
+	start_blk = le64_to_cpu(fork->start_offset);
+	blks_count = le64_to_cpu(fork->blks_count);
+
+	SSDFS_DBG("start_blk %llu, blks_count %llu\n",
+		  start_blk, blks_count);
+
+	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; found = NULL, i++) {
+		if (processed_blks >= blks_count)
+			break;
+
+		found = &fork->extents[i];
+
+		seg_id = le64_to_cpu(found->seg_id);
+		logical_blk = le32_to_cpu(found->logical_blk);
+		len = le32_to_cpu(found->len);
+
+		if (seg_id == U64_MAX || logical_blk == U32_MAX ||
+		    len == U32_MAX) {
+			err = -ERANGE;
+			SSDFS_ERR("corrupted extent: index %d\n", i);
+			goto finish_recommend_migration_extent;
+		}
+
+		if (len == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("corrupted extent: index %d\n", i);
+			goto finish_recommend_migration_extent;
+		}
+
+		if (req->place.start.seg_id == seg_id) {
+			if (logical_blk <= req->place.start.blk_index &&
+			    req->place.start.blk_index < (logical_blk + len)) {
+				/* extent has been found */
+				break;
+			}
+		}
+
+		processed_blks += len;
+		found = NULL;
+	}
+
+	if (!found) {
+		err = -ENODATA;
+		SSDFS_DBG("extent hasn't been found\n");
+		goto finish_recommend_migration_extent;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(logical_blk >= U16_MAX);
+	BUG_ON(len >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (logical_blk == req->place.start.blk_index &&
+	    req->place.len == len) {
+		err = -ENODATA;
+		SSDFS_DBG("extent hasn't been found\n");
+		goto finish_recommend_migration_extent;
+	} else {
+		fragment->ino = ii->vfs_inode.i_ino;
+		fragment->logical_blk_offset = start_blk + processed_blks;
+		ssdfs_memcpy(&fragment->extent, 0, item_size,
+			     found, 0, item_size,
+			     item_size);
+	}
+
+finish_recommend_migration_extent:
+	ssdfs_btree_search_free(search);
+	return err;
+}
+
+/*
  * ssdfs_extents_tree_has_logical_block() - check that block exists
  * @blk_offset: offset of logical block into file
  * @inode: pointer on VFS inode
@@ -3887,7 +4085,7 @@ int ssdfs_extents_tree_change_fork(struct ssdfs_extents_btree_info *tree,
 }
 
 /*
- * __ssdfs_extents_tree_add_extent() - add extent into the tree
+ * ssdfs_extents_tree_add_extent_nolock() - add extent into the tree
  * @tree: extents tree
  * @blk: logical block number
  * @extent: new extent
@@ -3903,12 +4101,12 @@ int ssdfs_extents_tree_change_fork(struct ssdfs_extents_btree_info *tree,
  * %-ERANGE     - internal error.
  * %-EEXIST     - extent exists in the tree.
  */
-int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
-				    u64 blk,
-				    struct ssdfs_raw_extent *extent,
-				    struct ssdfs_btree_search *search)
+static
+int ssdfs_extents_tree_add_extent_nolock(struct ssdfs_extents_btree_info *tree,
+					 u64 blk,
+					 struct ssdfs_raw_extent *extent,
+					 struct ssdfs_btree_search *search)
 {
-	struct ssdfs_inode_info *ii;
 	s64 forks_count;
 	u32 init_flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 			 SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
@@ -3918,50 +4116,11 @@ int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !extent || !search);
 	BUG_ON(!tree->owner);
-#endif /* CONFIG_SSDFS_DEBUG */
+	BUG_ON(!rwsem_is_locked(&tree->lock));
 
 	SSDFS_DBG("tree %p, search %p, blk %llu\n",
 		  tree, search, blk);
-
-	ii = tree->owner;
-
-	down_write(&ii->lock);
-	down_write(&tree->lock);
-
-	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-	len = le32_to_cpu(extent->len);
-
-	if (len == 0) {
-		err = -ERANGE;
-		SSDFS_ERR("empty extent\n");
-		goto finish_add_extent;
-	}
-
-	if (need_initialize_extent_btree_search(blk, search)) {
-		ssdfs_btree_search_init(search);
-		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
-		search->request.flags = init_flags;
-		search->request.start.hash = blk;
-		search->request.end.hash = blk + len - 1;
-		/* no information about forks count */
-		search->request.count = 0;
-	}
-
-	ssdfs_debug_btree_search_object(search);
-
-	switch (atomic_read(&tree->state)) {
-	case SSDFS_EXTENTS_BTREE_CREATED:
-	case SSDFS_EXTENTS_BTREE_INITIALIZED:
-	case SSDFS_EXTENTS_BTREE_DIRTY:
-		/* expected state */
-		break;
-
-	default:
-		err = -ERANGE;
-		SSDFS_ERR("invalid extent tree's state %#x\n",
-			  atomic_read(&tree->state));
-		goto finish_add_extent;
-	};
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	forks_count = atomic64_read(&tree->forks_count);
 
@@ -4143,6 +4302,94 @@ add_new_generic_fork:
 		err = -ERANGE;
 		SSDFS_ERR("invalid extents tree type %#x\n",
 			  atomic_read(&tree->type));
+		goto finish_add_extent;
+	}
+
+finish_add_extent:
+	return err;
+}
+
+/*
+ * __ssdfs_extents_tree_add_extent() - add extent into the tree
+ * @tree: extents tree
+ * @blk: logical block number
+ * @extent: new extent
+ * @search: search object
+ *
+ * This method tries to add @extent into the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EEXIST     - extent exists in the tree.
+ */
+int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
+				    u64 blk,
+				    struct ssdfs_raw_extent *extent,
+				    struct ssdfs_btree_search *search)
+{
+	struct ssdfs_inode_info *ii;
+	u32 init_flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			 SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+	u32 len;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !extent || !search);
+	BUG_ON(!tree->owner);
+
+	SSDFS_DBG("tree %p, search %p, blk %llu\n",
+		  tree, search, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ii = tree->owner;
+
+	down_write(&ii->lock);
+	down_write(&tree->lock);
+
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+	len = le32_to_cpu(extent->len);
+
+	if (len == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("empty extent\n");
+		goto finish_add_extent;
+	}
+
+	if (need_initialize_extent_btree_search(blk, search)) {
+		ssdfs_btree_search_init(search);
+		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.flags = init_flags;
+		search->request.start.hash = blk;
+		search->request.end.hash = blk + len - 1;
+		/* no information about forks count */
+		search->request.count = 0;
+	}
+
+	ssdfs_debug_btree_search_object(search);
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_EXTENTS_BTREE_CREATED:
+	case SSDFS_EXTENTS_BTREE_INITIALIZED:
+	case SSDFS_EXTENTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid extent tree's state %#x\n",
+			  atomic_read(&tree->state));
+		goto finish_add_extent;
+	};
+
+	err = ssdfs_extents_tree_add_extent_nolock(tree, blk, extent, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add extent: "
+			  "blk %llu, err %d\n",
+			  blk, err);
 		goto finish_add_extent;
 	}
 
@@ -4450,6 +4697,462 @@ finish_change_generic_fork:
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	return err;
+}
+
+/*
+ * ssdfs_shrink_found_extent() - shrink found extent
+ * @old_extent: old state of extent
+ * @found_extent: shrinking extent [in|out]
+ */
+static inline
+int ssdfs_shrink_found_extent(struct ssdfs_raw_extent *old_extent,
+			      struct ssdfs_raw_extent *found_extent)
+{
+	u64 seg_id1, seg_id2;
+	u32 logical_blk1, logical_blk2;
+	u32 len1, len2;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!old_extent || !found_extent);
+
+	SSDFS_DBG("old_extent %p, found_extent %p\n",
+		  old_extent, found_extent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	seg_id1 = le64_to_cpu(old_extent->seg_id);
+	logical_blk1 = le32_to_cpu(old_extent->logical_blk);
+	len1 = le32_to_cpu(old_extent->len);
+
+	seg_id2 = le64_to_cpu(found_extent->seg_id);
+	logical_blk2 = le32_to_cpu(found_extent->logical_blk);
+	len2 = le32_to_cpu(found_extent->len);
+
+	if (seg_id1 != seg_id2) {
+		SSDFS_ERR("invalid segment ID: "
+			  "old_extent (seg_id %llu, "
+			  "logical_blk %u, len %u), "
+			  "found_extent (seg_id %llu, "
+			  "logical_blk %u, len %u)\n",
+			  seg_id1, logical_blk1, len1,
+			  seg_id2, logical_blk2, len2);
+		return -ERANGE;
+	}
+
+	if (logical_blk1 != logical_blk2) {
+		SSDFS_ERR("invalid old extent: "
+			  "old_extent (seg_id %llu, "
+			  "logical_blk %u, len %u), "
+			  "found_extent (seg_id %llu, "
+			  "logical_blk %u, len %u)\n",
+			  seg_id1, logical_blk1, len1,
+			  seg_id2, logical_blk2, len2);
+		return -ERANGE;
+	} else {
+		if (len1 > len2) {
+			SSDFS_ERR("invalid length of old extent: "
+				  "old_extent (seg_id %llu, "
+				  "logical_blk %u, len %u), "
+				  "found_extent (seg_id %llu, "
+				  "logical_blk %u, len %u)\n",
+				  seg_id1, logical_blk1, len1,
+				  seg_id2, logical_blk2, len2);
+			return -ERANGE;
+		} else if (len1 < len2) {
+			/* shrink extent */
+			found_extent->len = cpu_to_le32(len2 - len1);
+		} else {
+			SSDFS_DBG("extent is empty: "
+				  "old_extent (seg_id %llu, "
+				  "logical_blk %u, len %u), "
+				  "found_extent (seg_id %llu, "
+				  "logical_blk %u, len %u)\n",
+				  seg_id1, logical_blk1, len1,
+				  seg_id2, logical_blk2, len2);
+			return -ENODATA;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_delete_extent_in_fork() - delete extent from the fork
+ * @blk: logical block number
+ * @search: search object
+ *
+ * This method tries to delete extent from the fork.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - extent doesn't exist in the tree.
+ * %-EFAULT     - fail to create the hole in the fork.
+ */
+static
+int ssdfs_delete_extent_in_fork(u64 blk,
+				struct ssdfs_btree_search *search,
+				struct ssdfs_raw_extent *extent)
+{
+	struct ssdfs_raw_fork *fork;
+	struct ssdfs_raw_extent *cur_extent = NULL;
+	size_t extent_size = sizeof(struct ssdfs_raw_extent);
+	u64 start_offset;
+	u64 blks_count;
+	u64 cur_blk;
+	u32 len;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search || !extent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_DBG("blk %llu, search %p\n",
+		  blk, search);
+
+	switch (search->result.state) {
+	case SSDFS_BTREE_SEARCH_EMPTY_RESULT:
+		SSDFS_DBG("no fork in search object\n");
+		return -ENODATA;
+
+	case SSDFS_BTREE_SEARCH_VALID_ITEM:
+	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid search object state %#x\n",
+			  search->result.state);
+		return -ERANGE;
+	}
+
+	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+		SSDFS_ERR("invalid search buffer state %#x\n",
+			  search->result.buf_state);
+		return -ERANGE;
+	}
+
+	if (search->result.buf_size != sizeof(struct ssdfs_raw_fork) ||
+	    search->result.items_in_buffer != 1) {
+		SSDFS_ERR("invalid search buffer state %#x\n",
+			  search->result.buf_state);
+		return -ERANGE;
+	}
+
+	fork = &search->raw.fork;
+	start_offset = le64_to_cpu(fork->start_offset);
+	blks_count = le64_to_cpu(fork->blks_count);
+
+	if (start_offset >= U64_MAX || blks_count >= U64_MAX) {
+		SSDFS_ERR("invalid fork state: "
+			  "start_offset %llu, blks_count %llu\n",
+			  start_offset, blks_count);
+		return -ENODATA;
+	}
+
+	if (blk >= U64_MAX) {
+		SSDFS_ERR("invalid request: blk %llu\n",
+			  blk);
+		return -ERANGE;
+	}
+
+	if (start_offset <= blk && blk < (start_offset + blks_count)) {
+		/*
+		 * Expected state
+		 */
+	} else {
+		SSDFS_ERR("blk %llu is out of fork\n",
+			  blk);
+		return -ERANGE;
+	}
+
+	cur_blk = le64_to_cpu(fork->start_offset);
+	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; i++) {
+		len = le32_to_cpu(fork->extents[i].len);
+
+		if (cur_blk == blk) {
+			/* extent is found */
+			cur_extent = &fork->extents[i];
+			break;
+		} else if (blk < cur_blk) {
+			SSDFS_ERR("invalid extent: "
+				  "blk %llu, cur_blk %llu\n",
+				  blk, cur_blk);
+			return -ERANGE;
+		} else if (len >= U32_MAX || len == 0) {
+			/* empty extent */
+			break;
+		} else {
+			/* it needs to check the next extent */
+			cur_blk += len;
+		}
+	}
+
+	if (!cur_extent) {
+		SSDFS_ERR("fail to find the extent: blk %llu\n",
+			  blk);
+		return -ERANGE;
+	}
+
+	ssdfs_memcpy(extent, 0, extent_size,
+		     cur_extent, 0, extent_size,
+		     extent_size);
+
+	len = le32_to_cpu(fork->extents[i].len);
+
+	if (i < (SSDFS_INLINE_EXTENTS_COUNT - 1)) {
+		err = ssdfs_memmove(fork->extents,
+				    i * extent_size,
+				    SSDFS_INLINE_EXTENTS_COUNT * extent_size,
+				    fork->extents,
+				    (i + 1) * extent_size,
+				    SSDFS_INLINE_EXTENTS_COUNT * extent_size,
+				    (SSDFS_INLINE_EXTENTS_COUNT - i) *
+					extent_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move: err %d\n", err);
+			return err;
+		}
+	} else {
+		memset(&fork->extents[i], 0xFF, extent_size);
+	}
+
+	if (len >= U32_MAX || len == 0) {
+		/*
+		 * Do nothing. Empty extent.
+		 */
+	} else if (blks_count < len) {
+		SSDFS_ERR("blks_count %llu < len %u\n",
+			  blks_count, len);
+		return -ERANGE;
+	}
+
+	blks_count -= len;
+	fork->blks_count = cpu_to_le64(blks_count);
+
+	if (blks_count == 0) {
+		fork->start_offset = cpu_to_le64(U64_MAX);
+		SSDFS_DBG("empty fork\n");
+		return -ENODATA;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_extents_tree_move_extent() - move extent (ZNS SSD)
+ * @tree: extents tree
+ * @blk: logical block number
+ * @old_extent: old extent object
+ * @new_extent: new extent object
+ * @search: search object
+ *
+ * This method tries to change @old_extent on @new_extent in the @tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - extent doesn't exist in the tree.
+ */
+int ssdfs_extents_tree_move_extent(struct ssdfs_extents_btree_info *tree,
+				   u64 blk,
+				   struct ssdfs_raw_extent *old_extent,
+				   struct ssdfs_raw_extent *new_extent,
+				   struct ssdfs_btree_search *search)
+{
+	struct ssdfs_raw_extent extent;
+	u64 new_blk;
+	u32 len;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !old_extent || !new_extent || !search);
+
+	SSDFS_DBG("tree %p, search %p, blk %llu\n",
+		  tree, search, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&tree->state)) {
+	case SSDFS_EXTENTS_BTREE_CREATED:
+	case SSDFS_EXTENTS_BTREE_INITIALIZED:
+	case SSDFS_EXTENTS_BTREE_DIRTY:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid extent tree's state %#x\n",
+			  atomic_read(&tree->state));
+		return -ERANGE;
+	};
+
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+
+	if (need_initialize_extent_btree_search(blk, search)) {
+		ssdfs_btree_search_init(search);
+		search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+		search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+		search->request.start.hash = blk;
+		search->request.end.hash = blk;
+		search->request.count = 1;
+	}
+
+	down_write(&tree->lock);
+
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_FORKS_ARRAY:
+		err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find the inline fork: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_change_fork;
+		}
+
+		err = ssdfs_delete_extent_in_fork(blk, search,
+						  &extent);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to delete extent in fork: err %d\n",
+				  err);
+			goto finish_change_fork;
+		}
+
+		err = ssdfs_shrink_found_extent(old_extent, &extent);
+		if (err == -ENODATA) {
+			/*
+			 * Extent is empty. Do nothing.
+			 */
+			err = 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to shrink extent: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_change_fork;
+		} else {
+			len = le32_to_cpu(old_extent->len);
+			new_blk = blk + len;
+
+			err = ssdfs_add_extent_into_fork(new_blk,
+							 &extent,
+							 search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add extent into fork: "
+					  "err %d\n",
+					  err);
+				goto finish_change_fork;
+			}
+
+			ssdfs_debug_btree_search_object(search);
+
+			search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
+			err = ssdfs_extents_tree_add_inline_fork(tree, search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add fork: err %d\n", err);
+				goto finish_change_fork;
+			}
+		}
+
+		err = ssdfs_extents_tree_add_extent_nolock(tree, blk,
+							   new_extent,
+							   search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add extent: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_change_fork;
+		}
+		break;
+
+	case SSDFS_PRIVATE_EXTENTS_BTREE:
+		err = ssdfs_btree_find_item(tree->generic_tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find the fork: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_change_fork;
+		}
+
+		err = ssdfs_delete_extent_in_fork(blk, search,
+						  &extent);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to delete extent in fork: err %d\n",
+				  err);
+			goto finish_change_fork;
+		}
+
+		err = ssdfs_shrink_found_extent(old_extent, &extent);
+		if (err == -ENODATA) {
+			/*
+			 * Extent is empty. Do nothing.
+			 */
+			err = 0;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to shrink extent: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_change_fork;
+		} else {
+			len = le32_to_cpu(old_extent->len);
+			new_blk = blk + len;
+
+			err = ssdfs_add_extent_into_fork(new_blk,
+							 &extent,
+							 search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add extent into fork: "
+					  "err %d\n",
+					  err);
+				goto finish_change_fork;
+			}
+
+			ssdfs_debug_btree_search_object(search);
+
+			err = ssdfs_extents_tree_add_extent_nolock(tree,
+								   new_blk,
+								   &extent,
+								   search);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add extent: "
+					  "blk %llu, err %d\n",
+					  new_blk, err);
+				goto finish_change_fork;
+			}
+		}
+
+		err = ssdfs_extents_tree_add_extent_nolock(tree, blk,
+							   new_extent,
+							   search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add extent: "
+				  "blk %llu, err %d\n",
+				  blk, err);
+			goto finish_change_fork;
+		}
+		break;
+
+	default:
+		err = -ERANGE;
+		SSDFS_ERR("invalid extents tree type %#x\n",
+			  atomic_read(&tree->type));
+		break;
+	}
+
+finish_change_fork:
+	up_write(&tree->lock);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
+	ssdfs_debug_extents_btree_object(tree);
 
 	return err;
 }
@@ -4995,173 +5698,6 @@ int ssdfs_extents_tree_delete_fork(struct ssdfs_extents_btree_info *tree,
 	}
 
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_DIRTY);
-	return 0;
-}
-
-/*
- * ssdfs_delete_extent_in_fork() - delete extent from the fork
- * @blk: logical block number
- * @search: search object
- *
- * This method tries to delete extent from the fork.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ERANGE     - internal error.
- * %-ENODATA    - extent doesn't exist in the tree.
- * %-EFAULT     - fail to create the hole in the fork.
- */
-static
-int ssdfs_delete_extent_in_fork(u64 blk,
-				struct ssdfs_btree_search *search,
-				struct ssdfs_raw_extent *extent)
-{
-	struct ssdfs_raw_fork *fork;
-	struct ssdfs_raw_extent *cur_extent = NULL;
-	size_t extent_size = sizeof(struct ssdfs_raw_extent);
-	u64 start_offset;
-	u64 blks_count;
-	u64 cur_blk;
-	u32 len;
-	int i;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!search || !extent);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	SSDFS_DBG("blk %llu, search %p\n",
-		  blk, search);
-
-	switch (search->result.state) {
-	case SSDFS_BTREE_SEARCH_EMPTY_RESULT:
-		SSDFS_DBG("no fork in search object\n");
-		return -ENODATA;
-
-	case SSDFS_BTREE_SEARCH_VALID_ITEM:
-	case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-		/* expected state */
-		break;
-
-	default:
-		SSDFS_ERR("invalid search object state %#x\n",
-			  search->result.state);
-		return -ERANGE;
-	}
-
-	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
-		SSDFS_ERR("invalid search buffer state %#x\n",
-			  search->result.buf_state);
-		return -ERANGE;
-	}
-
-	if (search->result.buf_size != sizeof(struct ssdfs_raw_fork) ||
-	    search->result.items_in_buffer != 1) {
-		SSDFS_ERR("invalid search buffer state %#x\n",
-			  search->result.buf_state);
-		return -ERANGE;
-	}
-
-	fork = &search->raw.fork;
-	start_offset = le64_to_cpu(fork->start_offset);
-	blks_count = le64_to_cpu(fork->blks_count);
-
-	if (start_offset >= U64_MAX || blks_count >= U64_MAX) {
-		SSDFS_ERR("invalid fork state: "
-			  "start_offset %llu, blks_count %llu\n",
-			  start_offset, blks_count);
-		return -ENODATA;
-	}
-
-	if (blk >= U64_MAX) {
-		SSDFS_ERR("invalid request: blk %llu\n",
-			  blk);
-		return -ERANGE;
-	}
-
-	if (start_offset <= blk && blk < (start_offset + blks_count)) {
-		/*
-		 * Expected state
-		 */
-	} else {
-		SSDFS_ERR("blk %llu is out of fork\n",
-			  blk);
-		return -ERANGE;
-	}
-
-	cur_blk = le64_to_cpu(fork->start_offset);
-	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; i++) {
-		len = le32_to_cpu(fork->extents[i].len);
-
-		if (cur_blk == blk) {
-			/* extent is found */
-			cur_extent = &fork->extents[i];
-			break;
-		} else if (blk < cur_blk) {
-			SSDFS_ERR("invalid extent: "
-				  "blk %llu, cur_blk %llu\n",
-				  blk, cur_blk);
-			return -ERANGE;
-		} else if (len >= U32_MAX || len == 0) {
-			/* empty extent */
-			break;
-		} else {
-			/* it needs to check the next extent */
-			cur_blk += len;
-		}
-	}
-
-	if (!cur_extent) {
-		SSDFS_ERR("fail to find the extent: blk %llu\n",
-			  blk);
-		return -ERANGE;
-	}
-
-	ssdfs_memcpy(extent, 0, extent_size,
-		     cur_extent, 0, extent_size,
-		     extent_size);
-
-	len = le32_to_cpu(fork->extents[i].len);
-
-	if (i < (SSDFS_INLINE_EXTENTS_COUNT - 1)) {
-		err = ssdfs_memmove(fork->extents,
-				    i * extent_size,
-				    SSDFS_INLINE_EXTENTS_COUNT * extent_size,
-				    fork->extents,
-				    (i + 1) * extent_size,
-				    SSDFS_INLINE_EXTENTS_COUNT * extent_size,
-				    (SSDFS_INLINE_EXTENTS_COUNT - i) *
-					extent_size);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to move: err %d\n", err);
-			return err;
-		}
-	} else {
-		memset(&fork->extents[i], 0xFF, extent_size);
-	}
-
-	if (len >= U32_MAX || len == 0) {
-		/*
-		 * Do nothing. Empty extent.
-		 */
-	} else if (blks_count < len) {
-		SSDFS_ERR("blks_count %llu < len %u\n",
-			  blks_count, len);
-		return -ERANGE;
-	}
-
-	blks_count -= len;
-	fork->blks_count = cpu_to_le64(blks_count);
-
-	if (blks_count == 0) {
-		fork->start_offset = cpu_to_le64(U64_MAX);
-		SSDFS_DBG("empty fork\n");
-		return -ENODATA;
-	}
-
 	return 0;
 }
 
@@ -5764,6 +6300,62 @@ finish_truncate_generic_fork:
 	return err;
 }
 
+static int
+ssdfs_extents_tree_delete_inline_extent(struct ssdfs_extents_btree_info *tree,
+					u64 blk,
+					struct ssdfs_raw_extent *extent,
+					struct ssdfs_btree_search *search)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !tree->fsi || !extent || !search);
+	BUG_ON(!rwsem_is_locked(&tree->lock));
+
+	SSDFS_DBG("tree %p, search %p, blk %llu\n",
+		  tree, search, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
+
+	err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the inline fork: "
+			  "blk %llu, err %d\n",
+			  blk, err);
+		return err;
+	}
+
+	err = ssdfs_delete_extent_in_fork(blk, search, extent);
+	if (err == -ENODATA) {
+		/*
+		 * The fork doesn't contain any extents.
+		 */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to delete extent in fork: err %d\n",
+			  err);
+		return err;
+	}
+
+	if (err == -ENODATA) {
+		search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+		err = ssdfs_extents_tree_delete_inline_fork(tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to delete fork: err %d\n", err);
+			return err;
+		}
+	} else {
+		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+		err = ssdfs_extents_tree_change_inline_fork(tree, search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change fork: err %d\n", err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
 /*
  * ssdfs_extents_tree_delete_extent() - delete extent from the tree
  * @tree: extents tree
@@ -5839,42 +6431,15 @@ int ssdfs_extents_tree_delete_extent(struct ssdfs_extents_btree_info *tree,
 	case SSDFS_INLINE_FORKS_ARRAY:
 		down_write(&tree->lock);
 
-		err = ssdfs_extents_tree_find_inline_fork(tree, blk, search);
+		err = ssdfs_extents_tree_delete_inline_extent(tree,
+							      blk,
+							      &extent,
+							      search);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to find the inline fork: "
+			SSDFS_ERR("fail to delete inline extent: "
 				  "blk %llu, err %d\n",
 				  blk, err);
 			goto finish_delete_inline_extent;
-		}
-
-		err = ssdfs_delete_extent_in_fork(blk, search,
-						  &extent);
-		if (err == -ENODATA) {
-			/*
-			 * The fork doesn't contain any extents.
-			 */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to delete extent in fork: err %d\n",
-				  err);
-			goto finish_delete_inline_extent;
-		}
-
-		if (err == -ENODATA) {
-			search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
-			err = ssdfs_extents_tree_delete_inline_fork(tree,
-								   search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to delete fork: err %d\n", err);
-				goto finish_delete_inline_extent;
-			}
-		} else {
-			search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
-			err = ssdfs_extents_tree_change_inline_fork(tree,
-								   search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to change fork: err %d\n", err);
-				goto finish_delete_inline_extent;
-			}
 		}
 
 		len = le32_to_cpu(extent.len);

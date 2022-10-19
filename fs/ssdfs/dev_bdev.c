@@ -108,6 +108,16 @@ static __u64 ssdfs_bdev_device_size(struct super_block *sb)
 	return i_size_read(sb->s_bdev->bd_inode);
 }
 
+static int ssdfs_bdev_open_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
+static int ssdfs_bdev_close_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
 /*
  * ssdfs_bdev_bio_alloc() - allocate bio object
  * @bdev: block device
@@ -1127,17 +1137,19 @@ static void ssdfs_bdev_sync(struct super_block *sb)
 }
 
 const struct ssdfs_device_ops ssdfs_bdev_devops = {
-	.device_name = ssdfs_bdev_device_name,
-	.device_size = ssdfs_bdev_device_size,
-	.read = ssdfs_bdev_read,
-	.readpage = ssdfs_bdev_readpage,
-	.readpages = ssdfs_bdev_readpages,
-	.can_write_page = ssdfs_bdev_can_write_page,
-	.writepage = ssdfs_bdev_writepage,
-	.writepages = ssdfs_bdev_writepages,
-	.erase = ssdfs_bdev_erase,
-	.trim = ssdfs_bdev_trim,
-	.peb_isbad = ssdfs_bdev_peb_isbad,
-	.mark_peb_bad = ssdfs_bdev_mark_peb_bad,
-	.sync = ssdfs_bdev_sync,
+	.device_name		= ssdfs_bdev_device_name,
+	.device_size		= ssdfs_bdev_device_size,
+	.open_zone		= ssdfs_bdev_open_zone,
+	.close_zone		= ssdfs_bdev_close_zone,
+	.read			= ssdfs_bdev_read,
+	.readpage		= ssdfs_bdev_readpage,
+	.readpages		= ssdfs_bdev_readpages,
+	.can_write_page		= ssdfs_bdev_can_write_page,
+	.writepage		= ssdfs_bdev_writepage,
+	.writepages		= ssdfs_bdev_writepages,
+	.erase			= ssdfs_bdev_erase,
+	.trim			= ssdfs_bdev_trim,
+	.peb_isbad		= ssdfs_bdev_peb_isbad,
+	.mark_peb_bad		= ssdfs_bdev_mark_peb_bad,
+	.sync			= ssdfs_bdev_sync,
 };

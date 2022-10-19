@@ -109,6 +109,10 @@ int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 			  struct pagevec *pvec,
 			  u32 from_off, size_t len);
 
+/* dev_zns.c */
+u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
+u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset);
+
 /* dir.c */
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
@@ -269,7 +273,8 @@ bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr);
 bool is_ssdfs_partial_log_header_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_volume_header_csum_valid(void *vh_buf, size_t buf_size);
 bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size);
-bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
+bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
+					struct ssdfs_volume_header *vh,
 					u64 dev_size);
 int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_header *hdr,
@@ -323,6 +328,8 @@ void ssdfs_dentries_memory_leaks_init(void);
 void ssdfs_dentries_check_memory_leaks(void);
 void ssdfs_dev_bdev_memory_leaks_init(void);
 void ssdfs_dev_bdev_check_memory_leaks(void);
+void ssdfs_dev_zns_memory_leaks_init(void);
+void ssdfs_dev_zns_check_memory_leaks(void);
 void ssdfs_dev_mtd_memory_leaks_init(void);
 void ssdfs_dev_mtd_check_memory_leaks(void);
 void ssdfs_dir_memory_leaks_init(void);

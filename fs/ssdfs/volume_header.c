@@ -92,6 +92,7 @@ bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
 
 /*
  * is_ssdfs_volume_header_consistent() - check volume header consistency
+ * @fsi: pointer on shared file system object
  * @vh: volume header
  * @dev_size: partition size in bytes
  *
@@ -99,7 +100,8 @@ bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
  * [true]  - volume header is consistent.
  * [false] - volume header is corrupted.
  */
-bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
+bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
+					struct ssdfs_volume_header *vh,
 					u64 dev_size)
 {
 	u32 page_size;
@@ -161,8 +163,23 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_volume_header *vh,
 		break;
 
 	default:
-		SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
-		return false;
+		if (fsi->is_zns_device) {
+			u64 zone_size = le16_to_cpu(vh->megabytes_per_peb);
+
+			zone_size *= SSDFS_1MB;
+
+			if (fsi->zone_size != zone_size) {
+				SSDFS_ERR("invalid zone size: "
+					  "size1 %llu != size2 %llu\n",
+					  fsi->zone_size, zone_size);
+				return -ERANGE;
+			}
+
+			erase_size = zone_size;
+		} else {
+			SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
+			return false;
+		}
 	};
 
 	if (seg_size < erase_size) {
@@ -306,7 +323,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 	}
 
 	dev_size = fsi->devops->device_size(fsi->sb);
-	if (!is_ssdfs_volume_header_consistent(vh, dev_size)) {
+	if (!is_ssdfs_volume_header_consistent(fsi, vh, dev_size)) {
 		if (!silent)
 			SSDFS_ERR("volume header is corrupted\n");
 		else
@@ -364,6 +381,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 
 /*
  * is_ssdfs_partial_log_header_consistent() - check partial header consistency
+ * @fsi: pointer on shared file system object
  * @ph: partial log header
  * @dev_size: partition size in bytes
  *
@@ -371,7 +389,8 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
  * [true]  - partial log header is consistent.
  * [false] - partial log header is corrupted.
  */
-bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
+bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
+					    struct ssdfs_partial_log_header *ph,
 					    u64 dev_size)
 {
 	u32 page_size;
@@ -434,8 +453,23 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_partial_log_header *ph,
 		break;
 
 	default:
-		SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
-		return false;
+		if (fsi->is_zns_device) {
+			u64 zone_size = le16_to_cpu(fsi->vh->megabytes_per_peb);
+
+			zone_size *= SSDFS_1MB;
+
+			if (fsi->zone_size != zone_size) {
+				SSDFS_ERR("invalid zone size: "
+					  "size1 %llu != size2 %llu\n",
+					  fsi->zone_size, zone_size);
+				return -ERANGE;
+			}
+
+			erase_size = (u32)zone_size;
+		} else {
+			SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
+			return false;
+		}
 	};
 
 	if (seg_size < erase_size) {
@@ -552,7 +586,7 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 	}
 
 	dev_size = fsi->devops->device_size(fsi->sb);
-	if (!is_ssdfs_partial_log_header_consistent(hdr, dev_size)) {
+	if (!is_ssdfs_partial_log_header_consistent(fsi, hdr, dev_size)) {
 		if (!silent)
 			SSDFS_ERR("partial log header is corrupted\n");
 		else
@@ -906,7 +940,7 @@ int ssdfs_prepare_volume_header_for_commit(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	dev_size = fsi->devops->device_size(sb);
-	if (!is_ssdfs_volume_header_consistent(vh, dev_size)) {
+	if (!is_ssdfs_volume_header_consistent(fsi, vh, dev_size)) {
 		SSDFS_ERR("volume header is inconsistent\n");
 		return -EIO;
 	}

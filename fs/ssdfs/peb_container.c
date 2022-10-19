@@ -2146,7 +2146,7 @@ finish_define_relation:
 }
 
 /*
- * ssdfs_peb_container_prepare_destination() - prepare destination
+ * __ssdfs_peb_container_prepare_destination() - prepare destination
  * @ptr: pointer on PEB container
  *
  * This method tries to create the destination PEB in requested
@@ -2160,7 +2160,7 @@ finish_define_relation:
  * %-ENODATA    - try to create a relation.
  */
 static
-int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
+int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
@@ -2459,6 +2459,204 @@ fail_prepare_destination:
 	};
 
 	spin_unlock(&si->migration.lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_peb_container_prepare_zns_destination() - prepare ZNS destination
+ * @ptr: pointer on PEB container
+ *
+ * This method tries to create relation with shared segment for
+ * user data updates.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - try to create a relation.
+ */
+static
+int ssdfs_peb_container_prepare_zns_destination(struct ssdfs_peb_container *ptr)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_current_segment *cur_seg;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_info *dest_si = NULL;
+	struct ssdfs_peb_mapping_table *maptbl;
+	u64 start = U64_MAX;
+	int seg_type = SSDFS_USER_DATA_SEG_TYPE;
+	u16 peb_index, dst_peb_index;
+	u64 leb_id, dst_leb_id;
+	struct completion *end;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->src_peb);
+	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
+	BUG_ON(!mutex_is_locked(&ptr->migration_lock));
+
+	SSDFS_DBG("ptr %p, peb_index %u, "
+		  "peb_type %#x, log_pages %u\n",
+		  ptr,
+		  ptr->peb_index,
+		  ptr->peb_type,
+		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = ptr->parent_si->fsi;
+	maptbl = fsi->maptbl;
+	si = ptr->parent_si;
+	peb_index = ptr->peb_index;
+
+	leb_id = (si->seg_id * fsi->pebs_per_seg) + peb_index;
+
+	down_read(&fsi->cur_segs->lock);
+
+	cur_seg = fsi->cur_segs->objects[SSDFS_CUR_DATA_UPDATE_SEG];
+
+	ssdfs_current_segment_lock(cur_seg);
+
+	if (is_ssdfs_current_segment_empty(cur_seg)) {
+		start = cur_seg->seg_id;
+		dest_si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
+		if (IS_ERR_OR_NULL(dest_si)) {
+			err = (dest_si == NULL ? -ENOMEM : PTR_ERR(dest_si));
+			if (err == -ENOSPC) {
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
+			goto finish_get_current_segment;
+		}
+
+		err = ssdfs_current_segment_add(cur_seg, dest_si);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(dest_si);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add segment %llu as current: "
+				  "err %d\n",
+				  dest_si->seg_id, err);
+			goto finish_get_current_segment;
+		}
+	}
+
+	dst_peb_index = 0;
+	dst_leb_id = (dest_si->seg_id * fsi->pebs_per_seg) + dst_peb_index;
+
+finish_get_current_segment:
+	ssdfs_current_segment_unlock(cur_seg);
+	up_read(&fsi->cur_segs->lock);
+
+	if (unlikely(err))
+		return err;
+
+	err = ssdfs_maptbl_set_zns_indirect_relation(maptbl,
+						     leb_id,
+						     ptr->peb_type,
+						     &end);
+	if (err == -EAGAIN) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			ptr->dst_peb = NULL;
+			return err;
+		}
+
+		err = ssdfs_maptbl_set_zns_indirect_relation(maptbl,
+							     leb_id,
+							     ptr->peb_type,
+							     &end);
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set relation LEB to PEB: "
+			  "leb_id %llu, dst leb_id %llu"
+			  "err %d\n",
+			  leb_id, dst_leb_id, err);
+		ptr->dst_peb = NULL;
+		return err;
+	}
+
+	switch (atomic_read(&ptr->items_state)) {
+	case SSDFS_PEB1_SRC_CONTAINER:
+		atomic_set(&ptr->items_state,
+			SSDFS_PEB1_SRC_EXT_PTR_DST_CONTAINER);
+		break;
+
+	case SSDFS_PEB2_SRC_CONTAINER:
+		atomic_set(&ptr->items_state,
+			SSDFS_PEB2_SRC_EXT_PTR_DST_CONTAINER);
+		break;
+
+	default:
+		BUG();
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_container_prepare_destination() - prepare destination
+ * @ptr: pointer on PEB container
+ *
+ * This method tries to create the destination PEB in requested
+ * container.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - try to create a relation.
+ */
+static
+int ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->src_peb);
+	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
+
+	SSDFS_DBG("ptr %p, peb_index %u, "
+		  "peb_type %#x, log_pages %u\n",
+		  ptr,
+		  ptr->peb_index,
+		  ptr->peb_type,
+		  ptr->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = ptr->parent_si->fsi;
+	si = ptr->parent_si;
+
+	if (fsi->is_zns_device && is_ssdfs_peb_containing_user_data(ptr))
+		err = ssdfs_peb_container_prepare_zns_destination(ptr);
+	else
+		err = __ssdfs_peb_container_prepare_destination(ptr);
+
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to prepare destination: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  si->seg_id, ptr->peb_index, err);
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare destination: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  si->seg_id, ptr->peb_index, err);
+	}
 
 	return err;
 }
@@ -2914,6 +3112,137 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 }
 
 /*
+ * ssdfs_peb_container_break_zns_relation() - break relation with PEB
+ * @ptr: pointer on PEB container
+ * @state: current state of items
+ * @new_state: new state of items
+ *
+ * This method tries to break relation with shared zone.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_container_break_zns_relation(struct ssdfs_peb_container *ptr,
+					   int state, int new_state)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_peb_mapping_table *maptbl;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_invextree_info *invextree;
+	struct ssdfs_btree_search *search;
+	struct ssdfs_raw_extent extent;
+	u64 leb_id;
+	int invalid_blks;
+	struct completion *end;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->src_peb || !ptr->dst_peb);
+	BUG_ON(!ptr->parent_si || !ptr->parent_si->fsi);
+	BUG_ON(!rwsem_is_locked(&ptr->lock));
+
+	SSDFS_DBG("ptr %p, peb_index %u, "
+		  "peb_type %#x, log_pages %u, "
+		  "state %#x, new_state %#x\n",
+		  ptr,
+		  ptr->peb_index,
+		  ptr->peb_type,
+		  ptr->log_pages,
+		  state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = ptr->parent_si->fsi;
+	si = ptr->parent_si;
+	maptbl = fsi->maptbl;
+	seg_blkbmap = &si->blk_bmap;
+	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	err = ssdfs_maptbl_break_zns_indirect_relation(maptbl,
+						       leb_id,
+						       ptr->peb_type,
+						       &end);
+	if (err == -EAGAIN) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(end,
+					SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("maptbl init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_maptbl_break_zns_indirect_relation(maptbl,
+								leb_id,
+								ptr->peb_type,
+								&end);
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to break relation: "
+			  "leb_id %llu, peb_index %u, err %d\n",
+			  leb_id, ptr->peb_index, err);
+		return err;
+	}
+
+	invextree = fsi->invextree;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!invextree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	invalid_blks = ssdfs_segment_blk_bmap_get_invalid_pages(seg_blkbmap);
+	if (invalid_blks <= 0) {
+		SSDFS_ERR("invalid state: "
+			  "leb_id %llu, invalid_blks %d\n",
+			  leb_id, invalid_blks);
+		return -ERANGE;
+	}
+
+	search = ssdfs_btree_search_alloc();
+	if (!search) {
+		SSDFS_ERR("fail to allocate btree search object\n");
+		return -ENOMEM;
+	}
+
+	extent.seg_id = cpu_to_le64(si->seg_id);
+	extent.logical_blk = cpu_to_le32(0);
+	extent.len = cpu_to_le32(invalid_blks);
+
+	ssdfs_btree_search_init(search);
+	err = ssdfs_invextree_delete(invextree, &extent, search);
+	ssdfs_btree_search_free(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete invalidated extent: "
+			  "leb_id %llu, len %d, err %d\n",
+			  leb_id, invalid_blks, err);
+		return err;
+	}
+
+	if (new_state == SSDFS_PEB_CONTAINER_EMPTY) {
+		err = ssdfs_peb_object_destroy(ptr->src_peb);
+		WARN_ON(err);
+		err = 0;
+
+		memset(ptr->src_peb, 0, sizeof(struct ssdfs_peb_info));
+	} else
+		ptr->dst_peb = NULL;
+
+	atomic_set(&ptr->items_state, new_state);
+	atomic_set(&ptr->migration_state, SSDFS_PEB_NOT_MIGRATING);
+	atomic_dec(&ptr->parent_si->migration.migrating_pebs);
+
+	return 0;
+}
+
+/*
  * ssdfs_peb_container_forget_source() - forget about dirty source PEB
  * @ptr: pointer on PEB container
  *
@@ -3108,9 +3437,16 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 			goto finish_forget_source;
 		}
 
-		err = ssdfs_peb_container_break_relation(ptr,
-							 items_state,
-							 new_state);
+		if (fsi->is_zns_device) {
+			err = ssdfs_peb_container_break_zns_relation(ptr,
+								 items_state,
+								 new_state);
+		} else {
+			err = ssdfs_peb_container_break_relation(ptr,
+								 items_state,
+								 new_state);
+		}
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to break relation: "
 				  "leb_id %llu, items_state %#x"
@@ -3364,15 +3700,21 @@ try_get_current_peb:
 		ssdfs_peb_current_log_unlock(pebi);
 
 		if (is_peb_exhausted) {
-			pebi = pebc->dst_peb;
-			if (!pebi) {
-				err = -ERANGE;
-				SSDFS_WARN("destination PEB is NULL\n");
-				goto fail_to_get_current_peb;
-			}
+			if (fsi->is_zns_device &&
+			    is_ssdfs_peb_containing_user_data(pebc)) {
+				atomic_set(&pebc->migration_phase,
+					    SSDFS_SHARED_ZONE_RECEIVES_DATA);
+			} else {
+				pebi = pebc->dst_peb;
+				if (!pebi) {
+					err = -ERANGE;
+					SSDFS_WARN("destination PEB is NULL\n");
+					goto fail_to_get_current_peb;
+				}
 
-			atomic_set(&pebc->migration_phase,
-					SSDFS_DST_PEB_RECEIVES_DATA);
+				atomic_set(&pebc->migration_phase,
+						SSDFS_DST_PEB_RECEIVES_DATA);
+			}
 		} else {
 			atomic_set(&pebc->migration_phase,
 					SSDFS_SRC_PEB_NOT_EXHAUSTED);

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.24 [October 19, 2022]
+    (*) Introduce ZNS SSD support.
+
 v.4.23 [October 18, 2022]
     (*) Introduce invalidated extents btree.
 
