@@ -135,13 +135,21 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("si %p, seg_id %llu, "
+		  "pages_per_peb %u, "
+		  "init_flag %#x, init_state %#x\n",
+		  si, si->seg_id, pages_per_peb,
+		  init_flag, init_state);
+#else
 	SSDFS_DBG("si %p, seg_id %llu, "
 		  "pages_per_peb %u, "
 		  "init_flag %#x, init_state %#x\n",
 		  si, si->seg_id, pages_per_peb,
 		  init_flag, init_state);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = si->fsi;
 	bmap = &si->blk_bmap;
@@ -179,6 +187,13 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	}
 
 	set_seg_block_bmap_created(bmap);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 
 fail_create_seg_blk_bmap:
@@ -203,9 +218,15 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 		return;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, state %#x\n",
+		  ptr->parent_si->seg_id,
+		  atomic_read(&ptr->state));
+#else
 	SSDFS_DBG("seg_id %llu, state %#x\n",
 		  ptr->parent_si->seg_id,
 		  atomic_read(&ptr->state));
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	atomic_set(&ptr->seg_valid_blks, 0);
 	atomic_set(&ptr->seg_invalid_blks, 0);
@@ -218,6 +239,12 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 	ptr->peb = NULL;
 
 	atomic_set(&ptr->state, SSDFS_SEG_BLK_BMAP_STATE_UNKNOWN);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -234,14 +261,21 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 					struct ssdfs_block_bitmap_fragment *hdr,
 					u64 cno)
 {
+	int err = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
 	BUG_ON(!source || !hdr);
 	BUG_ON(ssdfs_page_vector_count(source) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, cno %llu\n",
+		  bmap->parent_si->seg_id, peb_index, cno);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu\n",
 		  bmap->parent_si->seg_id, peb_index, cno);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (atomic_read(&bmap->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
@@ -255,8 +289,16 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 		return -ERANGE;
 	}
 
-	return ssdfs_peb_blk_bmap_init(&bmap->peb[peb_index],
+	err = ssdfs_peb_blk_bmap_init(&bmap->peb[peb_index],
 					source, hdr, cno);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
 }
 
 /*

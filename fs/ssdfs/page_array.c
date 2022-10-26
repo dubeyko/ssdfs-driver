@@ -108,10 +108,10 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
 	BUG_ON(atomic_read(&array->state) != SSDFS_PAGE_ARRAY_UNKNOWN_STATE);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("capacity %d, array %p\n",
 		  capacity, array);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (capacity == 0) {
 		SSDFS_ERR("invalid capacity %d\n",
@@ -122,6 +122,10 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array)
 	init_rwsem(&array->lock);
 	atomic_set(&array->pages_capacity, capacity);
 	array->pages_count = 0;
+	array->last_page = SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE;
+
+	SSDFS_DBG("pages_count %lu, last_page %lu\n",
+		  array->pages_count, array->last_page);
 
 	array->pages = ssdfs_parray_kcalloc(capacity, sizeof(struct page *),
 					    GFP_KERNEL);
@@ -191,11 +195,11 @@ void ssdfs_destroy_page_array(struct ssdfs_page_array *array)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
 	BUG_ON(rwsem_is_locked(&array->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, state %#x\n",
 		  array,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_page_array_release_all_pages(array);
 
@@ -216,8 +220,12 @@ void ssdfs_destroy_page_array(struct ssdfs_page_array *array)
 		break;
 	}
 
+	SSDFS_DBG("pages_count %lu, last_page %lu\n",
+		  array->pages_count, array->last_page);
+
 	atomic_set(&array->pages_capacity, 0);
 	array->pages_count = 0;
+	array->last_page = SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE;
 
 	if (array->pages)
 		ssdfs_parray_kfree(array->pages);
@@ -261,11 +269,11 @@ int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, capacity %d, state %#x\n",
 		  array, capacity,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -391,6 +399,28 @@ bool is_ssdfs_page_array_empty(struct ssdfs_page_array *array)
 }
 
 /*
+ * ssdfs_page_array_get_last_page_index() - get latest page index
+ * @array: page array object
+ *
+ * This method tries to get latest page index.
+ */
+unsigned long
+ssdfs_page_array_get_last_page_index(struct ssdfs_page_array *array)
+{
+	unsigned long index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_read(&array->lock);
+	index = array->last_page;
+	up_read(&array->lock);
+
+	return index;
+}
+
+/*
  * ssdfs_page_array_add_page() - add memory page into the page array
  * @array: page array object
  * @page: memory page
@@ -417,11 +447,11 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page %p, page_index %lu, state %#x\n",
 		  array, page, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -505,6 +535,14 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 	ssdfs_parray_account_page(page);
 	array->pages_count++;
 
+	if (array->last_page >= SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE)
+		array->last_page = page_index;
+	else if (array->last_page < page_index)
+		array->last_page = page_index;
+
+	SSDFS_DBG("pages_count %lu, last_page %lu\n",
+		  array->pages_count, array->last_page);
+
 finish_add_page:
 	up_write(&array->lock);
 
@@ -537,11 +575,11 @@ ssdfs_page_array_allocate_page_locked(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -608,11 +646,11 @@ struct page *ssdfs_page_array_get_page(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -704,11 +742,11 @@ struct page *ssdfs_page_array_get_page_locked(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_page_array_get_page(array, page_index);
 	if (PTR_ERR(page) == -ENOENT) {
@@ -748,11 +786,11 @@ struct page *ssdfs_page_array_grab_page(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_page_array_get_page_locked(array, page_index);
 	if (PTR_ERR(page) == -ENOENT) {
@@ -1120,11 +1158,11 @@ int ssdfs_page_array_clear_all_dirty_pages(struct ssdfs_page_array *array)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, state %#x\n",
 		  array,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	capacity = atomic_read(&array->pages_capacity);
 
@@ -1174,9 +1212,11 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 
 	state = atomic_read(&array->state);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("array %p, start %lu, end %lu, "
 		  "tag %#x, max_pages %d, state %#x\n",
 		  array, *start, end, tag, max_pages, state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (state) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -1277,6 +1317,59 @@ finish_search:
 }
 
 /*
+ * ssdfs_page_array_define_last_page() - define last page index
+ * @array: page array object
+ * @capacity: pages capacity in array
+ *
+ * This method tries to define last page index.
+ */
+static inline
+void ssdfs_page_array_define_last_page(struct ssdfs_page_array *array,
+					int capacity)
+{
+	struct ssdfs_page_array_bitmap *alloc_bmap;
+	unsigned long *ptr;
+	unsigned long found;
+	unsigned long i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+	BUG_ON(!rwsem_is_locked(&array->lock));
+
+	SSDFS_DBG("array %p, state %#x\n",
+		  array, atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	alloc_bmap = &array->bmap[SSDFS_PAGE_ARRAY_ALLOC_BMAP];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!alloc_bmap->ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (array->pages_count == 0) {
+		/* empty array */
+		array->last_page = SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE;
+	} else if (array->last_page >= SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE) {
+		/* do nothing */
+	} else if (array->last_page > 0) {
+		for (i = array->last_page; i > array->pages_count; i--) {
+			spin_lock(&alloc_bmap->lock);
+			ptr = alloc_bmap->ptr;
+			found = bitmap_find_next_zero_area(ptr,
+							   capacity,
+							   i, 1, 0);
+			spin_unlock(&alloc_bmap->lock);
+
+			if (found == i)
+				break;
+		}
+
+		array->last_page = i;
+	} else
+		array->last_page = SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE;
+}
+
+/*
  * ssdfs_page_array_delete_page() - delete page from the page array
  * @array: page array object
  * @page_index: index of the page
@@ -1303,11 +1396,11 @@ struct page *ssdfs_page_array_delete_page(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, page_index %lu, state %#x\n",
 		  array, page_index,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -1381,6 +1474,12 @@ struct page *ssdfs_page_array_delete_page(struct ssdfs_page_array *array,
 	array->pages_count--;
 	array->pages[page_index] = NULL;
 
+	if (array->last_page == page_index)
+		ssdfs_page_array_define_last_page(array, capacity);
+
+	SSDFS_DBG("pages_count %lu, last_page %lu\n",
+		  array->pages_count, array->last_page);
+
 	if (is_clean)
 		atomic_set(&array->state, SSDFS_PAGE_ARRAY_CREATED);
 
@@ -1432,11 +1531,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !start);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, start %lu, end %lu, state %#x\n",
 		  array, *start, end,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&array->state)) {
 	case SSDFS_PAGE_ARRAY_CREATED:
@@ -1511,7 +1610,7 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 	end = min_t(int, capacity - 1, end);
 
-	*start = (int)found;
+	*start = found;
 
 	while (found <= end) {
 		spin_lock(&dirty_bmap->lock);
@@ -1562,6 +1661,11 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 		spin_unlock(&alloc_bmap->lock);
 	};
 
+	ssdfs_page_array_define_last_page(array, capacity);
+
+	SSDFS_DBG("pages_count %lu, last_page %lu\n",
+		  array->pages_count, array->last_page);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	released -= array->pages_count;
 
@@ -1597,11 +1701,11 @@ int ssdfs_page_array_release_all_pages(struct ssdfs_page_array *array)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, state %#x\n",
 		  array,
 		  atomic_read(&array->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	capacity = atomic_read(&array->pages_capacity);
 

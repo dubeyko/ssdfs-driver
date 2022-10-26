@@ -2586,7 +2586,11 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	int i;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, silent %#x\n", fsi, silent);
+#else
 	SSDFS_DBG("fsi %p, silent %#x\n", fsi, silent);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_init_sb_info(fsi, &fsi->sbi);
 	if (likely(!err)) {
@@ -2955,7 +2959,11 @@ free_environment:
 			goto forget_buf;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("DONE: gather superblock info\n");
+#else
 	SSDFS_DBG("DONE: gather superblock info\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 

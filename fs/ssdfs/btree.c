@@ -6153,6 +6153,10 @@ int ssdfs_btree_delete_all(struct ssdfs_btree *tree)
 	if (unlikely(err))
 		SSDFS_ERR("fail to delete all items: err %d\n", err);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_btree_search_free(search);
 	return err;
 }

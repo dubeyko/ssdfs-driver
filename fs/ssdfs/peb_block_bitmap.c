@@ -91,12 +91,19 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent || !parent->peb);
 	BUG_ON(peb_index >= parent->pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("parent %p, peb_index %u, "
+		  "items_count %u, init_flag %#x, init_state %#x\n",
+		  parent, peb_index,
+		  items_count, init_flag, init_state);
+#else
 	SSDFS_DBG("parent %p, peb_index %u, "
 		  "items_count %u, init_flag %#x, init_state %#x\n",
 		  parent, peb_index,
 		  items_count, init_flag, init_state);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = parent->parent_si->fsi;
 	bmap = &parent->peb[peb_index];
@@ -157,6 +164,13 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 
 	atomic_set(&bmap->buffers_state, SSDFS_PEB_BMAP1_SRC);
 	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_CREATED);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 
 fail_create_peb_bmap:
@@ -177,7 +191,19 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(rwsem_is_locked(&ptr->lock));
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ptr %p, peb_index %u, "
+		  "state %#x, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, "
+		  "free_logical_blks %d\n",
+		  ptr, ptr->peb_index,
+		  atomic_read(&ptr->state),
+		  atomic_read(&ptr->peb_valid_blks),
+		  atomic_read(&ptr->peb_invalid_blks),
+		  atomic_read(&ptr->peb_free_blks));
+#else
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "state %#x, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, "
@@ -187,7 +213,7 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 		  atomic_read(&ptr->peb_valid_blks),
 		  atomic_read(&ptr->peb_invalid_blks),
 		  atomic_read(&ptr->peb_free_blks));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!is_peb_block_bmap_initialized(ptr))
 		SSDFS_WARN("PEB's block bitmap hasn't been initialized\n");
@@ -204,6 +230,12 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 	ssdfs_block_bmap_destroy(&ptr->buffer[SSDFS_PEB_BLK_BMAP2]);
 
 	atomic_set(&ptr->state, SSDFS_PEB_BLK_BMAP_STATE_UNKNOWN);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -256,8 +288,13 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	fsi = bmap->parent->parent_si->fsi;
 	si = bmap->parent->parent_si;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, cno %llu\n",
+		  si->seg_id, bmap->peb_index, cno);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu\n",
 		  si->seg_id, bmap->peb_index, cno);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	bmap_state = atomic_read(&bmap->state);
 	switch (bmap_state) {
@@ -663,6 +700,12 @@ fail_init_blk_bmap:
 
 finish_init_blk_bmap:
 	up_write(&bmap->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

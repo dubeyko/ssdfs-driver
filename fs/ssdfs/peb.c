@@ -559,14 +559,23 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 			  pebc->parent_si->pebs_count);
 		return -EINVAL;
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("pebi %p, seg %llu, peb_id %llu, "
+		  "peb_index %u, pebc %p, "
+		  "peb_state %#x, peb_migration_id %u\n",
+		  pebi, pebc->parent_si->seg_id,
+		  pebi->peb_id, pebc->peb_index, pebc,
+		  peb_state, peb_migration_id);
+#else
 	SSDFS_DBG("pebi %p, seg %llu, peb_id %llu, "
 		  "peb_index %u, pebc %p, "
 		  "peb_state %#x, peb_migration_id %u\n",
 		  pebi, pebc->parent_si->seg_id,
 		  pebi->peb_id, pebc->peb_index, pebc,
 		  peb_state, peb_migration_id);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 	flags = fsi->metadata_options.blk2off_tbl.flags;
@@ -681,6 +690,12 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 
 	atomic_set(&pebi->state, SSDFS_PEB_OBJECT_CREATED);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 
 fail_conctruct_peb_obj:
@@ -712,14 +727,18 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	BUG_ON(!pebi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("peb_id %llu\n", pebi->peb_id);
+#else
+	SSDFS_DBG("peb_id %llu\n", pebi->peb_id);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	fsi = pebi->pebc->parent_si->fsi;
 
 	if (pebi->peb_id >= (fsi->nsegs * fsi->pebs_per_seg)) {
 		SSDFS_DBG("invalid PEB id %llu\n", pebi->peb_id);
 		return -EINVAL;
 	}
-
-	SSDFS_DBG("peb_id %llu\n", pebi->peb_id);
 
 	err = ssdfs_peb_current_log_destroy(pebi);
 
@@ -742,6 +761,12 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	}
 
 	ssdfs_destroy_page_array(&pebi->cache);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

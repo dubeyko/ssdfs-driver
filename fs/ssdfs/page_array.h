@@ -37,6 +37,7 @@ struct ssdfs_page_array_bitmap {
  * @lock: page array's lock
  * @pages: array of memory pages' pointers
  * @pages_count: current number of allocated pages
+ * @last_page: latest page index
  * @bmap_bytes: number of bytes in every bitmap
  * bmap: array of bitmaps
  */
@@ -47,11 +48,13 @@ struct ssdfs_page_array {
 	struct rw_semaphore lock;
 	struct page **pages;
 	unsigned long pages_count;
+#define SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE	(ULONG_MAX)
+	unsigned long last_page;
 	size_t bmap_bytes;
 
-#define SSDFS_PAGE_ARRAY_ALLOC_BMAP	(0)
-#define SSDFS_PAGE_ARRAY_DIRTY_BMAP	(1)
-#define SSDFS_PAGE_ARRAY_BMAP_COUNT	(2)
+#define SSDFS_PAGE_ARRAY_ALLOC_BMAP		(0)
+#define SSDFS_PAGE_ARRAY_DIRTY_BMAP		(1)
+#define SSDFS_PAGE_ARRAY_BMAP_COUNT		(2)
 	struct ssdfs_page_array_bitmap bmap[SSDFS_PAGE_ARRAY_BMAP_COUNT];
 };
 
@@ -77,6 +80,8 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array);
 void ssdfs_destroy_page_array(struct ssdfs_page_array *array);
 int ssdfs_reinit_page_array(int capacity, struct ssdfs_page_array *array);
 bool is_ssdfs_page_array_empty(struct ssdfs_page_array *array);
+unsigned long
+ssdfs_page_array_get_last_page_index(struct ssdfs_page_array *array);
 int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 			      struct page *page,
 			      unsigned long page_index);

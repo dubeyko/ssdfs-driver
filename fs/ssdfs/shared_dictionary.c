@@ -432,7 +432,11 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p\n", fsi);
+#else
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi->shdictree = NULL;
 
@@ -474,7 +478,11 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 
 	fsi->shdictree = ptr;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("DONE: create shared dictionary\n");
+#else
 	SSDFS_DBG("DONE: create shared dictionary\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 
@@ -494,9 +502,13 @@ void ssdfs_shared_dict_btree_destroy(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-
-	SSDFS_DBG("shdictree %p\n", fsi->shdictree);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("shdictree %p\n", fsi->shdictree);
+#else
+	SSDFS_DBG("shdictree %p\n", fsi->shdictree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!fsi->shdictree)
 		return;
@@ -506,6 +518,12 @@ void ssdfs_shared_dict_btree_destroy(struct ssdfs_fs_info *fsi)
 	ssdfs_btree_destroy(&fsi->shdictree->generic_tree);
 	ssdfs_dict_kfree(fsi->shdictree);
 	fsi->shdictree = NULL;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -526,7 +544,11 @@ int ssdfs_shared_dict_btree_init(struct ssdfs_fs_info *fsi)
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("shdictree %p\n", fsi->shdictree);
+#else
 	SSDFS_DBG("shdictree %p\n", fsi->shdictree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!fsi->shdictree)
 		return -ERANGE;
@@ -582,6 +604,13 @@ int ssdfs_shared_dict_btree_init(struct ssdfs_fs_info *fsi)
 finish_init:
 	ssdfs_debug_shdict_btree_object(tree);
 	wake_up_all(&tree->wait_queue);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -644,7 +673,11 @@ int ssdfs_shared_dict_btree_flush(struct ssdfs_shared_dict_btree_info *tree)
 	BUG_ON(!tree);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p\n", tree);
+#else
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (atomic_read(&tree->state) == SSDFS_SHDICT_BTREE_CORRUPTED) {
 		SSDFS_WARN("shared dictionary is corrupted\n");
@@ -737,6 +770,13 @@ finish_flush:
 	up_write(&tree->lock);
 
 	ssdfs_btree_search_free(search);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -768,8 +808,13 @@ int ssdfs_shared_dict_get_name(struct ssdfs_shared_dict_btree_info *tree,
 	BUG_ON(!tree || !name);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("tree %p, hash %llx\n",
+		  tree, hash);
+#else
 	SSDFS_DBG("tree %p, hash %llx\n",
 		  tree, hash);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 try_check_state:
 	switch (atomic_read(&tree->state)) {
@@ -891,6 +936,13 @@ try_check_state:
 
 finish_get_name:
 	ssdfs_btree_search_free(search);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -920,10 +972,15 @@ int ssdfs_shared_dict_save_name(struct ssdfs_shared_dict_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !str);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("hash %llx, name %s, len %u\n",
+		  hash, str->name, str->len);
+#else
 	SSDFS_DBG("hash %llx, name %s, len %u\n",
 		  hash, str->name, str->len);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 try_check_state:
 	switch (atomic_read(&tree->state)) {
@@ -1011,6 +1068,12 @@ finish_save_name:
 		ssdfs_name_info_free(ni);
 	if (search)
 		ssdfs_btree_search_free(search);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

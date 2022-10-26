@@ -14598,6 +14598,12 @@ finish_process_free_space_absence:
 		mutex_unlock(&pebc->migration_lock);
 		ssdfs_unlock_current_peb(pebc);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished: err %d\n", err);
+#else
+		SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 		if (err == -EAGAIN) {
 			if (kthread_should_stop())
 				goto fail_create_log;
@@ -14696,6 +14702,12 @@ fail_create_log:
 			}
 
 			ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+			SSDFS_ERR("finished: err %d\n", err);
+#else
+			SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 			goto stop_flush_thread;
 		} else {
@@ -14954,6 +14966,12 @@ finish_create_request_processing:
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished\n");
+#else
+		SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 finish_wait_next_create_request:
 		if (thread_state == SSDFS_FLUSH_THREAD_COMMIT_LOG)
 			goto next_partial_step;
@@ -15191,6 +15209,12 @@ finish_update_request_processing:
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished\n");
+#else
+		SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 finish_wait_next_data_request:
 		if (thread_state == SSDFS_FLUSH_THREAD_COMMIT_LOG ||
 		    thread_state == SSDFS_FLUSH_THREAD_START_MIGRATION_NOW) {
@@ -15272,6 +15296,12 @@ finish_wait_next_data_request:
 		ssdfs_peb_current_log_unlock(pebi);
 
 		ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished\n");
+#else
+		SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 		thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 		goto next_partial_step;
@@ -15422,6 +15452,12 @@ process_migration_failure:
 			goto repeat;
 		}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished\n");
+#else
+		SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 		if (state != SSDFS_LOG_CREATED) {
 			thread_state =
 				SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
@@ -15563,6 +15599,12 @@ make_log_commit:
 		ssdfs_peb_check_update_queue(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished: err %d\n", err);
+#else
+		SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 		if (unlikely(err))
 			goto repeat;
 
@@ -15679,6 +15721,12 @@ make_log_commit:
 
 stimulate_migration_done:
 			mutex_unlock(&pebc->migration_lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+			SSDFS_ERR("finished: err %d\n", err);
+#else
+			SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 			if (err == -ENODATA) {
 				err = 0;

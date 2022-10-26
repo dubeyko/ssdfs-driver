@@ -468,6 +468,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		init_state = SSDFS_BLK_STATE_MAX;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create segment block bitmap: seg %llu\n", seg);
+#else
+	SSDFS_DBG("create segment block bitmap: seg %llu\n", seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	err = ssdfs_segment_blk_bmap_create(si, fsi->pages_per_peb,
 					    init_flag, init_state);
 	if (unlikely(err)) {
@@ -475,6 +481,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 			  "err %d\n", err);
 		goto destroy_seg_obj;
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create blk2off table: seg %llu\n", seg);
+#else
+	SSDFS_DBG("create blk2off table: seg %llu\n", seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	si->blk2off_table = ssdfs_blk2off_table_create(fsi,
 							fsi->leb_pages_capacity,
@@ -485,6 +497,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("fail to allocate memory for translation table\n");
 		goto destroy_seg_obj;
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create PEB containers: seg %llu\n", seg);
+#else
+	SSDFS_DBG("create PEB containers: seg %llu\n", seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	for (i = 0; i < si->pebs_count; i++) {
 		err = ssdfs_peb_container_create(fsi, seg, i,
@@ -529,6 +547,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	destination->state = SSDFS_VALID_DESTINATION;
 	spin_unlock(&si->migration.lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("get free pages: seg %llu\n", seg);
+#else
+	SSDFS_DBG("get free pages: seg %llu\n", seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	/*
 	 * The goal of this cycle is to finish segment object
 	 * initialization. The segment object should have
@@ -555,6 +579,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 			goto destroy_seg_obj;
 		}
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create sysfs group: seg %llu\n", seg);
+#else
+	SSDFS_DBG("create sysfs group: seg %llu\n", seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_sysfs_create_seg_group(si);
 	if (unlikely(err)) {
@@ -1087,9 +1117,15 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 		seg_type != SSDFS_USER_DATA_SEG_TYPE);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, seg_type %#x, "
+		  "seg_id %llu, start_search_id %llu\n",
+		  fsi, seg_type, seg_id, start_search_id);
+#else
 	SSDFS_DBG("fsi %p, seg_type %#x, "
 		  "seg_id %llu, start_search_id %llu\n",
 		  fsi, seg_type, seg_id, start_search_id);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (seg_id == U64_MAX) {
 		err = ssdfs_find_new_segment(fsi, seg_type,
@@ -1218,6 +1254,13 @@ create_segment_object:
 	}
 
 	ssdfs_segment_get_object(si);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return si;
 }
 

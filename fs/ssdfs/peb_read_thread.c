@@ -3676,10 +3676,17 @@ int ssdfs_peb_read_src_all_log_headers(struct ssdfs_peb_container *pebc,
 		goto finish_read_src_all_log_headers;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, peb_id %llu\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index,
+		  pebi->peb_id);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index,
 		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_peb_read_all_log_headers(pebi, req);
 	if (unlikely(err)) {
@@ -3691,6 +3698,12 @@ int ssdfs_peb_read_src_all_log_headers(struct ssdfs_peb_container *pebc,
 
 finish_read_src_all_log_headers:
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -3731,10 +3744,17 @@ int ssdfs_peb_read_dst_all_log_headers(struct ssdfs_peb_container *pebc,
 		goto finish_read_dst_all_log_headers;
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, peb_id %llu\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index,
+		  pebi->peb_id);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_id %llu\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index,
 		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	err = ssdfs_peb_read_all_log_headers(pebi, req);
 	if (unlikely(err)) {
@@ -3746,6 +3766,12 @@ int ssdfs_peb_read_dst_all_log_headers(struct ssdfs_peb_container *pebc,
 
 finish_read_dst_all_log_headers:
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -3882,6 +3908,7 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 	void *kaddr;
 	size_t hdr_buf_size = sizeof(struct ssdfs_segment_header);
 	u32 byte_offset, page_offset;
+	unsigned long last_page_idx;
 	int i;
 	int err = 0;
 
@@ -3896,7 +3923,22 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 
 	*new_log_start_page = U16_MAX;
 
-	for (i = fsi->pages_per_peb - 1; i >= 0; i--) {
+	last_page_idx = ssdfs_page_array_get_last_page_index(&pebi->cache);
+
+	if (last_page_idx >= SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE) {
+		SSDFS_ERR("empty page array: last_page_idx %lu\n",
+			  last_page_idx);
+		return -ERANGE;
+	}
+
+	if (last_page_idx >= fsi->pages_per_peb) {
+		SSDFS_ERR("corrupted page array: "
+			  "last_page_idx %lu, fsi->pages_per_peb %u\n",
+			  last_page_idx, fsi->pages_per_peb);
+		return -ERANGE;
+	}
+
+	for (i = (int)last_page_idx; i >= 0; i--) {
 		page = ssdfs_page_array_get_page_locked(&pebi->cache, i);
 		if (IS_ERR_OR_NULL(page)) {
 			if (page == NULL) {
@@ -6453,7 +6495,7 @@ int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
 	} while (len > 0);
 
 	if (err == -ENODATA) {
-		/* all extents have beedn processed */
+		/* all extents have been processed */
 		err = 0;
 	}
 
@@ -6531,12 +6573,18 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 
 	pebi->log_pages = env->log_pages;
 
+	SSDFS_DBG("ssdfs_find_last_partial_log: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+
 	err = ssdfs_find_last_partial_log(fsi, pebi, env,
 					  &new_log_start_page);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to find last partial log: err %d\n", err);
 		goto fail_init_using_blk_bmap;
 	}
+
+	SSDFS_DBG("ssdfs_pre_fetch_block_bitmap: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
 	err = ssdfs_pre_fetch_block_bitmap(pebi, env);
 	if (unlikely(err)) {
@@ -6546,6 +6594,9 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 			  env->log_offset, err);
 		goto fail_init_using_blk_bmap;
 	}
+
+	SSDFS_DBG("ssdfs_read_checked_block_bitmap_header: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
 	err = ssdfs_read_checked_block_bitmap_header(pebi, env);
 	if (unlikely(err)) {
@@ -6558,6 +6609,9 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 
 	fragments_count = le16_to_cpu(env->b_init.bmap_hdr->fragments_count);
 	bytes_count = le32_to_cpu(env->b_init.bmap_hdr->bytes_count);
+
+	SSDFS_DBG("ssdfs_init_block_bitmap_fragment: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
 	for (i = 0; i < fragments_count; i++) {
 		env->b_init.fragment_index = i;
@@ -6583,6 +6637,9 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 
 	if (fsi->is_zns_device &&
 	    is_ssdfs_peb_containing_user_data(pebi->pebc)) {
+		SSDFS_DBG("ssdfs_correct_zone_block_bitmap: seg_id %llu, peb %llu\n",
+			  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+
 		err = ssdfs_correct_zone_block_bitmap(pebi);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to correct zone's block bitmap: "
@@ -6672,6 +6729,9 @@ fail_init_using_blk_bmap:
 	if (unlikely(err))
 		goto fail_init_using_peb;
 
+	SSDFS_DBG("ssdfs_pre_fetch_blk2off_table_area: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+
 	err = ssdfs_pre_fetch_blk2off_table_area(pebi, env);
 	if (err == -ENOENT) {
 		SSDFS_DBG("blk2off table's fragment is absent\n");
@@ -6684,6 +6744,9 @@ fail_init_using_blk_bmap:
 		goto fail_init_using_peb;
 	}
 
+	SSDFS_DBG("ssdfs_pre_fetch_blk_desc_table_area: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+
 	err = ssdfs_pre_fetch_blk_desc_table_area(pebi, env);
 	if (err == -ENOENT) {
 		SSDFS_DBG("blk desc table's fragment is absent\n");
@@ -6695,6 +6758,9 @@ fail_init_using_blk_bmap:
 			  env->log_offset, err);
 		goto fail_init_using_peb;
 	}
+
+	SSDFS_DBG("ssdfs_read_blk2off_table_fragment: seg_id %llu, peb %llu\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
 
 	err = ssdfs_read_blk2off_table_fragment(pebi, env);
 	if (unlikely(err)) {
@@ -6727,6 +6793,7 @@ fail_init_using_blk_bmap:
 	}
 
 fail_init_using_peb:
+	SSDFS_DBG("finished\n");
 	return err;
 }
 
@@ -6952,10 +7019,15 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7041,6 +7113,12 @@ finish_src_init_using_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -7069,10 +7147,15 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7192,6 +7275,13 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 finish_dst_init_using_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -7220,10 +7310,15 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7364,6 +7459,12 @@ finish_src_init_used_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 
@@ -7392,10 +7493,15 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -7535,6 +7641,12 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 finish_dst_init_used_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -7800,6 +7912,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *blk2off_table = NULL;
 	u64 cno;
+	unsigned long last_page_idx;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7838,7 +7951,22 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	pebi->env.log_offset = fsi->pages_per_peb;
+	last_page_idx = ssdfs_page_array_get_last_page_index(&pebi->cache);
+
+	if (last_page_idx >= SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE) {
+		SSDFS_ERR("empty page array: last_page_idx %lu\n",
+			  last_page_idx);
+		return -ERANGE;
+	}
+
+	if (last_page_idx >= fsi->pages_per_peb) {
+		SSDFS_ERR("corrupted page array: "
+			  "last_page_idx %lu, fsi->pages_per_peb %u\n",
+			  last_page_idx, fsi->pages_per_peb);
+		return -ERANGE;
+	}
+
+	pebi->env.log_offset = (u32)last_page_idx;
 
 	do {
 		err = ssdfs_find_prev_partial_log(fsi, pebi,
@@ -8165,10 +8293,15 @@ int ssdfs_src_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	down_read(&pebc->lock);
 
@@ -8192,6 +8325,12 @@ int ssdfs_src_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 
 finish_src_peb_init_blk2off_table:
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -8221,10 +8360,15 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	down_read(&pebc->lock);
 
@@ -8317,6 +8461,12 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 
 finish_dst_peb_init_blk2off_table:
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -8899,14 +9049,23 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#else
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -8949,6 +9108,12 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 				  err1);
 		}
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }
@@ -9165,13 +9330,21 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#else
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd,
 		  req->private.type);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -9246,6 +9419,12 @@ end_init:
 				  err1);
 		}
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }

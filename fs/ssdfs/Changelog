@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.25 [October 25, 2022]
+    (*) Fix issue with long mount.
+
 v.4.24 [October 19, 2022]
     (*) Introduce ZNS SSD support.
 

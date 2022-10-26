@@ -1481,11 +1481,17 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 			  peb_index, si->pebs_count);
 		return -EINVAL;
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, seg %llu, peb_index %u, "
+		  "peb_type %#x, si %p\n",
+		  fsi, seg, peb_index, peb_type, si);
+#else
 	SSDFS_DBG("fsi %p, seg %llu, peb_index %u, "
 		  "peb_type %#x, si %p\n",
 		  fsi, seg, peb_index, peb_type, si);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	pebc = &si->peb_array[peb_index];
 
@@ -1752,6 +1758,13 @@ finish_init_peb_container:
 	SSDFS_DBG("PEB has been created: "
 		  "seg %llu, peb_index %u\n",
 		  seg, peb_index);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 
 fail_create_peb_objects:
@@ -1780,8 +1793,13 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 	migration_state = atomic_read(&ptr->migration_state);
 	items_state = atomic_read(&ptr->items_state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ptr %p, migration_state %#x, items_state %#x\n",
+		  ptr, migration_state, items_state);
+#else
 	SSDFS_DBG("ptr %p, migration_state %#x, items_state %#x\n",
 		  ptr, migration_state, items_state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (migration_state <= SSDFS_PEB_UNKNOWN_MIGRATION_STATE ||
 	    migration_state >= SSDFS_PEB_MIGRATION_STATE_MAX) {
@@ -1922,6 +1940,12 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 
 	atomic_set(&ptr->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
 	atomic_set(&ptr->items_state, SSDFS_PEB_CONTAINER_EMPTY);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -4262,12 +4286,17 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	si = pebc->parent_si;
 	fsi = pebc->parent_si->fsi;
 
-#ifdef CONFIG_SSDFS_DEBUG
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("pebc %p, seg %llu, peb_index %u, "
+		  "peb_type %#x, log_pages %u\n",
+		  pebc, si->seg_id, pebc->peb_index,
+		  pebc->peb_type, pebc->log_pages);
+#else
 	SSDFS_DBG("pebc %p, seg %llu, peb_index %u, "
 		  "peb_type %#x, log_pages %u\n",
 		  pebc, si->seg_id, pebc->peb_index,
 		  pebc->peb_type, pebc->log_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	seg_blkbmap = &si->blk_bmap;
 	maptbl = fsi->maptbl;
@@ -4741,6 +4770,12 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			  items_state);
 		return -ERANGE;
 	};
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 }

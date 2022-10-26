@@ -579,10 +579,10 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !tbl);
 	BUG_ON(array_type >= SSDFS_MAPTBL_SEG_COPY_MAX);
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, array_type %#x, tbl %p, segs_count %u\n",
 		  fsi, array_type, tbl, tbl->segs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	log_pages = le16_to_cpu(fsi->vh->maptbl_log_pages);
 
@@ -863,7 +863,11 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
+#else
 	SSDFS_DBG("fsi %p, segs_count %llu\n", fsi, fsi->nsegs);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	kaddr = ssdfs_map_tbl_kzalloc(maptbl_obj_size, GFP_KERNEL);
 	if (!kaddr) {
@@ -1001,7 +1005,11 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 
 	atomic_set(&ptr->state, SSDFS_MAPTBL_CREATED);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("DONE: create mapping table\n");
+#else
 	SSDFS_DBG("DONE: create mapping table\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
 
@@ -1038,7 +1046,11 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("maptbl %p\n", fsi->maptbl);
+#else
 	SSDFS_DBG("maptbl %p\n", fsi->maptbl);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!fsi->maptbl)
 		return;
@@ -1053,6 +1065,12 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 	fsi->maptbl->dirty_bmap = NULL;
 	ssdfs_map_tbl_kfree(fsi->maptbl);
 	fsi->maptbl = NULL;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -1560,11 +1578,19 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 	BUG_ON(!rwsem_is_locked(&pebc->parent_si->fsi->maptbl->tbl_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb_index %u, portion_id %u, "
+		  "pages_count %zu, pages_capacity %zu\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, area->portion_id,
+		  area->pages_count, area->pages_capacity);
+#else
 	SSDFS_DBG("seg %llu, peb_index %u, portion_id %u, "
 		  "pages_count %zu, pages_capacity %zu\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, area->portion_id,
 		  area->pages_count, area->pages_capacity);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 	tbl = fsi->maptbl;
@@ -1795,7 +1821,11 @@ finish_fragment_init:
 
 	complete_all(&fdesc->init_end);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -3614,7 +3644,11 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 	BUG_ON(!tbl);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("maptbl %p\n", tbl);
+#else
 	SSDFS_DBG("maptbl %p\n", tbl);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_ERROR) {
 		ssdfs_fs_error(tbl->fsi->sb,
@@ -3733,7 +3767,13 @@ finish_prepare_migration:
 
 finish_maptbl_flush:
 	atomic_and(~SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 

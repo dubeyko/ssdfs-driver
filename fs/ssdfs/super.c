@@ -225,7 +225,11 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 	unsigned long old_mount_opts;
 	int err;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("sb %p, flags %#x, data %p\n", sb, *flags, data);
+#else
 	SSDFS_DBG("sb %p, flags %#x, data %p\n", sb, *flags, data);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	old_sb_flags = sb->s_flags;
 	old_mount_opts = fsi->mount_opts;
@@ -308,6 +312,13 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 	}
 out:
 	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 
 restore_opts:
@@ -2313,7 +2324,11 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 	BUG_ON(!sb || !last_sb_log || !payload);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("sb %p, fs_state %u", sb, fs_state);
+#else
 	SSDFS_DBG("sb %p, fs_state %u", sb, fs_state);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	BUG_ON(fs_state > SSDFS_LAST_KNOWN_FS_STATE);
 
@@ -2372,6 +2387,12 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 		     sizeof(struct ssdfs_peb_extent));
 
 finish_commit_super:
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return err;
 }
 

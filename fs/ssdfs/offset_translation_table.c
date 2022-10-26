@@ -465,10 +465,15 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	BUG_ON(items_count > (2 * fsi->pages_per_seg));
 	BUG_ON(type <= SSDFS_UNKNOWN_OFF_TABLE_TYPE ||
 		type >= SSDFS_OFF_TABLE_MAX_TYPE);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("fsi %p, items_count %u, type %u, state %#x\n",
+		  fsi, items_count, type,  state);
+#else
 	SSDFS_DBG("fsi %p, items_count %u, type %u, state %#x\n",
 		  fsi, items_count, type,  state);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	ptr = (struct ssdfs_blk2off_table *)ssdfs_blk2off_kzalloc(table_size,
 								  GFP_KERNEL);
@@ -608,6 +613,10 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 
 	atomic_set(&ptr->state, state);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return ptr;
 
 free_phys_offs_array:
@@ -645,7 +654,11 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	int state;
 	int i;
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("table %p\n", table);
+#else
 	SSDFS_DBG("table %p\n", table);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!table) {
 		WARN_ON(!table);
@@ -714,6 +727,10 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	}
 
 	ssdfs_blk2off_kfree(table);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 }
 
 /*
@@ -2394,10 +2411,15 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !blk2off_pvec || !blk_desc_pvec);
 	BUG_ON(peb_index >= table->pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("table %p, peb_index %u\n",
+		  table, peb_index);
+#else
 	SSDFS_DBG("table %p, peb_index %u\n",
 		  table, peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	memset(&portion, 0, sizeof(struct ssdfs_blk2off_init));
 
@@ -2492,14 +2514,18 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 unlock_translation_table:
 	up_write(&table->translation_lock);
 
-	SSDFS_DBG("finished: err %d\n", err);
-
 	ssdfs_blk2off_kvfree(portion.bmap);
 	portion.bmap = NULL;
 	ssdfs_blk2off_kvfree(portion.pos_array);
 	portion.pos_array = NULL;
 	ssdfs_blk2off_kfree(portion.extent_array);
 	portion.extent_array = NULL;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -4385,13 +4411,21 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si->fsi);
 	BUG_ON(!pebi->pebc->parent_si->blk2off_table);
 	BUG_ON(!desc || !cur_page || !write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb %llu, current_log.start_page %u, "
+		  "cur_page %lu, write_offset %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  pebi->current_log.start_page,
+		  *cur_page, *write_offset);
+#else
 	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
 		  "cur_page %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  pebi->current_log.start_page,
 		  *cur_page, *write_offset);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	peb_index = pebi->peb_index;
@@ -4578,6 +4612,12 @@ fail_store_off_table:
 	ssdfs_blk2off_table_free_snapshot(&snapshot);
 
 	ssdfs_blk2off_kfree(extents);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
 }
@@ -5737,7 +5777,26 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("table %p, logical_blk %u, peb_index %u, "
+		  "off->page_desc.logical_offset %u, "
+		  "off->page_desc.logical_blk %u, "
+		  "off->page_desc.peb_page %u, "
+		  "off->blk_state.log_start_page %u, "
+		  "off->blk_state.log_area %u, "
+		  "off->blk_state.peb_migration_id %u, "
+		  "off->blk_state.byte_offset %u\n",
+		  table, logical_blk, peb_index,
+		  le32_to_cpu(off->page_desc.logical_offset),
+		  le16_to_cpu(off->page_desc.logical_blk),
+		  le16_to_cpu(off->page_desc.peb_page),
+		  le16_to_cpu(off->blk_state.log_start_page),
+		  off->blk_state.log_area,
+		  off->blk_state.peb_migration_id,
+		  le32_to_cpu(off->blk_state.byte_offset));
+#else
 	SSDFS_DBG("table %p, logical_blk %u, peb_index %u, "
 		  "off->page_desc.logical_offset %u, "
 		  "off->page_desc.logical_blk %u, "
@@ -5754,7 +5813,7 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 		  off->blk_state.log_area,
 		  off->blk_state.peb_migration_id,
 		  le32_to_cpu(off->blk_state.byte_offset));
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (peb_index >= table->pebs_count) {
 		SSDFS_ERR("fail to change offset value: "
@@ -5889,6 +5948,12 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 
 	wake_up_all(&table->wait_queue);
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	return 0;
 
 finish_fragment_modification:
@@ -5986,7 +6051,17 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !extent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("table %p, len %u, extent %p, "
+		  "used_logical_blks %u, free_logical_blks %u, "
+		  "last_allocated_blk %u\n",
+		  table, len, extent,
+		  table->used_logical_blks,
+		  table->free_logical_blks,
+		  table->last_allocated_blk);
+#else
 	SSDFS_DBG("table %p, len %u, extent %p, "
 		  "used_logical_blks %u, free_logical_blks %u, "
 		  "last_allocated_blk %u\n",
@@ -5994,7 +6069,7 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 		  table->used_logical_blks,
 		  table->free_logical_blks,
 		  table->last_allocated_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_CREATED) {
 		SSDFS_DBG("unable to allocate before initialization\n");
@@ -6108,6 +6183,12 @@ finish_allocation:
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
 	ssdfs_debug_blk2off_table_object(table);
 
 	return err;
@@ -6213,10 +6294,15 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !extent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("table %p, extent (start %u, len %u)\n",
+		  table, extent->start_lblk, extent->len);
+#else
 	SSDFS_DBG("table %p, extent (start %u, len %u)\n",
 		  table, extent->start_lblk, extent->len);
-#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_CREATED) {
 		SSDFS_DBG("unable to free before initialization: "
@@ -6417,6 +6503,12 @@ finish_freeing:
 			  extent->start_lblk, extent->len);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	wake_up_all(&table->wait_queue);
 
