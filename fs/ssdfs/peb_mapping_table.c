@@ -5527,7 +5527,7 @@ finish_inconsistent_case:
 		}
 
 		consistency = SSDFS_PEB_STATE_CONSISTENT;
-		err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
+		err = ssdfs_maptbl_cache_forget_leb2peb_nolock(cache,
 								leb_id,
 								consistency);
 		if (unlikely(err)) {
@@ -7635,12 +7635,12 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	u16 item_index;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tbl %p, fdesc %p, leb_id %llu, "
 		  "selected_index %u, new_peb_state %#x\n",
 		  tbl, fdesc, leb_id,
 		  selected_index, new_peb_state);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !fdesc || !old_peb_state);
 	BUG_ON(selected_index >= U16_MAX);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));

@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.26 [October 27, 2022]
+    (*) Fix PEB mapping table cache issue with adding item.
+    (*) Fix deadlock in PEB mapping table cache logic.
+
 v.4.25 [October 25, 2022]
     (*) Fix issue with long mount.
 
