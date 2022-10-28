@@ -5603,6 +5603,10 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 	u32 chain_compr_bytes, chain_uncompr_bytes;
 	u32 read_bytes, uncompr_bytes;
 	u16 fragments_count;
+	u16 last_free_blk;
+	u32 bmap_bytes = 0;
+	u32 bmap_pages = 0;
+	u32 pages_count;
 	int i;
 	int err = 0;
 
@@ -5666,6 +5670,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 	frag_array = (struct ssdfs_fragment_desc *)((u8 *)frag_hdr + hdr_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("BLOCK BITMAP FRAGMENT HEADER: "
 		  "peb_index %u, sequence_id %u, flags %#x, "
 		  "type %#x, last_free_blk %u, "
@@ -5689,12 +5694,15 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 		  frag_hdr->chain_hdr.magic,
 		  frag_hdr->chain_hdr.type,
 		  le16_to_cpu(frag_hdr->chain_hdr.flags));
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	if (le16_to_cpu(frag_hdr->last_free_blk) >= fsi->pages_per_peb) {
+	last_free_blk = le16_to_cpu(frag_hdr->last_free_blk);
+
+	if (last_free_blk >= fsi->pages_per_peb) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 				"block bitmap is corrupted: "
 				"last_free_blk %u is invalid\n",
-				le16_to_cpu(frag_hdr->last_free_blk));
+				last_free_blk);
 		err = -EIO;
 		goto fail_read_blk_bmap;
 	}
@@ -5761,6 +5769,25 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 	read_bytes = 0;
 	uncompr_bytes = 0;
 
+	if (last_free_blk == 0) {
+		/* need to process as minumum one page */
+		bmap_pages = 1;
+	} else {
+		bmap_bytes = BLK_BMAP_BYTES(last_free_blk);
+		bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	}
+
+	pages_count = min_t(u32, (u32)fragments_count, bmap_pages);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_free_blk %u, bmap_bytes %u, "
+		  "bmap_pages %u, fragments_count %u, "
+		  "pages_count %u\n",
+		  last_free_blk, bmap_bytes,
+		  bmap_pages, fragments_count,
+		  pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	for (i = 0; i < fragments_count; i++) {
 		struct ssdfs_fragment_desc *frag_desc;
 		struct page *page;
@@ -5781,6 +5808,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 		frag_desc = &frag_array[i];
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("FRAGMENT DESCRIPTOR: index %d, "
 			  "offset %u, compr_size %u, uncompr_size %u, "
 			  "checksum %#x, sequence_id %u, magic %#x, "
@@ -5794,6 +5822,14 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 			  frag_desc->magic,
 			  frag_desc->type,
 			  frag_desc->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (i >= pages_count) {
+			SSDFS_DBG("account fragment bytes: "
+				  "i %d, pages_count %u\n",
+				  i, pages_count);
+			goto account_fragment_bytes;
+		}
 
 		page = ssdfs_page_vector_allocate(&env->b_init.array);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
@@ -5835,15 +5871,18 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 			goto fail_read_blk_bmap;
 		}
 
+account_fragment_bytes:
 		read_bytes += le16_to_cpu(frag_desc->compr_size);
 		uncompr_bytes += le16_to_cpu(frag_desc->uncompr_size);
 		env->b_init.read_bytes += le16_to_cpu(frag_desc->compr_size);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_free_blk %u, metadata_blks %u, invalid_blks %u\n",
 		  le16_to_cpu(frag_hdr->last_free_blk),
 		  le16_to_cpu(frag_hdr->metadata_blks),
 		  le16_to_cpu(frag_hdr->invalid_blks));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 fail_read_blk_bmap:
 	ssdfs_read_kfree(cdata_buf);

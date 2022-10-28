@@ -35,6 +35,7 @@ int ssdfs_page_vector_init(struct ssdfs_page_vector *array);
 int ssdfs_page_vector_reinit(struct ssdfs_page_vector *array);
 u32 ssdfs_page_vector_count(struct ssdfs_page_vector *array);
 u32 ssdfs_page_vector_space(struct ssdfs_page_vector *array);
+u32 ssdfs_page_vector_capacity(struct ssdfs_page_vector *array);
 struct page *ssdfs_page_vector_allocate(struct ssdfs_page_vector *array);
 int ssdfs_page_vector_add(struct ssdfs_page_vector *array,
 			  struct page *page);

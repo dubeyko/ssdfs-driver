@@ -327,22 +327,25 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
 		array = &ptr->storage.array;
 
-		for (i = 0; i < bmap_pages; i++) {
-			if (ssdfs_page_vector_space(array) == 0) {
-				SSDFS_ERR("unable to add page: i %d\n", i);
-				return -ENOMEM;
-			}
-
-			page = ssdfs_page_vector_allocate(array);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate #%d page\n", i);
-				return err;
-			}
-
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+		if (ssdfs_page_vector_space(array) < bmap_pages) {
+			SSDFS_ERR("page vector capacity is not enough: "
+				  "capacity %u, free_space %u, "
+				  "bmap_pages %zu\n",
+				  ssdfs_page_vector_capacity(array),
+				  ssdfs_page_vector_space(array),
+				  bmap_pages);
+			return -ENOMEM;
 		}
+
+		page = ssdfs_page_vector_allocate(array);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+			SSDFS_ERR("unable to allocate #%d page\n", i);
+			return err;
+		}
+
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -977,6 +980,26 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 				return err;
 			}
 		}
+
+		for (; i < ssdfs_page_vector_capacity(array); i++) {
+			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+				SSDFS_ERR("unable to allocate #%d page\n", i);
+				return err;
+			}
+
+			ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
+
+			ssdfs_block_bmap_forget_page(page);
+			err = ssdfs_page_vector_add(snapshot, page);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add page: "
+					  "index %d, err %d\n",
+					  i, err);
+				return err;
+			}
+		}
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -1358,9 +1381,14 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
 		array = &blk_bmap->storage.array;
 
-		if (page_index >= ssdfs_page_vector_count(array)) {
+		if (page_index >= ssdfs_page_vector_capacity(array)) {
 			SSDFS_ERR("invalid page index %d\n", page_index);
 			return -EOPNOTSUPP;
+		}
+
+		if (page_index >= ssdfs_page_vector_count(array)) {
+			SSDFS_DBG("absent page index %d\n", page_index);
+			return -ENOENT;
 		}
 
 		err = ssdfs_memcpy_from_page(&cache,
@@ -1652,11 +1680,26 @@ int ssdfs_save_cache_in_storage(struct ssdfs_block_bmap *blk_bmap)
 		case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
 			array = &blk_bmap->storage.array;
 
-			if (page_index >= ssdfs_page_vector_count(array)) {
+			if (page_index >= ssdfs_page_vector_capacity(array)) {
 				SSDFS_ERR("block bmap's cache is corrupted: "
 					  "page_index %d, offset %u\n",
 					  page_index, (u32)offset);
 				return -EINVAL;
+			}
+
+			while (page_index >= ssdfs_page_vector_count(array)) {
+				struct page *page;
+
+				page = ssdfs_page_vector_allocate(array);
+				if (IS_ERR_OR_NULL(page)) {
+					err = (page == NULL ? -ENOMEM :
+								PTR_ERR(page));
+					SSDFS_ERR("unable to allocate page\n");
+					return err;
+				}
+
+				SSDFS_DBG("page %p, count %d\n",
+					  page, page_ref_count(page));
 			}
 
 			err = ssdfs_memcpy_to_page(array->pages[page_index],
@@ -2176,9 +2219,31 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		  aligned_start, aligned_end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (page_index = aligned_start / items_per_page;
-	     page_index < ssdfs_page_vector_count(array);
-	     page_index++) {
+	page_index = aligned_start / items_per_page;
+
+	if (page_index >= ssdfs_page_vector_capacity(array)) {
+		SSDFS_DBG("page_index %d >= capacity %u\n",
+			  page_index,
+			  ssdfs_page_vector_capacity(array));
+		return -ENODATA;
+	}
+
+	if (page_index >= ssdfs_page_vector_count(array)) {
+		if (blk_state != SSDFS_BLK_FREE)
+			return -ENODATA;
+
+		*found_blk = page_index * items_per_page;
+
+		if (*found_blk >= max_blk)
+			err = -ENODATA;
+
+		SSDFS_DBG("block %u has been found for state %#x, "
+			  "err %d\n",
+			  *found_blk, blk_state, err);
+		return err;
+	}
+
+	for (; page_index < ssdfs_page_vector_count(array); page_index++) {
 		u32 byte_index, search_bytes = U32_MAX;
 		u8 start_off = U8_MAX;
 
@@ -2808,9 +2873,20 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
-	for (page_index = aligned_start / items_per_page;
-	     page_index < ssdfs_page_vector_count(array);
-	     page_index++) {
+	page_index = aligned_start / items_per_page;
+
+	if (page_index >= ssdfs_page_vector_count(array)) {
+		SSDFS_DBG("page_index %d >= count %u\n",
+			  page_index,
+			  ssdfs_page_vector_count(array));
+
+		*found_end = max_blk;
+		SSDFS_DBG("area end %u has been found for state %#x\n",
+			  *found_end, blk_state);
+		return 0;
+	}
+
+	for (; page_index < ssdfs_page_vector_count(array); page_index++) {
 		u32 byte_index, search_bytes = U32_MAX;
 		u8 start_off = U8_MAX;
 
@@ -3172,6 +3248,7 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 	void *kaddr;
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	int i;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
@@ -3191,6 +3268,27 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 				  page_index,
 				  ssdfs_page_vector_count(array));
 			return -EINVAL;
+		}
+
+		if (page_index >= ssdfs_page_vector_capacity(array)) {
+			SSDFS_ERR("invalid page index %d, pagevec capacity %d\n",
+				  page_index,
+				  ssdfs_page_vector_capacity(array));
+			return -EINVAL;
+		}
+
+		while (page_index >= ssdfs_page_vector_count(array)) {
+			struct page *page;
+
+			page = ssdfs_page_vector_allocate(array);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+				SSDFS_ERR("unable to allocate page\n");
+				return err;
+			}
+
+			SSDFS_DBG("page %p, count %d\n",
+				  page, page_ref_count(page));
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG

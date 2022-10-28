@@ -213,7 +213,7 @@ int ssdfs_page_vector_reinit(struct ssdfs_page_vector *array)
 }
 
 /*
- * ssdfs_page_vector_count() - count of paged in page vector
+ * ssdfs_page_vector_count() - count of pages in page vector
  * @array: pointer on page vector
  */
 u32 ssdfs_page_vector_count(struct ssdfs_page_vector *array)
@@ -242,6 +242,19 @@ u32 ssdfs_page_vector_space(struct ssdfs_page_vector *array)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return array->capacity - array->count;
+}
+
+/*
+ * ssdfs_page_vector_capacity() - capacity of page vector
+ * @array: pointer on page vector
+ */
+u32 ssdfs_page_vector_capacity(struct ssdfs_page_vector *array)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return array->capacity;
 }
 
 /*
