@@ -24,6 +24,7 @@
 
 #include "request_queue.h"
 #include "sequence_array.h"
+#include "dynamic_array.h"
 
 /*
  * struct ssdfs_phys_offset_table_fragment - fragment of phys offsets table
@@ -159,6 +160,19 @@ enum {
 	SSDFS_LBMAP_ARRAY_MAX,
 };
 
+
+/*
+ * struct ssdfs_bitmap_array - bitmap array
+ * @bits_count: number of available bits in every bitmap
+ * @bytes_count: number of allocated bytes in every bitmap
+ * @array: array of bitmaps
+ */
+struct ssdfs_bitmap_array {
+	u32 bits_count;
+	u32 bytes_count;
+	unsigned long *array[SSDFS_LBMAP_ARRAY_MAX];
+};
+
 /*
  * struct ssdfs_blk2off_table - in-core translation table
  * @flags: flags of translation table
@@ -195,9 +209,9 @@ struct ssdfs_blk2off_table {
 	u16 used_logical_blks;
 	u16 free_logical_blks;
 	u16 last_allocated_blk;
-	unsigned long *lbmap[SSDFS_LBMAP_ARRAY_MAX];
-	struct ssdfs_offset_position *lblk2off;
-	struct ssdfs_migrating_block **migrating_blks;
+	struct ssdfs_bitmap_array lbmap;
+	struct ssdfs_dynamic_array lblk2off;
+	struct ssdfs_dynamic_array migrating_blks;
 	u16 lblk2off_capacity;
 
 	struct ssdfs_phys_offset_table_array *peb;
@@ -209,6 +223,11 @@ struct ssdfs_blk2off_table {
 
 	struct ssdfs_fs_info *fsi;
 };
+
+#define SSDFS_OFF_POS(ptr) \
+	((struct ssdfs_offset_position *)(ptr))
+#define SSDFS_MIGRATING_BLK(ptr) \
+	((struct ssdfs_migrating_block *)(ptr))
 
 enum {
 	SSDFS_BLK2OFF_OBJECT_UNKNOWN,

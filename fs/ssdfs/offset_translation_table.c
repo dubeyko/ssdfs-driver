@@ -213,8 +213,6 @@ void ssdfs_blk2off_frag_free(void *ptr)
  * @pot_hdr_off: fragment header's offset
  * @bmap: temporary bitmap
  * @bmap_bytes: bytes in temporaray bitmap
- * @pos_array: offset positions temporary array
- * @pos_count: count of offset positions in array
  * @extent_array: translation extents temporary array
  * @extents_count: count of extents in array
  */
@@ -234,9 +232,6 @@ struct ssdfs_blk2off_init {
 
 	unsigned long *bmap;
 	u32 bmap_bytes;
-
-	struct ssdfs_offset_position *pos_array;
-	u16 pos_count;
 
 	struct ssdfs_translation_extent *extent_array;
 	u16 extents_count;
@@ -345,8 +340,7 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 			  bool need_allocate)
 {
 	struct ssdfs_migrating_block *migrating_blk = NULL;
-	u32 items_count = table->lblk2off_capacity;
-	size_t ptr_size = sizeof(struct ssdfs_migrating_block *);
+	void *kaddr;
 	size_t blk_desc_size = sizeof(struct ssdfs_migrating_block);
 	int err = 0;
 
@@ -358,22 +352,7 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 		  logical_blk, need_allocate);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!table->migrating_blks) {
-		table->migrating_blks =
-			ssdfs_blk2off_kvzalloc(ptr_size * items_count,
-						GFP_KERNEL);
-		if (!table->migrating_blks) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate migrating blocks array\n");
-			goto fail_get_migrating_blk;
-		}
-
-		SSDFS_DBG("migrating_blks array has been allocated\n");
-	}
-
-	migrating_blk = table->migrating_blks[logical_blk];
-
-	if (!migrating_blk && need_allocate) {
+	if (need_allocate) {
 		migrating_blk = ssdfs_blk2off_kzalloc(blk_desc_size,
 							GFP_KERNEL);
 		if (!migrating_blk) {
@@ -382,10 +361,39 @@ ssdfs_get_migrating_block(struct ssdfs_blk2off_table *table,
 			goto fail_get_migrating_blk;
 		}
 
-		table->migrating_blks[logical_blk] = migrating_blk;
+		err = ssdfs_dynamic_array_set(&table->migrating_blks,
+						logical_blk, &migrating_blk);
+		if (unlikely(err)) {
+			ssdfs_blk2off_kfree(migrating_blk);
+			SSDFS_ERR("fail to store migrating block in array: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			goto fail_get_migrating_blk;
+		}
 
 		SSDFS_DBG("logical_blk %u descriptor has been allocated\n",
 			  logical_blk);
+	} else {
+		kaddr = ssdfs_dynamic_array_get_locked(&table->migrating_blks,
+							logical_blk);
+		if (IS_ERR_OR_NULL(kaddr)) {
+			err = (kaddr == NULL ? -ENOENT : PTR_ERR(kaddr));
+			SSDFS_ERR("fail to get migrating block: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			goto fail_get_migrating_blk;
+		}
+
+		migrating_blk = SSDFS_MIGRATING_BLK(*(u8 **)kaddr);
+
+		err = ssdfs_dynamic_array_release(&table->migrating_blks,
+						  logical_blk, kaddr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			goto fail_get_migrating_blk;
+		}
 	}
 
 	if (migrating_blk) {
@@ -409,25 +417,33 @@ fail_get_migrating_blk:
 static
 void ssdfs_destroy_migrating_blocks_array(struct ssdfs_blk2off_table *table)
 {
-	u32 items_count = table->lblk2off_capacity;
+	struct ssdfs_migrating_block *migrating_blk = NULL;
+	void *kaddr;
+	u32 items_count;
 	u32 i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!table->migrating_blks)
-		return;
+	items_count = ssdfs_dynamic_array_items_count(&table->migrating_blks);
 
 	for (i = 0; i < items_count; i++) {
-		if (table->migrating_blks[i]) {
-			ssdfs_blk2off_kfree(table->migrating_blks[i]);
-			table->migrating_blks[i] = NULL;
-		}
+		kaddr = ssdfs_dynamic_array_get_locked(&table->migrating_blks,
+							i);
+		if (IS_ERR_OR_NULL(kaddr))
+			continue;
+
+		migrating_blk = SSDFS_MIGRATING_BLK(*(u8 **)kaddr);
+
+		if (migrating_blk)
+			ssdfs_blk2off_kfree(migrating_blk);
+
+		ssdfs_dynamic_array_release(&table->migrating_blks,
+					    i, kaddr);
 	}
 
-	ssdfs_blk2off_kvfree(table->migrating_blks);
-	table->migrating_blks = NULL;
+	ssdfs_dynamic_array_destroy(&table->migrating_blks);
 }
 
 /*
@@ -454,7 +470,9 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	struct ssdfs_blk2off_table *ptr;
 	size_t table_size = sizeof(struct ssdfs_blk2off_table);
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
+	size_t ptr_size = sizeof(struct ssdfs_migrating_block *);
 	u32 bytes;
+	u32 bits_count;
 	int i;
 	int err;
 
@@ -500,10 +518,17 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	ptr->last_allocated_blk = U16_MAX;
 
 	bytes = ssdfs_blk2off_table_bmap_bytes(items_count);
+	bytes = min_t(u32, bytes, PAGE_SIZE);
+	bits_count = bytes * BITS_PER_BYTE;
+
+	ptr->lbmap.bits_count = bits_count;
+	ptr->lbmap.bytes_count = bytes;
+
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		ptr->lbmap[i] = (unsigned long *)ssdfs_blk2off_kvzalloc(bytes,
-								    GFP_KERNEL);
-		if (!ptr->lbmap[i]) {
+		ptr->lbmap.array[i] =
+			(unsigned long *)ssdfs_blk2off_kvzalloc(bytes,
+								GFP_KERNEL);
+		if (!ptr->lbmap.array[i]) {
 			err = -ENOMEM;
 			SSDFS_ERR("fail to allocate bitmaps\n");
 			goto free_bmap;
@@ -511,24 +536,35 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	}
 
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, modification_bmap %lx\n",
-		  *ptr->lbmap[SSDFS_LBMAP_INIT_INDEX],
-		  *ptr->lbmap[SSDFS_LBMAP_STATE_INDEX],
-		  *ptr->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX]);
+		  *ptr->lbmap.array[SSDFS_LBMAP_INIT_INDEX],
+		  *ptr->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
+		  *ptr->lbmap.array[SSDFS_LBMAP_MODIFICATION_INDEX]);
 
 	ptr->lblk2off_capacity = items_count;
 
-	ptr->lblk2off = ssdfs_blk2off_kvzalloc(off_pos_size * items_count,
-						GFP_KERNEL);
-	if (!ptr->lblk2off) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate translation array: "
+	err = ssdfs_dynamic_array_create(&ptr->lblk2off,
+					 ptr->lblk2off_capacity,
+					 off_pos_size,
+					 0xFF);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create translation array: "
 			  "off_pos_size %zu, items_count %u\n",
-			  off_pos_size, items_count);
+			  off_pos_size,
+			  ptr->lblk2off_capacity);
 		goto free_bmap;
 	}
-	memset(ptr->lblk2off, 0xFF, off_pos_size * items_count);
 
-	ptr->migrating_blks = NULL;
+	err = ssdfs_dynamic_array_create(&ptr->migrating_blks,
+					 ptr->lblk2off_capacity,
+					 ptr_size,
+					 0);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create migrating blocks array: "
+			  "ptr_size %zu, items_count %u\n",
+			  ptr_size,
+			  ptr->lblk2off_capacity);
+		goto free_bmap;
+	}
 
 	ptr->pebs_count = fsi->pebs_per_seg;
 
@@ -604,9 +640,9 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 	}
 
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, modification_bmap %lx\n",
-		  *ptr->lbmap[SSDFS_LBMAP_INIT_INDEX],
-		  *ptr->lbmap[SSDFS_LBMAP_STATE_INDEX],
-		  *ptr->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX]);
+		  *ptr->lbmap.array[SSDFS_LBMAP_INIT_INDEX],
+		  *ptr->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
+		  *ptr->lbmap.array[SSDFS_LBMAP_MODIFICATION_INDEX]);
 
 	init_completion(&ptr->partial_init_end);
 	init_completion(&ptr->full_init_end);
@@ -631,11 +667,16 @@ free_phys_offs_array:
 	ssdfs_blk2off_kfree(ptr->peb);
 
 free_translation_array:
-	ssdfs_blk2off_kvfree(ptr->lblk2off);
+	ssdfs_dynamic_array_destroy(&ptr->lblk2off);
 
 free_bmap:
-	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++)
-		ssdfs_blk2off_kvfree(ptr->lbmap[i]);
+	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
+		ssdfs_blk2off_kvfree(ptr->lbmap.array[i]);
+		ptr->lbmap.array[i] = NULL;
+	}
+
+	ptr->lbmap.bits_count = 0;
+	ptr->lbmap.bytes_count = 0;
 
 	ssdfs_blk2off_kfree(ptr);
 
@@ -716,15 +757,17 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_blk2off_kvfree(table->lblk2off);
-	table->lblk2off = NULL;
+	ssdfs_dynamic_array_destroy(&table->lblk2off);
 
 	ssdfs_destroy_migrating_blocks_array(table);
 
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		ssdfs_blk2off_kvfree(table->lbmap[i]);
-		table->lbmap[i] = NULL;
+		ssdfs_blk2off_kvfree(table->lbmap.array[i]);
+		table->lbmap.array[i] = NULL;
 	}
+
+	table->lbmap.bits_count = 0;
+	table->lbmap.bytes_count = 0;
 
 	ssdfs_blk2off_kfree(table);
 
@@ -734,13 +777,21 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 }
 
 /*
- * ssdfs_blk2off_table_bmap_set() - set bit for logical block
+ * ssdfs_blk2off_table_resize_bitmap_array() - resize bitmap array
  * @lbmap: bitmap pointer
- * @logical_blk: logical block number
+ * @logical_blk: new threshold
  */
 static inline
-void ssdfs_blk2off_table_bmap_set(unsigned long *lbmap, u16 logical_blk)
+int ssdfs_blk2off_table_resize_bitmap_array(struct ssdfs_bitmap_array *lbmap,
+					    u16 logical_blk)
 {
+	unsigned long *bmap_ptr;
+	u32 new_bits_count;
+	u32 new_bytes_count;
+	u32 bits_per_page;
+	int i;
+	int err = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap);
 
@@ -748,35 +799,134 @@ void ssdfs_blk2off_table_bmap_set(unsigned long *lbmap, u16 logical_blk)
 		  lbmap, logical_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	bitmap_set(lbmap, logical_blk, 1);
+	bits_per_page = PAGE_SIZE * BITS_PER_BYTE;
+
+	new_bits_count = logical_blk + bits_per_page - 1;
+	new_bits_count /= bits_per_page;
+	new_bits_count *= bits_per_page;
+
+	new_bytes_count = ssdfs_blk2off_table_bmap_bytes(new_bits_count);
+
+	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
+		bmap_ptr = kvrealloc(lbmap->array[i],
+				     lbmap->bytes_count,
+				     new_bytes_count,
+				     GFP_KERNEL | __GFP_ZERO);
+		if (!bmap_ptr) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate bitmaps\n");
+			goto finish_bitmap_array_resize;
+		} else
+			lbmap->array[i] = (unsigned long *)bmap_ptr;
+	}
+
+	lbmap->bits_count = new_bits_count;
+	lbmap->bytes_count = new_bytes_count;
+
+finish_bitmap_array_resize:
+	return err;
+}
+
+/*
+ * ssdfs_blk2off_table_bmap_set() - set bit for logical block
+ * @lbmap: bitmap pointer
+ * @bitmap_index: index of bitmap
+ * @logical_blk: logical block number
+ */
+static inline
+int ssdfs_blk2off_table_bmap_set(struct ssdfs_bitmap_array *lbmap,
+				 int bitmap_index, u16 logical_blk)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!lbmap);
+
+	SSDFS_DBG("lbmap %p, bitmap_index %d, logical_blk %u\n",
+		  lbmap, bitmap_index, logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (bitmap_index >= SSDFS_LBMAP_ARRAY_MAX) {
+		SSDFS_ERR("invalid bitmap index %d\n",
+			  bitmap_index);
+		return -EINVAL;
+	}
+
+	if (logical_blk >= lbmap->bits_count) {
+		err = ssdfs_blk2off_table_resize_bitmap_array(lbmap,
+							      logical_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc bitmap array: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			return err;
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!lbmap->array[bitmap_index]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	bitmap_set(lbmap->array[bitmap_index], logical_blk, 1);
+
+	return 0;
 }
 
 /*
  * ssdfs_blk2off_table_bmap_clear() - clear bit for logical block
  * @lbmap: bitmap pointer
+ * @bitmap_index: index of bitmap
  * @logical_blk: logical block number
  */
 static inline
-void ssdfs_blk2off_table_bmap_clear(unsigned long *lbmap, u16 logical_blk)
+int ssdfs_blk2off_table_bmap_clear(struct ssdfs_bitmap_array *lbmap,
+				   int bitmap_index, u16 logical_blk)
 {
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap);
 
-	SSDFS_DBG("lbmap %p, logical_blk %u\n",
-		  lbmap, logical_blk);
+	SSDFS_DBG("lbmap %p, bitmap_index %d, logical_blk %u\n",
+		  lbmap, bitmap_index, logical_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	bitmap_clear(lbmap, logical_blk, 1);
+	if (bitmap_index >= SSDFS_LBMAP_ARRAY_MAX) {
+		SSDFS_ERR("invalid bitmap index %d\n",
+			  bitmap_index);
+		return -EINVAL;
+	}
+
+	if (logical_blk >= lbmap->bits_count) {
+		err = ssdfs_blk2off_table_resize_bitmap_array(lbmap,
+							      logical_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc bitmap array: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+			return err;
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!lbmap->array[bitmap_index]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	bitmap_clear(lbmap->array[bitmap_index], logical_blk, 1);
+
+	return 0;
 }
 
 /*
  * ssdfs_blk2off_table_bmap_vacant() - check bit for logical block
  * @lbmap: bitmap pointer
+ * @bitmap_index: index of bitmap
  * @lbmap_bits: count of bits in bitmap
  * @logical_blk: logical block number
  */
 static inline
-bool ssdfs_blk2off_table_bmap_vacant(unsigned long *lbmap,
+bool ssdfs_blk2off_table_bmap_vacant(struct ssdfs_bitmap_array *lbmap,
+				     int bitmap_index,
 				     u16 lbmap_bits,
 				     u16 logical_blk)
 {
@@ -785,11 +935,27 @@ bool ssdfs_blk2off_table_bmap_vacant(unsigned long *lbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap);
 
-	SSDFS_DBG("lbmap %p, lbmap_bits %u, logical_blk %u\n",
-		  lbmap, lbmap_bits, logical_blk);
+	SSDFS_DBG("lbmap %p, bitmap_index %d, "
+		  "lbmap_bits %u, logical_blk %u\n",
+		  lbmap, bitmap_index,
+		  lbmap_bits, logical_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	found = find_next_zero_bit(lbmap, lbmap_bits, logical_blk);
+	if (bitmap_index >= SSDFS_LBMAP_ARRAY_MAX) {
+		SSDFS_ERR("invalid bitmap index %d\n",
+			  bitmap_index);
+		return false;
+	}
+
+	if (logical_blk >= lbmap->bits_count)
+		return true;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!lbmap->array[bitmap_index]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	found = find_next_zero_bit(lbmap->array[bitmap_index],
+				   lbmap_bits, logical_blk);
 
 	return found == logical_blk;
 }
@@ -797,11 +963,13 @@ bool ssdfs_blk2off_table_bmap_vacant(unsigned long *lbmap,
 /*
  * ssdfs_blk2off_table_extent_vacant() - check extent vacancy
  * @lbmap: bitmap pointer
+ * @bitmap_index: index of bitmap
  * @lbmap_bits: count of bits in bitmap
  * @extent: pointer on extent
  */
 static inline
-bool ssdfs_blk2off_table_extent_vacant(unsigned long *lbmap,
+bool ssdfs_blk2off_table_extent_vacant(struct ssdfs_bitmap_array *lbmap,
+					int bitmap_index,
 					u16 lbmap_bits,
 					struct ssdfs_blk2off_range *extent)
 {
@@ -810,9 +978,17 @@ bool ssdfs_blk2off_table_extent_vacant(unsigned long *lbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap || !extent);
 
-	SSDFS_DBG("lbmap %p, lbmap_bits %u, extent (start %u, len %u)\n",
-		  lbmap, lbmap_bits, extent->start_lblk, extent->len);
+	SSDFS_DBG("lbmap %p, bitmap_index %d, "
+		  "lbmap_bits %u, extent (start %u, len %u)\n",
+		  lbmap, bitmap_index, lbmap_bits,
+		  extent->start_lblk, extent->len);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (bitmap_index >= SSDFS_LBMAP_ARRAY_MAX) {
+		SSDFS_ERR("invalid bitmap index %d\n",
+			  bitmap_index);
+		return false;
+	}
 
 	if (extent->start_lblk >= lbmap_bits) {
 		SSDFS_ERR("invalid extent start %u\n",
@@ -825,14 +1001,22 @@ bool ssdfs_blk2off_table_extent_vacant(unsigned long *lbmap,
 		return false;
 	}
 
-	start = find_next_zero_bit(lbmap, lbmap_bits, extent->start_lblk);
+	if (extent->start_lblk >= lbmap->bits_count)
+		return true;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!lbmap->array[bitmap_index]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	start = find_next_zero_bit(lbmap->array[bitmap_index],
+				   lbmap_bits, extent->start_lblk);
 
 	if (start != extent->start_lblk)
 		return false;
 	else if (extent->len == 1)
 		return true;
 
-	end = find_next_bit(lbmap, lbmap_bits, start);
+	end = find_next_bit(lbmap->array[bitmap_index], lbmap_bits, start);
 
 	if ((end - start) == extent->len)
 		return true;
@@ -875,9 +1059,9 @@ int ssdfs_check_table_header(struct ssdfs_blk2off_table_header *hdr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hdr %p, size %zu\n", hdr, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_magic_valid(&hdr->magic) ||
 	    !is_ssdfs_table_header_magic_valid(hdr)) {
@@ -947,12 +1131,14 @@ int ssdfs_check_fragment(struct ssdfs_blk2off_table *table,
 	id_count = le16_to_cpu(hdr->id_count);
 	byte_size = le32_to_cpu(hdr->byte_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("table %p, peb_index %u, start_id %u, "
 		  "id_count %u, byte_size %u, "
 		  "fragment_id %u\n",
 		  table, peb_index,
 		  start_id, id_count, byte_size,
 		  hdr->sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (le32_to_cpu(hdr->magic) != SSDFS_PHYS_OFF_TABLE_MAGIC) {
 		SSDFS_ERR("invalid magic %#x\n",
@@ -1052,10 +1238,10 @@ int ssdfs_get_checked_table_header(struct ssdfs_blk2off_init *portion)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !portion->blk2off_pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("source %p, offset %u\n",
 		  portion->blk2off_pvec, portion->tbl_hdr_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index = portion->tbl_hdr_off >> PAGE_SHIFT;
 	if (portion->tbl_hdr_off >= PAGE_SIZE)
@@ -1116,36 +1302,6 @@ int ssdfs_blk2off_prepare_temp_bmap(struct ssdfs_blk2off_init *portion)
 		SSDFS_ERR("fail to allocate memory\n");
 		return -ENOMEM;
 	}
-
-	return 0;
-}
-
-/*
- * ssdfs_blk2off_prepare_pos_array() - prepare positions array
- * @portion: initialization environment [in | out]
- */
-static inline
-int ssdfs_blk2off_prepare_pos_array(struct ssdfs_blk2off_init *portion)
-{
-	size_t pos_size = sizeof(struct ssdfs_offset_position);
-	size_t pos_array_bytes;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || portion->pos_array);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	portion->pos_count = portion->capacity;
-	pos_array_bytes = portion->capacity * pos_size;
-	portion->pos_array = ssdfs_blk2off_kvzalloc(pos_array_bytes,
-						    GFP_KERNEL);
-	if (unlikely(!portion->pos_array)) {
-		SSDFS_ERR("fail to allocate memory\n");
-		return -ENOMEM;
-	}
-
-	ssdfs_memcpy(portion->pos_array, 0, pos_array_bytes,
-		     portion->table->lblk2off, 0, pos_array_bytes,
-		     pos_array_bytes);
 
 	return 0;
 }
@@ -1307,11 +1463,11 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !portion->table || !portion->blk2off_pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("table %p, peb_index %u, source %p, offset %u\n",
 		  portion->table, portion->peb_index,
 		  portion->blk2off_pvec, portion->pot_hdr_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fragment_size = le32_to_cpu(portion->pot_hdr.byte_size);
 	start_id = le16_to_cpu(portion->pot_hdr.start_id);
@@ -1504,10 +1660,12 @@ int ssdfs_check_translation_extent(struct ssdfs_translation_extent *extent,
 	offset_id = le16_to_cpu(extent->offset_id);
 	len = le16_to_cpu(extent->len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("logical_blk %u, offset_id %u, len %u, "
 		  "sequence_id %u, state %#x\n",
 		  logical_blk, offset_id, len,
 		  extent->sequence_id, extent->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (extent->state <= SSDFS_LOGICAL_BLK_UNKNOWN_STATE ||
 	    extent->state >= SSDFS_LOGICAL_BLK_STATE_MAX) {
@@ -1569,6 +1727,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
 	struct ssdfs_phys_offset_descriptor *phys_off = NULL;
 	struct ssdfs_translation_extent *extent = NULL;
+	struct ssdfs_dynamic_array *lblk2off;
 	void *ptr;
 	u16 peb_index;
 	u16 sequence_id;
@@ -1590,10 +1749,12 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !extent_index);
-	BUG_ON(!portion->bmap || !portion->pos_array || !portion->extent_array);
+	BUG_ON(!portion->bmap || !portion->extent_array);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
 	BUG_ON(*extent_index >= portion->extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	lblk2off = &portion->table->lblk2off;
 
 	peb_index = portion->peb_index;
 	sequence_id = le16_to_cpu(portion->pot_hdr.sequence_id);
@@ -1761,7 +1922,15 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			goto finish_process_fragment;
 		}
 
-		pos = &portion->pos_array[cur_blk];
+		pos = SSDFS_OFF_POS(ssdfs_dynamic_array_get_locked(lblk2off,
+								   cur_blk));
+		if (IS_ERR_OR_NULL(pos)) {
+			err = (pos == NULL ? -ENOENT : PTR_ERR(pos));
+			SSDFS_ERR("fail to get logical block: "
+				  "cur_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
 
 		SSDFS_DBG("portion->cno %#llx, "
 			  "pos (cno %#llx, id %u, peb_index %u, "
@@ -1774,7 +1943,15 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			/* logical block has been initialized already */
 			SSDFS_DBG("logical block %u has been initialized already\n",
 				  cur_blk);
-			continue;
+			err = ssdfs_dynamic_array_release(lblk2off,
+							  cur_blk, pos);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to release: "
+					  "cur_blk %u, err %d\n",
+					  cur_blk, err);
+				goto finish_process_fragment;
+			} else
+				continue;
 		}
 
 		peb_index = portion->peb_index;
@@ -1804,6 +1981,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			SSDFS_ERR("fail to read block descriptor: "
 				  "cur_blk %u, err %d\n",
 				  cur_blk, err);
+			ssdfs_dynamic_array_release(lblk2off,
+						    cur_blk, pos);
 			goto finish_process_fragment;
 		} else
 			pos->blk_desc.status = SSDFS_BLK_DESC_BUF_INITIALIZED;
@@ -1848,6 +2027,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 					  state_off->peb_migration_id);
 			}
 
+			ssdfs_dynamic_array_release(lblk2off, cur_blk, pos);
+
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1881,8 +2062,23 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			  cur_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
-			   cur_blk, 1);
+		err = ssdfs_dynamic_array_release(lblk2off, cur_blk, pos);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "cur_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
+
+		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
+						   SSDFS_LBMAP_INIT_INDEX,
+						   cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set init bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
 	}
 
 finish_process_fragment:
@@ -1892,23 +2088,23 @@ finish_process_fragment:
 		return err;
 
 	if (bitmap_intersects(portion->bmap,
-			      portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
-			      portion->capacity)) {
+			portion->table->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
+			portion->table->lbmap.bits_count)) {
 		SSDFS_ERR("invalid translation extent: "
 			  "logical_blk %u, offset_id %u, len %u\n",
 			  logical_blk, offset_id, len);
 		return -EIO;
 	}
 
-	bitmap_or(portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
+	bitmap_or(portion->table->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
 		  portion->bmap,
-		  portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
-		  portion->capacity);
+		  portion->table->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
+		  portion->table->lbmap.bits_count);
 
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, modification_bmap %lx\n",
-		  *portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
-		  *portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
-		  *portion->table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX]);
+		  *portion->table->lbmap.array[SSDFS_LBMAP_INIT_INDEX],
+		  *portion->table->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
+		  *portion->table->lbmap.array[SSDFS_LBMAP_MODIFICATION_INDEX]);
 
 	if (is_partially_processed) {
 		SSDFS_DBG("extent has been processed partially: "
@@ -1942,6 +2138,7 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 	struct ssdfs_sequence_array *sequence = NULL;
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
 	struct ssdfs_translation_extent *extent = NULL;
+	struct ssdfs_dynamic_array *lblk2off;
 	void *ptr;
 	u16 peb_index;
 	u16 sequence_id;
@@ -1954,10 +2151,12 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !extent_index);
-	BUG_ON(!portion->pos_array || !portion->extent_array);
+	BUG_ON(!portion->extent_array);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
 	BUG_ON(*extent_index >= portion->extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	lblk2off = &portion->table->lblk2off;
 
 	peb_index = portion->peb_index;
 	sequence_id = le16_to_cpu(portion->pot_hdr.sequence_id);
@@ -2005,7 +2204,15 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 		struct ssdfs_offset_position *pos;
 		u32 cur_blk = logical_blk + i;
 
-		pos = &portion->pos_array[cur_blk];
+		pos = SSDFS_OFF_POS(ssdfs_dynamic_array_get_locked(lblk2off,
+								   cur_blk));
+		if (IS_ERR_OR_NULL(pos)) {
+			err = (pos == NULL ? -ENOENT : PTR_ERR(pos));
+			SSDFS_ERR("fail to get logical block: "
+				  "cur_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
 
 		SSDFS_DBG("portion->cno %#llx, "
 			  "pos (cno %#llx, id %u, peb_index %u, "
@@ -2018,21 +2225,52 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 			/* logical block has been initialized already */
 			SSDFS_DBG("logical block %u has been initialized already\n",
 				  cur_blk);
-			continue;
+			err = ssdfs_dynamic_array_release(lblk2off,
+							  cur_blk, pos);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to release: "
+					  "cur_blk %u, err %d\n",
+					  cur_blk, err);
+				goto finish_process_fragment;
+			} else
+				continue;
 		}
 
-		bitmap_clear(portion->table->lbmap[SSDFS_LBMAP_STATE_INDEX],
-			     cur_blk, 1);
+		err = ssdfs_blk2off_table_bmap_clear(&portion->table->lbmap,
+						     SSDFS_LBMAP_STATE_INDEX,
+						     cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to clear state bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
+
 		memset(pos, 0xFF, pos_size);
 
 		pos->cno = portion->cno;
 		pos->peb_index = portion->peb_index;
 
+		err = ssdfs_dynamic_array_release(lblk2off, cur_blk, pos);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "cur_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
+
 		SSDFS_DBG("set init bitmap: cur_blk %u\n",
 			  cur_blk);
 
-		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_INIT_INDEX],
-			   cur_blk, 1);
+		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
+						   SSDFS_LBMAP_INIT_INDEX,
+						   cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set init bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
 
 		/*
 		 * Free block needs to be marked as modified
@@ -2041,10 +2279,18 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 		 * Because, offsets translation table's snapshot
 		 * needs to contain information about free blocks.
 		 */
-		bitmap_set(portion->table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX],
-			   cur_blk, 1);
+		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
+						SSDFS_LBMAP_MODIFICATION_INDEX,
+						cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set modification bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_fragment;
+		}
 	}
 
+finish_process_fragment:
 	up_read(&frag->lock);
 
 	return err;
@@ -2061,8 +2307,6 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 {
 	struct ssdfs_sequence_array *sequence = NULL;
 	struct ssdfs_translation_extent *extent = NULL;
-	size_t pos_size = sizeof(struct ssdfs_offset_position);
-	size_t pos_array_bytes;
 	u16 logical_blk;
 	u16 offset_id;
 	u16 len;
@@ -2073,7 +2317,7 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !portion->table || !portion->blk2off_pvec);
-	BUG_ON(!portion->bmap || !portion->pos_array || !portion->extent_array);
+	BUG_ON(!portion->bmap || !portion->extent_array);
 	BUG_ON(!extent_index);
 	BUG_ON(portion->peb_index >= portion->table->pebs_count);
 
@@ -2170,11 +2414,6 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 			++*extent_index;
 	};
 
-	pos_array_bytes = portion->capacity * pos_size;
-	ssdfs_memcpy(portion->table->lblk2off, 0, pos_array_bytes,
-		     portion->pos_array, 0, pos_array_bytes,
-		     pos_array_bytes);
-
 	if (portion->table->init_cno == U64_MAX ||
 	    portion->cno >= portion->table->init_cno) {
 		u16 peb_index = portion->peb_index;
@@ -2231,7 +2470,7 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 	else
 		allocated_blks = last_allocated_blk + 1;
 
-	init_bits = bitmap_weight(table->lbmap[SSDFS_LBMAP_INIT_INDEX],
+	init_bits = bitmap_weight(table->lbmap.array[SSDFS_LBMAP_INIT_INDEX],
 				  allocated_blks);
 
 	SSDFS_DBG("table %p, peb_index %u, count %d, last_id %lu, "
@@ -2458,12 +2697,6 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		goto unlock_translation_table;
 	}
 
-	err = ssdfs_blk2off_prepare_pos_array(&portion);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to allocate memory\n");
-		goto unlock_translation_table;
-	}
-
 	err = ssdfs_blk2off_prepare_extent_array(&portion);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate memory\n");
@@ -2516,8 +2749,6 @@ unlock_translation_table:
 
 	ssdfs_blk2off_kvfree(portion.bmap);
 	portion.bmap = NULL;
-	ssdfs_blk2off_kvfree(portion.pos_array);
-	portion.pos_array = NULL;
 	ssdfs_blk2off_kfree(portion.extent_array);
 	portion.extent_array = NULL;
 
@@ -2620,8 +2851,8 @@ u16 ssdfs_blk2off_table_find_last_valid_block(struct ssdfs_blk2off_table *table)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	logical_blk = U16_MAX;
-	long_count = BITS_TO_LONGS(table->lblk2off_capacity);
-	lbmap = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
+	long_count = BITS_TO_LONGS(table->lbmap.bits_count);
+	lbmap = table->lbmap.array[SSDFS_LBMAP_STATE_INDEX];
 
 	for (i = long_count - 1; i >= 0; i--) {
 		if (lbmap[i] != 0) {
@@ -2663,16 +2894,8 @@ calculate_logical_blk:
 int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 				u16 new_items_count)
 {
-	unsigned long *bmap_ptr;
-	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
-	size_t blk_desc_ptr_size = sizeof(struct ssdfs_migrating_block *);
-	u16 *off_ptr;
-	void *migrating_ptr;
-	u32 old_bytes;
-	u32 new_bytes;
 	u16 last_blk;
 	int diff;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2700,59 +2923,7 @@ int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 		}
 	}
 
-	old_bytes = ssdfs_blk2off_table_bmap_bytes(table->lblk2off_capacity);
-	new_bytes = ssdfs_blk2off_table_bmap_bytes(new_items_count);
-
-	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		bmap_ptr = kvrealloc(table->lbmap[i],
-				     old_bytes, new_bytes,
-				     GFP_KERNEL | __GFP_ZERO);
-		if (!bmap_ptr) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate bitmaps\n");
-			goto finish_table_resize;
-		} else
-			table->lbmap[i] = (unsigned long *)bmap_ptr;
-	}
-
-	old_bytes = off_pos_size * table->lblk2off_capacity;
-
-	off_ptr = kvrealloc(table->lblk2off,
-			    old_bytes, off_pos_size * new_items_count,
-			    GFP_KERNEL | __GFP_ZERO);
-	if (!off_ptr) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate translation array\n");
-		goto finish_table_resize;
-	} else
-		table->lblk2off = (struct ssdfs_offset_position *)off_ptr;
-
 	diff = (int)new_items_count - table->lblk2off_capacity;
-
-	memset((u8 *)table->lblk2off +
-		(off_pos_size * table->lblk2off_capacity),
-		0xFF, off_pos_size * diff);
-
-	if (table->migrating_blks) {
-		old_bytes = blk_desc_ptr_size * table->lblk2off_capacity;
-
-		migrating_ptr = kvrealloc(table->migrating_blks,
-					  old_bytes,
-					  blk_desc_ptr_size * new_items_count,
-					  GFP_KERNEL | __GFP_ZERO);
-		if (!migrating_ptr) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to allocate migrating blocks array\n");
-			goto finish_table_resize;
-		} else {
-			table->migrating_blks =
-				(struct ssdfs_migrating_block **)migrating_ptr;
-		}
-	}
-
-	memset((u8 *)table->migrating_blks +
-		(blk_desc_ptr_size * table->lblk2off_capacity),
-		0, blk_desc_ptr_size * diff);
 
 	table->lblk2off_capacity = new_items_count;
 	table->free_logical_blks += diff;
@@ -2949,8 +3120,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 {
 	struct ssdfs_phys_offset_table_array *pot_table;
 	struct ssdfs_sequence_array *sequence;
-	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
-	u16 capacity;
+	u32 capacity;
 	size_t bmap_bytes, tbl_bytes;
 	u16 last_sequence_id;
 	unsigned long dirty_fragments;
@@ -2978,7 +3148,12 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 		goto finish_snapshoting;
 	}
 
-	capacity = table->lblk2off_capacity;
+	capacity = ssdfs_dynamic_array_items_count(&table->lblk2off);
+	if (capacity == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid capacity %u\n", capacity);
+		goto finish_snapshoting;
+	}
 
 	bmap_bytes = ssdfs_blk2off_table_bmap_bytes(capacity);
 	snapshot->bmap_copy = ssdfs_blk2off_kvzalloc(bmap_bytes, GFP_KERNEL);
@@ -2989,7 +3164,13 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 		goto finish_snapshoting;
 	}
 
-	tbl_bytes = capacity * off_pos_size;
+	tbl_bytes = ssdfs_dynamic_array_allocated_bytes(&table->lblk2off);
+	if (tbl_bytes == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid bytes count %zu\n", tbl_bytes);
+		goto finish_snapshoting;
+	}
+
 	snapshot->tbl_copy = ssdfs_blk2off_kvzalloc(tbl_bytes, GFP_KERNEL);
 	if (!snapshot->tbl_copy) {
 		err = -ENOMEM;
@@ -3002,23 +3183,29 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 		  table->last_allocated_blk);
 
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, bmap_copy %lx\n",
-		  *table->lbmap[SSDFS_LBMAP_INIT_INDEX],
-		  *table->lbmap[SSDFS_LBMAP_STATE_INDEX],
+		  *table->lbmap.array[SSDFS_LBMAP_INIT_INDEX],
+		  *table->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
 		  *snapshot->bmap_copy);
 
 	bitmap_or(snapshot->bmap_copy,
 		   snapshot->bmap_copy,
-		   table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX],
-		   capacity);
+		   table->lbmap.array[SSDFS_LBMAP_MODIFICATION_INDEX],
+		   table->lbmap.bits_count);
 
 	SSDFS_DBG("modification_bmap %lx, bmap_copy %lx\n",
-		  *table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX],
+		  *table->lbmap.array[SSDFS_LBMAP_MODIFICATION_INDEX],
 		  *snapshot->bmap_copy);
 
-	ssdfs_memcpy(snapshot->tbl_copy, 0, tbl_bytes,
-		     table->lblk2off, 0, tbl_bytes,
-		     tbl_bytes);
-	snapshot->capacity = table->lblk2off_capacity;
+	err = ssdfs_dynamic_array_copy_content(&table->lblk2off,
+						snapshot->tbl_copy,
+						tbl_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy position array: "
+			  "err %d\n", err);
+		goto finish_snapshoting;
+	}
+
+	snapshot->capacity = capacity;
 
 	snapshot->used_logical_blks = table->used_logical_blks;
 	snapshot->free_logical_blks = table->free_logical_blks;
@@ -3909,7 +4096,7 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 {
 	struct ssdfs_phys_offset_table_array *pot_table;
 	struct ssdfs_sequence_array *sequence;
-	unsigned long *lbmap1, *lbmap2;
+	struct ssdfs_offset_position *pos;
 	u16 last_sequence_id;
 	unsigned long commited_fragments = 0;
 	int i, j;
@@ -3958,9 +4145,6 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 		goto finish_forget_snapshot;
 	}
 
-	lbmap1 = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
-	lbmap2 = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
-
 	for (i = 0; i < extent_count; i++) {
 		u16 start_blk = le16_to_cpu(array[i].logical_blk);
 		u16 len = le16_to_cpu(array[i].len);
@@ -3968,9 +4152,31 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 		for (j = 0; j < len; j++) {
 			u16 blk = start_blk + j;
 			u64 cno1, cno2;
+			void *kaddr;
 
-			cno1 = table->lblk2off[blk].cno;
+			kaddr = ssdfs_dynamic_array_get_locked(&table->lblk2off,
+								blk);
+			if (IS_ERR_OR_NULL(kaddr)) {
+				err = (kaddr == NULL ? -ENOENT : PTR_ERR(kaddr));
+				SSDFS_ERR("fail to get logical block: "
+					  "blk %u, err %d\n",
+					  blk, err);
+				goto finish_forget_snapshot;
+			}
+
+			pos = SSDFS_OFF_POS(kaddr);
+			cno1 = pos->cno;
 			cno2 = sp->tbl_copy[blk].cno;
+
+			err = ssdfs_dynamic_array_release(&table->lblk2off,
+							  blk, pos);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to release: "
+					  "blk %u, err %d\n",
+					  blk, err);
+				goto finish_forget_snapshot;
+			}
+
 			if (cno1 < cno2) {
 				SSDFS_WARN("cno1 %llu < cno2 %llu\n",
 					   cno1, cno2);
@@ -3983,10 +4189,26 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 			 * this information will be lost during
 			 * the PEBs migration.
 			 */
-			if (array[i].state != SSDFS_LOGICAL_BLK_FREE)
-				ssdfs_blk2off_table_bmap_clear(lbmap1, blk);
+			if (array[i].state != SSDFS_LOGICAL_BLK_FREE) {
+				err =
+				   ssdfs_blk2off_table_bmap_clear(&table->lbmap,
+					   SSDFS_LBMAP_MODIFICATION_INDEX, blk);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to clear bitmap: "
+						  "blk %u, err %d\n",
+						  blk, err);
+					goto finish_forget_snapshot;
+				}
+			}
 
-			ssdfs_blk2off_table_bmap_set(lbmap2, blk);
+			err = ssdfs_blk2off_table_bmap_set(&table->lbmap,
+						SSDFS_LBMAP_INIT_INDEX, blk);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to set bitmap: "
+					  "blk %u, err %d\n",
+					  blk, err);
+				goto finish_forget_snapshot;
+			}
 		}
 	}
 
@@ -4678,7 +4900,6 @@ int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 					u16 logical_blk,
 					struct ssdfs_offset_position *pos)
 {
-	unsigned long *lbmap = NULL;
 	struct ssdfs_offset_position *old_pos = NULL;
 	struct ssdfs_blk_state_offset *state_off;
 	size_t desc_size = sizeof(struct ssdfs_block_descriptor_state);
@@ -4699,8 +4920,9 @@ int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 
 	down_write(&table->translation_lock);
 
-	lbmap = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
-	if (ssdfs_blk2off_table_bmap_vacant(lbmap, table->lblk2off_capacity,
+	if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+					    SSDFS_LBMAP_STATE_INDEX,
+					    table->lblk2off_capacity,
 					    logical_blk)) {
 		err = -ENODATA;
 		SSDFS_ERR("requested block %u hasn't been allocated\n",
@@ -4708,7 +4930,15 @@ int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 		goto finish_init;
 	}
 
-	old_pos = &table->lblk2off[logical_blk];
+	old_pos = SSDFS_OFF_POS(ssdfs_dynamic_array_get_locked(&table->lblk2off,
+								logical_blk));
+	if (IS_ERR_OR_NULL(old_pos)) {
+		err = (old_pos == NULL ? -ENOENT : PTR_ERR(old_pos));
+		SSDFS_ERR("fail to get logical block: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto finish_init;
+	}
 
 	switch (old_pos->blk_desc.status) {
 	case SSDFS_BLK_DESC_BUF_UNKNOWN_STATE:
@@ -4743,11 +4973,12 @@ int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 		goto finish_init;
 	}
 
-	ssdfs_memcpy(&table->lblk2off[logical_blk].blk_desc, 0, desc_size,
+	ssdfs_memcpy(&old_pos->blk_desc, 0, desc_size,
 		     &pos->blk_desc.buf, 0, desc_size,
 		     desc_size);
 
 finish_init:
+	ssdfs_dynamic_array_release(&table->lblk2off, logical_blk, old_pos);
 	up_write(&table->translation_lock);
 
 	return err;
@@ -4779,7 +5010,6 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 	struct ssdfs_phys_offset_table_array *phys_off_table;
 	struct ssdfs_sequence_array *sequence;
 	struct ssdfs_phys_offset_table_fragment *fragment;
-	unsigned long *lbmap = NULL;
 	void *ptr;
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
 	int state;
@@ -4802,21 +5032,39 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 	}
 
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, modification_bmap %lx\n",
-		  *table->lbmap[SSDFS_LBMAP_INIT_INDEX],
-		  *table->lbmap[SSDFS_LBMAP_STATE_INDEX],
-		  *table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX]);
+		  *table->lbmap.array[SSDFS_LBMAP_INIT_INDEX],
+		  *table->lbmap.array[SSDFS_LBMAP_STATE_INDEX],
+		  *table->lbmap.array[SSDFS_LBMAP_MODIFICATION_INDEX]);
 
-	lbmap = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
-	if (ssdfs_blk2off_table_bmap_vacant(lbmap, table->lblk2off_capacity,
+	if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+					    SSDFS_LBMAP_STATE_INDEX,
+					    table->lblk2off_capacity,
 					    logical_blk)) {
 		SSDFS_ERR("requested block %u hasn't been allocated\n",
 			  logical_blk);
 		return -ENODATA;
 	}
 
+	ptr = ssdfs_dynamic_array_get_locked(&table->lblk2off, logical_blk);
+	if (IS_ERR_OR_NULL(ptr)) {
+		err = (ptr == NULL ? -ENOENT : PTR_ERR(ptr));
+		SSDFS_ERR("fail to get logical block: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		return err;
+	}
+
 	ssdfs_memcpy(pos, 0, off_pos_size,
-		     &table->lblk2off[logical_blk], 0, off_pos_size,
+		     ptr, 0, off_pos_size,
 		     off_pos_size);
+
+	err = ssdfs_dynamic_array_release(&table->lblk2off, logical_blk, ptr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to release: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		return err;
+	}
 
 	if (pos->id == U16_MAX) {
 		SSDFS_DBG("logical block %u hasn't ID yet\n",
@@ -4926,15 +5174,15 @@ int ssdfs_blk2off_table_check_fragment_desc(struct ssdfs_blk2off_table *table,
 bool has_logical_block_id_assigned(struct ssdfs_blk2off_table *table,
 				   u16 logical_blk)
 {
-	unsigned long *lbmap = NULL;
 	u16 capacity;
 	bool has_assigned = false;
 
 	down_read(&table->translation_lock);
-	lbmap = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
 	capacity = table->lblk2off_capacity;
-	has_assigned = !ssdfs_blk2off_table_bmap_vacant(lbmap, capacity,
-							logical_blk);
+	has_assigned = !ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+						SSDFS_LBMAP_MODIFICATION_INDEX,
+						capacity,
+						logical_blk);
 	up_read(&table->translation_lock);
 
 	return has_assigned;
@@ -4996,10 +5244,11 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 	}
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT) {
-		unsigned long *bmap = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
 		u16 capacity = table->lblk2off_capacity;
 
-		if (ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
+		if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+						    SSDFS_LBMAP_INIT_INDEX,
+						    capacity,
 						    logical_blk)) {
 			err = -EAGAIN;
 			SSDFS_DBG("table is not initialized yet: "
@@ -5140,10 +5389,11 @@ int ssdfs_blk2off_table_get_offset_position(struct ssdfs_blk2off_table *table,
 	}
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT) {
-		unsigned long *bmap = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
 		u16 capacity = table->lblk2off_capacity;
 
-		if (ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
+		if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+						    SSDFS_LBMAP_INIT_INDEX,
+						    capacity,
 						    logical_blk)) {
 			err = -EAGAIN;
 			SSDFS_DBG("table is not initialized yet: "
@@ -5287,14 +5537,13 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 	int state;
 	int id = -1;
 	u16 offset_index = U16_MAX;
-	unsigned long *bmap;
 	u16 capacity;
 	void *kaddr;
 	unsigned long last_id;
 #ifdef CONFIG_SSDFS_DEBUG
 	int i;
 #endif /* CONFIG_SSDFS_DEBUG */
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!table || !last_sequence_id);
@@ -5371,8 +5620,15 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 		return -ERANGE;
 	}
 
-	bmap = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
-	pos = &table->lblk2off[logical_blk];
+	pos = SSDFS_OFF_POS(ssdfs_dynamic_array_get_locked(&table->lblk2off,
+							   logical_blk));
+	if (IS_ERR_OR_NULL(pos)) {
+		err = (pos == NULL ? -ENOENT : PTR_ERR(pos));
+		SSDFS_ERR("fail to get logical block: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		return err;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("POS BEFORE: cno %llu, id %u, peb_index %u, "
@@ -5381,7 +5637,9 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 		  pos->sequence_id, pos->offset_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
+	if (!ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+					     SSDFS_LBMAP_MODIFICATION_INDEX,
+					     capacity,
 					     logical_blk)) {
 		if (pos->sequence_id == *last_sequence_id) {
 			pos->cno = ssdfs_current_cno(table->fsi->sb);
@@ -5394,11 +5652,12 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 			id = fragment->start_id + offset_index;
 
 			if (!is_id_valid_for_assignment(table, fragment, id)) {
+				err = -ENOSPC;
 				SSDFS_DBG("id %d cannot be assign "
 					  "for fragment %d\n",
 					  id, *last_sequence_id);
 				atomic_dec(&fragment->id_count);
-				return -ENOSPC;
+				goto finish_assign_id;
 			}
 
 			pos->cno = ssdfs_current_cno(table->fsi->sb);
@@ -5412,11 +5671,12 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 			id = fragment->start_id + offset_index;
 
 			if (!is_id_valid_for_assignment(table, fragment, id)) {
+				err = -ENOSPC;
 				SSDFS_DBG("id %d cannot be assign "
 					  "for fragment %d\n",
 					  id, *last_sequence_id);
 				atomic_dec(&fragment->id_count);
-				return -ENOSPC;
+				goto finish_assign_id;
 			}
 
 			pos->cno = ssdfs_current_cno(table->fsi->sb);
@@ -5425,20 +5685,22 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 			pos->sequence_id = *last_sequence_id;
 			pos->offset_index = offset_index;
 		} else if (pos->sequence_id > *last_sequence_id) {
+			err = -ERANGE;
 			SSDFS_WARN("sequence_id %u > last_sequence_id %d\n",
 				  pos->sequence_id,
 				  *last_sequence_id);
-			return -ERANGE;
+			goto finish_assign_id;
 		}
 	} else {
 		offset_index = atomic_inc_return(&fragment->id_count) - 1;
 		id = fragment->start_id + offset_index;
 
 		if (!is_id_valid_for_assignment(table, fragment, id)) {
+			err = -ENOSPC;
 			SSDFS_DBG("id %d cannot be assign for fragment %d\n",
 				  id, *last_sequence_id);
 			atomic_dec(&fragment->id_count);
-			return -ENOSPC;
+			goto finish_assign_id;
 		}
 
 		pos->cno = ssdfs_current_cno(table->fsi->sb);
@@ -5493,7 +5755,9 @@ int ssdfs_blk2off_table_assign_id(struct ssdfs_blk2off_table *table,
 		  *last_sequence_id, offset_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return 0;
+finish_assign_id:
+	ssdfs_dynamic_array_release(&table->lblk2off, logical_blk, pos);
+	return err;
 }
 
 /*
@@ -5767,10 +6031,8 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 	struct ssdfs_phys_offset_table_array *phys_off_table;
 	struct ssdfs_sequence_array *sequence;
 	struct ssdfs_phys_offset_table_fragment *fragment;
-	unsigned long *lbmap = NULL;
 	struct ssdfs_offset_position pos = {0};
 	u16 last_sequence_id = SSDFS_INVALID_FRAG_ID;
-	unsigned long *bmap;
 	void *kaddr;
 	u16 capacity;
 	int err = 0;
@@ -5836,9 +6098,9 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 	capacity = table->lblk2off_capacity;
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT) {
-		bmap = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
-
-		if (ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
+		if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+						    SSDFS_LBMAP_INIT_INDEX,
+						    capacity,
 						    logical_blk)) {
 			err = -EAGAIN;
 			SSDFS_DBG("table is not initialized yet: "
@@ -5848,9 +6110,9 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 		}
 	}
 
-	bmap = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
-
-	if (ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
+	if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+					    SSDFS_LBMAP_STATE_INDEX,
+					    capacity,
 					    logical_blk)) {
 		err = -ENODATA;
 		SSDFS_ERR("logical block is not allocated yet: "
@@ -5923,9 +6185,15 @@ int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 		goto finish_fragment_modification;
 	}
 
-	lbmap = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
-
-	ssdfs_blk2off_table_bmap_set(lbmap, logical_blk);
+	err = ssdfs_blk2off_table_bmap_set(&table->lbmap,
+					   SSDFS_LBMAP_MODIFICATION_INDEX,
+					   logical_blk);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set bitmap: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto finish_fragment_modification;
+	}
 
 	downgrade_write(&table->translation_lock);
 
@@ -5969,7 +6237,8 @@ finish_table_modification:
 
 /*
  * ssdfs_blk2off_table_bmap_allocate() - find vacant and set logical block
- * @lbmap: bitmap pointer
+ * @lbmap: bitmap array pointer
+ * @bitmap_index: index of bitmap in array
  * @start_blk: start block for search
  * @len: requested length
  * @max_blks: upper bound for search
@@ -5983,37 +6252,97 @@ finish_table_modification:
  * %-ENODATA    - unable to allocate.
  */
 static inline
-int ssdfs_blk2off_table_bmap_allocate(unsigned long *lbmap,
+int ssdfs_blk2off_table_bmap_allocate(struct ssdfs_bitmap_array *lbmap,
+					int bitmap_index,
 					u16 start_blk, u16 len,
 					u16 max_blks,
 					struct ssdfs_blk2off_range *extent)
 {
 	unsigned long found, end;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!lbmap || !extent);
+
+	SSDFS_DBG("lbmap %p, bitmap_index %d, "
+		  "start_blk %u, len %u, "
+		  "max_blks %u, extent %p\n",
+		  lbmap, bitmap_index,
+		  start_blk, len, max_blks, extent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("lbmap %p, start_blk %u, len %u, "
-		  "max_blks %u, extent %p\n",
-		  lbmap, start_blk, len, max_blks, extent);
+	if (bitmap_index >= SSDFS_LBMAP_ARRAY_MAX) {
+		SSDFS_ERR("invalid bitmap index %d\n",
+			  bitmap_index);
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!lbmap->array[bitmap_index]);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	len = min_t(u16, len, max_blks);
 
-	found = find_next_zero_bit(lbmap, max_blks, start_blk);
-	if (found >= max_blks) {
-		SSDFS_ERR("unable to allocate\n");
-		return -ENODATA;
+	found = find_next_zero_bit(lbmap->array[bitmap_index],
+				   lbmap->bits_count, start_blk);
+	if (found >= lbmap->bits_count) {
+		if (lbmap->bits_count >= max_blks) {
+			SSDFS_DBG("unable to allocate\n");
+			return -ENODATA;
+		}
+
+		err = ssdfs_blk2off_table_resize_bitmap_array(lbmap,
+							lbmap->bits_count);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc bitmap array: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		found = find_next_zero_bit(lbmap->array[bitmap_index],
+					   lbmap->bits_count, start_blk);
+		if (found >= lbmap->bits_count) {
+			SSDFS_ERR("unable to allocate\n");
+			return -ENODATA;
+		}
 	}
 	BUG_ON(found >= U16_MAX);
 
+	if (found >= max_blks) {
+		SSDFS_DBG("unable to allocate\n");
+		return -ENODATA;
+	}
+
 	end = min_t(unsigned long, found + len, (unsigned long)max_blks);
-	end = find_next_bit(lbmap, end, found);
+
+	SSDFS_DBG("found %lu, len %u, max_blks %u, end %lu\n",
+		  found, len, max_blks, end);
+
+	end = find_next_bit(lbmap->array[bitmap_index],
+			    end, found);
+
+	SSDFS_DBG("found %lu, end %lu\n",
+		  found, end);
 
 	extent->start_lblk = (u16)found;
 	extent->len = (u16)(end - found);
 
-	bitmap_set(lbmap, extent->start_lblk, extent->len);
+	if (extent->len < len && lbmap->bits_count < max_blks) {
+		err = ssdfs_blk2off_table_resize_bitmap_array(lbmap, end);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to realloc bitmap array: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		end = find_next_bit(lbmap->array[bitmap_index],
+				    end, found);
+	}
+
+	extent->start_lblk = (u16)found;
+	extent->len = (u16)(end - found);
+
+	bitmap_set(lbmap->array[bitmap_index], extent->start_lblk, extent->len);
 
 	SSDFS_DBG("found extent (start %u, len %u)\n",
 		  extent->start_lblk, extent->len);
@@ -6044,9 +6373,10 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 					u16 len,
 					struct ssdfs_blk2off_range *extent)
 {
-	unsigned long *lbmap = NULL;
+	void *kaddr;
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
 	u16 start_blk = 0;
+	u16 i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6091,24 +6421,26 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 		goto finish_allocation;
 	}
 
-	lbmap = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
-
 	if (atomic_read(&table->state) == SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT) {
 		u16 capacity = table->lblk2off_capacity;
 		bool is_vacant;
 
 		start_blk = table->last_allocated_blk;
-		is_vacant = ssdfs_blk2off_table_bmap_vacant(lbmap, capacity,
-							    start_blk);
+		is_vacant = ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+							SSDFS_LBMAP_INIT_INDEX,
+							capacity,
+							start_blk);
 
 		if (is_vacant) {
 			start_blk = table->used_logical_blks;
 			if (start_blk > 0)
 				start_blk--;
 
-			is_vacant = ssdfs_blk2off_table_bmap_vacant(lbmap,
-								    capacity,
-								    start_blk);
+			is_vacant =
+			    ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+							SSDFS_LBMAP_INIT_INDEX,
+							capacity,
+							start_blk);
 		}
 
 		if (is_vacant) {
@@ -6118,9 +6450,9 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 		}
 	}
 
-	lbmap = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
-
-	err = ssdfs_blk2off_table_bmap_allocate(lbmap, start_blk, len,
+	err = ssdfs_blk2off_table_bmap_allocate(&table->lbmap,
+						SSDFS_LBMAP_STATE_INDEX,
+						start_blk, len,
 						table->lblk2off_capacity,
 						extent);
 	if (err == -EAGAIN) {
@@ -6143,7 +6475,9 @@ try_next_range:
 		goto finish_allocation;
 	}
 
-	err = ssdfs_blk2off_table_bmap_allocate(lbmap, 0, len, start_blk,
+	err = ssdfs_blk2off_table_bmap_allocate(&table->lbmap,
+						SSDFS_LBMAP_STATE_INDEX,
+						0, len, start_blk,
 						extent);
 	if (err == -EAGAIN) {
 		err = 0;
@@ -6159,8 +6493,33 @@ try_next_range:
 	}
 
 save_found_extent:
-	memset(&table->lblk2off[extent->start_lblk], 0xFF,
-		extent->len * off_pos_size);
+	for (i = 0; i < extent->len; i++) {
+		u16 blk = extent->start_lblk + i;
+
+		kaddr = ssdfs_dynamic_array_get_locked(&table->lblk2off, blk);
+		if (IS_ERR_OR_NULL(kaddr)) {
+			err = (kaddr == NULL ? -ENOENT : PTR_ERR(kaddr));
+			SSDFS_ERR("fail to get logical block: "
+				  "blk %u, extent (start %u, len %u), "
+				  "err %d\n",
+				  blk, extent->start_lblk,
+				  extent->len, err);
+			goto finish_allocation;
+		}
+
+		memset(kaddr, 0xFF, off_pos_size);
+
+		err = ssdfs_dynamic_array_release(&table->lblk2off,
+						  blk, kaddr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "blk %u, extent (start %u, len %u), "
+				  "err %d\n",
+				  blk, extent->start_lblk,
+				  extent->len, err);
+			goto finish_allocation;
+		}
+	}
 
 	BUG_ON(table->used_logical_blks > (U16_MAX - extent->len));
 	BUG_ON((table->used_logical_blks + extent->len) >
@@ -6279,10 +6638,9 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 	struct ssdfs_sequence_array *sequence;
 	struct ssdfs_phys_offset_table_fragment *fragment;
 	struct ssdfs_phys_offset_descriptor off;
-	unsigned long *lbmap1 = NULL;
-	unsigned long *lbmap2 = NULL;
 	u16 last_sequence_id = SSDFS_INVALID_FRAG_ID;
 	struct ssdfs_offset_position pos = {0};
+	void *old_pos;
 	size_t desc_size = sizeof(struct ssdfs_offset_position);
 	struct ssdfs_block_descriptor blk_desc = {0};
 	bool is_vacant;
@@ -6325,11 +6683,10 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 		goto finish_freeing;
 	}
 
-	lbmap1 = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
-
 	state = atomic_read(&table->state);
 	if (state == SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT) {
-		is_vacant = ssdfs_blk2off_table_extent_vacant(lbmap1,
+		is_vacant = ssdfs_blk2off_table_extent_vacant(&table->lbmap,
+						      SSDFS_LBMAP_INIT_INDEX,
 						      table->lblk2off_capacity,
 						      extent);
 
@@ -6342,9 +6699,8 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 		}
 	}
 
-	lbmap1 = table->lbmap[SSDFS_LBMAP_STATE_INDEX];
-
-	is_vacant = ssdfs_blk2off_table_extent_vacant(lbmap1,
+	is_vacant = ssdfs_blk2off_table_extent_vacant(&table->lbmap,
+						      SSDFS_LBMAP_STATE_INDEX,
 						      table->lblk2off_capacity,
 						      extent);
 	if (is_vacant) {
@@ -6355,13 +6711,29 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 		goto finish_freeing;
 	}
 
-	lbmap2 = table->lbmap[SSDFS_LBMAP_MODIFICATION_INDEX];
-
 	end_lblk = extent->start_lblk + extent->len;
 	for (i = extent->start_lblk; i < end_lblk; i++) {
-		if (table->lblk2off[i].id == U16_MAX) {
+		old_pos = ssdfs_dynamic_array_get_locked(&table->lblk2off, i);
+		if (IS_ERR_OR_NULL(old_pos)) {
+			err = (old_pos == NULL ? -ENOENT : PTR_ERR(old_pos));
+			SSDFS_ERR("fail to get logical block: "
+				  "blk %u, err %d\n",
+				  i, err);
+			goto finish_freeing;
+		}
+
+		if (SSDFS_OFF_POS(old_pos)->id == U16_MAX) {
 			SSDFS_WARN("logical block %d hasn't associated ID\n",
 				   i);
+		}
+
+		err = ssdfs_dynamic_array_release(&table->lblk2off,
+						  i, old_pos);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "blk %u, err %d\n",
+				  i, err);
+			goto finish_freeing;
 		}
 
 		err = ssdfs_blk2off_table_assign_id(table, i, peb_index,
@@ -6433,8 +6805,12 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 			goto finish_fragment_modification;
 		}
 
-		ssdfs_blk2off_table_bmap_clear(lbmap1, (u16)i);
-		ssdfs_blk2off_table_bmap_set(lbmap2, (u16)i);
+		ssdfs_blk2off_table_bmap_clear(&table->lbmap,
+						SSDFS_LBMAP_STATE_INDEX,
+						(u16)i);
+		ssdfs_blk2off_table_bmap_set(&table->lbmap,
+					     SSDFS_LBMAP_MODIFICATION_INDEX,
+					     (u16)i);
 
 		off.page_desc.logical_offset = cpu_to_le32(U32_MAX);
 		off.page_desc.logical_blk = cpu_to_le16((u16)i);
@@ -6477,14 +6853,30 @@ finish_fragment_modification:
 			  pos.offset_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_memcpy(table->lblk2off,
-				   i * desc_size,
-				   table->lblk2off_capacity * desc_size,
+		old_pos = ssdfs_dynamic_array_get_locked(&table->lblk2off, i);
+		if (IS_ERR_OR_NULL(kaddr)) {
+			err = (kaddr == NULL ? -ENOENT : PTR_ERR(kaddr));
+			SSDFS_ERR("fail to get logical block: "
+				  "blk %u, err %d\n",
+				  i, err);
+			goto finish_freeing;
+		}
+
+		err = ssdfs_memcpy(old_pos, 0, desc_size,
 				   &pos, 0, desc_size,
 				   desc_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n",
 				  err);
+			goto finish_freeing;
+		}
+
+		err = ssdfs_dynamic_array_release(&table->lblk2off,
+						  i, kaddr);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "blk %u, err %d\n",
+				  i, err);
 			goto finish_freeing;
 		}
 
@@ -6643,10 +7035,11 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 	}
 
 	if (atomic_read(&table->state) <= SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT) {
-		unsigned long *bmap = table->lbmap[SSDFS_LBMAP_INIT_INDEX];
 		u16 capacity = table->lblk2off_capacity;
 
-		if (ssdfs_blk2off_table_bmap_vacant(bmap, capacity,
+		if (ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+						    SSDFS_LBMAP_INIT_INDEX,
+						    capacity,
 						    logical_blk)) {
 			err = -EAGAIN;
 			SSDFS_DBG("table is not initialized yet: "
@@ -7184,13 +7577,14 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 {
 	struct ssdfs_migrating_block *blk = NULL;
 	int i;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("table %p, peb_index %u\n",
 		  tbl, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (peb_index >= tbl->pebs_count) {
 		SSDFS_ERR("fail to revert migration state: "
@@ -7218,17 +7612,30 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 
 			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
 			ssdfs_blk2off_pagevec_release(&blk->pvec);
-			ssdfs_blk2off_kfree(tbl->migrating_blks[i]);
-			tbl->migrating_blks[i] = NULL;
+
+			ssdfs_blk2off_kfree(blk);
+			blk = NULL;
+
+			err = ssdfs_dynamic_array_set(&tbl->migrating_blks,
+							i, &blk);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to zero pointer: "
+					  "logical_blk %d, err %d\n",
+					  i, err);
+				goto finish_revert_migration_state;
+			}
 		}
 	}
 
+finish_revert_migration_state:
 	up_write(&tbl->translation_lock);
 
-	SSDFS_DBG("migration state was reverted for peb_index %u\n",
-		  peb_index);
+	if (!err) {
+		SSDFS_DBG("migration state was reverted for peb_index %u\n",
+			  peb_index);
+	}
 
-	return 0;
+	return err;
 }
 
 static inline
@@ -7266,7 +7673,7 @@ static
 void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	size_t bytes;
+	u32 items_count;
 	int i;
 
 	BUG_ON(!tbl);
@@ -7284,28 +7691,39 @@ void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 		  tbl->init_cno, tbl->used_logical_blks,
 		  tbl->free_logical_blks, tbl->last_allocated_blk);
 
-	bytes = ssdfs_blk2off_table_bmap_bytes(tbl->lblk2off_capacity);
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
-		unsigned long *bmap = tbl->lbmap[i];
+		unsigned long *bmap = tbl->lbmap.array[i];
 
 		SSDFS_DBG("lbmap: index %d, bmap %p\n", i, bmap);
 		if (bmap) {
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-						bmap, bytes);
+						bmap,
+						tbl->lbmap.bytes_count);
 		}
 	}
 
 	SSDFS_DBG("lblk2off_capacity %u\n", tbl->lblk2off_capacity);
 
-	for (i = 0; i < tbl->lblk2off_capacity; i++) {
+	items_count = ssdfs_dynamic_array_items_count(&tbl->lblk2off);
+
+	for (i = 0; i < items_count; i++) {
+		void *kaddr;
+
+		kaddr = ssdfs_dynamic_array_get_locked(&tbl->lblk2off, i);
+		if (IS_ERR_OR_NULL(kaddr))
+			continue;
+
 		SSDFS_DBG("lbk2off: index %d, "
 			  "cno %llu, id %u, peb_index %u, "
 			  "sequence_id %u, offset_index %u\n",
-			  i, tbl->lblk2off[i].cno,
-			  tbl->lblk2off[i].id,
-			  tbl->lblk2off[i].peb_index,
-			  tbl->lblk2off[i].sequence_id,
-			  tbl->lblk2off[i].offset_index);
+			  i,
+			  SSDFS_OFF_POS(kaddr)->cno,
+			  SSDFS_OFF_POS(kaddr)->id,
+			  SSDFS_OFF_POS(kaddr)->peb_index,
+			  SSDFS_OFF_POS(kaddr)->sequence_id,
+			  SSDFS_OFF_POS(kaddr)->offset_index);
+
+		ssdfs_dynamic_array_release(&tbl->lblk2off, i, kaddr);
 	}
 
 	SSDFS_DBG("pebs_count %u\n", tbl->pebs_count);

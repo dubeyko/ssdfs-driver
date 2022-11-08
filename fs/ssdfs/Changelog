@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.28 [November 07, 2022]
+    (*) Optimize offset translation table memory management.
+
 v.4.27 [October 28, 2022]
     (*) Optimize block bitmap memory management.
 

@@ -81,7 +81,7 @@ void ssdfs_page_vector_check_memory_leaks(void)
  * @capacity: max number of memory pages in vector
  */
 int ssdfs_page_vector_create(struct ssdfs_page_vector *array,
-			     u8 capacity)
+			     u32 capacity)
 {
 	size_t size = sizeof(struct page *);
 
@@ -348,7 +348,7 @@ struct page *ssdfs_page_vector_allocate(struct ssdfs_page_vector *array)
  * @page_index: index of the page
  */
 struct page *ssdfs_page_vector_remove(struct ssdfs_page_vector *array,
-				      u8 page_index)
+				      u32 page_index)
 {
 	struct page *page;
 
