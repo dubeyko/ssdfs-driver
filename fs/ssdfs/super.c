@@ -2791,18 +2791,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("create current segment array started...\n");
-#else
-	SSDFS_DBG("create current segment array started...\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	down_write(&fs_info->volume_sem);
-	err = ssdfs_current_segment_array_create(fs_info);
-	up_write(&fs_info->volume_sem);
-	if (err)
-		goto destroy_segbmap;
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create shared extents tree started...\n");
 #else
 	SSDFS_DBG("create shared extents tree started...\n");
@@ -2813,12 +2801,38 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		err = ssdfs_shextree_create(fs_info);
 		up_write(&fs_info->volume_sem);
 		if (err)
-			goto destroy_current_segment_array;
+			goto destroy_segbmap;
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't shared extents tree\n");
-		goto destroy_current_segment_array;
+		goto destroy_segbmap;
 	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create invalidated extents btree started...\n");
+#else
+	SSDFS_DBG("create invalidated extents btree started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (fs_feature_compat & SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
+		down_write(&fs_info->volume_sem);
+		err = ssdfs_invextree_create(fs_info);
+		up_write(&fs_info->volume_sem);
+		if (err)
+			goto destroy_shextree;
+	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("create current segment array started...\n");
+#else
+	SSDFS_DBG("create current segment array started...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	down_write(&fs_info->volume_sem);
+	err = ssdfs_current_segment_array_create(fs_info);
+	up_write(&fs_info->volume_sem);
+	if (err)
+		goto destroy_invext_btree;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create shared dictionary started...\n");
@@ -2832,7 +2846,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		err = ssdfs_shared_dict_btree_create(fs_info);
 		if (err) {
 			up_write(&fs_info->volume_sem);
-			goto destroy_shextree;
+			goto destroy_current_segment_array;
 		}
 
 		err = ssdfs_shared_dict_btree_init(fs_info);
@@ -2845,7 +2859,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	} else {
 		err = -EIO;
 		SSDFS_WARN("volume hasn't shared dictionary\n");
-		goto destroy_shextree;
+		goto destroy_current_segment_array;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -2867,20 +2881,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("create invalidated extents btree started...\n");
-#else
-	SSDFS_DBG("create invalidated extents btree started...\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	if (fs_feature_compat & SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
-		down_write(&fs_info->volume_sem);
-		err = ssdfs_invextree_create(fs_info);
-		up_write(&fs_info->volume_sem);
-		if (err)
-			goto destroy_inodes_btree;
-	}
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("getting root inode...\n");
 #else
 	SSDFS_DBG("getting root inode...\n");
@@ -2890,14 +2890,14 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (IS_ERR(root_i)) {
 		SSDFS_DBG("getting root inode failed\n");
 		err = PTR_ERR(root_i);
-		goto destroy_invext_btree;
+		goto destroy_inodes_btree;
 	}
 
 	if (!S_ISDIR(root_i->i_mode) || !root_i->i_blocks || !root_i->i_size) {
 		err = -ERANGE;
 		iput(root_i);
 		SSDFS_ERR("corrupted root inode\n");
-		goto destroy_invext_btree;
+		goto destroy_inodes_btree;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3002,20 +3002,20 @@ stop_gc_using_seg_thread:
 put_root_inode:
 	iput(root_i);
 
-destroy_invext_btree:
-	ssdfs_invextree_destroy(fs_info);
-
 destroy_inodes_btree:
 	ssdfs_inodes_btree_destroy(fs_info);
 
 destroy_shdictree:
 	ssdfs_shared_dict_btree_destroy(fs_info);
 
-destroy_shextree:
-	ssdfs_shextree_destroy(fs_info);
-
 destroy_current_segment_array:
 	ssdfs_destroy_all_curent_segments(fs_info);
+
+destroy_invext_btree:
+	ssdfs_invextree_destroy(fs_info);
+
+destroy_shextree:
+	ssdfs_shextree_destroy(fs_info);
 
 destroy_segbmap:
 	ssdfs_segbmap_destroy(fs_info);

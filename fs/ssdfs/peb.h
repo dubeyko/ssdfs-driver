@@ -256,6 +256,8 @@ enum {
  * @pages_capacity: rest free pages in log
  * @write_offset: current offset in bytes for adding data in log
  * @seg_flags: segment header's flags for the log
+ * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
+ * @bmap_snapshot: snapshot of block bitmap
  * @area: log's areas (main, diff updates, journal)
  */
 struct ssdfs_peb_log {
@@ -266,6 +268,7 @@ struct ssdfs_peb_log {
 	u32 reserved_pages; /* metadata pages in the log */
 	u32 free_data_pages; /* free data pages capacity */
 	u32 seg_flags;
+	u32 prev_log_bmap_bytes;
 	struct ssdfs_page_vector bmap_snapshot;
 	struct ssdfs_peb_area area[SSDFS_LOG_AREA_MAX];
 };
@@ -511,25 +514,30 @@ void ssdfs_peb_set_current_log_state(struct ssdfs_peb_info *pebi,
  * @free_pages: free pages in the current log
  * @start_page: start page of the current log
  * @sequence_id: index of partial log in the sequence
+ * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
  */
 static inline
 void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 				u32 free_pages,
 				u32 start_page,
-				int sequence_id)
+				int sequence_id,
+				u32 prev_log_bmap_bytes)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 
 	SSDFS_DBG("peb_id %llu, "
 		  "pebi->current_log.start_page %u, "
-		  "free_pages %u\n",
-		  pebi->peb_id, start_page, free_pages);
+		  "free_pages %u, sequence_id %d, "
+		  "prev_log_bmap_bytes %u\n",
+		  pebi->peb_id, start_page, free_pages,
+		  sequence_id, prev_log_bmap_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_lock(pebi);
 	pebi->current_log.start_page = start_page;
 	pebi->current_log.free_data_pages = free_pages;
+	pebi->current_log.prev_log_bmap_bytes = prev_log_bmap_bytes;
 	atomic_set(&pebi->current_log.sequence_id, sequence_id);
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_INITIALIZED);
 	ssdfs_peb_current_log_unlock(pebi);

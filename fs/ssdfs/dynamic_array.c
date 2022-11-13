@@ -86,7 +86,9 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 				u32 capacity, size_t item_size,
 				u8 alloc_pattern)
 {
+	struct page *page;
 	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
+	u32 pages_count;
 	u64 bytes_count;
 	int err;
 
@@ -114,6 +116,13 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 
 	array->capacity = capacity;
 	array->item_size = item_size;
+	array->items_per_mem_page = PAGE_SIZE / item_size;
+
+	pages_count = capacity + array->items_per_mem_page - 1;
+	pages_count /= array->items_per_mem_page;
+
+	if (pages_count == 0)
+		pages_count = 1;
 
 	bytes_count = (u64)capacity * item_size;
 
@@ -127,16 +136,14 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 	}
 
 	if (bytes_count > PAGE_SIZE) {
-		u64 pages_count = (bytes_count + PAGE_SIZE - 1) / PAGE_SIZE;
-
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(pages_count >= ssdfs_page_vector_max_threshold());
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_page_vector_create(&array->pvec, (u32)pages_count);
+		err = ssdfs_page_vector_create(&array->pvec, pages_count);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create page vector: "
-				  "bytes_count %llu, pages_count %llu, "
+				  "bytes_count %llu, pages_count %u, "
 				  "err %d\n",
 				  bytes_count, pages_count, err);
 			return err;
@@ -146,11 +153,26 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 		if (unlikely(err)) {
 			ssdfs_page_vector_destroy(&array->pvec);
 			SSDFS_ERR("fail to init page vector: "
-				  "bytes_count %llu, pages_count %llu, "
+				  "bytes_count %llu, pages_count %u, "
 				  "err %d\n",
 				  bytes_count, pages_count, err);
 			return err;
 		}
+
+		page = ssdfs_page_vector_allocate(&array->pvec);
+		if (IS_ERR_OR_NULL(page)) {
+			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+			SSDFS_ERR("unable to allocate page\n");
+			return err;
+		}
+
+		ssdfs_lock_page(page);
+		ssdfs_memset_page(page, 0, PAGE_SIZE,
+				  array->alloc_pattern, PAGE_SIZE);
+		ssdfs_unlock_page(page);
+
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
 
 		array->bytes_count = PAGE_SIZE;
 		array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC;
@@ -206,6 +228,7 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
 
 	array->capacity = 0;
 	array->item_size = 0;
+	array->items_per_mem_page = 0;
 	array->bytes_count = 0;
 	array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT;
 }
@@ -233,6 +256,7 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 {
 	struct page *page;
 	void *ptr = NULL;
+	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
 	u64 item_offset = 0;
 	u64 page_index;
 	u32 page_off;
@@ -284,19 +308,22 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 
 	item_offset = (u64)array->item_size * index;
 
-	if (item_offset >= array->bytes_count) {
+	if (item_offset >= max_threshold) {
 		SSDFS_ERR("invalid item_offset: "
 			  "index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u\n",
+			  "item_offset %llu, bytes_count %u, "
+			  "max_threshold %llu\n",
 			  index, array->item_size,
-			  item_offset, array->bytes_count);
+			  item_offset, array->bytes_count,
+			  max_threshold);
 		return ERR_PTR(-E2BIG);
 	}
 
 	switch (array->state) {
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		page_index = item_offset / PAGE_SIZE;
-		page_off = item_offset % PAGE_SIZE;
+		page_index = index / array->items_per_mem_page;
+		page_off = index % array->items_per_mem_page;
+		page_off *= array->item_size;
 
 		if (page_index >= ssdfs_page_vector_capacity(&array->pvec)) {
 			SSDFS_ERR("invalid page index: "
@@ -322,6 +349,15 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 				  page, page_ref_count(page));
 
 			array->bytes_count += PAGE_SIZE;
+
+			SSDFS_DBG("array %p, index %u, capacity %u, "
+					  "item_size %zu, bytes_count %u, "
+					  "index %u, item_offset %llu, "
+					  "page_index %llu, page_count %u\n",
+					  array, index, array->capacity,
+					  array->item_size, array->bytes_count,
+					  index, item_offset, page_index,
+					  ssdfs_page_vector_count(&array->pvec));
 		}
 
 		page = array->pvec.pages[page_index];
@@ -424,7 +460,7 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 		return -E2BIG;
 	}
 
-	page_index = item_offset / PAGE_SIZE;
+	page_index = index / array->items_per_mem_page;
 
 	if (page_index >= ssdfs_page_vector_count(&array->pvec)) {
 		SSDFS_ERR("invalid page index: "
@@ -462,6 +498,7 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 {
 	struct page *page;
 	void *kaddr = NULL;
+	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
 	u64 item_offset = 0;
 	u64 page_index;
 	u32 page_off;
@@ -513,19 +550,22 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 
 	item_offset = (u64)array->item_size * index;
 
-	if (item_offset >= array->bytes_count) {
+	if (item_offset >= max_threshold) {
 		SSDFS_ERR("invalid item_offset: "
 			  "index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u\n",
+			  "item_offset %llu, bytes_count %u, "
+			  "max_threshold %llu\n",
 			  index, array->item_size,
-			  item_offset, array->bytes_count);
+			  item_offset, array->bytes_count,
+			  max_threshold);
 		return -E2BIG;
 	}
 
 	switch (array->state) {
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		page_index = item_offset / PAGE_SIZE;
-		page_off = item_offset % PAGE_SIZE;
+		page_index = index / array->items_per_mem_page;
+		page_off = index % array->items_per_mem_page;;
+		page_off *= array->item_size;
 
 		if (page_index >= ssdfs_page_vector_capacity(&array->pvec)) {
 			SSDFS_ERR("invalid page index: "
@@ -670,7 +710,9 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				goto finish_copy_content;
 			}
 
-			bytes_count = min_t(size_t, (size_t)PAGE_SIZE,
+			bytes_count =
+				array->item_size * array->items_per_mem_page;
+			bytes_count = min_t(size_t, bytes_count,
 						buf_size - copied_bytes);
 
 			err = ssdfs_memcpy_from_page(copy_buf,
@@ -695,6 +737,14 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 			}
 
 			copied_bytes += bytes_count;
+
+			SSDFS_DBG("array %p, capacity %u, "
+				  "item_size %zu, bytes_count %u, "
+				  "page_index %d, pages_count %u, "
+				  "bytes_count %zu, copied_bytes %u\n",
+				  array, array->capacity,
+				  array->item_size, array->bytes_count,
+				  i, pages_count, bytes_count, copied_bytes);
 		}
 		break;
 

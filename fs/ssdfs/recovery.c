@@ -1000,9 +1000,9 @@ static int ssdfs_find_latest_valid_sb_segment(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi->devops->read);
 	BUG_ON(!is_ssdfs_magic_valid(&SSDFS_VH(fsi->sbi.vh_buf)->magic));
 	BUG_ON(!is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf, hdr_size));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p\n", fsi, fsi->sbi.vh_buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 try_next_peb:
 	last_vh = SSDFS_VH(fsi->sbi.vh_buf);
@@ -1271,9 +1271,9 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi->devops->read);
 	BUG_ON(!is_ssdfs_magic_valid(&SSDFS_VH(fsi->sbi.vh_buf)->magic));
 	BUG_ON(!is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf, hdr_size));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p\n", fsi, fsi->sbi.vh_buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_backup_sb_info(fsi);
 	last_seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
@@ -1396,9 +1396,9 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->sbi.vh_buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p\n", fsi, fsi->sbi.vh_buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!fsi->devops->can_write_page) {
 		SSDFS_CRIT("fail to find latest valid sb info: "

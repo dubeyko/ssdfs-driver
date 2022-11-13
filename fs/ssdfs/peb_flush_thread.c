@@ -245,9 +245,11 @@ pgoff_t ssdfs_write_offset_to_mem_page_index(struct ssdfs_fs_info *fsi,
  * ssdfs_peb_estimate_blk_bmap_bytes() - estimate block bitmap's bytes
  * @pages_per_peb: number of pages in one PEB
  * @is_migrating: is PEB migrating?
+ * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
  */
 static inline
-int ssdfs_peb_estimate_blk_bmap_bytes(u32 pages_per_peb, bool is_migrating)
+int ssdfs_peb_estimate_blk_bmap_bytes(u32 pages_per_peb, bool is_migrating,
+				      u32 prev_log_bmap_bytes)
 {
 	size_t blk_bmap_hdr_size = sizeof(struct ssdfs_block_bitmap_header);
 	size_t blk_bmap_frag_hdr_size = sizeof(struct ssdfs_block_bitmap_fragment);
@@ -267,6 +269,11 @@ int ssdfs_peb_estimate_blk_bmap_bytes(u32 pages_per_peb, bool is_migrating)
 		reserved_bytes += blk_bmap_frag_hdr_size;
 		reserved_bytes += frag_desc_size;
 		reserved_bytes += blk_bmap_bytes;
+	}
+
+	if (prev_log_bmap_bytes < S32_MAX) {
+		reserved_bytes = min_t(int, reserved_bytes,
+					(int)(prev_log_bmap_bytes * 2));
 	}
 
 	return reserved_bytes;
@@ -289,7 +296,7 @@ int ssdfs_peb_estimate_blk2off_bytes(u16 log_pages, u32 pebs_per_seg,
 	u32 items_number;
 	int reserved_bytes = 0;
 
-	items_number = min_t(u32, log_pages,
+	items_number = min_t(u32, log_pages - (log_start_page % log_pages),
 				pages_per_peb - log_start_page);
 
 	SSDFS_DBG("items_number %u, log_pages %u, "
@@ -320,7 +327,8 @@ int ssdfs_peb_estimate_blk_desc_tbl_bytes(u16 log_pages,
 	u32 items_number;
 	int reserved_bytes = 0;
 
-	items_number = min_t(u32, log_pages,
+	items_number = min_t(u32,
+				log_pages - (log_start_page % log_pages),
 				pages_per_peb - log_start_page);
 
 	reserved_bytes += blk_desc_tbl_hdr_size;
@@ -360,7 +368,8 @@ u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
 
 	/* block bitmap */
 	reserved_bytes += ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb,
-							    is_migrating);
+							    is_migrating,
+							    U32_MAX);
 
 	/* blk2off table */
 	reserved_bytes += ssdfs_peb_estimate_blk2off_bytes(log_pages,
@@ -380,7 +389,8 @@ u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
 
 	/* block bitmap */
 	reserved_bytes += ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb,
-							    is_migrating);
+							    is_migrating,
+							    U32_MAX);
 
 	/* blk2off table */
 	reserved_bytes += ssdfs_peb_estimate_blk2off_bytes(log_pages,
@@ -410,6 +420,7 @@ int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
 	struct ssdfs_fs_info *fsi = si->fsi;
 	u32 pages_per_peb = fsi->pages_per_peb;
 	bool is_migrating = false;
+	u32 prev_log_bmap_bytes;
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_MIGRATION_PREPARATION:
@@ -423,7 +434,10 @@ int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
 		break;
 	}
 
-	return ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb, is_migrating);
+	prev_log_bmap_bytes = pebi->current_log.prev_log_bmap_bytes;
+
+	return ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb, is_migrating,
+						 prev_log_bmap_bytes);
 }
 
 /*
@@ -9659,6 +9673,9 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 	bmap_hdr->bytes_count = cpu_to_le32(*write_offset - bmap_hdr_off);
 	desc->size = bmap_hdr->bytes_count;
+
+	pebi->current_log.prev_log_bmap_bytes =
+			le32_to_cpu(bmap_hdr->bytes_count);
 
 	bmap_hdr->flags = flags;
 	bmap_hdr->type = compression;

@@ -426,7 +426,7 @@ void ssdfs_destroy_migrating_blocks_array(struct ssdfs_blk2off_table *table)
 	BUG_ON(!table);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	items_count = ssdfs_dynamic_array_items_count(&table->migrating_blks);
+	items_count = table->last_allocated_blk + 1;
 
 	for (i = 0; i < items_count; i++) {
 		kaddr = ssdfs_dynamic_array_get_locked(&table->migrating_blks,
@@ -3155,7 +3155,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 		goto finish_snapshoting;
 	}
 
-	bmap_bytes = ssdfs_blk2off_table_bmap_bytes(capacity);
+	bmap_bytes = ssdfs_blk2off_table_bmap_bytes(table->lbmap.bits_count);
 	snapshot->bmap_copy = ssdfs_blk2off_kvzalloc(bmap_bytes, GFP_KERNEL);
 	if (!snapshot->bmap_copy) {
 		err = -ENOMEM;
@@ -3179,7 +3179,11 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 		goto finish_snapshoting;
 	}
 
-	SSDFS_DBG("last_allocated_blk %u\n",
+	SSDFS_DBG("capacity %u, bits_count %u, "
+		  "bmap_bytes %zu, tbl_bytes %zu, "
+		  "last_allocated_blk %u\n",
+		  capacity, table->lbmap.bits_count,
+		  bmap_bytes, tbl_bytes,
 		  table->last_allocated_blk);
 
 	SSDFS_DBG("init_bmap %lx, state_bmap %lx, bmap_copy %lx\n",
@@ -7702,9 +7706,11 @@ void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 		}
 	}
 
-	SSDFS_DBG("lblk2off_capacity %u\n", tbl->lblk2off_capacity);
+	SSDFS_DBG("lblk2off_capacity %u, capacity %u\n",
+		  tbl->lblk2off_capacity,
+		  ssdfs_dynamic_array_items_count(&tbl->lblk2off));
 
-	items_count = ssdfs_dynamic_array_items_count(&tbl->lblk2off);
+	items_count = tbl->last_allocated_blk + 1;
 
 	for (i = 0; i < items_count; i++) {
 		void *kaddr;

@@ -118,7 +118,7 @@ int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_current_log_init(pebi, pebi->log_pages, 0, 0);
+	ssdfs_peb_current_log_init(pebi, pebi->log_pages, 0, 0, U32_MAX);
 
 	return 0;
 }
@@ -184,7 +184,7 @@ int ssdfs_create_used_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
 
 	return 0;
 }
@@ -218,7 +218,7 @@ int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
 
 	return 0;
 }
@@ -349,6 +349,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.free_data_pages = pebi->log_pages;
 	pebi->current_log.seg_flags = 0;
+	pebi->current_log.prev_log_bmap_bytes = U32_MAX;
 
 	SSDFS_DBG("free_data_pages %u\n",
 		  pebi->current_log.free_data_pages);

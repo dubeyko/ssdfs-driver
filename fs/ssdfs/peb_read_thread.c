@@ -6743,6 +6743,10 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 				   free_pages, min_log_pages,
 				   new_log_start_page + free_pages);
 
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			new_log_start_page += free_pages;
 			free_pages = pebi->log_pages;
 			sequence_id = 0;
@@ -6753,15 +6757,18 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 			  free_pages, min_log_pages,
 			  new_log_start_page);
 
+		bytes_count = le32_to_cpu(env->b_init.bmap_hdr->bytes_count);
 		ssdfs_peb_current_log_init(pebi, free_pages,
 					   new_log_start_page,
-					   sequence_id);
+					   sequence_id,
+					   bytes_count);
 	} else {
 		sequence_id = 0;
 		ssdfs_peb_current_log_init(pebi,
 					   0,
 					   new_log_start_page,
-					   sequence_id);
+					   sequence_id,
+					   U32_MAX);
 	}
 
 fail_init_using_blk_bmap:
@@ -6968,7 +6975,7 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 		}
 	}
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
 
 fail_init_used_blk_bmap:
 	if (unlikely(err))
@@ -8005,7 +8012,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
-	pebi->env.log_offset = (u32)last_page_idx;
+	pebi->env.log_offset = (u32)last_page_idx + 1;
 
 	do {
 		err = ssdfs_find_prev_partial_log(fsi, pebi,
