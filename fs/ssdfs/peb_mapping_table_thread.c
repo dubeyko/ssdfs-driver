@@ -2655,8 +2655,17 @@ int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl)
 	tbl->thread.task = kthread_create(threadfn, tbl, fmt);
 	if (IS_ERR_OR_NULL(tbl->thread.task)) {
 		err = PTR_ERR(tbl->thread.task);
-		SSDFS_ERR("fail to start mapping table's thread: "
-			  "err %d\n", err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
+			SSDFS_ERR("fail to start mapping table's thread: "
+				  "err %d\n", err);
+		}
+
 		return err;
 	}
 

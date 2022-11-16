@@ -338,7 +338,12 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 						  log_pages,
 						  create_threads,
 						  *kaddr);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create segment: "
 				  "seg %llu, err %d\n",
 				  seg, err);
@@ -747,7 +752,12 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 	}
 
 	err = ssdfs_segbmap_create_segments(fsi, SSDFS_MAIN_SEGBMAP_SEG, ptr);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto destroy_seg_objects;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to create segbmap's segment objects: "
 			  "err %d\n",
 			  err);

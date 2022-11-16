@@ -363,9 +363,9 @@ int ssdfs_shared_dict_start_thread(struct ssdfs_shared_dict_btree_info *tree)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	threadfn = thread_desc[0].threadfn;
 	fmt = thread_desc[0].fmt;
@@ -373,9 +373,19 @@ int ssdfs_shared_dict_start_thread(struct ssdfs_shared_dict_btree_info *tree)
 	ptr = &tree->requests;
 	ptr->thread.task = kthread_create(threadfn, tree, fmt);
 	if (IS_ERR_OR_NULL(ptr->thread.task)) {
-		err = PTR_ERR(ptr->thread.task);
-		SSDFS_ERR("fail to start shared extents tree's thread: "
-			  "err %d\n", err);
+		err = (ptr->thread.task == NULL ? -ENOMEM :
+						PTR_ERR(ptr->thread.task));
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
+			SSDFS_ERR("fail to start shared extents tree's thread: "
+				  "err %d\n", err);
+		}
+
 		return err;
 	}
 

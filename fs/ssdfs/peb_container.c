@@ -173,9 +173,19 @@ int ssdfs_peb_start_thread(struct ssdfs_peb_container *pebc, int type)
 						 pebc->peb_index);
 	if (IS_ERR_OR_NULL(pebc->thread[type].task)) {
 		err = PTR_ERR(pebc->thread[type].task);
-		SSDFS_ERR("fail to start thread: "
-			  "seg_id %llu, peb_index %u, thread_type %d\n",
-			  pebc->parent_si->seg_id, pebc->peb_index, type);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
+			SSDFS_ERR("fail to start thread: "
+				  "seg_id %llu, peb_index %u, thread_type %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, type);
+		}
+
 		return err;
 	}
 
@@ -505,7 +515,12 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		BUG();
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto fail_create_clean_peb_obj;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start read thread: "
 			  "peb_index %u, err %d\n",
 			  pebc->peb_index, err);
@@ -513,7 +528,12 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 	}
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto stop_read_thread;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start flush thread: "
 			  "peb_index %u, err %d\n",
 			  pebc->peb_index, err);
@@ -681,18 +701,32 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to start read thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start read thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
 		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
 		goto fail_create_using_peb_obj;
 	}
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to start flush thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start flush thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
 		goto stop_read_thread;
 	}
 
@@ -866,18 +900,32 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to start read thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start read thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
 		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
 		goto fail_create_used_peb_obj;
 	}
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to start flush thread: "
-			  "peb_index %u, err %d\n",
-			  pebc->peb_index, err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start flush thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
 		goto stop_read_thread;
 	}
 
@@ -1158,7 +1206,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
 			err = ssdfs_create_clean_peb_container(pebc,
 								SSDFS_DST_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create clean PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1168,7 +1221,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
 			err = ssdfs_create_using_peb_container(pebc,
 								SSDFS_DST_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create using PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1177,7 +1235,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
 			err = ssdfs_create_used_peb_container(pebc,
 							      SSDFS_DST_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create used PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1187,7 +1250,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
 			err = ssdfs_create_pre_dirty_peb_container(pebc,
 								SSDFS_DST_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create pre-dirty PEB "
 					  "container: err %d\n", err);
 				goto fail_start_threads;
@@ -1197,7 +1265,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
 			err = ssdfs_create_dirty_peb_container(pebc,
 								SSDFS_DST_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create dirty PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1216,7 +1289,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
 		err = ssdfs_create_clean_peb_container(pebc,
 							SSDFS_SRC_PEB);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto fail_start_threads;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create clean PEB container: "
 				  "err %d\n", err);
 			goto fail_start_threads;
@@ -1226,7 +1304,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_USING_PEB_STATE:
 		err = ssdfs_create_using_peb_container(pebc,
 							SSDFS_SRC_PEB);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto fail_start_threads;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create using PEB container: "
 				  "err %d\n", err);
 			goto fail_start_threads;
@@ -1236,7 +1319,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_USED_PEB_STATE:
 		err = ssdfs_create_used_peb_container(pebc,
 							SSDFS_SRC_PEB);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto fail_start_threads;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create used PEB container: "
 				  "err %d\n", err);
 			goto fail_start_threads;
@@ -1246,7 +1334,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 		err = ssdfs_create_pre_dirty_peb_container(pebc,
 							   SSDFS_SRC_PEB);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto fail_start_threads;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create pre-dirty PEB container: "
 				  "err %d\n", err);
 			goto fail_start_threads;
@@ -1256,7 +1349,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
 		err = ssdfs_create_dirty_peb_container(pebc,
 							SSDFS_SRC_PEB);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto fail_start_threads;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create dirty PEB container: "
 				  "err %d\n", err);
 			goto fail_start_threads;
@@ -1273,7 +1371,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 			err = ssdfs_create_used_peb_container(pebc,
 							      SSDFS_SRC_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create used PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1289,7 +1392,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 							SSDFS_SRC_AND_DST_PEB);
 			}
 
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create using PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1315,7 +1423,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 			err = ssdfs_create_pre_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create pre-dirty PEB "
 					  "container: err %d\n", err);
 				goto fail_start_threads;
@@ -1331,7 +1444,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 							SSDFS_SRC_AND_DST_PEB);
 			}
 
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create using PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1358,7 +1476,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 								SSDFS_DST_PEB);
 			}
 
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create using PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1374,7 +1497,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 							      SSDFS_DST_PEB);
 			}
 
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create used PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1390,7 +1518,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 								SSDFS_DST_PEB);
 			}
 
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create pre-dirty PEB "
 					  "container: err %d\n", err);
 				goto fail_start_threads;
@@ -1406,7 +1539,12 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 								SSDFS_DST_PEB);
 			}
 
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create dirty PEB container: "
 					  "err %d\n", err);
 				goto fail_start_threads;
@@ -1748,7 +1886,12 @@ start_container_threads:
 	err = ssdfs_peb_container_start_threads(pebc, src_peb_state,
 						dst_peb_state,
 						src_peb_flags);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto fail_init_peb_container;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start PEB's threads: "
 			  "err %d\n", err);
 		goto fail_init_peb_container;

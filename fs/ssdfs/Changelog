@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.30 [November 15, 2022]
+    (*) Fix issue with dentries/extents number accounting.
+
 v.4.29 [November 12, 2022]
     (*) Fix bugs in ZNS SSD support.
     (*) Improve logic of minimal log size estimation.

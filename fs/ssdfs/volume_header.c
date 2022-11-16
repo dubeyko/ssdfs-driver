@@ -90,6 +90,34 @@ bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
 	return is_csum_valid(&SSDFS_PLH(plh_buf)->check, plh_buf, buf_size);
 }
 
+static inline
+void ssdfs_show_volume_header(struct ssdfs_volume_header *hdr)
+{
+	SSDFS_ERR("MAGIC: common %#x, key %#x, "
+		  "version (major %u, minor %u)\n",
+		  le32_to_cpu(hdr->magic.common),
+		  le16_to_cpu(hdr->magic.key),
+		  hdr->magic.version.major,
+		  hdr->magic.version.minor);
+	SSDFS_ERR("CHECK: bytes %u, flags %#x, csum %#x\n",
+		  le16_to_cpu(hdr->check.bytes),
+		  le16_to_cpu(hdr->check.flags),
+		  le32_to_cpu(hdr->check.csum));
+	SSDFS_ERR("KEY VALUES: log_pagesize %u, log_erasesize %u, "
+		  "log_segsize %u, log_pebs_per_seg %u, "
+		  "megabytes_per_peb %u, pebs_per_seg %u, "
+		  "create_time %llu, create_cno %llu, flags %#x\n",
+		  hdr->log_pagesize,
+		  hdr->log_erasesize,
+		  hdr->log_segsize,
+		  hdr->log_pebs_per_seg,
+		  le16_to_cpu(hdr->megabytes_per_peb),
+		  le16_to_cpu(hdr->pebs_per_seg),
+		  le64_to_cpu(hdr->create_time),
+		  le64_to_cpu(hdr->create_cno),
+		  le32_to_cpu(hdr->flags));
+}
+
 /*
  * is_ssdfs_volume_header_consistent() - check volume header consistency
  * @fsi: pointer on shared file system object
@@ -295,46 +323,52 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 	minor_magic_valid = is_ssdfs_segment_header_magic_valid(hdr);
 
 	if (!major_magic_valid && !minor_magic_valid) {
-		if (!silent)
+		if (!silent) {
 			SSDFS_ERR("valid magic doesn't detected\n");
-		else
+			ssdfs_show_volume_header(vh);
+		} else
 			SSDFS_DBG("valid magic doesn't detected\n");
 		return -ENODATA;
 	} else if (!major_magic_valid) {
-		if (!silent)
+		if (!silent) {
 			SSDFS_ERR("invalid SSDFS magic signature\n");
-		else
+			ssdfs_show_volume_header(vh);
+		} else
 			SSDFS_DBG("invalid SSDFS magic signature\n");
 		return -EIO;
 	} else if (!minor_magic_valid) {
-		if (!silent)
+		if (!silent) {
 			SSDFS_ERR("invalid segment header magic signature\n");
-		else
+			ssdfs_show_volume_header(vh);
+		} else
 			SSDFS_DBG("invalid segment header magic signature\n");
 		return -EIO;
 	}
 
 	if (!is_ssdfs_volume_header_csum_valid(hdr, hdr_size)) {
-		if (!silent)
+		if (!silent) {
 			SSDFS_ERR("invalid checksum of volume header\n");
-		else
+			ssdfs_show_volume_header(vh);
+		} else
 			SSDFS_DBG("invalid checksum of volume header\n");
 		return -EIO;
 	}
 
 	dev_size = fsi->devops->device_size(fsi->sb);
 	if (!is_ssdfs_volume_header_consistent(fsi, vh, dev_size)) {
-		if (!silent)
+		if (!silent) {
 			SSDFS_ERR("volume header is corrupted\n");
-		else
+			ssdfs_show_volume_header(vh);
+		} else
 			SSDFS_DBG("volume header is corrupted\n");
 		return -EIO;
 	}
 
 	if (SSDFS_VH_CNO(vh) > SSDFS_SEG_CNO(hdr)) {
-		if (!silent)
+		if (!silent) {
 			SSDFS_ERR("invalid checkpoint/timestamp\n");
-		else
+			ssdfs_show_volume_header(vh);
+		} else
 			SSDFS_DBG("invalid checkpoint/timestamp\n");
 		return -EIO;
 	}
@@ -344,6 +378,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("log_pages %u > pages_per_peb %u\n",
 				  le16_to_cpu(hdr->log_pages),
 				  fsi->pages_per_peb);
+			ssdfs_show_volume_header(vh);
 		} else {
 			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
 				  le16_to_cpu(hdr->log_pages),
@@ -356,6 +391,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 		if (!silent) {
 			SSDFS_ERR("unknown seg_type %#x\n",
 				  le16_to_cpu(hdr->seg_type));
+			ssdfs_show_volume_header(vh);
 		} else {
 			SSDFS_DBG("unknown seg_type %#x\n",
 				  le16_to_cpu(hdr->seg_type));
@@ -367,6 +403,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 		if (!silent) {
 			SSDFS_ERR("corrupted seg_flags %#x\n",
 				  le32_to_cpu(hdr->seg_flags));
+			ssdfs_show_volume_header(vh);
 		} else {
 			SSDFS_DBG("corrupted seg_flags %#x\n",
 				  le32_to_cpu(hdr->seg_flags));
@@ -549,9 +586,9 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, hdr %p, silent %#x\n", fsi, hdr, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	major_magic_valid = is_ssdfs_magic_valid(&hdr->magic);
 	minor_magic_valid =
@@ -675,10 +712,10 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 	size_t read_bytes;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, pages_off %u, buf %p, silent %#x\n",
 		  peb_id, pages_off, buf, silent);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->devops->read);
 	BUG_ON(!buf);
@@ -880,7 +917,9 @@ void ssdfs_store_sb_segs_array(struct ssdfs_fs_info *fsi,
 {
 	int i, j;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, vh %p\n", fsi, vh);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&fsi->sb_segs_sem);
 
@@ -895,6 +934,7 @@ void ssdfs_store_sb_segs_array(struct ssdfs_fs_info *fsi,
 
 	up_read(&fsi->sb_segs_sem);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb_lebs[CUR][MAIN] %llu, sb_pebs[CUR][MAIN] %llu\n",
 		  fsi->sb_lebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG],
 		  fsi->sb_pebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG]);
@@ -919,6 +959,7 @@ void ssdfs_store_sb_segs_array(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("sb_lebs[PREV][COPY] %llu, sb_pebs[PREV][COPY] %llu\n",
 		  fsi->sb_lebs[SSDFS_PREV_SB_SEG][SSDFS_COPY_SB_SEG],
 		  fsi->sb_pebs[SSDFS_PREV_SB_SEG][SSDFS_COPY_SB_SEG]);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -932,9 +973,9 @@ int ssdfs_prepare_volume_header_for_commit(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	struct super_block *sb = fsi->sb;
 	u64 dev_size;
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, vh %p\n", fsi, vh);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_store_sb_segs_array(fsi, vh);
 
@@ -966,9 +1007,11 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 	u16 data_size = sizeof(struct ssdfs_segment_header);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, hdr %p, "
 		  "log_pages %u, seg_type %#x, seg_flags %#x\n",
 		  fsi, hdr, log_pages, seg_type, seg_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr->timestamp = fsi->vs->timestamp;
 	hdr->cno = fsi->vs->cno;
@@ -1021,9 +1064,11 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	u16 data_size = sizeof(struct ssdfs_partial_log_header);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, hdr %p, sequence_id %d, "
 		  "log_pages %u, seg_type %#x, pl_flags %#x\n",
 		  fsi, hdr, sequence_id, log_pages, seg_type, pl_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr->magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
 	hdr->magic.key = cpu_to_le16(SSDFS_PARTIAL_LOG_HDR_MAGIC);

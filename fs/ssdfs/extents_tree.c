@@ -7599,10 +7599,10 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	if (!tree) {
@@ -7847,8 +7847,6 @@ finish_init_operation:
 
 	if (unlikely(err))
 		goto finish_init_node;
-
-	atomic64_add((u64)forks_count, &tree_info->forks_count);
 
 	SSDFS_DBG("forks_count %lld\n",
 		  atomic64_read(&tree_info->forks_count));

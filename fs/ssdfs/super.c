@@ -2764,7 +2764,14 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		down_write(&fs_info->volume_sem);
 		err = ssdfs_maptbl_create(fs_info);
 		up_write(&fs_info->volume_sem);
-		if (err)
+
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			err = 0;
+			goto destroy_segments_tree;
+		} else if (err)
 			goto destroy_segments_tree;
 	} else {
 		err = -EIO;
@@ -2782,7 +2789,14 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		down_write(&fs_info->volume_sem);
 		err = ssdfs_segbmap_create(fs_info);
 		up_write(&fs_info->volume_sem);
-		if (err)
+
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			err = 0;
+			goto destroy_maptbl;
+		} else if (err)
 			goto destroy_maptbl;
 	} else {
 		err = -EIO;

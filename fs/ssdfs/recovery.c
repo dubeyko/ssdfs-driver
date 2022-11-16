@@ -142,6 +142,7 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 	if (!sbi->vh_buf || !sbi->vs_buf)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sbi %p, sbi->vh_buf %p, sbi->vs_buf %p, "
 		  "sbi->last_log.leb_id %llu, sbi->last_log.peb_id %llu, "
 		  "sbi->last_log.page_offset %u, "
@@ -149,6 +150,7 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 		  sbi, sbi->vh_buf, sbi->vs_buf, sbi->last_log.leb_id,
 		  sbi->last_log.peb_id, sbi->last_log.page_offset,
 		  sbi->last_log.pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_recovery_kfree(sbi->vh_buf);
 	ssdfs_recovery_kfree(sbi->vs_buf);
@@ -169,7 +171,6 @@ void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->sbi.vh_buf || !fsi->sbi.vs_buf);
 	BUG_ON(!fsi->sbi_backup.vh_buf || !fsi->sbi_backup.vs_buf);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
@@ -183,6 +184,7 @@ void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->timestamp),
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(fsi->sbi_backup.vh_buf, 0, hdr_size,
 		     fsi->sbi.vh_buf, 0, hdr_size,
@@ -283,6 +285,7 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 		     &fsi->sbi_backup.last_log, 0, extent_size,
 		     extent_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_log: leb_id %llu, peb_id %llu, "
 		  "page_offset %u, pages_count %u, "
 		  "volume state: free_pages %llu, timestamp %#llx, "
@@ -295,6 +298,7 @@ void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi)
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->timestamp),
 		  le64_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->cno),
 		  le16_to_cpu(SSDFS_VS(fsi->sbi.vs_buf)->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
@@ -608,10 +612,10 @@ static int ssdfs_read_checked_sb_info(struct ssdfs_fs_info *fsi, u64 peb_id,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, peb_id %llu, pages_off %u, silent %#x\n",
 		  fsi, peb_id, pages_off, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_read_checked_segment_header(fsi, peb_id, pages_off,
 						fsi->sbi.vh_buf, silent);
@@ -756,10 +760,10 @@ static int ssdfs_find_any_valid_sb_segment(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi->devops->read);
 	BUG_ON(!is_ssdfs_magic_valid(&SSDFS_VH(fsi->sbi.vh_buf)->magic));
 	BUG_ON(!is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf, hdr_size));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p, start_peb_id %llu\n",
 		  fsi, fsi->sbi.vh_buf, start_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	i = SSDFS_SB_CHAIN_MAX;
 	dev_size = fsi->devops->device_size(fsi->sb);
@@ -903,12 +907,12 @@ static inline bool is_sb_peb_exhausted2(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi->devops->read);
 	BUG_ON(!is_ssdfs_magic_valid(&SSDFS_VH(fsi->sbi.vh_buf)->magic));
 	BUG_ON(!is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf, hdr_size));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p, "
 		  "leb_id %llu, peb_id %llu\n",
 		  fsi, fsi->sbi.vh_buf,
 		  leb_id, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!fsi->devops->can_write_page) {
 		SSDFS_CRIT("fail to find latest valid sb info: "
@@ -949,10 +953,12 @@ static inline bool is_cur_main_sb_peb_exhausted2(struct ssdfs_fs_info *fsi)
 	peb_id = SSDFS_MAIN_SB_PEB(SSDFS_VH(fsi->sbi.vh_buf),
 				   SSDFS_CUR_SB_SEG);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p, "
 		  "leb_id %llu, peb_id %llu\n",
 		  fsi, fsi->sbi.vh_buf,
 		  leb_id, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_sb_peb_exhausted2(fsi, leb_id, peb_id);
 }
@@ -972,10 +978,12 @@ static inline bool is_cur_copy_sb_peb_exhausted2(struct ssdfs_fs_info *fsi)
 	peb_id = SSDFS_COPY_SB_PEB(SSDFS_VH(fsi->sbi.vh_buf),
 				   SSDFS_CUR_SB_SEG);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p, "
 		  "leb_id %llu, peb_id %llu\n",
 		  fsi, fsi->sbi.vh_buf,
 		  leb_id, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_sb_peb_exhausted2(fsi, leb_id, peb_id);
 }
@@ -1663,6 +1671,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->fs_cno = le64_to_cpu(fsi->vh->create_cno);
 	fsi->raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("STATIC VOLUME INFO:\n");
 	SSDFS_DBG("pagesize %u, erasesize %u, segsize %u\n",
 		  fsi->pagesize, fsi->erasesize, fsi->segsize);
@@ -1675,6 +1684,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, raw_inode_size %u\n",
 		  (u64)fsi->fs_ctime, (u64)fsi->fs_cno,
 		  fsi->raw_inode_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	/* Mutable volume info */
 	init_rwsem(&fsi->sb_segs_sem);
@@ -1732,6 +1742,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 		fsi->migration_threshold = fsi->pebs_per_seg;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("MUTABLE VOLUME INFO:\n");
 	SSDFS_DBG("sb_lebs[CUR][MAIN] %llu, sb_pebs[CUR][MAIN] %llu\n",
 		  fsi->sb_lebs[SSDFS_CUR_SB_SEG][SSDFS_MAIN_SB_SEG],
@@ -1769,6 +1780,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 		  fsi->fs_feature_incompat);
 	SSDFS_DBG("migration_threshold %u\n",
 		  fsi->migration_threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->sb->s_blocksize = fsi->pagesize;
 	fsi->sb->s_blocksize_bits = blksize_bits(fsi->pagesize);
@@ -1835,9 +1847,9 @@ int ssdfs_check_maptbl_cache_header(struct ssdfs_maptbl_cache_header *hdr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl_cache_hdr %p\n", hdr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (hdr->magic.common != cpu_to_le32(SSDFS_SUPER_MAGIC) ||
 	    hdr->magic.key != cpu_to_le16(SSDFS_MAPTBL_CACHE_MAGIC)) {
@@ -1901,9 +1913,9 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->devops->read);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
 
@@ -2098,9 +2110,9 @@ static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->devops->read);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	footer = SSDFS_LF(fsi->sbi.vs_buf);
 	rules_list = &fsi->snapshots.rules_list;
@@ -2244,9 +2256,9 @@ static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !vh || !env);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, vh %p, env %p\n", fsi, vh, env);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	env->found = NULL;
 	env->err = 0;
@@ -2294,12 +2306,14 @@ static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
 	u64 calculated = U16_MAX;
 	u32 remainder;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu, "
 		  "fragments_count %u, pebs_per_fragment %u, "
 		  "stripes_per_fragment %u, pebs_per_stripe %u\n",
 		  pebs_per_volume, processed_pebs,
 		  fragments_count, pebs_per_fragment,
 		  stripes_per_fragment, pebs_per_stripe);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (fragments_count == 0) {
 		SSDFS_WARN("invalid fragments_count %u\n",
@@ -2339,10 +2353,10 @@ static inline u16 ssdfs_get_pebs_per_stripe(u64 pebs_per_volume,
 			calculated++;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("calculated: fragment_index %llu, pebs_per_stripe %llu\n",
 		  fragment_index, calculated);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(calculated > pebs_per_stripe);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2356,9 +2370,9 @@ void ssdfs_init_found_pebs_details(struct ssdfs_found_protected_pebs *ptr)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ptr %p\n", ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ptr->start_peb = U64_MAX;
 	ptr->pebs_count = U32_MAX;
@@ -2403,12 +2417,12 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || env->found || !found);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("env %p, found %p, start_peb %llu, "
 		  "pebs_count %u, search_phase %#x\n",
 		  env, found, start_peb,
 		  pebs_count, search_phase);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	env->found = found;
 	env->err = 0;
@@ -2504,10 +2518,10 @@ int ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || !has_sb_peb_found);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("env %p, has_sb_peb_found %p, stripe_id %u\n",
 		  env, has_sb_peb_found, stripe_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	/*
 	 * Do not change has_sb_peb_found
@@ -2664,9 +2678,15 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	for (i = 0; i < threads_count; i++) {
 		err = ssdfs_recovery_start_thread(&array[i], i);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to start thread: "
-				  "id %u, err %d\n",
-				  i, err);
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+			} else {
+				SSDFS_ERR("fail to start thread: "
+					  "id %u, err %d\n",
+					  i, err);
+			}
 
 			for (; i >= 0; i--)
 				ssdfs_recovery_stop_thread(&array[i]);

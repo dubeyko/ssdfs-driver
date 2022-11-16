@@ -5838,10 +5838,15 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to create block: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to create block: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -5874,10 +5879,15 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to create extent: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to create extent: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -5900,10 +5910,15 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to migrate block: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to migrate block: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -5926,10 +5941,15 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to migrate extent: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to migrate extent: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -8035,10 +8055,15 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to update block: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to update block: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -8051,17 +8076,22 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to update extent: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to update extent: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_BTREE_NODE_DIFF:
 		err = ssdfs_peb_update_extent(pebi, req);
 		if (err == -EAGAIN) {
-			SSDFS_DBG("unable to update block: "
+			SSDFS_DBG("unable to update extent: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
@@ -8072,10 +8102,15 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to update extent: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to update extent: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -8087,10 +8122,15 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to update block: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to update block: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -8109,10 +8149,15 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to migrate extent: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to migrate extent: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -8125,10 +8170,15 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to migrate pre-alloc page: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to migrate pre-alloc page: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
@@ -8141,10 +8191,15 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  pebi->peb_id);
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to migrate fragment: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to migrate fragment: "
+				"seg %llu, peb %llu, err %d\n",
+				pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 

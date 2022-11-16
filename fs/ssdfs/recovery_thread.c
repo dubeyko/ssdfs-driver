@@ -1031,9 +1031,19 @@ int ssdfs_recovery_start_thread(struct ssdfs_recovery_env *env,
 
 	env->thread.task = kthread_create(threadfn, env, fmt, id);
 	if (IS_ERR_OR_NULL(env->thread.task)) {
-		err = PTR_ERR(env->thread.task);
-		SSDFS_ERR("fail to start recovery thread: "
-			  "id %u, err %d\n", id, err);
+		err = (env->thread.task == NULL ? -ENOMEM :
+						PTR_ERR(env->thread.task));
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
+			SSDFS_ERR("fail to start recovery thread: "
+				  "id %u, err %d\n", id, err);
+		}
+
 		return err;
 	}
 

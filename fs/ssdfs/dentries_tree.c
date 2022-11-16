@@ -549,6 +549,9 @@ fail_create_generic_tree:
 finish_tree_init:
 	up_write(&tree->lock);
 
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&tree->dentries_count));
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
@@ -662,6 +665,9 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 		     dentries_bytes);
 
 	atomic64_sub(dentries_count, &tree->dentries_count);
+
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&tree->dentries_count));
 
 	for (i = 0; i < dentries_count; i++) {
 		cur = &dentries[i];
@@ -894,6 +900,8 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 	down_write(&tree->lock);
 
 	dentries_count = atomic64_read(&tree->dentries_count);
+
+	SSDFS_DBG("dentries_count %llu\n", dentries_count);
 
 	if (dentries_count >= U32_MAX) {
 		err = -EOPNOTSUPP;
@@ -2049,6 +2057,9 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 
 	dentries_count = atomic64_inc_return(&tree->dentries_count);
 
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&tree->dentries_count));
+
 	if (dentries_count > dentries_capacity) {
 		SSDFS_WARN("dentries_count is too much: "
 			   "count %lld, capacity %lld\n",
@@ -3110,6 +3121,9 @@ ssdfs_dentries_tree_delete_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 
 	dentries_count = atomic64_dec_return(&tree->dentries_count);
 
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&tree->dentries_count));
+
 	if (dentries_count == 0) {
 		SSDFS_DBG("tree is empty now\n");
 	} else if (dentries_count < 0) {
@@ -3645,6 +3659,9 @@ finish_process_range:
 
 	atomic64_set(&tree->dentries_count, dentries_count);
 
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&tree->dentries_count));
+
 	atomic_and(~SSDFS_INODE_HAS_DENTRIES_BTREE,
 		   &tree->owner->private_flags);
 	atomic_or(SSDFS_INODE_HAS_INLINE_DENTRIES,
@@ -3965,6 +3982,9 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree)
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&tree->dentries_count));
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -5325,8 +5345,6 @@ finish_init_operation:
 
 	if (unlikely(err))
 		goto finish_init_node;
-
-	atomic64_add((u64)dentries_count, &tree_info->dentries_count);
 
 finish_init_node:
 	up_read(&node->full_lock);
@@ -7594,7 +7612,13 @@ finish_detect_affected_items:
 
 	hdr = &node->raw.dentries_header;
 
+	SSDFS_DBG("NODE (BEFORE): dentries_count %u\n",
+		  le16_to_cpu(hdr->dentries_count));
+
 	le16_add_cpu(&hdr->dentries_count, search->request.count);
+
+	SSDFS_DBG("NODE (AFTER): dentries_count %u\n",
+		  le16_to_cpu(hdr->dentries_count));
 
 	inline_names = 0;
 	for (i = 0; i < search->request.count; i++) {
@@ -7617,7 +7641,13 @@ finish_detect_affected_items:
 	le16_add_cpu(&hdr->inline_names, inline_names);
 	hdr->free_space = cpu_to_le16(node->items_area.free_space);
 
+	SSDFS_DBG("TREE (BEFORE): dentries_count %llu\n",
+		  atomic64_read(&dtree->dentries_count));
+
 	atomic64_add(search->request.count, &dtree->dentries_count);
+
+	SSDFS_DBG("TREE (AFTER): dentries_count %llu\n",
+		  atomic64_read(&dtree->dentries_count));
 
 finish_items_area_correction:
 	up_write(&node->header_lock);
@@ -7827,7 +7857,9 @@ int ssdfs_dentries_btree_node_insert_item(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -9069,6 +9101,9 @@ finish_detect_affected_items:
 	dentries_count = le16_to_cpu(hdr->dentries_count);
 	dentries_diff = old_dentries_count - dentries_count;
 	atomic64_sub(dentries_diff, &dtree->dentries_count);
+
+	SSDFS_DBG("dentries_count %llu\n",
+		  atomic64_read(&dtree->dentries_count));
 
 	ssdfs_memcpy(&items_area,
 		     0, sizeof(struct ssdfs_btree_node_items_area),

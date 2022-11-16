@@ -174,7 +174,12 @@ int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
 		ssdfs_extents_queue_init(&ptr->array[i].queue);
 
 		err = ssdfs_shextree_start_thread(ptr, i);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto destroy_shextree_object;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to start shared extent tree's thread: "
 				  "ID %d, err %d\n",
 				  i, err);
@@ -2264,10 +2269,10 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	if (!tree) {
@@ -6092,8 +6097,8 @@ int __ssdfs_shextree_node_delete_range(struct ssdfs_btree_node *node,
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
 		if ((item_index + range_len) > items_area.items_count) {
 			err = -ERANGE;
-			SSDFS_ERR("invalid dentries_count: "
-				  "item_index %u, dentries_count %u, "
+			SSDFS_ERR("invalid items_count: "
+				  "item_index %u, items_count %u, "
 				  "items_count %u\n",
 				  item_index, range_len,
 				  items_area.items_count);

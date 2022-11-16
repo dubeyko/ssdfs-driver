@@ -426,8 +426,17 @@ int ssdfs_shextree_start_thread(struct ssdfs_shared_extents_tree *tree,
 	ptr->thread.task = kthread_create(threadfn, tree, fmt);
 	if (IS_ERR_OR_NULL(ptr->thread.task)) {
 		err = PTR_ERR(ptr->thread.task);
-		SSDFS_ERR("fail to start shared extents tree's thread: "
-			  "err %d\n", err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
+			SSDFS_ERR("fail to start shared extents tree's thread: "
+				  "err %d\n", err);
+		}
+
 		return err;
 	}
 

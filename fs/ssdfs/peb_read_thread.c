@@ -9519,120 +9519,180 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 	case SSDFS_READ_PAGE:
 		err = ssdfs_peb_read_page(pebc, req, NULL);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to read page: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to read page: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_PAGES_READAHEAD:
 		err = ssdfs_peb_readahead_pages(pebc, req, NULL);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to read pages: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to read pages: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_SRC_ALL_LOG_HEADERS:
 		err = ssdfs_peb_read_src_all_log_headers(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to read log headers: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to read log headers: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_DST_ALL_LOG_HEADERS:
 		err = ssdfs_peb_read_dst_all_log_headers(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to read log headers: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to read log headers: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_BLK_BMAP_SRC_USING_PEB:
 		err = ssdfs_src_peb_init_using_metadata_state(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to init source PEB (using state): "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init source PEB (using state): "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_BLK_BMAP_DST_USING_PEB:
 		err = ssdfs_dst_peb_init_using_metadata_state(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to init destination PEB (using state): "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init destination PEB (using state): "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_BLK_BMAP_SRC_USED_PEB:
 		err = ssdfs_src_peb_init_used_metadata_state(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to init source PEB (used state): "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init source PEB (used state): "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_BLK_BMAP_DST_USED_PEB:
 		err = ssdfs_dst_peb_init_used_metadata_state(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to init destination PEB (used state): "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init destination PEB (used state): "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_BLK2OFF_TABLE_SRC_PEB:
 		err = ssdfs_src_peb_complete_init_blk2off_table(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to finish offset table init: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to finish offset table init: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_BLK2OFF_TABLE_DST_PEB:
 		err = ssdfs_dst_peb_complete_init_blk2off_table(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to finish offset table init: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to finish offset table init: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_INIT_SEGBMAP:
 		err = ssdfs_peb_init_segbmap_object(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to init segment bitmap object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init segment bitmap object: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 
 	case SSDFS_READ_INIT_MAPTBL:
 		err = ssdfs_peb_init_maptbl_object(pebc, req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to init mapping table object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init mapping table object: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 

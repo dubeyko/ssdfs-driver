@@ -362,7 +362,6 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	int refs_count = fsi->pebs_per_seg;
 	int destination_pebs = 0;
 	int init_flag, init_state;
-	u32 logical_blk_capacity;
 	int i;
 	int err = 0;
 
@@ -469,15 +468,13 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		init_state = SSDFS_BLK_STATE_MAX;
 	}
 
-	logical_blk_capacity = fsi->leb_pages_capacity * fsi->pebs_per_seg;
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create segment block bitmap: seg %llu\n", seg);
 #else
 	SSDFS_DBG("create segment block bitmap: seg %llu\n", seg);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	err = ssdfs_segment_blk_bmap_create(si, logical_blk_capacity,
+	err = ssdfs_segment_blk_bmap_create(si, fsi->pages_per_peb,
 					    init_flag, init_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segment block bitmap: "
@@ -492,7 +489,7 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	si->blk2off_table = ssdfs_blk2off_table_create(fsi,
-							logical_blk_capacity,
+							fsi->pages_per_seg,
 							SSDFS_SEG_OFF_TABLE,
 							state);
 	if (!si->blk2off_table) {
@@ -511,7 +508,12 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		err = ssdfs_peb_container_create(fsi, seg, i,
 						  SEG2PEB_TYPE(seg_type),
 						  log_pages, si);
-		if (err) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto destroy_seg_obj;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create PEB container: "
 				  "seg %llu, peb index %d, err %d\n",
 				  seg, i, err);
@@ -1063,7 +1065,12 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 						  log_pages,
 						  create_threads,
 						  si);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			return ERR_PTR(err);
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create segment: "
 				  "seg %llu, err %d\n",
 				  seg_id, err);
@@ -1238,10 +1245,16 @@ create_segment_object:
 							log_pages,
 							create_threads);
 			if (IS_ERR_OR_NULL(si)) {
-				err = PTR_ERR(si);
-				SSDFS_ERR("fail to add new segment into tree: "
-					  "seg %llu, err %d\n",
-					  seg_id, err);
+				err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+				if (err == -EINTR) {
+					/*
+					 * Ignore this error.
+					 */
+				} else {
+					SSDFS_ERR("fail to add new segment: "
+						  "seg %llu, err %d\n",
+						  seg_id, err);
+				}
 			}
 
 			return si;

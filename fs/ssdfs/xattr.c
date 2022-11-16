@@ -1019,9 +1019,15 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 				seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		err = !si ? -ENOMEM : PTR_ERR(si);
-		SSDFS_ERR("fail to grab segment object: "
-			  "seg %llu, err %d\n",
-			  seg_id, err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to grab segment object: "
+				  "seg %llu, err %d\n",
+				  seg_id, err);
+		}
 		goto fail_get_segment;
 	}
 
@@ -1370,7 +1376,12 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 								     xattr,
 								     value,
 								     size);
-				if (unlikely(err)) {
+				if (err == -EINTR) {
+					/*
+					 * Ignore this error.
+					 */
+					goto xattr_is_not_available;
+				} else if (unlikely(err)) {
 					SSDFS_ERR("fail to read external blob: "
 						  "err %zd\n", err);
 					goto xattr_is_not_available;

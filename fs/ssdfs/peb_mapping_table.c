@@ -473,9 +473,9 @@ int ssdfs_maptbl_define_segment_counts(struct ssdfs_peb_mapping_table *tbl)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p\n", tbl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_MAPTBL_RESERVED_EXTENTS; i++) {
 		struct ssdfs_meta_area_extent *extent;
@@ -644,7 +644,12 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 							  seg_type, log_pages,
 							  create_threads,
 							  *kaddr);
-			if (unlikely(err)) {
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				return err;
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to create segment: "
 					  "seg %llu, err %d\n",
 					  seg, err);
@@ -973,7 +978,12 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 
 	array_type = SSDFS_MAIN_MAPTBL_SEG;
 	err = ssdfs_maptbl_create_segments(fsi, array_type, ptr);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto destroy_seg_objects;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to create maptbl's segment objects: "
 			  "err %d\n", err);
 		goto destroy_seg_objects;
@@ -982,7 +992,12 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	if (atomic_read(&ptr->flags) & SSDFS_MAPTBL_HAS_COPY) {
 		array_type = SSDFS_COPY_MAPTBL_SEG;
 		err = ssdfs_maptbl_create_segments(fsi, array_type, ptr);
-		if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+			goto destroy_seg_objects;
+		} if (unlikely(err)) {
 			SSDFS_ERR("fail to create segbmap's segment objects: "
 				  "err %d\n", err);
 			goto destroy_seg_objects;
@@ -997,7 +1012,12 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	}
 
 	err = ssdfs_maptbl_start_thread(ptr);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto destroy_seg_objects;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start mapping table's thread: "
 			  "err %d\n", err);
 		goto destroy_seg_objects;

@@ -466,7 +466,12 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 	ssdfs_names_queue_init(&ptr->requests.queue);
 
 	err = ssdfs_shared_dict_start_thread(ptr);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto destroy_shared_dict_object;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start shared dictionary tree's thread: "
 			  "err %d\n", err);
 		goto destroy_shared_dict_object;
@@ -16066,8 +16071,8 @@ int __ssdfs_shared_dict_btree_node_delete_range(struct ssdfs_btree_node *node,
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
 		if ((item_index + range_len) > node->items_area.items_count) {
 			err = -ERANGE;
-			SSDFS_ERR("invalid dentries_count: "
-				  "item_index %u, dentries_count %u, "
+			SSDFS_ERR("invalid items_count: "
+				  "item_index %u, items_count %u, "
 				  "items_count %u\n",
 				  item_index, range_len,
 				  node->items_area.items_count);

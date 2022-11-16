@@ -1633,12 +1633,12 @@ __ssdfs_btree_read_node(struct ssdfs_btree *tree,
 	u64 start_hash;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, parent %p, "
 		  "node_index %p, node_type %#x, node_id %llu\n",
 		  tree, parent, node_index,
 		  node_type, (u64)node_id);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !parent || !node_index);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1769,7 +1769,12 @@ finish_insert_node:
 	}
 
 	err = ssdfs_btree_node_prepare_content(ptr, node_index);
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto fail_read_node;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare btree node's content: "
 			  "err %d\n", err);
 		goto fail_read_node;
@@ -1823,7 +1828,6 @@ ssdfs_btree_read_node(struct ssdfs_btree *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, id %u, node_id %u, "
 		  "hash %llx, "
@@ -1835,6 +1839,7 @@ ssdfs_btree_read_node(struct ssdfs_btree *tree,
 		le32_to_cpu(search->node.found_index.index.extent.seg_id),
 		le32_to_cpu(search->node.found_index.index.extent.logical_blk),
 		le32_to_cpu(search->node.found_index.index.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	node_type = search->node.found_index.node_type;
 	return __ssdfs_btree_read_node(tree, search->node.parent,

@@ -998,9 +998,15 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 				seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(*si))) {
 		err = !*si ? -ENOMEM : PTR_ERR(*si);
-		SSDFS_ERR("fail to grab segment object: "
-			  "seg %llu, err %d\n",
-			  seg_id, err);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to grab segment object: "
+				  "seg %llu, err %d\n",
+				  seg_id, err);
+		}
 		goto fail_get_segment;
 	}
 
@@ -1237,7 +1243,12 @@ int ssdfs_btree_node_prepare_content(struct ssdfs_btree_node *node,
 						 &node->content.pvec);
 	up_write(&node->full_lock);
 
-	if (unlikely(err)) {
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto finish_prepare_node_content;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare node's content: "
 			  "node_id %u, err %d\n",
 			  node->node_id, err);

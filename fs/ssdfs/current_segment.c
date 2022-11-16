@@ -555,10 +555,18 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 						log_pages,
 						create_threads);
 		if (IS_ERR_OR_NULL(si)) {
-			SSDFS_WARN("fail to create segment object: "
-				   "seg %llu, err %d\n",
-				   seg, err);
-			goto destroy_cur_segs;
+			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto destroy_cur_segs;
+			} else {
+				SSDFS_WARN("fail to create segment object: "
+					   "seg %llu, err %d\n",
+					   seg, err);
+				goto destroy_cur_segs;
+			}
 		}
 
 		ssdfs_current_segment_lock(object);
