@@ -362,6 +362,7 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	int refs_count = fsi->pebs_per_seg;
 	int destination_pebs = 0;
 	int init_flag, init_state;
+	u32 logical_blk_capacity;
 	int i;
 	int err = 0;
 
@@ -468,13 +469,15 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		init_state = SSDFS_BLK_STATE_MAX;
 	}
 
+	logical_blk_capacity = fsi->leb_pages_capacity * fsi->pebs_per_seg;
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("create segment block bitmap: seg %llu\n", seg);
 #else
 	SSDFS_DBG("create segment block bitmap: seg %llu\n", seg);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	err = ssdfs_segment_blk_bmap_create(si, fsi->pages_per_peb,
+	err = ssdfs_segment_blk_bmap_create(si, logical_blk_capacity,
 					    init_flag, init_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segment block bitmap: "
@@ -489,7 +492,7 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	si->blk2off_table = ssdfs_blk2off_table_create(fsi,
-							fsi->pages_per_seg,
+							logical_blk_capacity,
 							SSDFS_SEG_OFF_TABLE,
 							state);
 	if (!si->blk2off_table) {
@@ -2187,6 +2190,8 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = cur_seg->fsi;

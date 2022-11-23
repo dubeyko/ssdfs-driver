@@ -8576,12 +8576,12 @@ int ssdfs_prepare_forks_buffer(struct ssdfs_btree_search *search,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("found_index %u, start_hash %llx, end_hash %llx, "
 		  "items_count %u, item_size %zu\n",
 		   found_index, start_hash, end_hash,
 		   items_count, item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_FIND_ITEM:

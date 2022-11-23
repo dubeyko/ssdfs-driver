@@ -919,6 +919,10 @@ init_failed:
 	reserved_pages_per_log = ssdfs_peb_define_reserved_pages_per_log(bmap);
 	free_pages = atomic_read(&bmap->peb_free_blks);
 
+	SSDFS_DBG("log_pages %d, reserved_pages_per_log %d, "
+		  "free_pages %d\n",
+		  log_pages, reserved_pages_per_log, free_pages);
+
 	if (free_pages > 0) {
 		int upper_threshold, lower_threshold;
 
@@ -933,6 +937,11 @@ init_failed:
 			lower_threshold = ((created_logs - 1) * log_pages) +
 					    reserved_pages_per_log;
 		}
+
+		SSDFS_DBG("created_logs %d, used_pages %d, "
+			  "upper_threshold %d, lower_threshold %d\n",
+			  created_logs, used_pages,
+			  upper_threshold, lower_threshold);
 
 		BUG_ON(used_pages > upper_threshold);
 

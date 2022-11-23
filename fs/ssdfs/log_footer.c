@@ -748,8 +748,12 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 		     size);
 
 	vs->migration_threshold = cpu_to_le16(fsi->migration_threshold);
+	vs->open_zones = cpu_to_le32(atomic_read(&fsi->open_zones));
 
 	spin_unlock(&fsi->volume_state_lock);
+
+	SSDFS_DBG("open_zones %d\n",
+		  atomic_read(&fsi->open_zones));
 
 	ssdfs_memcpy(&vs->blkbmap,
 		     0, sizeof(struct ssdfs_blk_bmap_options),

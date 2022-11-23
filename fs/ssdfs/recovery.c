@@ -1656,6 +1656,12 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		fsi->peb_pages_capacity = (u32)peb_pages_capacity;
+		atomic_set(&fsi->open_zones, le32_to_cpu(fsi->vs->open_zones));
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("open_zones %d\n",
+			  atomic_read(&fsi->open_zones));
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		fsi->erasesize = 1 << fsi->vh->log_erasesize;
 		fsi->segsize = 1 << fsi->vh->log_segsize;
@@ -1678,9 +1684,11 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("pebs_per_seg %u, pages_per_peb %u, pages_per_seg %u\n",
 		  fsi->pebs_per_seg, fsi->pages_per_peb, fsi->pages_per_seg);
 	SSDFS_DBG("zone_size %llu, zone_capacity %llu, "
-		  "leb_pages_capacity %u, peb_pages_capacity %u\n",
+		  "leb_pages_capacity %u, peb_pages_capacity %u, "
+		  "open_zones %d\n",
 		  fsi->zone_size, fsi->zone_capacity,
-		  fsi->leb_pages_capacity, fsi->peb_pages_capacity);
+		  fsi->leb_pages_capacity, fsi->peb_pages_capacity,
+		  atomic_read(&fsi->open_zones));
 	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, raw_inode_size %u\n",
 		  (u64)fsi->fs_ctime, (u64)fsi->fs_cno,
 		  fsi->raw_inode_size);

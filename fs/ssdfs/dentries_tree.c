@@ -6082,12 +6082,12 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("found_index %u, start_hash %llx, end_hash %llx, "
 		  "items_count %u, item_size %zu\n",
 		   found_index, start_hash, end_hash,
 		   items_count, item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_search_free_result_buf(search);
 
@@ -6142,6 +6142,16 @@ int ssdfs_prepare_dentries_buffer(struct ssdfs_btree_search *search,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("found_dentries %u, "
+		  "search->result.buf (buf_state %#x, "
+		  "buf_size %zu, items_in_buffer %u)\n",
+		  found_dentries,
+		  search->result.buf_state,
+		  search->result.buf_size,
+		  search->result.items_in_buffer);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -6182,9 +6192,9 @@ int ssdfs_extract_found_dentry(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !search || !kaddr);
 	BUG_ON(!start_hash || !end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p\n", kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = U64_MAX;
 	*end_hash = U64_MAX;
@@ -6196,9 +6206,11 @@ int ssdfs_extract_found_dentry(struct ssdfs_fs_info *fsi,
 	}
 
 	calculated = search->result.items_in_buffer * buf_size;
-	if (calculated > search->result.buf_size) {
-		SSDFS_ERR("calculated %u > buf_size %zu\n",
-			  calculated, search->result.buf_size);
+	if (calculated >= search->result.buf_size) {
+		SSDFS_ERR("calculated %u >= buf_size %zu, "
+			  "items_in_buffer %u\n",
+			  calculated, search->result.buf_size,
+			  search->result.items_in_buffer);
 		return -ERANGE;
 	}
 

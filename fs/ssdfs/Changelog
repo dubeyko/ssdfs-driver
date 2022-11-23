@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.31 [November 22, 2022]
+    (*) Fix issue with open zones accounting.
+
 v.4.30 [November 15, 2022]
     (*) Fix issue with dentries/extents number accounting.
 

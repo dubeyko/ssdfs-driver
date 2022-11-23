@@ -117,6 +117,8 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu\n",
 		  sb, (unsigned long long)offset);
+	SSDFS_DBG("BEFORE: open_zones %d\n",
+		  atomic_read(&fsi->open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	open_zones = atomic_inc_return(&fsi->open_zones);
@@ -128,12 +130,21 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 		return -EBUSY;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("AFTER: open_zones %d\n",
+		   atomic_read(&fsi->open_zones));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
 				zone_sector, zone_size, GFP_NOFS);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to open zone: "
-			  "zone_sector %llu, zone_size %llu, err %d\n",
-			  zone_sector, zone_size, err);
+			  "zone_sector %llu, zone_size %llu, "
+			  "open_zones %u, max_open_zones %u, "
+			  "err %d\n",
+			  zone_sector, zone_size,
+			  open_zones, fsi->max_open_zones,
+			  err);
 		return err;
 	}
 

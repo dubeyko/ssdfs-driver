@@ -13336,13 +13336,17 @@ try_lock_checking_item:
 		goto finish_extract_range;
 	} else {
 		err = prepare_buffer(search, found_index,
-				     start_hash, end_hash,
+				     search->request.start.hash,
+				     search->request.end.hash,
 				     items_count, item_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare buffers: "
+				  "requested (start_hash %llx, end_hash %llx), "
 				  "found_index %u, start_hash %llx, "
 				  "end_hash %llx, items_count %u, "
 				  "item_size %zu, err %d\n",
+				  search->request.start.hash,
+				  search->request.end.hash,
 				  found_index, start_hash, end_hash,
 				  items_count, item_size, err);
 			goto finish_extract_range;

@@ -77,11 +77,11 @@ u8 FIRST_STATE_IN_BYTE(u8 *value, int state,
 	BUG_ON(state_bits > BITS_PER_BYTE);
 	BUG_ON(state_bits > 1 && (state_bits % 2) != 0);
 	BUG_ON(start_offset > SSDFS_ITEMS_PER_BYTE(state_bits));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("value %#x, state %#x, "
 		  "start_offset %u, state_bits %u\n",
 		  *value, state, start_offset, state_bits);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	i = start_offset * state_bits;
 	for (; i < BITS_PER_BYTE; i += state_bits) {
@@ -175,10 +175,10 @@ int ssdfs_find_first_dirty_fragment(unsigned long *addr,
 {
 	unsigned long found;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("addr %p, max_fragment %lu, found_addr %p\n",
 		  addr, max_fragment, found_addr);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!addr || !found_addr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -193,8 +193,10 @@ int ssdfs_find_first_dirty_fragment(unsigned long *addr,
 
 	*found_addr = (unsigned long *)(addr + (found / BITS_PER_LONG));
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("found %lu, addr %p, found_addr %p\n",
 		  found, addr, *found_addr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -208,9 +210,9 @@ int ssdfs_clear_dirty_state(unsigned long *addr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!addr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("addr %p\n", addr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(addr, 0, sizeof(unsigned long));
 	return 0;

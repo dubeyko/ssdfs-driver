@@ -344,8 +344,10 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -776,8 +778,10 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		blk_bmap->used_blks += found.len;
 		start_item = found.start + found.len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("VALID_BLK: range (start %u, len %u)\n",
 			  found.start, found.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} while (start_item < blk_bmap->items_count);
 
 check_pre_allocated_blocks:
@@ -803,14 +807,18 @@ check_pre_allocated_blocks:
 		blk_bmap->used_blks += found.len;
 		start_item = found.start + found.len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PRE_ALLOCATED_BLK: range (start %u, len %u)\n",
 			  found.start, found.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} while (start_item < blk_bmap->items_count);
 
 finish_block_bmap_init:
 	set_block_bmap_initialized(blk_bmap);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -831,10 +839,10 @@ int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 	u32 items_per_long = SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk_bmap %p, found_blk %p\n",
 		  blk_bmap, found_blk);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap || !found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -864,12 +872,16 @@ int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 	} else {
 		last_search = &blk_bmap->last_search[cache_type];
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		first_cached_blk = SSDFS_FIRST_CACHED_BLOCK(last_search);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("first_cached_blk %u\n",
 			  first_cached_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_block_bmap_find_block_in_cache(blk_bmap,
 							   first_cached_blk,
@@ -902,7 +914,9 @@ int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 finish_define_last_free_page:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last free block: %u\n", *found_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1179,7 +1193,9 @@ int ssdfs_block_bmap_lock(struct ssdfs_block_bmap *blk_bmap)
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = mutex_lock_killable(&blk_bmap->lock);
 	if (err) {
@@ -1205,7 +1221,10 @@ bool ssdfs_block_bmap_is_locked(struct ssdfs_block_bmap *blk_bmap)
  */
 void ssdfs_block_bmap_unlock(struct ssdfs_block_bmap *blk_bmap)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	mutex_unlock(&blk_bmap->lock);
 }
 
@@ -1228,9 +1247,9 @@ int ssdfs_get_cache_type(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index = SSDFS_BLK2PAGE(blk, SSDFS_BLK_STATE_BITS, &offset);
 
@@ -1263,9 +1282,9 @@ bool is_block_state_cached(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cache_type = ssdfs_get_cache_type(blk_bmap, blk);
 
@@ -1430,7 +1449,9 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	blk_bmap->last_search[cache_type].offset = offset;
 	blk_bmap->last_search[cache_type].cache = cache;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_search.cache %lx\n", cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1481,7 +1502,9 @@ int ssdfs_define_bits_shift_in_cache(struct ssdfs_block_bmap *blk_bmap,
 
 	last_search = &blk_bmap->last_search[cache_type];
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	first_cached_block = SSDFS_FIRST_CACHED_BLOCK(last_search);
 
@@ -1510,9 +1533,9 @@ int ssdfs_define_bits_shift_in_cache(struct ssdfs_block_bmap *blk_bmap,
 			  diff, BITS_PER_LONG, SSDFS_BLK_STATE_BITS);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("diff %u\n", diff);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (int)diff;
 }
@@ -1545,9 +1568,9 @@ int ssdfs_get_block_state_from_cache(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_ERR("invalid block %u\n", blk);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cache_type = ssdfs_get_cache_type(blk_bmap, blk);
 	shift = ssdfs_define_bits_shift_in_cache(blk_bmap, cache_type, blk);
@@ -1564,7 +1587,9 @@ int ssdfs_get_block_state_from_cache(struct ssdfs_block_bmap *blk_bmap,
 
 	last_search = &blk_bmap->last_search[cache_type];
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (int)((last_search->cache >> shift) & SSDFS_BLK_STATE_MASK);
 }
@@ -1603,10 +1628,10 @@ int ssdfs_set_block_state_in_cache(struct ssdfs_block_bmap *blk_bmap,
 		SSDFS_ERR("invalid block state %#x\n", blk_state);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, block %u, blk_state %#x\n",
 		  blk_bmap, blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cache_type = ssdfs_get_cache_type(blk_bmap, blk);
 	shift = ssdfs_define_bits_shift_in_cache(blk_bmap, cache_type, blk);
@@ -1622,11 +1647,11 @@ int ssdfs_set_block_state_in_cache(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(cache_type >= SSDFS_SEARCH_TYPE_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("value %lx, cache %lx\n",
 		  value,
 		  blk_bmap->last_search[cache_type].cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cached_value = &blk_bmap->last_search[cache_type].cache;
 	*cached_value &= ~((unsigned long)SSDFS_BLK_STATE_MASK << shift);
@@ -1698,8 +1723,10 @@ int ssdfs_save_cache_in_storage(struct ssdfs_block_bmap *blk_bmap)
 					return err;
 				}
 
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("page %p, count %d\n",
 					  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 			err = ssdfs_memcpy_to_page(array->pages[page_index],
@@ -1763,7 +1790,9 @@ bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state)
 
 	last_search = &blk_bmap->last_search[cache_type];
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (last_search->page_index >= max_capacity ||
 	    last_search->offset == U16_MAX)
@@ -1871,17 +1900,21 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 	*found_blk = U32_MAX;
 	last_search = &blk_bmap->last_search[cache_type];
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	first_cached_blk = SSDFS_FIRST_CACHED_BLOCK(last_search);
 	blks_diff = start - first_cached_blk;
 	byte_index = blks_diff / items_per_byte;
 	blks_diff = blks_diff % items_per_byte;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("first_cached_blk %u, start %u, "
 		  "byte_index %u, bytes_per_long %zu\n",
 		  first_cached_blk, start,
 		  byte_index, bytes_per_long);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (; byte_index < bytes_per_long; byte_index++) {
 		u8 *value = (u8 *)&last_search->cache + byte_index;
@@ -1908,8 +1941,10 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 		*found_blk += byte_index * items_per_byte;
 		*found_blk += found_off;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block %u has been found for state %#x\n",
 			  *found_blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		return 0;
 	}
@@ -1958,12 +1993,14 @@ int ssdfs_block_bmap_define_start_item(int page_index,
 
 	*item_offset = (u8)(start - aligned_start);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index %d, start %u, "
 		  "aligned_start %u, aligned_end %u, "
 		  "start_byte %u, rest_bytes %u, item_offset %u\n",
 		  page_index, start,
 		  aligned_start, aligned_end,
 		  *start_byte, *rest_bytes, *item_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -2004,6 +2041,11 @@ int ssdfs_block_bmap_find_block_in_memory_range(void *kaddr,
 		SSDFS_ERR("invalid block state %#x\n", blk_state);
 		return -EINVAL;
 	}
+
+	SSDFS_DBG("blk_state %#x, byte_index %u, "
+		  "search_bytes %u, start_off %u\n",
+		  blk_state, *byte_index,
+		  search_bytes, start_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (; *byte_index < search_bytes; ++(*byte_index)) {
@@ -2027,9 +2069,11 @@ int ssdfs_block_bmap_find_block_in_memory_range(void *kaddr,
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("offset %u has been found for state %#x, "
 			  "err %d\n",
 			  *found_off, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		return 0;
 	}
@@ -2064,6 +2108,7 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	u32 aligned_start, aligned_end;
 	u32 byte_index, search_bytes = U32_MAX;
+	u32 rest_bytes = U32_MAX;
 	u8 start_off = U8_MAX;
 	void *kaddr;
 	u8 found_off = U8_MAX;
@@ -2097,17 +2142,19 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk_state %#x, start %u, max_blk %u, "
 		  "aligned_start %u, aligned_end %u\n",
 		  blk_state, start, max_blk,
 		  aligned_start, aligned_end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_block_bmap_define_start_item(0,
 						 start,
 						 aligned_start,
 						 aligned_end,
 						 &byte_index,
-						 &search_bytes,
+						 &rest_bytes,
 						 &start_off);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define start item: "
@@ -2119,6 +2166,7 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	kaddr = blk_bmap->storage.buf;
+	search_bytes = byte_index + rest_bytes;
 
 	err = ssdfs_block_bmap_find_block_in_memory_range(kaddr, blk_state,
 							  &byte_index,
@@ -2142,9 +2190,11 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 	if (*found_blk >= max_blk)
 		err = -ENODATA;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("block %u has been found for state %#x, "
 		  "err %d\n",
 		  *found_blk, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -2177,6 +2227,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	size_t items_per_page = PAGE_SIZE * items_per_byte;
 	u32 aligned_start, aligned_end;
+	struct page *page;
 	void *kaddr;
 	int page_index;
 	u8 found_off = U8_MAX;
@@ -2232,26 +2283,74 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		if (blk_state != SSDFS_BLK_FREE)
 			return -ENODATA;
 
+		while (page_index >= ssdfs_page_vector_count(array)) {
+			page = ssdfs_page_vector_allocate(array);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+				SSDFS_ERR("unable to allocate page\n");
+				return err;
+			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("page %p, count %d\n",
+				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
 		*found_blk = page_index * items_per_page;
 
 		if (*found_blk >= max_blk)
 			err = -ENODATA;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block %u has been found for state %#x, "
 			  "err %d\n",
 			  *found_blk, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		return err;
 	}
 
-	for (; page_index < ssdfs_page_vector_count(array); page_index++) {
+	for (; page_index < ssdfs_page_vector_capacity(array); page_index++) {
 		u32 byte_index, search_bytes = U32_MAX;
+		u32 rest_bytes = U32_MAX;
 		u8 start_off = U8_MAX;
+
+		if (page_index == ssdfs_page_vector_count(array)) {
+			if (blk_state != SSDFS_BLK_FREE)
+				return -ENODATA;
+
+			page = ssdfs_page_vector_allocate(array);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+				SSDFS_ERR("unable to allocate page\n");
+				return err;
+			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("page %p, count %d\n",
+				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			*found_blk = page_index * items_per_page;
+
+			if (*found_blk >= max_blk)
+				err = -ENODATA;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("block %u has been found for state %#x, "
+				  "err %d\n",
+				  *found_blk, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			return err;
+		}
 
 		err = ssdfs_block_bmap_define_start_item(page_index, start,
 							 aligned_start,
 							 aligned_end,
 							 &byte_index,
-							 &search_bytes,
+							 &rest_bytes,
 							 &start_off);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define start item: "
@@ -2261,6 +2360,8 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 				  aligned_start, aligned_end);
 			return err;
 		}
+
+		search_bytes = byte_index + rest_bytes;
 
 		kaddr = kmap_local_page(array->pages[page_index]);
 		err = ssdfs_block_bmap_find_block_in_memory_range(kaddr,
@@ -2272,7 +2373,13 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		kunmap_local(kaddr);
 
 		if (err == -ENODATA) {
-			/* no item has been found */
+			SSDFS_DBG("no item has been found: "
+				  "page_index %d, "
+				  "page_vector_count %u, "
+				  "page_vector_capacity %u\n",
+				  page_index,
+				  ssdfs_page_vector_count(array),
+				  ssdfs_page_vector_capacity(array));
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find block: "
@@ -2289,9 +2396,12 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		if (*found_blk >= max_blk)
 			err = -ENODATA;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block %u has been found for state %#x, "
 			  "err %d\n",
 			  *found_blk, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		return err;
 	}
 
@@ -2521,8 +2631,11 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 end_search:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("block %u has been found for state %#x\n",
 		  *found_blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 
 fail_find:
@@ -2630,8 +2743,10 @@ int ssdfs_find_state_area_end_in_byte(u8 *value, int blk_state,
 		if (blk_offset < BITS_PER_BYTE) {
 			*found_off = blk_offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("block offset %u for *NOT* state %#x\n",
 				  *found_off, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			return 0;
 		}
@@ -2696,9 +2811,11 @@ int ssdfs_block_bmap_find_state_area_end_in_memory(void *kaddr,
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("offset %u has been found for state %#x, "
 			  "err %d\n",
 			  *found_off, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		return 0;
 	}
@@ -2731,6 +2848,7 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 	u32 aligned_start, aligned_end;
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	u32 byte_index, search_bytes = U32_MAX;
+	u32 rest_bytes = U32_MAX;
 	u8 start_off = U8_MAX;
 	void *kaddr;
 	u8 found_off = U8_MAX;
@@ -2758,17 +2876,19 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk_state %#x, start %u, max_blk %u, "
 		  "aligned_start %u, aligned_end %u\n",
 		  blk_state, start, max_blk,
 		  aligned_start, aligned_end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_block_bmap_define_start_item(0,
 						 start,
 						 aligned_start,
 						 aligned_end,
 						 &byte_index,
-						 &search_bytes,
+						 &rest_bytes,
 						 &start_off);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define start item: "
@@ -2780,6 +2900,7 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 	}
 
 	kaddr = bmap->storage.buf;
+	search_bytes = byte_index + rest_bytes;
 
 	err = ssdfs_block_bmap_find_state_area_end_in_memory(kaddr, blk_state,
 							     &byte_index,
@@ -2802,18 +2923,22 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 	*found_end = byte_index * items_per_byte;
 	*found_end += found_off;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start %u, aligned_start %u, "
 		  "aligned_end %u, byte_index %u, "
 		  "items_per_byte %u, start_off %u, "
 		  "found_off %u\n",
 		  start, aligned_start, aligned_end, byte_index,
 		  items_per_byte, start_off, found_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*found_end > max_blk)
 		*found_end = max_blk;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area end %u has been found for state %#x\n",
 		  *found_end, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -2888,13 +3013,14 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 
 	for (; page_index < ssdfs_page_vector_count(array); page_index++) {
 		u32 byte_index, search_bytes = U32_MAX;
+		u32 rest_bytes = U32_MAX;
 		u8 start_off = U8_MAX;
 
 		err = ssdfs_block_bmap_define_start_item(page_index, start,
 							 aligned_start,
 							 aligned_end,
 							 &byte_index,
-							 &search_bytes,
+							 &rest_bytes,
 							 &start_off);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define start item: "
@@ -2904,6 +3030,8 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 				  aligned_start, aligned_end);
 			return err;
 		}
+
+		search_bytes = byte_index + rest_bytes;
 
 		kaddr = kmap_local_page(array->pages[page_index]);
 		err = ssdfs_block_bmap_find_state_area_end_in_memory(kaddr,
@@ -2929,6 +3057,7 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 		*found_end += byte_index * items_per_byte;
 		*found_end += found_off;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start %u, aligned_start %u, "
 			  "aligned_end %u, "
 			  "page_index %d, items_per_page %zu, "
@@ -2938,18 +3067,26 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 			  start, aligned_start, aligned_end,
 			  page_index, items_per_page, byte_index,
 			  items_per_byte, start_off, found_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (*found_end > max_blk)
 			*found_end = max_blk;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("area end %u has been found for state %#x\n",
 			  *found_end, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		return 0;
 	}
 
 	*found_end = max_blk;
+
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area end %u has been found for state %#x\n",
 		  *found_end, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -3070,10 +3207,10 @@ bool is_whole_range_cached(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->items_count);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
 		  blk_bmap, range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
 		struct ssdfs_last_bmap_search *last_search;
@@ -3081,7 +3218,9 @@ bool is_whole_range_cached(struct ssdfs_block_bmap *blk_bmap,
 
 		last_search = &blk_bmap->last_search[i];
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		cached_range.start = SSDFS_FIRST_CACHED_BLOCK(last_search);
 		cached_range.len = SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS);
@@ -3287,8 +3426,10 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 				return err;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3395,8 +3536,10 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 	aligned_end >>= SSDFS_BLK_STATE_BITS;
 	aligned_end <<= SSDFS_BLK_STATE_BITS;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("aligned_start %u, aligned_end %u\n",
 		  aligned_start, aligned_end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range->start != aligned_start) {
 		struct ssdfs_block_bmap_range unaligned;
@@ -3443,12 +3586,14 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 		} else
 			init_size = PAGE_SIZE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("items_per_page %zu, item_offset %u, "
 			  "rest_items %zu, iter_items %zu, "
 			  "init_size %zu\n",
 			  items_per_page, item_offset,
 			  rest_items, iter_items,
 			  init_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = __ssdfs_set_range_in_memory(blk_bmap, page_index,
 						  byte_offset, byte_value,
@@ -3588,10 +3733,12 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 	range->start = found_start;
 	range->len = min_t(u32, len, found_end - found_start);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("found_start %u, found_end %u, len %u, "
 		  "range (start %u, len %u)\n",
 		  found_start, found_end, len,
 		  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -3748,7 +3895,9 @@ int ssdfs_block_bmap_set_range(struct ssdfs_block_bmap *blk_bmap,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -4181,7 +4330,9 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	}
 
 	if (is_cache_invalid(blk_bmap, SSDFS_BLK_FREE)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cache for free states is invalid!!!\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_block_bmap_find_block(blk_bmap,
 						  0, blk_bmap->items_count,
@@ -4206,6 +4357,7 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 	free_blks = blk_bmap->items_count;
 	free_blks -= used_blks + metadata_items + invalid_blks;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %zu, used_blks %u, "
 		  "invalid_blks %u, "
 		  "metadata_items %u, free_blks %d\n",
@@ -4213,7 +4365,6 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 		  used_blks, invalid_blks, metadata_items,
 		  free_blks);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (unlikely(found_blk > blk_bmap->items_count)) {
 		SSDFS_ERR("found_blk %u > items_count %zu\n",
 			  found_blk, blk_bmap->items_count);
@@ -4404,11 +4555,15 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (len) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("blk_bmap %p, start %u, len %u\n",
 			  blk_bmap, start, *len);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
 			  blk_bmap, range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (range_corrupted(blk_bmap, range)) {
 			SSDFS_ERR("invalid range: start %u, len %u; "
@@ -4419,12 +4574,14 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %zu, used_blks %u, "
 		  "metadata_items %u, invalid_blks %u\n",
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4440,7 +4597,9 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		err = 0;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_pages %d\n", free_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (len) {
 		u32 max_blk = blk_bmap->items_count - blk_bmap->metadata_items;
@@ -4575,11 +4734,15 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (len) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("blk_bmap %p, start %u, len %u\n",
 			  blk_bmap, start, *len);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
 			  blk_bmap, range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (range_corrupted(blk_bmap, range)) {
 			SSDFS_ERR("invalid range: start %u, len %u; "
@@ -4590,11 +4753,13 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %zu, used_blks %u, "
 		  "metadata_items %u\n",
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -4750,7 +4915,9 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		return -ENOENT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range_corrupted(blk_bmap, range)) {
 		SSDFS_ERR("invalid range (start %u, len %u); items count %zu\n",
@@ -4785,16 +4952,20 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 	} else
 		blk_bmap->used_blks -= range->len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %zu, used_blks %u, "
 		  "metadata_items %u, invalid_blks %u\n",
 		  blk_bmap->items_count,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	set_block_bmap_dirty(blk_bmap);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("range (start %u, len %u) has been invalidated\n",
@@ -4860,7 +5031,9 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return -ENOENT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (blk_state) {
 	case SSDFS_BLK_PRE_ALLOCATED:
@@ -4885,8 +5058,10 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("range (start %u, len %u) has been collected as garbage\n",
 		  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("range (start %u, len %u) has been collected as garbage\n",

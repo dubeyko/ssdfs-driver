@@ -520,6 +520,7 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 		switch (i) {
 		case SSDFS_CUR_DATA_SEG:
+		case SSDFS_CUR_DATA_UPDATE_SEG:
 			seg_state = SSDFS_SEG_DATA_USING;
 			seg_type = SSDFS_USER_DATA_SEG_TYPE;
 			log_pages = le16_to_cpu(fsi->vh->user_data_log_pages);

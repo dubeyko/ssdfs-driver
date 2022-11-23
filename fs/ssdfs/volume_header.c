@@ -1143,6 +1143,13 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->log_segsize = fsi->log_segsize;
 	hdr->log_pebs_per_seg = fsi->log_pebs_per_seg;
 
+	hdr->open_zones = cpu_to_le32(atomic_read(&fsi->open_zones));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("open_zones %d\n",
+		  atomic_read(&fsi->open_zones));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	hdr->check.bytes = cpu_to_le16(data_size);
 	hdr->check.flags = cpu_to_le16(SSDFS_CRC32);
 
