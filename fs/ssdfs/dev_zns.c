@@ -101,6 +101,15 @@ static __u64 ssdfs_zns_device_size(struct super_block *sb)
 	return i_size_read(sb->s_bdev->bd_inode);
 }
 
+static int ssdfs_report_zone(struct blk_zone *zone,
+			     unsigned int index, void *data)
+{
+	ssdfs_memcpy(data, 0, sizeof(struct blk_zone),
+		     zone, 0, sizeof(struct blk_zone),
+		     sizeof(struct blk_zone));
+	return 0;
+}
+
 /*
  * ssdfs_zns_open_zone() - open zone
  * @sb: superblock object
@@ -152,6 +161,127 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 }
 
 /*
+ * ssdfs_zns_reopen_zone() - reopen closed zone
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ */
+static int ssdfs_zns_reopen_zone(struct super_block *sb, loff_t offset)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct blk_zone zone;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	sector_t zone_size = fsi->erasesize >> SECTOR_SHIFT;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu\n",
+		  sb, (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (err != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, err);
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("zone before: start %llu, len %llu, wp %llu, "
+		  "type %#x, cond %#x, non_seq %#x, "
+		  "reset %#x, capacity %llu\n",
+		  zone.start, zone.len, zone.wp,
+		  zone.type, zone.cond, zone.non_seq,
+		  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (zone.cond) {
+	case BLK_ZONE_COND_CLOSED:
+		SSDFS_DBG("zone is closed: offset %llu\n",
+			  offset);
+		/* continue logic */
+		break;
+
+	case BLK_ZONE_COND_READONLY:
+		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	case BLK_ZONE_COND_FULL:
+		SSDFS_DBG("zone is full: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	case BLK_ZONE_COND_OFFLINE:
+		SSDFS_DBG("zone is offline: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
+				zone_sector, zone_size, GFP_NOFS);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to open zone: "
+			  "zone_sector %llu, zone_size %llu, "
+			  "err %d\n",
+			  zone_sector, zone_size,
+			  err);
+		return err;
+	}
+
+	err = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (err != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, err);
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("zone after: start %llu, len %llu, wp %llu, "
+		  "type %#x, cond %#x, non_seq %#x, "
+		  "reset %#x, capacity %llu\n",
+		  zone.start, zone.len, zone.wp,
+		  zone.type, zone.cond, zone.non_seq,
+		  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (zone.cond) {
+	case BLK_ZONE_COND_CLOSED:
+		SSDFS_DBG("zone is closed: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	case BLK_ZONE_COND_READONLY:
+		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	case BLK_ZONE_COND_FULL:
+		SSDFS_DBG("zone is full: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	case BLK_ZONE_COND_OFFLINE:
+		SSDFS_DBG("zone is offline: offset %llu\n",
+			  offset);
+		return -EIO;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_zns_close_zone() - close zone
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
@@ -184,15 +314,6 @@ static int ssdfs_zns_close_zone(struct super_block *sb, loff_t offset)
 			   "open_zones %u\n", open_zones);
 	}
 
-	return 0;
-}
-
-static int ssdfs_report_zone(struct blk_zone *zone,
-			     unsigned int index, void *data)
-{
-	ssdfs_memcpy(data, 0, sizeof(struct blk_zone),
-		     zone, 0, sizeof(struct blk_zone),
-		     sizeof(struct blk_zone));
 	return 0;
 }
 
@@ -238,7 +359,7 @@ u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset)
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
  *
- * This function tries to retrieve zone size.
+ * This function tries to retrieve zone capacity.
  */
 u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset)
 {
@@ -638,8 +759,12 @@ int ssdfs_zns_read(struct super_block *sb, loff_t offset,
 static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 				    bool need_check)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct blk_zone zone;
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	sector_t zone_size = fsi->erasesize >> SECTOR_SHIFT;
+	u64 peb_id;
+	loff_t zone_offset;
 	int res;
 	int err = 0;
 
@@ -696,7 +821,20 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 	case BLK_ZONE_COND_CLOSED:
 		SSDFS_DBG("zone is closed: offset %llu\n",
 			  offset);
-		return -EIO;
+
+		peb_id = offset / fsi->erasesize;
+		zone_offset = peb_id * fsi->erasesize;
+
+		err = ssdfs_zns_reopen_zone(sb, zone_offset);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to reopen zone: "
+				  "zone_offset %llu, zone_size %llu, "
+				  "err %d\n",
+				  zone_offset, zone_size, err);
+			return err;
+		}
+
+		return 0;
 
 	case BLK_ZONE_COND_READONLY:
 		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
@@ -1082,6 +1220,7 @@ const struct ssdfs_device_ops ssdfs_zns_devops = {
 	.device_name		= ssdfs_zns_device_name,
 	.device_size		= ssdfs_zns_device_size,
 	.open_zone		= ssdfs_zns_open_zone,
+	.reopen_zone		= ssdfs_zns_reopen_zone,
 	.close_zone		= ssdfs_zns_close_zone,
 	.read			= ssdfs_zns_read,
 	.readpage		= ssdfs_zns_readpage,

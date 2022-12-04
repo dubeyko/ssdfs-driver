@@ -479,6 +479,7 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 #endif /* CONFIG_SSDFS_DEBUG */
 	struct ssdfs_peb_extent checking_page;
+	u64 pages_per_peb;
 	u16 sb_seg_log_pages;
 	int err;
 
@@ -510,9 +511,19 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 		return true;
 	}
 
+	if (env->fsi->is_zns_device) {
+		pages_per_peb = div64_u64(env->fsi->zone_capacity,
+					  env->fsi->pagesize);
+	} else
+		pages_per_peb = env->fsi->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(pages_per_peb >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	checking_page.leb_id = leb_id;
 	checking_page.peb_id = peb_id;
-	checking_page.page_offset = env->fsi->pages_per_peb - sb_seg_log_pages;
+	checking_page.page_offset = (u32)pages_per_peb - sb_seg_log_pages;
 	checking_page.pages_count = 1;
 
 	err = ssdfs_can_write_sb_log(env->fsi->sb, &checking_page);

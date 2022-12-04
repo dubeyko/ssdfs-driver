@@ -899,6 +899,7 @@ static inline bool is_sb_peb_exhausted2(struct ssdfs_fs_info *fsi,
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 #endif /* CONFIG_SSDFS_DEBUG */
 	struct ssdfs_peb_extent checking_page;
+	u64 pages_per_peb;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -928,7 +929,19 @@ static inline bool is_sb_peb_exhausted2(struct ssdfs_fs_info *fsi,
 
 	checking_page.leb_id = leb_id;
 	checking_page.peb_id = peb_id;
-	checking_page.page_offset = fsi->pages_per_peb - 2;
+
+	if (fsi->is_zns_device) {
+		pages_per_peb = div64_u64(fsi->zone_capacity, fsi->pagesize);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(pages_per_peb >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		checking_page.page_offset = (u32)pages_per_peb - 2;
+	} else {
+		checking_page.page_offset = fsi->pages_per_peb - 2;
+	}
+
 	checking_page.pages_count = 1;
 
 	err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
@@ -1267,7 +1280,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	u64 leb, peb;
 	u32 cur_off, low_off, high_off;
 	u32 log_pages;
-	u32 logs_count;
+	u64 pages_per_peb;
 	int err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
@@ -1288,10 +1301,18 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	leb = fsi->sbi.last_log.leb_id;
 	peb = fsi->sbi.last_log.peb_id;
 	log_pages = SSDFS_LOG_PAGES(last_seg_hdr);
-	logs_count = fsi->pages_per_peb / log_pages;
+
+	if (fsi->is_zns_device)
+		pages_per_peb = div64_u64(fsi->zone_capacity, fsi->pagesize);
+	else
+		pages_per_peb = fsi->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(pages_per_peb >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	low_off = fsi->sbi.last_log.page_offset;
-	high_off = fsi->pages_per_peb;
+	high_off = (u32)pages_per_peb;
 	cur_off = low_off + log_pages;
 
 	do {
@@ -1301,10 +1322,10 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 		u32 peb_pages_off;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(cur_off >= fsi->pages_per_peb);
+		BUG_ON(cur_off >= pages_per_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		peb_pages_off = cur_off % fsi->pages_per_peb;
+		peb_pages_off = cur_off % (u32)pages_per_peb;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(peb_pages_off > U16_MAX);
@@ -1399,6 +1420,7 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 	u64 cno1, cno2;
 	u64 copy_leb, copy_peb;
 	u32 peb_pages_off;
+	u64 pages_per_peb;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1426,10 +1448,19 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		return -ERANGE;
 	}
 
+	if (fsi->is_zns_device)
+		pages_per_peb = div64_u64(fsi->zone_capacity, fsi->pagesize);
+	else
+		pages_per_peb = fsi->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(pages_per_peb >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	log_pages = SSDFS_LOG_PAGES(last_seg_hdr);
 	start_offset = fsi->sbi.last_log.page_offset + log_pages;
 	low_off = start_offset;
-	high_off = fsi->pages_per_peb;
+	high_off = (u32)pages_per_peb;
 	cur_off = low_off;
 
 	checking_page.leb_id = leb;
@@ -1483,7 +1514,7 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		cur_off = low_off + diff_pages;
 	} while (cur_off > low_off && cur_off < high_off);
 
-	peb_pages_off = cur_off % fsi->pages_per_peb;
+	peb_pages_off = cur_off % (u32)pages_per_peb;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(peb_pages_off > U16_MAX);

@@ -1257,6 +1257,15 @@ int ssdfs_get_cache_type(struct ssdfs_block_bmap *blk_bmap,
 		struct ssdfs_last_bmap_search *last;
 
 		last = &blk_bmap->last_search[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("last->page_index %d, page_index %d, "
+			  "last->offset %u, offset %u, "
+			  "search_type %#x\n",
+			  last->page_index, page_index,
+			  last->offset, offset, i);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (last->page_index == page_index &&
 		    last->offset == offset)
 			return i;
@@ -1450,7 +1459,10 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	blk_bmap->last_search[cache_type].cache = cache;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_search.cache %lx\n", cache);
+	SSDFS_DBG("last_search.cache %lx, cache_type %#x, "
+		  "page_index %d, offset %u\n",
+		  cache, cache_type,
+		  page_index, offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;

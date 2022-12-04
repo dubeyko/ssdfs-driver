@@ -140,6 +140,9 @@ int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 static
 int ssdfs_create_using_peb_object(struct ssdfs_peb_info *pebi)
 {
+	struct ssdfs_fs_info *fsi;
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(pebi->peb_id == U64_MAX);
@@ -148,7 +151,19 @@ int ssdfs_create_using_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	/* Do nothing */
+	fsi = pebi->pebc->parent_si->fsi;
+
+	if (fsi->is_zns_device) {
+		loff_t offset = pebi->peb_id * fsi->erasesize;
+
+		err = fsi->devops->reopen_zone(fsi->sb, offset);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to reopen zone: "
+				  "offset %llu, err %d\n",
+				  offset, err);
+			return err;
+		}
+	}
 
 	return 0;
 }

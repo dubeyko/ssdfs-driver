@@ -119,6 +119,7 @@ struct ssdfs_sb_info {
  * @device_name: get device name
  * @device_size: get device size in bytes
  * @open_zone: open zone
+ * @reopen_zone: reopen closed zone
  * @close_zone: close zone
  * @read: read from device
  * @readpage: read page
@@ -135,6 +136,7 @@ struct ssdfs_device_ops {
 	const char * (*device_name)(struct super_block *sb);
 	__u64 (*device_size)(struct super_block *sb);
 	int (*open_zone)(struct super_block *sb, loff_t offset);
+	int (*reopen_zone)(struct super_block *sb, loff_t offset);
 	int (*close_zone)(struct super_block *sb, loff_t offset);
 	int (*read)(struct super_block *sb, loff_t offset, size_t len,
 		    void *buf);

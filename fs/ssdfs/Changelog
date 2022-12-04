@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.32 [December 03, 2022]
+    (*) Fix issue with zone reopening after system restart.
+
 v.4.31 [November 22, 2022]
     (*) Fix issue with open zones accounting.
 

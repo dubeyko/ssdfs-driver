@@ -110,6 +110,11 @@ static int ssdfs_mtd_open_zone(struct super_block *sb, loff_t offset)
 	return -EOPNOTSUPP;
 }
 
+static int ssdfs_mtd_reopen_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
 static int ssdfs_mtd_close_zone(struct super_block *sb, loff_t offset)
 {
 	return -EOPNOTSUPP;
@@ -605,6 +610,7 @@ const struct ssdfs_device_ops ssdfs_mtd_devops = {
 	.device_name		= ssdfs_mtd_device_name,
 	.device_size		= ssdfs_mtd_device_size,
 	.open_zone		= ssdfs_mtd_open_zone,
+	.reopen_zone		= ssdfs_mtd_reopen_zone,
 	.close_zone		= ssdfs_mtd_close_zone,
 	.read			= ssdfs_mtd_read,
 	.readpage		= ssdfs_mtd_readpage,

@@ -113,6 +113,11 @@ static int ssdfs_bdev_open_zone(struct super_block *sb, loff_t offset)
 	return -EOPNOTSUPP;
 }
 
+static int ssdfs_bdev_reopen_zone(struct super_block *sb, loff_t offset)
+{
+	return -EOPNOTSUPP;
+}
+
 static int ssdfs_bdev_close_zone(struct super_block *sb, loff_t offset)
 {
 	return -EOPNOTSUPP;
@@ -1140,6 +1145,7 @@ const struct ssdfs_device_ops ssdfs_bdev_devops = {
 	.device_name		= ssdfs_bdev_device_name,
 	.device_size		= ssdfs_bdev_device_size,
 	.open_zone		= ssdfs_bdev_open_zone,
+	.reopen_zone		= ssdfs_bdev_reopen_zone,
 	.close_zone		= ssdfs_bdev_close_zone,
 	.read			= ssdfs_bdev_read,
 	.readpage		= ssdfs_bdev_readpage,
