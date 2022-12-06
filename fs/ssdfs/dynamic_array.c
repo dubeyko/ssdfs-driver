@@ -301,8 +301,8 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 	}
 
 	if (index >= array->capacity) {
-		SSDFS_ERR("invalid index: index %u, capacity %u\n",
-			  index, array->capacity);
+		SSDFS_WARN("invalid index: index %u, capacity %u\n",
+			   index, array->capacity);
 		return ERR_PTR(-ERANGE);
 	}
 

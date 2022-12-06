@@ -15716,6 +15716,13 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 	} else
 		items_free_space = 0;
 
+	SSDFS_DBG("indexes_offset %u, indexes_size %u, "
+		  "items_offset %u, items_size %u, "
+		  "indexes_free_space %u, items_free_space %u\n",
+		  indexes_offset, indexes_size,
+		  items_offset, items_size,
+		  indexes_free_space, items_free_space);
+
 	if (new_size > items_size) {
 		/* increase items area */
 		u32 unused_space;
@@ -16000,6 +16007,10 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 			  new_size, items_size);
 		goto finish_area_resize;
 	}
+
+	node->bmap_array.item_start_bit =
+			node->bmap_array.index_start_bit +
+			node->index_area.index_capacity;
 
 	index_capacity = node->index_area.index_capacity;
 	items_capacity = node->items_area.items_capacity;

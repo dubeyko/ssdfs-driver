@@ -1909,7 +1909,7 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	*found_blk = U32_MAX;
+	*found_blk = max_blk;
 	last_search = &blk_bmap->last_search[cache_type];
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2149,7 +2149,7 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, start, max_blk, blk_state, found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*found_blk = U32_MAX;
+	*found_blk = max_blk;
 
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
@@ -2268,7 +2268,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, start, max_blk, blk_state, found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*found_blk = U32_MAX;
+	*found_blk = max_blk;
 
 	array = &blk_bmap->storage.array;
 
@@ -2558,7 +2558,7 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 		return 0;
 	}
 
-	*found_blk = U32_MAX;
+	*found_blk = max_blk;
 	max_blk = min_t(u32, max_blk, blk_bmap->items_count);
 
 	if (is_cache_invalid(blk_bmap, blk_state)) {
@@ -4246,6 +4246,10 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 
 	blk_bmap->metadata_items += count;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(blk_bmap->metadata_items == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -4268,6 +4272,9 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 					 u32 count)
 {
+	u32 metadata_items;
+	u32 freed_items;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
@@ -4290,13 +4297,31 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 		return -ENOENT;
 	}
 
+	metadata_items = blk_bmap->metadata_items;
+	freed_items = count;
+
 	if (blk_bmap->metadata_items < count) {
 		SSDFS_DBG("correct value: metadata_items %u < count %u\n",
 			  blk_bmap->metadata_items, count);
-		count = blk_bmap->metadata_items;
+		freed_items = blk_bmap->metadata_items;
 	}
 
-	blk_bmap->metadata_items -= count;
+	blk_bmap->metadata_items -= freed_items;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (blk_bmap->metadata_items == 0) {
+		SSDFS_ERR("BEFORE: metadata_items %u, count %u, "
+			  "items_count %zu, used_blks %u, "
+			  "invalid_blks %u\n",
+			  metadata_items, count,
+			  blk_bmap->items_count,
+			  blk_bmap->used_blks,
+			  blk_bmap->invalid_blks);
+		SSDFS_ERR("AFTER: metadata_items %u, freed_items %u\n",
+			  blk_bmap->metadata_items, freed_items);
+	}
+	BUG_ON(blk_bmap->metadata_items == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }

@@ -9297,6 +9297,14 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 		  pebi->peb_id, desc.last_free_blk,
 		  desc.metadata_blks, desc.invalid_blks);
 
+	if (desc.metadata_blks == 0) {
+		SSDFS_WARN("peb_id %llu, SRC: last_free_blk %u, "
+			   "metadata_blks %u, invalid_blks %u\n",
+			   pebi->peb_id, desc.last_free_blk,
+			   desc.metadata_blks, desc.invalid_blks);
+		BUG();
+	}
+
 	if (ssdfs_page_vector_count(desc.snapshot) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty block bitmap\n");

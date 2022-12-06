@@ -881,6 +881,39 @@ init_failed:
 				  "err %d\n",
 				  bmap->parent->parent_si->seg_id,
 				  bmap->peb_index, err);
+			SSDFS_ERR("seg_id %llu, free_logical_blks %u, "
+					  "valid_logical_blks %u, "
+					  "invalid_logical_blks %u, pages_per_peb %u\n",
+					  bmap->parent->parent_si->seg_id,
+					  atomic_read(&bmap->peb_free_blks),
+					  atomic_read(&bmap->peb_valid_blks),
+					  atomic_read(&bmap->peb_invalid_blks),
+					  bmap->pages_per_peb);
+
+			if (bmap->src) {
+				SSDFS_ERR("SRC BLOCK BITMAP: bytes_count %zu, items_count %zu, "
+					  "metadata_items %u, used_blks %u, invalid_blks %u, "
+					  "flags %#x\n",
+					  bmap->src->bytes_count,
+					  bmap->src->items_count,
+					  bmap->src->metadata_items,
+					  bmap->src->used_blks,
+					  bmap->src->invalid_blks,
+					  atomic_read(&bmap->src->flags));
+			}
+
+			if (bmap->dst) {
+				SSDFS_ERR("DST BLOCK BITMAP: bytes_count %zu, items_count %zu, "
+					  "metadata_items %u, used_blks %u, invalid_blks %u, "
+					  "flags %#x\n",
+					  bmap->dst->bytes_count,
+					  bmap->dst->items_count,
+					  bmap->dst->metadata_items,
+					  bmap->dst->used_blks,
+					  bmap->dst->invalid_blks,
+					  atomic_read(&bmap->dst->flags));
+			}
+
 			return err;
 		}
 
@@ -3549,10 +3582,27 @@ finish_process_source_bmap:
 		goto finish_migrate;
 	}
 
-	err = ssdfs_block_bmap_free_metadata_pages(dst, range->len);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to free metadata pages: err %d\n", err);
+	err = ssdfs_block_bmap_get_free_pages(dst);
+	if (err < 0) {
+		SSDFS_ERR("fail to get free pages count: "
+			  "peb_index %u, err %d\n",
+			  bmap->peb_index, err);
 		goto do_bmap_unlock;
+	} else {
+		free_blks = err;
+		err = 0;
+	}
+
+	if (free_blks < range->len) {
+		u32 freed_metapages = range->len - free_blks;
+
+		err = ssdfs_block_bmap_free_metadata_pages(dst,
+							   freed_metapages);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to free metadata pages: err %d\n",
+				  err);
+			goto do_bmap_unlock;
+		}
 	}
 
 	if (new_range_state == SSDFS_BLK_PRE_ALLOCATED)
