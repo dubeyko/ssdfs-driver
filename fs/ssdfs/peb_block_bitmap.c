@@ -3452,8 +3452,9 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 	int range_state;
 	struct ssdfs_block_bmap *src;
 	struct ssdfs_block_bmap *dst;
+	int free_blks;
 #ifdef CONFIG_SSDFS_DEBUG
-	int free_blks, used_blks, invalid_blks;
+	int used_blks, invalid_blks;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 

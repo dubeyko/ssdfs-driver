@@ -5694,10 +5694,10 @@ bool can_be_mapped_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !fdesc);
 	BUG_ON(!tbl->fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl %p, leb_id %llu, fdesc %p\n",
 		  tbl, leb_id, fdesc);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	expected2migrate = fdesc->mapped_lebs - fdesc->migrating_lebs;
 	reserved_pool = fdesc->reserved_pebs + fdesc->pre_erase_pebs;
@@ -5844,6 +5844,8 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
+	unused_pebs -= reserved_pebs;
+
 	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
 		  "expected2migrate %u\n",
 		  pebs_count, used_pebs,
@@ -5965,6 +5967,14 @@ int ssdfs_maptbl_increase_reserved_pebs(struct ssdfs_fs_info *fsi,
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
 	used_pebs = bitmap_weight(bmap, pebs_count);
 	unused_pebs = pebs_count - used_pebs;
+
+	if (reserved_pebs > unused_pebs) {
+		SSDFS_ERR("reserved_pebs %u > unused_pebs %u\n",
+			  reserved_pebs, unused_pebs);
+		return -ERANGE;
+	}
+
+	unused_pebs -= reserved_pebs;
 
 	if (need_try2reserve_peb(fsi)) {
 		SSDFS_DBG("used_pebs %u, unused_pebs %u, "
@@ -7395,11 +7405,11 @@ ssdfs_maptbl_try_decrease_reserved_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!tbl || !fdesc);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_leb %llu, end_leb %llu\n",
 		  fdesc->start_leb,
 		  fdesc->start_leb + fdesc->lebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 
@@ -7514,10 +7524,10 @@ int ssdfs_maptbl_recommend_search_range(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !start_leb || !end_leb || !end);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, start_leb %llu, end_leb %p, init_end %p\n",
 		  fsi, *start_leb, end_leb, end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*start_leb >= fsi->nsegs) {
 		SSDFS_DBG("start_leb %llu >= nsegs %llu",

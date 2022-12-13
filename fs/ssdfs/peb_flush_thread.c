@@ -6201,7 +6201,9 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_offset_position pos = {0};
 	u8 migration_id1;
 	int migration_id2;
+#ifdef CONFIG_SSDFS_DEBUG
 	int i;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG

@@ -167,8 +167,11 @@ static
 int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 				u32 start, u32 max_blk, int blk_state,
 				u32 *found_blk);
+
+#ifdef CONFIG_SSDFS_DEBUG
 static
 void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 /*
  * ssdfs_block_bmap_storage_destroy() - destroy block bitmap's storage
@@ -499,7 +502,9 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 {
 	struct ssdfs_page_vector *array;
 	struct page *page;
+#ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int i;
 	int err;
 
@@ -5175,10 +5180,10 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 	return 0;
 }
 
+#ifdef CONFIG_SSDFS_DEBUG
 static
 void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap)
 {
-#ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_page_vector *array;
 	struct page *page;
 	void *kaddr;
@@ -5232,6 +5237,5 @@ void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap)
 				     bmap->bytes_count);
 		break;
 	}
-
-#endif /* CONFIG_SSDFS_DEBUG */
 }
+#endif /* CONFIG_SSDFS_DEBUG */

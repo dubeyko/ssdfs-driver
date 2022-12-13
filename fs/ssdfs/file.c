@@ -2140,12 +2140,16 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	unsigned blks = 0;
 	loff_t start_blk, end_blk, cur_blk;
 	u64 last_blk = U64_MAX;
+#ifdef CONFIG_SSDFS_DEBUG
 	u64 free_pages = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
 	bool is_new_blk = false;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, pos %llu, len %u\n",
 		  inode->i_ino, pos, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;

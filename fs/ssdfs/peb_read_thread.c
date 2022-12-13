@@ -6437,7 +6437,9 @@ int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
 	struct ssdfs_btree_search *search;
 	struct ssdfs_raw_extent extent;
 	struct ssdfs_raw_extent *found;
+#ifdef CONFIG_SSDFS_DEBUG
 	size_t item_size = sizeof(struct ssdfs_raw_extent);
+#endif /* CONFIG_SSDFS_DEBUG */
 	u32 logical_blk = 0;
 	u32 len;
 	u32 count;

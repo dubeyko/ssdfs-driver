@@ -924,10 +924,10 @@ static int __ssdfs_reserve_clean_segment(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!reserved_seg);
 	BUG_ON(sb_seg_type >= SSDFS_SB_SEG_COPY_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, sb_seg_type %#x, start_search_id %llu\n",
 		  fsi, sb_seg_type, start_search_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (sb_seg_type) {
 	case SSDFS_MAIN_SB_SEG:

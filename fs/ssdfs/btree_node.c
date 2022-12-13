@@ -4246,6 +4246,7 @@ int ssdfs_btree_node_grow_index_area(struct ssdfs_btree_node *node,
  *
  * %-ERANGE  - btree node is inconsistent.
  */
+#ifdef CONFIG_SSDFS_DEBUG
 static
 int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 {
@@ -4261,11 +4262,9 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 	unsigned long index_start_bit, item_start_bit;
 	int err = 0;
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
@@ -4375,6 +4374,7 @@ int ssdfs_check_btree_node_after_resize(struct ssdfs_btree_node *node)
 
 	return 0;
 }
+#endif /* CONFIG_SSDFS_DEBUG */
 
 static inline
 void ssdfs_set_node_update_cno(struct ssdfs_btree_node *node)

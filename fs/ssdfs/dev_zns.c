@@ -407,8 +407,8 @@ static int ssdfs_zns_sync_page_request(struct super_block *sb,
 					unsigned int op, int op_flags)
 {
 	struct bio *bio;
-	sector_t zone_sector = offset >> SECTOR_SHIFT;
 #ifdef CONFIG_SSDFS_DEBUG
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	struct blk_zone zone;
 	int res;
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -494,9 +494,9 @@ static int ssdfs_zns_sync_pvec_request(struct super_block *sb,
 					unsigned int op, int op_flags)
 {
 	struct bio *bio;
-	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	int i;
 #ifdef CONFIG_SSDFS_DEBUG
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	struct blk_zone zone;
 	int res;
 #endif /* CONFIG_SSDFS_DEBUG */

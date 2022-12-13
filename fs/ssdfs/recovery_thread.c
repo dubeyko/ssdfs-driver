@@ -283,12 +283,12 @@ int ssdfs_find_any_valid_sb_segment2(struct ssdfs_recovery_env *env,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!env || !env->found || !env->fsi);
 	BUG_ON(!env->fsi->devops->read);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("env %p, start_peb %llu, "
 		  "pebs_count %u, threshold_peb %llu\n",
 		  env, env->found->start_peb,
 		  env->found->pebs_count, threshold_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dev_size = env->fsi->devops->device_size(env->fsi->sb);
 	step = env->fsi->erasesize;
@@ -369,10 +369,10 @@ try_again:
 			return -ENODATA;
 
 		if (peb_id == U64_MAX || leb_id == U64_MAX) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid peb_id %llu, leb_id %llu\n",
-				  leb_id, peb_id);
-			goto fail_find_sb_seg;
+			SSDFS_DBG("invalid peb_id %llu, leb_id %llu, "
+				  "sb_chain %d, sb_copy %d\n",
+				  leb_id, peb_id, i, j);
+			continue;
 		}
 
 		SSDFS_DBG("leb_id %llu, peb_id %llu, "
@@ -466,7 +466,6 @@ compare_vh_info:
 		goto try_again;
 	}
 
-fail_find_sb_seg:
 	SSDFS_DBG("unable to find any valid segment with superblocks chain\n");
 	return err;
 }

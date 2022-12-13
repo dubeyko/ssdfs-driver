@@ -683,10 +683,10 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !start_seg || !end_seg);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, start_search_id %llu\n",
 		  fsi, *start_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*start_seg >= fsi->nsegs) {
 		SSDFS_DBG("start_seg %llu >= nsegs %llu\n",

@@ -331,9 +331,7 @@ int SEG_TYPE2MASK(int seg_type)
 static inline
 void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si)
 {
-#ifdef CONFIG_SSDFS_DEBUG
 	u64 flush_requests = 0;
-#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
@@ -409,9 +407,7 @@ static inline
 void ssdfs_account_invalidated_user_data_pages(struct ssdfs_segment_info *si,
 						u32 count)
 {
-#ifdef CONFIG_SSDFS_DEBUG
 	u64 invalidated = 0;
-#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
@@ -436,9 +432,7 @@ void ssdfs_account_invalidated_user_data_pages(struct ssdfs_segment_info *si,
 static inline
 void ssdfs_forget_invalidated_user_data_pages(struct ssdfs_segment_info *si)
 {
-#ifdef CONFIG_SSDFS_DEBUG
 	u64 invalidated = 0;
-#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
