@@ -2004,7 +2004,7 @@ const struct inode_operations ssdfs_dir_inode_operations = {
 	.rename		= ssdfs_rename,
 	.setattr	= ssdfs_setattr,
 	.listxattr	= ssdfs_listxattr,
-	.get_acl	= ssdfs_get_acl,
+	.get_inode_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
 };
 

@@ -217,7 +217,7 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 
 	bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
 	bio_set_dev(bio, sb->s_bdev);
-	bio_set_op_attrs(bio, op, op_flags);
+	bio->bi_opf = op | op_flags;
 
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
@@ -285,7 +285,7 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 
 	bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
 	bio_set_dev(bio, sb->s_bdev);
-	bio_set_op_attrs(bio, op, op_flags);
+	bio->bi_opf = op | op_flags;
 
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		struct page *page = pvec->pages[i];
@@ -888,7 +888,7 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 	for (i = 0; i < nr_iovecs; i++) {
 		if (i >= max_pages) {
 			bio_set_dev(bio, sb->s_bdev);
-			bio_set_op_attrs(bio, REQ_OP_DISCARD, REQ_BACKGROUND);
+			bio->bi_opf = REQ_OP_DISCARD | REQ_BACKGROUND;
 			bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
 			bio->bi_private = sb;
 			bio->bi_end_io = ssdfs_bdev_erase_end_io;
@@ -921,7 +921,7 @@ static int ssdfs_bdev_erase_request(struct super_block *sb,
 	}
 
 	bio_set_dev(bio, sb->s_bdev);
-	bio_set_op_attrs(bio, REQ_OP_DISCARD, REQ_BACKGROUND);
+	bio->bi_opf = REQ_OP_DISCARD | REQ_BACKGROUND;
 	bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
 	bio->bi_private = sb;
 	bio->bi_end_io = ssdfs_bdev_erase_end_io;

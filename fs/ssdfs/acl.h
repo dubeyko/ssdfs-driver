@@ -29,7 +29,7 @@
 
 /* acl.c */
 struct posix_acl *ssdfs_get_acl(struct inode *, int, bool);
-int ssdfs_set_acl(struct user_namespace *mnt_userns, struct inode *,
+int ssdfs_set_acl(struct user_namespace *mnt_userns, struct dentry *,
 		  struct posix_acl *, int);
 int ssdfs_init_acl(struct inode *, struct inode *);
 

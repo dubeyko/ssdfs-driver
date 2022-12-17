@@ -533,7 +533,7 @@ static void ssdfs_init_inode(struct inode *dir,
 	ii->flags = ssdfs_mask_flags(mode,
 			 SSDFS_I(dir)->flags & SSDFS_FL_INHERITED);
 	ssdfs_set_inode_flags(inode);
-	inode->i_generation = prandom_u32();
+	inode->i_generation = get_random_u32();
 	inode->i_blkbits = fsi->log_pagesize;
 	i_size_write(inode, 0);
 	inode->i_blocks = 0;
@@ -791,7 +791,7 @@ int ssdfs_setattr(struct user_namespace *mnt_userns,
 
 		if (attr->ia_valid & ATTR_MODE) {
 			err = posix_acl_chmod(&init_user_ns,
-					      inode, inode->i_mode);
+					      dentry, inode->i_mode);
 		}
 	}
 

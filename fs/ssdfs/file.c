@@ -2407,14 +2407,14 @@ const struct inode_operations ssdfs_file_inode_operations = {
 	.getattr	= ssdfs_getattr,
 	.setattr	= ssdfs_setattr,
 	.listxattr	= ssdfs_listxattr,
-	.get_acl	= ssdfs_get_acl,
+	.get_inode_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
 };
 
 const struct inode_operations ssdfs_special_inode_operations = {
 	.setattr	= ssdfs_setattr,
 	.listxattr	= ssdfs_listxattr,
-	.get_acl	= ssdfs_get_acl,
+	.get_inode_acl	= ssdfs_get_acl,
 	.set_acl	= ssdfs_set_acl,
 };
 

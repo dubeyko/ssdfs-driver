@@ -451,7 +451,7 @@ static int ssdfs_zns_sync_page_request(struct super_block *sb,
 
 	bio->bi_iter.bi_sector = zone_start;
 	bio_set_dev(bio, sb->s_bdev);
-	bio_set_op_attrs(bio, op, op_flags);
+	bio->bi_opf = op | op_flags;
 
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
@@ -545,7 +545,7 @@ static int ssdfs_zns_sync_pvec_request(struct super_block *sb,
 
 	bio->bi_iter.bi_sector = zone_start;
 	bio_set_dev(bio, sb->s_bdev);
-	bio_set_op_attrs(bio, op, op_flags);
+	bio->bi_opf = op | op_flags;
 
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		struct page *page = pvec->pages[i];
