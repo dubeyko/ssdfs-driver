@@ -346,10 +346,10 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 					struct ssdfs_translation_extent *array,
 					u16 capacity,
 					u16 *extent_count);
-int
-ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
-				       u16 peb_index, u16 sequence_id,
-				       struct ssdfs_blk2off_table_snapshot *sp);
+int ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
+				    u16 peb_index, u16 sequence_id,
+				    u32 *offset_table_off,
+				    struct ssdfs_blk2off_table_snapshot *sp);
 int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 					 struct ssdfs_blk2off_table_header *hdr,
 					 pgoff_t *cur_page,

@@ -54,12 +54,14 @@ struct ssdfs_blk_bmap_init_env {
  * struct ssdfs_blk2off_table_init_env - blk2off table init environment
  * @tbl_hdr: blk2off table header
  * @pvec: pagevec with blk2off table fragment
+ * @blk2off_tbl_hdr_off: blk2off table header offset
  * @read_off: current read offset
  * @write_off: current write offset
  */
 struct ssdfs_blk2off_table_init_env {
 	struct ssdfs_blk2off_table_header tbl_hdr;
 	struct pagevec pvec;
+	u32 blk2off_tbl_hdr_off;
 	u32 read_off;
 	u32 write_off;
 };

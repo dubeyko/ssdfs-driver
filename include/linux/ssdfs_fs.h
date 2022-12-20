@@ -2158,6 +2158,7 @@ struct ssdfs_phys_offset_table_header {
 struct ssdfs_translation_extent {
 /* 0x0000 */
 	__le16 logical_blk;
+#define SSDFS_INVALID_OFFSET_ID		(U16_MAX)
 	__le16 offset_id;
 	__le16 len;
 	__le8 sequence_id;
