@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.36 [December 19, 2022]
+    (*) Fix bugs in logic of calculation of number of unused PEBs in
+        PEB mapping table's fragment.
+
 v.4.35 [December 19, 2022]
     (*) Fix bugs in logic of managing multiple fragments of
         offsets translation table.

@@ -5729,6 +5729,11 @@ bool can_be_mapped_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  threshold,
 		  fdesc->stripe_pages);
 
+	if ((reserved_pool + 1) >= unused_lebs) {
+		is_mapping_possible = false;
+		goto finish_check;
+	}
+
 	if (need_try2reserve_peb(tbl->fsi)) {
 		threshold = max_t(u32, threshold,
 				  (u32)tbl->stripes_per_fragment);
@@ -5771,6 +5776,7 @@ bool has_fragment_unused_pebs(struct ssdfs_peb_table_fragment_header *hdr)
 	unsigned long *bmap;
 	u16 pebs_count;
 	int used_pebs, unused_pebs;
+	u16 reserved_pebs;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hdr);
@@ -5784,8 +5790,18 @@ bool has_fragment_unused_pebs(struct ssdfs_peb_table_fragment_header *hdr)
 
 	WARN_ON(unused_pebs < 0);
 
-	SSDFS_DBG("hdr %p, unused_pebs %d\n",
-		  hdr, unused_pebs);
+	reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
+
+	if (reserved_pebs > unused_pebs) {
+		SSDFS_ERR("reserved_pebs %u > unused_pebs %u\n",
+			  reserved_pebs, unused_pebs);
+		return false;
+	}
+
+	unused_pebs -= reserved_pebs;
+
+	SSDFS_DBG("hdr %p, unused_pebs %d, reserved_pebs %u\n",
+		  hdr, unused_pebs, reserved_pebs);
 
 	return unused_pebs > 0;
 }
@@ -6863,11 +6879,11 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 			  peb_type);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, fdesc %p, leb_id %llu, "
 		  "start_peb_id %llu, peb_type %#x\n",
 		  tbl, fdesc, leb_id, start_peb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 
