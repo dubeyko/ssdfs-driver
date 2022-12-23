@@ -16,6 +16,7 @@ config SSDFS
 config SSDFS_BLOCK_DEVICE
 	bool "Block layer support"
 	depends on BLOCK && SSDFS
+	depends on BLK_DEV_ZONED
 	default y
 	help
 	  This option enables block layer support.
