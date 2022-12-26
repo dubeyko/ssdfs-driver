@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.37 [December 26, 2022]
+    (*) Fix issue with wrong accounting of free blocks during
+        offset translation table's fragment initilization.
+
 v.4.36 [December 19, 2022]
     (*) Fix bugs in logic of calculation of number of unused PEBs in
         PEB mapping table's fragment.

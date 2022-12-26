@@ -2478,7 +2478,8 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		} else
 			++*extent_index;
 
-		processed_offset_ids += len;
+		if (state != SSDFS_LOGICAL_BLK_FREE)
+			processed_offset_ids += len;
 	};
 
 finish_fragment_processing:
@@ -6791,8 +6792,17 @@ int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
 
 	down_write(&table->translation_lock);
 
-	BUG_ON(table->lblk2off_capacity > (U16_MAX - extent->len));
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("used_logical_blks %u, free_logical_blks %u, "
+		  "last_allocated_blk %u, lblk2off_capacity %u\n",
+		  table->used_logical_blks,
+		  table->free_logical_blks,
+		  table->last_allocated_blk,
+		  table->lblk2off_capacity);
+
+	BUG_ON(extent->len > table->used_logical_blks);
 	BUG_ON(table->used_logical_blks > table->lblk2off_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if ((extent->start_lblk + extent->len) > table->lblk2off_capacity) {
 		err = -EINVAL;
