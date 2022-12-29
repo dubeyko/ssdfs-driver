@@ -77,9 +77,11 @@ int ssdfs_shextree_invalidate_extent(struct ssdfs_shared_extents_tree *tree,
 	logical_blk = le32_to_cpu(ei->raw.extent.logical_blk);
 	len = le32_to_cpu(ei->raw.extent.len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, ei %p, seg_id %llu, "
 		  "logical_blk %u, len %u\n",
 		  tree, ei, seg_id, logical_blk, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (ei->type != SSDFS_EXTENT_INFO_RAW_EXTENT) {
 		SSDFS_ERR("invalid type %#x\n",
@@ -113,8 +115,10 @@ int ssdfs_shextree_invalidate_index(struct ssdfs_shared_extents_tree *tree,
 	height = ei->raw.index.height;
 	flags = ei->raw.index.flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, node_type %u, height %u, flags %#x\n",
 		  node_id, node_type, height, flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (ei->type) {
 	case SSDFS_EXTENT_INFO_INDEX_DESCRIPTOR:
@@ -168,10 +172,10 @@ int ssdfs_shextree_extent_thread_func(void *data)
 		SSDFS_ERR("pointer on shared extents tree's object is NULL\n");
 		BUG();
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("shared extents tree's thread: "
 		  "extents invalidation queue\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_queue = &tree->wait_queue;
 	ptr = &tree->array[id];
@@ -302,10 +306,10 @@ int ssdfs_shextree_index_thread_func(void *data)
 		SSDFS_ERR("pointer on shared extents tree's object is NULL\n");
 		BUG();
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("shared extents tree's thread: "
 		  "index invalidation queue\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_queue = &tree->wait_queue;
 	ptr = &tree->array[id];
@@ -415,9 +419,9 @@ int ssdfs_shextree_start_thread(struct ssdfs_shared_extents_tree *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
 	BUG_ON(index >= SSDFS_INVALIDATION_QUEUE_NUMBER);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, index %d\n", tree, index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	threadfn = thread_desc[index].threadfn;
 	fmt = thread_desc[index].fmt;

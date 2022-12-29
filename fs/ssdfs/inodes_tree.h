@@ -62,6 +62,7 @@ struct ssdfs_free_inode_range_queue {
  * @lock: inodes btree lock
  * @root_folder: copy of root folder's inode
  * @upper_allocated_ino: maximal allocated inode ID number
+ * @last_free_ino: latest free inode ID number
  * @allocated_inodes: allocated inodes count in the whole tree
  * @free_inodes: free inodes count in the whole tree
  * @inodes_capacity: inodes capacity in the whole tree
@@ -76,6 +77,7 @@ struct ssdfs_inodes_btree_info {
 	spinlock_t lock;
 	struct ssdfs_inode root_folder;
 	u64 upper_allocated_ino;
+	u64 last_free_ino;
 	u64 allocated_inodes;
 	u64 free_inodes;
 	u64 inodes_capacity;

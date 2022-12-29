@@ -3122,6 +3122,8 @@ static void ssdfs_put_super(struct super_block *sb)
 			  "err %d\n", err);
 	}
 
+	SSDFS_DBG("GC threads have been stoped\n");
+
 	err = ssdfs_shared_dict_stop_thread(fsi->shdictree);
 	if (err == -EIO) {
 		ssdfs_fs_error(fsi->sb,
@@ -3131,6 +3133,8 @@ static void ssdfs_put_super(struct super_block *sb)
 		SSDFS_WARN("thread stopping issue: err %d\n",
 			   err);
 	}
+
+	SSDFS_DBG("shared dictionary thread has been stoped\n");
 
 	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
 		err = ssdfs_shextree_stop_thread(fsi->shextree, i);
@@ -3144,6 +3148,8 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
+	SSDFS_DBG("shared extents threads have been stoped\n");
+
 	err = ssdfs_stop_snapshots_btree_thread(fsi);
 	if (err == -EIO) {
 		ssdfs_fs_error(fsi->sb,
@@ -3154,11 +3160,15 @@ static void ssdfs_put_super(struct super_block *sb)
 			   err);
 	}
 
+	SSDFS_DBG("snaphots btree thread has been stoped\n");
+
 	err = ssdfs_maptbl_stop_thread(fsi->maptbl);
 	if (unlikely(err)) {
 		SSDFS_WARN("maptbl thread stopping issue: err %d\n",
 			   err);
 	}
+
+	SSDFS_DBG("mapping table thread has been stoped\n");
 
 	spin_lock(&fsi->volume_state_lock);
 	fs_feature_compat = fsi->fs_feature_compat;
@@ -3166,6 +3176,8 @@ static void ssdfs_put_super(struct super_block *sb)
 	spin_unlock(&fsi->volume_state_lock);
 
 	pagevec_init(&payload.maptbl_cache.pvec);
+
+	SSDFS_DBG("Wait unfinished user data requests...\n");
 
 	if (unfinished_user_data_requests_exist(fsi)) {
 		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;

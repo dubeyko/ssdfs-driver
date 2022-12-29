@@ -3067,6 +3067,19 @@ struct ssdfs_xattrs_btree_node_header {
 /* 0x0100 */
 } __packed;
 
+/*
+ * struct ssdfs_index_area - index area info
+ * @start_hash: start hash value
+ * @end_hash: end hash value
+ */
+struct ssdfs_index_area {
+/* 0x0000 */
+	__le64 start_hash;
+	__le64 end_hash;
+
+/* 0x0010 */
+} __packed;
+
 #define SSDFS_INODE_PAGES_PER_NODE_MAX		(32)
 #define SSDFS_INODE_BMAP_SIZE \
 	(((SSDFS_INODE_PAGES_PER_NODE_MAX * PAGE_SIZE) / \
@@ -3077,6 +3090,7 @@ struct ssdfs_xattrs_btree_node_header {
  * @node: generic btree node's header
  * @inodes_count: count of inodes in the node
  * @valid_inodes: count of valid inodes in the node
+ * @index_area: index area info (hybrid node)
  * @bmap: bitmap of valid/invalid inodes in the node
  */
 struct ssdfs_inodes_btree_node_header {
@@ -3086,7 +3100,13 @@ struct ssdfs_inodes_btree_node_header {
 /* 0x0040 */
 	__le16 inodes_count;
 	__le16 valid_inodes;
-	__le8 reserved[0x7C];
+	__le8 reserved1[0xC];
+
+/* 0x0050 */
+	struct ssdfs_index_area index_area;
+
+/* 0x0060 */
+	__le8 reserved2[0x60];
 
 /* 0x00C0 */
 	__le8 bmap[SSDFS_INODE_BMAP_SIZE];

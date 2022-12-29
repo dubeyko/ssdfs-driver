@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.38 [December 28, 2022]
+    (*) Fix issue with logic of detection deleted nodes
+        of inodes btree.
+
 v.4.37 [December 26, 2022]
     (*) Fix issue with wrong accounting of free blocks during
         offset translation table's fragment initilization.

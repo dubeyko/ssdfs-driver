@@ -8540,6 +8540,7 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 		}
 	}
 
+finish_common_node_delete_index:
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "index_count %u, index_capacity %u\n",
 		  node->index_area.start_hash,
@@ -8547,7 +8548,6 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 		  node->index_area.index_count,
 		  node->index_area.index_capacity);
 
-finish_common_node_delete_index:
 	return 0;
 }
 
@@ -8807,6 +8807,14 @@ finish_change_root_node:
 			}
 		}
 	}
+
+
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "index_count %u, index_capacity %u\n",
+		  node->index_area.start_hash,
+		  node->index_area.end_hash,
+		  node->index_area.index_count,
+		  node->index_area.index_capacity);
 
 	return 0;
 }
@@ -10432,7 +10440,8 @@ int ssdfs_btree_node_check_result_for_alloc(struct ssdfs_btree_search *search)
 		break;
 
 	default:
-		SSDFS_WARN("invalid search result state\n");
+		SSDFS_WARN("invalid search result state %#x\n",
+			   search->result.state);
 		return -ERANGE;
 	}
 
