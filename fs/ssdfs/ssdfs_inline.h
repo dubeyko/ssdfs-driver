@@ -693,8 +693,15 @@ bool is_ssdfs_magic_valid(struct ssdfs_signature *magic)
 	if (le32_to_cpu(magic->common) != SSDFS_SUPER_MAGIC)
 		return false;
 	if (magic->version.major > SSDFS_MAJOR_REVISION ||
-	    magic->version.minor > SSDFS_MINOR_REVISION)
+	    magic->version.minor > SSDFS_MINOR_REVISION) {
+		SSDFS_INFO("Volume has unsupported %u.%u version. "
+			   "Driver expects %u.%u version.\n",
+			   magic->version.major,
+			   magic->version.minor,
+			   SSDFS_MAJOR_REVISION,
+			   SSDFS_MINOR_REVISION);
 		return false;
+	}
 
 	return true;
 }

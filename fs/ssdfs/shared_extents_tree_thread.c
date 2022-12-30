@@ -146,6 +146,81 @@ int ssdfs_shextree_invalidate_index(struct ssdfs_shared_extents_tree *tree,
 	return -ERANGE;
 }
 
+/*
+ * ssdfs_shextree_try_merge_extents() - try to merge extents
+ * @ei: current extent info
+ * @next_ei: next extent info
+ */
+static
+int ssdfs_shextree_try_merge_extents(struct ssdfs_extent_info *ei,
+				     struct ssdfs_extent_info *next_ei)
+{
+	u64 seg_id1, seg_id2;
+	u32 logical_blk1, logical_blk2;
+	u32 len1, len2;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ei || !next_ei);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (ei->type) {
+	case SSDFS_EXTENT_INFO_RAW_EXTENT:
+		switch (next_ei->type) {
+		case SSDFS_EXTENT_INFO_RAW_EXTENT:
+			/* continue logic */
+			break;
+
+		default:
+			return -ENOENT;
+		}
+			break;
+
+	default:
+		return -ENOENT;
+	}
+
+	seg_id1 = le64_to_cpu(ei->raw.extent.seg_id);
+	logical_blk1 = le32_to_cpu(ei->raw.extent.logical_blk);
+	len1 = le32_to_cpu(ei->raw.extent.len);
+
+	seg_id2 = le64_to_cpu(next_ei->raw.extent.seg_id);
+	logical_blk2 = le32_to_cpu(next_ei->raw.extent.logical_blk);
+	len2 = le32_to_cpu(next_ei->raw.extent.len);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ei %p (seg_id %llu, logical_blk %u, len %u), "
+		  "next_ei %p (seg_id %llu, logical_blk %u, len %u)\n",
+		  ei, seg_id1, logical_blk1, len1,
+		  next_ei, seg_id2, logical_blk2, len2);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (seg_id1 != seg_id2) {
+		SSDFS_DBG("unable to merge: "
+			  "seg_id1 %llu != seg_id2 %llu\n",
+			  seg_id1, seg_id2);
+		return -ENOENT;
+	}
+
+	if ((logical_blk1 + len1) != logical_blk2) {
+		SSDFS_DBG("unable to merge: "
+			  "logical_blk1 %u, len1 %u, logical_blk2 %u\n",
+			  logical_blk1, len1, logical_blk2);
+		return -ENOENT;
+	}
+
+	le32_add_cpu(&ei->raw.extent.len, len2);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("extents are merged: "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  le64_to_cpu(ei->raw.extent.seg_id),
+		  le32_to_cpu(ei->raw.extent.logical_blk),
+		  le32_to_cpu(ei->raw.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
 #define SHEXTREE_PTR(tree) \
 	((struct ssdfs_shared_extents_tree *)(tree))
 #define SHEXTREE_THREAD_WAKE_CONDITION(tree, index) \
@@ -163,6 +238,7 @@ int ssdfs_shextree_extent_thread_func(void *data)
 	struct ssdfs_shared_extents_tree *tree = data;
 	wait_queue_head_t *wait_queue = NULL;
 	struct ssdfs_invalidation_queue *ptr = NULL;
+	struct ssdfs_extents_queue *eq = NULL;
 	int id = SSDFS_EXTENT_INVALIDATION_QUEUE;
 	int state;
 	int err = 0;
@@ -179,10 +255,11 @@ int ssdfs_shextree_extent_thread_func(void *data)
 
 	wait_queue = &tree->wait_queue;
 	ptr = &tree->array[id];
+	eq = &ptr->queue;
 
 repeat:
 	if (unlikely(err)) {
-		ssdfs_extents_queue_remove_all(&ptr->queue);
+		ssdfs_extents_queue_remove_all(eq);
 		wake_up_all(&tree->wait_queue);
 
 		if (kthread_should_stop())
@@ -205,7 +282,7 @@ finish_thread:
 
 try_invalidate_queue:
 	do {
-		struct ssdfs_extent_info *ei = NULL;
+		struct ssdfs_extent_info *ei = NULL, *next_ei = NULL;
 
 		state = atomic_read(&tree->fsi->global_fs_state);
 		switch (state) {
@@ -235,8 +312,7 @@ try_invalidate_queue:
 			break;
 		}
 
-		err = ssdfs_extents_queue_remove_first(&ptr->queue,
-							&ei);
+		err = ssdfs_extents_queue_remove_first(eq, &ei);
 		if (err == -ENODATA) {
 			err = 0;
 			goto sleep_shextree_thread;
@@ -251,10 +327,26 @@ try_invalidate_queue:
 			goto repeat;
 		}
 
+		do {
+			if (!has_shextree_pre_invalid_extents(tree, id))
+				break;
+
+			err = ssdfs_extents_queue_remove_first(eq, &next_ei);
+			if (!err) {
+				err = ssdfs_shextree_try_merge_extents(ei,
+								    next_ei);
+				if (err) {
+					ssdfs_extents_queue_add_head(eq,
+								     next_ei);
+				} else
+					ssdfs_extent_info_free(next_ei);
+			}
+		} while (err == 0);
+
 		err = ssdfs_shextree_invalidate_extent(tree, ei);
 		if (err == -EBUSY) {
 			err = 0;
-			ssdfs_extents_queue_add_tail(&ptr->queue, ei);
+			ssdfs_extents_queue_add_tail(eq, ei);
 			wait_event_interruptible_timeout(*wait_queue,
 						kthread_should_stop(),
 						HZ);

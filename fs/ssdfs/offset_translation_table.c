@@ -4118,12 +4118,20 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	id_count = (u16)atomic_read(&fragment->id_count);
 	fragment->hdr->id_count = cpu_to_le16(id_count);
 	byte_size = sizeof(struct ssdfs_phys_offset_table_header);
-	byte_size += id_count * sizeof(struct ssdfs_phys_offset_descriptor);
+	byte_size += (u32)id_count * sizeof(struct ssdfs_phys_offset_descriptor);
 	fragment->hdr->byte_size = cpu_to_le32(byte_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("hdr_size %zu, id_count %u, "
+		  "desc_size %zu, byte_size %u\n",
+		  sizeof(struct ssdfs_phys_offset_table_header),
+		  id_count,
+		  sizeof(struct ssdfs_phys_offset_descriptor),
+		  byte_size);
 	SSDFS_DBG("fragment: start_id %u, id_count %u\n",
 		  le16_to_cpu(fragment->hdr->start_id),
 		  le16_to_cpu(fragment->hdr->id_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fragment->hdr->peb_index = cpu_to_le16(peb_index);
 	fragment->hdr->sequence_id = cpu_to_le16(fragment->sequence_id);
@@ -4158,19 +4166,19 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	fragment->hdr->free_logical_blks = cpu_to_le16(sp->free_logical_blks);
 	fragment->hdr->last_allocated_blk = cpu_to_le16(sp->last_allocated_blk);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(byte_size >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*offset_table_off += byte_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("offset_table_off %u\n", *offset_table_off);
-
-	BUG_ON(*offset_table_off > U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (has_next_fragment) {
 		fragment->hdr->next_fragment_off =
-				cpu_to_le16((u16)*offset_table_off);
+				cpu_to_le16((u16)byte_size);
 	} else {
 		fragment->hdr->next_fragment_off =
 				cpu_to_le16(U16_MAX);
@@ -4557,7 +4565,12 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 	struct page *page;
 	void *kaddr;
 	u32 fragment_size;
+	u16 flags;
+	u32 next_fragment_off;
 	u32 rest_bytes, written_bytes = 0;
+	u32 cur_off;
+	u32 new_off;
+	u32 diff;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4616,10 +4629,33 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		goto finish_fragment_copy;
 	}
 
+	next_fragment_off = ssdfs_peb_correct_area_write_offset(*write_offset +
+								fragment_size,
+								hdr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cur_page %lu, write_offset %u, fragment_size %u, "
+		  "hdr_size %zu, next_fragment_off %u\n",
+		  *cur_page, *write_offset, fragment_size,
+		  hdr_size, next_fragment_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	flags = le16_to_cpu(hdr->flags);
+	if (flags & SSDFS_OFF_TABLE_HAS_NEXT_FRAGMENT) {
+		diff = next_fragment_off - *write_offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(diff >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		hdr->next_fragment_off = cpu_to_le16((u16)diff);
+		hdr->checksum = ssdfs_crc32_le(hdr,
+						le32_to_cpu(hdr->byte_size));
+	}
+
 	while (rest_bytes > 0) {
 		u32 bytes;
-		u32 cur_off = *write_offset % PAGE_SIZE;
-		u32 new_off;
+		cur_off = *write_offset % PAGE_SIZE;
 
 		bytes = min_t(u32, rest_bytes, PAGE_SIZE - cur_off);
 
@@ -4647,6 +4683,11 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		ssdfs_set_page_private(page, 0);
 		SetPageUptodate(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("ssdfs_page_array_set_page_dirty %lu\n",
+			  *cur_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
 						      *cur_page);
 		if (unlikely(err)) {
@@ -4669,9 +4710,35 @@ finish_cur_copy:
 		new_off = (*cur_page << PAGE_SHIFT) + cur_off + bytes;
 		*cur_page = new_off >> PAGE_SHIFT;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("cur_off %u, bytes %u, new_off %u, cur_page %lu\n",
+			  cur_off, bytes, new_off, *cur_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		rest_bytes -= bytes;
 		written_bytes += bytes;
 	};
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(*write_offset > next_fragment_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	diff = next_fragment_off - *write_offset;
+
+	if (diff > 0) {
+		cur_off = *write_offset % PAGE_SIZE;
+		*write_offset = next_fragment_off;
+
+		new_off = (*cur_page << PAGE_SHIFT) + cur_off + diff;
+		*cur_page = new_off >> PAGE_SHIFT;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cur_page %lu, write_offset %u, "
+		  "next_fragment_off %u\n",
+		  *cur_page, *write_offset,
+		  next_fragment_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_copy:
 	up_write(&fragment->lock);
@@ -4841,6 +4908,11 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 
 	sequence_id = snapshot.start_sequence_id;
 	for (i = 0; i < fragments_count; i++) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fragment_index %d, offset_table_off %u\n",
+			  i, offset_table_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_blk2off_table_prepare_for_commit(table, peb_index,
 							     sequence_id,
 							     &offset_table_off,
@@ -4851,10 +4923,6 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 				  peb_index, sequence_id, err);
 			goto fail_store_off_table;
 		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(offset_table_off >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		sequence_id = ssdfs_next_sequence_id(sequence_id);
 		if (sequence_id > SSDFS_BLK2OFF_TBL_REVERT_THRESHOLD) {

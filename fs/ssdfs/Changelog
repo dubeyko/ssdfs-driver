@@ -3,6 +3,11 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.39 [December 30, 2022]
+    (*) Inform about incompatible version of SSDFS on-disk layout.
+    (*) Add merging extents during invalidation.
+    (*) Fix issue with aligning multiple fragments of offset translation table.
+
 v.4.38 [December 28, 2022]
     (*) Fix issue with logic of detection deleted nodes
         of inodes btree.

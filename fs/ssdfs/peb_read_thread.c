@@ -6269,6 +6269,7 @@ int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_phys_offset_table_header hdr;
 	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
+	u32 fragment_start;
 	u32 next_frag_off;
 	u32 read_bytes;
 	int err;
@@ -6283,6 +6284,8 @@ int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
 		  env->t_init.read_off, env->t_init.write_off);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fragment_start = env->t_init.read_off;
 
 	err = ssdfs_unaligned_read_cache(pebi,
 					 env->t_init.read_off, hdr_size,
@@ -6316,13 +6319,7 @@ int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
 	if (next_frag_off >= U16_MAX)
 		goto finish_read_blk2off_pot_fragment;
 
-	next_frag_off += env->t_init.blk2off_tbl_hdr_off;
-
-	if (next_frag_off != env->t_init.read_off) {
-		SSDFS_ERR("next_frag_off %u != read_off %u\n",
-			  next_frag_off, env->t_init.read_off);
-		return -EIO;
-	}
+	env->t_init.read_off = fragment_start + next_frag_off;
 
 finish_read_blk2off_pot_fragment:
 	return 0;
