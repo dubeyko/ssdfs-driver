@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.40 [December 31, 2022]
+    (*) Fix issue with finishing not completely full log.
+
 v.4.39 [December 30, 2022]
     (*) Inform about incompatible version of SSDFS on-disk layout.
     (*) Add merging extents during invalidation.
