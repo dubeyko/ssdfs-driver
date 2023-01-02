@@ -4035,6 +4035,23 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 			}
 
 			env->log_offset = (u16)i;
+			pebi->peb_create_time =
+				le64_to_cpu(seg_hdr->peb_create_time);
+			pebi->current_log.last_log_time =
+				le64_to_cpu(seg_hdr->timestamp);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("seg %llu, peb %llu, "
+				  "peb_create_time %llx, last_log_time %llx\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  pebi->peb_create_time,
+				  pebi->current_log.last_log_time);
+
+			BUG_ON(pebi->peb_create_time >
+				pebi->current_log.last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			goto finish_last_log_search;
 		} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 			u32 flags;
@@ -4108,6 +4125,23 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 				}
 
 				env->log_offset = (u16)i;
+				pebi->peb_create_time =
+					le64_to_cpu(pl_hdr->peb_create_time);
+				pebi->current_log.last_log_time =
+					le64_to_cpu(pl_hdr->timestamp);
+
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("seg %llu, peb %llu, "
+					  "peb_create_time %llx, last_log_time %llx\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  pebi->peb_create_time,
+					  pebi->current_log.last_log_time);
+
+				BUG_ON(pebi->peb_create_time >
+					pebi->current_log.last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 				goto finish_last_log_search;
 			} else {
 				/* intermediate partial log */
@@ -4131,6 +4165,23 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 
 				*new_log_start_page = (u16)page_offset;
 				env->log_offset = (u16)i;
+				pebi->peb_create_time =
+					le64_to_cpu(pl_hdr->peb_create_time);
+				pebi->current_log.last_log_time =
+					le64_to_cpu(pl_hdr->timestamp);
+
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("seg %llu, peb %llu, "
+					  "peb_create_time %llx, last_log_time %llx\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  pebi->peb_create_time,
+					  pebi->current_log.last_log_time);
+
+				BUG_ON(pebi->peb_create_time >
+					pebi->current_log.last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 				goto finish_last_log_search;
 			}
 		} else if (__is_ssdfs_log_footer_magic_valid(magic)) {
@@ -9473,6 +9524,392 @@ end_init:
 }
 
 /*
+ * ssdfs_peb_get_last_log_time() - get PEB's last log timestamp
+ * @fsi: file system info object
+ * @pebi: pointer on PEB object
+ * @page_off: page offset to footer's placement
+ * @peb_create_time: PEB's create timestamp [out]
+ * @last_log_time: PEB's last log timestamp
+ *
+ * This method tries to read the last log footer of PEB
+ * and retrieve peb_create_time and last_log_time.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no valid log footer.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_get_last_log_time(struct ssdfs_fs_info *fsi,
+				struct ssdfs_peb_info *pebi,
+				u32 page_off,
+				u64 *peb_create_time,
+				u64 *last_log_time)
+{
+	struct ssdfs_signature *magic = NULL;
+	struct ssdfs_partial_log_header *plh_hdr = NULL;
+	struct ssdfs_log_footer *footer = NULL;
+	struct page *page;
+	void *kaddr;
+	u32 bytes_off;
+	size_t read_bytes;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!peb_create_time || !last_log_time);
+
+	SSDFS_DBG("seg %llu, peb_id %llu, page_off %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id, page_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*peb_create_time = U64_MAX;
+	*last_log_time = U64_MAX;
+
+	page = ssdfs_page_array_grab_page(&pebi->cache, page_off);
+	if (unlikely(IS_ERR_OR_NULL(page))) {
+		SSDFS_ERR("fail to grab page: index %u\n",
+			  page_off);
+		return -ENOMEM;
+	}
+
+	kaddr = kmap_local_page(page);
+
+	if (PageUptodate(page) || PageDirty(page))
+		goto check_footer_magic;
+
+	bytes_off = page_off * fsi->pagesize;
+
+	err = ssdfs_aligned_read_buffer(fsi, pebi->peb_id,
+					bytes_off,
+					(u8 *)kaddr,
+					PAGE_SIZE,
+					&read_bytes);
+	if (unlikely(err))
+		goto fail_read_footer;
+	else if (unlikely(read_bytes != PAGE_SIZE)) {
+		err = -ERANGE;
+		goto fail_read_footer;
+	}
+
+	SetPageUptodate(page);
+
+check_footer_magic:
+	magic = (struct ssdfs_signature *)kaddr;
+
+	if (!is_ssdfs_magic_valid(magic)) {
+		err = -ENODATA;
+		goto fail_read_footer;
+	}
+
+	if (is_ssdfs_partial_log_header_magic_valid(magic)) {
+		plh_hdr = SSDFS_PLH(kaddr);
+		*peb_create_time = le64_to_cpu(plh_hdr->peb_create_time);
+		*last_log_time = le64_to_cpu(plh_hdr->timestamp);
+	} else if (__is_ssdfs_log_footer_magic_valid(magic)) {
+		footer = SSDFS_LF(kaddr);
+		*peb_create_time = le64_to_cpu(footer->peb_create_time);
+		*last_log_time = le64_to_cpu(footer->timestamp);
+	} else {
+		err = -ENODATA;
+		SSDFS_DBG("log footer is corrupted: "
+			  "peb %llu, page_off %u\n",
+			  pebi->peb_id, page_off);
+		goto fail_read_footer;
+	}
+
+fail_read_footer:
+	kunmap_local(kaddr);
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
+	if (err == -ENODATA) {
+		SSDFS_DBG("valid footer is not detected: "
+			  "seg_id %llu, peb_id %llu, "
+			  "page_off %u\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  page_off);
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to read footer: "
+			  "seg %llu, peb %llu, "
+			  "pages_off %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  page_off,
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_read_last_log_footer() - read PEB's last log footer
+ * @pebi: pointer on PEB object
+ * @req: read request
+ *
+ * This method tries to read the last log footer of PEB
+ * and initialize peb_create_time and last_log_time fields.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no valid log footer.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_read_last_log_footer(struct ssdfs_peb_info *pebi,
+				   struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	u32 log_bytes;
+	u32 pages_per_log;
+	u32 logs_count;
+	u32 page_off;
+	u64 peb_create_time;
+	u64 last_log_time;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi || !req);
+
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	page_off = 0;
+
+	err = __ssdfs_peb_read_log_header(fsi, pebi, page_off,
+					  &log_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read log header: "
+			  "seg %llu, peb %llu, page_off %u, "
+			  "err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  page_off,
+			  err);
+		return err;
+	}
+
+	pages_per_log = log_bytes + fsi->pagesize - 1;
+	pages_per_log /= fsi->pagesize;
+	logs_count = fsi->pages_per_peb / pages_per_log;
+
+	for (i = logs_count; i > 0; i--) {
+		page_off = (i * pages_per_log) - 1;
+
+		err = ssdfs_peb_get_last_log_time(fsi, pebi,
+						  page_off,
+						  &peb_create_time,
+						  &last_log_time);
+		if (err == -ENODATA)
+			continue;
+		else if (unlikely(err)) {
+			SSDFS_ERR("fail to get last log time: "
+				  "seg %llu, peb %llu, "
+				  "page_off %u, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  page_off,
+				  err);
+			return err;
+		} else
+			break;
+	}
+
+	if (i <= 0 || err == -ENODATA) {
+		SSDFS_ERR("fail to get last log time: "
+			  "seg %llu, peb %llu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, err);
+		return -ERANGE;
+	}
+
+	pebi->peb_create_time = peb_create_time;
+	pebi->current_log.last_log_time = last_log_time;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "peb_create_time %llx, last_log_time %llx\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  peb_create_time,
+		  last_log_time);
+
+	BUG_ON(pebi->peb_create_time > last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_read_src_last_log_footer() - read src PEB's last log footer
+ * @pebc: pointer on PEB container
+ * @req: read request
+ *
+ * This method tries to read the last log footer of source PEB.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no valid log footer.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_read_src_last_log_footer(struct ssdfs_peb_container *pebc,
+					struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_info *pebi;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#else
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = pebc->parent_si->fsi;
+
+	down_read(&pebc->lock);
+
+	pebi = pebc->src_peb;
+	if (!pebi) {
+		SSDFS_WARN("source PEB is NULL\n");
+		err = -ERANGE;
+		goto finish_read_src_last_log_footer;
+	}
+
+	err = ssdfs_peb_read_last_log_footer(pebi, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read last log's footer: "
+			  "peb_id %llu, peb_index %u, err %d\n",
+			  pebi->peb_id, pebi->peb_index, err);
+		goto finish_read_src_last_log_footer;
+	}
+
+finish_read_src_last_log_footer:
+	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
+/*
+ * ssdfs_peb_read_dst_last_log_footer() - read dst PEB's last log footer
+ * @pebc: pointer on PEB container
+ * @req: read request
+ *
+ * This method tries to read the last log footer of destination PEB.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-ENODATA    - no valid log footer.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_read_dst_last_log_footer(struct ssdfs_peb_container *pebc,
+					struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_info *pebi;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#else
+	SSDFS_DBG("seg %llu, peb_index %u, "
+		  "class %#x, cmd %#x, type %#x\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  req->private.class, req->private.cmd,
+		  req->private.type);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = pebc->parent_si->fsi;
+
+	down_read(&pebc->lock);
+
+	pebi = pebc->dst_peb;
+	if (!pebi) {
+		SSDFS_WARN("destination PEB is NULL\n");
+		err = -ERANGE;
+		goto finish_read_dst_last_log_footer;
+	}
+
+	err = ssdfs_peb_read_last_log_footer(pebi, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read last log's footer: "
+			  "peb_id %llu, peb_index %u, err %d\n",
+			  pebi->peb_id, pebi->peb_index, err);
+		goto finish_read_dst_last_log_footer;
+	}
+
+finish_read_dst_last_log_footer:
+	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
+/*
  * ssdfs_process_read_request() - process read request
  * @pebc: pointer on PEB container
  * @req: read request
@@ -9684,6 +10121,36 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 			ssdfs_fs_error(pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"fail to init mapping table object: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		break;
+
+	case SSDFS_READ_SRC_LAST_LOG_FOOTER:
+		err = ssdfs_peb_read_src_last_log_footer(pebc, req);
+		if (unlikely(err)) {
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to read last log footer: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		break;
+
+	case SSDFS_READ_DST_LAST_LOG_FOOTER:
+		err = ssdfs_peb_read_dst_last_log_footer(pebc, req);
+		if (unlikely(err)) {
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to read last log footer: "
 				"seg %llu, peb_index %u, err %d\n",
 				pebc->parent_si->seg_id,
 				pebc->peb_index, err);

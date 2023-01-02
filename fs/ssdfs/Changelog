@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.41 [January 02, 2023]
+    (*) Implement support and management PEBs in snapshot state.
+
 v.4.40 [December 31, 2022]
     (*) Fix issue with finishing not completely full log.
 

@@ -187,10 +187,14 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 						u16 fs_state,
 						__le64 *cur_segs,
 						size_t size,
+						u64 last_log_time,
+						u64 last_log_cno,
 						struct ssdfs_volume_state *vs);
 int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 					u32 log_pages,
 					u32 log_flags,
+					u64 last_log_time,
+					u64 last_log_cno,
 					struct ssdfs_log_footer *footer);
 
 /* offset_translation_table.c */
@@ -293,12 +297,16 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 					    u32 log_pages,
 					    u16 seg_type,
 					    u32 seg_flags,
+					    u64 last_log_time,
+					    u64 last_log_cno,
 					    struct ssdfs_segment_header *hdr);
 int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 					int sequence_id,
 					u32 log_pages,
 					u16 seg_type,
 					u32 flags,
+					u64 last_log_time,
+					u64 last_log_cno,
 					struct ssdfs_partial_log_header *hdr);
 
 /* memory leaks checker */

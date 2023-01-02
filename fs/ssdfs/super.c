@@ -1731,6 +1731,7 @@ finish_copy_items:
 }
 
 static int __ssdfs_commit_sb_log(struct super_block *sb,
+				 u64 timestamp, u64 cno,
 				 struct ssdfs_peb_extent *last_sb_log,
 				 struct ssdfs_sb_log_payload *payload)
 {
@@ -1807,6 +1808,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 						     SSDFS_SB_SEG_TYPE,
 						     SSDFS_LOG_HAS_FOOTER |
 						     SSDFS_LOG_HAS_MAPTBL_CACHE,
+						     timestamp, cno,
 						     hdr);
 	if (err) {
 		SSDFS_ERR("fail to prepare segment header: err %d\n", err);
@@ -1832,7 +1834,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		     footer_array_bytes);
 
 	err = ssdfs_prepare_log_footer_for_commit(fsi, last_sb_log->pages_count,
-						  flags, footer);
+						  flags, timestamp,
+						  cno, footer);
 	if (err) {
 		SSDFS_ERR("fail to prepare log footer: err %d\n", err);
 		return err;
@@ -1995,6 +1998,7 @@ cleanup_after_failure:
 
 static int
 __ssdfs_commit_sb_log_inline(struct super_block *sb,
+			     u64 timestamp, u64 cno,
 			     struct ssdfs_peb_extent *last_sb_log,
 			     struct ssdfs_sb_log_payload *payload,
 			     u32 payload_size)
@@ -2077,6 +2081,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 						     SSDFS_SB_SEG_TYPE,
 						     SSDFS_LOG_HAS_FOOTER |
 						     SSDFS_LOG_HAS_MAPTBL_CACHE,
+						     timestamp, cno,
 						     hdr);
 	if (err) {
 		SSDFS_ERR("fail to prepare segment header: err %d\n", err);
@@ -2102,7 +2107,8 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		     footer_array_bytes);
 
 	err = ssdfs_prepare_log_footer_for_commit(fsi, last_sb_log->pages_count,
-						  flags, footer);
+						  flags, timestamp,
+						  cno, footer);
 	if (err) {
 		SSDFS_ERR("fail to prepare log footer: err %d\n", err);
 		return err;
@@ -2273,6 +2279,7 @@ cleanup_after_failure:
 }
 
 static int ssdfs_commit_sb_log(struct super_block *sb,
+				u64 timestamp, u64 cno,
 				struct ssdfs_peb_extent *last_sb_log,
 				struct ssdfs_sb_log_payload *payload)
 {
@@ -2296,10 +2303,12 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 	SSDFS_DBG("inline_capacity %u, payload_size %u\n",
 		  inline_capacity, payload_size);
 
-	if (payload_size > inline_capacity)
-		err = __ssdfs_commit_sb_log(sb, last_sb_log, payload);
-	else {
-		err = __ssdfs_commit_sb_log_inline(sb, last_sb_log,
+	if (payload_size > inline_capacity) {
+		err = __ssdfs_commit_sb_log(sb, timestamp, cno,
+					    last_sb_log, payload);
+	} else {
+		err = __ssdfs_commit_sb_log_inline(sb, timestamp, cno,
+						   last_sb_log,
 						   payload, payload_size);
 	}
 
@@ -2317,6 +2326,8 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
 	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
+	u64 timestamp = ssdfs_current_timestamp();
+	u64 cno = ssdfs_current_cno(sb);
 	int i;
 	int err = 0;
 
@@ -2353,6 +2364,8 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 
 	err = ssdfs_prepare_volume_state_info_for_commit(fsi, fs_state,
 							 cur_segs, size,
+							 timestamp,
+							 cno,
 							 fsi->vs);
 	if (unlikely(err)) {
 		SSDFS_CRIT("volume state info is inconsistent: err %d\n", err);
@@ -2362,7 +2375,8 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 	for (i = 0; i < SSDFS_SB_SEG_COPY_MAX; i++) {
 		last_sb_log->leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][i];
 		last_sb_log->peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
-		err = ssdfs_commit_sb_log(sb, last_sb_log, payload);
+		err = ssdfs_commit_sb_log(sb, timestamp, cno,
+					  last_sb_log, payload);
 		if (err) {
 			SSDFS_ERR("fail to commit superblock log: "
 				  "leb_id %llu, peb_id %llu, "

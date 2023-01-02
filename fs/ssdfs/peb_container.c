@@ -484,8 +484,9 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 
-	SSDFS_DBG("peb_index %u, peb_type %#x, "
-		  "selected_peb %d\n",
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
+		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -569,7 +570,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
-	struct ssdfs_segment_request *req1, *req2, *req3, *req4;
+	struct ssdfs_segment_request *req1, *req2, *req3, *req4, *req5;
 	int command;
 	int err;
 
@@ -579,8 +580,9 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(selected_peb < SSDFS_SRC_PEB ||
 		selected_peb > SSDFS_SRC_AND_DST_PEB);
 
-	SSDFS_DBG("peb_index %u, peb_type %#x, "
-		  "selected_peb %d\n",
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
+		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -646,12 +648,12 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
 	if (selected_peb == SSDFS_SRC_AND_DST_PEB) {
-		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
+		command = SSDFS_READ_SRC_LAST_LOG_FOOTER;
 
 		req3 = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req3)) {
 			err = (req3 == NULL ? -ENOMEM : PTR_ERR(req3));
-			req3 = NULL;
+			req1 = NULL;
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
 			ssdfs_requests_queue_remove_all(&pebc->read_rq,
@@ -668,6 +670,29 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
 		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
+
+		command = SSDFS_READ_SRC_ALL_LOG_HEADERS;
+
+		req4 = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req4)) {
+			err = (req4 == NULL ? -ENOMEM : PTR_ERR(req4));
+			req4 = NULL;
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			ssdfs_requests_queue_remove_all(&pebc->read_rq,
+							-ERANGE);
+			goto fail_create_using_peb_obj;
+		}
+
+		ssdfs_request_init(req4);
+		ssdfs_get_request(req4);
+		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+						    command,
+						    SSDFS_REQ_ASYNC,
+						    req4);
+		ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+		ssdfs_peb_read_request_cno(pebc);
+		ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 	}
 
 	if (selected_peb == SSDFS_SRC_PEB)
@@ -679,25 +704,25 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	else
 		BUG();
 
-	req4 = ssdfs_request_alloc();
-	if (IS_ERR_OR_NULL(req4)) {
-		err = (req4 == NULL ? -ENOMEM : PTR_ERR(req4));
-		req4 = NULL;
+	req5 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req5)) {
+		err = (req5 == NULL ? -ENOMEM : PTR_ERR(req5));
+		req5 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
 		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
 		goto fail_create_using_peb_obj;
 	}
 
-	ssdfs_request_init(req4);
-	ssdfs_get_request(req4);
+	ssdfs_request_init(req5);
+	ssdfs_get_request(req5);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
 					    SSDFS_REQ_ASYNC,
-					    req4);
-	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+					    req5);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req5);
 	ssdfs_peb_read_request_cno(pebc);
-	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req5);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (unlikely(err)) {
@@ -809,8 +834,9 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
 
-	SSDFS_DBG("peb_index %u, peb_type %#x, "
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
 		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1003,8 +1029,9 @@ int ssdfs_create_pre_dirty_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
 
-	SSDFS_DBG("peb_index %u, peb_type %#x, "
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
 		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1030,18 +1057,525 @@ static
 int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
+	struct ssdfs_segment_request *req;
+	int command;
+	unsigned long res;
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 	BUG_ON(selected_peb < SSDFS_SRC_PEB || selected_peb > SSDFS_DST_PEB);
 
-	SSDFS_DBG("peb_index %u, peb_type %#x, "
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
 		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	command = SSDFS_READ_SRC_LAST_LOG_FOOTER;
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		req = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		goto fail_create_dirty_peb_obj;
+	}
+
+	ssdfs_request_init(req);
+	/* read thread puts request */
+	ssdfs_get_request(req);
+	/* it needs to be sure that request will be not freed */
+	ssdfs_get_request(req);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
+
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
+	if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start read thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_peb_obj;
+	}
+
+	res = wait_for_completion_timeout(&req->result.wait,
+					  SSDFS_DEFAULT_TIMEOUT);
+	if (res == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("read thread fails: err %d\n",
+			  err);
+		goto stop_read_thread;
+	}
+
+	ssdfs_put_request(req);
+
+	/*
+	 * Wake up read request if it waits zeroing
+	 * of reference counter.
+	 */
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+
 	return 0;
+
+stop_read_thread:
+	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
+
+fail_create_dirty_peb_obj:
+	return err;
+}
+
+/*
+ * ssdfs_create_dirty_using_container() - create "dirty" + "using" PEB container
+ * @pebc: pointer on PEB container
+ * @selected_peb: source or destination PEB?
+ *
+ * This function tries to initialize PEB conatiner for "dirty" + "using"
+ * state of the PEBs.
+ *
+ * RETURN:
+ * [success] - PEB object has been constructed sucessfully.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ */
+static
+int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
+					int selected_peb)
+{
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_segment_request *req1, *req2, *req3, *req4;
+	int command;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si);
+	BUG_ON(!pebc->parent_si->blk_bmap.peb);
+	BUG_ON(selected_peb != SSDFS_SRC_AND_DST_PEB);
+
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
+		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_SRC_LAST_LOG_FOOTER;
+	else
+		BUG();
+
+	req1 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req1)) {
+		err = (req1 == NULL ? -ENOMEM : PTR_ERR(req1));
+		req1 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		goto fail_create_dirty_using_peb_obj;
+	}
+
+	ssdfs_request_init(req1);
+	ssdfs_get_request(req1);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req1);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_DST_ALL_LOG_HEADERS;
+	else
+		BUG();
+
+	req2 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req2)) {
+		err = (req2 == NULL ? -ENOMEM : PTR_ERR(req2));
+		req2 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		goto fail_create_dirty_using_peb_obj;
+	}
+
+	ssdfs_request_init(req2);
+	/* read thread puts request */
+	ssdfs_get_request(req2);
+	/* it needs to be sure that request will be not freed */
+	ssdfs_get_request(req2);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req2);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_BLK_BMAP_DST_USING_PEB;
+	else
+		BUG();
+
+	req3 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req3)) {
+		err = (req3 == NULL ? -ENOMEM : PTR_ERR(req3));
+		req3 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_using_peb_obj;
+	}
+
+	ssdfs_request_init(req3);
+	ssdfs_get_request(req3);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req3);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+	else
+		BUG();
+
+	req4 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req4)) {
+		err = (req4 == NULL ? -ENOMEM : PTR_ERR(req4));
+		req4 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_using_peb_obj;
+	}
+
+	ssdfs_request_init(req4);
+	ssdfs_get_request(req4);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req4);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
+
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
+	if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start read thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_using_peb_obj;
+	}
+
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
+	if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start flush thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
+		goto stop_read_thread;
+	}
+
+	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+
+	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&req2->result.wait,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("read thread fails: err %d\n",
+				  err);
+			goto stop_flush_thread;
+		}
+
+		/*
+		 * Block bitmap has been locked for initialization.
+		 * Now it isn't initialized yet. It should check
+		 * block bitmap initialization state during first
+		 * request about free pages count.
+		 */
+	}
+
+	ssdfs_put_request(req2);
+
+	/*
+	 * Current log start_page and data_free_pages count was defined
+	 * in the read thread during searching last actual state of block
+	 * bitmap.
+	 */
+
+	/*
+	 * Wake up read request if it waits zeroing
+	 * of reference counter.
+	 */
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+
+	return 0;
+
+stop_flush_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
+
+stop_read_thread:
+	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
+
+fail_create_dirty_using_peb_obj:
+	return err;
+}
+
+/*
+ * ssdfs_create_dirty_used_container() - create "dirty" + "used" PEB container
+ * @pebi: pointer on PEB container
+ * @selected_peb: source or destination PEB?
+ *
+ * This function tries to initialize PEB container for "dirty" + "used"
+ * state of the PEBs.
+ *
+ * RETURN:
+ * [success] - PEB container has been constructed sucessfully.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ */
+static
+int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
+				      int selected_peb)
+{
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_segment_request *req1, *req2, *req3, *req4;
+	int command;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si);
+	BUG_ON(!pebc->parent_si->blk_bmap.peb);
+	BUG_ON(selected_peb != SSDFS_SRC_AND_DST_PEB);
+
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
+		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  selected_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_SRC_LAST_LOG_FOOTER;
+	else
+		BUG();
+
+	req1 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req1)) {
+		err = (req1 == NULL ? -ENOMEM : PTR_ERR(req1));
+		req1 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		goto fail_create_dirty_used_peb_obj;
+	}
+
+	ssdfs_request_init(req1);
+	ssdfs_get_request(req1);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req1);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_DST_ALL_LOG_HEADERS;
+	else
+		BUG();
+
+	req2 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req2)) {
+		err = (req2 == NULL ? -ENOMEM : PTR_ERR(req2));
+		req2 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		goto fail_create_dirty_used_peb_obj;
+	}
+
+	ssdfs_request_init(req2);
+	/* read thread puts request */
+	ssdfs_get_request(req2);
+	/* it needs to be sure that request will be not freed */
+	ssdfs_get_request(req2);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req2);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_BLK_BMAP_DST_USED_PEB;
+	else
+		BUG();
+
+	req3 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req3)) {
+		err = (req3 == NULL ? -ENOMEM : PTR_ERR(req3));
+		req3 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_used_peb_obj;
+	}
+
+	ssdfs_request_init(req3);
+	ssdfs_get_request(req3);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req3);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
+
+	if (selected_peb == SSDFS_SRC_AND_DST_PEB)
+		command = SSDFS_READ_BLK2OFF_TABLE_DST_PEB;
+	else
+		BUG();
+
+	req4 = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req4)) {
+		err = (req4 == NULL ? -ENOMEM : PTR_ERR(req4));
+		req4 = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_used_peb_obj;
+	}
+
+	ssdfs_request_init(req4);
+	ssdfs_get_request(req4);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req4);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
+
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
+	if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start read thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
+		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		goto fail_create_dirty_used_peb_obj;
+	}
+
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
+	if (unlikely(err)) {
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			SSDFS_ERR("fail to start flush thread: "
+				  "peb_index %u, err %d\n",
+				  pebc->peb_index, err);
+		}
+
+		goto stop_read_thread;
+	}
+
+	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+
+	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
+		unsigned long res;
+
+		res = wait_for_completion_timeout(&req2->result.wait,
+						  SSDFS_DEFAULT_TIMEOUT);
+		if (res == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("read thread fails: err %d\n",
+				  err);
+			goto stop_flush_thread;
+		}
+
+		/*
+		 * Block bitmap has been locked for initialization.
+		 * Now it isn't initialized yet. It should check
+		 * block bitmap initialization state during first
+		 * request about free pages count.
+		 */
+	}
+
+	ssdfs_put_request(req2);
+
+	/*
+	 * Current log start_page and data_free_pages count was defined
+	 * in the read thread during searching last actual state of block
+	 * bitmap.
+	 */
+
+	/*
+	 * Wake up read request if it waits zeroing
+	 * of reference counter.
+	 */
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+
+	return 0;
+
+stop_flush_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
+
+stop_read_thread:
+	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
+
+fail_create_dirty_used_peb_obj:
+	return err;
 }
 
 /*
@@ -1472,8 +2006,8 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 				err = ssdfs_create_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
 			} else {
-				err = ssdfs_create_using_peb_container(pebc,
-								SSDFS_DST_PEB);
+				err = ssdfs_create_dirty_using_container(pebc,
+							SSDFS_SRC_AND_DST_PEB);
 			}
 
 			if (err == -EINTR) {
@@ -1493,8 +2027,8 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 				err = ssdfs_create_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
 			} else {
-				err = ssdfs_create_used_peb_container(pebc,
-							      SSDFS_DST_PEB);
+				err = ssdfs_create_dirty_used_container(pebc,
+							SSDFS_SRC_AND_DST_PEB);
 			}
 
 			if (err == -EINTR) {
@@ -1514,8 +2048,8 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 				err = ssdfs_create_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
 			} else {
-				err = ssdfs_create_pre_dirty_peb_container(pebc,
-								SSDFS_DST_PEB);
+				err = ssdfs_create_dirty_used_container(pebc,
+							SSDFS_SRC_AND_DST_PEB);
 			}
 
 			if (err == -EINTR) {
@@ -3048,6 +3582,8 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 	struct ssdfs_migration_destination *mdest;
 	int new_state;
 	u64 leb_id;
+	u64 peb_create_time = U64_MAX;
+	u64 last_log_time = U64_MAX;
 	struct completion *end;
 	int err;
 
@@ -3100,8 +3636,42 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 		return -ERANGE;
 	}
 
+	if (ptr->src_peb) {
+		peb_create_time = ptr->src_peb->peb_create_time;
+
+		ssdfs_peb_current_log_lock(ptr->src_peb);
+		last_log_time = ptr->src_peb->current_log.last_log_time;
+		ssdfs_peb_current_log_unlock(ptr->src_peb);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg %llu, peb %llu, "
+			  "peb_create_time %llx, last_log_time %llx\n",
+			  si->seg_id,
+			  ptr->src_peb->peb_id,
+			  peb_create_time,
+			  last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else {
+		peb_create_time = ptr->dst_peb->peb_create_time;
+
+		ssdfs_peb_current_log_lock(ptr->dst_peb);
+		last_log_time = ptr->dst_peb->current_log.last_log_time;
+		ssdfs_peb_current_log_unlock(ptr->dst_peb);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg %llu, peb %llu, "
+			  "peb_create_time %llx, last_log_time %llx\n",
+			  si->seg_id,
+			  ptr->dst_peb->peb_id,
+			  peb_create_time,
+			  last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
 	err = ssdfs_maptbl_exclude_migration_peb(fsi, leb_id,
 						 ptr->peb_type,
+						 peb_create_time,
+						 last_log_time,
 						 &end);
 	if (err == -EAGAIN) {
 		unsigned long res;
@@ -3117,6 +3687,8 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 
 		err = ssdfs_maptbl_exclude_migration_peb(fsi, leb_id,
 							 ptr->peb_type,
+							 peb_create_time,
+							 last_log_time,
 							 &end);
 	}
 

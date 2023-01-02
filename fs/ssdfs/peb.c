@@ -365,6 +365,8 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	pebi->current_log.free_data_pages = pebi->log_pages;
 	pebi->current_log.seg_flags = 0;
 	pebi->current_log.prev_log_bmap_bytes = U32_MAX;
+	pebi->current_log.last_log_time = U64_MAX;
+	pebi->current_log.last_log_cno = U64_MAX;
 
 	SSDFS_DBG("free_data_pages %u\n",
 		  pebi->current_log.free_data_pages);
@@ -610,11 +612,20 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	pebi->peb_id = peb_id;
 	pebi->peb_index = pebc->peb_index;
 	pebi->log_pages = pebc->log_pages;
+	pebi->peb_create_time = ssdfs_current_timestamp();
 	ssdfs_set_peb_migration_id(pebi, peb_migration_id);
 	init_completion(&pebi->init_end);
 	atomic_set(&pebi->reserved_bytes.blk_bmap, 0);
 	atomic_set(&pebi->reserved_bytes.blk2off_tbl, 0);
 	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, 0);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_id %llu, "
+		  "peb_create_time %llx\n",
+		  pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  pebi->peb_create_time);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	init_rwsem(&pebi->read_buffer.lock);
 	if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {

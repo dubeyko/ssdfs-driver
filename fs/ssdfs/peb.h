@@ -259,6 +259,8 @@ enum {
  * @write_offset: current offset in bytes for adding data in log
  * @seg_flags: segment header's flags for the log
  * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
+ * @last_log_time: creation timestamp of last log
+ * @last_log_cno: last log checkpoint
  * @bmap_snapshot: snapshot of block bitmap
  * @area: log's areas (main, diff updates, journal)
  */
@@ -271,6 +273,8 @@ struct ssdfs_peb_log {
 	u32 free_data_pages; /* free data pages capacity */
 	u32 seg_flags;
 	u32 prev_log_bmap_bytes;
+	u64 last_log_time;
+	u64 last_log_cno;
 	struct ssdfs_page_vector bmap_snapshot;
 	struct ssdfs_peb_area area[SSDFS_LOG_AREA_MAX];
 };
@@ -280,6 +284,7 @@ struct ssdfs_peb_log {
  * @peb_id: PEB number
  * @peb_index: PEB index
  * @log_pages: count of pages in full partial log
+ * @peb_create_time: PEB creation timestamp
  * @peb_migration_id: identification number of PEB in migration sequence
  * @state: PEB object state
  * @init_end: wait of full init ending
@@ -297,6 +302,8 @@ struct ssdfs_peb_info {
 	u64 peb_id;
 	u16 peb_index;
 	u32 log_pages;
+
+	u64 peb_create_time;
 
 	/*
 	 * The peb_migration_id is stored in two places:

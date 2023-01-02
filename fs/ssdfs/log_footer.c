@@ -681,6 +681,8 @@ int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
  * @fs_state: file system state
  * @array: pointer on array of IDs
  * @size: size the array in bytes
+ * @last_log_time: log creation timestamp
+ * @last_log_cno: last log checkpoint
  * @vs: volume state [out]
  *
  * This function prepares volume state info for commit.
@@ -693,11 +695,10 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 						u16 fs_state,
 						__le64 *cur_segs,
 						size_t size,
+						u64 last_log_time,
+						u64 last_log_cno,
 						struct ssdfs_volume_state *vs)
 {
-	struct super_block *sb = fsi->sb;
-	u64 timestamp = ssdfs_current_timestamp();
-	u64 cno = ssdfs_current_cno(sb);
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -724,12 +725,12 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 
 	spin_lock(&fsi->volume_state_lock);
 
-	fsi->fs_mod_time = timestamp;
+	fsi->fs_mod_time = last_log_time;
 	fsi->fs_state = fs_state;
 
 	vs->free_pages = cpu_to_le64(fsi->free_pages);
-	vs->timestamp = cpu_to_le64(timestamp);
-	vs->cno = cpu_to_le64(cno);
+	vs->timestamp = cpu_to_le64(last_log_time);
+	vs->cno = cpu_to_le64(last_log_cno);
 	vs->flags = cpu_to_le32(fsi->fs_flags);
 	vs->state = cpu_to_le16(fs_state);
 	vs->errors = cpu_to_le16(fsi->fs_errors);
@@ -806,6 +807,8 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
  * @fsi: pointer on shared file system object
  * @log_pages: count of pages in the log
  * @log_flags: log's flags
+ * @last_log_time: log creation timestamp
+ * @last_log_cno: last log checkpoint
  * @footer: log footer [out]
  *
  * This function prepares log footer for commit.
@@ -819,6 +822,8 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 					u32 log_pages,
 					u32 log_flags,
+					u64 last_log_time,
+					u64 last_log_cno,
 					struct ssdfs_log_footer *footer)
 {
 	u16 data_size = sizeof(struct ssdfs_log_footer);
@@ -829,8 +834,8 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 
 	footer->volume_state.magic.key = cpu_to_le16(SSDFS_LOG_FOOTER_MAGIC);
 
-	footer->timestamp = footer->volume_state.timestamp;
-	footer->cno = footer->volume_state.cno;
+	footer->timestamp = cpu_to_le64(last_log_time);
+	footer->cno = cpu_to_le64(last_log_cno);
 
 	if (log_pages >= (U32_MAX >> fsi->log_pagesize)) {
 		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);

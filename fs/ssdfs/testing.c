@@ -1820,6 +1820,7 @@ finish_search:
 
 		err = ssdfs_maptbl_exclude_migration_peb(fsi, cur_leb,
 							 peb_type,
+							 U64_MAX, U64_MAX,
 							 &init_end);
 		if (err == -EAGAIN) {
 			res = wait_for_completion_timeout(init_end,
@@ -1833,6 +1834,8 @@ finish_search:
 
 			err = ssdfs_maptbl_exclude_migration_peb(fsi, cur_leb,
 								 peb_type,
+								 U64_MAX,
+								 U64_MAX,
 								 &init_end);
 		}
 

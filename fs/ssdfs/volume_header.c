@@ -828,7 +828,9 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 				struct ssdfs_volume_header *vh)
 {
+	u64 erase_size;
 	u32 megabytes_per_peb;
+	u32 flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !vh);
@@ -865,6 +867,19 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 
 	vh->create_time = cpu_to_le64(fsi->fs_ctime);
 	vh->create_cno = cpu_to_le64(fsi->fs_cno);
+
+	vh->flags = cpu_to_le32(0);
+
+	if (fsi->is_zns_device) {
+		flags = le32_to_cpu(vh->flags);
+		flags |= SSDFS_VH_ZNS_BASED_VOLUME;
+
+		erase_size = 1 << fsi->log_erasesize;
+		if (erase_size != fsi->zone_size)
+			flags |= SSDFS_VH_UNALIGNED_ZONE;
+
+		vh->flags = cpu_to_le32(flags);
+	}
 
 	vh->sb_seg_log_pages = cpu_to_le16(fsi->sb_seg_log_pages);
 	vh->segbmap_log_pages = cpu_to_le16(fsi->segbmap_log_pages);
@@ -996,12 +1011,16 @@ int ssdfs_prepare_volume_header_for_commit(struct ssdfs_fs_info *fsi,
  * @log_pages: full log pages count
  * @seg_type: segment type
  * @seg_flags: segment flags
+ * @last_log_time: log creation time
+ * @last_log_cno: log checkpoint
  * @hdr: segment header [out]
  */
 int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 					    u32 log_pages,
 					    u16 seg_type,
 					    u32 seg_flags,
+					    u64 last_log_time,
+					    u64 last_log_cno,
 					    struct ssdfs_segment_header *hdr)
 {
 	u16 data_size = sizeof(struct ssdfs_segment_header);
@@ -1013,8 +1032,8 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 		  fsi, hdr, log_pages, seg_type, seg_flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	hdr->timestamp = fsi->vs->timestamp;
-	hdr->cno = fsi->vs->cno;
+	hdr->timestamp = cpu_to_le64(last_log_time);
+	hdr->cno = cpu_to_le64(last_log_cno);
 
 	if (log_pages > fsi->pages_per_seg || log_pages > U16_MAX) {
 		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);
@@ -1052,6 +1071,8 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
  * @log_pages: log pages count
  * @seg_type: segment type
  * @pl_flags: partial log's flags
+ * @last_log_time: log creation time
+ * @last_log_cno: log checkpoint
  * @hdr: partial log's header [out]
  */
 int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
@@ -1059,6 +1080,8 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 					u32 log_pages,
 					u16 seg_type,
 					u32 pl_flags,
+					u64 last_log_time,
+					u64 last_log_cno,
 					struct ssdfs_partial_log_header *hdr)
 {
 	u16 data_size = sizeof(struct ssdfs_partial_log_header);
@@ -1075,8 +1098,8 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->magic.version.major = SSDFS_MAJOR_REVISION;
 	hdr->magic.version.minor = SSDFS_MINOR_REVISION;
 
-	hdr->timestamp = fsi->vs->timestamp;
-	hdr->cno = fsi->vs->cno;
+	hdr->timestamp = cpu_to_le64(last_log_time);
+	hdr->cno = cpu_to_le64(last_log_cno);
 
 	if (log_pages > fsi->pages_per_seg || log_pages > U16_MAX) {
 		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);

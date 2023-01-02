@@ -10634,6 +10634,8 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	u32 log_pages;
 	struct page *page;
 	u32 area_offset, area_size;
+	u64 last_log_time;
+	u64 last_log_cno;
 	int i;
 	int err;
 
@@ -10745,14 +10747,28 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 		     lf_desc, 0, array_bytes,
 		     array_bytes);
 
+	last_log_time = pebi->current_log.last_log_time;
+	last_log_cno = pebi->current_log.last_log_cno;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(pebi->peb_create_time > last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_prepare_volume_state_info_for_commit(fsi, SSDFS_MOUNTED_FS,
 							 cur_segs,
 							 cur_segs_size,
+							 last_log_time,
+							 last_log_cno,
 							 &footer->volume_state);
 
 	if (!err) {
 		err = ssdfs_prepare_log_footer_for_commit(fsi, log_pages,
-							  flags, footer);
+							  flags,
+							  last_log_time,
+							  last_log_cno,
+							  footer);
+
+		footer->peb_create_time = cpu_to_le64(pebi->peb_create_time);
 	}
 
 	if (!err) {
@@ -11061,6 +11077,8 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 	u32 seg_flags;
 	u32 log_pages;
 	u16 seg_type;
+	u64 last_log_time;
+	u64 last_log_cno;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11114,10 +11132,28 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 	if (unlikely(err))
 		goto finish_segment_header_preparation;
 
+	hdr->peb_create_time = cpu_to_le64(pebi->peb_create_time);
+
+	last_log_time = pebi->current_log.last_log_time;
+	last_log_cno = pebi->current_log.last_log_cno;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "peb_create_time %llx, last_log_time %llx\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  pebi->peb_create_time,
+		  last_log_time);
+
+	BUG_ON(pebi->peb_create_time > last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_prepare_segment_header_for_commit(fsi,
 						      log_pages,
 						      seg_type,
 						      seg_flags,
+						      last_log_time,
+						      last_log_cno,
 						      hdr);
 	if (unlikely(err))
 		goto finish_segment_header_preparation;
@@ -11656,6 +11692,8 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	u32 area_offset, area_size;
 	u16 seg_type;
 	int sequence_id;
+	u64 last_log_time;
+	u64 last_log_cno;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11707,10 +11745,28 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 		     plh_desc, 0, array_bytes,
 		     array_bytes);
 
+	pl_hdr->peb_create_time = cpu_to_le64(pebi->peb_create_time);
+
+	last_log_time = pebi->current_log.last_log_time;
+	last_log_cno = pebi->current_log.last_log_cno;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "peb_create_time %llx, last_log_time %llx\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  pebi->peb_create_time,
+		  last_log_time);
+
+	BUG_ON(pebi->peb_create_time > last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
 							  sequence_id,
 							  log_pages,
 							  seg_type, flags,
+							  last_log_time,
+							  last_log_cno,
 							  pl_hdr);
 
 	if (!err) {
@@ -11799,6 +11855,8 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 	u32 log_pages;
 	u16 seg_type;
 	int sequence_id;
+	u64 last_log_time;
+	u64 last_log_cno;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11848,11 +11906,29 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 		     plh_desc, 0, array_bytes,
 		     array_bytes);
 
+	pl_hdr->peb_create_time = cpu_to_le64(pebi->peb_create_time);
+
+	last_log_time = pebi->current_log.last_log_time;
+	last_log_cno = pebi->current_log.last_log_cno;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "peb_create_time %llx, last_log_time %llx\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  pebi->peb_create_time,
+		  last_log_time);
+
+	BUG_ON(pebi->peb_create_time > last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
 							  sequence_id,
 							  log_pages,
 							  seg_type,
 							  flags | seg_flags,
+							  last_log_time,
+							  last_log_cno,
 							  pl_hdr);
 	if (unlikely(err))
 		goto finish_pl_header_preparation;
@@ -12814,6 +12890,9 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		  data_pages,
 		  pebi->current_log.reserved_pages,
 		  pebi->current_log.free_data_pages);
+
+	pebi->current_log.last_log_time = ssdfs_current_timestamp();
+	pebi->current_log.last_log_cno = ssdfs_current_cno(si->fsi->sb);
 
 	log_strategy = is_log_partial(pebi);
 
@@ -13974,7 +14053,7 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	 * So, this buffered state of valid blocks
 	 * should be commited ASAP. It needs to send
 	 * the COMMIT_LOG_NOW command to guarantee
-	 * that valid blocks will be flushed on teh volume.
+	 * that valid blocks will be flushed on the volume.
 	 */
 
 	req = ssdfs_request_alloc();
@@ -14415,6 +14494,84 @@ request_commit_log_now:
 	return 0;
 }
 
+static inline
+int ssdfs_check_peb_init_state(u64 seg_id, u64 peb_id, int state,
+				struct completion *init_end)
+{
+	int res;
+
+	if (peb_id >= U64_MAX ||
+	    state == SSDFS_PEB_OBJECT_INITIALIZED ||
+	    !init_end) {
+		/* do nothing */
+		return 0;
+	}
+
+	res = wait_for_completion_timeout(init_end, SSDFS_DEFAULT_TIMEOUT);
+	if (res == 0) {
+		SSDFS_ERR("PEB init failed: "
+			  "seg %llu, peb %llu\n",
+			  seg_id, peb_id);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static inline
+int ssdfs_check_src_peb_init_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_peb_info *pebi = NULL;
+	struct completion *init_end = NULL;
+	u64 peb_id = U64_MAX;
+	int state = SSDFS_PEB_OBJECT_UNKNOWN_STATE;
+
+	down_read(&pebc->lock);
+	pebi = pebc->src_peb;
+	if (pebi) {
+		init_end = &pebi->init_end;
+		peb_id = pebi->peb_id;
+		state = atomic_read(&pebi->state);
+	}
+	up_read(&pebc->lock);
+
+	return ssdfs_check_peb_init_state(pebc->parent_si->seg_id,
+					  peb_id, state, init_end);
+}
+
+static inline
+int ssdfs_check_dst_peb_init_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_peb_info *pebi = NULL;
+	struct completion *init_end = NULL;
+	u64 peb_id = U64_MAX;
+	int state = SSDFS_PEB_OBJECT_UNKNOWN_STATE;
+
+	down_read(&pebc->lock);
+	pebi = pebc->dst_peb;
+	if (pebi) {
+		init_end = &pebi->init_end;
+		peb_id = pebi->peb_id;
+		state = atomic_read(&pebi->state);
+	}
+	up_read(&pebc->lock);
+
+	return ssdfs_check_peb_init_state(pebc->parent_si->seg_id,
+					  peb_id, state, init_end);
+}
+
+static inline
+int ssdfs_check_peb_container_init_state(struct ssdfs_peb_container *pebc)
+{
+	int err;
+
+	err = ssdfs_check_src_peb_init_state(pebc);
+	if (!err)
+		err = ssdfs_check_dst_peb_init_state(pebc);
+
+	return err;
+}
+
 /*
  * ssdfs_peb_flush_thread_func() - main fuction of flush thread
  * @data: pointer on data object
@@ -14756,6 +14913,15 @@ finish_process_free_space_absence:
 				thread_state = SSDFS_FLUSH_THREAD_ERROR;
 				goto repeat;
 			}
+		}
+
+		err = ssdfs_check_peb_container_init_state(pebc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to check init state: "
+				  "seg %llu, peb_index %u, err %d\n",
+				  si->seg_id, pebc->peb_index, err);
+			thread_state = SSDFS_FLUSH_THREAD_ERROR;
+			goto repeat;
 		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
