@@ -586,9 +586,7 @@ int ssdfs_maptbl_create_segments(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	log_pages = le16_to_cpu(fsi->vh->maptbl_log_pages);
-
-	/* TODO: make final desicion later */
-	create_threads = SSDFS_CREATE_THREADS_DEFAULT;
+	create_threads = fsi->create_threads_per_seg;
 
 	tbl->segs[array_type] = ssdfs_map_tbl_kcalloc(tbl->segs_count,
 					sizeof(struct ssdfs_segment_info *),
@@ -763,19 +761,33 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 
 /*
  * ssdfs_maptbl_segment_init() - initiate mapping table's segment init
+ * @tbl: mapping table object
  * @si: segment object
+ * @seg_index: index of segment in the sequence
  */
 static
-int ssdfs_maptbl_segment_init(struct ssdfs_segment_info *si)
+int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
+			      struct ssdfs_segment_info *si,
+			      int seg_index)
 {
+	u32 page_size;
+	u64 logical_offset;
+	u64 logical_blk;
+	u32 blks_count;
+	u32 fragment_bytes = tbl->fragment_bytes;
+	u64 bytes_per_peb = (u64)tbl->fragments_per_peb * fragment_bytes;
 	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
+
+	SSDFS_DBG("si %p, seg %llu, seg_index %d\n",
+		  si, si->seg_id, seg_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("si %p, seg %llu\n", si, si->seg_id);
+	page_size = si->fsi->pagesize;
+	logical_offset = bytes_per_peb * si->pebs_count * seg_index;
 
 	for (i = 0; i < si->pebs_count; i++) {
 		struct ssdfs_peb_container *pebc = &si->peb_array[i];
@@ -784,6 +796,13 @@ int ssdfs_maptbl_segment_init(struct ssdfs_segment_info *si)
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (is_peb_container_empty(pebc)) {
+			SSDFS_DBG("PEB container empty: "
+				  "seg %llu, peb_index %d\n",
+				  si->seg_id, i);
+			continue;
+		}
 
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {
@@ -796,6 +815,41 @@ int ssdfs_maptbl_segment_init(struct ssdfs_segment_info *si)
 
 		ssdfs_request_init(req);
 		ssdfs_get_request(req);
+
+		logical_offset += bytes_per_peb * i;
+
+		ssdfs_request_prepare_logical_extent(SSDFS_MAPTBL_INO,
+						     logical_offset,
+						     fragment_bytes,
+						     0, 0, req);
+		ssdfs_request_define_segment(si->seg_id, req);
+
+		logical_blk = (u64)i * fragment_bytes;
+		logical_blk = div64_u64(logical_blk, si->fsi->pagesize);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(logical_blk >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		blks_count = (fragment_bytes + page_size - 1) / page_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(blks_count >= U16_MAX);
+
+		SSDFS_DBG("seg %llu, peb_index %d, "
+			  "logical_blk %llu, blks_count %u, "
+			  "fragment_bytes %u, page_size %u, "
+			  "logical_offset %llu\n",
+			  si->seg_id, i,
+			  logical_blk, blks_count,
+			  fragment_bytes, page_size,
+			  logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_request_define_volume_extent((u16)logical_blk,
+						   (u16) blks_count,
+						   req);
+
 		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 						    SSDFS_READ_INIT_MAPTBL,
 						    SSDFS_REQ_ASYNC,
@@ -822,9 +876,9 @@ int ssdfs_maptbl_init(struct ssdfs_peb_mapping_table *tbl)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl %p\n", tbl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < tbl->segs_count; i++) {
 		for (j = 0; j < SSDFS_MAPTBL_SEG_COPY_MAX; j++) {
@@ -836,7 +890,7 @@ int ssdfs_maptbl_init(struct ssdfs_peb_mapping_table *tbl)
 			if (!si)
 				continue;
 
-			err = ssdfs_maptbl_segment_init(si);
+			err = ssdfs_maptbl_segment_init(tbl, si, i);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to init segment: "
 					  "seg %llu, err %d\n",
@@ -1207,6 +1261,15 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 	kaddr = kmap_local_page(page);
 	hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("PAGE DUMP: page_index %u\n",
+		  page_index);
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (le16_to_cpu(hdr->magic) != SSDFS_LEB_TABLE_MAGIC) {
 		err = -EIO;
 		SSDFS_ERR("invalid LEB table's magic signature: "
@@ -1364,6 +1427,15 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 	ssdfs_lock_page(page);
 	kaddr = kmap_local_page(page);
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("PAGE DUMP: page_index %u\n",
+		  page_index);
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     kaddr,
+			     PAGE_SIZE);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (le16_to_cpu(hdr->magic) != SSDFS_PEB_TABLE_MAGIC) {
 		err = -EIO;
@@ -2131,13 +2203,13 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !req || !fragment || !seg_index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("maptbl %p, req %p, fragment %p, "
 		  "area_start %lu, pages_count %u, "
 		  "seg_index %p\n",
 		  tbl, req, fragment, area_start,
 		  pages_count, seg_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pagesize = tbl->fsi->pagesize;
 
@@ -3514,21 +3586,16 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 			return -EFAULT;
 		} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
 			struct completion *end = &fdesc->init_end;
-			unsigned long res;
 
 			up_read(&tbl->tbl_lock);
 
-			SSDFS_DBG("wait fragment initialization end: "
-				  "index %u, state %#x\n",
-				  i, state);
-
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl's fragment init failed: "
 					  "index %u\n", i);
 				return -ERANGE;
 			}
+
 			down_read(&tbl->tbl_lock);
 		}
 
@@ -5399,7 +5466,12 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 
 		err = __ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
 							   &cached_pebr);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to convert LEB to PEB: "
+				  "leb_id %llu, err %d\n",
+				  leb_id, err);
+			goto finish_conversion;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to convert LEB to PEB: "
 				  "leb_id %llu, err %d\n",
 				  leb_id, err);
@@ -11862,7 +11934,6 @@ int ssdfs_try2increase_free_pages(struct ssdfs_fs_info *fsi)
 			goto finish_fragment_check;
 		} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
 			struct completion *end = &fdesc->init_end;
-			unsigned long res;
 
 			up_read(&tbl->tbl_lock);
 
@@ -11870,9 +11941,8 @@ int ssdfs_try2increase_free_pages(struct ssdfs_fs_info *fsi)
 				  "index %u, state %#x\n",
 				  i, state);
 
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("fragment init failed: "
 					  "index %u\n", i);
 				err = -EFAULT;
@@ -11937,7 +12007,6 @@ int ssdfs_wait_maptbl_init_ending(struct ssdfs_fs_info *fsi, u32 count)
 			goto finish_fragment_check;
 		} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
 			struct completion *end = &fdesc->init_end;
-			unsigned long res;
 
 			up_read(&tbl->tbl_lock);
 
@@ -11945,9 +12014,8 @@ int ssdfs_wait_maptbl_init_ending(struct ssdfs_fs_info *fsi, u32 count)
 				  "index %u, state %#x\n",
 				  i, state);
 
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("fragment init failed: "
 					  "index %u\n", i);
 				err = -EFAULT;

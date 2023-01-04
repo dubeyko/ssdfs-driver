@@ -491,7 +491,6 @@ static int ssdfs_mtd_erase(struct super_block *sb, loff_t offset, size_t len)
 	struct erase_info ei;
 	DECLARE_COMPLETION_ONSTACK(complete);
 	u32 remainder;
-	unsigned long res;
 	int ret;
 
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
@@ -529,10 +528,8 @@ static int ssdfs_mtd_erase(struct super_block *sb, loff_t offset, size_t len)
 		return ret;
 	}
 
-	res = wait_for_completion_timeout(&complete,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&complete);
+	if (unlikely(err)) {
 		SSDFS_ERR("timeout is out: "
 			  "err %d\n", err);
 		return err;

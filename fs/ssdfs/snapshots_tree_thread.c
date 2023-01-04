@@ -563,7 +563,17 @@ int ssdfs_start_snapshots_btree_thread(struct ssdfs_fs_info *fsi)
 	thread->task = kthread_create(threadfn, fsi, fmt);
 	if (IS_ERR_OR_NULL(thread->task)) {
 		err = PTR_ERR(thread->task);
-		SSDFS_ERR("fail to start snapshots btree thread\n");
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
+			SSDFS_ERR("fail to start snapshots btree's thread: "
+				  "err %d\n", err);
+		}
+
 		return err;
 	}
 
@@ -592,7 +602,6 @@ int ssdfs_start_snapshots_btree_thread(struct ssdfs_fs_info *fsi)
 int ssdfs_stop_snapshots_btree_thread(struct ssdfs_fs_info *fsi)
 {
 	struct ssdfs_thread_info *thread;
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -624,10 +633,8 @@ int ssdfs_stop_snapshots_btree_thread(struct ssdfs_fs_info *fsi)
 
 	fsi->snapshots.tree->requests.thread.task = NULL;
 
-	res = wait_for_completion_timeout(&thread->full_stop,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&thread->full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}

@@ -216,7 +216,6 @@ int ssdfs_peb_start_thread(struct ssdfs_peb_container *pebc, int type)
 static
 int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 {
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -252,10 +251,8 @@ int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 
 	pebc->thread[type].task = NULL;
 
-	res = wait_for_completion_timeout(&pebc->thread[type].full_stop,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&pebc->thread[type].full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}
@@ -300,12 +297,8 @@ int ssdfs_peb_map_leb2peb(struct ssdfs_fs_info *fsi,
 	err = ssdfs_maptbl_map_leb2peb(fsi, leb_id, peb_type,
 					pebr, &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -407,12 +400,8 @@ int ssdfs_peb_convert_leb2peb(struct ssdfs_fs_info *fsi,
 					   peb_type,
 					   pebr, &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -477,6 +466,8 @@ static
 int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
+	struct ssdfs_segment_info *si;
+	struct ssdfs_blk2off_table *blk2off_table;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int err;
 
@@ -484,14 +475,20 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 
-	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
-		  "selected_peb %u\n",
-		  pebc->parent_si->seg_id,
+	SSDFS_DBG("peb_index %u, peb_type %#x, "
+		  "selected_peb %d\n",
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+	si = pebc->parent_si;
+	blk2off_table = si->blk2off_table;
+
+	atomic_set(&blk2off_table->peb[pebc->peb_index].state,
+		   SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+
+	peb_blkbmap = &si->blk_bmap.peb[pebc->peb_index];
+	ssdfs_set_block_bmap_initialized(peb_blkbmap->src);
 	atomic_set(&peb_blkbmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
 
 	if (selected_peb == SSDFS_SRC_PEB) {
@@ -758,12 +755,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&req1->result.wait,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&req1->result.wait);
+		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
 			goto stop_flush_thread;
@@ -958,12 +951,8 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&req1->result.wait,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&req1->result.wait);
+		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
 			goto stop_flush_thread;
@@ -1057,9 +1046,10 @@ static
 int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
+	struct ssdfs_segment_info *si;
+	struct ssdfs_blk2off_table *blk2off_table;
 	struct ssdfs_segment_request *req;
 	int command;
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1073,6 +1063,9 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 		  pebc->peb_index, pebc->peb_type,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebc->parent_si;
+	blk2off_table = si->blk2off_table;
 
 	command = SSDFS_READ_SRC_LAST_LOG_FOOTER;
 
@@ -1114,10 +1107,8 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_peb_obj;
 	}
 
-	res = wait_for_completion_timeout(&req->result.wait,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&req->result.wait);
+	if (unlikely(err)) {
 		SSDFS_ERR("read thread fails: err %d\n",
 			  err);
 		goto stop_read_thread;
@@ -1130,6 +1121,9 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 	 * of reference counter.
 	 */
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+
+	atomic_set(&blk2off_table->peb[pebc->peb_index].state,
+		   SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
 
 	return 0;
 
@@ -1313,12 +1307,8 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&req2->result.wait,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&req2->result.wait);
+		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
 			goto stop_flush_thread;
@@ -1531,12 +1521,8 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&req2->result.wait,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&req2->result.wait);
+		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
 			goto stop_flush_thread;
@@ -2213,7 +2199,14 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 						   atomic_read(&si->seg_state),
 						   &pebr);
 	if (err == -ENODATA) {
+		struct ssdfs_peb_blk_bmap *peb_blkbmap;
+
 		err = 0;
+
+		peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+		ssdfs_set_block_bmap_initialized(peb_blkbmap->src);
+		atomic_set(&peb_blkbmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
+
 		SSDFS_DBG("can't map LEB to PEB: "
 			  "seg %llu, peb_index %u, "
 			  "peb_type %#x, err %d\n",
@@ -2478,6 +2471,29 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 		  ptr, migration_state, items_state);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	if (!is_ssdfs_requests_queue_empty(&ptr->read_rq)) {
+		ssdfs_fs_error(ptr->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"read requests queue isn't empty\n");
+		err = -EIO;
+		ssdfs_requests_queue_remove_all(&ptr->read_rq, err);
+	}
+
+	if (!is_ssdfs_requests_queue_empty(&ptr->update_rq)) {
+		ssdfs_fs_error(ptr->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"flush requests queue isn't empty\n");
+		err = -EIO;
+		ssdfs_requests_queue_remove_all(&ptr->update_rq, err);
+	}
+
+	if (is_peb_container_empty(ptr)) {
+		SSDFS_DBG("PEB container is empty: "
+			  "peb_type %#x, peb_index %u\n",
+			  ptr->peb_type, ptr->peb_index);
+		return;
+	}
+
 	if (migration_state <= SSDFS_PEB_UNKNOWN_MIGRATION_STATE ||
 	    migration_state >= SSDFS_PEB_MIGRATION_STATE_MAX) {
 		SSDFS_WARN("invalid migration_state %#x\n",
@@ -2505,22 +2521,6 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 				   "peb_index %u, thread type %#x, err %d\n",
 				   ptr->peb_index, i, err2);
 		}
-	}
-
-	if (!is_ssdfs_requests_queue_empty(&ptr->read_rq)) {
-		ssdfs_fs_error(ptr->parent_si->fsi->sb,
-				__FILE__, __func__, __LINE__,
-				"read requests queue isn't empty\n");
-		err = -EIO;
-		ssdfs_requests_queue_remove_all(&ptr->read_rq, err);
-	}
-
-	if (!is_ssdfs_requests_queue_empty(&ptr->update_rq)) {
-		ssdfs_fs_error(ptr->parent_si->fsi->sb,
-				__FILE__, __func__, __LINE__,
-				"flush requests queue isn't empty\n");
-		err = -EIO;
-		ssdfs_requests_queue_remove_all(&ptr->update_rq, err);
 	}
 
 	down_write(&ptr->lock);
@@ -2765,9 +2765,27 @@ finish_define_relation:
 			return err;
 		}
 
-		leb_id = (si->seg_id * fsi->pebs_per_seg) + peb_index;
+		leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+							si->seg_id,
+							peb_index);
+		if (leb_id >= U64_MAX) {
+			SSDFS_ERR("fail to convert PEB index into LEB ID: "
+				  "seg %llu, peb_index %u\n",
+				  si->seg_id, peb_index);
+			return -ERANGE;
+		}
+
 		dst_peb_index = ptr->dst_peb->peb_index;
-		dst_leb_id = (si->seg_id * fsi->pebs_per_seg) + dst_peb_index;
+
+		dst_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+							    si->seg_id,
+							    dst_peb_index);
+		if (dst_leb_id >= U64_MAX) {
+			SSDFS_ERR("fail to convert PEB index into LEB ID: "
+				  "seg %llu, peb_index %u\n",
+				  si->seg_id, peb_index);
+			return -ERANGE;
+		}
 
 		err = ssdfs_maptbl_set_indirect_relation(maptbl,
 							 leb_id,
@@ -2776,12 +2794,8 @@ finish_define_relation:
 							 dst_peb_index,
 							 &end);
 		if (err == -EAGAIN) {
-			unsigned long res;
-
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				ptr->dst_peb = NULL;
@@ -2916,17 +2930,19 @@ int __ssdfs_peb_container_prepare_destination(struct ssdfs_peb_container *ptr)
 		return -ERANGE;
 	}
 
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + peb_index;
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, si->seg_id, peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		return -ERANGE;
+	}
 
 	err = ssdfs_maptbl_add_migration_peb(fsi, leb_id, ptr->peb_type,
 					     &pebr, &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			goto fail_prepare_destination;
@@ -3211,7 +3227,13 @@ int ssdfs_peb_container_prepare_zns_destination(struct ssdfs_peb_container *ptr)
 	si = ptr->parent_si;
 	peb_index = ptr->peb_index;
 
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + peb_index;
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, si->seg_id, peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, peb_index);
+		return -ERANGE;
+	}
 
 	down_read(&fsi->cur_segs->lock);
 
@@ -3249,7 +3271,13 @@ int ssdfs_peb_container_prepare_zns_destination(struct ssdfs_peb_container *ptr)
 	}
 
 	dst_peb_index = 0;
-	dst_leb_id = (dest_si->seg_id * fsi->pebs_per_seg) + dst_peb_index;
+	dst_leb_id = ssdfs_get_leb_id_for_peb_index(fsi, dest_si->seg_id, dst_peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  dest_si->seg_id, dst_peb_index);
+		return -ERANGE;
+	}
 
 finish_get_current_segment:
 	ssdfs_current_segment_unlock(cur_seg);
@@ -3263,12 +3291,8 @@ finish_get_current_segment:
 						     ptr->peb_type,
 						     &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			ptr->dst_peb = NULL;
@@ -3604,7 +3628,16 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+						si->seg_id,
+						ptr->peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->peb_index);
+		return -ERANGE;
+	}
 
 	SSDFS_DBG("peb_id %llu, dst_peb_refs %d\n",
 		  ptr->dst_peb->peb_id,
@@ -3674,12 +3707,8 @@ int ssdfs_peb_container_move_dest2source(struct ssdfs_peb_container *ptr,
 						 last_log_time,
 						 &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -3790,9 +3819,29 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
 	maptbl = fsi->maptbl;
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+						si->seg_id,
+						ptr->peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->peb_index);
+		return -ERANGE;
+	}
+
 	dst_peb_index = ptr->dst_peb->peb_index;
-	dst_leb_id = (si->seg_id * fsi->pebs_per_seg) + dst_peb_index;
+
+	dst_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+						    si->seg_id,
+						    dst_peb_index);
+	if (dst_leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, dst_peb_index);
+		return -ERANGE;
+	}
+
 	dst_peb_refs = atomic_read(&si->peb_array[dst_peb_index].dst_peb_refs);
 
 	err = ssdfs_maptbl_break_indirect_relation(maptbl,
@@ -3802,12 +3851,8 @@ int ssdfs_peb_container_break_relation(struct ssdfs_peb_container *ptr,
 						   dst_peb_refs,
 						   &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -3899,19 +3944,24 @@ int ssdfs_peb_container_break_zns_relation(struct ssdfs_peb_container *ptr,
 	si = ptr->parent_si;
 	maptbl = fsi->maptbl;
 	seg_blkbmap = &si->blk_bmap;
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+						si->seg_id,
+						ptr->peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->peb_index);
+		return -ERANGE;
+	}
 
 	err = ssdfs_maptbl_break_zns_indirect_relation(maptbl,
 						       leb_id,
 						       ptr->peb_type,
 						       &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -4022,7 +4072,16 @@ int ssdfs_peb_container_forget_source(struct ssdfs_peb_container *ptr)
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
 	maptbl = fsi->maptbl;
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+						si->seg_id,
+						ptr->peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->peb_index);
+		return -ERANGE;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (rwsem_is_locked(&ptr->lock)) {
@@ -4326,7 +4385,16 @@ int ssdfs_peb_container_forget_relation(struct ssdfs_peb_container *ptr)
 	fsi = ptr->parent_si->fsi;
 	si = ptr->parent_si;
 	maptbl = fsi->maptbl;
-	leb_id = (si->seg_id * fsi->pebs_per_seg) + ptr->peb_index;
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+						si->seg_id,
+						ptr->peb_index);
+	if (leb_id >= U64_MAX) {
+		SSDFS_ERR("fail to convert PEB index into LEB ID: "
+			  "seg %llu, peb_index %u\n",
+			  si->seg_id, ptr->peb_index);
+		return -ERANGE;
+	}
 
 	down_write(&ptr->lock);
 
@@ -4985,7 +5053,6 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	struct ssdfs_peb_info *pebi;
 	struct ssdfs_peb_mapping_table *maptbl;
 	struct completion *end;
-	unsigned long res;
 	int items_state;
 	int used_pages, free_pages, invalid_pages;
 	int new_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
@@ -5132,10 +5199,8 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -5252,10 +5317,8 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -5339,10 +5402,8 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -5456,10 +5517,8 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 						    pebc->peb_type,
 						    new_peb_state, &end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;

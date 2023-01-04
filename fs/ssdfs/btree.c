@@ -1469,7 +1469,6 @@ int ssdfs_check_leaf_node_state(struct ssdfs_btree_search *search)
 {
 	struct ssdfs_btree_node *node;
 	int state;
-	unsigned long res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1500,10 +1499,8 @@ check_leaf_node_state:
 	case SSDFS_BTREE_NODE_CREATED:
 	case SSDFS_BTREE_NODE_CONTENT_PREPARED:
 		node = search->node.child;
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 		} else {
@@ -1768,18 +1765,14 @@ try_find_node:
 
 finish_insert_node:
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			ssdfs_btree_node_destroy(ptr);
 			return ERR_PTR(err);
-		}
-		goto try_find_node;
+		} else
+			goto try_find_node;
 	} else if (err == -EEXIST) {
 		ssdfs_btree_node_destroy(ptr);
 		return node;
@@ -3430,17 +3423,13 @@ try_find_index:
 			}
 			goto check_found_node;
 		} else if (err == -EACCES) {
-			unsigned long res;
-
-			res = wait_for_completion_timeout(&node->init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(&node->init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("node init failed: "
 					  "err %d\n", err);
 				goto finish_search_leaf_node;
-			}
-			goto try_find_index;
+			} else
+				goto try_find_index;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find index: "
 				  "start_hash %llx, err %d\n",
@@ -4335,7 +4324,6 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 			    struct ssdfs_btree_search *search)
 {
 	int tree_state;
-	unsigned long res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4464,10 +4452,8 @@ try_another_node:
 			BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			res = wait_for_completion_timeout(&node->init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(&node->init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("node init failed: "
 					  "err %d\n", err);
 				goto finish_search_item;
@@ -4484,10 +4470,8 @@ try_find_item_again:
 			BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			res = wait_for_completion_timeout(&node->init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(&node->init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("node init failed: "
 					  "err %d\n", err);
 				goto finish_search_item;
@@ -4596,7 +4580,6 @@ int __ssdfs_btree_find_range(struct ssdfs_btree *tree,
 			     struct ssdfs_btree_search *search)
 {
 	int tree_state;
-	unsigned long res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4717,10 +4700,8 @@ try_another_node:
 			BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			res = wait_for_completion_timeout(&node->init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(&node->init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("node init failed: "
 					  "err %d\n", err);
 				goto finish_search_range;
@@ -4737,10 +4718,8 @@ try_find_range_again:
 			BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			res = wait_for_completion_timeout(&node->init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(&node->init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("node init failed: "
 					  "err %d\n", err);
 				goto finish_search_range;
@@ -4945,16 +4924,13 @@ try_allocate_item:
 		goto try_next_search;
 	} else if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_allocate_item;
@@ -5108,16 +5084,13 @@ try_allocate_range:
 		goto try_next_search;
 	} else if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_allocate_range;
@@ -5391,16 +5364,13 @@ try_insert_item:
 	err = ssdfs_btree_node_insert_item(search);
 	if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_add_item;
@@ -5646,16 +5616,13 @@ try_insert_range:
 		goto try_find_range;
 	} else if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_add_range;
@@ -5843,16 +5810,13 @@ try_change_item:
 		goto try_next_search;
 	} else if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_change_item;
@@ -6015,16 +5979,13 @@ try_delete_item:
 	err = ssdfs_btree_node_delete_item(search);
 	if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_delete_item;
@@ -6200,16 +6161,13 @@ try_delete_range_again:
 	err = ssdfs_btree_node_delete_range(search);
 	if (err == -EACCES) {
 		struct ssdfs_btree_node *node = search->node.child;
-		unsigned long res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		res = wait_for_completion_timeout(&node->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&node->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("node init failed: "
 				  "err %d\n", err);
 			goto finish_delete_range;

@@ -868,6 +868,9 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 	vh->create_time = cpu_to_le64(fsi->fs_ctime);
 	vh->create_cno = cpu_to_le64(fsi->fs_cno);
 
+	vh->lebs_per_peb_index = cpu_to_le32(fsi->lebs_per_peb_index);
+	vh->create_threads_per_seg = cpu_to_le16(fsi->create_threads_per_seg);
+
 	vh->flags = cpu_to_le32(0);
 
 	if (fsi->is_zns_device) {
@@ -1165,6 +1168,8 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->log_erasesize = fsi->log_erasesize;
 	hdr->log_segsize = fsi->log_segsize;
 	hdr->log_pebs_per_seg = fsi->log_pebs_per_seg;
+	hdr->lebs_per_peb_index = cpu_to_le32(fsi->lebs_per_peb_index);
+	hdr->create_threads_per_seg = cpu_to_le16(fsi->create_threads_per_seg);
 
 	hdr->open_zones = cpu_to_le32(atomic_read(&fsi->open_zones));
 

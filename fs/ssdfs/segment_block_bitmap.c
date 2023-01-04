@@ -111,7 +111,6 @@ SSDFS_SEG_BLK_BMAP_STATE_FNS(CREATED, created)
 /*
  * ssdfs_segment_blk_bmap_create() - create segment block bitmap
  * @si: segment object
- * @pages_per_peb: count of pages per PEB
  * @init_flag: definition of block bitmap's creation state
  * @init_state: block state is used during initialization
  *
@@ -125,7 +124,6 @@ SSDFS_SEG_BLK_BMAP_STATE_FNS(CREATED, created)
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
-				  u32 pages_per_peb,
 				  int init_flag, int init_state)
 {
 	struct ssdfs_fs_info *fsi;
@@ -139,15 +137,13 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("si %p, seg_id %llu, "
-		  "pages_per_peb %u, "
 		  "init_flag %#x, init_state %#x\n",
-		  si, si->seg_id, pages_per_peb,
+		  si, si->seg_id,
 		  init_flag, init_state);
 #else
 	SSDFS_DBG("si %p, seg_id %llu, "
-		  "pages_per_peb %u, "
 		  "init_flag %#x, init_state %#x\n",
-		  si, si->seg_id, pages_per_peb,
+		  si, si->seg_id,
 		  init_flag, init_state);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -176,7 +172,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	}
 
 	for (i = 0; i < bmap->pebs_count; i++) {
-		err = ssdfs_peb_blk_bmap_create(bmap, i, pages_per_peb,
+		err = ssdfs_peb_blk_bmap_create(bmap, i, fsi->pages_per_peb,
 						init_flag, init_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create PEB's block bitmap: "

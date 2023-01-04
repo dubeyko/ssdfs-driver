@@ -1115,7 +1115,7 @@ int ssdfs_check_fragment(struct ssdfs_blk2off_table *table,
 			 struct ssdfs_phys_offset_table_header *hdr,
 			 size_t fragment_size)
 {
-	u16 start_id, peb_start_id;
+	u16 start_id;
 	u16 sequence_id;
 	u16 id_count;
 	u32 byte_size;
@@ -1170,16 +1170,9 @@ int ssdfs_check_fragment(struct ssdfs_blk2off_table *table,
 		return -EIO;
 	}
 
-	if (start_id >= table->pages_per_seg)
-		start_id %= table->pages_per_seg;
-
-	peb_start_id = peb_index * table->pages_per_peb;
-
-	if (start_id < peb_start_id ||
-	    start_id >= (peb_start_id + table->pages_per_peb)) {
+	if (start_id == U16_MAX) {
 		SSDFS_ERR("invalid start_id %u for peb_index %u\n",
-			  le16_to_cpu(hdr->start_id),
-			  peb_index);
+			  start_id, peb_index);
 		return -EIO;
 	}
 
@@ -1780,8 +1773,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	u16 len;
 	int phys_off_index;
 	bool is_partially_processed = false;
-	int i, j;
 	struct ssdfs_blk_state_offset *state_off;
+	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2641,7 +2634,7 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table)
 		}
 		break;
 
-	case SSDFS_BLK2OFF_OBJECT_PARTIAL_INIT:
+	case SSDFS_BLK2OFF_TABLE_PARTIAL_INIT:
 	case SSDFS_BLK2OFF_TABLE_DIRTY_PARTIAL_INIT:
 		state = atomic_cmpxchg(&table->state,
 					SSDFS_BLK2OFF_OBJECT_CREATED,

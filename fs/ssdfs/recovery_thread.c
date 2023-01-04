@@ -1074,7 +1074,6 @@ int ssdfs_recovery_start_thread(struct ssdfs_recovery_env *env,
  */
 int ssdfs_recovery_stop_thread(struct ssdfs_recovery_env *env)
 {
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1102,10 +1101,8 @@ int ssdfs_recovery_stop_thread(struct ssdfs_recovery_env *env)
 	finish_wait(&env->request_wait_queue, &env->thread.wait);
 	env->thread.task = NULL;
 
-	res = wait_for_completion_timeout(&env->thread.full_stop,
-					SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&env->thread.full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}

@@ -1673,6 +1673,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->pebs_per_seg = 1 << fsi->vh->log_pebs_per_seg;
 	fsi->pages_per_peb = fsi->erasesize / fsi->pagesize;
 	fsi->pages_per_seg = fsi->segsize / fsi->pagesize;
+	fsi->lebs_per_peb_index = le32_to_cpu(fsi->vh->lebs_per_peb_index);
 
 	if (fsi->is_zns_device) {
 		u64 peb_pages_capacity =
@@ -1707,22 +1708,28 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->fs_ctime = le64_to_cpu(fsi->vh->create_time);
 	fsi->fs_cno = le64_to_cpu(fsi->vh->create_cno);
 	fsi->raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
+	fsi->create_threads_per_seg =
+				le16_to_cpu(fsi->vh->create_threads_per_seg);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("STATIC VOLUME INFO:\n");
 	SSDFS_DBG("pagesize %u, erasesize %u, segsize %u\n",
 		  fsi->pagesize, fsi->erasesize, fsi->segsize);
-	SSDFS_DBG("pebs_per_seg %u, pages_per_peb %u, pages_per_seg %u\n",
-		  fsi->pebs_per_seg, fsi->pages_per_peb, fsi->pages_per_seg);
+	SSDFS_DBG("pebs_per_seg %u, pages_per_peb %u, "
+		  "pages_per_seg %u, lebs_per_peb_index %u\n",
+		  fsi->pebs_per_seg, fsi->pages_per_peb,
+		  fsi->pages_per_seg, fsi->lebs_per_peb_index);
 	SSDFS_DBG("zone_size %llu, zone_capacity %llu, "
 		  "leb_pages_capacity %u, peb_pages_capacity %u, "
 		  "open_zones %d\n",
 		  fsi->zone_size, fsi->zone_capacity,
 		  fsi->leb_pages_capacity, fsi->peb_pages_capacity,
 		  atomic_read(&fsi->open_zones));
-	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, raw_inode_size %u\n",
+	SSDFS_DBG("fs_ctime %llu, fs_cno %llu, "
+		  "raw_inode_size %u, create_threads_per_seg %u\n",
 		  (u64)fsi->fs_ctime, (u64)fsi->fs_cno,
-		  fsi->raw_inode_size);
+		  fsi->raw_inode_size,
+		  fsi->create_threads_per_seg);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	/* Mutable volume info */

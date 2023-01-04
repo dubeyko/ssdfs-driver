@@ -183,9 +183,9 @@ int ssdfs_segbmap_get_inode(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = iget_locked(fsi->sb, SSDFS_SEG_BMAP_INO);
 	if (unlikely(!inode)) {
@@ -254,10 +254,10 @@ int ssdfs_segbmap_define_segments(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !segbmap);
 	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p\n",
 		  fsi, array_type, segbmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_SEGBMAP_SEGS; i++)
 		segbmap->seg_numbers[i][array_type] = U64_MAX;
@@ -307,15 +307,13 @@ int ssdfs_segbmap_create_segments(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !segbmap);
 	BUG_ON(array_type >= SSDFS_SEGBMAP_SEG_COPY_MAX);
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, array_type %#x, segbmap %p\n",
 		  fsi, array_type, segbmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	log_pages = le16_to_cpu(fsi->vh->segbmap_log_pages);
-
-	/* TODO: make final desicion later */
-	create_threads = SSDFS_CREATE_THREADS_DEFAULT;
+	create_threads = fsi->create_threads_per_seg;
 
 	for (i = 0; i < segbmap->segs_count; i++) {
 		seg = segbmap->seg_numbers[i][array_type];
@@ -369,9 +367,9 @@ void ssdfs_segbmap_destroy_segments(struct ssdfs_segment_bmap *segbmap)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p\n", segbmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < segbmap->segs_count; i++) {
 		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
@@ -395,19 +393,26 @@ void ssdfs_segbmap_destroy_segments(struct ssdfs_segment_bmap *segbmap)
 
 /*
  * ssdfs_segbmap_segment_init() - issue segbmap init command for PEBs
+ * @segbmap: pointer on segment bitmap object
  * @si: segment object
+ * @seg_index: index of segment in the sequence
  */
 static
-int ssdfs_segbmap_segment_init(struct ssdfs_segment_info *si)
+int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
+				struct ssdfs_segment_info *si,
+				int seg_index)
 {
+	u64 logical_offset;
+	u32 fragment_bytes = segbmap->fragment_size;
 	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
-	SSDFS_DBG("si %p, seg %llu\n", si, si->seg_id);
+	SSDFS_DBG("si %p, seg %llu, seg_index %d\n",
+		  si, si->seg_id, seg_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
 		struct ssdfs_peb_container *pebc = &si->peb_array[i];
@@ -418,6 +423,13 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_info *si)
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (is_peb_container_empty(pebc)) {
+			SSDFS_DBG("PEB container empty: "
+				  "seg %llu, peb_index %d\n",
+				  si->seg_id, i);
+			continue;
+		}
 
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {
@@ -430,6 +442,17 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_info *si)
 
 		ssdfs_request_init(req);
 		ssdfs_get_request(req);
+
+		logical_offset =
+			(u64)segbmap->fragments_per_peb * fragment_bytes;
+		logical_offset *= si->pebs_count;
+		logical_offset *= seg_index;
+		ssdfs_request_prepare_logical_extent(SSDFS_MAPTBL_INO,
+						     logical_offset,
+						     fragment_bytes,
+						     0, 0, req);
+		ssdfs_request_define_segment(si->seg_id, req);
+
 		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 						    SSDFS_READ_INIT_SEGBMAP,
 						    SSDFS_REQ_ASYNC,
@@ -456,10 +479,10 @@ int ssdfs_segbmap_init(struct ssdfs_segment_bmap *segbmap)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, segbmap->segs_count %u\n",
 		  segbmap, segbmap->segs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < segbmap->segs_count; i++) {
 		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
@@ -470,7 +493,7 @@ int ssdfs_segbmap_init(struct ssdfs_segment_bmap *segbmap)
 			if (!si)
 				continue;
 
-			err = ssdfs_segbmap_segment_init(si);
+			err = ssdfs_segbmap_segment_init(segbmap, si, i);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to init segment: "
 					  "seg %llu, err %d\n",
@@ -497,9 +520,9 @@ int ssdfs_segbmap_create_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(segbmap->fragments_count == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p\n", segbmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	bmap_bytes = segbmap->fragments_count + BITS_PER_LONG - 1;
 	bmap_bytes /= BITS_PER_BYTE;
@@ -538,9 +561,9 @@ void ssdfs_segbmap_destroy_fragment_bitmaps(struct ssdfs_segment_bmap *segbmap)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p\n", segbmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_SEGBMAP_FBMAP_TYPE_MAX; i++)
 		ssdfs_seg_bmap_kfree(segbmap->fbmap[i]);
@@ -900,10 +923,10 @@ int ssdfs_segbmap_get_state_from_byte(u8 *byte_ptr, u32 byte_item)
 {
 	u32 shift;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("byte_ptr %p, byte_item %u\n",
 		  byte_ptr, byte_item);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!byte_ptr);
 	BUG_ON(byte_item >= SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -956,11 +979,11 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, page %p\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 
@@ -1279,10 +1302,10 @@ void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
 	BUG_ON(!rwsem_is_locked(&segbmap->fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p\n",
 		  segbmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr = &segbmap->fsi->vh->segbmap;
 
@@ -1538,10 +1561,10 @@ int ssdfs_segbmap_define_volume_extent(struct ssdfs_segment_bmap *segbmap,
 	BUG_ON(!segbmap || !req || !hdr || !seg_index);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
 	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, req %p\n",
 		  segbmap, req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*seg_index = le16_to_cpu(hdr->seg_index);
 	sequence_id = le16_to_cpu(hdr->sequence_id);
@@ -1621,10 +1644,10 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
 	BUG_ON(!rwsem_is_locked(&segbmap->resize_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, start_fragment %u, dirty_bmap %#lx\n",
 		  segbmap, start_fragment, dirty_bmap);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dirty_bmap == 0) {
 		SSDFS_DBG("bmap doesn't contain dirty bits\n");
@@ -1785,10 +1808,10 @@ int ssdfs_segbmap_flush_dirty_fragments(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragments_count %u, fragment_size %u\n",
 		  segbmap, fragments_count, fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fbmap = segbmap->fbmap[SSDFS_SEGBMAP_MODIFICATION_FBMAP];
 
@@ -1904,10 +1927,10 @@ int ssdfs_segbmap_wait_flush_end(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragments_count %u\n",
 		  segbmap, fragments_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
@@ -2054,10 +2077,10 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragments_count %u, fragment_size %u\n",
 		  segbmap, fragments_count, fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
@@ -2201,10 +2224,10 @@ int ssdfs_segbmap_wait_finish_commit_logs(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragments_count %u\n",
 		  segbmap, fragments_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	has_backup = segbmap->flags & SSDFS_SEGBMAP_HAS_COPY;
 
@@ -2482,10 +2505,10 @@ int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragment_index %lu\n",
 		  segbmap, fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fragment = &segbmap->desc_array[fragment_index];
 
@@ -2544,10 +2567,10 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, seg %llu\n",
 		  segbmap, seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
 
@@ -2689,10 +2712,10 @@ int ssdfs_segbmap_check_state(struct ssdfs_segment_bmap *segbmap,
 	BUG_ON(!segbmap);
 	BUG_ON(state < SSDFS_SEG_CLEAN ||
 		state >= SSDFS_SEG_STATE_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, seg %llu, state %#x\n",
 		  segbmap, seg, state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	res = ssdfs_segbmap_get_state(segbmap, seg, end);
 	if (res == -EAGAIN) {
@@ -2725,12 +2748,12 @@ int ssdfs_segbmap_set_state_in_byte(u8 *byte_ptr, u32 byte_item,
 	u8 value;
 	int shift = byte_item * SSDFS_SEG_STATE_BITS;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("byte_ptr %p, byte_item %u, "
 		  "old_state %p, new_state %#x\n",
 		  byte_ptr, byte_item,
 		  old_state, new_state);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!byte_ptr || !old_state);
 	BUG_ON(byte_item >= SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2781,12 +2804,12 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !kaddr);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragment_index %lu, "
 		  "old_state %#x, new_state %#x, kaddr %p\n",
 		  segbmap, fragment_index,
 		  old_state, new_state, kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (old_state == new_state) {
 		SSDFS_DBG("old_state %#x == new_state %#x\n",
@@ -3087,12 +3110,12 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, seg %llu, new_state %#x, "
 		  "fragment_index %lu, fragment_size %u\n",
 		  segbmap, seg, new_state,
 		  fragment_index, fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_segbmap_check_fragment_validity(segbmap, fragment_index);
 	if (err == -EAGAIN) {
@@ -3307,10 +3330,10 @@ unsigned long *ssdfs_segbmap_choose_fbmap(struct ssdfs_segment_bmap *segbmap,
 			  mask);
 		return ERR_PTR(-EOPNOTSUPP);
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, state %#x, mask %#x\n",
 		  segbmap, state, mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (mask & SSDFS_SEG_CLEAN_USING_MASK) {
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
@@ -3391,10 +3414,10 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !fbmap || !found_fragment);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fbmap %p, start_fragment %u, max_fragment %u\n",
 		  fbmap, start_fragment, max_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*found_fragment = U16_MAX;
 
@@ -3542,10 +3565,10 @@ u64 ssdfs_segbmap_correct_search_start(u16 fragment_index,
 			  old_start, max);
 		return U64_MAX;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fragment_index %u, old_start %llu, max %llu\n",
 		  fragment_index, old_start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	first_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
 							      fragment_size);
@@ -3578,10 +3601,10 @@ u16 ssdfs_segbmap_define_items_count(struct ssdfs_segbmap_fragment_desc *desc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc);
 	BUG_ON(!mask);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, state %#x, mask %#x\n",
 		  desc, state, mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (state) {
 	case SSDFS_SEG_CLEAN:
@@ -3727,11 +3750,11 @@ u8 FIRST_MASK_IN_BYTE(u8 *value, int mask,
 	BUG_ON(state_bits > BITS_PER_BYTE);
 	BUG_ON((state_bits % 2) != 0);
 	BUG_ON(start_offset > SSDFS_ITEMS_PER_BYTE(state_bits));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("value %#x, mask %#x, "
 		  "start_offset %u, state_bits %u\n",
 		  *value, mask, start_offset, state_bits);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	i = start_offset * state_bits;
 	for (; i < BITS_PER_BYTE; i += state_bits) {
@@ -3792,7 +3815,6 @@ int FIND_FIRST_ITEM_IN_FRAGMENT(struct ssdfs_segbmap_fragment_header *hdr,
 			  start_item, max_item);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hdr %p, fragment %p, "
 		  "start_item %llu, max_item %llu, "
@@ -3800,6 +3822,7 @@ int FIND_FIRST_ITEM_IN_FRAGMENT(struct ssdfs_segbmap_fragment_header *hdr,
 		  "found_seg %p, found_for_mask %p\n",
 		  hdr, fragment, start_item, max_item,
 		  state, mask, found_seg, found_for_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*found_seg = U64_MAX;
 	*found_for_mask = U64_MAX;
@@ -3989,7 +4012,6 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 			  start, max);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, fragment_index %u, "
 		  "fragment_size %u, start %llu, max %llu, "
@@ -3997,6 +4019,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 		  segbmap, fragment_index, fragment_size,
 		  start, max,
 		  found_seg, found_for_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*found_seg = U64_MAX;
 	*found_for_mask = U64_MAX;
@@ -4117,12 +4140,12 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !seg);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, start %llu, max %llu, "
 		  "state %#x, mask %#x, fragment_size %u, seg %p\n",
 		  segbmap, start, max, state, mask,
 		  fragment_size, seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
 
@@ -4341,11 +4364,11 @@ int ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 			  mask);
 		return -EOPNOTSUPP;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("segbmap %p, start %llu, max %llu, "
 		  "state %#x, mask %#x, seg %p\n",
 		  segbmap, start, max, state, mask, seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*end = NULL;
 

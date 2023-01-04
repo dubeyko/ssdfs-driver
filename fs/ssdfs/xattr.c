@@ -996,7 +996,6 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	u32 data_bytes;
 	u32 copied_bytes = 0;
 	struct completion *end;
-	unsigned long res;
 	int i;
 	int err = 0;
 
@@ -1100,9 +1099,8 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	if (err == -EAGAIN) {
 		end = &table->full_init_end;
 
-		res = wait_for_completion_timeout(end, SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "seg_id %llu, logical_blk %u, "
 				  "len %u, err %d\n",
@@ -1126,10 +1124,8 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_peb_readahead_pages(pebc, req, &end);
 	if (err == -EAGAIN) {
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("PEB init failed: "
 				  "err %d\n", err);
 			goto fail_read_blob;

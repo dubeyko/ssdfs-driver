@@ -138,8 +138,10 @@ int ssdfs_allocate_inline_file_buffer(struct inode *inode)
 
 	inline_capacity = ssdfs_inode_inline_file_capacity(inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("inline_capacity %zu, threshold %zu\n",
 		  inline_capacity, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (inline_capacity < threshold) {
 		SSDFS_ERR("inline_capacity %zu < threshold %zu\n",
@@ -172,8 +174,10 @@ void ssdfs_destroy_inline_file_buffer(struct inode *inode)
 
 	inline_capacity = ssdfs_inode_inline_file_capacity(inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("inline_capacity %zu, threshold %zu\n",
 		  inline_capacity, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (inline_capacity <= threshold) {
 		ii->inline_file = NULL;
@@ -198,9 +202,9 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, req %p\n", fsi, req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_prepare_volume_extent(fsi, req);
 	if (unlikely(err)) {
@@ -258,16 +262,15 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	struct ssdfs_offset_position pos;
 	u16 logical_blk;
 	struct completion *end;
-	unsigned long res;
 	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, req %p\n", fsi, req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_prepare_volume_extent(fsi, req);
 	if (unlikely(err)) {
@@ -307,10 +310,9 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	err = ssdfs_blk2off_table_get_offset_position(table, logical_blk, &pos);
 	if (err == -EAGAIN) {
 		end = &table->full_init_end;
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			goto finish_read_block;
@@ -334,10 +336,8 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_peb_read_page(pebc, req, &end);
 	if (err == -EAGAIN) {
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("PEB init failed: "
 				  "err %d\n", err);
 			goto forget_request_cno;
@@ -379,11 +379,12 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 	loff_t logical_offset;
 	loff_t data_bytes;
 	loff_t file_size;
-	unsigned long res;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %llu, read_mode %#x\n",
 		  ino, (u64)index, read_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	logical_offset = (loff_t)index << PAGE_SHIFT;
 
@@ -407,8 +408,10 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 		size_t inline_capacity =
 				ssdfs_inode_inline_file_capacity(inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("inline_capacity %zu, file_size %llu\n",
 			  inline_capacity, file_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (file_size > inline_capacity) {
 			ClearPageUptodate(page);
@@ -469,10 +472,8 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 			goto fail_read_page;
 		}
 
-		res = wait_for_completion_timeout(&req->result.wait,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&req->result.wait);
+		if (unlikely(err)) {
 			SSDFS_ERR("read request failed: "
 				  "ino %lu, logical_offset %llu, "
 				  "size %u, err %d\n",
@@ -525,17 +526,21 @@ int ssdfs_read_folio(struct file *file, struct folio *folio)
 	struct page *page = &folio->page;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %lu\n",
 		  file_inode(file)->i_ino, page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_account_locked_page(page);
 	err = ssdfs_readpage_nolock(file, page, SSDFS_CURRENT_THREAD_READ);
 	ssdfs_unlock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %lu, page %p, "
 		  "count %d, flags %#lx\n",
 		  file_inode(file)->i_ino, page_index(page),
 		  page, page_ref_count(page), page->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -554,8 +559,10 @@ ssdfs_issue_read_request(struct file *file, struct page *page)
 	loff_t file_size;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %lu\n",
 		  file_inode(file)->i_ino, page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	logical_offset = (loff_t)index << PAGE_SHIFT;
 
@@ -569,9 +576,11 @@ ssdfs_issue_read_request(struct file *file, struct page *page)
 
 	if (logical_offset >= file_size) {
 		/* Reading beyond inode */
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("Reading beyond inode: "
 			  "logical_offset %llu, file_size %llu\n",
 			  logical_offset, file_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		SetPageUptodate(page);
 		ClearPageError(page);
 		flush_dcache_page(page);
@@ -661,9 +670,9 @@ int ssdfs_check_read_request(struct ssdfs_segment_request *req)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p\n", req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 check_req_state:
 	switch (atomic_read(&req->result.state)) {
@@ -714,7 +723,9 @@ int ssdfs_wait_read_request_end(struct ssdfs_segment_request *req)
 {
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("req %p\n", req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!req)
 		return 0;
@@ -744,10 +755,12 @@ int ssdfs_readahead_page(void *data, struct page *page)
 	unsigned index;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %lu, page %p, "
 		  "count %d, flags %#lx\n",
 		  file_inode(env->file)->i_ino, page_index(page),
 		  page, page_ref_count(page), page->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (env->count >= env->capacity) {
 		SSDFS_ERR("count %u >= capacity %u\n",
@@ -767,12 +780,16 @@ int ssdfs_readahead_page(void *data, struct page *page)
 		env->reqs[index] = NULL;
 
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no data for the page: "
 				  "index %d\n", index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to issue request: "
 				  "index %d, err %d\n",
 				  index, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			SetPageError(page);
 			zero_user_segment(page, 0, PAGE_SIZE);
@@ -805,8 +822,10 @@ void ssdfs_readahead(struct readahead_control *rac)
 	int res;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, nr_pages %u\n",
 		  file_inode(rac->file)->i_ino, readahead_count(rac));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_ssdfs_file_inline(ii)) {
 		/* do nothing */
@@ -879,9 +898,9 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, req %p\n", fsi, req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_prepare_volume_extent(fsi, req);
 	if (unlikely(err)) {
@@ -947,9 +966,9 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
 	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, req %p\n", fsi, req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_prepare_volume_extent(fsi, req);
 	if (unlikely(err)) {
@@ -1034,9 +1053,11 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 	logical_offset = (*req)->extent.logical_offset;
 	data_bytes = (*req)->extent.data_bytes;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_add_block(page)) {
 		struct ssdfs_blk2off_range extent;
@@ -1126,9 +1147,11 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 	logical_offset = (*req)->extent.logical_offset;
 	data_bytes = (*req)->extent.data_bytes;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_add_block(page)) {
 		struct ssdfs_blk2off_range extent;
@@ -1210,9 +1233,11 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 	logical_offset = (*req)->extent.logical_offset;
 	data_bytes = (*req)->extent.data_bytes;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_add_block(page)) {
 		struct ssdfs_blk2off_range extent;
@@ -1311,9 +1336,11 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 	logical_offset = (*req)->extent.logical_offset;
 	data_bytes = (*req)->extent.data_bytes;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_add_block(page)) {
 		struct ssdfs_blk2off_range extent;
@@ -1387,7 +1414,6 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	u64 logical_offset;
 	u32 data_bytes;
 	int i;
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1416,9 +1442,11 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	logical_offset = (*req)->extent.logical_offset;
 	data_bytes = (*req)->extent.data_bytes;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, logical_offset %llu, "
 		  "data_bytes %u, sync_mode %#x\n",
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < pagevec_count(&(*req)->result.pvec); i++) {
 		page = (*req)->result.pvec.pages[i];
@@ -1470,10 +1498,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 
 		wake_up_all(&fsi->pending_wq);
 
-		res = wait_for_completion_timeout(&(*req)->result.wait,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&(*req)->result.wait);
+		if (unlikely(err)) {
 			SSDFS_ERR("write request failed: "
 				  "ino %lu, logical_offset %llu, size %u, "
 				  "err %d\n",
@@ -1556,8 +1582,10 @@ int __ssdfs_writepage(struct page *page, u32 len,
 	loff_t logical_offset;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %llu, len %u, sync_mode %#x\n",
 		  ino, (u64)index, len, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(*req)) {
@@ -1605,8 +1633,10 @@ int __ssdfs_writepages(struct page *page, u32 len,
 	bool need_create_request;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %llu, len %u, sync_mode %#x\n",
 		  ino, (u64)index, len, wbc->sync_mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	logical_offset = (loff_t)index << PAGE_SHIFT;
 
@@ -1652,10 +1682,11 @@ try_add_page_into_request:
 		last_index = pagevec_count(&(*req)->result.pvec) - 1;
 		last_page = (*req)->result.pvec.pages[last_index];
 
-		SSDFS_DBG("logical_offset %llu, upper_bound %llu, last_index %u\n",
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("logical_offset %llu, upper_bound %llu, "
+			  "last_index %u\n",
 			  (u64)logical_offset, upper_bound, last_index);
 
-#ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!last_page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1717,10 +1748,12 @@ int ssdfs_writepage_wrapper(struct page *page,
 	bool is_new_blk = false;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %llu, "
 		  "i_size %llu, len %d\n",
 		  ino, (u64)index,
 		  (u64)i_size, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (inode->i_sb->s_flags & SB_RDONLY) {
 		/*
@@ -1777,14 +1810,18 @@ int ssdfs_writepage_wrapper(struct page *page,
 
 	cur_blk = (index << PAGE_SHIFT) >> fsi->log_pagesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("cur_blk %llu\n", (u64)cur_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_add_block(page)) {
 		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
 								   inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_blk %llu, is_new_blk %#x\n",
 			  (u64)cur_blk, is_new_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_new_blk)
 			set_page_new(page);
@@ -1847,8 +1884,10 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 	pgoff_t index = page_index(page);
 	struct ssdfs_segment_request *req = NULL;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %llu\n",
 		  ino, (u64)index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_writepage_wrapper(page, wbc, &req,
 					__ssdfs_writepage);
@@ -1883,6 +1922,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	int done = 0;
 	int ret = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, nr_to_write %lu, "
 		  "range_start %llu, range_end %llu, "
 		  "writeback_index %llu, "
@@ -1892,6 +1932,7 @@ int ssdfs_writepages(struct address_space *mapping,
 		  (u64)wbc->range_end,
 		  (u64)mapping->writeback_index,
 		  wbc->range_cyclic);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	/*
 	 * No pages to write?
@@ -1923,9 +1964,11 @@ int ssdfs_writepages(struct address_space *mapping,
 		nr_pages = (int)min_t(pgoff_t, end - index,
 					(pgoff_t)PAGEVEC_SIZE-1) + 1;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index %llu, end %llu, "
 			  "nr_pages %d, tag %#x\n",
 			  (u64)index, (u64)end, nr_pages, tag);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
 						    end, tag);
@@ -2103,6 +2146,7 @@ out_writepages:
 	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0))
 		mapping->writeback_index = done_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, nr_to_write %lu, "
 		  "range_start %llu, range_end %llu, "
 		  "writeback_index %llu\n",
@@ -2110,6 +2154,7 @@ out_writepages:
 		  (u64)wbc->range_start,
 		  (u64)wbc->range_end,
 		  (u64)mapping->writeback_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ret;
 }
@@ -2154,8 +2199,10 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	if (inode->i_sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, index %lu\n",
 		  inode->i_ino, index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = grab_cache_page_write_begin(mapping, index);
 	if (!page) {
@@ -2164,8 +2211,10 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		return -ENOMEM;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_account_locked_page(page);
 
@@ -2194,10 +2243,12 @@ try_regular_write:
 		end_blk = (pos + len) >> fsi->log_pagesize;
 
 		if (can_file_be_inline(inode, i_size_read(inode))) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("change from inline to regular file: "
 				  "old_size %llu, new_size %llu\n",
 				  (u64)i_size_read(inode),
 				  (u64)(pos + len));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			last_blk = U64_MAX;
 		} else if (i_size_read(inode) > 0) {
@@ -2205,9 +2256,11 @@ try_regular_write:
 						fsi->log_pagesize;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start_blk %llu, end_blk %llu, last_blk %llu\n",
 			  (u64)start_blk, (u64)end_blk,
 			  (u64)last_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		cur_blk = start_blk;
 		do {
@@ -2216,8 +2269,10 @@ try_regular_write:
 			else
 				is_new_blk = cur_blk > last_blk;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_blk %llu, is_new_blk %#x, blks %u\n",
 				  (u64)cur_blk, is_new_blk, blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (is_new_blk) {
 				if (!need_add_block(page)) {
@@ -2263,23 +2318,29 @@ try_regular_write:
 		} while (cur_blk < end_blk);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*pagep = page;
 
 	if ((len == PAGE_SIZE) || PageUptodate(page))
 		return 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pos %llu, inode_size %llu\n",
 		  pos, (u64)i_size_read(inode));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if ((pos & PAGE_MASK) >= i_size_read(inode)) {
 		unsigned start = pos & (PAGE_SIZE - 1);
 		unsigned end = start + len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start %u, end %u, len %u\n",
 			  start, end, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		/* Reading beyond i_size is simple: memset to zero */
 		zero_user_segments(page, 0, start, end, PAGE_SIZE);
@@ -2305,10 +2366,12 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 	loff_t old_size = i_size_read(inode);
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, pos %llu, len %u, copied %u, "
 		  "index %lu, start %u, end %u, old_size %llu\n",
 		  inode->i_ino, pos, len, copied,
 		  index, start, end, old_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (copied < len) {
 		/*
@@ -2337,8 +2400,10 @@ out:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err ? err : copied;
 }
@@ -2363,9 +2428,11 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct inode *inode = file->f_mapping->host;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, start %llu, end %llu, datasync %#x\n",
 		  (unsigned long)inode->i_ino, (unsigned long long)start,
 		  (unsigned long long)end, datasync);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	trace_ssdfs_sync_file_enter(inode);
 

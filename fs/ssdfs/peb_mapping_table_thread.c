@@ -2228,13 +2228,10 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_resolving;
 	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
 		struct completion *end = &fdesc->init_end;
-		unsigned long res;
 
 		up_read(&tbl->tbl_lock);
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl's fragment init failed: "
 				  "leb_id %llu, err %d\n",
 				  pmi->leb_id, err);
@@ -2711,7 +2708,6 @@ int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl)
  */
 int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl)
 {
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2737,10 +2733,8 @@ int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl)
 	finish_wait(&tbl->wait_queue, &tbl->thread.wait);
 	tbl->thread.task = NULL;
 
-	res = wait_for_completion_timeout(&tbl->thread.full_stop,
-					SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&tbl->thread.full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}

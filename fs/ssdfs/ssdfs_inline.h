@@ -1266,6 +1266,42 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len,
 	return name_hash;
 }
 
+#define SSDFS_LOG_FOOTER_OFF(seg_hdr)({ \
+	u32 offset; \
+	int index; \
+	struct ssdfs_metadata_descriptor *desc; \
+	index = SSDFS_LOG_FOOTER_INDEX; \
+	desc = &SSDFS_SEG_HDR(seg_hdr)->desc_array[index]; \
+	offset = le32_to_cpu(desc->offset); \
+	offset; \
+})
+
+#define SSDFS_WAITED_TOO_LONG_MSECS		(1000)
+
+static inline
+void ssdfs_check_jiffies_left_till_timeout(unsigned long value)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	unsigned int msecs;
+
+	msecs = jiffies_to_msecs(SSDFS_DEFAULT_TIMEOUT - value);
+	if (msecs >= SSDFS_WAITED_TOO_LONG_MSECS)
+		SSDFS_ERR("function waited %u msecs\n", msecs);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+#define SSDFS_WAIT_COMPLETION(end)({ \
+	unsigned long res; \
+	int err = 0; \
+	res = wait_for_completion_timeout(end, SSDFS_DEFAULT_TIMEOUT); \
+	if (res == 0) { \
+		err = -ERANGE; \
+	} else { \
+		ssdfs_check_jiffies_left_till_timeout(res); \
+	} \
+	err; \
+})
+
 #define SSDFS_FSI(ptr) \
 	((struct ssdfs_fs_info *)(ptr))
 #define SSDFS_BLKT(ptr) \
@@ -1283,9 +1319,7 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len,
 #define SSDFS_SNRU_INFO(ptr) \
 	((struct ssdfs_snapshot_rule_info *)(ptr))
 
-#define SSDFS_SEG2PEB(fsi, seg) \
-	((u64)seg * fsi->pebs_per_seg)
-#define SSDFS_PEB2SEG(fsi, peb) \
-	((u64)div_u64(peb, fsi->pebs_per_seg))
+#define SSDFS_LEB2SEG(fsi, leb) \
+	((u64)ssdfs_get_seg_id_for_leb_id(fsi, leb))
 
 #endif /* _SSDFS_INLINE_H */

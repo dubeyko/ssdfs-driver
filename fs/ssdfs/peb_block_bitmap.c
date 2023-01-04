@@ -85,6 +85,7 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 			      int init_flag, int init_state)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_blk_bmap *bmap;
 	int err;
 
@@ -106,8 +107,12 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = parent->parent_si->fsi;
+	si = parent->parent_si;
 	bmap = &parent->peb[peb_index];
 	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_STATE_UNKNOWN);
+
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  si->seg_id, bmap->peb_index);
 
 	if (items_count > parent->pages_per_peb) {
 		SSDFS_ERR("items_count %u > pages_per_peb %u\n",
@@ -810,12 +815,8 @@ int ssdfs_peb_blk_bmap_wait_init_end(struct ssdfs_peb_blk_bmap *bmap)
 	if (ssdfs_peb_blk_bmap_initialized(bmap))
 		return 0;
 	else {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
 				  "err %d\n",
@@ -869,12 +870,8 @@ int ssdfs_peb_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1016,12 +1013,8 @@ int ssdfs_peb_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1087,12 +1080,8 @@ int ssdfs_peb_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1159,12 +1148,8 @@ int ssdfs_src_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1228,12 +1213,8 @@ int ssdfs_src_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1297,12 +1278,8 @@ int ssdfs_src_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1366,12 +1343,8 @@ int ssdfs_dst_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1435,12 +1408,8 @@ int ssdfs_dst_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1504,12 +1473,8 @@ int ssdfs_dst_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1791,12 +1756,8 @@ int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -1953,12 +1914,8 @@ int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -2248,12 +2205,8 @@ int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -2534,12 +2487,8 @@ int ssdfs_peb_blk_bmap_invalidate(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -2769,12 +2718,8 @@ int ssdfs_peb_blk_bmap_update_range(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -3039,12 +2984,8 @@ int ssdfs_peb_blk_bmap_collect_garbage(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -3152,12 +3093,8 @@ int ssdfs_peb_blk_bmap_start_migration(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -3472,12 +3409,8 @@ int ssdfs_peb_blk_bmap_migrate(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "
@@ -3758,12 +3691,8 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(&bmap->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&bmap->init_end);
+		if (unlikely(err)) {
 init_failed:
 			SSDFS_ERR("PEB block bitmap init failed: "
 				  "seg_id %llu, peb_index %u, "

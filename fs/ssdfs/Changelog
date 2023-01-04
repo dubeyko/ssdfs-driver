@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.42 [January 03, 2023]
+    (*) Fix bugs in functionality of support multiple PEBs in segment.
+
 v.4.41 [January 02, 2023]
     (*) Implement support and management PEBs in snapshot state.
 

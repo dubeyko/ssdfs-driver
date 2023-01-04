@@ -554,7 +554,6 @@ int ssdfs_shextree_stop_thread(struct ssdfs_shared_extents_tree *tree,
 				int index)
 {
 	struct ssdfs_invalidation_queue *ptr;
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -582,10 +581,8 @@ int ssdfs_shextree_stop_thread(struct ssdfs_shared_extents_tree *tree,
 	finish_wait(&tree->wait_queue, &ptr->thread.wait);
 	ptr->thread.task = NULL;
 
-	res = wait_for_completion_timeout(&ptr->thread.full_stop,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&ptr->thread.full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}

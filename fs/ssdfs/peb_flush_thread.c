@@ -5119,15 +5119,10 @@ int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
 						blk_desc,
 						&blk_desc_off);
 	if (err == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
+		struct completion *end = &table->full_init_end;
 
-		end = &table->full_init_end;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -6267,15 +6262,10 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 						   &migration_state,
 						   &pos);
 	if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
+		struct completion *end = &table->full_init_end;
 
-		end = &table->full_init_end;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -7946,15 +7936,10 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 						   &migration_state,
 						   &pos);
 	if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
+		struct completion *end = &table->full_init_end;
 
-		end = &table->full_init_end;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;

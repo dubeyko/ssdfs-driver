@@ -569,6 +569,8 @@ static inline
 u64 ssdfs_get_leb_id_for_peb_index(struct ssdfs_fs_info *fsi,
 				   u64 seg, u32 peb_index)
 {
+	u64 leb_id = U64_MAX;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 
@@ -582,7 +584,50 @@ u64 ssdfs_get_leb_id_for_peb_index(struct ssdfs_fs_info *fsi,
 		  fsi, seg, peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return (seg * fsi->pebs_per_seg) + peb_index;
+	if (fsi->lebs_per_peb_index == SSDFS_LEBS_PER_PEB_INDEX_DEFAULT)
+		leb_id = (seg * fsi->pebs_per_seg) + peb_index;
+	else
+		leb_id = seg + (peb_index * fsi->lebs_per_peb_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %u, leb_id %llu\n",
+		  seg, peb_index, leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return leb_id;
+}
+
+/*
+ * ssdfs_get_seg_id_for_leb_id() - convert LEB's into segment's ID
+ * @fsi: pointer on shared file system object
+ * @leb_id: LEB ID
+ *
+ * This function converts LEB's ID into segment's identification
+ * number.
+ *
+ * RETURN:
+ * [success] - LEB's identification number.
+ * [failure] - U64_MAX.
+ */
+static inline
+u64 ssdfs_get_seg_id_for_leb_id(struct ssdfs_fs_info *fsi,
+				u64 leb_id)
+{
+	u64 seg_id = U64_MAX;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p, leb_id %llu\n",
+		  fsi, leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->lebs_per_peb_index == SSDFS_LEBS_PER_PEB_INDEX_DEFAULT)
+		seg_id = div_u64(leb_id, fsi->pebs_per_seg);
+	else
+		seg_id = div_u64(leb_id, fsi->lebs_per_peb_index);
+
+	return seg_id;
 }
 
 /*
@@ -641,10 +686,8 @@ int ssdfs_get_peb_migration_id_checked(struct ssdfs_peb_info *pebi)
 
 	switch (atomic_read(&pebi->state)) {
 	case SSDFS_PEB_OBJECT_CREATED:
-		res = wait_for_completion_timeout(&pebi->init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(&pebi->init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("PEB init failed: "
 				  "err %d\n", err);
 			return err;

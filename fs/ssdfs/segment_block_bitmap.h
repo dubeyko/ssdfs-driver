@@ -63,7 +63,6 @@ enum {
  * Segment block bitmap API
  */
 int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
-				  u32 pages_per_peb,
 				  int init_flag, int init_state);
 void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr);
 int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,

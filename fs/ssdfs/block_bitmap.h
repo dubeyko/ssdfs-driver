@@ -291,6 +291,7 @@ void ssdfs_block_bmap_unlock(struct ssdfs_block_bmap *blk_bmap);
 bool ssdfs_block_bmap_dirtied(struct ssdfs_block_bmap *blk_bmap);
 void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap);
 bool ssdfs_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap);
+void ssdfs_set_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap);
 
 bool ssdfs_block_bmap_test_block(struct ssdfs_block_bmap *blk_bmap,
 				 u32 blk, int blk_state);

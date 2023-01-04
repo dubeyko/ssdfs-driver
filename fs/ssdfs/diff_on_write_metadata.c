@@ -1496,15 +1496,10 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 							   &migration_state,
 							   &pos);
 		if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
-			struct completion *end;
-			unsigned long res;
+			struct completion *end = &table->full_init_end;
 
-			end = &table->full_init_end;
-
-			res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				return err;

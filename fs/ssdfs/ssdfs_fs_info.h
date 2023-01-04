@@ -183,9 +183,11 @@ struct ssdfs_snapshot_subsystem {
  * @pages_per_seg: pages per segment
  * @leb_pages_capacity: maximal number of logical blocks per LEB
  * @peb_pages_capacity: maximal number of NAND pages can be written per PEB
+ * @lebs_per_peb_index: difference of LEB IDs between PEB indexes in segment
  * @fs_ctime: volume create timestamp (mkfs phase)
  * @fs_cno: volume create checkpoint
  * @raw_inode_size: raw inode size in bytes
+ * @create_threads_per_seg: number of creation threads per segment
  * @mount_opts: mount options
  * @metadata_options: metadata options
  * @volume_sem: volume semaphore
@@ -274,9 +276,11 @@ struct ssdfs_fs_info {
 	u32 pages_per_seg;
 	u32 leb_pages_capacity;
 	u32 peb_pages_capacity;
+	u32 lebs_per_peb_index;
 	u64 fs_ctime;
 	u64 fs_cno;
 	u16 raw_inode_size;
+	u16 create_threads_per_seg;
 
 	unsigned long mount_opts;
 	struct ssdfs_metadata_options metadata_options;

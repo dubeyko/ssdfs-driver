@@ -3056,15 +3056,10 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 						&migration_state,
 						&pos);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
-		struct completion *init_end;
-		unsigned long res;
+		struct completion *init_end = &table->full_init_end;
 
-		init_end = &table->full_init_end;
-
-		res = wait_for_completion_timeout(init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -7085,6 +7080,7 @@ fail_init_used_blk_bmap:
 	}
 
 fail_init_used_peb:
+	SSDFS_DBG("finished\n");
 	return err;
 }
 
@@ -8286,12 +8282,8 @@ int ssdfs_finish_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 					   pebi->pebc->peb_type,
 					   &pebr, &end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -8623,15 +8615,18 @@ u16 ssdfs_peb_define_segbmap_sequence_id(struct ssdfs_peb_container *pebc,
 	u16 peb_index;
 	u16 fragments_per_seg;
 	u16 fragment_size;
+	u32 fragments_bytes_per_seg;
+	u64 seg_logical_offset;
 	u32 id;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
 
-	SSDFS_DBG("seg_id %llu, peb_index %u, logical_offset %llu\n",
-		  pebc->parent_si->seg_id, pebc->peb_index,
-		  logical_offset);
+	SSDFS_DBG("seg_id %llu, seg_index %u, "
+		  "peb_index %u, logical_offset %llu\n",
+		  pebc->parent_si->seg_id, seg_index,
+		  pebc->peb_index, logical_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
@@ -8640,14 +8635,36 @@ u16 ssdfs_peb_define_segbmap_sequence_id(struct ssdfs_peb_container *pebc,
 	down_read(&segbmap->resize_lock);
 	fragments_per_seg = segbmap->fragments_per_seg;
 	fragment_size = segbmap->fragment_size;
+	fragments_bytes_per_seg =
+		(u32)segbmap->fragments_per_seg * fragment_size;
 	up_read(&segbmap->resize_lock);
 
-	logical_offset /= fragment_size;
-	BUG_ON(logical_offset >= U16_MAX);
+	seg_logical_offset = (u64)seg_index * fragments_bytes_per_seg;
 
-	id = seg_index * fragments_per_seg;
-	id += (u32)logical_offset;
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_index %u, seg_logical_offset %llu, "
+		  "logical_offset %llu\n",
+		  seg_index, seg_logical_offset,
+		  logical_offset);
+
+	BUG_ON(seg_logical_offset > logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	logical_offset -= seg_logical_offset;
+
+	id = logical_offset / fragment_size;
+	id += seg_index * fragments_per_seg;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_index %u, fragments_per_seg %u, "
+		  "logical_offset %llu, fragment_size %u, "
+		  "id %u\n",
+		  seg_index, fragments_per_seg,
+		  logical_offset, fragment_size,
+		  id);
+
 	BUG_ON(id >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (u16)id;
 }
@@ -8655,41 +8672,60 @@ u16 ssdfs_peb_define_segbmap_sequence_id(struct ssdfs_peb_container *pebc,
 /*
  * ssdfs_peb_define_segbmap_logical_extent() - define logical extent
  * @pebc: pointer on PEB container
+ * @seg_index: index of segment in segment bitmap
  * @ptr: pointer on segbmap extent [out]
  */
 static
 void ssdfs_peb_define_segbmap_logical_extent(struct ssdfs_peb_container *pebc,
+					     u16 seg_index,
 					     struct ssdfs_segbmap_extent *ptr)
 {
 	struct ssdfs_segment_bmap *segbmap;
 	u16 peb_index;
+	u32 fragments_bytes_per_seg;
+	u32 fragments_bytes_per_peb;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->fsi->segbmap);
 	BUG_ON(!ptr);
 
-	SSDFS_DBG("seg_id %llu, peb_index %u, extent %p\n",
-		  pebc->parent_si->seg_id, pebc->peb_index,
-		  ptr);
+	SSDFS_DBG("seg_id %llu, seg_index %u, peb_index %u, extent %p\n",
+		  pebc->parent_si->seg_id, seg_index,
+		  pebc->peb_index, ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 	peb_index = pebc->peb_index;
 
 	down_read(&segbmap->resize_lock);
-
 	ptr->fragment_size = segbmap->fragment_size;
-	ptr->logical_offset = peb_index * segbmap->fragments_per_peb;
-	ptr->logical_offset *= ptr->fragment_size;
+	fragments_bytes_per_seg =
+		(u32)segbmap->fragments_per_seg * ptr->fragment_size;
+	fragments_bytes_per_peb =
+		(u32)segbmap->fragments_per_peb * ptr->fragment_size;
+	ptr->logical_offset = fragments_bytes_per_seg * seg_index;
+	ptr->logical_offset += fragments_bytes_per_peb * peb_index;
 	ptr->data_size = segbmap->fragments_per_peb * ptr->fragment_size;
-
 	up_read(&segbmap->resize_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fragment_size %u, fragments_bytes_per_seg %u, "
+		  "fragments_bytes_per_peb %u, seg_index %u, "
+		  "peb_index %u, logical_offset %llu, data_size %u\n",
+		  ptr->fragment_size,
+		  fragments_bytes_per_seg,
+		  fragments_bytes_per_peb,
+		  seg_index, peb_index,
+		  ptr->logical_offset,
+		  ptr->data_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
  * ssdfs_peb_define_segbmap_logical_block() - convert offset into block number
  * @pebc: pointer on PEB container
+ * @seg_index: index of segment in segment bitmap
  * @logical_offset: logical offset
  *
  * RETURN:
@@ -8698,12 +8734,16 @@ void ssdfs_peb_define_segbmap_logical_extent(struct ssdfs_peb_container *pebc,
  */
 static
 u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
+					   u16 seg_index,
 					   u64 logical_offset)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_bmap *segbmap;
 	u16 peb_index;
+	u32 fragments_bytes_per_seg;
+	u32 fragments_bytes_per_peb;
 	u32 blks_per_peb;
+	u64 seg_logical_offset;
 	u32 peb_blk_off, blk_off;
 	u32 logical_blk;
 
@@ -8722,10 +8762,28 @@ u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
 	peb_index = pebc->peb_index;
 
 	down_read(&segbmap->resize_lock);
-	blks_per_peb = (u32)segbmap->fragments_per_peb * segbmap->fragment_size;
+	fragments_bytes_per_seg =
+		(u32)segbmap->fragments_per_seg * segbmap->fragment_size;
+	fragments_bytes_per_peb =
+		(u32)segbmap->fragments_per_peb * segbmap->fragment_size;
+	blks_per_peb = fragments_bytes_per_peb;
 	blks_per_peb >>= fsi->log_pagesize;
 	up_read(&segbmap->resize_lock);
 
+	seg_logical_offset = (u64)seg_index * fragments_bytes_per_seg;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_index %u, seg_logical_offset %llu, "
+		  "logical_offset %llu\n",
+		  seg_index, seg_logical_offset,
+		  logical_offset);
+
+	BUG_ON(seg_logical_offset > logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	logical_offset -= seg_logical_offset;
+
+	logical_blk = blks_per_peb * peb_index;
 	peb_blk_off = blks_per_peb * peb_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8737,14 +8795,21 @@ u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
 
 	if (blk_off < peb_blk_off || blk_off >= (peb_blk_off + blks_per_peb)) {
 		SSDFS_ERR("invalid logical offset: "
-			  "blk_off %u, peb_blk_off %u, blks_per_peb %u\n",
-			  blk_off, peb_blk_off, blks_per_peb);
+			  "blk_off %u, peb_blk_off %u, "
+			  "blks_per_peb %u, logical_offset %llu\n",
+			  blk_off, peb_blk_off,
+			  blks_per_peb, logical_offset);
 		return U16_MAX;
 	}
 
 	logical_blk = blk_off - peb_blk_off;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_blk_off %u, blk_off %u, "
+		  "logical_blk %u\n",
+		  peb_blk_off, blk_off,
+		  logical_blk);
+
 	BUG_ON(logical_blk >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -8827,6 +8892,7 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
 
 	logical_blk = ssdfs_peb_define_segbmap_logical_block(pebc,
+							seg_index,
 							extent->logical_offset);
 	if (unlikely(logical_blk == U16_MAX)) {
 		err = -ERANGE;
@@ -8989,6 +9055,7 @@ int ssdfs_peb_read_segbmap_pages(struct ssdfs_peb_container *pebc,
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
 
 	logical_blk = ssdfs_peb_define_segbmap_logical_block(pebc,
+							seg_index,
 							extent->logical_offset);
 	if (unlikely(logical_blk == U16_MAX)) {
 		err = -ERANGE;
@@ -9169,7 +9236,7 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	}
 
-	ssdfs_peb_define_segbmap_logical_extent(pebc, &extent);
+	ssdfs_peb_define_segbmap_logical_extent(pebc, seg_index, &extent);
 
 	err = ssdfs_peb_read_segbmap_first_page(pebc, seg_index, &extent);
 	if (err == -ENODATA) {
@@ -9249,6 +9316,8 @@ u16 ssdfs_maptbl_fragment_pages_count(struct ssdfs_fs_info *fsi)
  * ssdfs_peb_read_maptbl_fragment() - read mapping table's fragment's pages
  * @pebc: pointer on PEB container
  * @index: index of fragment in the PEB
+ * @logical_offset: logical offset of fragment in mapping table
+ * @logical_blk: starting logical block of fragment
  * @fragment_bytes: size of fragment in bytes
  * @area: fragment content [out]
  *
@@ -9264,20 +9333,24 @@ u16 ssdfs_maptbl_fragment_pages_count(struct ssdfs_fs_info *fsi)
  */
 static
 int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
-				   int index, u32 fragment_bytes,
+				   int index, u64 logical_offset,
+				   u16 logical_blk,
+				   u32 fragment_bytes,
 				   struct ssdfs_maptbl_area *area)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_request *req;
-	u64 logical_offset = 0;
 	u32 pagevec_bytes = (u32)PAGEVEC_SIZE << PAGE_SHIFT;
+	u32 cur_offset = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi || !area);
 
-	SSDFS_DBG("pebc %p, index %d, fragment_bytes %u, area %p\n",
-		  pebc, index, fragment_bytes, area);
+	SSDFS_DBG("pebc %p, index %d, logical_offset %llu, "
+		  "logical_blk %u, fragment_bytes %u, area %p\n",
+		  pebc, index, logical_offset,
+		  logical_blk, fragment_bytes, area);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
@@ -9289,7 +9362,6 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 	}
 
 	do {
-		u32 logical_blk;
 		u32 size;
 		u16 pages_count;
 		int i;
@@ -9305,8 +9377,8 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		ssdfs_request_init(req);
 		ssdfs_get_request(req);
 
-		if (logical_offset == 0)
-			size = PAGE_SIZE;
+		if (cur_offset == 0)
+			size = fsi->pagesize;
 		else
 			size = min_t(u32, fragment_bytes, pagevec_bytes);
 
@@ -9335,10 +9407,11 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 
 		ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
 
-		logical_blk = (u32)((((u64)fragment_bytes * index) +
-					logical_offset) >> fsi->log_pagesize);
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(logical_blk >= U16_MAX);
+		SSDFS_DBG("logical_offset %llu, size %u, "
+			  "logical_blk %u, pages_count %u\n",
+			  logical_offset, size,
+			  logical_blk, pages_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_request_define_volume_extent((u16)logical_blk,
@@ -9356,7 +9429,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		for (i = 0; i < req->result.processed_blks; i++)
 			ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
-		if (logical_offset == 0) {
+		if (cur_offset == 0) {
 			struct ssdfs_leb_table_fragment_header *hdr;
 			u16 magic;
 			void *kaddr;
@@ -9386,6 +9459,8 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 
 		fragment_bytes -= size;
 		logical_offset += size;
+		cur_offset += size;
+		logical_blk += pages_count;
 	} while (fragment_bytes > 0);
 
 	return 0;
@@ -9418,7 +9493,10 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_maptbl_area area = {0};
+	u64 logical_offset;
+	u32 logical_blk;
 	u32 fragment_bytes;
+	u32 blks_per_fragment;
 	int i;
 	int err = 0;
 
@@ -9465,8 +9543,32 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 		goto end_init;
 	}
 
+	logical_offset = req->extent.logical_offset;
+	logical_blk = req->place.start.blk_index;
+
+	blks_per_fragment =
+		(fragment_bytes + fsi->pagesize - 1) / fsi->pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(blks_per_fragment >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	for (i = 0; i < fsi->maptbl->fragments_per_peb; i++) {
+		logical_offset = logical_offset + ((u64)fragment_bytes * i);
+		logical_blk = logical_blk + (blks_per_fragment * i);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(logical_blk >= U16_MAX);
+
+		SSDFS_DBG("seg %llu, peb_index %d, "
+			  "logical_offset %llu, logical_blk %u\n",
+			  pebc->parent_si->seg_id, i,
+			  logical_offset, logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_peb_read_maptbl_fragment(pebc, i,
+						     logical_offset,
+						     (u16)logical_blk,
 						     fragment_bytes,
 						     &area);
 		if (err == -ENODATA) {

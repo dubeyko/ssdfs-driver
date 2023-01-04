@@ -477,8 +477,7 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("create segment block bitmap: seg %llu\n", seg);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	err = ssdfs_segment_blk_bmap_create(si, logical_blk_capacity,
-					    init_flag, init_state);
+	err = ssdfs_segment_blk_bmap_create(si, init_flag, init_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create segment block bitmap: "
 			  "err %d\n", err);
@@ -694,22 +693,30 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 		return -ENOENT;
 	}
 
-	start_leb = *start_seg * fsi->pebs_per_seg;
+	start_leb = ssdfs_get_leb_id_for_peb_index(fsi, *start_seg, 0);
+	if (start_leb >= U64_MAX) {
+		SSDFS_ERR("invalid leb_id for seg_id %llu\n",
+			  *start_seg);
+		return -ERANGE;
+	}
+
 	err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
 						  &end_leb, &init_end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			goto finish_seg_id_correction;
 		}
 
-		start_leb = *start_seg * fsi->pebs_per_seg;
+		start_leb = ssdfs_get_leb_id_for_peb_index(fsi, *start_seg, 0);
+		if (start_leb >= U64_MAX) {
+			SSDFS_ERR("invalid leb_id for seg_id %llu\n",
+				  *start_seg);
+			return -ERANGE;
+		}
+
 		err = ssdfs_maptbl_recommend_search_range(fsi, &start_leb,
 							  &end_leb, &init_end);
 	}
@@ -729,8 +736,8 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 		goto finish_seg_id_correction;
 	}
 
-	*start_seg = (start_leb + fsi->pebs_per_seg - 1) / fsi->pebs_per_seg;
-	*end_seg = (end_leb + fsi->pebs_per_seg - 1) / fsi->pebs_per_seg;
+	*start_seg = SSDFS_LEB2SEG(fsi, start_leb);
+	*end_seg = SSDFS_LEB2SEG(fsi, end_leb);
 
 finish_seg_id_correction:
 	SSDFS_DBG("start_seg %llu, end_seg %llu, err %d\n",
@@ -766,16 +773,15 @@ int __ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 	u64 start_seg = start_search_id;
 	u64 end_seg = U64_MAX;
 	struct completion *init_end;
-	unsigned long rest;
 	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !seg_id || !seg_state);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg_type %#x, start_search_id %llu\n",
 		  fsi, seg_type, start_search_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*seg_id = U64_MAX;
 	*seg_state = SSDFS_SEG_STATE_MAX;
@@ -826,10 +832,8 @@ int __ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 		/* Define segment state */
 		*seg_state = res;
 	} else if (res == -EAGAIN) {
-		rest = wait_for_completion_timeout(init_end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (rest == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("segbmap init failed: "
 				  "err %d\n", err);
 			goto finish_search;
@@ -1119,7 +1123,6 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 	struct ssdfs_segment_info *si;
 	int seg_state = SSDFS_SEG_STATE_MAX;
 	struct completion *init_end;
-	unsigned long rest;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1170,10 +1173,8 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 			seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
 							    seg_id, &init_end);
 			if (seg_state == -EAGAIN) {
-				rest = wait_for_completion_timeout(init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (rest == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
 					SSDFS_ERR("segbmap init failed: "
 						  "err %d\n", err);
 					return ERR_PTR(err);
@@ -1238,9 +1239,7 @@ create_segment_object:
 				break;
 			};
 
-			/* TODO: make final desicion later */
-			create_threads = SSDFS_CREATE_THREADS_DEFAULT;
-
+			create_threads = fsi->create_threads_per_seg;
 			si = __ssdfs_create_new_segment(fsi,
 							seg_id,
 							seg_state,
@@ -1319,14 +1318,10 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
 						&peb_index, NULL, &pos);
 	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
+		struct completion *end = &table->full_init_end;
 
-		end = &table->full_init_end;
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -1487,7 +1482,6 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 	int new_seg_state = SSDFS_SEG_STATE_MAX;
 	u64 seg_id;
 	struct completion *init_end;
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1512,10 +1506,8 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 	if (err == -EAGAIN) {
 		init_end = &blk2off_tbl->partial_init_end;
 
-		res = wait_for_completion_timeout(init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -1752,10 +1744,8 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 	err = ssdfs_segbmap_change_state(segbmap, seg_id,
 					 new_seg_state, &init_end);
 	if (err == -EAGAIN) {
-		res = wait_for_completion_timeout(init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("segbmap init failed: "
 				  "err %d\n", err);
 			return err;
@@ -2070,13 +2060,10 @@ add_new_current_segment:
 			err = ssdfs_blk2off_table_allocate_block(table, &blk);
 			if (err == -EAGAIN) {
 				struct completion *end;
-				unsigned long res;
-
 				end = &table->partial_init_end;
-				res = wait_for_completion_timeout(end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+
+				err = SSDFS_WAIT_COMPLETION(end);
+				if (unlikely(err)) {
 					SSDFS_ERR("blk2off init failed: "
 						  "err %d\n", err);
 					goto finish_add_block;
@@ -2289,13 +2276,10 @@ add_new_current_segment:
 								  extent);
 			if (err == -EAGAIN) {
 				struct completion *end;
-				unsigned long res;
-
 				end = &table->partial_init_end;
-				res = wait_for_completion_timeout(end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+
+				err = SSDFS_WAIT_COMPLETION(end);
+				if (unlikely(err)) {
 					SSDFS_ERR("blk2off init failed: "
 						  "err %d\n", err);
 					goto finish_add_extent;
@@ -3807,13 +3791,10 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 						&peb_index, NULL, &pos);
 	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 		struct completion *end;
-		unsigned long res;
-
 		end = &table->full_init_end;
-		res = wait_for_completion_timeout(end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -4038,13 +4019,10 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 							NULL, &pos);
 		if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
 			struct completion *end;
-			unsigned long res;
-
 			end = &table->full_init_end;
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				return err;
@@ -4918,7 +4896,6 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 	u32 upper_blk = start_off + blks_count;
 	struct completion *init_end;
 	struct ssdfs_offset_position pos = {0};
-	unsigned long res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4958,10 +4935,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		if (PTR_ERR(off_desc) == -EAGAIN) {
 			init_end = &blk2off_tbl->full_init_end;
 
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				return err;
@@ -5002,10 +4977,8 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 		if (err == -EAGAIN) {
 			init_end = &blk2off_tbl->full_init_end;
 
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				return err;

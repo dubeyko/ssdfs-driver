@@ -1234,7 +1234,6 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 	u16 logical_blk;
 	s64 sequence_id;
 	struct completion *end;
-	unsigned long res;
 	int err = 0;
 
 	blk2off_tbl = ssdfs_blk2off_table_create(fsi, capacity,
@@ -1252,10 +1251,9 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 							 &logical_blk);
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->partial_init_end;
-			res = wait_for_completion_timeout(end,
-							SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				goto destroy_blk2off_table;
@@ -1315,10 +1313,8 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->full_init_end;
 
-			res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				goto destroy_blk2off_table;
@@ -1364,10 +1360,8 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 		if (IS_ERR(ptr) && PTR_ERR(ptr) == -EAGAIN) {
 			end = &blk2off_tbl->full_init_end;
 
-			res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				goto destroy_blk2off_table;
@@ -1454,10 +1448,8 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->full_init_end;
 
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("blk2off init failed: "
 					  "err %d\n", err);
 				return err;
@@ -1516,25 +1508,30 @@ int ssdfs_define_current_mapping_leb(struct ssdfs_fs_info *fsi,
 				     u64 *cur_leb)
 {
 	struct completion *init_end;
+	u64 seg_id;
 	u64 end_leb;
 	int err;
 
 try_next_range:
-	if (SSDFS_PEB2SEG(fsi, *cur_leb) >= fsi->nsegs) {
+	seg_id = ssdfs_get_seg_id_for_leb_id(fsi, *cur_leb);
+	if (seg_id >= U64_MAX) {
+		SSDFS_ERR("invalid seg_id for leb_id %llu\n",
+			  *cur_leb);
+		return -ERANGE;
+	}
+
+	if (seg_id >= fsi->nsegs) {
 		return -ENOENT;
 	}
 
 	err = ssdfs_maptbl_recommend_search_range(fsi, cur_leb,
 						  &end_leb, &init_end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
-			return -ERANGE;
+			return err;
 		}
 
 		err = ssdfs_maptbl_recommend_search_range(fsi, cur_leb,
@@ -1579,12 +1576,8 @@ try_next_leb:
 						SSDFS_MAPTBL_DATA_PEB_TYPE,
 						&pebr, &end);
 		if (err == -EAGAIN) {
-			unsigned long res;
-
-			res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -1626,8 +1619,8 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 	struct ssdfs_maptbl_peb_descriptor *ptr2;
 	u8 peb_type = SSDFS_MAPTBL_DATA_PEB_TYPE;
 	u64 cur_leb = 0;
+	u64 seg_id = U64_MAX;
 	int i;
-	unsigned long res;
 	int err;
 
 	for (i = 0; i < env->mapping_table.add_migrations_per_iteration; i++) {
@@ -1636,10 +1629,8 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 							   peb_type, &pebr,
 							   &init_end);
 			if (err == -EAGAIN) {
-				res = wait_for_completion_timeout(init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
 					SSDFS_ERR("maptbl init failed: "
 						  "err %d\n", err);
 					return err;
@@ -1679,9 +1670,23 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 				continue;
 			} else
 				break;
-		} while (SSDFS_PEB2SEG(fsi, cur_leb) < fsi->nsegs);
 
-		if (SSDFS_PEB2SEG(fsi, cur_leb) >= fsi->nsegs) {
+			seg_id = ssdfs_get_seg_id_for_leb_id(fsi, cur_leb);
+			if (seg_id >= U64_MAX) {
+				SSDFS_ERR("invalid seg_id for leb_id %llu\n",
+					  cur_leb);
+				return -ERANGE;
+			}
+		} while (seg_id  < fsi->nsegs);
+
+		seg_id = ssdfs_get_seg_id_for_leb_id(fsi, cur_leb);
+		if (seg_id >= U64_MAX) {
+			SSDFS_ERR("invalid seg_id for leb_id %llu\n",
+				  cur_leb);
+			return -ERANGE;
+		}
+
+		if (seg_id >= fsi->nsegs) {
 			return -ENOENT;
 		}
 
@@ -1692,10 +1697,8 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 						SSDFS_MAPTBL_DIRTY_PEB_STATE,
 						&init_end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -1717,10 +1720,8 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 		err = ssdfs_maptbl_add_migration_peb(fsi, cur_leb, peb_type,
 						     &pebr, &init_end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -1755,19 +1756,16 @@ int ssdfs_do_finish_migration_testing(struct ssdfs_fs_info *fsi,
 	u32 count = env->mapping_table.exclude_migrations_per_iteration;
 	u64 cur_leb = 0;
 	int i;
-	unsigned long res;
 	int err;
 
 	for (i = 0; i < count; i++) {
-		while (SSDFS_PEB2SEG(fsi, cur_leb) < fsi->nsegs) {
+		while (SSDFS_LEB2SEG(fsi, cur_leb) < fsi->nsegs) {
 			err = ssdfs_maptbl_convert_leb2peb(fsi, cur_leb,
 							   peb_type, &pebr,
 							   &init_end);
 			if (err == -EAGAIN) {
-				res = wait_for_completion_timeout(init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
 					SSDFS_ERR("maptbl init failed: "
 						  "err %d\n", err);
 					return err;
@@ -1811,7 +1809,7 @@ int ssdfs_do_finish_migration_testing(struct ssdfs_fs_info *fsi,
 		};
 
 finish_search:
-		if (SSDFS_PEB2SEG(fsi, cur_leb) >= fsi->nsegs) {
+		if (SSDFS_LEB2SEG(fsi, cur_leb) >= fsi->nsegs) {
 			return -ENOENT;
 		}
 
@@ -1823,10 +1821,8 @@ finish_search:
 							 U64_MAX, U64_MAX,
 							 &init_end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -1863,7 +1859,6 @@ int ssdfs_do_check_leb2peb_mapping(struct ssdfs_fs_info *fsi,
 			env->mapping_table.peb_mappings_per_iteration;
 	u64 calculated = 0;
 	u64 cur_leb = 0;
-	unsigned long res;
 	int err;
 
 	do {
@@ -1871,10 +1866,8 @@ int ssdfs_do_check_leb2peb_mapping(struct ssdfs_fs_info *fsi,
 						   peb_type, &pebr,
 						   &init_end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("maptbl init failed: "
 					  "err %d\n", err);
 				return err;
@@ -1902,10 +1895,8 @@ int ssdfs_do_check_leb2peb_mapping(struct ssdfs_fs_info *fsi,
 						SSDFS_MAPTBL_DIRTY_PEB_STATE,
 						&init_end);
 			if (err == -EAGAIN) {
-				res = wait_for_completion_timeout(init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
 					SSDFS_ERR("maptbl init failed: "
 						  "err %d\n", err);
 					return err;
@@ -1931,10 +1922,8 @@ int ssdfs_do_check_leb2peb_mapping(struct ssdfs_fs_info *fsi,
 								   peb_type,
 								   &init_end);
 			if (err == -EAGAIN) {
-				res = wait_for_completion_timeout(init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
 					SSDFS_ERR("maptbl init failed: "
 						  "err %d\n", err);
 					return err;
@@ -1960,7 +1949,7 @@ int ssdfs_do_check_leb2peb_mapping(struct ssdfs_fs_info *fsi,
 
 check_next_leb:
 		cur_leb++;
-	} while (SSDFS_PEB2SEG(fsi, cur_leb) < fsi->nsegs);
+	} while (SSDFS_LEB2SEG(fsi, cur_leb) < fsi->nsegs);
 
 	if (calculated != count) {
 		SSDFS_ERR("calculated %llu != count %llu\n",
@@ -2052,7 +2041,6 @@ int ssdfs_do_segment_using_testing(struct ssdfs_fs_info *fsi,
 	u64 found_seg;
 	int check_state;
 	struct completion *init_end;
-	unsigned long rest;
 	int res = 0;
 	u32 i;
 	int err;
@@ -2083,10 +2071,8 @@ int ssdfs_do_segment_using_testing(struct ssdfs_fs_info *fsi,
 				return -ERANGE;
 			}
 		} else if (res == -EAGAIN) {
-			rest = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (rest == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
 				return err;
@@ -2163,8 +2149,6 @@ int ssdfs_do_segment_state_testing(struct ssdfs_fs_info *fsi,
 	int seg_state = SSDFS_SEG_STATE_MAX;
 	bool is_expected_state;
 	struct completion *init_end;
-	unsigned long rest;
-	int res;
 	u32 i;
 	int err;
 
@@ -2177,10 +2161,8 @@ int ssdfs_do_segment_state_testing(struct ssdfs_fs_info *fsi,
 			seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
 							    cur_seg, &init_end);
 			if (seg_state == -EAGAIN) {
-				rest = wait_for_completion_timeout(init_end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (rest == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
 					SSDFS_ERR("segbmap init failed: "
 						  "err %d\n", err);
 					return err;
@@ -2213,10 +2195,8 @@ fail_define_seg_state:
 		err = ssdfs_segbmap_change_state(fsi->segbmap, cur_seg,
 						 new_state, &init_end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
 				return err;
@@ -2296,7 +2276,6 @@ int ssdfs_check_segment_bitmap_testing(struct ssdfs_fs_info *fsi,
 	u64 nsegs;
 	int seg_state = SSDFS_SEG_STATE_MAX;
 	struct completion *init_end;
-	unsigned long rest;
 	u64 clean_segs = 0;
 	u64 using_segs = 0;
 	u64 used_segs = 0;
@@ -2313,10 +2292,8 @@ int ssdfs_check_segment_bitmap_testing(struct ssdfs_fs_info *fsi,
 		seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
 						    cur_seg, &init_end);
 		if (seg_state == -EAGAIN) {
-			rest = wait_for_completion_timeout(init_end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (rest == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
 				return err;

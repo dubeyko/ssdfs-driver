@@ -455,15 +455,10 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 						&peb_index, NULL,
 						&pos);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
+		struct completion *end = &table->full_init_end;
 
-		end = &table->full_init_end;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -578,15 +573,10 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 						&peb_index, NULL,
 						&pos);
 	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
-		struct completion *end;
-		unsigned long res;
+		struct completion *end = &table->full_init_end;
 
-		end = &table->full_init_end;
-
-		res = wait_for_completion_timeout(end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
 				  "err %d\n", err);
 			return err;
@@ -789,17 +779,16 @@ int ssdfs_gc_find_next_seg_id(struct ssdfs_fs_info *fsi,
 	struct ssdfs_segment_bmap *segbmap;
 	struct completion *init_end;
 	int res;
-	unsigned long rest;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segbmap || !seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, start_seg_id %llu, max_seg_id %llu, "
 		  "seg_type %#x, type_mask %#x\n",
 		  fsi, start_seg_id, max_seg_id,
 		  seg_type, type_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = fsi->segbmap;
 	*seg_id = U64_MAX;
@@ -839,10 +828,8 @@ check_segment_state:
 			  "seg_id %llu, state %#x\n",
 			  *seg_id, res);
 	} else if (res == -EAGAIN) {
-		rest = wait_for_completion_timeout(init_end,
-					SSDFS_DEFAULT_TIMEOUT);
-		if (rest == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("segbmap init failed: "
 				  "err %d\n", err);
 			return err;
@@ -906,21 +893,17 @@ int ssdfs_gc_convert_leb2peb(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, leb_id %llu, pebr %p\n",
 		  fsi, leb_id, pebr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
 					   peb_type, pebr,
 					   &init_end);
 	if (err == -EAGAIN) {
-		unsigned long res;
-
-		res = wait_for_completion_timeout(init_end,
-						  SSDFS_DEFAULT_TIMEOUT);
-		if (res == 0) {
-			err = -ERANGE;
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
 			SSDFS_ERR("maptbl init failed: "
 				  "err %d\n", err);
 			return err;
@@ -1723,7 +1706,6 @@ int ssdfs_generic_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 	u64 max_seg_id;
 	u64 seg_id_step = SSDFS_GC_DEFAULT_SEARCH_STEP;
 	u64 nsegs;
-	u64 leb_id;
 	u64 cur_leb_id;
 	u32 lebs_per_segment;
 	int gc_strategy;
@@ -1799,11 +1781,18 @@ repeat:
 		if (kthread_should_stop())
 			goto finish_seg_processing;
 
-		leb_id = seg_id * lebs_per_segment;
 		i = 0;
 
 		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = leb_id + i;
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+				continue;
+			}
 
 			if (kthread_should_stop())
 				goto finish_seg_processing;
@@ -1909,7 +1898,15 @@ try_create_seg_object:
 
 try_collect_garbage:
 		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = leb_id + i;
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+				continue;
+			}
 
 			if (kthread_should_stop()) {
 				ssdfs_segment_put_object(si);
@@ -2173,21 +2170,19 @@ int __ssdfs_dirty_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 	u64 seg_id = 0;
 	u64 max_seg_id;
 	u64 nsegs;
-	u64 leb_id;
 	u64 cur_leb_id;
 	u32 lebs_per_segment;
 	int mandatory_ops = SSDFS_GC_DIRTY_SEG_DEFAULT_OPS;
 	u32 i;
-	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: thread_type %#x, "
 		  "seg_state %#x, seg_state_mask %#x\n",
 		  thread_type, seg_state, seg_state_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	segbmap = fsi->segbmap;
 	wq = &fsi->gc_wait_queue[thread_type];
@@ -2232,11 +2227,18 @@ repeat:
 		if (!should_continue_processing(mandatory_ops))
 			goto finish_seg_processing;
 
-		leb_id = seg_id * lebs_per_segment;
 		i = 0;
 
 		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = leb_id + i;
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+				continue;
+			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
@@ -2307,7 +2309,15 @@ try_to_find_seg_object:
 
 try_set_pre_erase_state:
 		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = leb_id + i;
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+				continue;
+			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
@@ -2340,10 +2350,8 @@ try_set_pre_erase_state:
 								   pebd->type,
 								   &end);
 			if (err == -EAGAIN) {
-				res = wait_for_completion_timeout(end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(end);
+				if (unlikely(err)) {
 					SSDFS_ERR("maptbl init failed: "
 						  "err %d\n", err);
 					goto sleep_failed_gc_thread;
@@ -2364,7 +2372,7 @@ try_set_pre_erase_state:
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare pre-erase state: "
 					  "leb_id %llu, err %d\n",
-					  leb_id, err);
+					  cur_leb_id, err);
 				goto sleep_failed_gc_thread;
 			}
 		}
@@ -2372,10 +2380,8 @@ try_set_pre_erase_state:
 		err = ssdfs_segbmap_change_state(segbmap, seg_id,
 						 SSDFS_SEG_CLEAN, &end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
 				goto sleep_failed_gc_thread;
@@ -2439,11 +2445,9 @@ int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
 	u64 seg_id = 0;
 	u64 max_seg_id;
 	u64 nsegs;
-	u64 leb_id;
 	u64 cur_leb_id;
 	u32 lebs_per_segment;
 	u32 i;
-	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2479,11 +2483,18 @@ int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
 			  "seg_id %llu, seg_state %#x\n",
 			  seg_id, seg_state);
 
-		leb_id = seg_id * lebs_per_segment;
 		i = 0;
 
 		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = leb_id + i;
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+				continue;
+			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
@@ -2551,7 +2562,15 @@ try_to_find_seg_object:
 
 try_set_pre_erase_state:
 		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = leb_id + i;
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+				continue;
+			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
@@ -2584,10 +2603,8 @@ try_set_pre_erase_state:
 								   pebd->type,
 								   &end);
 			if (err == -EAGAIN) {
-				res = wait_for_completion_timeout(end,
-							SSDFS_DEFAULT_TIMEOUT);
-				if (res == 0) {
-					err = -ERANGE;
+				err = SSDFS_WAIT_COMPLETION(end);
+				if (unlikely(err)) {
 					SSDFS_ERR("maptbl init failed: "
 						  "err %d\n", err);
 					return err;
@@ -2608,7 +2625,7 @@ try_set_pre_erase_state:
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare pre-erase state: "
 					  "leb_id %llu, err %d\n",
-					  leb_id, err);
+					  cur_leb_id, err);
 				return err;
 			}
 		}
@@ -2616,10 +2633,8 @@ try_set_pre_erase_state:
 		err = ssdfs_segbmap_change_state(segbmap, seg_id,
 						 SSDFS_SEG_CLEAN, &end);
 		if (err == -EAGAIN) {
-			res = wait_for_completion_timeout(end,
-						SSDFS_DEFAULT_TIMEOUT);
-			if (res == 0) {
-				err = -ERANGE;
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
 				SSDFS_ERR("segbmap init failed: "
 					  "err %d\n", err);
 				return err;
@@ -2758,8 +2773,18 @@ int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type)
 	fsi->gc_thread[type].task = kthread_create(threadfn, fsi, fmt);
 	if (IS_ERR_OR_NULL(fsi->gc_thread[type].task)) {
 		err = PTR_ERR(fsi->gc_thread[type].task);
+		if (err == -EINTR) {
+			/*
+			 * Ignore this error.
+			 */
+		} else {
+			if (err == 0)
+				err = -ERANGE;
 		SSDFS_ERR("fail to start GC thread: "
-			  "thread_type %d\n", type);
+			  "thread_type %d, err %d\n",
+			  type, err);
+		}
+
 		return err;
 	}
 
@@ -2789,7 +2814,6 @@ int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type)
  */
 int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type)
 {
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2825,10 +2849,8 @@ int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type)
 
 	fsi->gc_thread[type].task = NULL;
 
-	res = wait_for_completion_timeout(&fsi->gc_thread[type].full_stop,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&fsi->gc_thread[type].full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}

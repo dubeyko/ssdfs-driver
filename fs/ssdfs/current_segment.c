@@ -507,7 +507,6 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		struct ssdfs_current_segment *object = NULL;
 		int seg_state, seg_type;
 		u16 log_pages;
-		u16 create_threads;
 
 		object = (struct ssdfs_current_segment *)(start_ptr + offset);
 		fsi->cur_segs->objects[i] = object;
@@ -548,13 +547,10 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 			BUG();
 		};
 
-		/* TODO: make final desicion later */
-		create_threads = SSDFS_CREATE_THREADS_DEFAULT;
-
 		si = __ssdfs_create_new_segment(fsi, seg,
 						seg_state, seg_type,
 						log_pages,
-						create_threads);
+						fsi->create_threads_per_seg);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 			if (err == -EINTR) {

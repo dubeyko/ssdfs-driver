@@ -147,6 +147,11 @@ bool ssdfs_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap)
 	return is_block_bmap_initialized(blk_bmap);
 }
 
+void ssdfs_set_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap)
+{
+	set_block_bmap_initialized(blk_bmap);
+}
+
 void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap)
 {
 	SSDFS_DBG("clear dirty state\n");

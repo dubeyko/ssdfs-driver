@@ -405,7 +405,6 @@ int ssdfs_shared_dict_start_thread(struct ssdfs_shared_dict_btree_info *tree)
 int ssdfs_shared_dict_stop_thread(struct ssdfs_shared_dict_btree_info *tree)
 {
 	struct ssdfs_name_requests_queue *ptr;
-	unsigned long res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -432,10 +431,8 @@ int ssdfs_shared_dict_stop_thread(struct ssdfs_shared_dict_btree_info *tree)
 	finish_wait(&tree->wait_queue, &ptr->thread.wait);
 	ptr->thread.task = NULL;
 
-	res = wait_for_completion_timeout(&ptr->thread.full_stop,
-					  SSDFS_DEFAULT_TIMEOUT);
-	if (res == 0) {
-		err = -ERANGE;
+	err = SSDFS_WAIT_COMPLETION(&ptr->thread.full_stop);
+	if (unlikely(err)) {
 		SSDFS_ERR("stop thread fails: err %d\n", err);
 		return err;
 	}
