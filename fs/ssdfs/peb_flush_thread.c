@@ -4,17 +4,23 @@
  *
  * fs/ssdfs/peb_flush_thread.c - flush thread functionality.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
+ *                  Cong Wang
  */
 
 #include <linux/pagemap.h>
@@ -294,9 +300,11 @@ int __ssdfs_peb_estimate_blk2off_bytes(u32 items_number, u32 pebs_per_seg)
 	reserved_bytes += pot_tbl_hdr_size;
 	reserved_bytes += (phys_off_desc_size * items_number) * pebs_per_seg;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_number %u, pebs_per_seg %u, "
 		  "reserved_bytes %d\n",
 		  items_number, pebs_per_seg, reserved_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return reserved_bytes;
 }
@@ -317,10 +325,12 @@ int ssdfs_peb_estimate_blk2off_bytes(u16 log_pages, u32 pebs_per_seg,
 	items_number = min_t(u32, log_pages - (log_start_page % log_pages),
 				pages_per_peb - log_start_page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_number %u, log_pages %u, "
 		  "pages_per_peb %u, log_start_page %u\n",
 		  items_number, log_pages,
 		  pages_per_peb, log_start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_peb_estimate_blk2off_bytes(items_number, pebs_per_seg);
 }
@@ -339,8 +349,10 @@ int __ssdfs_peb_estimate_blk_desc_tbl_bytes(u32 items_number)
 	reserved_bytes += blk_desc_tbl_hdr_size;
 	reserved_bytes += blk_desc_size * items_number;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_number %u, reserved_bytes %d\n",
 		  items_number, reserved_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return reserved_bytes;
 }
@@ -365,12 +377,14 @@ int ssdfs_peb_estimate_blk_desc_tbl_bytes(u16 log_pages,
 
 	reserved_bytes = __ssdfs_peb_estimate_blk_desc_tbl_bytes(items_number);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log_pages %u, log_start_page %u, "
 		  "pages_per_peb %u, items_number %u, "
 		  "reserved_bytes %d\n",
 		  log_pages, log_start_page,
 		  pages_per_peb, items_number,
 		  reserved_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return reserved_bytes;
 }
@@ -534,11 +548,13 @@ u32 ssdfs_peb_log_footer_reserved_bytes(struct ssdfs_peb_info *pebi)
 	reserved_bytes /= page_size;
 	reserved_bytes *= page_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("block_bitmap %d, blk2off_table %d, "
 		  "reserved_bytes %u\n",
 		  atomic_read(&pebi->reserved_bytes.blk_bmap),
 		  atomic_read(&pebi->reserved_bytes.blk2off_tbl),
 		  reserved_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return reserved_bytes;
 }
@@ -560,7 +576,9 @@ u32 ssdfs_peb_log_footer_metapages(struct ssdfs_peb_info *pebi)
 
 	BUG_ON(reserved_pages >= U16_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_pages %u\n", reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return reserved_pages;
 }
@@ -590,24 +608,30 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 		   ssdfs_peb_blk_bmap_reserved_bytes(pebi));
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_bmap);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi->reserved_bytes.blk_bmap %d\n",
 		  atomic_read(&pebi->reserved_bytes.blk_bmap));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	/* blk2off table */
 	atomic_set(&pebi->reserved_bytes.blk2off_tbl,
 		   ssdfs_peb_blk2off_reserved_bytes(pebi));
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk2off_tbl);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi->reserved_bytes.blk2off_tbl %d\n",
 		  atomic_read(&pebi->reserved_bytes.blk2off_tbl));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	/* block descriptor table */
 	offset = reserved_bytes;
 	blk_desc_reserved = ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi);
 	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, blk_desc_reserved);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi->reserved_bytes.blk_desc_tbl %d\n",
 		  atomic_read(&pebi->reserved_bytes.blk_desc_tbl));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
 
@@ -615,16 +639,22 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 	reserved_bytes /= page_size;
 	reserved_bytes *= page_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_bytes %u, offset %u\n",
 		  reserved_bytes, offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	reserved_bytes += ssdfs_peb_log_footer_reserved_bytes(pebi);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_bytes %u\n", reserved_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	reserved_pages = reserved_bytes / page_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_pages %u\n", reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	BUG_ON(reserved_pages >= U16_MAX);
 
@@ -656,8 +686,10 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 	int buf_size;
 	struct page *page;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb %llu, current_log.start_page %u\n",
 		  pebi->peb_id, pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	buf_size = atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
 
@@ -677,8 +709,10 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 
 	count = buf_size / blk_desc_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("buf_size %d, blk_desc_size %zu, count %zu\n",
 		  buf_size, blk_desc_size, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	area_pages = &pebi->current_log.area[SSDFS_LOG_BLK_DESC_AREA].array;
 
@@ -694,8 +728,10 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 	ssdfs_put_page(page);
 	ssdfs_unlock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	metadata->area.blk_desc.items_count = 0;
 	metadata->area.blk_desc.capacity = count;
@@ -751,6 +787,7 @@ u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi)
 
 	BUG_ON(reserved_pages >= U16_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_pages %u, reserved_bytes %u, "
 		  "blk_bmap_reserved_bytes %d, "
 		  "blk2off_reserved_bytes %d, "
@@ -759,6 +796,7 @@ u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi)
 		  ssdfs_peb_blk_bmap_reserved_bytes(pebi),
 		  ssdfs_peb_blk2off_reserved_bytes(pebi),
 		  ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return reserved_pages;
 }
@@ -794,10 +832,12 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 	reserved_pages = pebi->current_log.reserved_pages;
 	sequence_id = atomic_read(&pebi->current_log.sequence_id);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log_pages %u, free_data_pages %u, "
 		  "reserved_pages %u, sequence_id %d\n",
 		  log_pages, free_data_pages,
 		  reserved_pages, sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (free_data_pages == 0) {
 		if (sequence_id > 0)
@@ -811,8 +851,10 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 
 	min_partial_log_pages = ssdfs_peb_estimate_min_partial_log_pages(pebi);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("min_partial_log_pages %u, reserved_pages %u\n",
 		  min_partial_log_pages, reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (reserved_pages == 0) {
 		if (free_data_pages <= min_partial_log_pages) {
@@ -979,8 +1021,10 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 			 * to keep the data too then footer will be in
 			 * the log. Otherwise, footer will be absent.
 			 */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log_footer_pages %u, log->reserved_pages %u\n",
 				  log_footer_pages, log->reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			log->free_data_pages += log_footer_pages;
 		}
@@ -994,14 +1038,18 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 	}
 
 	if (log->free_data_pages < log->reserved_pages) {
+		err = -ENOSPC;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("log->free_data_pages %u < log->reserved_pages %u\n",
 			  log->free_data_pages, log->reserved_pages);
-		err = -ENOSPC;
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_log_create;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log_strategy %#x, free_data_pages %u, reserved_pages %u\n",
 		  log_strategy, log->free_data_pages, log->reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_segment_blk_bmap_reserve_metapages(&si->blk_bmap,
 							pebi->pebc,
@@ -1046,8 +1094,10 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 			/*
 			 * It needs to repeat the commit.
 			 */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("PEB %llu is dirty on log creation\n",
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			err = ssdfs_page_array_release_all_pages(area_pages);
 			if (unlikely(err)) {
@@ -1241,13 +1291,15 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			index_start++;
 			ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	} while (index_start < index_end);
 
 	if (index_start >= index_end) {
-		SSDFS_DBG("log doesn't need in growing\n");
+		SSDFS_DBG("log doesn't need to grow\n");
 		return 0;
 	}
 
@@ -1266,12 +1318,14 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	min_log_pages = ssdfs_peb_estimate_min_partial_log_pages(pebi);
 	footer_pages = ssdfs_peb_log_footer_metapages(pebi);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("min_log_pages %u, footer_pages %u, "
 		  "log_strategy %#x, free_data_pages %u, "
 		  "reserved_pages %u\n",
 		  min_log_pages, footer_pages,
 		  log_strategy, free_data_pages,
 		  reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (phys_pages <= free_data_pages) {
 		/*
@@ -1282,19 +1336,23 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		switch (log_strategy) {
 		case SSDFS_START_FULL_LOG:
 		case SSDFS_FINISH_FULL_LOG:
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
 				  phys_pages,
 				  pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 
 		case SSDFS_START_PARTIAL_LOG:
 			pebi->current_log.free_data_pages += footer_pages;
 			pebi->current_log.reserved_pages -= footer_pages;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("use footer page for data: "
 				  "free_data_pages %u, reserved_pages %u\n",
 				  pebi->current_log.free_data_pages,
 				  pebi->current_log.reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 			break;
 
 		case SSDFS_CONTINUE_PARTIAL_LOG:
@@ -1302,21 +1360,27 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			/* no free space available */
 
 		default:
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
 				  phys_pages,
 				  pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		}
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("new_page_count %u > free_data_pages %u\n",
 			  phys_pages,
 			  pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}
 
 	for (; index_start < index_end; index_start++) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_index %lu, current_log.free_data_pages %u\n",
 			  index_start, pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		page = ssdfs_page_array_grab_page(area_pages, index_start);
 		if (IS_ERR_OR_NULL(page)) {
@@ -1331,8 +1395,10 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		ssdfs_put_page(page);
 		ssdfs_unlock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	pebi->current_log.free_data_pages -= phys_pages;
@@ -1492,12 +1558,14 @@ int ssdfs_peb_store_fragment(struct ssdfs_fragment_source *from,
 	to->desc->type = from->fragment_type;
 	to->desc->flags = from->fragment_flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("offset %u, compr_size %u, "
 		  "uncompr_size %u, checksum %#x\n",
 		  to->desc->offset,
 		  to->desc->compr_size,
 		  to->desc->uncompr_size,
 		  le32_to_cpu(to->desc->checksum));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1597,9 +1665,11 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 
 	err = ssdfs_peb_store_fragment(from, &to);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to store data fragment: "
 			  "write_offset %u, dst_free_space %zu\n",
 			  write_offset, to.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto free_compr_buffer;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to store fragment: "
@@ -1683,8 +1753,10 @@ finish_copy:
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err)
 			goto free_compr_buffer;
@@ -1806,8 +1878,10 @@ finish_copy:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1915,9 +1989,11 @@ try_get_next_page:
 			if (page_off == 0)
 				goto finish_store_byte_stream;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try to get next page: "
 				  "write_offset %u, free_space %u\n",
 				  write_offset, rest);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			pebi->current_log.area[area_type].write_offset += rest;
 			goto try_get_next_page;
@@ -2080,8 +2156,10 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fragments %u, start_offset %u, data_bytes %u\n",
 		  fragments, stream->start_offset, stream->data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	start_page = stream->start_offset >> PAGE_SHIFT;
 
@@ -2106,7 +2184,9 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 	stream->write_offset = area->write_offset = metadata_offset;
 	area->write_offset += metadata_space;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u\n", area->write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (page_index = 0; page_index < fragments; page_index++) {
 		int i = start_page + page_index;
@@ -2140,10 +2220,12 @@ int ssdfs_peb_store_byte_stream(struct ssdfs_peb_info *pebi,
 		from.fragment_type = fragment_type;
 		from.fragment_flags = SSDFS_FRAGMENT_HAS_CSUM;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("from.start_offset %u, from.data_bytes %zu, "
 			  "page_index %d\n",
 			  from.start_offset, from.data_bytes,
 			  page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 try_get_next_page:
 		write_offset = area->write_offset;
@@ -2159,9 +2241,11 @@ try_get_next_page:
 			if (page_off == 0)
 				goto free_array;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try to get next page: "
 				  "write_offset %u, free_space %u\n",
 				  write_offset, rest);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			pebi->current_log.area[area_type].write_offset += rest;
 			goto try_get_next_page;
@@ -2188,15 +2272,19 @@ try_get_next_page:
 		written_bytes += from.data_bytes;
 		area->write_offset += le16_to_cpu(cur_desc.compr_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("written_bytes %u, write_offset %u\n",
 			  written_bytes, area->write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	stream->compr_bytes =
 		area->write_offset - (metadata_offset + metadata_space);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u, metadata_offset %u, metadata_space %u\n",
 		  area->write_offset, metadata_offset, metadata_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state_desc.cno = cpu_to_le64(cno);
 	state_desc.parent_snapshot = cpu_to_le64(parent_snapshot);
@@ -2234,6 +2322,7 @@ free_array:
 	if (err)
 		area->write_offset = metadata_offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, peb %llu, "
 		  "area_type %#x, fragment_type %#x, write_offset %u, "
 		  "stream->start_offset %u, stream->data_bytes %u\n",
@@ -2241,6 +2330,7 @@ free_array:
 		  area_type, fragment_type,
 		  pebi->current_log.area[area_type].write_offset,
 		  stream->start_offset, stream->data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -2264,9 +2354,9 @@ u32 ssdfs_area_free_space(struct ssdfs_peb_info *pebi, int area_type)
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("area_type %#x\n", area_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	write_offset = pebi->current_log.area[area_type].write_offset;
@@ -2317,16 +2407,18 @@ bool can_area_add_fragment(struct ssdfs_peb_info *pebi, int area_type,
 	BUG_ON(fragment_size == 0);
 	BUG_ON(area_type >= SSDFS_LOG_AREA_MAX);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("area_type %#x, fragment_size %u\n",
 		  area_type, fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	write_offset = pebi->current_log.area[area_type].write_offset;
 	free_space = ssdfs_area_free_space(pebi, area_type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u, free_space %u\n",
 		  write_offset, free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return fragment_size <= free_space;
 }
@@ -2376,8 +2468,10 @@ bool has_current_page_free_space(struct ssdfs_peb_info *pebi,
 	if (page_index < pages_count)
 		free_space += PAGE_SIZE - (write_offset % PAGE_SIZE);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u, free_space %u\n",
 		  write_offset, free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	is_space_enough = fragment_size <= free_space;
 
@@ -2390,8 +2484,10 @@ bool has_current_page_free_space(struct ssdfs_peb_info *pebi,
 		is_page_available = true;
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return is_space_enough && is_page_available;
@@ -2440,8 +2536,10 @@ ssdfs_peb_get_area_free_frag_desc(struct ssdfs_peb_info *pebi, int area_type)
 	table = &pebi->current_log.area[area_type].metadata.area.blk_desc.table;
 	vacant_item = le16_to_cpu(table->chain_hdr.fragments_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area_type %#x, vacant_item %u\n",
 		  area_type, vacant_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	BUG_ON(vacant_item > SSDFS_NEXT_BLK_TABLE_INDEX);
 	if (vacant_item == SSDFS_NEXT_BLK_TABLE_INDEX) {
@@ -2501,12 +2599,13 @@ ssdfs_peb_get_area_cur_frag_desc(struct ssdfs_peb_info *pebi, int area_type)
 
 	if (fragments_count > 0)
 		cur_item = fragments_count - 1;
-	else {
+	else
 		cur_item = 0;
-	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area_type %#x, cur_item %u\n",
 		  area_type, cur_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	BUG_ON(cur_item >= SSDFS_NEXT_BLK_TABLE_INDEX);
 
@@ -2568,9 +2667,11 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 		BUG();
 	};
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_offset %u, area_type %#x\n",
 		  pebi->current_log.area[area_type].metadata.reserved_offset,
 		  area_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	is_compressed = fsi->metadata_options.blk2off_tbl.flags &
@@ -2581,8 +2682,10 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 
 	fragments = le16_to_cpu(table->chain_hdr.fragments_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("table->chain_hdr.fragments_count %u\n",
 		  fragments);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (fragments < SSDFS_NEXT_BLK_TABLE_INDEX) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2684,8 +2787,10 @@ finish_copy:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -2740,9 +2845,11 @@ int ssdfs_peb_allocate_area_block_table(struct ssdfs_peb_info *pebi,
 		BUG();
 	};
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u, area_type %#x\n",
 		  pebi->current_log.area[area_type].write_offset,
 		  area_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 	is_compressed = fsi->metadata_options.blk2off_tbl.flags &
@@ -2813,20 +2920,21 @@ u32 ssdfs_peb_estimate_data_fragment_size(u32 uncompr_bytes)
 	u32 estimated_compr_size;
 
 	/*
-	 * TODO: Research function
-	 * Maybe we don't need in this function. But, anyway, we can try
-	 * to estimate potential size of data fragment. There are several
-	 * alternatives: (1) overestimate size; (2) underestimate size;
+	 * There are several alternatives:
+	 * (1) overestimate size;
+	 * (2) underestimate size;
 	 * (3) try to predict possible size by means of some formula.
 	 *
-	 * Currently, I try to estimate size as 65% from uncompressed state
+	 * Currently, try to estimate size as 65% from uncompressed state
 	 * for compression case.
 	 */
 
 	estimated_compr_size = (uncompr_bytes * 65) / 100;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("uncompr_bytes %u, estimated_compr_size %u\n",
 		  uncompr_bytes, estimated_compr_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return estimated_compr_size;
 }
@@ -2843,8 +2951,10 @@ u32 ssdfs_request_rest_bytes(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi = pebi->pebc->parent_si->fsi;
 	u32 processed_bytes = req->result.processed_blks * fsi->pagesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("processed_bytes %u, req->extent.data_bytes %u\n",
 		  processed_bytes, req->extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (processed_bytes > req->extent.data_bytes)
 		return 0;
@@ -2936,9 +3046,11 @@ int ssdfs_peb_define_area_offset(struct ssdfs_peb_info *pebi,
 	off->log_area = area_type;
 	off->byte_offset = p->write_offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("off->peb_index %u, off->peb_migration_id %u, "
 		  "off->log_area %#x, off->byte_offset %u\n",
 		  pebi->peb_index, id, area_type, p->write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -3102,11 +3214,13 @@ int ssdfs_peb_store_fragment_in_area(struct ssdfs_peb_info *pebi,
 					  req->extent.parent_snapshot);
 
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add byte stream: "
 			  "start_offset %u, data_bytes %u, area_type %#x, "
 			  "cno %llu, parent_snapshot %llu\n",
 			  byte_stream.start_offset, data_bytes, area_type,
 			  req->extent.cno, req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add byte stream: "
@@ -3294,11 +3408,13 @@ int ssdfs_peb_store_in_main_area(struct ssdfs_peb_info *pebi,
 						req->extent.cno,
 						req->extent.parent_snapshot);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add byte stream: "
 			  "start_offset %u, data_bytes %u, area_type %#x, "
 			  "cno %llu, parent_snapshot %llu\n",
 			  start_offset, data_bytes, area_type,
 			  req->extent.cno, req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add byte stream: "
@@ -3331,8 +3447,10 @@ int ssdfs_peb_store_in_main_area(struct ssdfs_peb_info *pebi,
 static inline
 bool is_ssdfs_block_full(u32 pagesize, u32 data_size)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pagesize %u, data_size %u\n",
 		  pagesize, data_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (pagesize > PAGE_SIZE)
 		return data_size >= pagesize;
@@ -3463,6 +3581,7 @@ int ssdfs_peb_define_area_type(struct ssdfs_peb_info *pebi,
 
 		if (err == -ENOENT) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to prepare user data diff: "
 				  "seg %llu, peb %llu, ino %llu, "
 				  "processed_blks %d, bytes_count %u, "
@@ -3473,6 +3592,7 @@ int ssdfs_peb_define_area_type(struct ssdfs_peb_info *pebi,
 				  req->result.processed_blks,
 				  bytes_count, start_page,
 				  page_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			can_be_compressed =
 				can_ssdfs_pagevec_be_compressed(start_page,
@@ -3641,14 +3761,18 @@ int ssdfs_peb_add_block_into_data_area(struct ssdfs_peb_info *pebi,
 		}
 
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to add page into current log: "
 				  "index %d, portion_size %u\n",
 				  page_index, portion_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to add page into current log: "
 				  "index %d, portion_size %u\n",
 				  page_index, portion_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EAGAIN;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add page: "
@@ -3660,7 +3784,9 @@ int ssdfs_peb_add_block_into_data_area(struct ssdfs_peb_info *pebi,
 		*written_bytes += portion_size;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("written_bytes %u\n", *written_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -3732,8 +3858,10 @@ bool need_reserve_free_space(struct ssdfs_peb_info *pebi,
 	metadata = &pebi->current_log.area[area_type].metadata;
 	write_offset = metadata->area.blk_desc.flush_buf.write_offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u, free_space %u\n",
 		  write_offset, free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	is_space_enough = (write_offset / 2) < free_space;
 
@@ -3748,8 +3876,10 @@ bool need_reserve_free_space(struct ssdfs_peb_info *pebi,
 		is_page_available = true;
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return is_space_enough && is_page_available;
@@ -3806,11 +3936,15 @@ int ssdfs_peb_reserve_block_descriptor(struct ssdfs_peb_info *pebi,
 	capacity = metadata->area.blk_desc.capacity;
 
 	if (items_count > capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("items_count %d > capacity %d\n",
 			  items_count, capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("items_count %d, capacity %d\n",
 			  items_count, capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
@@ -4103,8 +4237,10 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 	*write_offset = ssdfs_peb_correct_area_write_offset(area->write_offset,
 							    blk_desc_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area->write_offset %u, write_offset %u\n",
 		  area->write_offset, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
 		buf = &metadata->area.blk_desc.flush_buf;
@@ -4152,17 +4288,22 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 
 		buf->write_offset += blk_desc_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("buf->write_offset %u, buf->size %zu\n",
 			  buf->write_offset, buf->size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (buf->write_offset == buf->size) {
 			err = ssdfs_peb_realloc_write_buffer(buf);
 			if (err == -E2BIG) {
 				err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("buffer is full: "
 					  "write_offset %u, size %zu\n",
 					  buf->write_offset,
 					  buf->size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 				is_buffer_full = true;
 			} else if (unlikely(err)) {
@@ -4174,10 +4315,12 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 	} else {
 		page_index = *write_offset / PAGE_SIZE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("area->write_offset %u, blk_desc_size %zu, "
 			  "write_offset %u, page_index %lu\n",
 			  area->write_offset, blk_desc_size,
 			  *write_offset, page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		page = ssdfs_page_array_grab_page(&area->array, page_index);
 		if (IS_ERR_OR_NULL(page)) {
@@ -4212,8 +4355,10 @@ finish_copy:
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err))
 			return err;
@@ -4239,6 +4384,7 @@ finish_copy:
 	off->log_area = area_type;
 	off->byte_offset = *write_offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, "
 		  "peb_index %u, peb_page %u, "
 		  "log_area %#x, byte_offset %u\n",
@@ -4247,11 +4393,14 @@ finish_copy:
 		  le16_to_cpu(off->peb_page),
 		  off->log_area,
 		  le32_to_cpu(off->byte_offset));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	area->write_offset = *write_offset + blk_desc_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area->write_offset %u, write_offset %u\n",
 		  area->write_offset, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_buffer_full)
 		return -E2BIG;
@@ -4587,8 +4736,10 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 	old_offset = le32_to_cpu(meta_desc->offset);
 	bytes_count = le16_to_cpu(meta_desc->uncompr_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("old_offset %u, bytes_count %u\n",
 		  old_offset, bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_prepare_block_descriptor(pebi, req, data_off,
 						 blk_desc);
@@ -4619,8 +4770,10 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 
 	bytes_count += blk_desc_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("bytes_count %u\n",
 		  bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err == -E2BIG) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4703,10 +4856,12 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 			err = ssdfs_peb_allocate_area_block_table(pebi,
 								  area_type);
 			if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("log is full, "
 					  "unable to add next fragments chain: "
 					  "area %#x\n",
 					  area_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return err;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to add next fragments chain: "
@@ -4883,10 +5038,12 @@ int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_allocate_area_block_table(pebi,
 							  area_type);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log is full, "
 				  "unable to add next fragments chain: "
 				  "area %#x\n",
 				  area_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add next fragments chain: "
@@ -4929,6 +5086,7 @@ int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 		meta_desc->compr_size = cpu_to_le16((u16)bytes_count);
 		meta_desc->uncompr_size = cpu_to_le16((u16)bytes_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("old_offset %u, write_offset %u, bytes_count %u\n",
 			  old_offset, write_offset, bytes_count);
 		SSDFS_DBG("fragments_count %u, fragment (offset %u, "
@@ -4938,6 +5096,7 @@ int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 			  le16_to_cpu(meta_desc->compr_size),
 			  meta_desc->sequence_id,
 			  meta_desc->type);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		meta_desc = ssdfs_peb_get_area_free_frag_desc(pebi, area_type);
 		if (IS_ERR(meta_desc)) {
@@ -4966,6 +5125,7 @@ int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 		meta_desc->type = SSDFS_DATA_BLK_DESC;
 		meta_desc->flags = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("old_offset %u, write_offset %u, bytes_count %u\n",
 			  old_offset, write_offset, bytes_count);
 		SSDFS_DBG("fragments_count %u, fragment (offset %u, "
@@ -4975,6 +5135,7 @@ int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 			  le16_to_cpu(meta_desc->compr_size),
 			  meta_desc->sequence_id,
 			  meta_desc->type);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	le32_add_cpu(&chain_hdr->compr_bytes, (u32)blk_desc_size);
@@ -5219,10 +5380,12 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 
 	err = ssdfs_peb_reserve_block_descriptor(pebi, req);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, logical_block,
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve block descriptor: "
@@ -5237,10 +5400,12 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 						 &data_off,
 						 &written_bytes);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, logical_block,
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add block: "
@@ -5279,8 +5444,10 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 
 	data_off.peb_page = (u16)range.start;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("logical_blk %u, peb_page %u\n",
 		  logical_block, range.start);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_BLK_DESC_INIT(&blk_desc);
 
@@ -5365,11 +5532,13 @@ int ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 		SSDFS_DBG("block bitmap hasn't free space\n");
 		return err;
 	} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to create block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id,
 			  req->place.start.blk_index,
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to create block: "
@@ -5448,10 +5617,12 @@ int ssdfs_peb_create_extent(struct ssdfs_peb_info *pebi,
 			SSDFS_DBG("block bitmap hasn't free space\n");
 			return err;
 		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try again to create block: "
 				  "seg %llu, logical_block %u, peb %llu\n",
 				  req->place.start.seg_id, logical_block,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create block: "
@@ -5592,8 +5763,10 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 		logical_block += i;
 		logical_offset += i;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical_blk %u, peb_page %u\n",
 			  logical_block, range.start + i);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_peb_store_block_descriptor_offset(pebi,
 							(u32)logical_offset,
@@ -5669,7 +5842,6 @@ int ssdfs_peb_pre_allocate_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
 	BUG_ON(req->extent.data_bytes > pebi->pebc->parent_si->fsi->pagesize);
 	BUG_ON(req->result.processed_blks > 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
 		  "logical_block %u, data_bytes %u, cno %llu, "
@@ -5679,17 +5851,20 @@ int ssdfs_peb_pre_allocate_block(struct ssdfs_peb_info *pebi,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot,
 		  req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = __ssdfs_peb_pre_allocate_extent(pebi, req);
 	if (err == -ENOSPC) {
 		SSDFS_DBG("block bitmap hasn't free space\n");
 		return err;
 	} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to pre-allocate block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id,
 			  req->place.start.blk_index,
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-allocate block: "
@@ -5778,11 +5953,13 @@ int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 		SSDFS_DBG("block bitmap hasn't free space\n");
 		return err;
 	} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to pre-allocate extent: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id,
 			  req->place.start.blk_index,
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-allocate extent: "
@@ -5864,9 +6041,11 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 			SSDFS_DBG("block bitmap hasn't free space\n");
 			return err;
 		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try again to create block: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -5905,9 +6084,11 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 			SSDFS_DBG("block bitmap hasn't free space\n");
 			return err;
 		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try again to create extent: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -5936,9 +6117,11 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 			SSDFS_DBG("block bitmap hasn't free space\n");
 			return err;
 		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try again to migrate block: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -5967,9 +6150,11 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 			SSDFS_DBG("block bitmap hasn't free space\n");
 			return err;
 		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try again to migrate extent: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -6014,8 +6199,10 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 			SSDFS_ERR("pending %u < processed_blks %d\n",
 				  pending, processed_blks);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("seg %llu, pending %u, processed_blks %d\n",
 				  si->seg_id, pending, processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 
@@ -6063,6 +6250,7 @@ int ssdfs_peb_read_from_offset(struct ssdfs_peb_info *pebi,
 	log_start_page = le16_to_cpu(off->blk_state.log_start_page);
 	byte_offset = le32_to_cpu(off->blk_state.byte_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, peb %llu, "
 		  "log_start_page %u, log_area %#x, "
 		  "peb_migration_id %u, byte_offset %u, "
@@ -6071,6 +6259,7 @@ int ssdfs_peb_read_from_offset(struct ssdfs_peb_info *pebi,
 		  log_start_page, off->blk_state.log_area,
 		  off->blk_state.peb_migration_id,
 		  byte_offset, buf, buf_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	log_index = log_start_page / pebi->log_pages;
 
@@ -6251,8 +6440,10 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 		if (req->result.pvec.pages[cur_index] == NULL) {
 			req->result.processed_blks++;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("block %u hasn't diff\n",
 				  blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_update_block;
 		}
 	}
@@ -6301,8 +6492,10 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			ssdfs_requests_queue_add_head(&pebi->pebc->update_rq,
 							req);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("range: (start %u, len %u)\n",
 				  range.start, range.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (is_ssdfs_peb_containing_user_data(pebi->pebc)) {
 				ssdfs_account_updated_user_data_pages(fsi,
@@ -6359,9 +6552,11 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 	case SSDFS_LBLOCK_UNDER_COMMIT:
 		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to update block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, blk, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	default:
@@ -6380,19 +6575,23 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		/* logical block is not migrating */
 		err = 0;
 	} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("migrating block has been updated in buffer: "
 			  "seg %llu, peb %llu, logical_block %u\n",
 			  req->place.start.seg_id, pebi->peb_id,
 			  blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	} else if (unlikely(err))
 		return err;
 
 	err = ssdfs_peb_reserve_block_descriptor(pebi, req);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, blk, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve block descriptor: "
@@ -6406,9 +6605,11 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 						 &data_off,
 						 &written_bytes);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, blk, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add block: "
@@ -6420,8 +6621,10 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	range.start = le16_to_cpu(blk_desc_off->page_desc.peb_page);
 	range.len = (written_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("written_bytes %u, range (start %u, len %u)\n",
 		  written_bytes, range.start, range.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (req->private.class == SSDFS_PEB_DIFF_ON_WRITE_REQ)
 		range_state = SSDFS_BLK_VALID;
@@ -6430,8 +6633,10 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	else
 		range_state = SSDFS_BLK_PRE_ALLOCATED;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("logical_blk %u, peb_page %u\n",
 		  blk, range.start);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_segment_blk_bmap_update_range(seg_blkbmap, pebi->pebc,
 				blk_desc_off->blk_state.peb_migration_id,
@@ -6529,10 +6734,12 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_block %u, "
 		  "migration_state %#x\n",
 		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
 		  req->place.start.blk_index, migration_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_ssdfs_logical_block_migrating(migration_state)) {
 		err = ssdfs_blk2off_table_set_block_commit(table, blk,
@@ -6548,12 +6755,14 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	req->result.processed_blks += range.len;
 
 finish_update_block:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finish update block: "
 		  "ino %llu, seg %llu, peb %llu, logical_block %u, "
 		  "req->result.processed_blks %d\n",
 		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
 		  req->place.start.blk_index,
 		  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6697,6 +6906,7 @@ int ssdfs_extract_left_extent(struct ssdfs_segment_request *req,
 	}
 
 	if (req->place.start.blk_index == start_blk) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("no extent from the left: "
 			  "request (seg_id %llu, logical_blk %u, len %u), "
 			  "migration (seg_id %llu, logical_blk %u, len %u)\n",
@@ -6704,6 +6914,7 @@ int ssdfs_extract_left_extent(struct ssdfs_segment_request *req,
 			  req->place.start.blk_index,
 			  req->place.len,
 			  seg_id, start_blk, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -6792,6 +7003,7 @@ int ssdfs_extract_right_extent(struct ssdfs_segment_request *req,
 	}
 
 	if (upper_bound1 == upper_bound2) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("no extent from the right: "
 			  "request (seg_id %llu, logical_blk %u, len %u), "
 			  "migration (seg_id %llu, logical_blk %u, len %u)\n",
@@ -6799,6 +7011,7 @@ int ssdfs_extract_right_extent(struct ssdfs_segment_request *req,
 			  req->place.start.blk_index,
 			  req->place.len,
 			  seg_id, start_blk, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -6895,10 +7108,12 @@ int __ssdfs_zone_issue_move_request(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_copy_page(pebi->pebc, logical_blk, req);
 		if (err == -EAGAIN) {
 			req->place.len = req->result.processed_blks;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to copy the whole range: "
 				  "seg %llu, logical_blk %u, len %u\n",
 				  pebi->pebc->parent_si->seg_id,
 				  logical_blk, req->place.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy page: "
@@ -7741,18 +7956,22 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 
 		err = __ssdfs_peb_update_block(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to update block: "
 				  "seg %llu, logical_block %u, "
 				  "peb %llu\n",
 				  req->place.start.seg_id, blk,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("need to migrate base state for diff: "
 				  "seg %llu, logical_block %u, "
 				  "peb %llu\n",
 				  req->place.start.seg_id, blk,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to update block: "
@@ -7907,6 +8126,7 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 				((u64)processed_blks * fsi->pagesize);
 	logical_offset /= fsi->pagesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, peb %llu, logical_block %u, "
 		  "logical_offset %llu, "
 		  "processed_blks %d\n",
@@ -7914,7 +8134,6 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 		  logical_block, logical_offset,
 		  processed_blks);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (req->extent.logical_offset >= U64_MAX) {
 		SSDFS_ERR("seg %llu, peb %llu, logical_block %u, "
 			  "logical_offset %llu, "
@@ -7961,21 +8180,24 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 	}
 
 	if (migration_state == SSDFS_LBLOCK_UNDER_COMMIT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, logical_block,
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EAGAIN;
 	}
 
 	range.start = le16_to_cpu(blk_desc_off->page_desc.peb_page);
 	range.len = len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("logical_blk %u, peb_page %u\n",
 		  logical_block, range.start);
-
 	SSDFS_DBG("range (start %u, len %u)\n",
 		  range.start, range.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	range_state = SSDFS_BLK_PRE_ALLOCATED;
 
@@ -8073,9 +8295,11 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_UPDATE_PRE_ALLOC_BLOCK:
 		err = ssdfs_peb_update_block(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to update block: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8094,9 +8318,11 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_UPDATE_PRE_ALLOC_EXTENT:
 		err = ssdfs_peb_update_extent(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to update block: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8114,15 +8340,19 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_BTREE_NODE_DIFF:
 		err = ssdfs_peb_update_extent(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to update extent: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("need to migrate base state for diff: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8140,9 +8370,11 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_USER_DATA_DIFF:
 		err = ssdfs_peb_update_block(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to update block: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8166,10 +8398,12 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_MIGRATE_RANGE:
 		err = ssdfs_peb_update_extent(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to migrate extent: "
 				  "seg %llu, peb %llu\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8187,10 +8421,12 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_MIGRATE_PRE_ALLOC_PAGE:
 		err = ssdfs_peb_migrate_pre_allocated_block(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to migrate pre-alloc page: "
 				  "seg %llu, peb %llu\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8208,10 +8444,12 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 	case SSDFS_MIGRATE_FRAGMENT:
 		err = ssdfs_peb_update_block(pebi, req);
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to migrate fragment: "
 				  "seg %llu, peb %llu\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -8270,10 +8508,12 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 			SSDFS_ERR("pending %u < processed_blks %d\n",
 				  pending, processed_blks);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("seg_id %llu, peb_index %u, pending %u\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->pebc->peb_index,
 				  pending);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 
@@ -8293,11 +8533,11 @@ bool ssdfs_peb_has_dirty_pages(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		area_pages = &pebi->current_log.area[i].array;
@@ -8320,12 +8560,12 @@ bool is_full_log_ready(struct ssdfs_peb_info *pebi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu, free_data_pages %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id,
 		  pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return pebi->current_log.free_data_pages == 0;
 }
@@ -8351,11 +8591,13 @@ bool should_partial_log_being_commited(struct ssdfs_peb_info *pebi)
 
 	log_strategy = is_log_partial(pebi);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, peb %llu, log_strategy %#x, "
 		  "free_data_pages %u, min_partial_log_pages %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, log_strategy,
 		  free_data_pages, min_partial_log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (log_strategy) {
 	case SSDFS_START_FULL_LOG:
@@ -8381,7 +8623,9 @@ bool should_partial_log_being_commited(struct ssdfs_peb_info *pebi)
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("time_to_commit %#x\n", time_to_commit);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return time_to_commit;
 }
@@ -8445,8 +8689,10 @@ int ssdfs_reserve_segment_header(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*write_offset = offsetof(struct ssdfs_segment_header, payload);
 
@@ -8512,8 +8758,10 @@ int ssdfs_reserve_partial_log_header(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*write_offset = offsetof(struct ssdfs_partial_log_header, payload);
 
@@ -8644,14 +8892,18 @@ try_get_next_page:
 		ssdfs_unlock_page(dst_page);
 		ssdfs_put_page(dst_page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  dst_page, page_ref_count(dst_page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("try to get next page: "
 				  "write_offset %u, dst_free_space %zu\n",
 				  *desc->write_offset,
 				  dst_free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			*desc->write_offset += dst_free_space;
 			(*desc->cur_page)++;
@@ -8883,8 +9135,10 @@ finish_copy:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 fail_store_bmap_fragment:
 	ssdfs_block_bmap_forget_snapshot(desc->snapshot);
@@ -9051,10 +9305,12 @@ int ssdfs_peb_store_dst_blk_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_dst_blk_bmap;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, DST: last_free_blk %u, "
 		  "metadata_blks %u, invalid_blks %u\n",
 		  pebi->peb_id, desc.last_free_blk,
 		  desc.metadata_blks, desc.invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (ssdfs_page_vector_count(desc.snapshot) == 0) {
 		err = -ERANGE;
@@ -9262,10 +9518,12 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 		goto finish_store_src_blk_bmap;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, SRC: last_free_blk %u, "
 		  "metadata_blks %u, invalid_blks %u\n",
 		  pebi->peb_id, desc.last_free_blk,
 		  desc.metadata_blks, desc.invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (desc.metadata_blks == 0) {
 		SSDFS_WARN("peb_id %llu, SRC: last_free_blk %u, "
@@ -9415,9 +9673,11 @@ int ssdfs_peb_store_dependent_blk_bmap(struct ssdfs_peb_info *pebi,
 		up_read(&cur_pebc->lock);
 
 		if (dst_peb == NULL) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("dst_peb is NULL: "
 				  "peb_index %u\n",
 				  i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (dst_peb != pebi->pebc->dst_peb)
 			continue;
@@ -9809,8 +10069,10 @@ finish_bmap_hdr_preparation:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_store_block_bitmap:
 	return err;
@@ -9839,8 +10101,10 @@ bool is_peb_area_empty(struct ssdfs_peb_info *pebi, int area_type)
 	else
 		is_empty = area->write_offset == 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("area_type %#x, write_offset %u, is_empty %d\n",
 		  area_type, area->write_offset, (int)is_empty);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_empty;
 }
@@ -9982,8 +10246,10 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n",
@@ -10013,8 +10279,10 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 				  (pgoff_t)(pages_count - page_index));
 		end = page_index + range_len - 1;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_index %lu, pages_count %lu\n",
 			  page_index, pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_page_array_lookup_range(smap, &page_index, end,
 						    SSDFS_DIRTY_PAGE_TAG,
@@ -10049,8 +10317,10 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 try_copy_area_data:
 			ssdfs_lock_page(page1);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page1, page_ref_count(page1));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (*write_offset >= PAGE_SIZE)
 				dst_off = *write_offset % PAGE_SIZE;
@@ -10080,12 +10350,14 @@ try_copy_area_data:
 				goto unlock_page2;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("src_off %u, dst_off %u, src_len %u, "
 				  "dst_len %u, copy_len %u, "
 				  "write_offset %u, cur_page %lu, "
 				  "page_index %d\n",
 				  src_off, dst_off, src_len, dst_len, copy_len,
 				  *write_offset, *cur_page, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (PageDirty(page1)) {
 				err = ssdfs_page_array_set_page_dirty(dmap,
@@ -10106,14 +10378,18 @@ unlock_page2:
 			ssdfs_unlock_page(page2);
 			ssdfs_put_page(page2);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page2, page_ref_count(page2));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 unlock_page1:
 			ssdfs_unlock_page(page1);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page1, page_ref_count(page1));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_current_copy:
 			if (unlikely(err)) {
@@ -10130,10 +10406,12 @@ finish_current_copy:
 			if ((dst_off + copy_len) >= PAGE_SIZE)
 				++(*cur_page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("read_bytes %u, area_size %u, "
 				  "write_offset %u, copy_len %u, rest_len %u\n",
 				  read_bytes, area_size,
 				  *write_offset, copy_len, rest_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (read_bytes == area_size) {
 				err = ssdfs_page_array_clear_dirty_page(smap,
@@ -10283,8 +10561,10 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n",
@@ -10330,8 +10610,10 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 
 			ssdfs_lock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			page2 = ssdfs_page_array_delete_page(smap, src_off);
 			if (IS_ERR_OR_NULL(page2)) {
@@ -10343,10 +10625,12 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 
 			WARN_ON(page2 != page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_page %lu, write_offset %u, "
 				  "i %d, pvec_count %u\n",
 				  *cur_page, *write_offset,
 				  i, pagevec_count(&pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			page->index = *cur_page;
 
@@ -10378,8 +10662,10 @@ finish_current_move:
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (unlikely(err)) {
 				for (i = 0; i < pagevec_count(&pvec); i++) {
@@ -10489,6 +10775,7 @@ int ssdfs_peb_store_blk_desc_table(struct ssdfs_peb_info *pebi,
 	uncompr_size = le32_to_cpu(meta_desc->uncompr_size);
 
 	if (uncompr_size == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("latest fragment of blk desc table is empty: "
 			  "seg %llu, peb %llu, current_log.start_page %u, "
 			  "area->write_offset %u, "
@@ -10497,6 +10784,7 @@ int ssdfs_peb_store_blk_desc_table(struct ssdfs_peb_info *pebi,
 			  pebi->current_log.start_page,
 			  area->write_offset,
 			  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto copy_area_pages_into_cache;
 	}
 
@@ -10548,12 +10836,14 @@ int ssdfs_peb_store_blk_desc_table(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 		meta_desc->compr_size = cpu_to_le16((u16)compr_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("offset %u, compr_size %u, "
 			  "uncompr_size %u, checksum %#x\n",
 			  le32_to_cpu(meta_desc->offset),
 			  le16_to_cpu(meta_desc->compr_size),
 			  le16_to_cpu(meta_desc->uncompr_size),
 			  le32_to_cpu(meta_desc->checksum));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		area->compressed_offset += compr_size;
 		le32_add_cpu(&chain_hdr->compr_bytes, compr_size);
@@ -10784,8 +11074,10 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store log footer: "
@@ -10924,10 +11216,10 @@ int ssdfs_store_peb_migration_id(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	items_state = atomic_read(&pebi->pebc->items_state);
 	switch (items_state) {
@@ -11149,8 +11441,10 @@ finish_segment_header_preparation:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store segment header: "
@@ -11230,8 +11524,10 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 		end = (pgoff_t)pebi->current_log.start_page + pebi->log_pages;
 		end = min_t(pgoff_t, end, (pgoff_t)(index + PAGEVEC_SIZE));
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index %lu, end %lu\n",
 			  index, end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_page_array_lookup_range(&pebi->cache,
 						    &index, end,
@@ -11428,8 +11724,10 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 		goto finish_commit_payload;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0001-payload: cur_page %lu, write_offset %u\n",
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cur_hdr_desc = &hdr_desc[SSDFS_OFF_TABLE_INDEX];
 	err = ssdfs_peb_store_offsets_table(pebi, cur_hdr_desc,
@@ -11443,8 +11741,10 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 		goto finish_commit_payload;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0002-payload: cur_page %lu, write_offset %u\n",
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	area_type = SSDFS_LOG_BLK_DESC_AREA;
 	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
@@ -11452,12 +11752,14 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 					     cur_page, write_offset);
 	if (err == -ENODATA) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block descriptor area is absent: "
 			   "seg %llu, peb %llu, "
 			   "cur_page %lu, write_offset %u\n",
 			   pebi->pebc->parent_si->seg_id,
 			   pebi->peb_id,
 			   *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_CRIT("fail to store block descriptors table: "
 			   "seg %llu, peb %llu, cur_page %lu, write_offset %u, "
@@ -11467,8 +11769,10 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 		goto finish_commit_payload;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0003-payload: cur_page %lu, write_offset %u\n",
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	area_type = SSDFS_LOG_DIFFS_AREA;
 	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
@@ -11490,8 +11794,10 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 	} else
 		*log_has_data = true;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0004-payload: cur_page %lu, write_offset %u\n",
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	area_type = SSDFS_LOG_JOURNAL_AREA;
 	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
@@ -11513,8 +11819,10 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 	} else
 		*log_has_data = true;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0005-payload: cur_page %lu, write_offset %u\n",
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*write_offset % PAGE_SIZE) {
 		(*cur_page)++;
@@ -11544,8 +11852,10 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 	} else
 		*log_has_data = true;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0006-payload: cur_page %lu, write_offset %u\n",
 		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_commit_payload:
 	return err;
@@ -11631,12 +11941,14 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi->current_log.start_page %u, "
 		  "current_log.free_data_pages %u, "
 		  "sequence_id %d\n",
 		  pebi->current_log.start_page,
 		  pebi->current_log.free_data_pages,
 		  atomic_read(&pebi->current_log.sequence_id));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -11782,8 +12094,10 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store partial log header: "
@@ -11924,8 +12238,10 @@ finish_pl_header_preparation:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store partial log header: "
@@ -12039,8 +12355,10 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 	memset(hdr_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 	memset(plh_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0001: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_reserve_segment_header(pebi, &cur_page, &write_offset);
 	if (unlikely(err)) {
@@ -12050,8 +12368,10 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0002: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_commit_log_payload(pebi, hdr_desc, &log_has_data,
 					   &cur_page, &write_offset);
@@ -12065,12 +12385,16 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 	}
 
 	if (!log_has_data) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
 	flags = SSDFS_LOG_IS_PARTIAL |
@@ -12090,8 +12414,10 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_store_log_header(pebi, hdr_desc,
 					 SSDFS_SEG_HDR_DESC_MAX,
@@ -12105,8 +12431,10 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0005: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_flush_current_log_dirty_pages(pebi, write_offset);
 	if (unlikely(err)) {
@@ -12118,22 +12446,28 @@ int ssdfs_peb_commit_first_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0006: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_define_next_log_start(pebi, SSDFS_START_PARTIAL_LOG,
 					&cur_page, &write_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0007: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.seg_flags = 0;
 
 	ssdfs_peb_set_current_log_state(pebi, SSDFS_LOG_COMMITTED);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log commited: seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_commit_log:
 	return err;
@@ -12178,8 +12512,10 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 
 	memset(plh_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0001: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_reserve_partial_log_header(pebi, &cur_page, &write_offset);
 	if (unlikely(err)) {
@@ -12189,8 +12525,10 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0002: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_commit_log_payload(pebi, plh_desc, &log_has_data,
 					   &cur_page, &write_offset);
@@ -12204,8 +12542,10 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 	}
 
 	if (!log_has_data) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	flags = SSDFS_LOG_IS_PARTIAL |
@@ -12224,8 +12564,10 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_flush_current_log_dirty_pages(pebi, write_offset);
 	if (unlikely(err)) {
@@ -12237,22 +12579,28 @@ int ssdfs_peb_commit_next_partial_log(struct ssdfs_peb_info *pebi)
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_define_next_log_start(pebi, SSDFS_CONTINUE_PARTIAL_LOG,
 					&cur_page, &write_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0005: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.seg_flags = 0;
 
 	ssdfs_peb_set_current_log_state(pebi, SSDFS_LOG_COMMITTED);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log commited: seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_commit_log:
 	return err;
@@ -12306,8 +12654,10 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 	memset(plh_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 	memset(lf_desc, 0, desc_size * SSDFS_LOG_FOOTER_DESC_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0001: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_reserve_partial_log_header(pebi, &cur_page, &write_offset);
 	if (unlikely(err)) {
@@ -12317,8 +12667,10 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0002: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_commit_log_payload(pebi, plh_desc, &log_has_data,
 					   &cur_page, &write_offset);
@@ -12331,15 +12683,17 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
-	SSDFS_DBG("log_has_data %#x\n", log_has_data);
-
 	if (!log_has_data) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cur_page_offset = cur_page % pebi->log_pages;
 
@@ -12385,8 +12739,10 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		log_strategy = SSDFS_CONTINUE_PARTIAL_LOG;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_store_partial_log_header(pebi, flags, NULL,
 						 plh_desc,
@@ -12402,8 +12758,10 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0005: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_flush_current_log_dirty_pages(pebi, write_offset);
 	if (unlikely(err)) {
@@ -12415,22 +12773,28 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0006: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_define_next_log_start(pebi, log_strategy,
 					&cur_page, &write_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0007: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.seg_flags = 0;
 
 	ssdfs_peb_set_current_log_state(pebi, SSDFS_LOG_COMMITTED);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log commited: seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_commit_log:
 	return err;
@@ -12485,8 +12849,10 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 	memset(hdr_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 	memset(lf_desc, 0, desc_size * SSDFS_LOG_FOOTER_DESC_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0001: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_reserve_segment_header(pebi, &cur_page, &write_offset);
 	if (unlikely(err)) {
@@ -12496,8 +12862,10 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0002: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_commit_log_payload(pebi, hdr_desc, &log_has_data,
 					   &cur_page, &write_offset);
@@ -12511,13 +12879,17 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 	}
 
 	if (!log_has_data) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("current log hasn't data: start_page %u\n",
 			  pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto define_next_log_start;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0003: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cur_page_offset = cur_page % pebi->log_pages;
 	if (cur_page_offset == 0) {
@@ -12527,9 +12899,11 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 	if ((pebi->log_pages - cur_page_offset) > 1) {
 		log_strategy = SSDFS_START_PARTIAL_LOG;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start partial log: "
 			  "cur_page_offset %lu, pebi->log_pages %u\n",
 			  cur_page_offset, pebi->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
 		flags = SSDFS_LOG_IS_PARTIAL |
@@ -12553,9 +12927,11 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 	} else {
 		log_strategy = SSDFS_FINISH_FULL_LOG;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("finish full log: "
 			  "cur_page_offset %lu, pebi->log_pages %u\n",
 			  cur_page_offset, pebi->log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
 		flags = 0;
@@ -12576,8 +12952,10 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0004: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_store_log_header(pebi, hdr_desc,
 					 SSDFS_SEG_HDR_DESC_MAX,
@@ -12591,8 +12969,10 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0005: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_flush_current_log_dirty_pages(pebi, write_offset);
 	if (unlikely(err)) {
@@ -12604,23 +12984,29 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 		goto finish_commit_log;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0006: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 define_next_log_start:
 	ssdfs_peb_define_next_log_start(pebi, log_strategy,
 					&cur_page, &write_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("0007: cur_page %lu, write_offset %u\n",
 		  cur_page, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebi->current_log.reserved_pages = 0;
 	pebi->current_log.seg_flags = 0;
 
 	ssdfs_peb_set_current_log_state(pebi, SSDFS_LOG_COMMITTED);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("log commited: seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_commit_log:
 	return err;
@@ -12700,6 +13086,7 @@ u16 ssdfs_peb_calculate_reserved_metapages(u32 page_size,
 
 	reserved_pages = reserved_bytes / page_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("data_pages %u, log_strategy %#x, "
 		  "blk_bmap_bytes %u, blk2off_tbl_bytes %u, "
 		  "blk_desc_tbl_bytes %u, reserved_bytes %u, "
@@ -12708,6 +13095,7 @@ u16 ssdfs_peb_calculate_reserved_metapages(u32 page_size,
 		  blk_bmap_bytes, blk2off_tbl_bytes,
 		  blk_desc_tbl_bytes, reserved_bytes,
 		  reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	BUG_ON(reserved_pages >= U16_MAX);
 
@@ -12870,11 +13258,13 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		pebi->current_log.free_data_pages += diff;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("data_pages %u, "
 		  "current_log (reserved_pages %u, free_data_pages %u)\n",
 		  data_pages,
 		  pebi->current_log.reserved_pages,
 		  pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebi->current_log.last_log_time = ssdfs_current_timestamp();
 	pebi->current_log.last_log_cno = ssdfs_current_cno(si->fsi->sb);
@@ -12979,10 +13369,10 @@ int ssdfs_peb_remain_log_creation_thread(struct ssdfs_peb_container *pebc)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %d\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 
@@ -12996,7 +13386,9 @@ int ssdfs_peb_remain_log_creation_thread(struct ssdfs_peb_container *pebc)
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_free_pages %d\n", peb_free_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (peb_free_pages == 0) {
 		SSDFS_DBG("PEB hasn't free space\n");
@@ -13233,10 +13625,10 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x, err %d\n",
 		  req, req->private.cmd, req->private.type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pagesize = pebc->parent_si->fsi->pagesize;
 	processed_bytes_max = req->result.processed_blks * pagesize;
@@ -13292,8 +13684,10 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		complete(&req->result.wait);
 
 		if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("start waiting: refs_count %d\n",
 				   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = wait_event_killable_timeout(*wait,
 			    atomic_read(&req->private.refs_count) == 0,
@@ -13320,8 +13714,10 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		complete(&req->result.wait);
 
 		if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("start waiting: refs_count %d\n",
 				   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = wait_event_killable_timeout(*wait,
 			    atomic_read(&req->private.refs_count) == 0,
@@ -13362,10 +13758,10 @@ void ssdfs_finish_pre_allocate_request(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x, err %d\n",
 		  req, req->private.cmd, req->private.type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!err) {
 		WARN_ON(pagevec_count(&req->result.pvec) != 0);
@@ -13373,6 +13769,7 @@ void ssdfs_finish_pre_allocate_request(struct ssdfs_peb_container *pebc,
 	}
 
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("return request into queue: "
 			  "seg %llu, peb_index %u, "
 			  "ino %llu, logical_offset %llu, "
@@ -13386,6 +13783,7 @@ void ssdfs_finish_pre_allocate_request(struct ssdfs_peb_container *pebc,
 			  req->place.start.seg_id, req->place.start.blk_index,
 			  req->private.cmd, req->private.type,
 			  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		atomic_set(&req->result.state, SSDFS_REQ_CREATED);
 
@@ -13419,10 +13817,10 @@ void ssdfs_finish_create_request(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x, err %d\n",
 		  req, req->private.cmd, req->private.type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!err) {
 		for (i = 0; i < req->result.processed_blks; i++)
@@ -13430,6 +13828,7 @@ void ssdfs_finish_create_request(struct ssdfs_peb_container *pebc,
 	}
 
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("return request into queue: "
 			  "seg %llu, peb_index %u, "
 			  "ino %llu, logical_offset %llu, "
@@ -13443,6 +13842,7 @@ void ssdfs_finish_create_request(struct ssdfs_peb_container *pebc,
 			  req->place.start.seg_id, req->place.start.blk_index,
 			  req->private.cmd, req->private.type,
 			  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		atomic_set(&req->result.state, SSDFS_REQ_CREATED);
 
@@ -13473,19 +13873,15 @@ void ssdfs_finish_update_request(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x, err %d\n",
 		  req, req->private.cmd, req->private.type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!err) {
 		for (i = 0; i < req->result.processed_blks; i++)
 			ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 	}
-
-	/* TODO: check necessity to do this here */
-	/*atomic_add(req->result.processed_blks,
-			&pebi->pebc->parent_si->invalid_pages);*/
 
 	__ssdfs_finish_request(pebc, req, wait, err);
 }
@@ -13506,10 +13902,10 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x, err %d\n",
 		  req, req->private.cmd, req->private.type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req->private.class) {
 	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
@@ -13541,8 +13937,10 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 	ssdfs_forget_user_data_flush_request(pebc->parent_si);
 	ssdfs_segment_finish_request_cno(pebc->parent_si);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("flush_reqs %lld\n",
 		  atomic64_read(&pebc->parent_si->fsi->flush_reqs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	WARN_ON(atomic64_dec_return(&pebc->parent_si->fsi->flush_reqs) < 0);
 }
@@ -13561,11 +13959,11 @@ void ssdfs_peb_clear_current_log_pages(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		area_pages = &pebi->current_log.area[i].array;
@@ -13590,11 +13988,11 @@ void ssdfs_peb_clear_cache_dirty_pages(struct ssdfs_peb_info *pebi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb %llu\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_page_array_clear_all_dirty_pages(&pebi->cache);
 	if (unlikely(err)) {
@@ -13623,11 +14021,11 @@ int ssdfs_peb_commit_log_on_thread_stop(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
 
@@ -13787,11 +14185,13 @@ bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
 		break;
 	};
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, start_page %u, "
 		  "pages_per_peb %u, is_exhausted %#x\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, start_page,
 		  pages_per_peb, is_exhausted);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_exhausted;
 }
@@ -13826,9 +14226,11 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 		switch (migration_phase) {
 		case SSDFS_SRC_PEB_NOT_EXHAUSTED:
 			is_ready_to_exhaust = false;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb under migration: "
 				  "src_peb %llu is not exhausted\n",
 				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return is_ready_to_exhaust;
 
 		default:
@@ -13841,9 +14243,11 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 	case SSDFS_PEB_RELATION_PREPARATION:
 	case SSDFS_PEB_FINISHING_MIGRATION:
 		is_ready_to_exhaust = true;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb is going to migrate: "
 			  "src_peb %llu is exhausted\n",
 			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return is_ready_to_exhaust;
 
 	default:
@@ -13885,6 +14289,7 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 		break;
 	};
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, free_data_pages %u, "
 		  "reserved_pages %u, min_partial_log_pages %u, "
 		  "is_ready_to_exhaust %#x\n",
@@ -13892,6 +14297,7 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 		  pebi->peb_id, free_data_pages,
 		  reserved_pages, min_partial_log_pages,
 		  is_ready_to_exhaust);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_ready_to_exhaust;
 }
@@ -13936,6 +14342,7 @@ bool ssdfs_peb_has_partial_empty_log(struct ssdfs_fs_info *fsi,
 		break;
 	};
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, start_page %u, "
 		  "pages_per_peb %u, log_pages %u, "
 		  "min_partial_log_pages %u, "
@@ -13945,6 +14352,7 @@ bool ssdfs_peb_has_partial_empty_log(struct ssdfs_fs_info *fsi,
 		  pages_per_peb, log_pages,
 		  min_partial_log_pages,
 		  has_partial_empty_log);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return has_partial_empty_log;
 }
@@ -14002,11 +14410,13 @@ void ssdfs_peb_check_update_queue(struct ssdfs_peb_container *pebc)
 	if (err || !req)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
 	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 		  req->private.class, req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_requests_queue_add_head(&pebc->update_rq, req);
 	return;
@@ -14019,8 +14429,10 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	struct ssdfs_segment_request *req;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_peb_finish_migration(pebc);
 	if (unlikely(err)) {
@@ -14086,7 +14498,9 @@ bool need_wait_next_create_data_request(struct ssdfs_peb_info *pebi)
 	has_pending_pages = si->pending_new_user_data_pages > 0;
 	spin_unlock(&si->pending_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pending_pages %llu\n", pending_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (has_pending_pages) {
 		need_wait = true;
@@ -14098,13 +14512,17 @@ bool need_wait_next_create_data_request(struct ssdfs_peb_info *pebi)
 	has_reserved_pages = fsi->reserved_new_user_data_pages > 0;
 	spin_unlock(&fsi->volume_state_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_pages %llu\n", reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&si->obj_state);
 	is_current_seg = (state == SSDFS_CURRENT_SEG_OBJECT);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("is_current_seg %#x, has_reserved_pages %#x\n",
 		  is_current_seg, has_reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	need_wait = is_current_seg && has_reserved_pages;
 
@@ -14131,7 +14549,9 @@ bool need_wait_next_update_request(struct ssdfs_peb_info *pebi)
 	has_pending_pages = pending_pages > 0;
 	spin_unlock(&pebi->pebc->pending_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pending_pages %llu\n", pending_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (has_pending_pages) {
 		need_wait = true;
@@ -14143,7 +14563,9 @@ bool need_wait_next_update_request(struct ssdfs_peb_info *pebi)
 	has_updated_pages = fsi->updated_user_data_pages > 0;
 	spin_unlock(&fsi->volume_state_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("updated_pages %llu\n", updated_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	need_wait = has_updated_pages;
 
@@ -14243,8 +14665,10 @@ int wait_next_create_request(struct ssdfs_peb_container *pebc,
 	if (is_current_seg && has_reserved_pages) {
 		wq = &fsi->pending_wq;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next data request: reserved_pages %llu\n",
 			  reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = wait_event_killable_timeout(*wq,
 				FLUSH_THREAD_CUR_SEG_WAKE_CONDITION(pebc),
@@ -14297,11 +14721,15 @@ int wait_next_create_request(struct ssdfs_peb_container *pebc,
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("request commit log now: reserved_pages %llu\n",
 			  reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("get next create request: reserved_pages %llu\n",
 			  reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	*thread_state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
@@ -14336,8 +14764,10 @@ int wait_next_update_request(struct ssdfs_peb_container *pebc,
 	if (has_updated_pages) {
 		wq = &fsi->pending_wq;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next update request: updated_pages %llu\n",
 			  updated_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = wait_event_killable_timeout(*wq,
 				FLUSH_THREAD_UPDATE_WAKE_CONDITION(pebc),
@@ -14387,11 +14817,15 @@ int wait_next_update_request(struct ssdfs_peb_container *pebc,
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("request commit log now: updated_pages %llu\n",
 			  updated_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("get next create request: updated_pages %llu\n",
 			  updated_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	*thread_state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
@@ -14424,7 +14858,9 @@ int wait_next_invalidate_request(struct ssdfs_peb_container *pebc,
 	case SSDFS_REGULAR_FS_OPERATIONS:
 		wq = &fsi->pending_wq;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next invalidate request\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = wait_event_killable_timeout(*wq,
 				FLUSH_THREAD_INVALIDATE_WAKE_CONDITION(pebc),
@@ -14465,7 +14901,9 @@ request_commit_log_now:
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("request commit log now\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	default:
@@ -14600,10 +15038,10 @@ int ssdfs_peb_flush_thread_func(void *data)
 		SSDFS_ERR("pointer on PEB container is NULL\n");
 		BUG();
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("flush thread: seg %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
 
@@ -14621,10 +15059,12 @@ next_partial_step:
 	switch (thread_state) {
 	case SSDFS_FLUSH_THREAD_ERROR:
 		BUG_ON(err == 0);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("[FLUSH THREAD STATE] ERROR\n");
 		SSDFS_DBG("thread after-error state: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  pebc->parent_si->seg_id, pebc->peb_index, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (have_flush_requests(pebc)) {
 			ssdfs_requests_queue_remove_all(&pebc->update_rq,
@@ -14660,10 +15100,12 @@ stop_flush_thread:
 		break;
 
 	case SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("[FLUSH THREAD STATE] FREE SPACE ABSENT: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_peb_joined_into_create_requests_queue(pebc)) {
 			err = ssdfs_peb_find_next_log_creation_thread(pebc);
@@ -14748,10 +15190,12 @@ finish_process_free_space_absence:
 		break;
 
 	case SSDFS_FLUSH_THREAD_RO_STATE:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("[FLUSH THREAD STATE] READ-ONLY STATE: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_prepare_current_segment_ids(fsi, cur_segs, size);
 		if (unlikely(err)) {
@@ -14920,10 +15364,12 @@ finish_process_free_space_absence:
 			goto repeat;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg %llu, peb_index %u, migration_state %#x\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
 			  atomic_read(&pebc->migration_state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_peb_current_log_lock(pebi);
 		peb_id = pebi->peb_id;
@@ -14931,12 +15377,14 @@ finish_process_free_space_absence:
 		need_create_log = peb_has_dirty_pages ||
 					have_flush_requests(pebc);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb_id %llu, ssdfs_peb_has_dirty_pages %#x, "
 			  "have_flush_requests %#x, need_create_log %#x, "
 			  "is_peb_exhausted %#x\n",
 			  peb_id, peb_has_dirty_pages,
 			  have_flush_requests(pebc),
 			  need_create_log, is_peb_exhausted);
+#endif /* CONFIG_SSDFS_DEBUG */
 		ssdfs_peb_current_log_unlock(pebi);
 
 		if (!need_create_log) {
@@ -14951,11 +15399,13 @@ finish_process_free_space_absence:
 			 * If no other commands in the queue
 			 * then ignore the log creation now.
 			 */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("Don't create log: "
 				  "COMMIT_LOG_NOW command: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_unlock_current_peb(pebc);
 			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 			goto repeat;
@@ -14966,11 +15416,13 @@ finish_process_free_space_absence:
 			 * No necessity to create log
 			 * for START_MIGRATION_NOW command.
 			 */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("Don't create log: "
 				  "START_MIGRATION_NOW command: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_unlock_current_peb(pebc);
 			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 			goto repeat;
@@ -14984,8 +15436,10 @@ finish_process_free_space_absence:
 					/*
 					 * Continue logic for user data.
 					 */
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("ignore mapping table's "
 						  "flush for user data\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 				} else if (have_flush_requests(pebc)) {
 					SSDFS_ERR("maptbl is flushing: "
 						  "unprocessed requests: "
@@ -15066,10 +15520,12 @@ finish_process_free_space_absence:
 			}
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("is_peb_under_migration %#x, "
 			  "has_peb_migration_done %#x\n",
 			  is_peb_under_migration(pebc),
 			  has_peb_migration_done(pebc));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_peb_under_migration(pebc) &&
 		    has_peb_migration_done(pebc)) {
@@ -15133,10 +15589,12 @@ finish_process_free_space_absence:
 			}
 		} else if (err == -ENOSPC) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("PEB hasn't free space: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			thread_state = SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT;
 		} else if (unlikely(err)) {
 fail_create_log:
@@ -15302,8 +15760,10 @@ process_flush_requests:
 			goto repeat;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 			  req->private.class, req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		thread_state = SSDFS_FLUSH_THREAD_PROCESS_CREATE_REQUEST;
 		goto next_partial_step;
@@ -15353,8 +15813,10 @@ process_flush_requests:
 			goto repeat;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 			  req->private.class, req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		thread_state = SSDFS_FLUSH_THREAD_PROCESS_UPDATE_REQUEST;
 		goto next_partial_step;
@@ -15410,19 +15872,23 @@ process_flush_requests:
 		mutex_unlock(&pebc->migration_lock);
 
 		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to process create request: "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_finish_flush_request(pebc, req, wait_queue, err);
 			thread_state = SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT;
 			goto finish_create_request_processing;
 		} else if (err == -EAGAIN) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to process create request : "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			spin_lock(&pebc->crq_ptr_lock);
 			ssdfs_requests_queue_add_head(pebc->create_rq, req);
 			spin_unlock(&pebc->crq_ptr_lock);
@@ -15550,10 +16016,12 @@ finish_wait_next_create_request:
 
 		if (err == -EAGAIN) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to process update request : "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_requests_queue_add_head(&pebc->update_rq, req);
 			req = NULL;
 			skip_finish_flush_request = true;
@@ -15562,10 +16030,12 @@ finish_wait_next_create_request:
 		} else if (err == -ENOENT &&
 			   req->private.cmd == SSDFS_BTREE_NODE_DIFF) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to process update request : "
 				  "seg %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			req = NULL;
 			thread_state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 			goto finish_update_request_processing;
@@ -15593,10 +16063,12 @@ finish_wait_next_create_request:
 
 		case SSDFS_COMMIT_LOG_NOW:
 			if (has_commit_log_now_requested(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("Ignore current COMMIT_LOG_NOW: "
 					  "seg %llu, peb_index %u\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				ssdfs_finish_flush_request(pebc, req,
 							   wait_queue, err);
 				thread_state =
@@ -15859,9 +16331,11 @@ finish_wait_next_data_request:
 			ssdfs_peb_has_partial_empty_log(fsi, pebi);
 		ssdfs_peb_current_log_unlock(pebi);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("is_peb_exhausted %#x, "
 			  "is_peb_ready_to_exhaust %#x\n",
 			  is_peb_exhausted, is_peb_ready_to_exhaust);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_peb_exhausted || is_peb_ready_to_exhaust) {
 			ssdfs_unlock_current_peb(pebc);
@@ -16007,16 +16481,20 @@ process_migration_failure:
 			postponed_req = NULL;
 			has_migration_check_requested = false;
 		} else if (req != NULL) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("req->private.class %#x, "
 				  "req->private.cmd %#x\n",
 				  req->private.class,
 				  req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			switch (req->private.class) {
 			case SSDFS_PEB_COLLECT_GARBAGE_REQ:
 				/* ignore this case */
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("ignore request class %#x\n",
 					  req->private.class);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto make_log_commit;
 
 			default:
@@ -16170,16 +16648,20 @@ make_log_commit:
 			ssdfs_peb_current_log_unlock(pebi);
 			ssdfs_unlock_current_peb(pebc);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("free_space1 %u, free_space2 %u, "
 				  "free_data_pages %u, peb_has_dirty_pages %#x\n",
 				  free_space1, free_space2,
 				  free_data_pages, peb_has_dirty_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (!peb_has_dirty_pages) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("PEB has no dirty pages: "
 					  "seg_id %llu, peb_index %u\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_check_migration_need;
 			}
 
@@ -16187,10 +16669,12 @@ make_log_commit:
 				/*
 				 * No free space for shadow migration.
 				 */
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("No free space for shadow migration: "
 					  "seg_id %llu, peb_index %u\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_check_migration_need;
 			}
 
@@ -16199,10 +16683,12 @@ make_log_commit:
 				/*
 				 * No free space for shadow migration.
 				 */
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("No free space for shadow migration: "
 					  "seg_id %llu, peb_index %u\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_check_migration_need;
 			}
 
@@ -16210,10 +16696,12 @@ make_log_commit:
 				/*
 				 * No used blocks in the source PEB.
 				 */
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("No used blocks in the source PEB: "
 					  "seg_id %llu, peb_index %u\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_check_migration_need;
 			}
 
@@ -16262,20 +16750,24 @@ stimulate_migration_done:
 			goto next_partial_step;
 		} else {
 finish_check_migration_need:
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no migration necessary: "
 				  "seg_id %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			thread_state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			goto next_partial_step;
 		}
 		break;
 
 	case SSDFS_FLUSH_THREAD_DELEGATE_CREATE_ROLE:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("[FLUSH THREAD STATE] DELEGATE CREATE ROLE: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!is_peb_joined_into_create_requests_queue(pebc)) {
 finish_delegation:

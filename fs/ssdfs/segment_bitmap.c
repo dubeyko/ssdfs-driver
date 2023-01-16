@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/segment_bitmap.c - segment bitmap implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/slab.h>
@@ -108,8 +111,10 @@ static
 void ssdfs_segbmap_invalidate_folio(struct folio *folio, size_t offset,
 				    size_t length)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
 		  offset, length);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -273,14 +278,18 @@ int ssdfs_segbmap_define_segments(struct ssdfs_fs_info *fsi,
 			return -EIO;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segbmap: seg[%d][%d] = %llu\n",
 			  i, array_type, seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		segbmap->seg_numbers[i][array_type] = seg;
 		count++;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segbmap segments count %u\n", count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return count;
 }
@@ -418,16 +427,18 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
 		struct ssdfs_peb_container *pebc = &si->peb_array[i];
 		struct ssdfs_segment_request *req;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("i %d, pebc %p\n", i, pebc);
 
-#ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_peb_container_empty(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("PEB container empty: "
 				  "seg %llu, peb_index %d\n",
 				  si->seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
@@ -488,7 +499,9 @@ int ssdfs_segbmap_init(struct ssdfs_segment_bmap *segbmap)
 		for (j = 0; j < SSDFS_SEGBMAP_SEG_COPY_MAX; j++) {
 			si = segbmap->segs[i][j];
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("i %d, j %d, si %p\n", i, j, si);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (!si)
 				continue;
@@ -880,14 +893,18 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 		xa_unlock_irq(&fsi->segbmap->pages.i_pages);
 
 		if (!page) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %d is NULL\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
 		page->mapping = NULL;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_put_page(page);
 		ssdfs_seg_bmap_free_page(page);
@@ -1205,8 +1222,10 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	ssdfs_get_page(page);
 	page->index = sequence_id;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&segbmap->search_lock);
 
@@ -1216,13 +1235,18 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	err = __xa_insert(&segbmap->pages.i_pages,
 			 sequence_id, page, GFP_NOFS);
 	if (unlikely(err < 0)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fail to add page %u into address space: err %d\n",
 			  sequence_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		page->mapping = NULL;
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		page->mapping = &segbmap->pages;
 		segbmap->pages.nrpages++;
@@ -1239,12 +1263,14 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		hdr = SSDFS_SBMP_FRAG_HDR(kmap_local_page(page));
 		desc->total_segs = le16_to_cpu(hdr->total_segs);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("total_segs %u, clean_or_using_segs %u, "
 			  "used_or_dirty_segs %u, bad_segs %u\n",
 			  le16_to_cpu(hdr->total_segs),
 			  le16_to_cpu(hdr->clean_or_using_segs),
 			  le16_to_cpu(hdr->used_or_dirty_segs),
 			  le16_to_cpu(hdr->bad_segs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		fbmap = segbmap->fbmap[SSDFS_SEGBMAP_CLEAN_USING_FBMAP];
 		desc->clean_or_using_segs =
@@ -1485,8 +1511,10 @@ fail_copy_fragment:
 	ssdfs_unlock_page(spage);
 	ssdfs_put_page(spage);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  spage, page_ref_count(spage));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -2133,8 +2161,10 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (unlikely(err))
 				goto fail_issue_commit_logs;
@@ -2344,9 +2374,12 @@ finish_fragment_check:
 static
 int ssdfs_segbmap_create_checkpoint(struct ssdfs_segment_bmap *segbmap)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	/* TODO: implement */
 	SSDFS_DBG("TODO: implement %s\n", __func__);
-	return 0 /*-ENOSYS*/;
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
 }
 
 /*
@@ -2477,8 +2510,11 @@ finish_segbmap_flush:
 int ssdfs_segbmap_resize(struct ssdfs_segment_bmap *segbmap,
 			 u64 new_items_count)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	/* TODO: implement */
 	SSDFS_DBG("TODO: implement %s\n", __func__);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return -ENOSYS;
 }
 
@@ -2612,8 +2648,10 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 
 	err = ssdfs_segbmap_check_fragment_validity(segbmap, fragment_index);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment %lu is not initialized yet\n",
 			  fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_get_state;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fragment %lu init has failed\n",
@@ -2669,8 +2707,10 @@ free_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_get_state:
 	up_read(&segbmap->search_lock);
@@ -2726,8 +2766,10 @@ int ssdfs_segbmap_check_state(struct ssdfs_segment_bmap *segbmap,
 			   seg, res);
 		return res;
 	} else if (res != state) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("res %#x != state %#x\n",
 			  res, state);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -2768,8 +2810,10 @@ int ssdfs_segbmap_set_state_in_byte(u8 *byte_ptr, u32 byte_item,
 	}
 
 	if (*old_state == new_state) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("old_state %#x == new_state %#x\n",
 			  *old_state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EEXIST;
 	}
 
@@ -2812,8 +2856,10 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (old_state == new_state) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("old_state %#x == new_state %#x\n",
 			  old_state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 
@@ -2963,6 +3009,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("BEFORE: total_segs %u, "
 		  "clean_or_using_segs %u, "
 		  "used_or_dirty_segs %u, "
@@ -2971,6 +3018,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		  fragment->clean_or_using_segs,
 		  fragment->used_or_dirty_segs,
 		  fragment->bad_segs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (old_state) {
 	case SSDFS_SEG_CLEAN:
@@ -3008,6 +3056,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		BUG();
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("OLD_STATE: total_segs %u, "
 		  "clean_or_using_segs %u, "
 		  "used_or_dirty_segs %u, "
@@ -3016,6 +3065,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		  fragment->clean_or_using_segs,
 		  fragment->used_or_dirty_segs,
 		  fragment->bad_segs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (new_state) {
 	case SSDFS_SEG_CLEAN:
@@ -3053,6 +3103,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		BUG();
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("NEW_STATE: total_segs %u, "
 		  "clean_or_using_segs %u, "
 		  "used_or_dirty_segs %u, "
@@ -3061,6 +3112,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		  fragment->clean_or_using_segs,
 		  fragment->used_or_dirty_segs,
 		  fragment->bad_segs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr->clean_or_using_segs = cpu_to_le16(fragment->clean_or_using_segs);
 	hdr->used_or_dirty_segs = cpu_to_le16(fragment->used_or_dirty_segs);
@@ -3119,8 +3171,10 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 
 	err = ssdfs_segbmap_check_fragment_validity(segbmap, fragment_index);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment %lu is not initialized yet\n",
 			  fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_set_state;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fragment %lu init has failed\n",
@@ -3181,8 +3235,10 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 	if (err == -EEXIST) {
 		err = 0;
 		SetPageUptodate(page);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("old_state %#x == new_state %#x\n",
 			  old_state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to set state: "
 			  "seg %llu, new_state %#x, err %d\n",
@@ -3198,8 +3254,10 @@ free_page:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_set_state:
 	return err;
@@ -3422,8 +3480,10 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 	*found_fragment = U16_MAX;
 
 	if (start_fragment >= max_fragment) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start_fragment %u >= max_fragment %u\n",
 			  start_fragment, max_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -3433,12 +3493,14 @@ int ssdfs_segbmap_find_fragment(struct ssdfs_segment_bmap *segbmap,
 	checking_fragment = min_t(u16, start_fragment, first_fragment);
 	checked_size = max_fragment - checking_fragment;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_fragment %u, max_fragment %u, "
 		  "long_offset %u, first_fragment %u, "
 		  "checking_fragment %u, checked_size %u\n",
 		  start_fragment, max_fragment,
 		  long_offset, first_fragment,
 		  checking_fragment, checked_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < checked_size; i++) {
 		struct ssdfs_segbmap_fragment_desc *desc;
@@ -3504,9 +3566,11 @@ check_presence_valid_fragments:
 			*found_fragment = start_fragment + (u16)(found - size);
 			return 0;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find fragment: "
 				  "value %#lx\n",
 				  value);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENODATA;
 		}
 	} else {
@@ -3528,13 +3592,17 @@ check_presence_valid_fragments:
 
 		if (found >= size) {
 			if (size < requested_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("Wait init of fragment %lu\n",
 					  found);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return -EAGAIN;
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to find fragment: "
 					  "found %lu, size %u\n",
 					  found, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return -ENODATA;
 			}
 		}
@@ -3574,14 +3642,18 @@ u64 ssdfs_segbmap_correct_search_start(u16 fragment_index,
 							      fragment_size);
 
 	if (first_item >= max) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("first_item %llu >= max %llu\n",
 			  first_item, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return U64_MAX;
 	}
 
 	corrected_value = first_item > old_start ? first_item : old_start;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("corrected_value %llu\n", corrected_value);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return corrected_value;
 }
@@ -3759,8 +3831,10 @@ u8 FIRST_MASK_IN_BYTE(u8 *value, int mask,
 	i = start_offset * state_bits;
 	for (; i < BITS_PER_BYTE; i += state_bits) {
 		if (IS_STATE_GOOD_FOR_MASK(mask, (*value >> i) & state_mask)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found bit %u, found item %u\n",
 				  i, i / state_bits);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return i / state_bits;
 		}
 	}
@@ -3902,10 +3976,12 @@ int FIND_FIRST_ITEM_IN_FRAGMENT(struct ssdfs_segbmap_fragment_header *hdr,
 				ssdfs_segbmap_get_state_from_byte(value,
 								  found_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found_for_mask %llu, "
 				  "found_state_for_mask %#x\n",
 				  *found_for_mask,
 				  *found_state_for_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (IS_STATE_GOOD_FOR_MASK(mask, *found_state_for_mask))
 				break;
@@ -3949,11 +4025,13 @@ ignore_search_for_mask:
 	else if (*found_seg == U64_MAX && *found_for_mask != U64_MAX)
 		err = -ENOENT;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	if (!err || err == -ENOENT) {
 		SSDFS_DBG("found_seg %llu, found_for_mask %llu\n",
 			  *found_seg, *found_for_mask);
 	} else
 		SSDFS_DBG("nothing was found: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 end_search:
 	return err;
@@ -4041,12 +4119,16 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 
 	err = ssdfs_segbmap_check_fragment_validity(segbmap, fragment_index);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment %u is not initilaized yet\n",
 			  fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (err == -EFAULT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment %u initialization was failed\n",
 			  fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fragment %u is corrupted: err %d\n",
@@ -4061,8 +4143,10 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 		SSDFS_ERR("segbmap has inconsistent state\n");
 		return -ERANGE;
 	} else if (items_count == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment %u hasn't items for search\n",
 			  fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -4093,8 +4177,10 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -4150,8 +4236,10 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 	*end = NULL;
 
 	if (start >= max) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start %llu >= max %llu\n",
 			  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -4179,11 +4267,13 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 						  max_fragment,
 						  &found_fragment);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find fragment: "
 				  "state %#x, mask %#x, "
 				  "start_fragment %d, max_fragment %d\n",
 				  state, mask,
 				  start_fragment, max_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_seg_search;
 		} else if (err == -EFAULT) {
 			ssdfs_fs_error(segbmap->fsi->sb,
@@ -4199,8 +4289,10 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 			}
 
 			*end = &segbmap->desc_array[found_fragment].init_end;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment %u is not initilaized yet\n",
 				  found_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_seg_search;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find fragment: "
@@ -4221,8 +4313,10 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 							   start, max,
 							   fragment_size);
 		if (start == U64_MAX || start >= max) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("break search: start %llu, max %llu\n",
 				  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			break;
 		}
 
@@ -4235,6 +4329,7 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 						     &found, &found_for_iter,
 						     &found_state_for_iter);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find segment: "
 				  "fragment %d, "
 				  "state %#x, mask %#x, "
@@ -4242,24 +4337,31 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 				  found_fragment,
 				  state, mask,
 				  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			/* try next fragment */
 		} else if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("mask %#x, found_for_mask %llu, "
 				  "found_for_iter %llu, "
 				  "found_state %#x\n",
 				  mask, found_for_mask, found_for_iter,
 				  found_state_for_iter);
+#endif /* CONFIG_SSDFS_DEBUG */
 			err = 0;
 			found_for_mask = found_for_iter;
 			found_state_for_mask = found_state_for_iter;
 			goto check_search_result;
 		} else if (err == -EFAULT) {
 			/* Just try another iteration */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment %d is inconsistent\n",
 				  found_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment %u is not initilaized yet\n",
 				  found_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_seg_search;
 		} else if (unlikely(err < 0)) {
 			SSDFS_ERR("fail to find segment: "
@@ -4291,13 +4393,17 @@ check_search_result:
 		} else {
 			*seg = found_for_mask;
 			err = found_state_for_mask;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found for mask %llu, state %#x\n",
 				  *seg, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	} else {
 		*seg = found;
 		err = state;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found segment %llu\n", *seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 finish_seg_search:

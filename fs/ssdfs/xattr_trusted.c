@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/xattr_trusted.c - handler for trusted extended attributes.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -38,9 +41,11 @@ int ssdfs_trusted_getxattr(const struct xattr_handler *handler,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, name %s, buffer %p, size %zu\n",
 		  (unsigned long)inode->i_ino,
 		  name, buffer, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
 
@@ -65,9 +70,11 @@ int ssdfs_trusted_setxattr(const struct xattr_handler *handler,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, name %s, value %p, size %zu, flags %#x\n",
 		  (unsigned long)inode->i_ino,
 		  name, value, size, flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
 

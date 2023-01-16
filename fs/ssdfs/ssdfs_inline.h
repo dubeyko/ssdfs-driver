@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/ssdfs_inline.h - inline functions and macros.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -149,20 +150,26 @@ void ssdfs_get_page(struct page *page)
 {
 	get_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d, flags %#lx\n",
 		  page, page_ref_count(page), page->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline
 void ssdfs_put_page(struct page *page)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (page_ref_count(page) < 1) {
 		SSDFS_WARN("page %p, count %d\n",
@@ -241,10 +248,12 @@ struct page *ssdfs_alloc_page(gfp_t gfp_mask)
 
 	ssdfs_get_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d, "
 		  "flags %#lx, page_index %lu\n",
 		  page, page_ref_count(page),
 		  page->flags, page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_inc(&ssdfs_allocated_pages);
@@ -305,10 +314,12 @@ struct page *ssdfs_add_pagevec_page(struct pagevec *pvec)
 
 	pagevec_add(pvec, page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pvec %p, pagevec count %u\n",
 		  pvec, pagevec_count(pvec));
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return page;
 }
@@ -328,8 +339,10 @@ void ssdfs_free_page(struct page *page)
 
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (page_ref_count(page) <= 0 ||
 	    page_ref_count(page) > 1) {
@@ -346,10 +359,12 @@ void ssdfs_free_page(struct page *page)
 
 	__free_pages(page, 0);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d, "
 		  "flags %#lx, page_index %lu\n",
 		  page, page_ref_count(page),
 		  page->flags, page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline
@@ -357,12 +372,16 @@ void ssdfs_pagevec_release(struct pagevec *pvec)
 {
 	int i;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pvec %p\n", pvec);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!pvec)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pvec count %u\n", pagevec_count(pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < pagevec_count(pvec); i++) {
 		struct page *page = pvec->pages[i];
@@ -1245,10 +1264,12 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len,
 
 			hash32_hi += diff * symbol1;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("hash32_hi %x, symbol1 %x, "
 				  "symbol2 %x, index %d, diff %u\n",
 				  hash32_hi, symbol1, symbol2,
 				  i, diff);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	} else {
 		hash32_hi = full_name_hash(NULL,

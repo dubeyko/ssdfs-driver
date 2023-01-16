@@ -4,10 +4,15 @@
  *
  * fs/ssdfs/page_vector.c - page vector implementation.
  *
- * Copyright (c) 2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
+ * Copyright (c) 2022-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cong Wang
  */
 
 #include <linux/pagemap.h>

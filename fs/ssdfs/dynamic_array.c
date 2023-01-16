@@ -4,10 +4,15 @@
  *
  * fs/ssdfs/dymanic_array.c - dynamic array implementation.
  *
- * Copyright (c) 2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
+ * Copyright (c) 2022-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cong Wang
  */
 
 #include <linux/pagemap.h>
@@ -171,8 +176,10 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 				  array->alloc_pattern, PAGE_SIZE);
 		ssdfs_unlock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		array->bytes_count = PAGE_SIZE;
 		array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC;
@@ -345,11 +352,14 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 					  array->alloc_pattern, PAGE_SIZE);
 			ssdfs_unlock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			array->bytes_count += PAGE_SIZE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("array %p, index %u, capacity %u, "
 					  "item_size %zu, bytes_count %u, "
 					  "index %u, item_offset %llu, "
@@ -358,6 +368,7 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 					  array->item_size, array->bytes_count,
 					  index, item_offset, page_index,
 					  ssdfs_page_vector_count(&array->pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		page = array->pvec.pages[page_index];
@@ -587,8 +598,10 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 					  array->alloc_pattern, PAGE_SIZE);
 			ssdfs_unlock_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			array->bytes_count += PAGE_SIZE;
 		}
@@ -683,6 +696,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 			size_t bytes_count;
 
 			if (copied_bytes >= buf_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("stop copy: "
 					  "copied_bytes %u, "
 					  "buf_size %zu, "
@@ -692,6 +706,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 					  buf_size,
 					  array->bytes_count,
 					  pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 				break;
 			}
 
@@ -738,6 +753,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 
 			copied_bytes += bytes_count;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("array %p, capacity %u, "
 				  "item_size %zu, bytes_count %u, "
 				  "page_index %d, pages_count %u, "
@@ -745,6 +761,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				  array, array->capacity,
 				  array->item_size, array->bytes_count,
 				  i, pages_count, bytes_count, copied_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 

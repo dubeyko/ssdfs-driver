@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/btree.c - generalized btree functionality implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -196,8 +199,10 @@ int ssdfs_btree_radix_tree_find(struct ssdfs_btree *tree,
 	spin_unlock(&tree->nodes_lock);
 
 	if (!*node) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find the node: id %llu\n",
 			  (u64)node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
@@ -979,8 +984,10 @@ int ssdfs_btree_flush(struct ssdfs_btree *tree)
 	switch (tree_state) {
 	case SSDFS_BTREE_CREATED:
 		/* do nothing */
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("btree %#x is not dirty\n",
 			  tree->type);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 
 	case SSDFS_BTREE_DIRTY:
@@ -1389,8 +1396,10 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	}
 
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to pre-allocate node: "
 			  "free space is absent\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto free_segment_request;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-allocate node: err %d\n",
@@ -1751,8 +1760,10 @@ try_find_node:
 		case SSDFS_BTREE_NODE_INITIALIZED:
 		case SSDFS_BTREE_NODE_DIRTY:
 			err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("node %u has been found\n",
 				  node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_insert_node;
 
 		default:
@@ -1900,8 +1911,10 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 	switch (atomic_read(&parent->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
 		err = -EACCES;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u is under initialization\n",
 			  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return ERR_PTR(err);
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
@@ -1918,8 +1931,10 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 
 	if (!is_ssdfs_btree_node_index_area_exist(parent)) {
 		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u hasn't index area\n",
 			  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return ERR_PTR(err);
 	}
 
@@ -1949,9 +1964,11 @@ ssdfs_btree_get_child_node_for_hash(struct ssdfs_btree *tree,
 		err = 0;
 	} else if (err == -ENODATA) {
 		child = ERR_PTR(err);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find an index: "
 			  "node_id %u, hash %llx\n",
 			  parent->node_id, upper_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_child_search;
 	} else if (unlikely(err)) {
 		child = ERR_PTR(err);
@@ -2263,8 +2280,10 @@ int ssdfs_btree_create_empty_node(struct ssdfs_btree *tree,
 
 	err = ssdfs_current_segment_pre_allocate_node(node_type, ptr);
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to preallocate node: id %u\n",
 			  node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_create_node;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to preallocate node: id %u, err %d\n",
@@ -2343,8 +2362,10 @@ int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
 	}
 
 	if (is_ssdfs_btree_node_index_area_empty(parent)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u has empty index area\n",
 			  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -2395,8 +2416,10 @@ int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
 		err = ssdfs_btree_radix_tree_find(tree, node_id, &child);
 
 		if (!child) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("empty node pointer: "
 				  "node_id %u\n", node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		if (!err) {
@@ -2411,8 +2434,10 @@ int ssdfs_btree_update_parent_node_pointer(struct ssdfs_btree *tree,
 
 		if (err == -ENOENT) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("node %u is absent\n",
 				  node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find node in radix tree: "
@@ -2483,9 +2508,11 @@ int ssdfs_btree_process_hierarchy_for_add_nolock(struct ssdfs_btree *tree,
 						    hierarchy);
 		if (err) {
 			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to create empty node: "
 					  "err %d\n",
 					  err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
 				SSDFS_ERR("fail to create empty node: "
 					  "err %d\n",
@@ -2764,8 +2791,10 @@ int __ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	err = ssdfs_btree_process_hierarchy_for_add_nolock(tree, search,
 							   hierarchy);
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to process hierarchy for add: "
 			  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_create_node;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to process hierarchy for add: "
@@ -2933,8 +2962,10 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 	index_position++;
 
 	if (index_position >= index_count) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index_position %u >= index_count %u\n",
 			  index_position, index_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
@@ -3052,6 +3083,7 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 		   search->request.start.hash <= end_hash;
 
 	if (!is_found && items_count >= items_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node (start_hash %llx, end_hash %llx), "
 			  "request (start_hash %llx, end_hash %llx), "
 			  "items_count %u, items_capacity %u\n",
@@ -3059,6 +3091,7 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
@@ -3129,6 +3162,7 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 		   search->request.start.hash <= end_hash;
 	is_right_adjacent = search->request.start.hash > end_hash;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node (start_hash %llx, end_hash %llx), "
 		  "request (start_hash %llx, end_hash %llx), "
 		  "is_found %#x, is_right_adjacent %#x, "
@@ -3138,6 +3172,7 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 		  search->request.end.hash,
 		  is_found, is_right_adjacent,
 		  items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (node->tree->type) {
 	case SSDFS_INODES_BTREE:
@@ -3168,22 +3203,26 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("found leaf node: "
 		  "node_id %u, start_hash %llx, "
 		  "end_hash %llx, search_hash %llx\n",
 		  node->node_id, start_hash, end_hash,
 		  search->request.start.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 
 unable_find_leaf_node:
 	search->node.state = SSDFS_BTREE_SEARCH_FOUND_INDEX_NODE_DESC;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("unable to find a leaf node: "
 		  "start_hash %llx, end_hash %llx, "
 		  "search_hash %llx\n",
 		  start_hash, end_hash,
 		  search->request.start.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return -ENOENT;
 }
@@ -3225,9 +3264,11 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->node.state == SSDFS_BTREE_SEARCH_FOUND_LEAF_NODE_DESC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try to use old search result: "
 			  "node_id %llu, height %u\n",
 			  (u64)search->node.id, search->node.height);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EEXIST;
 	}
 
@@ -3408,12 +3449,16 @@ try_find_index:
 		err = ssdfs_btree_node_find_index(search);
 		if (err == -ENODATA) {
 			err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find node index: "
 				  "node_state %#x, node_id %llu, "
 				  "height %u\n",
 				  search->node.state,
 				  (u64)search->node.id,
 				  search->node.height);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			if (upper_height == 0) {
 				search->node.state =
 					SSDFS_BTREE_SEARCH_ROOT_NODE_DESC;
@@ -3475,12 +3520,14 @@ check_found_node:
 			goto finish_search_leaf_node;
 	} else {
 		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid leaf node descriptor: "
 			   "node_state %#x, node_id %llu, "
 			   "height %u\n",
 			   search->node.state,
 			   (u64)search->node.id,
 			   search->node.height);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 finish_search_leaf_node:
@@ -3549,9 +3596,11 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	err = ssdfs_reserve_free_pages(fsi, tree->pages_per_node,
 					SSDFS_METADATA_PAGES);
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add the new node: "
 			  "pages_per_node %u, err %d\n",
 			  tree->pages_per_node, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	}
 
@@ -3560,8 +3609,10 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	up_read(&tree->lock);
 
 	if (!err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found leaf node %u\n",
 			  search->node.id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return ssdfs_check_leaf_node_state(search);
 	} else if (err == -ENOENT) {
 		/*
@@ -3581,8 +3632,10 @@ int ssdfs_btree_add_node(struct ssdfs_btree *tree,
 	if (err == -EEXIST) {
 		SSDFS_DBG("node has been added\n");
 	} else if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add a new node: err %d\n",
 			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add a new node: err %d\n",
 			  err);
@@ -3645,9 +3698,11 @@ int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
 	err = ssdfs_reserve_free_pages(fsi, tree->pages_per_node,
 					SSDFS_METADATA_PAGES);
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add the new node: "
 			  "pages_per_node %u, err %d\n",
 			  tree->pages_per_node, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	}
 
@@ -3829,8 +3884,10 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 	for (cur_height = 0; cur_height < (tree_height - 1); cur_height++) {
 		level = hierarchy->array_ptr[cur_height];
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_height %d, tree_height %d\n",
 			  cur_height, tree_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!need_delete_node(level))
 			continue;
@@ -3994,9 +4051,11 @@ int ssdfs_btree_delete_node(struct ssdfs_btree *tree,
 	}
 
 	if (is_ssdfs_node_shared(node)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u has several owners %d\n",
 			  node->node_id,
 			  atomic_read(&node->refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EBUSY;
 	}
 
@@ -4245,29 +4304,35 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	free_items = items_capacity - items_count;
 
 	if (free_items == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u is exhausted: free_items %u, "
 			   "items_count %u, items_capacity %u\n",
 			   node->node_id,
 			   free_items, items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
 		return -ENOENT;
 	}
 
 	if (items_count == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u is empty: free_items %u, "
 			   "items_count %u, items_capacity %u\n",
 			   node->node_id,
 			   free_items, items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_node_check;
 	}
 
 	if (search->request.start.hash < start_hash) {
 		if (search->request.end.hash < start_hash) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("request (start_hash %llx, end_hash %llx), "
 				  "area (start_hash %llx, end_hash %llx)\n",
 				  search->request.start.hash,
 				  search->request.end.hash,
 				  start_hash, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_node_check;
 		} else {
 			SSDFS_ERR("invalid request: "
@@ -4493,10 +4558,12 @@ try_find_item_again:
 			goto finish_search_item;
 		}
 	} else if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find item: "
 			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_search_item;
 	} else if (err == -ENOSPC) {
 		err = -ENODATA;
@@ -4742,10 +4809,12 @@ try_find_range_again:
 			goto try_next_search;
 		}
 	} else if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find range: "
 			  "start_hash %llx, end_hash %llx\n",
 			  search->request.start.hash,
 			  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_search_range;
 	} else if (err == -ENOSPC) {
 		err = -ENODATA;
@@ -6449,8 +6518,10 @@ int ssdfs_btree_get_head_range(struct ssdfs_btree *tree,
 
 	if (expected_len != search->result.count) {
 		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("expected_len %u != search->result.count %u\n",
 			  expected_len, search->result.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 finish_get_range:
@@ -7021,9 +7092,11 @@ int ssdfs_btree_get_next_hash(struct ssdfs_btree *tree,
 			/* hash == found hash */
 			err = 0;
 		} else if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the index position: "
 				  "old_hash %llx\n",
 				  old_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_index_search;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the index position: "
@@ -7040,9 +7113,11 @@ int ssdfs_btree_get_next_hash(struct ssdfs_btree *tree,
 
 		if (found_pos >= area.index_count) {
 			err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("index area is finished: "
 				  "found_pos %u, area.index_count %u\n",
 				  found_pos, area.index_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_index_search;
 		}
 
@@ -7096,7 +7171,9 @@ finish_index_search:
 			/* next hash has been found */
 			err = 0;
 			*next_hash = le64_to_cpu(index_key.index.hash);
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("next_hash %llx\n", *next_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_get_next_hash;
 		}
 
@@ -7130,8 +7207,10 @@ void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
 	}
 
 	if (is_ssdfs_btree_node_index_area_empty(parent)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u has empty index area\n",
 			  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 
@@ -7226,8 +7305,10 @@ void ssdfs_debug_btree_check_indexes(struct ssdfs_btree *tree,
 	}
 
 	if (is_ssdfs_btree_node_index_area_empty(parent)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u has empty index area\n",
 			  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 

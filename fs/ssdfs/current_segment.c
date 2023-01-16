@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/current_segment.c - current segment abstraction implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/slab.h>
@@ -236,8 +239,10 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 
 	if (!need_select_flush_threads(atomic_read(&si->seg_state)) ||
 	    atomic_read(&si->blk_bmap.seg_free_blks) == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu can't be used as current: \n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}
 
@@ -374,9 +379,11 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 				  pebc, si->seg_id, i, err);
 			return err;
 		} else if (peb_free_pages == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("seg %llu, peb_index %u, free_pages %d\n",
 				  si->seg_id, pebc->peb_index,
 				  peb_free_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		if (max_free_pages.value < peb_free_pages) {
@@ -386,19 +393,23 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 	}
 
 	if (max_free_pages.value <= 0 || max_free_pages.pos < 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu can't be used as current: "
 			  "max_free_pages.value %d, "
 			  "max_free_pages.pos %d\n",
 			  si->seg_id,
 			  max_free_pages.value,
 			  max_free_pages.pos);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}
 
 	err = ssdfs_segment_select_flush_threads(si, &max_free_pages);
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu can't be used as current\n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to select flush threads: "
@@ -486,9 +497,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->cur_segs =
 		ssdfs_cur_seg_kzalloc(sizeof(struct ssdfs_current_segs_array),
@@ -579,7 +590,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 				goto destroy_cur_segs;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("current segment is absent\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_segment_put_object(si);
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to make segment %llu as current: "
@@ -596,7 +609,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create current segment array\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 
@@ -627,9 +642,9 @@ void ssdfs_destroy_all_curent_segments(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi->cur_segs %p\n", fsi->cur_segs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!fsi->cur_segs)
 		return;
@@ -652,9 +667,9 @@ void ssdfs_current_segment_array_destroy(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi->cur_segs %p\n", fsi->cur_segs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!fsi->cur_segs)
 		return;

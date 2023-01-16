@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/peb_mapping_table_thread.c - PEB mapping table thread functionality.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -104,10 +107,10 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hdr %p, found_item %lu\n",
 		  hdr, found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_peb_protected(found_item))
 		return true;
@@ -136,8 +139,10 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 		found = find_next_bit(used_bmap, pebs_count,
 				      protected_item);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("i %d, protected_item %lu, found %lu\n",
 			  i, protected_item, found);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (found == protected_item)
 			continue;
@@ -145,8 +150,10 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 		found = find_next_bit(dirty_bmap, pebs_count,
 				      protected_item);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("i %d, protected_item %lu, found %lu\n",
 			  i, protected_item, found);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (found == protected_item)
 			continue;
@@ -217,12 +224,12 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc || !array);
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fdesc %p, stripe_index %u, "
 		  "erases_per_stripe %d\n",
 		  fdesc, stripe_index,
 		  erases_per_stripe);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	start_page = stripe_index * stripe_pages;
 	start_page += fdesc->lebtbl_pages;
@@ -264,8 +271,10 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			found_item = find_next_bit(dirty_bmap, pebs_count,
 						   found_item);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found_item %lu, pebs_count %u\n",
 				  found_item, pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (found_item >= pebs_count) {
 				/* all dirty PEBs were found */
@@ -278,8 +287,10 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			}
 
 			if (!is_time_to_erase_peb(hdr, found_item)) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("PEB %llu is protected yet\n",
 					  GET_PEB_ID(kaddr, found_item));
+#endif /* CONFIG_SSDFS_DEBUG */
 				found_item++;
 				continue;
 			}
@@ -297,15 +308,19 @@ ssdfs_maptbl_collect_stripe_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			}
 
 			if (ptr->state == SSDFS_MAPTBL_UNDER_ERASE_STATE) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("PEB %llu is under erase\n",
 					  GET_PEB_ID(kaddr, found_item));
+#endif /* CONFIG_SSDFS_DEBUG */
 				found_item++;
 				continue;
 			}
 
 			if (does_peb_contain_snapshot(ptr)) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("PEB %llu contains snapshot\n",
 					  GET_PEB_ID(kaddr, found_item));
+#endif /* CONFIG_SSDFS_DEBUG */
 				found_item++;
 				continue;
 			}
@@ -335,8 +350,10 @@ finish_page_processing:
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err))
 			return err;
@@ -474,8 +491,10 @@ int ssdfs_maptbl_erase_peb(struct ssdfs_fs_info *fsi,
 
 	offset = peb_id * fsi->erasesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, offset %llu\n",
 		  peb_id, (u64)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (result->state == SSDFS_BAD_BLOCK_DETECTED) {
 		err = fsi->devops->mark_peb_bad(fsi->sb, offset);
@@ -492,8 +511,10 @@ int ssdfs_maptbl_erase_peb(struct ssdfs_fs_info *fsi,
 			return err;
 		} else if (err == -EFAULT) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("erase operation failure: peb %llu\n",
 				  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			result->state = SSDFS_ERASE_FAILURE;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to erase: peb %llu, err %d\n",
@@ -543,9 +564,11 @@ int ssdfs_maptbl_erase_pebs_array(struct ssdfs_fs_info *fsi,
 	for (i = 0; i < array->size; i++) {
 		err = ssdfs_maptbl_erase_peb(fsi, &array->ptr[i]);
 		if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to erase PEB: "
 				  "peb_id %llu, err %d\n",
 				  array->ptr[i].peb_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		}
 	}
@@ -583,15 +606,17 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc || !res);
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fdesc %p, res->fragment_index %u, res->peb_index %u, "
 		  "res->peb_id %llu, res->state %#x\n",
 		  fdesc, res->fragment_index, res->peb_index,
 		  res->peb_id, res->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (res->state == SSDFS_IGNORE_ERASE) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("ignore PEB: peb_id %llu\n", res->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -624,6 +649,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		goto finish_page_processing;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, peb_index %u, state %#x\n",
 			  res->peb_id, res->peb_index, ptr->state);
 	SSDFS_DBG("erase_cycles %u, type %#x, "
@@ -631,6 +657,7 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  le32_to_cpu(ptr->erase_cycles),
 		  ptr->type, ptr->state,
 		  ptr->flags, ptr->shared_peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (ptr->state != SSDFS_MAPTBL_PRE_ERASE_STATE &&
 	    ptr->state != SSDFS_MAPTBL_UNDER_ERASE_STATE &&
@@ -645,11 +672,13 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	le32_add_cpu(&ptr->erase_cycles, 1);
 	ptr->type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("erase_cycles %u, type %#x, "
 		  "state %#x, flags %#x, shared_peb_index %u\n",
 		  le32_to_cpu(ptr->erase_cycles),
 		  ptr->type, ptr->state,
 		  ptr->flags, ptr->shared_peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (res->state) {
 	case SSDFS_ERASE_DONE:
@@ -665,8 +694,10 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 #endif /* CONFIG_SSDFS_DEBUG */
 		fdesc->pre_erase_pebs--;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fdesc->pre_erase_pebs %u\n",
 			  fdesc->pre_erase_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	case SSDFS_ERASE_SB_PEB_DONE:
@@ -678,8 +709,10 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 #endif /* CONFIG_SSDFS_DEBUG */
 		fdesc->pre_erase_pebs--;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fdesc->pre_erase_pebs %u\n",
 			  fdesc->pre_erase_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	case SSDFS_ERASE_FAILURE:
@@ -713,8 +746,10 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -750,10 +785,10 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(array->capacity == 0);
 	BUG_ON(array->capacity < array->size);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u, size %u, item_index %u\n",
 		  tbl, array->capacity, array->size, *item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*item_index >= array->size) {
 		SSDFS_ERR("item_index %u >= array->size %u\n",
@@ -806,9 +841,11 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	} while (*item_index < array->size &&
 		 fragment_index == array->ptr[*item_index].fragment_index);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("erased_pebs %d, pre_erase_pebs %d\n",
 		  erased_pebs,
 		  atomic_read(&tbl->pre_erase_pebs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_sub_return(erased_pebs, &tbl->pre_erase_pebs) < 0) {
 		SSDFS_WARN("erased_pebs %d, pre_erase_pebs %d\n",
@@ -816,8 +853,10 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 			   atomic_read(&tbl->pre_erase_pebs));
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tbl->pre_erase_pebs %d\n",
 		  atomic_read(&tbl->pre_erase_pebs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_correction:
 	up_write(&fdesc->lock);
@@ -844,9 +883,11 @@ finish_fragment_correction:
 		bitmap_set(tbl->dirty_bmap, fragment_index, 1);
 		mutex_unlock(&tbl->bmap_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment_index %u, state %#x\n",
 			  fragment_index,
 			  atomic_read(&fdesc->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return err;
@@ -869,10 +910,10 @@ int ssdfs_maptbl_correct_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(array->capacity == 0);
 	BUG_ON(array->capacity < array->size);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u, size %u\n",
 		  tbl, array->capacity, array->size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (array->size == 0)
 		return 0;
@@ -922,9 +963,9 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!fdesc || !result);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu\n", result->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&fdesc->state);
 	if (state == SSDFS_MAPTBL_FRAG_INIT_FAILED ||
@@ -949,9 +990,11 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (result->state == SSDFS_IGNORE_ERASE) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("ignore erase operation: "
 			  "peb_id %llu\n",
 			  result->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -960,8 +1003,10 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 			   atomic_read(&tbl->pre_erase_pebs));
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tbl->pre_erase_pebs %d\n",
 		  atomic_read(&tbl->pre_erase_pebs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_ssdfs_maptbl_going_to_be_destroyed(tbl)) {
 		SSDFS_WARN("maptbl %p, "
@@ -984,9 +1029,11 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 	bitmap_set(tbl->dirty_bmap, fdesc->fragment_id, 1);
 	mutex_unlock(&tbl->bmap_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fragment_id %u, state %#x\n",
 		  fdesc->fragment_id,
 		  atomic_read(&fdesc->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1004,17 +1051,19 @@ bool is_time_to_recover_pebs(struct ssdfs_peb_mapping_table *tbl)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !tbl->fsi || !tbl->fsi->sb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p\n", tbl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	upper_bound_cno = atomic64_read(&tbl->last_peb_recover_cno);
 	upper_bound_cno += month_ns;
 
 	current_cno = ssdfs_current_cno(tbl->fsi->sb);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("current_cno %llu, upper_bound_cno %llu\n",
 		  current_cno, upper_bound_cno);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return current_cno >= upper_bound_cno;
 }
@@ -1028,9 +1077,9 @@ void set_last_recovering_cno(struct ssdfs_peb_mapping_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !tbl->fsi || !tbl->fsi->sb);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p\n", tbl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic64_set(&tbl->last_peb_recover_cno,
 			ssdfs_current_cno(tbl->fsi->sb));
@@ -1083,12 +1132,12 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 			  stage);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fdesc %p, fragment_index %u, page_index %lu, "
 		  "max_erases %d, stage %#x\n",
 		  fdesc, fragment_index, page_index,
 		  max_erases, stage);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
 	if (IS_ERR_OR_NULL(page)) {
@@ -1144,9 +1193,11 @@ ssdfs_maptbl_find_page_recovering_pebs(struct ssdfs_maptbl_fragment_desc *fdesc,
 		/* simply reserve PEBs for marking as bad */
 		need_mark_peb_bad = true;
 	} else if (((recovering_pebs * 100) / pebs_count) < 20) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("leave page %lu untouched: "
 			  "recovering_pebs %d, pebs_count %u\n",
 			  page_index, recovering_pebs, pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		hdr->recover_months++;
 		goto finish_page_processing;
 	}
@@ -1191,13 +1242,17 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (array->size >= array->capacity) {
 		err = -ENOSPC;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("array->size %u, max_erases %d\n",
 			  array->size, max_erases);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return err;
@@ -1248,12 +1303,12 @@ int ssdfs_maptbl_collect_recovering_pebs(struct ssdfs_peb_mapping_table *tbl,
 			  stage);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, fragment_index %u, "
 		  "erases_per_fragment %d, stage %#x\n",
 		  tbl, fragment_index,
 		  erases_per_fragment, stage);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(array->ptr, 0,
 		array->capacity * sizeof(struct ssdfs_erase_result));
@@ -1313,10 +1368,10 @@ ssdfs_maptbl_increase_threshold(struct ssdfs_peb_table_fragment_header *hdr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hdr %p, recover_threshold %u\n",
 		  hdr, hdr->recover_threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (hdr->recover_threshold) {
 	case SSDFS_PEBTBL_FIRST_RECOVER_TRY:
@@ -1364,10 +1419,10 @@ ssdfs_maptbl_define_wait_time(struct ssdfs_peb_table_fragment_header *hdr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hdr %p, recover_threshold %u\n",
 		  hdr, hdr->recover_threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (hdr->recover_threshold) {
 	case SSDFS_PEBTBL_FIRST_RECOVER_TRY:
@@ -1439,10 +1494,10 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(array->capacity < array->size);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 	BUG_ON(!rwsem_is_locked(&ptr->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fdesc %p, capacity %u, size %u, item_index %u\n",
 		  ptr, array->capacity, array->size, *item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*item_index >= array->size) {
 		SSDFS_ERR("item_index %u >= array->size %u\n",
@@ -1517,8 +1572,10 @@ ssdfs_maptbl_correct_page_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 			recovered_pebs++;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("hdr->reserved_pebs %u\n",
 				  le16_to_cpu(hdr->reserved_pebs));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		++*item_index;
@@ -1563,8 +1620,10 @@ finish_page_processing:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1600,10 +1659,10 @@ ssdfs_correct_fragment_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(array->capacity == 0);
 	BUG_ON(array->capacity < array->size);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u, size %u, item_index %u\n",
 		  tbl, array->capacity, array->size, *item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*item_index >= array->size) {
 		SSDFS_ERR("item_index %u >= array->size %u\n",
@@ -1680,9 +1739,11 @@ finish_fragment_correction:
 		mutex_unlock(&tbl->bmap_lock);
 		err = err2;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment_index %u, state %#x\n",
 			  fragment_index,
 			  atomic_read(&fdesc->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return err;
@@ -1715,10 +1776,10 @@ int ssdfs_maptbl_correct_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(array->capacity == 0);
 	BUG_ON(array->capacity < array->size);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u, size %u\n",
 		  tbl, array->capacity, array->size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (array->size == 0)
 		return 0;
@@ -1761,10 +1822,10 @@ int ssdfs_maptbl_correct_max_erase_ops(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, max_erase_ops %d\n",
 		  fsi, max_erase_ops);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (max_erase_ops <= 0)
 		return 0;
@@ -1803,10 +1864,10 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !array || !array->ptr);
 	BUG_ON(array->capacity == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u\n",
 		  tbl, array->capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 
@@ -1814,7 +1875,9 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	max_erase_ops = min_t(int, max_erase_ops, array->capacity);
 	max_erase_ops = ssdfs_maptbl_correct_max_erase_ops(fsi, max_erase_ops);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("max_erase_ops %d\n", max_erase_ops);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (max_erase_ops == 0) {
 		SSDFS_WARN("max_erase_ops == 0\n");
@@ -1844,15 +1907,19 @@ int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	if (erases_per_fragment == 0)
 		erases_per_fragment = 1;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("erases_per_fragment %d\n", erases_per_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < fragments_count; i++) {
 		err = ssdfs_maptbl_collect_dirty_pebs(tbl, i,
 					erases_per_fragment, array);
 		if (err == -ENOENT) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment %d has no dirty PEBs\n",
 				  i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to collect dirty pebs: "
@@ -1943,10 +2010,10 @@ int __ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 			  stage);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u, stage %#x\n",
 		  tbl, array->capacity, stage);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 
@@ -2054,10 +2121,10 @@ ssdfs_maptbl_check_pebs_recoverability(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !array || !array->ptr);
 	BUG_ON(array->capacity == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u\n",
 		  tbl, array->capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_maptbl_recover_pebs(tbl, array, stage);
 }
@@ -2087,10 +2154,10 @@ int ssdfs_maptbl_recover_pebs(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !array || !array->ptr);
 	BUG_ON(array->capacity == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p, capacity %u\n",
 		  tbl, array->capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_maptbl_recover_pebs(tbl, array, stage);
 }
@@ -2131,10 +2198,10 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !cache || !pmi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("leb_id %llu, peb_id %llu, consistency %#x\n",
 		  pmi->leb_id, pmi->peb_id, pmi->consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 
@@ -2185,20 +2252,26 @@ int ssdfs_maptbl_resolve_peb_mapping(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (consistency == SSDFS_PEB_STATE_UNKNOWN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb_id %llu isn't be found\n", pmi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
 	switch (consistency) {
 	case SSDFS_PEB_STATE_CONSISTENT:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb_id %llu has consistent state already\n",
 			  pmi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 
 	default:
 		if (consistency != pmi->consistency) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("consistency1 %#x != consistency2 %#x\n",
 				  consistency, pmi->consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
 	}
@@ -2371,7 +2444,9 @@ finish_resolving:
 	up_read(&tbl->tbl_lock);
 
 finish_resolving_no_lock:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -2385,10 +2460,10 @@ bool has_maptbl_pre_erase_pebs(struct ssdfs_peb_mapping_table *tbl)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pre_erase_pebs %d\n",
 		  atomic_read(&tbl->pre_erase_pebs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return atomic_read(&tbl->pre_erase_pebs) > 0;
 }
@@ -2462,9 +2537,9 @@ int ssdfs_maptbl_thread_func(void *data)
 		SSDFS_ERR("pointer on mapping table object is NULL\n");
 		BUG();
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("MAPTBL thread\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
 	cache = &fsi->maptbl_cache;
@@ -2669,9 +2744,9 @@ int ssdfs_maptbl_start_thread(struct ssdfs_peb_mapping_table *tbl)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tbl %p\n", tbl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	threadfn = maptbl_thread.threadfn;
 	fmt = maptbl_thread.fmt;

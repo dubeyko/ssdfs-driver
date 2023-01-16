@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/inode.c - inode handling routines.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/mtd/mtd.h>
@@ -196,7 +199,9 @@ static int ssdfs_read_inode(struct inode *inode)
 	u16 private_flags;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -454,7 +459,9 @@ struct inode *ssdfs_iget(struct super_block *sb, ino_t ino)
 	struct inode *inode;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = iget_locked(sb, ino);
 	if (unlikely(!inode)) {
@@ -557,8 +564,10 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 	ino_t ino;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir_ino %lu, mode %o\n",
 		  (unsigned long)dir->i_ino, mode);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	itree = fsi->inodes_tree;
 
@@ -574,9 +583,11 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 	ssdfs_btree_search_free(search);
 
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to allocate an inode: "
 			  "dir_ino %lu, err %d\n",
 			  (unsigned long)dir->i_ino, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto failed_new_inode;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate an inode: "
@@ -625,8 +636,10 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 
 	mark_inode_dirty(inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("new inode %lu is created\n",
 		  ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	trace_ssdfs_inode_new(inode);
 	return inode;
@@ -655,7 +668,9 @@ int ssdfs_getattr(struct user_namespace *mnt_userns,
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	unsigned int flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	flags = ii->flags & SSDFS_FL_USER_VISIBLE;
 	if (flags & SSDFS_APPEND_FL)
@@ -682,7 +697,9 @@ static int ssdfs_truncate(struct inode *inode)
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode) ||
 	      S_ISLNK(inode->i_mode)))
@@ -702,8 +719,10 @@ static int ssdfs_truncate(struct inode *inode)
 			return -E2BIG;
 		} else if (newsize == inline_capacity) {
 			/* do nothing */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("newsize %llu == inline_capacity %zu\n",
 				  (u64)newsize, inline_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			loff_t size = inline_capacity - newsize;
 
@@ -738,7 +757,9 @@ int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 	loff_t newsize = attr->ia_size;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(S_ISREG(inode->i_mode) || S_ISDIR(inode->i_mode) ||
 	    S_ISLNK(inode->i_mode)))
@@ -771,7 +792,9 @@ int ssdfs_setattr(struct user_namespace *mnt_userns,
 	struct inode *inode = dentry->d_inode;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = setattr_prepare(&init_user_ns, dentry, attr);
 	if (err)
@@ -810,10 +833,12 @@ void ssdfs_evict_inode(struct inode *inode)
 	bool want_delete = false;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu mode %o count %d nlink %u\n",
 		  ino, inode->i_mode,
 		  atomic_read(&inode->i_count),
 		  inode->i_nlink);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	xattrs_tree = SSDFS_XATTREE(SSDFS_I(inode));
 
@@ -905,7 +930,9 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	ino_t ino;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&fsi->volume_sem);
 	raw_inode_size = le16_to_cpu(fsi->vs->inodes_btree.desc.item_size);
@@ -1122,7 +1149,9 @@ int ssdfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	u64 nsegs;
 	u32 pages_per_seg;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu\n", (unsigned long)dentry->d_inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	buf->f_type = SSDFS_SUPER_MAGIC;
 	buf->f_bsize = sb->s_blocksize;

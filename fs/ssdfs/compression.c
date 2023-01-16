@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/compression.c - compression logic implementation.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -117,8 +118,10 @@ static int ssdfs_none_compress(struct list_head *ws_ptr,
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("data_in %p, cdata_out %p, srclen %p, destlen %p\n",
 		  data_in, cdata_out, srclen, destlen);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*srclen > *destlen) {
 		SSDFS_ERR("src_len %zu > dest_len %zu\n",
@@ -183,7 +186,9 @@ int ssdfs_compressors_init(void)
 	int i;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("init compressors subsystem\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_COMPR_TYPES_CNT; i++) {
 		INIT_LIST_HEAD(&compr_idle_workspace[i]);
@@ -222,7 +227,9 @@ void ssdfs_free_workspaces(void)
 	const struct ssdfs_compress_ops *ops;
 	int i;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("destruct auxiliary workspaces\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_COMPR_TYPES_CNT; i++) {
 		if (!ssdfs_compressors[i])
@@ -245,7 +252,9 @@ void ssdfs_free_workspaces(void)
 
 void ssdfs_compressors_exit(void)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("deinitialize compressors subsystem\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_free_workspaces();
 	ssdfs_unregister_compressor(&ssdfs_none_compr);
@@ -268,9 +277,9 @@ static struct list_head *ssdfs_find_workspace(int type)
 	int *num_workspace;
 	const struct ssdfs_compress_ops *ops;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("type %d\n", type);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (unknown_compression(type)) {
 		SSDFS_ERR("unknown compression type %d\n", type);
 		BUG();
@@ -331,9 +340,9 @@ static void ssdfs_free_workspace(int type, struct list_head *workspace)
 	int *num_workspace;
 	const struct ssdfs_compress_ops *ops;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("type %d, workspace %p\n", type, workspace);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	if (unknown_compression(type)) {
 		SSDFS_ERR("unknown compression type %d\n", type);
 		BUG();
@@ -414,8 +423,10 @@ bool ssdfs_can_compress_data(struct page *page,
 
 	ssdfs_compr_kfree(counts);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("data_size %u, found_symbols %u, min %u, max %u\n",
 		  data_size, found_symbols, min, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (max - min) >= SSDFS_MIN_MAX_DIFF_THRESHOLD;
 }
@@ -461,10 +472,12 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 
 	ssdfs_free_workspace(type, workspace);
 	if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("%s compressor is unable to compress data %p "
 			  "of size %zu\n",
 			  ssdfs_compressors[type]->name,
 			  data_in, *srclen);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto failed_compress;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("%s compressor fails to compress data %p "

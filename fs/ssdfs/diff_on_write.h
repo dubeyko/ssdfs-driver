@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/diff_on_write.h - Diff-On-Write approach declarations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #ifndef _SSDFS_DIFF_ON_WRITE_H
@@ -24,18 +27,6 @@
 
 #define SSDFS_DIRTY_ITEM	(0x1)
 #define SSDFS_DIRTY_ITEM_MASK	(0x1)
-
-/*
- * The struct page has union with field "private" and related fields.
- * It is possible to use this field with PG_private flag.
- * If ssdfs_write_begin() is called then it needs to copy current page
- * state into the backup memory page (this page should be shadowed inside
- * of "private" field). If ssdfs_write_end() is called then it needs
- * to extract diff (delta) and to save into structure is associated
- * with "private" field. Finally, gathered diffs are chained into
- * "private" field should be store during ssdfs_write_page() call.
- */
-
 
 /*
  * Diff-On-Write approach API

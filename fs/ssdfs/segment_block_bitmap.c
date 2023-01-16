@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/segment_block_bitmap.c - segment's block bitmap implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/pagemap.h>
@@ -719,9 +722,12 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 	if (free_blks < count) {
 		err = -E2BIG;
+
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu hasn't enough free pages: "
 			  "free_pages %u, requested_pages %u\n",
 			  ptr->parent_si->seg_id, free_blks, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		atomic_set(&ptr->seg_free_blks, 0);
 	} else {
@@ -759,8 +765,10 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		pending = si->pending_new_user_data_pages;
 		spin_unlock(&si->pending_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_id %llu, pending %u\n",
 			  si->seg_id, pending);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG

@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/peb_mapping_table.h - PEB mapping table declarations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #ifndef _SSDFS_PEB_MAPPING_TABLE_H
@@ -300,10 +303,10 @@ u16 DEFINE_PEB_INDEX_IN_FRAGMENT(struct ssdfs_maptbl_fragment_desc *fdesc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
 	BUG_ON(page_index < fdesc->lebtbl_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fdesc %p, page_index %lu, item_index %u\n",
 		  fdesc, page_index, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index -= fdesc->lebtbl_pages;
 	page_index *= fdesc->pebs_per_page;
@@ -337,10 +340,10 @@ u64 GET_PEB_ID(void *kaddr, u16 item_index)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p, item_index %u\n",
 		  kaddr, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -374,10 +377,10 @@ pgoff_t PEBTBL_PAGE_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fdesc %p, peb_index %u\n",
 		  fdesc, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index = fdesc->lebtbl_pages;
 	page_index += peb_index / fdesc->pebs_per_page;
@@ -407,10 +410,10 @@ struct ssdfs_peb_descriptor *GET_PEB_DESCRIPTOR(void *kaddr, u16 item_index)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p, item_index %u\n",
 		  kaddr, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -444,7 +447,9 @@ struct ssdfs_peb_descriptor *GET_PEB_DESCRIPTOR(void *kaddr, u16 item_index)
 static inline
 int SEG2PEB_TYPE(int seg_type)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_type %d\n", seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (seg_type) {
 	case SSDFS_USER_DATA_SEG_TYPE:
@@ -481,7 +486,9 @@ int SEG2PEB_TYPE(int seg_type)
 static inline
 int PEB2SEG_TYPE(int peb_type)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_type %d\n", peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (peb_type) {
 	case SSDFS_MAPTBL_DATA_PEB_TYPE:
@@ -527,7 +534,9 @@ bool is_peb_protected(unsigned long found_item)
 {
 	unsigned long remainder;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("found_item %lu\n", found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	remainder = found_item % SSDFS_MAPTBL_PROTECTION_STEP;
 	return remainder == 0;
@@ -551,9 +560,7 @@ void ssdfs_account_updated_user_data_pages(struct ssdfs_fs_info *fsi,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	u64 updated = 0;
-#endif /* CONFIG_SSDFS_DEBUG */
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 
 	SSDFS_DBG("fsi %p, count %u\n",

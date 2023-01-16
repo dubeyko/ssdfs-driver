@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/diff_on_write.c - Diff-On-Write approach implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/pagevec.h>
@@ -124,6 +127,7 @@ finish_check:
 	up_read(&node->header_lock);
 
 	if (can_be_used) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("Diff-On-Write: node_id %u, height %u, type %#x, "
 			  "dirty_bits %ld, dirty_indexes %ld, dirty_items %ld, "
 			  "allocated_bits %ld, bits_count %ld, "
@@ -137,6 +141,7 @@ finish_check:
 			  items_count, items_capacity, item_size,
 			  index_count, index_capacity, index_size,
 			  percentage, total_bytes, dirty_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DIFF_ON_WRITE_METADATA

@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/volume_header.c - operations with volume header.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -151,8 +154,10 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 	pebs_per_seg = 1 << vh->log_pebs_per_seg;
 
 	if (page_size >= erase_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_size %u >= erase_size %llu\n",
 			  page_size, erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -165,7 +170,9 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 		break;
 
 	default:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unexpected page_size %u\n", page_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -205,26 +212,34 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 
 			erase_size = zone_size;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return false;
 		}
 	};
 
 	if (seg_size < erase_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_size %u < erase_size %llu\n",
 			  seg_size, erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	if (pebs_per_seg != (seg_size >> vh->log_erasesize)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("pebs_per_seg %u != (seg_size %u / erase_size %llu)\n",
 			  pebs_per_seg, seg_size, erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	if (seg_size >= dev_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_size %u >= dev_size %llu\n",
 			  seg_size, dev_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -233,25 +248,31 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 			u64 leb_id = le64_to_cpu(vh->sb_pebs[i][j].leb_id);
 			u64 peb_id = le64_to_cpu(vh->sb_pebs[i][j].peb_id);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("i %d, j %d, LEB %llu, PEB %llu\n",
 				  i, j, leb_id, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			for (k = 0; k < array_index; k++) {
 				if (leb_id == leb_array[k]) {
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("corrupted LEB number: "
 						  "leb_id %llu, "
 						  "leb_array[%d] %llu\n",
 						  leb_id, k,
 						  leb_array[k]);
+#endif /* CONFIG_SSDFS_DEBUG */
 					return false;
 				}
 
 				if (peb_id == peb_array[k]) {
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("corrupted PEB number: "
 						  "peb_id %llu, "
 						  "peb_array[%d] %llu\n",
 						  peb_id, k,
 						  peb_array[k]);
+#endif /* CONFIG_SSDFS_DEBUG */
 					return false;
 				}
 			}
@@ -272,8 +293,10 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 			}
 
 			if (leb_id >= (dev_size >> vh->log_erasesize)) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("corrupted LEB number %llu\n",
 					  leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return false;
 			}
 
@@ -380,9 +403,11 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 				  fsi->pages_per_peb);
 			ssdfs_show_volume_header(vh);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
 				  le16_to_cpu(hdr->log_pages),
 				  fsi->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -393,8 +418,10 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 				  le16_to_cpu(hdr->seg_type));
 			ssdfs_show_volume_header(vh);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unknown seg_type %#x\n",
 				  le16_to_cpu(hdr->seg_type));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -405,8 +432,10 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 				  le32_to_cpu(hdr->seg_flags));
 			ssdfs_show_volume_header(vh);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("corrupted seg_flags %#x\n",
 				  le32_to_cpu(hdr->seg_flags));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -450,8 +479,10 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 	pebs_per_seg = 1 << ph->log_pebs_per_seg;
 
 	if (page_size >= erase_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_size %u >= erase_size %llu\n",
 			  page_size, erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -464,7 +495,9 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 		break;
 
 	default:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unexpected page_size %u\n", page_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -504,34 +537,44 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 
 			erase_size = (u32)zone_size;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unexpected erase_size %llu\n", erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return false;
 		}
 	};
 
 	if (seg_size < erase_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_size %u < erase_size %llu\n",
 			  seg_size, erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	if (pebs_per_seg != (seg_size >> ph->log_erasesize)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("pebs_per_seg %u != (seg_size %u / erase_size %llu)\n",
 			  pebs_per_seg, seg_size, erase_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	if (seg_size >= dev_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_size %u >= dev_size %llu\n",
 			  seg_size, dev_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	nsegs = le64_to_cpu(ph->nsegs);
 
 	if (nsegs == 0 || nsegs > (dev_size >> ph->log_segsize)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid nsegs %llu, dev_size %llu, seg_size) %u\n",
 			  nsegs, dev_size, seg_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -539,21 +582,27 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 
 	pages_count = div_u64_rem(dev_size, page_size, &remainder);
 	if (remainder) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dev_size %llu is unaligned on page_size %u\n",
 			  dev_size, page_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (free_pages > pages_count) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("free_pages %llu is greater than pages_count %llu\n",
 			  free_pages, pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	pages_per_seg = seg_size / page_size;
 	if (nsegs <= div_u64(free_pages, pages_per_seg)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid nsegs %llu, free_pages %llu, "
 			  "pages_per_seg %u\n",
 			  nsegs, free_pages, pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -637,9 +686,11 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 				  le16_to_cpu(hdr->log_pages),
 				  fsi->pages_per_peb);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log_pages %u > pages_per_peb %u\n",
 				  le16_to_cpu(hdr->log_pages),
 				  fsi->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -651,9 +702,11 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 				  log_bytes,
 				  le32_to_cpu(hdr->log_bytes));
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("calculated log_bytes %u < log_bytes %u\n",
 				  log_bytes,
 				  le32_to_cpu(hdr->log_bytes));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -663,8 +716,10 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("unknown seg_type %#x\n",
 				  le16_to_cpu(hdr->seg_type));
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unknown seg_type %#x\n",
 				  le16_to_cpu(hdr->seg_type));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -674,8 +729,10 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("corrupted pl_flags %#x\n",
 				  le32_to_cpu(hdr->pl_flags));
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("corrupted pl_flags %#x\n",
 				  le32_to_cpu(hdr->pl_flags));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -736,9 +793,11 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 				  "peb_id %llu, pages_off %u, err %d\n",
 				  peb_id, pages_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read segment header: "
 				  "peb_id %llu, pages_off %u, err %d\n",
 				  peb_id, pages_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -750,10 +809,12 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 				  "read_bytes %zu != hdr_size %zu\n",
 				  peb_id, pages_off, read_bytes, hdr_size);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read segment header: "
 				  "peb_id %llu, pages_off %u: "
 				  "read_bytes %zu != hdr_size %zu\n",
 				  peb_id, pages_off, read_bytes, hdr_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -ERANGE;
 	}
@@ -779,9 +840,11 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 					  "peb_id %llu, pages_off %u, err %d\n",
 					  peb_id, pages_off, err);
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("segment header is corrupted: "
 					  "peb_id %llu, pages_off %u, err %d\n",
 					  peb_id, pages_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 			return err;
@@ -796,9 +859,11 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 					  "peb_id %llu, pages_off %u\n",
 					  peb_id, pages_off);
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("partial log header is corrupted: "
 					  "peb_id %llu, pages_off %u\n",
 					  peb_id, pages_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 			return err;
@@ -809,9 +874,11 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 				  "peb_id %llu, pages_off %u\n",
 				  peb_id, pages_off);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log header is corrupted: "
 				  "peb_id %llu, pages_off %u\n",
 				  peb_id, pages_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		return -EIO;

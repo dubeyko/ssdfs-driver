@@ -4,10 +4,15 @@
  *
  * fs/ssdfs/dev_zns.c - ZNS SSD support.
  *
- * Copyright (c) 2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
+ * Copyright (c) 2022-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cong Wang
  */
 
 #include <linux/mm.h>
@@ -198,24 +203,32 @@ static int ssdfs_zns_reopen_zone(struct super_block *sb, loff_t offset)
 
 	switch (zone.cond) {
 	case BLK_ZONE_COND_CLOSED:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is closed: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		/* continue logic */
 		break;
 
 	case BLK_ZONE_COND_READONLY:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_FULL:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is full: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_OFFLINE:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is offline: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	default:
@@ -254,23 +267,31 @@ static int ssdfs_zns_reopen_zone(struct super_block *sb, loff_t offset)
 
 	switch (zone.cond) {
 	case BLK_ZONE_COND_CLOSED:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is closed: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_READONLY:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_FULL:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is full: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_OFFLINE:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is offline: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	default:
@@ -344,12 +365,14 @@ u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset)
 		return U64_MAX;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
 		  "type %#x, cond %#x, non_seq %#x, "
 		  "reset %#x, capacity %llu\n",
 		  zone.start, zone.len, zone.wp,
 		  zone.type, zone.cond, zone.non_seq,
 		  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (u64)zone.len << SECTOR_SHIFT;
 }
@@ -381,12 +404,14 @@ u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset)
 		return U64_MAX;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
 		  "type %#x, cond %#x, non_seq %#x, "
 		  "reset %#x, capacity %llu\n",
 		  zone.start, zone.len, zone.wp,
 		  zone.type, zone.cond, zone.non_seq,
 		  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (u64)zone.capacity << SECTOR_SHIFT;
 }
@@ -453,8 +478,10 @@ static int ssdfs_zns_sync_page_request(struct super_block *sb,
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_opf = op | op_flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_bdev_bio_add_page(bio, page, PAGE_SIZE, 0);
 	if (unlikely(err)) {
@@ -552,10 +579,10 @@ static int ssdfs_zns_sync_pvec_request(struct super_block *sb,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_bdev_bio_add_page(bio, page,
 					      PAGE_SIZE,
@@ -814,13 +841,17 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 
 	case BLK_ZONE_COND_EMPTY:
 		/* can write */
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is empty: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 
 	case BLK_ZONE_COND_CLOSED:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is closed: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		peb_id = offset / fsi->erasesize;
 		zone_offset = peb_id * fsi->erasesize;
@@ -837,18 +868,24 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 		return 0;
 
 	case BLK_ZONE_COND_READONLY:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is READ-ONLY: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_FULL:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is full: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	case BLK_ZONE_COND_OFFLINE:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("zone is offline: offset %llu\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 
 	default:
@@ -858,9 +895,11 @@ static int ssdfs_zns_can_write_page(struct super_block *sb, loff_t offset,
 
 	if (zone_sector < zone.wp) {
 		err = -EIO;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cannot be written: "
 			  "zone_sector %llu, zone.wp %llu\n",
 			  zone_sector, zone.wp);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -957,8 +996,10 @@ int ssdfs_zns_writepage(struct super_block *sb, loff_t to_off,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
 		wake_up_all(&zns_wq);
@@ -1079,8 +1120,10 @@ int ssdfs_zns_writepages(struct super_block *sb, loff_t to_off,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
@@ -1211,7 +1254,9 @@ static void ssdfs_zns_sync(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("device %s\n", sb->s_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_event(zns_wq, atomic_read(&fsi->pending_bios) == 0);
 }

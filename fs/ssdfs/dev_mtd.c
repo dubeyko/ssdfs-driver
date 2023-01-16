@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/dev_mtd.c - MTD device access code.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/mm.h>
@@ -145,8 +148,10 @@ static int ssdfs_mtd_read(struct super_block *sb, loff_t offset, size_t len,
 	size_t retlen;
 	int ret;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
 		  sb, (unsigned long long)offset, len, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ret = mtd_read(mtd, offset, len, &retlen, buf);
 	if (ret) {
@@ -184,9 +189,11 @@ static int ssdfs_mtd_readpage(struct super_block *sb, struct page *page,
 	void *kaddr;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, page %p, page_index %llu\n",
 		  sb, (unsigned long long)offset, page,
 		  (unsigned long long)page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kaddr = kmap_local_page(page);
 	err = ssdfs_mtd_read(sb, offset, PAGE_SIZE, kaddr);
@@ -233,8 +240,10 @@ static int ssdfs_mtd_readpages(struct super_block *sb, struct pagevec *pvec,
 	int i;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, pvec %p\n",
 		  sb, (unsigned long long)offset, pvec);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (pagevec_count(pvec) == 0) {
 		SSDFS_WARN("empty page vector\n");
@@ -287,8 +296,10 @@ static int ssdfs_mtd_can_write_page(struct super_block *sb, loff_t offset,
 	void *buf;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, need_check %d\n",
 		  sb, (unsigned long long)offset, (int)need_check);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_check)
 		return 0;
@@ -345,8 +356,10 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, to_off %llu, page %p, from_off %u, len %zu\n",
 		  sb, to_off, page, from_off, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
@@ -384,8 +397,10 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -419,8 +434,10 @@ static int ssdfs_mtd_writepages(struct super_block *sb, loff_t to_off,
 	int i;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, to_off %llu, pvec %p, from_off %u, len %zu\n",
 		  sb, to_off, pvec, from_off, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
@@ -493,10 +510,10 @@ static int ssdfs_mtd_erase(struct super_block *sb, loff_t offset, size_t len)
 	u32 remainder;
 	int ret;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
 		  sb, (unsigned long long)offset, len);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	div_u64_rem((u64)len, (u64)mtd->erasesize, &remainder);
 	BUG_ON(remainder);
 	div_u64_rem((u64)offset, (u64)mtd->erasesize, &remainder);
@@ -597,8 +614,10 @@ static void ssdfs_mtd_sync(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("device %d (\"%s\")\n",
 		  fsi->mtd->index, fsi->mtd->name);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	mtd_sync(fsi->mtd);
 }

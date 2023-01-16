@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/readwrite.c - read/write primitive operations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -58,10 +61,10 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !page);
 	BUG_ON(!fsi->devops->readpage);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, page %p\n",
 		  fsi, peb_id, bytes_off, page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sb = fsi->sb;
 	pagesize = fsi->pagesize;
@@ -101,16 +104,20 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 	if (fsi->devops->peb_isbad) {
 		err = fsi->devops->peb_isbad(sb, offset);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("offset %llu is in bad PEB: err %d\n",
 				  (unsigned long long)offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EIO;
 		}
 	}
 
 	err = fsi->devops->readpage(sb, page, offset);
 	if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fail to read page: offset %llu, err %d\n",
 			  (unsigned long long)offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 	}
 
@@ -191,16 +198,20 @@ int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
 	if (fsi->devops->peb_isbad) {
 		err = fsi->devops->peb_isbad(sb, offset);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("offset %llu is in bad PEB: err %d\n",
 				  (unsigned long long)offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EIO;
 		}
 	}
 
 	err = fsi->devops->readpages(sb, pvec, offset);
 	if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fail to read pvec: offset %llu, err %d\n",
 			  (unsigned long long)offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 	}
 
@@ -243,10 +254,10 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !buf);
 	BUG_ON(!fsi->devops->read);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, buf %p, size %zu\n",
 		  fsi, peb_id, bytes_off, buf, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sb = fsi->sb;
 	pagesize = fsi->pagesize;
@@ -295,16 +306,20 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 	if (fsi->devops->peb_isbad) {
 		err = fsi->devops->peb_isbad(sb, offset);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("offset %llu is in bad PEB: err %d\n",
 				  (unsigned long long)offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EIO;
 		}
 	}
 
 	err = fsi->devops->read(sb, offset, *read_bytes, buf);
 	if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fail to read from offset %llu, size %zu, err %d\n",
 			  (unsigned long long)offset, *read_bytes, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 	}
 
@@ -339,10 +354,10 @@ int ssdfs_unaligned_read_buffer(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !buf);
 	BUG_ON(!fsi->devops->read);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, buf %p, size %zu\n",
 		  fsi, peb_id, bytes_off, buf, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	do {
 		size_t iter_size = size - read_bytes;
@@ -468,7 +483,9 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 
 		err = fsi->devops->can_write_page(sb, byte_off, true);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page can't be written: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		}
 
@@ -507,16 +524,20 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 					(size_t)(size - read_bytes),
 					(size_t)(PAGE_SIZE - cur_off));
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_off %u, cur_off %zu, "
 			  "iter_read_bytes %zu\n",
 			  page_off, cur_off,
 			  iter_read_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_off >= pagevec_count(pvec)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page out of range: index %u: "
 				  "offset %zu, pagevec_count %u\n",
 				  page_off, cur_off,
 				  pagevec_count(pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -E2BIG;
 		}
 
@@ -584,11 +605,13 @@ int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 					(size_t)(size - written_bytes),
 					(size_t)(PAGE_SIZE - cur_off));
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("bytes_off %u, page_off %u, "
 			  "cur_off %zu, written_bytes %zu, "
 			  "iter_write_bytes %zu\n",
 			  bytes_off, page_off, cur_off,
 			  written_bytes, iter_write_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_off >= pagevec_count(pvec)) {
 			SSDFS_ERR("invalid page index %u: "

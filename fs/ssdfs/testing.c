@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/testing.c - testing infrastructure.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -43,8 +44,10 @@ static
 void ssdfs_testing_invalidate_folio(struct folio *folio, size_t offset,
 				    size_t length)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
 		  offset, length);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -118,9 +121,9 @@ int ssdfs_testing_get_inode(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = iget_locked(fsi->sb, SSDFS_TESTING_INO);
 	if (unlikely(!inode)) {
@@ -244,10 +247,12 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi,
 
 	for (logical_offset = 0; logical_offset < threshold;
 					logical_offset += page_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("ADD LOGICAL BLOCK: "
 			  "logical_offset %lld, seg_id %llu, "
 			  "logical_blk %llu\n",
 			  logical_offset, seg_id, logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (logical_offset >= message_threshold) {
 			SSDFS_ERR("ADD LOGICAL BLOCK: %llu%%\n",
@@ -286,9 +291,11 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi,
 
 	for (logical_offset = 0; logical_offset < threshold;
 					logical_offset += page_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("CHECK LOGICAL BLOCK: "
 			  "logical_offset %lld\n",
 			  logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (logical_offset >= message_threshold) {
 			SSDFS_ERR("CHECK LOGICAL BLOCK: %llu%%\n",
@@ -321,9 +328,11 @@ int ssdfs_do_extents_tree_testing(struct ssdfs_fs_info *fsi,
 	for (logical_offset = threshold - page_size;
 			logical_offset >= 0; logical_offset -= page_size,
 					     processed_bytes += page_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("TRUNCATE LOGICAL BLOCK: "
 			  "logical_offset %lld\n",
 			  logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (processed_bytes >= message_threshold) {
 			SSDFS_ERR("TRUNCATE LOGICAL BLOCK: %llu%%\n",
@@ -417,9 +426,11 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		goto finish_add_file;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("hash %llx, parent %p\n",
 		  (u64)dentry_inode->d_name.hash,
 		  dentry_inode->d_parent);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_create(&init_user_ns, root_i, dentry_inode,
 			   S_IFREG | S_IRWXU, false);
@@ -611,8 +622,10 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 	SSDFS_ERR("ADD FILE: 0%%\n");
 
 	for (file_index = 0; file_index < threshold; file_index++) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("ADD FILE: file_index %llu\n",
 			  file_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (file_index >= message_threshold) {
 			SSDFS_ERR("ADD FILE: %llu%%\n",
@@ -639,8 +652,10 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 	SSDFS_ERR("CHECK FILE: 0%%\n");
 
 	for (file_index = 0; file_index < threshold; file_index++) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("CHECK FILE: file_index %llu\n",
 			  file_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (file_index >= message_threshold) {
 			SSDFS_ERR("CHECK FILE: %llu%%\n",
@@ -682,8 +697,10 @@ int ssdfs_do_dentries_tree_testing(struct ssdfs_fs_info *fsi,
 	SSDFS_ERR("DELETE FILE: 0%%\n");
 
 	for (file_index = 0; file_index < threshold; file_index++) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("DELETE FILE: file_index %llu\n",
 			  file_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (file_index >= message_threshold) {
 			SSDFS_ERR("DELETE FILE: %llu%%\n",
@@ -980,8 +997,10 @@ int ssdfs_testing_block_bmap_collect_garbage(struct ssdfs_block_bmap *bmap,
 	range2.len = 0;
 
 	while (used_blks > 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("BLOCK BMAP: collect garbage: start1 %u\n",
 			  start1);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_block_bmap_collect_garbage(bmap, start1, capacity,
 							SSDFS_BLK_PRE_ALLOCATED,
@@ -1010,8 +1029,10 @@ int ssdfs_testing_block_bmap_collect_garbage(struct ssdfs_block_bmap *bmap,
 				  range1.start, range1.len);
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("BLOCK BMAP: collect garbage: start2 %u\n",
 			  start2);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_block_bmap_collect_garbage(bmap, start2, capacity,
 							SSDFS_BLK_VALID,
@@ -1060,8 +1081,10 @@ int ssdfs_testing_block_bmap_collect_garbage(struct ssdfs_block_bmap *bmap,
 			used_blks -= range2.len;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("BLOCK BMAP: start1 %u, start2 %u, used_blks %d\n",
 			  start1, start2, used_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (range1.len == 0 && range2.len == 0)
 			break;
@@ -1539,8 +1562,10 @@ try_next_range:
 	}
 
 	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find search range: leb_id %llu\n",
 			  *cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		*cur_leb = end_leb;
 		goto try_next_range;
 	} else if (unlikely(err)) {
@@ -1599,8 +1624,10 @@ try_next_leb:
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("MAPPING TABLE: LEB %llu has been mapped\n",
 			  cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		cur_leb++;
 	}
@@ -1655,6 +1682,7 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 			ptr1 = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
 			ptr2 = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
 				  "state %#x, consistency %#x; "
 				  "RELATION_INDEX: peb_id %llu, type %#x, "
@@ -1663,6 +1691,7 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 				  ptr1->state, ptr1->consistency,
 				  ptr2->peb_id, ptr2->type,
 				  ptr2->state, ptr2->consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (ptr1->state != SSDFS_MAPTBL_CLEAN_PEB_STATE ||
 			    ptr1->type != SSDFS_MAPTBL_DATA_PEB_TYPE) {
@@ -1690,8 +1719,10 @@ int ssdfs_do_migration_add_testing(struct ssdfs_fs_info *fsi,
 			return -ENOENT;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("MAPPING TABLE: leb %llu starting to migrate\n",
 			  cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_maptbl_change_peb_state(fsi, cur_leb, peb_type,
 						SSDFS_MAPTBL_DIRTY_PEB_STATE,
@@ -1813,8 +1844,10 @@ finish_search:
 			return -ENOENT;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("MAPPING TABLE: leb %llu has finished migration\n",
 			  cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_maptbl_exclude_migration_peb(fsi, cur_leb,
 							 peb_type,
@@ -3083,10 +3116,12 @@ int ssdfs_testing_shextree_add(struct ssdfs_fs_info *fsi,
 	shared_extent.fingerprint_len = sizeof(u64);
 	shared_extent.ref_count = cpu_to_le64(extent_len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fingerprint %pUb, type %#x, len %#x\n",
 		  shared_extent.fingerprint,
 		  shared_extent.fingerprint_type,
 		  shared_extent.fingerprint_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(&fingerprint, 0, sizeof(struct ssdfs_fingerprint));
 	ssdfs_memcpy(fingerprint.buf,
@@ -3095,10 +3130,12 @@ int ssdfs_testing_shextree_add(struct ssdfs_fs_info *fsi,
 		     sizeof(__le64));
 	fingerprint.len = sizeof(u64);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fingerprint %pUb, type %#x, len %#x\n",
 		  fingerprint.buf,
 		  fingerprint.type,
 		  fingerprint.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -3555,6 +3592,7 @@ int ssdfs_testing_snapshots_tree_add(struct ssdfs_fs_info *fsi,
 	snr->info.frequency = SSDFS_HOUR_FREQUENCY;
 	snr->info.snapshots_threshold = 1;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SNAPSHOT INFO: ");
 	SSDFS_DBG("name %s, ", snr->info.name);
 	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
@@ -3566,6 +3604,7 @@ int ssdfs_testing_snapshots_tree_add(struct ssdfs_fs_info *fsi,
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -3681,6 +3720,7 @@ int ssdfs_testing_snapshots_tree_change(struct ssdfs_fs_info *fsi,
 	snr->info.time_range.hour = tm.tm_hour;
 	snr->info.time_range.minute = tm.tm_min;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SNAPSHOT INFO: ");
 	SSDFS_DBG("name %s, ", snr->info.name);
 	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
@@ -3695,6 +3735,7 @@ int ssdfs_testing_snapshots_tree_change(struct ssdfs_fs_info *fsi,
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -3760,6 +3801,7 @@ int ssdfs_testing_snapshots_tree_delete(struct ssdfs_fs_info *fsi,
 	snr->info.time_range.hour = tm.tm_hour;
 	snr->info.time_range.minute = tm.tm_min;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SNAPSHOT INFO: ");
 	SSDFS_DBG("name %s, ", snr->info.name);
 	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
@@ -3774,6 +3816,7 @@ int ssdfs_testing_snapshots_tree_delete(struct ssdfs_fs_info *fsi,
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -3854,16 +3897,20 @@ int ssdfs_traverse_snapshots_tree(struct ssdfs_fs_info *fsi,
 
 		ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start_hash %llx\n",
 			  start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_snapshots_tree_find_leaf_node(fsi->snapshots.tree,
 							  &range,
 							  search);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find a leaf node: "
 				  "hash %llx, err %d\n",
 				  start_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_tree_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a leaf node: "

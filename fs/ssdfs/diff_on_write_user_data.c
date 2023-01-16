@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/diff_on_write_user_data.c - Diff-On-Write user data implementation.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -168,11 +169,13 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_peb_containing_user_data(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PEB contains NOT user data: "
 			  "seg %llu, peb_index %u, ino %llu\n",
 			  req->place.start.seg_id,
 			  pebc->peb_index,
 			  req->extent.ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
@@ -205,6 +208,7 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 					 desc_array,
 					 SSDFS_SEG_HDR_DESC_MAX);
 	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to read block state: "
 			  "seg %llu, peb_index %u, ino %llu, "
 			  "logical_offset %llu, "
@@ -214,6 +218,7 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 			  req->extent.ino,
 			  req->extent.logical_offset,
 			  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read block state: "
@@ -248,10 +253,12 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 	pvec_size1 = pagevec_count(&req->result.old_state);
 	pvec_size2 = pagevec_count(&req->result.pvec);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pvec_size1 %zu, pvec_size2 %zu, "
 		  "req->result.processed_blks %d\n",
 		  pvec_size1, pvec_size2,
 		  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < pvec_size1; i++) {
 		size_t uncompr_size = PAGE_SIZE;
@@ -262,15 +269,19 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		memset(&hdr, 0, hdr_size);
 		ssdfs_reserve_diff_blob_header(&hdr, &write_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("RESERVE DIFF BLOB HEADER: "
 			  "page_index %d, write_offset %u\n",
 			  i, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (write_offset >= PAGE_SIZE) {
 			err = -E2BIG;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to prepare diff blob: "
 				  "page_index %d, write_offset %u\n",
 				  i, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_prepare_diff;
 		}
 
@@ -304,20 +315,26 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		kunmap_local(kaddr2);
 		kunmap_local(kaddr1);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PREPARE DIFF BITMAP: "
 			  "page_index %d, write_offset %u\n",
 			  i, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		dirty_bits += bitmap_weight(bmap, bits_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_index %d, dirty_bits %lu\n",
 			  i, dirty_bits);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (dirty_bits > bits_threshold) {
 			err = -E2BIG;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to prepare diff blob: "
 				  "page_index %d, write_offset %u\n",
 				  i, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_prepare_diff;
 		}
 
@@ -336,9 +353,11 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		kunmap_local(kaddr1);
 
 		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to prepare diff blob: "
 				  "page_index %d, write_offset %u\n",
 				  i, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_prepare_diff;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("unable to prepare diff blob: "
@@ -350,9 +369,11 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 
 		write_offset += compr_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("COMPRESS DIFF BITMAP: "
 			  "page_index %d, write_offset %u\n",
 			  i, write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		blob_size = write_offset - blob_offset;
 
@@ -509,8 +530,10 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 
 		diff_flags = le16_to_cpu(hdr->flags);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("diff_flags %#x\n",
 			  diff_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (diff_flags & ~SSDFS_DIFF_BLOB_FLAGS_MASK) {
 			err = -EIO;
@@ -553,9 +576,11 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 			goto finish_apply_diff_page;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("DECOMPRESS DIFF BLOB: "
 			  "offset %u, page_index %d\n",
 			  offset, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		content_page = ssdfs_get_content_page(req, i);
 
@@ -572,9 +597,11 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 		flush_dcache_page(content_page);
 		kunmap_local(content_kaddr);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("APPLY DIFF BLOB: "
 			  "offset %u, page_index %d\n",
 			  offset, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (calculated_csum != csum) {
 			SSDFS_WARN("invalid checksum: "
@@ -674,6 +701,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 	fsi = pebi->pebc->parent_si->fsi;
 
 	if (pagevec_count(&req->result.diffs) == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("diff pagevec is empty: "
 			  "seg %llu, peb %llu, "
 			  "class %#x, cmd %#x, type %#x, "
@@ -683,6 +711,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 			  req->private.type, req->extent.ino,
 			  req->extent.logical_offset,
 			  req->extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -730,7 +759,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 
 		err = ssdfs_user_data_apply_diff_page(fsi, req, page);
 		if (unlikely(err)) {
-			SSDFS_DBG("fail to apply diff page: "
+			SSDFS_ERR("fail to apply diff page: "
 				  "seg %llu, peb %llu, page_index %d, "
 				  "class %#x, cmd %#x, type %#x, "
 				  "ino %llu, logical_offset %llu, "

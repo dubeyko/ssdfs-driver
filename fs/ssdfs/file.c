@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/file.c - file operations.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -858,9 +859,11 @@ void ssdfs_readahead(struct readahead_control *rac)
 	for (i = 0; i < readahead_count(rac); i++) {
 		res = ssdfs_wait_read_request_end(env.reqs[i]);
 		if (res) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("waiting has finished with issue: "
 				  "index %u, err %d\n",
 				  i, res);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		if (err == 0)
@@ -873,10 +876,12 @@ void ssdfs_readahead(struct readahead_control *rac)
 		ssdfs_file_kfree(env.reqs);
 
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("readahead fails: "
 			  "ino %lu, nr_pages %u, err %d\n",
 			  file_inode(rac->file)->i_ino,
 			  readahead_count(rac), err);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return;
@@ -1879,12 +1884,12 @@ discard_page:
 static
 int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 {
+	struct ssdfs_segment_request *req = NULL;
+#ifdef CONFIG_SSDFS_DEBUG
 	struct inode *inode = page->mapping->host;
 	ino_t ino = inode->i_ino;
 	pgoff_t index = page_index(page);
-	struct ssdfs_segment_request *req = NULL;
 
-#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, page_index %llu\n",
 		  ino, (u64)index);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1975,13 +1980,17 @@ int ssdfs_writepages(struct address_space *mapping,
 		if (nr_pages == 0)
 			break;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("FOUND: nr_pages %d\n", nr_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		for (i = 0; i < nr_pages; i++) {
 			struct page *page = pvec.pages[i];
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, index %d, page->index %ld\n",
 				  page, i, page->index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			/*
 			 * At this point, the page may be truncated or
@@ -2017,12 +2026,14 @@ continue_unlock:
 				continue;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, index %d, page->index %ld, "
 				  "PageLocked %#x, PageDirty %#x, "
 				  "PageWriteback %#x\n",
 				  page, i, page->index,
 				  PageLocked(page), PageDirty(page),
 				  PageWriteback(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (!PageDirty(page)) {
 				/* someone wrote it for us */
@@ -2063,12 +2074,14 @@ continue_unlock:
 				}
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, index %d, page->index %ld, "
 				  "PageLocked %#x, PageDirty %#x, "
 				  "PageWriteback %#x\n",
 				  page, i, page->index,
 				  PageLocked(page), PageDirty(page),
 				  PageWriteback(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			/*
 			 * We stop writing back only if we are not doing
@@ -2127,8 +2140,10 @@ continue_unlock:
 
 		index = done_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index %llu, end %llu, nr_to_write %lu\n",
 			  (u64)index, (u64)end, wbc->nr_to_write);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		pagevec_reinit(&pvec);
 		cond_resched();
@@ -2302,9 +2317,12 @@ try_regular_write:
 
 					ssdfs_write_failed(mapping, pos + len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("page %p, count %d\n",
 						  page, page_ref_count(page));
 					SSDFS_DBG("volume hasn't free space\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 					return err;
 				}
 			} else if (!PageDirty(page)) {
@@ -2439,12 +2457,14 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
 	if (err) {
 		trace_ssdfs_sync_file_exit(file, datasync, err);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fsync failed: ino %lu, start %llu, "
 			  "end %llu, err %d\n",
 			  (unsigned long)inode->i_ino,
 			  (unsigned long long)start,
 			  (unsigned long long)end,
 			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	}
 

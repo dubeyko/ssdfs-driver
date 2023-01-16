@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/recovery.c - searching actual state and recovery on mount code.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/slab.h>
@@ -347,7 +350,9 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 		off = *offset;
 
 	while (off < threshold) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("off %llu\n", (u64)off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		switch (op_type) {
 		case SSDFS_USE_PEB_ISBAD_OP:
@@ -383,14 +388,18 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 			SSDFS_NOTICE("offset %llu is in bad PEB\n",
 					(unsigned long long)off);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("offset %llu is in bad PEB\n",
 				  (unsigned long long)off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		off += 2 * seg_size;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("unable to find valid PEB\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return -ENODATA;
 }
@@ -427,8 +436,10 @@ try_seg_size:
 	threshold *= seg_size;
 	threshold = min_t(u64, dev_size, threshold + offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("offset %llu, dev_size %llu, threshold %llu\n",
 		  offset, dev_size, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (fsi->devops->peb_isbad) {
 		err = fsi->devops->peb_isbad(sb, offset);
@@ -437,8 +448,10 @@ try_seg_size:
 				SSDFS_NOTICE("offset %llu is in bad PEB\n",
 						(unsigned long long)offset);
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("offset %llu is in bad PEB\n",
 					  (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 			offset += seg_size;
@@ -522,8 +535,10 @@ try_seg_size:
 	crc_valid = is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf,
 							hdr_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("magic_valid %#x, crc_valid %#x\n",
 		  magic_valid, crc_valid);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!magic_valid && !crc_valid) {
 		if (!silent)
@@ -550,8 +565,10 @@ try_again:
 							silent,
 							SSDFS_USE_PEB_ISBAD_OP);
 			if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to find valid start PEB: "
 					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return err;
 			}
 		}
@@ -563,8 +580,10 @@ try_again:
 						    threshold, silent,
 						    SSDFS_USE_READ_OP);
 		if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find valid start PEB: "
 				  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		}
 
@@ -572,8 +591,10 @@ try_again:
 		crc_valid = is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf,
 								hdr_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("magic_valid %#x, crc_valid %#x\n",
 			  magic_valid, crc_valid);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!(magic_valid && crc_valid)) {
 			if (!silent)
@@ -625,9 +646,11 @@ static int ssdfs_read_checked_sb_info(struct ssdfs_fs_info *fsi, u64 peb_id,
 				  "peb_id %llu, offset %d, err %d\n",
 				  peb_id, pages_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("volume header is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
 				  peb_id, pages_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -643,9 +666,11 @@ static int ssdfs_read_checked_sb_info(struct ssdfs_fs_info *fsi, u64 peb_id,
 				  "peb_id %llu, offset %d, err %d\n",
 				  peb_id, lf_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log footer is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
 				  peb_id, lf_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -679,9 +704,11 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 				  "peb_id %llu, offset %u, err %d\n",
 				  peb_id, bytes_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read the log footer: "
 				  "peb_id %llu, offset %u, err %d\n",
 				  peb_id, bytes_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -692,7 +719,9 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 		if (!silent) {
 			SSDFS_ERR("invalid log_pages %u\n", log_pages);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("invalid log_pages %u\n", log_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -ERANGE;
 	}
@@ -708,9 +737,11 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 				  "peb_id %llu, offset %d, err %d\n",
 				  peb_id, pages_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("volume header is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
 				  peb_id, pages_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -725,9 +756,11 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 				  "peb_id %llu, bytes_off %u, err %d\n",
 				  peb_id, bytes_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log footer is corrupted: "
 				  "peb_id %llu, bytes_off %u, err %d\n",
 				  peb_id, bytes_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -835,8 +868,10 @@ try_again:
 		err = ssdfs_read_checked_sb_info(fsi, peb_id,
 						 0, true);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb_id %llu is corrupted: err %d\n",
 				  peb_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
@@ -853,8 +888,10 @@ try_again:
 			return 0;
 		else {
 			err = -EIO;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("PEB %llu is not sb segment\n",
 				  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		if (!err)
@@ -878,12 +915,14 @@ compare_vh_info:
 	cno = le64_to_cpu(seg_hdr->cno);
 
 	if (cno > last_cno && (leb1 != leb2 || peb1 != peb2)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cno %llu, last_cno %llu, "
 			  "leb1 %llu, leb2 %llu, "
 			  "peb1 %llu, peb2 %llu\n",
 			  cno, last_cno,
 			  le64_to_cpu(leb1), le64_to_cpu(leb2),
 			  le64_to_cpu(peb1), le64_to_cpu(peb2));
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto try_again;
 	}
 
@@ -1033,10 +1072,12 @@ try_next_peb:
 	if (cur_main_sb_peb != fsi->sbi.last_log.peb_id &&
 	    cur_copy_sb_peb != fsi->sbi.last_log.peb_id) {
 		SSDFS_ERR("volume header is corrupted\n");
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_main_sb_peb %llu, cur_copy_sb_peb %llu, "
 			  "read PEB %llu\n",
 			  cur_main_sb_peb, cur_copy_sb_peb,
 			  fsi->sbi.last_log.peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = -EIO;
 		goto end_search;
 	}
@@ -1090,12 +1131,16 @@ try_next_peb:
 	if (err) {
 		if (err == -EIO) {
 			/* next sb segments are corrupted */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("next sb PEB %llu is corrupted\n",
 				  next_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			/* next sb segments are invalid */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("next sb PEB %llu is invalid\n",
 				  next_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		ssdfs_restore_sb_info(fsi);
@@ -1104,18 +1149,22 @@ try_next_peb:
 
 		err = ssdfs_find_any_valid_volume_header(fsi, offset, true);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find any valid header: "
 				  "peb_id %llu\n",
 				  next_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 			err = 0;
 			goto rollback_valid_vh;
 		}
 
 		err = ssdfs_find_any_valid_sb_segment(fsi, next_peb);
 		if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find any valid sb seg: "
 				  "peb_id %llu\n",
 				  next_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 			err = 0;
 			goto rollback_valid_vh;
 		} else
@@ -1138,8 +1187,10 @@ check_volume_header:
 	cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 	cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
 	if (cno1 >= cno2) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("last cno %llu is not lesser than read cno %llu\n",
 			  cno1, cno2);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1149,8 +1200,10 @@ check_volume_header:
 	cur_peb = SSDFS_MAIN_SB_PEB(SSDFS_VH(fsi->sbi.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (next_peb != cur_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("next_peb %llu doesn't equal to cur_peb %llu\n",
 			  next_peb, cur_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1160,8 +1213,10 @@ check_volume_header:
 	cur_peb = SSDFS_MAIN_SB_PEB(SSDFS_VH(fsi->sbi_backup.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (prev_peb != cur_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("prev_peb %llu doesn't equal to cur_peb %llu\n",
 			  prev_peb, cur_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1171,8 +1226,10 @@ check_volume_header:
 	cur_leb = SSDFS_MAIN_SB_LEB(SSDFS_VH(fsi->sbi.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (next_leb != cur_leb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("next_leb %llu doesn't equal to cur_leb %llu\n",
 			  next_leb, cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1182,8 +1239,10 @@ check_volume_header:
 	cur_leb = SSDFS_MAIN_SB_LEB(SSDFS_VH(fsi->sbi_backup.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (prev_leb != cur_leb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("prev_leb %llu doesn't equal to cur_leb %llu\n",
 			  prev_leb, cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1193,8 +1252,10 @@ check_volume_header:
 	cur_peb = SSDFS_COPY_SB_PEB(SSDFS_VH(fsi->sbi.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (next_peb != cur_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("next_peb %llu doesn't equal to cur_peb %llu\n",
 			  next_peb, cur_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1204,8 +1265,10 @@ check_volume_header:
 	cur_peb = SSDFS_COPY_SB_PEB(SSDFS_VH(fsi->sbi_backup.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (prev_peb != cur_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("prev_peb %llu doesn't equal to cur_peb %llu\n",
 			  prev_peb, cur_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1215,8 +1278,10 @@ check_volume_header:
 	cur_leb = SSDFS_COPY_SB_LEB(SSDFS_VH(fsi->sbi.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (next_leb != cur_leb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("next_leb %llu doesn't equal to cur_leb %llu\n",
 			  next_leb, cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1226,8 +1291,10 @@ check_volume_header:
 	cur_leb = SSDFS_COPY_SB_LEB(SSDFS_VH(fsi->sbi_backup.vh_buf),
 					SSDFS_CUR_SB_SEG);
 	if (prev_leb != cur_leb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("prev_leb %llu doesn't equal to cur_leb %llu\n",
 			  prev_leb, cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = 0;
 		goto mount_fs_read_only;
 	}
@@ -1391,8 +1458,10 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 		if (err == -ENODATA || err == -EIO) {
 			/* previous read log was valid */
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 				  cur_off, low_off, high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
@@ -1481,8 +1550,10 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		ssdfs_restore_sb_info(fsi);
 
 		/* previous read log was valid */
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 			  cur_off, low_off, high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1564,8 +1635,10 @@ finish_find_latest_sb_info:
 		if (err == -ENODATA || err == -EIO) {
 			/* previous read log was valid */
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 				  cur_off, low_off, high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
@@ -2484,12 +2557,14 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 
 		if (env->found->start_peb != start_peb ||
 		    env->found->pebs_count != pebs_count) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("ignore search in fragment: "
 				  "found (start_peb %llu, pebs_count %u), "
 				  "start_peb %llu, pebs_count %u\n",
 				  env->found->start_peb,
 				  env->found->pebs_count,
 				  start_peb, pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			env->err = -ENODATA;
 			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
 			return -ENODATA;
@@ -2504,11 +2579,14 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 		protected = &env->found->array[SSDFS_LAST_CNO_PEB_INDEX];
 		last_cno_peb_id = protected->peb.peb_id;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("protected PEBs: "
 			  "lower %llu, upper %llu, last_cno_peb %llu\n",
 			  lower_peb_id, upper_peb_id, last_cno_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (lower_peb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("ignore search in fragment: "
 				  "found (start_peb %llu, pebs_count %u), "
 				  "start_peb %llu, pebs_count %u, "
@@ -2519,11 +2597,13 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 				  start_peb, pebs_count,
 				  lower_peb_id, upper_peb_id,
 				  last_cno_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			env->err = -ENODATA;
 			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
 			return -ENODATA;
 		} else if (lower_peb_id == env->found->start_peb &&
 			   upper_peb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("ignore search in fragment: "
 				  "found (start_peb %llu, pebs_count %u), "
 				  "start_peb %llu, pebs_count %u, "
@@ -2534,6 +2614,7 @@ int ssdfs_start_recovery_thread_activity(struct ssdfs_recovery_env *env,
 				  start_peb, pebs_count,
 				  lower_peb_id, upper_peb_id,
 				  last_cno_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			env->err = -ENODATA;
 			atomic_set(&env->state, SSDFS_RECOVERY_FAILED);
 			return -ENODATA;
@@ -2582,29 +2663,37 @@ int ssdfs_wait_recovery_thread_finish(struct ssdfs_fs_info *fsi,
 
 	switch (atomic_read(&env->state)) {
 	case SSDFS_RECOVERY_FINISHED:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("stripe %u has SB segment\n",
 			  stripe_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
 		cno1 = le64_to_cpu(seg_hdr->cno);
 		seg_hdr = SSDFS_SEG_HDR(env->sbi.vh_buf);
 		cno2 = le64_to_cpu(seg_hdr->cno);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cno1 %llu, cno2 %llu\n",
 			  cno1, cno2);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (cno1 <= cno2) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("copy sb info: "
 				  "stripe_id %u\n",
 				  stripe_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_copy_sb_info(fsi, env);
 			*has_sb_peb_found = true;
 		}
 		break;
 
 	case SSDFS_RECOVERY_FAILED:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("stripe %u has nothing\n",
 			  stripe_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	case SSDFS_START_RECOVERY:
@@ -2751,12 +2840,16 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		has_iteration_succeeded = false;
 
 		if (processed_stripes >= stripes_count) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("processed_stripes %u >= stripes_count %u\n",
 				  processed_stripes, stripes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto try_slow_search;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("FAST_SEARCH: jobs_count %u\n", jobs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		for (i = 0; i < jobs_count; i++) {
 			calculated =
@@ -2770,10 +2863,12 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 			if ((processed_pebs + calculated) > pebs_per_volume)
 				calculated = pebs_per_volume - processed_pebs;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
 				  i, processed_pebs, calculated);
 			SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu\n",
 				  pebs_per_volume, processed_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_start_recovery_thread_activity(&array[i],
 					&found_pebs[processed_stripes + i],
@@ -2847,12 +2942,16 @@ try_slow_search:
 		has_iteration_succeeded = false;
 
 		if (processed_stripes >= stripes_count) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("processed_stripes %u >= stripes_count %u\n",
 				  processed_stripes, stripes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_sb_peb_search;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("SLOW_SEARCH: jobs_count %u\n", jobs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		for (i = 0; i < jobs_count; i++) {
 			calculated =
@@ -2866,10 +2965,12 @@ try_slow_search:
 			if ((processed_pebs + calculated) > pebs_per_volume)
 				calculated = pebs_per_volume - processed_pebs;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("i %d, start_peb %llu, pebs_count %u\n",
 				  i, processed_pebs, calculated);
 			SSDFS_DBG("pebs_per_volume %llu, processed_pebs %llu\n",
 				  pebs_per_volume, processed_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_start_recovery_thread_activity(&array[i],
 					&found_pebs[processed_stripes + i],

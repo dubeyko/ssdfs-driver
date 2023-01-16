@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/btree_hierarchy.c - btree hierarchy functionality implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -319,7 +322,9 @@ void ssdfs_btree_hierarchy_free(struct ssdfs_btree_hierarchy *hierarchy)
 	int tree_height;
 	int i;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("hierarchy %p\n", hierarchy);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!hierarchy)
 		return;
@@ -354,11 +359,11 @@ void ssdfs_btree_prepare_add_node(struct ssdfs_btree *tree,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, level %p, node_type %#x, "
 		  "start_hash %llx, end_hash %llx\n",
 		  tree, level, node_type, start_hash, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	level->flags |= SSDFS_BTREE_LEVEL_ADD_NODE;
 	level->nodes.new_node.type = node_type;
@@ -401,11 +406,11 @@ int ssdfs_btree_prepare_add_index(struct ssdfs_btree_level *level,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level || !node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p, node %p, "
 		  "start_hash %llx, end_hash %llx\n",
 		  level, node, start_hash, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (level->flags & SSDFS_BTREE_LEVEL_ADD_NODE) {
 		level->flags |= SSDFS_BTREE_LEVEL_ADD_INDEX;
@@ -529,12 +534,14 @@ finish_prepare_level:
 		add->pos.start++;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "level->index_area.hash.start %llx, "
 		  "level->index_area.hash.end %llx\n",
 		  start_hash, end_hash,
 		  level->index_area.hash.start,
 		  level->index_area.hash.end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (end_hash < level->index_area.hash.start)
 		add->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
@@ -555,9 +562,9 @@ void ssdfs_btree_cancel_add_index(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	level->flags &= ~SSDFS_BTREE_LEVEL_ADD_INDEX;
 
@@ -599,11 +606,11 @@ int ssdfs_btree_prepare_update_index(struct ssdfs_btree_level *level,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level || !node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p, start_hash %llx, "
 		  "end_hash %llx, node %p\n",
 		  level, start_hash, end_hash, node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	level->flags |= SSDFS_BTREE_LEVEL_UPDATE_INDEX;
 	level->nodes.old_node.type = atomic_read(&node->type);
@@ -690,12 +697,14 @@ finish_prepare_level:
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "level->index_area.hash.start %llx, "
 		  "level->index_area.hash.end %llx\n",
 		  start_hash, end_hash,
 		  level->index_area.hash.start,
 		  level->index_area.hash.end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (end_hash < level->index_area.hash.start)
 		insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
@@ -733,10 +742,10 @@ int ssdfs_btree_prepare_do_nothing(struct ssdfs_btree_level *level,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level || !node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p, node %p\n",
 		  level, node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	level->flags = 0;
 	level->nodes.old_node.type = atomic_read(&node->type);
@@ -828,10 +837,10 @@ int ssdfs_btree_prepare_insert_item(struct ssdfs_btree_level *level,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level || !search || !node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p, node %p\n",
 		  level, node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_ROOT_NODE:
@@ -930,12 +939,14 @@ finish_prepare_level:
 	add->hash.start = start_hash;
 	add->hash.end = end_hash;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "level->items_area.hash.start %llx, "
 		  "level->items_area.hash.end %llx\n",
 		  start_hash, end_hash,
 		  level->items_area.hash.start,
 		  level->items_area.hash.end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (items_count == 0) {
 		add->pos.state = SSDFS_HASH_RANGE_OUT_OF_NODE;
@@ -978,8 +989,10 @@ finish_prepare_level:
 
 	insert_size = max_item_size * search->request.count;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("insert_size %u, free_space %u\n",
 		  insert_size, level->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (insert_size == 0) {
 		SSDFS_ERR("search->result.start_index %u, "
@@ -1019,8 +1032,10 @@ finish_prepare_level:
 			move->pos.start = 0;
 			move->pos.count = moving_items;
 			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("MOVE_TO_LEFT: start %u, count %u\n",
 				  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			break;
 
 		case SSDFS_HASH_RANGE_INTERSECTION:
@@ -1030,8 +1045,10 @@ finish_prepare_level:
 			move->pos.start = items_count - moving_items;
 			move->pos.count = moving_items;
 			move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("MOVE_TO_RIGHT: start %u, count %u\n",
 				  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			break;
 
 		case SSDFS_HASH_RANGE_RIGHT_ADJACENT:
@@ -1055,9 +1072,9 @@ void ssdfs_btree_cancel_insert_item(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	level->flags &= ~SSDFS_BTREE_LEVEL_ADD_ITEM;
 
@@ -1085,9 +1102,9 @@ bool ssdfs_need_move_items_to_sibling(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	move = &level->items_area.move;
 
@@ -1109,9 +1126,9 @@ void ssdfs_btree_cancel_move_items_to_sibling(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	move = &level->items_area.move;
 
@@ -1144,9 +1161,11 @@ bool can_index_area_being_increased(struct ssdfs_btree_node *node)
 	flags = atomic_read(&node->tree->flags);
 
 	if (!(flags & SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index area cannot be resized: "
 			  "node %u\n",
 			  node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -1210,9 +1229,9 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(level->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE)) {
 		SSDFS_DBG("no items should be moved\n");
@@ -1304,8 +1323,10 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("hash %llx, index_position %u\n",
 		  hash, index_position);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (index_position >= index_count) {
 		SSDFS_ERR("index_position %u >= index_count %u\n",
@@ -1322,8 +1343,10 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 				/*
 				 * Try to move to parent node
 				 */
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("MOVE_TO_PARENT: start %u, count %u\n",
 					  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 				move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
 				moving_items = items_capacity / 4;
 				move->pos.start = 0;
@@ -1344,8 +1367,10 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 				/*
 				 * Try to move to parent node
 				 */
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("MOVE_TO_PARENT: start %u, count %u\n",
 					  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 				move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
 				moving_items = items_capacity / 4;
 				move->pos.start = items_capacity - moving_items;
@@ -1397,8 +1422,10 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 	parent_node = node;
 	node_id = le32_to_cpu(index_key.node_id);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("index_position %u, node_id %u\n",
 		  index_position, node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_radix_tree_find(tree, node_id, &node);
 	if (err == -ENOENT) {
@@ -1438,16 +1465,21 @@ int ssdfs_check_capability_move_to_sibling(struct ssdfs_btree_level *level)
 		SSDFS_ERR("items area is absent\n");
 		return -ERANGE;
 	} else if (items_count >= items_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("items area hasn't free space: "
 			  "items_count %u, items_capacity %u\n",
 			  items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (vacant_indexes == 0 && !is_resize_possible) {
 			/*
 			 * Try to move to parent node
 			 */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("MOVE_TO_PARENT: start %u, count %u\n",
 				  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			move->direction = SSDFS_BTREE_MOVE_TO_PARENT;
 			moving_items = items_capacity / 4;
 			move->pos.start = items_capacity - moving_items;
@@ -1498,9 +1530,9 @@ bool ssdfs_need_move_items_to_parent(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	move = &level->items_area.move;
 
@@ -1521,9 +1553,9 @@ void ssdfs_btree_cancel_move_items_to_parent(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	move = &level->items_area.move;
 
@@ -1565,10 +1597,10 @@ int ssdfs_prepare_move_items_to_parent(struct ssdfs_btree_search *search,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search || !parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("search %p, parent %p, child %p\n",
 		  search, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(child->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE)) {
 		SSDFS_DBG("no items should be moved\n");
@@ -1626,6 +1658,7 @@ int ssdfs_prepare_move_items_to_parent(struct ssdfs_btree_search *search,
 	insert->hash.start = search->request.start.hash;
 	insert->hash.end = child->items_area.hash.end;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "child->items_area.hash.start %llx, "
 		  "child->items_area.hash.end %llx\n",
@@ -1633,6 +1666,7 @@ int ssdfs_prepare_move_items_to_parent(struct ssdfs_btree_search *search,
 		  insert->hash.end,
 		  child->items_area.hash.start,
 		  child->items_area.hash.end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	insert->pos.state = SSDFS_HASH_RANGE_LEFT_ADJACENT;
 	insert->pos.start = 0;
@@ -1673,7 +1707,6 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("parent: node_type %#x, node %p, "
 		  "child: node_type %#x, node %p\n",
@@ -1681,6 +1714,7 @@ int ssdfs_btree_define_moving_indexes(struct ssdfs_btree_level *parent,
 		  parent->nodes.old_node.ptr,
 		  child->nodes.old_node.type,
 		  child->nodes.old_node.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (parent->nodes.old_node.type) {
 	case SSDFS_BTREE_ROOT_NODE:
@@ -1863,14 +1897,12 @@ int ssdfs_prepare_move_indexes_right(struct ssdfs_btree_level *parent,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent || !parent_node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("parent: node_type %#x, node %p, node_id %u\n",
 		  parent->nodes.old_node.type,
 		  parent->nodes.old_node.ptr,
 		  parent_node->node_id);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	state = atomic_read(&parent_node->index_area.state);
 	if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
 		SSDFS_ERR("index area is absent\n");
@@ -1903,8 +1935,11 @@ int ssdfs_prepare_move_indexes_right(struct ssdfs_btree_level *parent,
 	move->pos.start = index_count / 2;
 	move->pos.count = index_count - move->pos.start;
 	move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("MOVE_TO_RIGHT: start %u, count %u\n",
 		  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1946,9 +1981,9 @@ ssdfs_check_capability_move_indexes_to_sibling(struct ssdfs_btree_level *level)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("level %p\n", level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!level->nodes.old_node.ptr) {
 		SSDFS_ERR("node pointer is empty\n");
@@ -2023,8 +2058,10 @@ ssdfs_check_capability_move_indexes_to_sibling(struct ssdfs_btree_level *level)
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("hash %llx, index_position %u\n",
 		  hash, index_position);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (index_position >= index_count) {
 		SSDFS_ERR("index_position %u >= index_count %u\n",
@@ -2081,8 +2118,10 @@ ssdfs_check_capability_move_indexes_to_sibling(struct ssdfs_btree_level *level)
 	parent_node = node;
 	node_id = le32_to_cpu(index_key.node_id);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("index_position %u, node_id %u\n",
 		  index_position, node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_radix_tree_find(tree, node_id, &node);
 	if (err == -ENOENT) {
@@ -2125,10 +2164,12 @@ ssdfs_check_capability_move_indexes_to_sibling(struct ssdfs_btree_level *level)
 		SSDFS_ERR("index area is absent\n");
 		return -ERANGE;
 	} else if (index_count >= index_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index area hasn't free space: "
 			  "index_count %u, index_capacity %u\n",
 			  index_count, index_capacity);
 		SSDFS_DBG("cannot move indexes\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
@@ -2144,8 +2185,11 @@ ssdfs_check_capability_move_indexes_to_sibling(struct ssdfs_btree_level *level)
 	move->pos.start = src_index_count - moving_indexes;
 	move->pos.count = src_index_count - move->pos.start;
 	move->op_state = SSDFS_BTREE_AREA_OP_REQUESTED;
+
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("MOVE_TO_RIGHT: start %u, count %u\n",
 		  move->pos.start, move->pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	level->nodes.new_node.type = atomic_read(&node->type);
 	level->nodes.new_node.ptr = node;
@@ -2193,11 +2237,11 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent || !child || !parent_node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("parent: node_type %#x, node %p\n",
 		  parent->nodes.old_node.type,
 		  parent->nodes.old_node.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&parent_node->items_area.state);
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
@@ -2229,9 +2273,11 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 	}
 
 	if (free_space < ((u32)item_size * items_count)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to move items: "
 			  "free_space %u, item_size %u, items_count %u\n",
 			  free_space, item_size, items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -2248,6 +2294,7 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 	case SSDFS_DENTRIES_BTREE:
 	case SSDFS_XATTR_BTREE:
 	case SSDFS_SHARED_DICTIONARY_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start_hash %llx, "
 			  "end_hash %llx, "
 			  "parent: (start_hash %llx, "
@@ -2255,6 +2302,7 @@ int ssdfs_define_hybrid_node_moving_items(struct ssdfs_btree *tree,
 			  start_hash, end_hash,
 			  parent_start_hash,
 			  parent_end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if ((index_area_size * 2) < parent_node->node_size) {
 			/* parent node will be still hybrid one */
@@ -2338,12 +2386,14 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("parent: node_type %#x, node %p, "
 		  "child: node_type %#x, node %p\n",
 		  parent->nodes.old_node.type,
 		  parent->nodes.old_node.ptr,
 		  child_node_type,
 		  child_node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (parent->nodes.old_node.type) {
 	case SSDFS_BTREE_ROOT_NODE:
@@ -2464,12 +2514,14 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 			case SSDFS_DENTRIES_BTREE:
 			case SSDFS_XATTR_BTREE:
 			case SSDFS_SHARED_DICTIONARY_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("search: (start_hash %llx, "
 					  "end_hash %llx), "
 					  "items_area: (start_hash %llx, "
 					  "end_hash %llx)\n",
 					  start_hash2, end_hash2,
 					  start_hash1, end_hash1);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 				if (has_intersection)
 					items_count /= 2;
@@ -2546,12 +2598,14 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 			}
 
 			if (free_space < ((u32)item_size * items_count)) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to move items: "
 					  "items_area.free_space %u, "
 					  "items_area.item_size %u, "
 					  "items_count %u\n",
 					  free_space, item_size,
 					  items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return 0;
 			}
 
@@ -2578,12 +2632,14 @@ int ssdfs_btree_define_moving_items(struct ssdfs_btree *tree,
 			case SSDFS_DENTRIES_BTREE:
 			case SSDFS_XATTR_BTREE:
 			case SSDFS_SHARED_DICTIONARY_BTREE:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("search: (start_hash %llx, "
 					  "end_hash %llx), "
 					  "items_area: (start_hash %llx, "
 					  "end_hash %llx)\n",
 					  start_hash2, end_hash2,
 					  start_hash1, end_hash1);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 				if (has_intersection)
 					items_count /= 2;
@@ -2656,13 +2712,13 @@ bool need_update_parent_index_area(u64 start_hash,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("start_hash %llx, node_id %u, "
 		  "node type %#x, tree type %#x\n",
 		  start_hash, child->node_id,
 		  atomic_read(&child->type),
 		  child->tree->type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&child->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -2707,10 +2763,12 @@ bool need_update_parent_index_area(u64 start_hash,
 	if (start_hash <= child_start_hash)
 		need_update = true;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, child_start_hash %llx, "
 		  "need_update %#x\n",
 		  start_hash, child_start_hash,
 		  need_update);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return need_update;
 }
@@ -2730,16 +2788,18 @@ bool is_index_area_resizable(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	flags = atomic_read(&node->tree->flags);
 
 	if (!(flags & SSDFS_BTREE_DESC_INDEX_AREA_RESIZABLE)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index area cannot be resized: "
 			  "node %u\n",
 			  node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -2805,11 +2865,9 @@ int ssdfs_btree_prepare_index_area_resize(struct ssdfs_btree_level *level,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!level);
 	BUG_ON(!node || !node->tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!is_index_area_resizable(node));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2824,11 +2882,13 @@ int ssdfs_btree_prepare_index_area_resize(struct ssdfs_btree_level *level,
 
 	index_area_min_size = node->tree->index_area_min_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("index_area_size %u, index_area_min_size %u, "
 		  "items_area_size %u, items_count %u, "
 		  "items_capacity %u\n",
 		  index_area_size, index_area_min_size,
 		  items_area_size, items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&node->items_area.state);
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
@@ -2889,11 +2949,13 @@ int ssdfs_btree_check_nothing_root_pair(struct ssdfs_btree *tree,
 
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "child id %u, child_type %#x\n",
 		  tree, search, parent, child,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (child_type != SSDFS_BTREE_ROOT_NODE) {
 		SSDFS_WARN("invalid child node's type %#x\n",
@@ -2974,12 +3036,14 @@ int ssdfs_btree_check_root_nothing_pair(struct ssdfs_btree *tree,
 
 	parent_type = atomic_read(&parent_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, type %#x\n",
 		  tree, search, parent, child,
 		  parent_node->node_id,
 		  parent_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_ROOT_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -3071,6 +3135,7 @@ int ssdfs_btree_check_root_index_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -3078,6 +3143,7 @@ int ssdfs_btree_check_root_index_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_ROOT_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -3218,6 +3284,7 @@ int ssdfs_btree_check_root_hybrid_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -3225,6 +3292,7 @@ int ssdfs_btree_check_root_hybrid_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_ROOT_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -3426,6 +3494,7 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -3433,6 +3502,7 @@ int ssdfs_btree_check_root_leaf_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_ROOT_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -3635,6 +3705,7 @@ int ssdfs_btree_check_index_index_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -3642,6 +3713,7 @@ int ssdfs_btree_check_index_index_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_INDEX_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -3775,6 +3847,7 @@ int ssdfs_btree_check_index_hybrid_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -3782,6 +3855,7 @@ int ssdfs_btree_check_index_hybrid_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_INDEX_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -3934,6 +4008,7 @@ int ssdfs_btree_check_index_leaf_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -3941,6 +4016,7 @@ int ssdfs_btree_check_index_leaf_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_INDEX_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -4116,12 +4192,14 @@ int ssdfs_btree_check_hybrid_nothing_pair(struct ssdfs_btree *tree,
 
 	parent_type = atomic_read(&parent_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, type %#x\n",
 		  tree, search, parent, child,
 		  parent_node->node_id,
 		  parent_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_HYBRID_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -4135,16 +4213,20 @@ int ssdfs_btree_check_hybrid_nothing_pair(struct ssdfs_btree *tree,
 	end_hash = parent_node->items_area.end_hash;
 	up_read(&parent_node->header_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %u, start_hash %llx, end_hash %llx\n",
 		  items_count, start_hash, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (items_count == 0) {
 		/*
 		 * Do nothing.
 		*/
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("parent id %u, type %#x, items_count == 0\n",
 			  parent_node->node_id,
 			  parent_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (can_add_new_index(parent_node)) {
 		ssdfs_btree_prepare_add_node(tree, SSDFS_BTREE_LEAF_NODE,
 					     start_hash, end_hash,
@@ -4270,6 +4352,7 @@ int ssdfs_btree_check_hybrid_index_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -4277,6 +4360,7 @@ int ssdfs_btree_check_hybrid_index_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_HYBRID_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -4430,6 +4514,7 @@ int ssdfs_btree_check_hybrid_hybrid_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -4437,6 +4522,7 @@ int ssdfs_btree_check_hybrid_hybrid_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_HYBRID_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -4615,6 +4701,7 @@ int ssdfs_btree_check_hybrid_leaf_pair(struct ssdfs_btree *tree,
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree %p, search %p, "
 		  "parent %p, child %p, "
 		  "parent id %u, parent_type %#x, "
@@ -4622,6 +4709,7 @@ int ssdfs_btree_check_hybrid_leaf_pair(struct ssdfs_btree *tree,
 		  tree, search, parent, child,
 		  parent_node->node_id, parent_type,
 		  child_node->node_id, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent_type != SSDFS_BTREE_HYBRID_NODE) {
 		SSDFS_WARN("invalid parent node's type %#x\n",
@@ -4838,10 +4926,10 @@ int ssdfs_btree_check_level_for_add(struct ssdfs_btree_state_descriptor *desc,
 	BUG_ON(!desc || !tree || !search);
 	BUG_ON(!parent || !child);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, parent %p, child %p\n",
 		  tree, search, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	parent_type = parent->nodes.old_node.type;
 	if (parent_type != SSDFS_BTREE_NODE_UNKNOWN_TYPE) {
@@ -4855,8 +4943,10 @@ int ssdfs_btree_check_level_for_add(struct ssdfs_btree_state_descriptor *desc,
 		child_type = atomic_read(&child->nodes.old_node.ptr->type);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("parent_type %#x, child_type %#x\n",
 		  parent_type, child_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (parent_type) {
 	case SSDFS_BTREE_NODE_UNKNOWN_TYPE:
@@ -4981,8 +5071,10 @@ int ssdfs_btree_check_level_for_add(struct ssdfs_btree_state_descriptor *desc,
 								parent,
 								child);
 			if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("need to prepare hierarchy: "
 					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to check index-leaf pair: "
 					  "err %d\n", err);
@@ -5037,8 +5129,10 @@ int ssdfs_btree_check_level_for_add(struct ssdfs_btree_state_descriptor *desc,
 								 parent,
 								 child);
 			if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("need to prepare hierarchy: "
 					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to check hybrid-leaf pair: "
 					  "err %d\n", err);
@@ -5091,10 +5185,10 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->node.height == SSDFS_BTREE_LEAF_NODE_HEIGHT) {
 		SSDFS_DBG("search object contains leaf node\n");
@@ -5140,10 +5234,12 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 	node = search->node.child;
 	prev_node_id = node->node_id;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, items_count %u, "
 		  "start_item_hash %llx, end_index_hash %llx\n",
 		  node->node_id, items_count,
 		  start_item_hash, upper_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (type == SSDFS_BTREE_HYBRID_NODE) {
 		if (items_count == 0)
@@ -5184,10 +5280,12 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 
 		type = atomic_read(&node->type);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node_id %u, type %#x, "
 			  "end_index_hash %llx\n",
 			  node->node_id, atomic_read(&node->type),
 			  upper_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		switch (type) {
 		case SSDFS_BTREE_LEAF_NODE:
@@ -5511,8 +5609,10 @@ int ssdfs_btree_check_hierarchy_for_add(struct ssdfs_btree *tree,
 		parent = hierarchy->array_ptr[cur_height + 1];
 		child = hierarchy->array_ptr[cur_height];
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_height %d, tree_height %d\n",
 			  cur_height, tree_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_btree_check_level_for_add(&hierarchy->desc,
 						      tree, search,
@@ -5587,10 +5687,10 @@ int ssdfs_btree_check_level_for_delete(struct ssdfs_btree *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search || !parent || !child);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, parent %p, child %p\n",
 		  tree, search, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	parent_node = parent->nodes.old_node.ptr;
 	child_node = child->nodes.old_node.ptr;
@@ -5890,10 +5990,10 @@ int ssdfs_btree_check_level_for_update(struct ssdfs_btree *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search || !parent || !child);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, parent %p, child %p\n",
 		  tree, search, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	child_node = child->nodes.old_node.ptr;
 	if (!child_node) {
@@ -6018,10 +6118,12 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 		child_node_height = atomic_read(&child_node->height);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("child_node %px, child_node_id %u, child_node_type %#x\n",
 		  child_node, child_node->node_id, child_node_type);
 	SSDFS_DBG("parent_node %px, parent_node_id %u, parent_node_type %#x\n",
 		  parent_node, parent_node->node_id, parent_node_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	cur_height = child_node_height;
 	if (cur_height >= tree_height) {
@@ -6059,8 +6161,10 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 	spin_unlock(lock);
 	lock = NULL;
 	for (; cur_height < tree_height; cur_height++) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_height %d, tree_height %d, parent_node %px\n",
 			  cur_height, tree_height, parent_node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!parent_node) {
 			SSDFS_ERR("parent node is NULL\n");
@@ -6148,10 +6252,10 @@ int ssdfs_btree_move_items_left(struct ssdfs_btree_state_descriptor *desc,
 			   child->items_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, child %p\n",
 		  desc, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	parent_node = parent->nodes.old_node.ptr;
 
@@ -6288,12 +6392,14 @@ int ssdfs_btree_move_items_left(struct ssdfs_btree_state_descriptor *desc,
 
 	child->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("src_node %u, dst_node %u, "
 		  "start_item %u, count %u\n",
 		  old_node->node_id,
 		  new_node->node_id,
 		  child->items_area.move.pos.start,
 		  child->items_area.move.pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6336,10 +6442,10 @@ int ssdfs_btree_move_items_right(struct ssdfs_btree_state_descriptor *desc,
 			   child->items_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, child %p\n",
 		  desc, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	parent_node = parent->nodes.old_node.ptr;
 
@@ -6468,12 +6574,14 @@ int ssdfs_btree_move_items_right(struct ssdfs_btree_state_descriptor *desc,
 
 	child->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("src_node %u, dst_node %u, "
 		  "start_item %u, count %u\n",
 		  old_node->node_id,
 		  new_node->node_id,
 		  child->items_area.move.pos.start,
 		  child->items_area.move.pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6515,10 +6623,10 @@ ssdfs_btree_move_items_parent2child(struct ssdfs_btree_state_descriptor *desc,
 			   parent->items_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent->items_area.move.op_state != SSDFS_BTREE_AREA_OP_REQUESTED) {
 		SSDFS_ERR("invalid operation state %#x\n",
@@ -6694,12 +6802,14 @@ ssdfs_btree_move_items_parent2child(struct ssdfs_btree_state_descriptor *desc,
 
 	parent->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("src_node %u, dst_node %u, "
 		  "start_item %u, count %u\n",
 		  parent_node->node_id,
 		  child_node->node_id,
 		  parent->items_area.move.pos.start,
 		  parent->items_area.move.pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6741,10 +6851,10 @@ ssdfs_btree_move_items_child2parent(struct ssdfs_btree_state_descriptor *desc,
 			   parent->items_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (child->items_area.move.op_state != SSDFS_BTREE_AREA_OP_REQUESTED) {
 		SSDFS_ERR("invalid operation state %#x\n",
@@ -6920,12 +7030,14 @@ ssdfs_btree_move_items_child2parent(struct ssdfs_btree_state_descriptor *desc,
 
 	child->items_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("src_node %u, dst_node %u, "
 		  "start_item %u, count %u\n",
 		  child_node->node_id,
 		  parent_node->node_id,
 		  child->items_area.move.pos.start,
 		  child->items_area.move.pos.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6954,10 +7066,10 @@ int ssdfs_btree_move_items(struct ssdfs_btree_state_descriptor *desc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (child->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE) {
 		switch (child->items_area.move.direction) {
@@ -7067,10 +7179,10 @@ ssdfs_btree_move_indexes_to_parent(struct ssdfs_btree_state_descriptor *desc,
 			   child->index_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = child->index_area.move.op_state;
 	if (state != SSDFS_BTREE_AREA_OP_REQUESTED) {
@@ -7260,10 +7372,10 @@ int ssdfs_btree_move_indexes_to_child(struct ssdfs_btree_state_descriptor *desc,
 			   parent->index_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	state = parent->index_area.move.op_state;
 	if (state != SSDFS_BTREE_AREA_OP_REQUESTED) {
@@ -7321,10 +7433,12 @@ int ssdfs_btree_move_indexes_to_child(struct ssdfs_btree_state_descriptor *desc,
 	start = parent->index_area.move.pos.start;
 	count = parent->index_area.move.pos.count;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start %u, count %u, state %#x\n",
 		  parent->index_area.move.pos.start,
 		  parent->index_area.move.pos.count,
 		  parent->index_area.move.pos.state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (parent->index_area.move.pos.state) {
 	case SSDFS_HASH_RANGE_INTERSECTION:
@@ -7475,10 +7589,10 @@ int ssdfs_btree_move_indexes_right(struct ssdfs_btree_state_descriptor *desc,
 			   child->index_area.move.direction);
 		return -ERANGE;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	parent_node = parent->nodes.old_node.ptr;
 	if (!parent_node) {
@@ -7566,10 +7680,12 @@ int ssdfs_btree_move_indexes_right(struct ssdfs_btree_state_descriptor *desc,
 	start = child->index_area.move.pos.start;
 	count = child->index_area.move.pos.count;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start %u, count %u, state %#x\n",
 		  child->index_area.move.pos.start,
 		  child->index_area.move.pos.count,
 		  child->index_area.move.pos.state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	calculated = (start + count) * desc->index_size;
 	if (calculated >= desc->node_size) {
@@ -7665,10 +7781,10 @@ int ssdfs_btree_move_indexes(struct ssdfs_btree_state_descriptor *desc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (parent->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
 		switch (parent->index_area.move.direction) {
@@ -7766,10 +7882,10 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, child %p\n",
 		  desc, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	node = child->nodes.old_node.ptr;
 
@@ -7778,7 +7894,9 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(child->flags & SSDFS_BTREE_TRY_RESIZE_INDEX_AREA)) {
 		SSDFS_WARN("resize hasn't been requested\n");
@@ -7825,6 +7943,7 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("INITIAL_STATE: "
 		  "items_area: area_size %u, free_space %u; "
 		  "index_area: area_size %u, free_space %u\n",
@@ -7832,14 +7951,17 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 		  child->items_area.free_space,
 		  child->index_area.area_size,
 		  child->index_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	index_area_size = child->index_area.area_size << 1;
 	index_free_area = index_area_size - child->index_area.area_size;
 
 	if (index_area_size > desc->node_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to resize the index area: "
 			  "requested_size %u, node_size %u\n",
 			  index_free_area, desc->node_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	} else if (index_area_size == desc->node_size) {
 		index_area_size = desc->node_size;
@@ -7849,10 +7971,12 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 		items_area_size = 0;
 		items_free_area = 0;
 	} else if (child->items_area.free_space < index_free_area) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to resize the index area: "
 			  "free_space %u, requested_size %u\n",
 			  child->items_area.free_space,
 			  index_free_area);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	} else {
 		items_area_size = child->items_area.area_size;
@@ -7861,22 +7985,24 @@ int ssdfs_btree_resize_index_area(struct ssdfs_btree_state_descriptor *desc,
 		items_free_area -= index_free_area;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("NEW_STATE: "
 		  "items_area: area_size %u, free_space %u; "
 		  "index_area: area_size %u, free_space %u\n",
 		  items_area_size, items_free_area,
 		  index_area_size, index_free_area);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(index_area_size == 0);
 	BUG_ON(index_area_size > desc->node_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_node_resize_index_area(node, index_area_size);
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to resize the index area: "
 			  "node_id %u, new_size %u\n",
 			  node->node_id, index_area_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to resize the index area: "
 			  "node_id %u, new_size %u\n",
@@ -7919,10 +8045,10 @@ int ssdfs_btree_prepare_add_item(struct ssdfs_btree_level *parent,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("parent %p, child %p\n",
 		  parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(child->flags & SSDFS_BTREE_LEVEL_ADD_ITEM)) {
 		SSDFS_WARN("add item hasn't been requested\n");
@@ -8105,10 +8231,10 @@ int __ssdfs_btree_update_index(struct ssdfs_btree_node *parent_node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent_node || !child_node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("parent_node %p, child_node %p\n",
 		  parent_node, child_node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	parent_type = atomic_read(&parent_node->type);
 	child_type = atomic_read(&child_node->type);
@@ -8246,17 +8372,18 @@ int __ssdfs_btree_update_index(struct ssdfs_btree_node *parent_node,
 finish_update_index:
 	spin_unlock(&child_node->descriptor_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "node_height %u, hash %llx\n",
 		  le32_to_cpu(new_key.node_id),
 		  new_key.node_type,
 		  new_key.height,
 		  le64_to_cpu(new_key.index.hash));
-
 	SSDFS_DBG("seg_id %llu, logical_blk %u, len %u\n",
 		  le64_to_cpu(new_key.index.extent.seg_id),
 		  le32_to_cpu(new_key.index.extent.logical_blk),
 		  le32_to_cpu(new_key.index.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err))
 		return err;
@@ -8295,10 +8422,10 @@ int ssdfs_btree_update_index(struct ssdfs_btree_state_descriptor *desc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(parent->flags & SSDFS_BTREE_LEVEL_UPDATE_INDEX)) {
 		SSDFS_WARN("update index hasn't been requested\n");
@@ -8357,10 +8484,10 @@ int __ssdfs_btree_add_index(struct ssdfs_btree_node *parent_node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!parent_node || !child_node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("parent_node %p, child_node %p\n",
 		  parent_node, child_node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	type = atomic_read(&child_node->type);
 
@@ -8396,17 +8523,18 @@ int __ssdfs_btree_add_index(struct ssdfs_btree_node *parent_node,
 		     sizeof(struct ssdfs_btree_index_key));
 	spin_unlock(&child_node->descriptor_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "node_height %u, hash %llx\n",
 		  le32_to_cpu(key.node_id),
 		  key.node_type,
 		  key.height,
 		  le64_to_cpu(key.index.hash));
-
 	SSDFS_DBG("seg_id %llu, logical_blk %u, len %u\n",
 		  le64_to_cpu(key.index.extent.seg_id),
 		  le32_to_cpu(key.index.extent.logical_blk),
 		  le32_to_cpu(key.index.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_node_add_index(parent_node, &key);
 	if (unlikely(err)) {
@@ -8442,10 +8570,10 @@ int ssdfs_btree_add_index(struct ssdfs_btree_state_descriptor *desc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !parent || !child);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, parent %p, child %p\n",
 		  desc, parent, child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(parent->flags & SSDFS_BTREE_LEVEL_ADD_INDEX)) {
 		SSDFS_WARN("add index hasn't been requested\n");
@@ -8502,10 +8630,10 @@ int ssdfs_btree_update_index_after_move(struct ssdfs_btree_level *child,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!child || !parent_node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("child %p, parent_node %p\n",
 		  child, parent_node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (child->flags & SSDFS_BTREE_ITEMS_AREA_NEED_MOVE ||
 	    child->flags & SSDFS_BTREE_INDEX_AREA_NEED_MOVE) {
@@ -8525,9 +8653,11 @@ int ssdfs_btree_update_index_after_move(struct ssdfs_btree_level *child,
 			break;
 
 		default:
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("nothing should be done: "
 				  "direction %#x\n",
 				  move->direction);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return 0;
 		}
 
@@ -8599,8 +8729,10 @@ int ssdfs_btree_update_index_after_move(struct ssdfs_btree_level *child,
 			}
 		}
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing should be done: "
 			  "flags %#x\n", child->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return 0;
@@ -8633,10 +8765,10 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!hierarchy || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hierarchy %p, cur_height %d\n",
 		  hierarchy, cur_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (cur_height >= hierarchy->desc.height) {
 		SSDFS_ERR("invalid hierarchy: "
@@ -8649,8 +8781,10 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 	cur_level = hierarchy->array_ptr[cur_height];
 
 	if (!cur_level->flags) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing to do: cur_height %d\n",
 			  cur_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -8659,10 +8793,12 @@ int ssdfs_btree_process_level_for_add(struct ssdfs_btree_hierarchy *hierarchy,
 
 	parent = hierarchy->array_ptr[cur_height + 1];
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("cur_height %d, tree_height %d, "
 		  "cur_level->flags %#x, parent->flags %#x\n",
 		  cur_height, hierarchy->desc.height,
 		  cur_level->flags, parent->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (cur_level->flags & ~SSDFS_BTREE_ADD_NODE_MASK ||
 	    parent->flags & ~SSDFS_BTREE_ADD_NODE_MASK) {
@@ -8787,10 +8923,12 @@ check_necessity_increase_tree_height:
 			if (hierarchy->desc.increment_height)
 				atomic_inc(&node->height);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("node_id %u, node height %u, "
 				  "cur_height %u, increment_height %#x\n",
 				  node->node_id, atomic_read(&node->height),
 				  cur_height, hierarchy->desc.increment_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 			break;
 
 		default:
@@ -8827,10 +8965,10 @@ int ssdfs_btree_delete_index(struct ssdfs_btree_state_descriptor *desc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!desc || !level);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("desc %p, level %p\n",
 		  desc, level);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!(level->flags & SSDFS_BTREE_LEVEL_DELETE_INDEX)) {
 		SSDFS_WARN("delete index hasn't been requested\n");
@@ -8855,8 +8993,10 @@ int ssdfs_btree_delete_index(struct ssdfs_btree_state_descriptor *desc,
 
 	hash = cpu_to_le64(delete->node_index.index.hash);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree type %#x, node_id %u, hash %llx\n",
 		  node->tree->type, node->node_id, hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_node_delete_index(node, hash);
 	if (unlikely(err)) {
@@ -8896,10 +9036,10 @@ int ssdfs_btree_process_level_for_delete(struct ssdfs_btree_hierarchy *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hierarchy %p, cur_height %d\n",
 		  ptr, cur_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (cur_height >= ptr->desc.height) {
 		SSDFS_ERR("invalid hierarchy: "
@@ -8913,8 +9053,10 @@ int ssdfs_btree_process_level_for_delete(struct ssdfs_btree_hierarchy *ptr,
 	parent = ptr->array_ptr[cur_height + 1];
 
 	if (!cur_level->flags) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing to do: cur_height %d\n",
 			  cur_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -8970,10 +9112,10 @@ int ssdfs_btree_process_level_for_update(struct ssdfs_btree_hierarchy *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("hierarchy %p, cur_height %d\n",
 		  ptr, cur_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_debug_btree_hierarchy_object(ptr);
 
@@ -8988,11 +9130,15 @@ int ssdfs_btree_process_level_for_update(struct ssdfs_btree_hierarchy *ptr,
 	cur_level = ptr->array_ptr[cur_height];
 	parent = ptr->array_ptr[cur_height + 1];
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("parent->flags %#x\n", parent->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!parent->flags) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing to do: cur_height %d\n",
 			  cur_height);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 

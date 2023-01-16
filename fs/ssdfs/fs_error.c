@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/fs_error.c - logic for the case of file system errors detection.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/page-flags.h>
@@ -128,8 +131,10 @@ int ssdfs_set_page_dirty(struct page *page)
 	struct address_space *mapping = page->mapping;
 	unsigned long flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index: %llu, mapping %p\n",
 		  (u64)page_index(page), mapping);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!PageLocked(page)) {
 		SSDFS_WARN("page isn't locked: "
@@ -155,8 +160,10 @@ int __ssdfs_clear_dirty_page(struct page *page)
 	struct address_space *mapping = page->mapping;
 	unsigned long flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index: %llu, mapping %p\n",
 		  (u64)page_index(page), mapping);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!PageLocked(page)) {
 		SSDFS_WARN("page isn't locked: "
@@ -185,8 +192,10 @@ int ssdfs_clear_dirty_page(struct page *page)
 	struct address_space *mapping = page->mapping;
 	unsigned long flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index: %llu, mapping %p\n",
 		  (u64)page_index(page), mapping);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!PageLocked(page)) {
 		SSDFS_WARN("page isn't locked: "
@@ -236,9 +245,11 @@ void ssdfs_clear_dirty_pages(struct address_space *mapping)
 			ssdfs_unlock_page(page);
 
 			if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("fail clear page dirty: "
 					  "page_index %llu\n",
 					  (u64)page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 		}
 		ssdfs_fs_error_pagevec_release(&pvec);

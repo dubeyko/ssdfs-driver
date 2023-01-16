@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/acl.c - ACLs support implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -91,8 +94,10 @@ struct posix_acl *ssdfs_get_acl(struct inode *inode, int type, bool rcu)
 	char *value = NULL;
 	ssize_t size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, type %#x\n",
 		  (unsigned long)inode->i_ino, type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (rcu)
 		return ERR_PTR(-ECHILD);
@@ -143,8 +148,10 @@ int __ssdfs_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	char *value = NULL;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, type %#x, acl %p\n",
 		  (unsigned long)inode->i_ino, type, acl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (type) {
 	case ACL_TYPE_ACCESS:
@@ -197,8 +204,10 @@ int ssdfs_set_acl(struct user_namespace *mnt_userns, struct dentry *dentry,
 	umode_t mode = inode->i_mode;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, type %#x, acl %p\n",
 		  (unsigned long)inode->i_ino, type, acl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (type == ACL_TYPE_ACCESS && acl) {
 		err = posix_acl_update_mode(&init_user_ns, inode, &mode, &acl);
@@ -225,8 +234,10 @@ int ssdfs_init_acl(struct inode *inode, struct inode *dir)
 	struct posix_acl *default_acl, *acl;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir_ino %lu, ino %lu\n",
 		  (unsigned long)dir->i_ino, (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = posix_acl_create(dir, &inode->i_mode, &default_acl, &acl);
 	if (err)

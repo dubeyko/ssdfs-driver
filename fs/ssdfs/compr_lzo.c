@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/compr_lzo.c - LZO compression support.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -124,7 +127,9 @@ static void ssdfs_lzo_free_workspace(struct list_head *ptr)
 
 	workspace = list_entry(ptr, struct ssdfs_lzo_workspace, list);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("workspace %p\n", workspace);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	vfree(workspace->cbuf);
 	vfree(workspace->mem);
@@ -135,7 +140,9 @@ static struct list_head *ssdfs_lzo_alloc_workspace(void)
 {
 	struct ssdfs_lzo_workspace *workspace;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("try to allocate workspace\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	workspace = ssdfs_lzo_kzalloc(sizeof(*workspace), GFP_KERNEL);
 	if (unlikely(!workspace))
@@ -175,11 +182,11 @@ static int ssdfs_lzo_compress(struct list_head *ws,
 	size_t compress_size;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ws_ptr %p, data_in %p, cdata_out %p, "
 		  "srclen ptr %p, destlen ptr %p\n",
 		  ws, data_in, cdata_out, srclen, destlen);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ws || !data_in || !cdata_out || !srclen || !destlen);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -196,9 +203,11 @@ static int ssdfs_lzo_compress(struct list_head *ws,
 	}
 
 	if (compress_size > *destlen) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to compress: compress_size %zu, "
 			  "destlen %zu\n",
 			  compress_size, *destlen);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = -E2BIG;
 		goto failed_compress;
 	}
@@ -208,8 +217,10 @@ static int ssdfs_lzo_compress(struct list_head *ws,
 		     compress_size);
 	*destlen = compress_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("compress has succeded: srclen %zu, destlen %zu\n",
 		    *srclen, *destlen);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 
@@ -225,11 +236,11 @@ static int ssdfs_lzo_decompress(struct list_head *ws,
 	size_t dl = destlen;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ws_ptr %p, cdata_in %p, data_out %p, "
 		  "srclen %zu, destlen %zu\n",
 		  ws, cdata_in, data_out, srclen, destlen);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ws || !cdata_in || !data_out);
 #endif /* CONFIG_SSDFS_DEBUG */
 

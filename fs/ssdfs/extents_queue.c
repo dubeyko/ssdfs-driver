@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/extents_queue.c - extents queue implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/slab.h>
@@ -179,10 +182,10 @@ void ssdfs_extents_queue_add_head(struct ssdfs_extents_queue *eq,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!eq || !ei);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, owner_ino %llu\n",
 		  ei->type, ei->owner_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&eq->lock);
 	list_add(&ei->list, &eq->list);
@@ -199,10 +202,10 @@ void ssdfs_extents_queue_add_tail(struct ssdfs_extents_queue *eq,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!eq || !ei);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, owner_ino %llu\n",
 		  ei->type, ei->owner_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&eq->lock);
 	list_add_tail(&ei->list, &eq->list);
@@ -421,13 +424,17 @@ int ssdfs_mark_segment_under_invalidation(struct ssdfs_segment_info *si)
 				SSDFS_SEG_OBJECT_REGULAR_ACTIVITY,
 				SSDFS_SEG_UNDER_INVALIDATION);
 	if (activity_type != SSDFS_SEG_OBJECT_REGULAR_ACTIVITY) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy under activity %#x\n",
 			   si->seg_id, activity_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EBUSY;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment %llu is under invalidation\n",
 		  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -446,8 +453,10 @@ int ssdfs_revert_invalidation_to_regular_activity(struct ssdfs_segment_info *si)
 		return -EFAULT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment %llu has been reverted from invalidation\n",
 		  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -486,10 +495,10 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!shextree || !hdr || !pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("owner_id %llu, node_size %u\n",
 		  owner_ino, node_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (le16_to_cpu(hdr->magic.key)) {
 	case SSDFS_EXTENTS_BNODE_MAGIC:
@@ -775,8 +784,10 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_invalidate_index;
 	}
 
@@ -855,7 +866,6 @@ int ssdfs_invalidate_dentries_btree_index(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -863,6 +873,7 @@ int ssdfs_invalidate_dentries_btree_index(struct ssdfs_fs_info *fsi,
 		  index->node_type,
 		  index->height,
 		  owner_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dentries_btree = &fsi->vh->dentries_btree;
 	node_size = 1 << dentries_btree->desc.log_node_size;
@@ -897,7 +908,6 @@ int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -905,6 +915,7 @@ int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
 		  index->node_type,
 		  index->height,
 		  owner_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	shared_dict = &fsi->vs->shared_dict_btree;
 	node_size = 1 << shared_dict->desc.log_node_size;
@@ -1204,8 +1215,10 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_invalidate_index;
 	}
 
@@ -1302,7 +1315,6 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -1310,6 +1322,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 		  index->node_type,
 		  index->height,
 		  owner_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	shextree = fsi->shextree;
 
@@ -1544,8 +1557,10 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_invalidate_index;
 	}
 
@@ -1635,8 +1650,10 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(extent->logical_blk);
 	len = le32_to_cpu(extent->len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, start_blk %u, len %u\n",
 		  seg_id, start_blk, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE, seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
@@ -1648,8 +1665,10 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_invalidate_extent;
 	}
 

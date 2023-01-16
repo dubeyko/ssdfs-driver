@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/request_queue.c - request queue implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019, HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/slab.h>
@@ -211,8 +214,10 @@ void ssdfs_requests_queue_add_head_inc(struct ssdfs_fs_info *fsi,
 	ssdfs_requests_queue_add_head(rq, req);
 	atomic64_inc(&fsi->flush_reqs);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("flush_reqs %lld\n",
 		  atomic64_read(&fsi->flush_reqs));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -259,8 +264,10 @@ void ssdfs_requests_queue_add_tail_inc(struct ssdfs_fs_info *fsi,
 	ssdfs_requests_queue_add_tail(rq, req);
 	atomic64_inc(&fsi->flush_reqs);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("flush_reqs %lld\n",
 		  atomic64_read(&fsi->flush_reqs));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -578,8 +585,10 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_dec_return(&req->private.refs_count) < 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("request's reference count %d\n",
 			  atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 }
 
@@ -793,10 +802,10 @@ ssdfs_request_allocate_locked_diff_page(struct ssdfs_segment_request *req,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pagevec count %d\n",
 		  pagevec_count(&req->result.diffs));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (pagevec_space(&req->result.diffs) == 0) {
 		SSDFS_WARN("request's pagevec is full\n");
@@ -948,7 +957,9 @@ void ssdfs_request_unlock_and_remove_update(struct ssdfs_segment_request *req)
 		struct page *page = req->result.pvec.pages[i];
 
 		if (!page) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %d is NULL\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
@@ -982,7 +993,9 @@ void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req)
 		struct page *page = req->result.diffs.pages[i];
 
 		if (!page) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %d is NULL\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
@@ -1016,7 +1029,9 @@ void ssdfs_request_unlock_and_remove_old_state(struct ssdfs_segment_request *req
 		struct page *page = req->result.old_state.pages[i];
 
 		if (!page) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %d is NULL\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
@@ -1119,7 +1134,9 @@ void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
 	}
 
 	if (!req->result.pvec.pages[page_index]) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %d is NULL\n", page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 
@@ -1145,7 +1162,9 @@ void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
 		bool need_free_page = false;
 
 		if (!page) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %d is NULL\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 

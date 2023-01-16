@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/dentries_tree.c - dentries btree implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -549,8 +552,10 @@ fail_create_generic_tree:
 finish_tree_init:
 	up_write(&tree->lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&tree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -592,9 +597,9 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !tree->fsi);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tree->fsi;
 
@@ -666,8 +671,10 @@ int ssdfs_migrate_inline2generic_tree(struct ssdfs_dentries_btree_info *tree)
 
 	atomic64_sub(dentries_count, &tree->dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&tree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < dentries_count; i++) {
 		cur = &dentries[i];
@@ -901,7 +908,9 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 
 	dentries_count = atomic64_read(&tree->dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n", dentries_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentries_count >= U32_MAX) {
 		err = -EOPNOTSUPP;
@@ -955,9 +964,11 @@ int ssdfs_dentries_tree_flush(struct ssdfs_fs_info *fsi,
 
 			if (flags & SSDFS_INODE_HAS_XATTR_BTREE) {
 				err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("tree should be converted: "
 					  "ino %lu\n",
 					  ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
 				memset(&ii->raw_inode.internal, 0xFF,
 					ssdfs_inline_dentries_size());
@@ -1047,11 +1058,13 @@ finish_dentries_tree_flush:
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("RAW INODE DUMP\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     &ii->raw_inode,
 			     sizeof(struct ssdfs_inode));
 	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1145,8 +1158,10 @@ int ssdfs_check_dentry_for_request(struct ssdfs_fs_info *fsi,
 	req_name = search->request.start.name;
 	req_name_len = search->request.start.name_len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search_hash %llx, req_ino %llu\n",
 		  search_hash, req_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hash_code = le64_to_cpu(dentry->hash_code);
 	ino = le64_to_cpu(dentry->ino);
@@ -1155,10 +1170,12 @@ int ssdfs_check_dentry_for_request(struct ssdfs_fs_info *fsi,
 	flags = dentry->flags;
 	name_len = dentry->name_len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("hash_code %llx, ino %llu, "
 		  "type %#x, file_type %#x, flags %#x, name_len %u\n",
 		  hash_code, ino, dentry_type,
 		  file_type, flags, name_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentry_type <= SSDFS_DENTRY_UNKNOWN_TYPE ||
 	    dentry_type >= SSDFS_DENTRY_TYPE_MAX) {
@@ -1306,10 +1323,10 @@ ssdfs_dentries_tree_find_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !tree->fsi || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&tree->type) != SSDFS_INLINE_DENTRIES_ARRAY) {
 		SSDFS_ERR("invalid tree type %#x\n",
@@ -1372,9 +1389,11 @@ ssdfs_dentries_tree_find_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		flags = dentry->flags;
 		name_len = dentry->name_len;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("i %llu, hash_code %llx, ino %llu, "
 			  "type %#x, flags %#x, name_len %u\n",
 			  (u64)i, hash_code, ino, type, flags, name_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (type != SSDFS_INLINE_DENTRY) {
 			SSDFS_ERR("corrupted dentry: "
@@ -1479,10 +1498,10 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_DENTRIES_BTREE_CREATED:
@@ -1504,9 +1523,11 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 		up_read(&tree->lock);
 
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the inline dentry: "
 				  "hash %llx\n",
 				  search->request.start.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the inline dentry: "
 				  "hash %llx, err %d\n",
@@ -1520,9 +1541,11 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 		up_read(&tree->lock);
 
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the dentry: "
 				  "hash %llx\n",
 				  search->request.start.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the dentry: "
 				  "hash %llx, err %d\n",
@@ -1567,10 +1590,10 @@ int ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !name || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, name %s, len %zu, search %p\n",
 		  tree, name, len, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
@@ -1623,10 +1646,10 @@ int ssdfs_dentries_tree_find_leaf_node(struct ssdfs_dentries_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, name_hash %llx, search %p\n",
 		  tree, name_hash, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
@@ -1703,10 +1726,10 @@ bool can_name_be_inline(const struct qstr *str)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!str || !str->name);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("name %s, len %u\n",
 		  str->name, str->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return str->len <= SSDFS_DENTRY_INLINE_NAME_MAX_LEN;
 }
@@ -1739,10 +1762,10 @@ int ssdfs_prepare_dentry(const struct qstr *str,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!str || !str->name || !ii || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("name %s, len %u, ino %lu\n",
 		  str->name, str->len, ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentry_type <= SSDFS_DENTRIES_BTREE_UNKNOWN_TYPE ||
 	    dentry_type >= SSDFS_DENTRIES_BTREE_TYPE_MAX) {
@@ -1906,8 +1929,10 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %lld, dentries_capacity %lld\n",
 		  dentries_count, dentries_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentries_count > dentries_capacity) {
 		SSDFS_WARN("dentries tree is corrupted: "
@@ -1916,9 +1941,11 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		atomic_set(&tree->state, SSDFS_DENTRIES_BTREE_CORRUPTED);
 		return -ERANGE;
 	} else if (dentries_count == dentries_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("inline tree hasn't room for the new dentry: "
 			  "dentries_count %lld, dentries_capacity %lld\n",
 			  dentries_count, dentries_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}
 
@@ -2057,8 +2084,10 @@ ssdfs_dentries_tree_add_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 
 	dentries_count = atomic64_inc_return(&tree->dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&tree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentries_count > dentries_capacity) {
 		SSDFS_WARN("dentries_count is too much: "
@@ -2339,9 +2368,11 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 			}
 		} else {
 			err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("dentry exists in the tree: "
 				  "name_hash %llx, ino %lu\n",
 				  name_hash, ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_add_inline_dentry;
 		}
 
@@ -2411,9 +2442,11 @@ try_to_add_into_generic_tree:
 			}
 		} else {
 			err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("dentry exists in the tree: "
 				  "name_hash %llx, ino %lu\n",
 				  name_hash, ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_add_generic_dentry;
 		}
 
@@ -2469,8 +2502,10 @@ int ssdfs_change_dentry(const struct qstr *str,
 
 	ino = new_ii->vfs_inode.i_ino;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("name %s, len %u, ino %lu\n",
 		  str->name, str->len, ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentry_type <= SSDFS_DENTRIES_BTREE_UNKNOWN_TYPE ||
 	    dentry_type >= SSDFS_DENTRIES_BTREE_TYPE_MAX) {
@@ -3010,10 +3045,10 @@ ssdfs_dentries_tree_delete_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
@@ -3121,8 +3156,10 @@ ssdfs_dentries_tree_delete_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 
 	dentries_count = atomic64_dec_return(&tree->dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&tree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentries_count == 0) {
 		SSDFS_DBG("tree is empty now\n");
@@ -3165,10 +3202,10 @@ int ssdfs_dentries_tree_delete_dentry(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
@@ -3306,10 +3343,10 @@ int ssdfs_dentries_tree_get_head_range(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, count %lld\n",
 		  tree, search, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_search_init(search);
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_RANGE;
@@ -3324,9 +3361,11 @@ int ssdfs_dentries_tree_get_head_range(struct ssdfs_dentries_btree_info *tree,
 					 count, search);
 	if (err == -EAGAIN) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("need to repeat extraction: "
 			  "count %lld, search->result.count %u\n",
 			  count, search->result.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract dentries: "
 			  "count %lld, err %d\n",
@@ -3375,7 +3414,6 @@ ssdfs_dentries_tree_remove_generic_items(struct ssdfs_dentries_btree_info *tree,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, search %p, count %lld, "
 		  "start_ino %llu, start_hash %llx, "
@@ -3383,6 +3421,7 @@ ssdfs_dentries_tree_remove_generic_items(struct ssdfs_dentries_btree_info *tree,
 		  tree, search, count,
 		  start_ino, start_hash,
 		  end_ino, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search->request.type = SSDFS_BTREE_SEARCH_DELETE_RANGE;
 	search->request.flags = SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
@@ -3453,9 +3492,9 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_dentries_btree_info *tree)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
@@ -3499,8 +3538,10 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_dentries_btree_info *tree)
 	}
 
 	if (dentries_count > dentries_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dentries_count %lld > dentries_capacity %lld\n",
 			  dentries_count, dentries_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}
 
@@ -3609,9 +3650,11 @@ try_extract_range:
 							search);
 	if (err == -EAGAIN) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("need to extract more: "
 			  "copied %lld, dentries_count %lld\n",
 			  copied, dentries_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto try_extract_range;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to remove generic items: "
@@ -3659,8 +3702,10 @@ finish_process_range:
 
 	atomic64_set(&tree->dentries_count, dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&tree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic_and(~SSDFS_INODE_HAS_DENTRIES_BTREE,
 		   &tree->owner->private_flags);
@@ -3852,9 +3897,9 @@ int ssdfs_delete_all_inline_dentries(struct ssdfs_dentries_btree_info *tree)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p\n", tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
@@ -3983,8 +4028,10 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree)
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&tree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -4035,8 +4082,10 @@ ssdfs_dentries_tree_extract_inline_range(struct ssdfs_dentries_btree_info *tree,
 
 	dentries_count = atomic64_read(&tree->dentries_count);
 	if (dentries_count == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dentries_count %llu\n",
 			  dentries_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	} else if (dentries_count > SSDFS_INLINE_DENTRIES_COUNT) {
 		SSDFS_ERR("unexpected dentries_count %llu\n",
@@ -4227,10 +4276,10 @@ int ssdfs_dentries_btree_desc_init(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, tree %p\n",
 		  fsi, tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree_info = container_of(tree,
 				 struct ssdfs_dentries_btree_info,
@@ -4392,10 +4441,10 @@ int ssdfs_dentries_btree_create_root_node(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, node %p\n",
 		  fsi, node);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	if (!tree) {
@@ -4501,10 +4550,10 @@ int ssdfs_dentries_btree_pre_flush_root_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -4578,10 +4627,10 @@ int ssdfs_dentries_btree_flush_root_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node %p, node_id %u\n",
 		  node, node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	if (!tree) {
@@ -4675,10 +4724,10 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !node->tree);
 	WARN_ON(atomic_read(&node->state) != SSDFS_BTREE_NODE_CREATED);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	node_size = tree->node_size;
@@ -4829,9 +4878,11 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.min_item_size = tree->min_item_size;
 		node->items_area.max_item_size = tree->max_item_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node_size %u, hdr_size %zu, free_space %u\n",
 			  node_size, hdr_size,
 			  node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		items_area_size = node->items_area.area_size;
 		item_size = node->items_area.item_size;
@@ -4866,9 +4917,11 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.min_item_size = tree->min_item_size;
 		node->items_area.max_item_size = tree->max_item_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node_size %u, hdr_size %zu, free_space %u\n",
 			  node_size, hdr_size,
 			  node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		items_area_size = node->items_area.area_size;
 		item_size = node->items_area.item_size;
@@ -4918,6 +4971,7 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		goto finish_create_node;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, dentries_count %u, "
 		  "inline_names %u, free_space %u\n",
 		  node->node_id,
@@ -4936,6 +4990,7 @@ int ssdfs_dentries_btree_create_node(struct ssdfs_btree_node *node)
 		  node->index_area.index_capacity,
 		  node->index_area.start_hash,
 		  node->index_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_create_node:
 	up_write(&node->bmap_array.lock);
@@ -5233,11 +5288,13 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 		BUG();
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_space %u, index_area_size %u, "
 		  "hdr_size %zu, dentries_count %u, "
 		  "item_size %u\n",
 		  free_space, index_area_size, hdr_size,
 		  dentries_count, item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (free_space != (node_size - calculated_used_space)) {
 		err = -EIO;
@@ -5252,6 +5309,7 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 	node->items_area.items_count = (u16)dentries_count;
 	node->items_area.items_capacity = items_capacity;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %u, items_capacity %u, "
 		  "start_hash %llx, end_hash %llx\n",
 		  node->items_area.items_count,
@@ -5264,6 +5322,7 @@ int ssdfs_dentries_btree_init_node(struct ssdfs_btree_node *node)
 		  node->index_area.index_capacity,
 		  node->index_area.start_hash,
 		  node->index_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_header_init:
 	up_write(&node->header_lock);
@@ -5323,6 +5382,7 @@ finish_header_init:
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
 	node->bmap_array.bmap_bytes = bmap_bytes;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("index_capacity %u, index_area_size %u, "
 		  "index_size %u\n",
 		  index_capacity, index_area_size, index_size);
@@ -5331,6 +5391,7 @@ finish_header_init:
 		  node->bmap_array.index_start_bit,
 		  node->bmap_array.item_start_bit,
 		  node->bmap_array.bits_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_btree_node_init_bmaps(node, addr);
 
@@ -5357,7 +5418,9 @@ finish_init_node:
 static
 void ssdfs_dentries_btree_destroy_node(struct ssdfs_btree_node *node)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("operation is unavailable\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -5383,10 +5446,10 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_CREATED:
@@ -5444,6 +5507,7 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, dentries_count %u, "
 		  "inline_names %u, free_space %u\n",
 		  node->node_id,
@@ -5462,6 +5526,7 @@ int ssdfs_dentries_btree_add_node(struct ssdfs_btree_node *node)
 		  node->index_area.index_capacity,
 		  node->index_area.start_hash,
 		  node->index_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_add_node:
 	up_read(&node->header_lock);
@@ -5548,10 +5613,10 @@ int ssdfs_dentries_btree_pre_flush_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
 	case SSDFS_BTREE_NODE_DIRTY:
@@ -5656,11 +5721,13 @@ int ssdfs_dentries_btree_pre_flush_node(struct ssdfs_btree_node *node)
 		goto finish_dentries_header_preparation;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_space %u, dentries_count %u, "
 		  "items_area_size %u, item_size %zu\n",
 		  free_space, dentries_count,
 		  items_area_size,
 		  sizeof(struct ssdfs_dir_entry));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (free_space != (items_area_size - used_space)) {
 		err = -ERANGE;
@@ -5731,10 +5798,10 @@ int ssdfs_dentries_btree_flush_node(struct ssdfs_btree_node *node)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node %p, node_id %u\n",
 		  node, node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	tree = node->tree;
 	if (!tree) {
@@ -5796,8 +5863,10 @@ int ssdfs_dentries_btree_flush_node(struct ssdfs_btree_node *node)
 static inline
 u16 ssdfs_convert_lookup2item_index(u32 node_size, u16 lookup_index)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_size %u, lookup_index %u\n",
 		  node_size, lookup_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_convert_lookup2item_index(lookup_index, node_size,
 					sizeof(struct ssdfs_dir_entry),
@@ -5812,8 +5881,10 @@ u16 ssdfs_convert_lookup2item_index(u32 node_size, u16 lookup_index)
 static inline
 u16 ssdfs_convert_item2lookup_index(u32 node_size, u16 item_index)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_size %u, item_index %u\n",
 		  node_size, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_convert_item2lookup_index(item_index, node_size,
 					sizeof(struct ssdfs_dir_entry),
@@ -5831,14 +5902,18 @@ bool is_hash_for_lookup_table(u32 node_size, u16 item_index)
 	u16 lookup_index;
 	u16 calculated;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_size %u, item_index %u\n",
 		  node_size, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	lookup_index = ssdfs_convert_item2lookup_index(node_size, item_index);
 	calculated = ssdfs_convert_lookup2item_index(node_size, lookup_index);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lookup_index %u, calculated %u\n",
 		  lookup_index, calculated);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return calculated == item_index;
 }
@@ -5869,7 +5944,6 @@ int ssdfs_dentries_btree_node_find_lookup_index(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search || !lookup_index);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -5880,6 +5954,7 @@ int ssdfs_dentries_btree_node_find_lookup_index(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->header_lock);
 	lookup_table = node->raw.dentries_header.lookup_table;
@@ -5907,9 +5982,9 @@ void ssdfs_get_dentries_hash_range(void *kaddr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!kaddr || !start_hash || !end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("kaddr %p\n", kaddr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dentry = (struct ssdfs_dir_entry *)kaddr;
 	*start_hash = le64_to_cpu(dentry->hash_code);
@@ -5957,9 +6032,9 @@ int ssdfs_check_found_dentry(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search || !kaddr || !found_index);
 	BUG_ON(!start_hash || !end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("item_index %u\n", item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = U64_MAX;
 	*end_hash = U64_MAX;
@@ -5972,8 +6047,10 @@ int ssdfs_check_found_dentry(struct ssdfs_fs_info *fsi,
 	flags = dentry->flags;
 	name_len = le16_to_cpu(dentry->name_len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("hash_code %llx, ino %llu, name_len %u\n",
 		  hash_code, ino, name_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	req_flags = search->request.flags;
 
@@ -6051,10 +6128,12 @@ int ssdfs_check_found_dentry(struct ssdfs_fs_info *fsi,
 			SSDFS_BTREE_SEARCH_VALID_ITEM;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "found_index %u\n",
 		  *start_hash, *end_hash,
 		  *found_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -6262,10 +6341,12 @@ int ssdfs_extract_found_dentry(struct ssdfs_fs_info *fsi,
 	search->result.count++;
 	search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "search->result.count %u\n",
 		  *start_hash, *end_hash,
 		  search->result.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -6463,14 +6544,17 @@ int ssdfs_dentries_btree_node_find_range(struct ssdfs_btree_node *node,
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node contains not all requested dentries: "
 			  "node (start_hash %llx, end_hash %llx), "
 			  "request (start_hash %llx, end_hash %llx)\n",
 			  start_hash, end_hash,
 			  search->request.start.hash,
 			  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to extract range: "
 			  "node (start_hash %llx, end_hash %llx), "
 			  "request (start_hash %llx, end_hash %llx), "
@@ -6479,6 +6563,7 @@ int ssdfs_dentries_btree_node_find_range(struct ssdfs_btree_node *node,
 			  search->request.start.hash,
 			  search->request.end.hash,
 			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		ssdfs_btree_search_result_no_data(node, lookup_index, search);
 		return err;
 	} else if (unlikely(err)) {
@@ -6517,7 +6602,6 @@ int ssdfs_dentries_btree_node_find_item(struct ssdfs_btree_node *node,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -6528,6 +6612,7 @@ int ssdfs_dentries_btree_node_find_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->request.count != 1 ||
 	    search->request.start.hash != search->request.end.hash) {
@@ -6546,7 +6631,10 @@ static
 int ssdfs_dentries_btree_node_allocate_item(struct ssdfs_btree_node *node,
 					    struct ssdfs_btree_search *search)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("operation is unavailable\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return -EOPNOTSUPP;
 }
 
@@ -6554,7 +6642,10 @@ static
 int ssdfs_dentries_btree_node_allocate_range(struct ssdfs_btree_node *node,
 					     struct ssdfs_btree_search *search)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("operation is unavailable\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return -EOPNOTSUPP;
 }
 
@@ -6591,10 +6682,10 @@ int __ssdfs_dentries_btree_node_get_dentry(struct pagevec *pvec,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec || !dentry);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
 		  area_offset, area_size, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_offset = (u32)item_index * item_size;
 	if (item_offset >= area_size) {
@@ -6659,10 +6750,10 @@ int ssdfs_dentries_btree_node_get_dentry(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !dentry);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_dentries_btree_node_get_dentry(&node->content.pvec,
 						      area->offset,
@@ -6782,6 +6873,7 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 			direction = SSDFS_CORRECT_POSITION;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %llu, hash %llx, "
 		  "search (start_hash %llx, ino %llu; "
 		  "end_hash %llx, ino %llu), "
@@ -6792,6 +6884,7 @@ int is_requested_position_correct(struct ssdfs_btree_node *node,
 		  search->request.end.hash,
 		  search->request.end.ino,
 		  direction);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return direction;
 }
@@ -6827,10 +6920,10 @@ int ssdfs_find_correct_position_from_left(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, search->result.start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
 	if ((item_index + search->request.count) >= area->items_capacity) {
@@ -6950,10 +7043,10 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, item_index %u\n",
 		  node->node_id, search->result.start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
 	if ((item_index + search->request.count) >= area->items_capacity) {
@@ -7074,15 +7167,17 @@ int ssdfs_clean_lookup_table(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !area);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, start_index %u\n",
 		  node->node_id, start_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	items_capacity = node->items_area.items_capacity;
 	if (start_index >= items_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start_index %u >= items_capacity %u\n",
 			  start_index, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -7112,8 +7207,10 @@ int ssdfs_clean_lookup_table(struct ssdfs_btree_node *node,
 		SSDFS_DENTRIES_BTREE_LOOKUP_TABLE_SIZE - lookup_index;
 	cleaning_bytes = cleaning_indexes * sizeof(__le64);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lookup_index %u, cleaning_indexes %u, cleaning_bytes %u\n",
 		  lookup_index, cleaning_indexes, cleaning_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	memset(&lookup_table[lookup_index], 0xFF, cleaning_bytes);
 
@@ -7155,7 +7252,9 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range_len == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("range_len == 0\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -7199,9 +7298,9 @@ void ssdfs_initialize_lookup_table(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 	BUG_ON(!rwsem_is_locked(&node->header_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	lookup_table = node->raw.dentries_header.lookup_table;
 	memset(lookup_table, 0xFF,
@@ -7330,6 +7429,7 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_capacity %u, items_count %u\n",
 		  items_area.items_capacity,
 		  items_area.items_count);
@@ -7338,6 +7438,7 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	SSDFS_DBG("area_size %u, free_space %u\n",
 		  items_area.area_size,
 		  items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	free_items = items_area.items_capacity - items_area.items_count;
 	if (unlikely(free_items < 0)) {
@@ -7564,9 +7665,11 @@ finish_detect_affected_items:
 		goto finish_items_area_correction;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_capacity %u, items_count %u\n",
 		  items_area.items_capacity,
 		  items_area.items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	used_space = (u32)search->request.count * item_size;
 	if (used_space > node->items_area.free_space) {
@@ -7603,16 +7706,20 @@ finish_detect_affected_items:
 		goto finish_items_area_correction;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("BEFORE: node_id %u, start_hash %llx, end_hash %llx\n",
 		  node->node_id,
 		  node->items_area.start_hash,
 		  node->items_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = end_hash;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("AFTER: node_id %u, start_hash %llx, end_hash %llx\n",
 		  node->node_id, start_hash, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_correct_lookup_table(node, &node->items_area,
 					 item_index, dentries_count);
@@ -7624,13 +7731,17 @@ finish_detect_affected_items:
 
 	hdr = &node->raw.dentries_header;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("NODE (BEFORE): dentries_count %u\n",
 		  le16_to_cpu(hdr->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	le16_add_cpu(&hdr->dentries_count, search->request.count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("NODE (AFTER): dentries_count %u\n",
 		  le16_to_cpu(hdr->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inline_names = 0;
 	for (i = 0; i < search->request.count; i++) {
@@ -7653,13 +7764,17 @@ finish_detect_affected_items:
 	le16_add_cpu(&hdr->inline_names, inline_names);
 	hdr->free_space = cpu_to_le16(node->items_area.free_space);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("TREE (BEFORE): dentries_count %llu\n",
 		  atomic64_read(&dtree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic64_add(search->request.count, &dtree->dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("TREE (AFTER): dentries_count %llu\n",
 		  atomic64_read(&dtree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_items_area_correction:
 	up_write(&node->header_lock);
@@ -7706,12 +7821,14 @@ finish_insert_item:
 
 			key.index.hash = cpu_to_le64(start_hash);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("node_id %u, node_type %#x, "
 				  "node_height %u, hash %llx\n",
 				  le32_to_cpu(key.node_id),
 				  key.node_type,
 				  key.height,
 				  le64_to_cpu(key.index.hash));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_btree_node_add_index(node, &key);
 			if (unlikely(err)) {
@@ -7955,7 +8072,9 @@ int ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_space %u\n", node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -7993,7 +8112,6 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -8004,6 +8122,7 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	range_len = search->request.count;
 
@@ -8154,7 +8273,6 @@ int ssdfs_dentries_btree_node_change_item(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
@@ -8165,6 +8283,7 @@ int ssdfs_dentries_btree_node_change_item(struct ssdfs_btree_node *node,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (search->result.state != SSDFS_BTREE_SEARCH_VALID_ITEM) {
 		SSDFS_ERR("invalid result's state %#x\n",
@@ -8416,10 +8535,10 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
 		  node->node_id, start_index, range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (((u32)start_index + range_len) > area->items_count) {
 		SSDFS_ERR("start_index %u, range_len %u, items_count %u\n",
@@ -8570,10 +8689,10 @@ int ssdfs_invalidate_whole_items_area(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, area %p, search %p\n",
 		  node->node_id, area, search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_invalidate_items_area(node, area,
 					     0, area->items_count,
@@ -8605,10 +8724,10 @@ int ssdfs_invalidate_items_area_partially(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !search);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("node_id %u, start_index %u, range_len %u\n",
 		  node->node_id, start_index, range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_invalidate_items_area(node, area,
 					     start_index, range_len,
@@ -8866,11 +8985,13 @@ int __ssdfs_dentries_btree_node_delete_range(struct ssdfs_btree_node *node,
 		/* request can be distributed between several nodes */
 		range_len = min_t(unsigned int, range_len,
 				  items_area.items_count - item_index);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node_id %u, item_index %u, "
 			  "request.count %u, items_count %u\n",
 			  node->node_id, item_index,
 			  search->request.count,
 			  items_area.items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	default:
@@ -8973,11 +9094,13 @@ finish_detect_affected_items:
 
 	down_write(&node->header_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("INITIAL STATE: node_id %u, "
 		  "items_count %u, free_space %u\n",
 		  node->node_id,
 		  node->items_area.items_count,
 		  node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (node->items_area.items_count < search->request.count)
 		node->items_area.items_count = 0;
@@ -8997,11 +9120,13 @@ finish_detect_affected_items:
 	}
 	node->items_area.free_space += deleted_space;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("NEW STATE: node_id %u, "
 		  "items_count %u, free_space %u\n",
 		  node->node_id,
 		  node->items_area.items_count,
 		  node->items_area.free_space);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (node->items_area.items_count == 0) {
 		start_hash = U64_MAX;
@@ -9027,20 +9152,24 @@ finish_detect_affected_items:
 		end_hash = le64_to_cpu(dentry.hash_code);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("BEFORE: node_id %u, items_area.start_hash %llx, "
 		  "items_area.end_hash %llx\n",
 		  node->node_id,
 		  node->items_area.start_hash,
 		  node->items_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = end_hash;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("AFTER: node_id %u, items_area.start_hash %llx, "
 		  "items_area.end_hash %llx\n",
 		  node->node_id,
 		  node->items_area.start_hash,
 		  node->items_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (node->items_area.items_count == 0)
 		ssdfs_initialize_lookup_table(node);
@@ -9114,8 +9243,10 @@ finish_detect_affected_items:
 	dentries_diff = old_dentries_count - dentries_count;
 	atomic64_sub(dentries_diff, &dtree->dentries_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
 		  atomic64_read(&dtree->dentries_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(&items_area,
 		     0, sizeof(struct ssdfs_btree_node_items_area),
@@ -9131,10 +9262,12 @@ finish_detect_affected_items:
 	}
 
 	if (dentries_count != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("set items range as dirty: "
 			  "node_id %u, start %u, count %u\n",
 			  node->node_id, item_index,
 			  old_dentries_count - item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_set_dirty_items_range(node,
 					items_area.items_capacity,
@@ -9182,9 +9315,11 @@ finish_delete_range:
 				return -ERANGE;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("index_count %u, end_hash %llx, "
 				  "old_hash %llx\n",
 				  index_count, end_hash, old_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (index_count <= 1 || end_hash == old_hash) {
 				err = ssdfs_btree_node_delete_index(node,
@@ -9233,9 +9368,11 @@ finish_delete_range:
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_type %#x, dentries_count %u, index_count %u\n",
 		  atomic_read(&node->type),
 		  dentries_count, index_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (dentries_count == 0 && index_count == 0)
 		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_DELETE_NODE;

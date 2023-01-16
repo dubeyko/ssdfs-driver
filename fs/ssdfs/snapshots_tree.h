@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/snapshots_tree.h - snapshots btree declarations.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -125,6 +126,7 @@ int check_year(int year)
 static inline
 void SHOW_SNAPSHOT_INFO(struct ssdfs_snapshot_request *snr)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SNAPSHOT INFO: ");
 	SSDFS_DBG("name %s, ", snr->info.name);
 	SSDFS_DBG("UUID %pUb, ", snr->info.uuid);
@@ -136,6 +138,7 @@ void SHOW_SNAPSHOT_INFO(struct ssdfs_snapshot_request *snr)
 		  snr->info.time_range.day,
 		  snr->info.time_range.month,
 		  snr->info.time_range.year);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline

@@ -4,17 +4,23 @@
  *
  * fs/ssdfs/peb_migration_scheme.c - Implementation of PEBs' migration scheme.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
+ *                  Cong Wang
  */
 
 #include <linux/pagemap.h>
@@ -136,10 +142,12 @@ check_migration_state:
 
 	case SSDFS_PEB_UNDER_MIGRATION:
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PEB is under migration already: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto start_migration_done;
 
 	case SSDFS_PEB_MIGRATION_PREPARATION:
@@ -207,7 +215,9 @@ bool is_peb_under_migration(struct ssdfs_peb_container *pebc)
 
 	state = atomic_read(&pebc->migration_state);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("migration state %#x\n", state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (state) {
 	case SSDFS_PEB_NOT_MIGRATING:
@@ -248,8 +258,10 @@ bool is_pebs_relation_alive(struct ssdfs_peb_container *pebc)
 
 	si = pebc->parent_si;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_state %#x\n",
 		  atomic_read(&pebc->items_state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 try_define_items_state:
 	switch (atomic_read(&pebc->items_state)) {
@@ -351,10 +363,10 @@ bool has_peb_migration_done(struct ssdfs_peb_container *pebc)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("migration_state %#x\n",
 		  atomic_read(&pebc->migration_state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_NOT_MIGRATING:
@@ -755,7 +767,6 @@ bool has_ssdfs_source_peb_valid_blocks(struct ssdfs_peb_container *pebc)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "migration_state %#x, items_state %#x\n",
@@ -763,6 +774,7 @@ bool has_ssdfs_source_peb_valid_blocks(struct ssdfs_peb_container *pebc)
 		  pebc->peb_index, pebc->peb_type,
 		  atomic_read(&pebc->migration_state),
 		  atomic_read(&pebc->items_state));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
@@ -900,7 +912,9 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("used_pages %d\n", used_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (used_pages > 0) {
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
@@ -908,8 +922,10 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 							 blk_type,
 							 &range);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found range: (start %u, len %u), err %d\n",
 			  range.start, range.len, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err == -ENODATA) {
 			/* no valid blocks */
@@ -933,8 +949,10 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 		range.len = min_t(u32, range_len, (u32)range.len);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("final range: (start %u, len %u)\n",
 			  range.start, range.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_ssdfs_peb_containing_user_data(pebc)) {
 			ssdfs_account_updated_user_data_pages(si->fsi,
@@ -1047,17 +1065,21 @@ check_migration_state:
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PEB is not migrating: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_migration_done;
 
 	case SSDFS_PEB_UNDER_MIGRATION:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PEB is under migration: "
 			  "seg_id %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!fsi->is_zns_device) {
 			pebi = pebc->dst_peb;
@@ -1083,10 +1105,12 @@ check_migration_state:
 			goto try_finish_migration_now;
 		else {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("Don't finish migration: "
 				  "seg_id %llu, peb_index %u\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_migration_done;
 		}
 		break;
@@ -1118,15 +1142,19 @@ try_finish_migration_now:
 		struct ssdfs_block_bmap_range range1 = {0, 0};
 		struct ssdfs_block_bmap_range range2 = {0, 0};
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("used_pages %d\n", used_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
 							 0, pages_per_peb,
 							 SSDFS_BLK_VALID,
 							 &range1);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("range1.start %u, range1.len %u, err %d\n",
 			  range1.start, range1.len, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err == -ENODATA) {
 			/* no valid blocks */
@@ -1143,8 +1171,10 @@ try_finish_migration_now:
 							SSDFS_BLK_PRE_ALLOCATED,
 							&range2);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("range2.start %u, range2.len %u, err %d\n",
 			  range2.start, range2.len, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err == -ENODATA) {
 			/* no valid blocks */

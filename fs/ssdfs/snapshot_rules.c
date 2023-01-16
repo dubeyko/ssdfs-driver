@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/snapshot_rules.c - snapshot rules implementation.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -123,10 +124,10 @@ void ssdfs_snapshot_rules_list_add_head(struct ssdfs_snapshot_rules_list *rl,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rl || !ri);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("rl %p, ri %p\n",
 		  rl, ri);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rl->lock);
 	list_add(&ri->list, &rl->list);
@@ -143,10 +144,10 @@ void ssdfs_snapshot_rules_list_add_tail(struct ssdfs_snapshot_rules_list *rl,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rl || !ri);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("rl %p, ri %p\n",
 		  rl, ri);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rl->lock);
 	list_add_tail(&ri->list, &rl->list);
@@ -226,9 +227,9 @@ ssdfs_snapshot_rules_add_pagevec_page(struct pagevec *pvec)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pvec %p\n", pvec);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_snap_rules_list_add_pagevec_page(pvec);
 	if (unlikely(IS_ERR_OR_NULL(page))) {
@@ -244,9 +245,9 @@ void ssdfs_snapshot_rules_pagevec_release(struct pagevec *pvec)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("pvec %p\n", pvec);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_snap_rules_list_pagevec_release(pvec);
 }
@@ -383,9 +384,11 @@ int ssdfs_create_snapshot(struct ssdfs_fs_info *fsi,
 	}
 
 	if (snapshots_number == snapshots_threshold) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing should be done: "
 			  "snapshots_number %u, snapshots_threshold %u\n",
 			  snapshots_number, snapshots_threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -458,9 +461,9 @@ int ssdfs_process_snapshot_rules(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	rl = &fsi->snapshots.rules_list;
 

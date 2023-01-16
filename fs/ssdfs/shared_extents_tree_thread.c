@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/shared_extents_tree_thread.c - shared extents tree's thread impl.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -195,16 +198,20 @@ int ssdfs_shextree_try_merge_extents(struct ssdfs_extent_info *ei,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (seg_id1 != seg_id2) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to merge: "
 			  "seg_id1 %llu != seg_id2 %llu\n",
 			  seg_id1, seg_id2);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
 	if ((logical_blk1 + len1) != logical_blk2) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to merge: "
 			  "logical_blk1 %u, len1 %u, logical_blk2 %u\n",
 			  logical_blk1, len1, logical_blk2);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 

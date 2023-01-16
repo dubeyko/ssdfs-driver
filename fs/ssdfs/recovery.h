@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/recovery.h - recovery logic declarations.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -308,6 +309,7 @@ void SSDFS_RECOVERY_SET_FAST_SEARCH_TRY(struct ssdfs_recovery_env *env)
 	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->lower_offset;
 	env->found->search_phase = SSDFS_RECOVERY_FAST_SEARCH;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lower_offset %llu, "
 		  "middle_offset %llu, "
 		  "upper_offset %llu, "
@@ -318,6 +320,7 @@ void SSDFS_RECOVERY_SET_FAST_SEARCH_TRY(struct ssdfs_recovery_env *env)
 		  env->found->upper_offset,
 		  env->found->current_offset,
 		  env->found->search_phase);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline
@@ -330,6 +333,7 @@ void SSDFS_RECOVERY_SET_FIRST_SLOW_TRY(struct ssdfs_recovery_env *env)
 	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->middle_offset;
 	env->found->search_phase = SSDFS_RECOVERY_FIRST_SLOW_TRY;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lower_offset %llu, "
 		  "middle_offset %llu, "
 		  "upper_offset %llu, "
@@ -340,6 +344,7 @@ void SSDFS_RECOVERY_SET_FIRST_SLOW_TRY(struct ssdfs_recovery_env *env)
 		  env->found->upper_offset,
 		  env->found->current_offset,
 		  env->found->search_phase);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline
@@ -362,6 +367,7 @@ void SSDFS_RECOVERY_SET_SECOND_SLOW_TRY(struct ssdfs_recovery_env *env)
 	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->lower_offset;
 	env->found->search_phase = SSDFS_RECOVERY_SECOND_SLOW_TRY;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lower_offset %llu, "
 		  "middle_offset %llu, "
 		  "upper_offset %llu, "
@@ -372,6 +378,7 @@ void SSDFS_RECOVERY_SET_SECOND_SLOW_TRY(struct ssdfs_recovery_env *env)
 		  env->found->upper_offset,
 		  env->found->current_offset,
 		  env->found->search_phase);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline
@@ -397,6 +404,7 @@ void SSDFS_RECOVERY_SET_THIRD_SLOW_TRY(struct ssdfs_recovery_env *env)
 	*SSDFS_RECOVERY_CUR_OFF_PTR(env) = env->found->lower_offset;
 	env->found->search_phase = SSDFS_RECOVERY_THIRD_SLOW_TRY;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lower_offset %llu, "
 		  "middle_offset %llu, "
 		  "upper_offset %llu, "
@@ -407,6 +415,7 @@ void SSDFS_RECOVERY_SET_THIRD_SLOW_TRY(struct ssdfs_recovery_env *env)
 		  env->found->upper_offset,
 		  env->found->current_offset,
 		  env->found->search_phase);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*

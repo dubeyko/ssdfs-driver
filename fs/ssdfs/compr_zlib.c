@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/compr_zlib.c - ZLIB compression support.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -125,7 +128,9 @@ static void ssdfs_zlib_free_workspace(struct list_head *ptr)
 
 	workspace = list_entry(ptr, struct ssdfs_zlib_workspace, list);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("workspace %p\n", workspace);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	vfree(workspace->deflate_stream.workspace);
 	vfree(workspace->inflate_stream.workspace);
@@ -137,7 +142,9 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 	struct ssdfs_zlib_workspace *workspace;
 	int deflate_size, inflate_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("try to allocate workspace\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	workspace = ssdfs_zlib_kzalloc(sizeof(*workspace), GFP_KERNEL);
 	if (unlikely(!workspace)) {
@@ -152,7 +159,9 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 		goto failed_alloc_workspaces;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("deflate stream size %d\n", deflate_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inflate_size = zlib_inflate_workspacesize();
 	workspace->inflate_stream.workspace = vmalloc(inflate_size);
@@ -161,7 +170,9 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 		goto failed_alloc_workspaces;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("inflate stream size %d\n", inflate_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	INIT_LIST_HEAD(&workspace->list);
 
@@ -216,6 +227,7 @@ static int ssdfs_zlib_compress(struct list_head *ws,
 	stream->avail_out = *destlen;
 	stream->total_out = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("calling deflate with: "
 		  "stream->avail_in %lu, stream->total_in %lu, "
 		  "stream->avail_out %lu, stream->total_out %lu\n",
@@ -223,9 +235,11 @@ static int ssdfs_zlib_compress(struct list_head *ws,
 		  (unsigned long)stream->total_in,
 		  (unsigned long)stream->avail_out,
 		  (unsigned long)stream->total_out);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = zlib_deflate(stream, Z_FINISH);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("deflate returned with: "
 		  "stream->avail_in %lu, stream->total_in %lu, "
 		  "stream->avail_out %lu, stream->total_out %lu\n",
@@ -233,13 +247,16 @@ static int ssdfs_zlib_compress(struct list_head *ws,
 		  (unsigned long)stream->total_in,
 		  (unsigned long)stream->avail_out,
 		  (unsigned long)stream->total_out);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err != Z_STREAM_END) {
 		if (err == Z_OK) {
 			err = -E2BIG;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to compress: "
 				  "total_in %zu, total_out %zu\n",
 				  stream->total_in, stream->total_out);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			SSDFS_ERR("ZLIB compression failed: "
 				  "internal err %d\n",
@@ -256,8 +273,10 @@ static int ssdfs_zlib_compress(struct list_head *ws,
 	}
 
 	if (stream->total_out >= stream->total_in) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to compress: total_in %zu, total_out %zu\n",
 			  stream->total_in, stream->total_out);
+#endif /* CONFIG_SSDFS_DEBUG */
 		err = -E2BIG;
 		goto failed_compress;
 	}
@@ -265,8 +284,10 @@ static int ssdfs_zlib_compress(struct list_head *ws,
 	*destlen = stream->total_out;
 	*srclen = stream->total_in;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("compress has succeded: srclen %zu, destlen %zu\n",
 		    *srclen, *destlen);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 failed_compress:
 	return err;
@@ -328,10 +349,12 @@ static int ssdfs_zlib_decompress(struct list_head *ws,
 		return -EFAULT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("decompression has succeded: "
 		  "total_in %zu, total_out %zu\n",
 		  workspace->inflate_stream.total_in,
 		  workspace->inflate_stream.total_out);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }

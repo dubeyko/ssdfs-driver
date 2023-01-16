@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/sysfs.c - sysfs support.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -241,7 +242,9 @@ static void ssdfs_peb_attr_release(struct kobject *kobj)
 	struct ssdfs_peb_container *pebc = container_of(kobj,
 						   struct ssdfs_peb_container,
 						   peb_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release peb %u group\n", pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&pebc->peb_kobj_unregister);
 }
 
@@ -261,7 +264,9 @@ int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc)
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create peb %u group\n", pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	pebc->peb_kobj.kset = ssdfs_kset;
 	init_completion(&pebc->peb_kobj_unregister);
@@ -278,7 +283,9 @@ int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc)
 
 void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete peb %u group\n", pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kobject_del(&pebc->peb_kobj);
 	kobject_put(&pebc->peb_kobj);
@@ -324,7 +331,9 @@ static void ssdfs_pebs_attr_release(struct kobject *kobj)
 	struct ssdfs_segment_info *si = container_of(kobj,
 						     struct ssdfs_segment_info,
 						     pebs_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release pebs group: seg_id %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&si->pebs_kobj_unregister);
 }
 
@@ -343,7 +352,9 @@ static int ssdfs_sysfs_create_pebs_group(struct ssdfs_segment_info *si)
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create pebs group: seg_id %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si->pebs_kobj.kset = ssdfs_kset;
 	init_completion(&si->pebs_kobj_unregister);
@@ -357,7 +368,9 @@ static int ssdfs_sysfs_create_pebs_group(struct ssdfs_segment_info *si)
 
 static void ssdfs_sysfs_delete_pebs_group(struct ssdfs_segment_info *si)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete pebs group: seg_id %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kobject_del(&si->pebs_kobj);
 	kobject_put(&si->pebs_kobj);
@@ -560,7 +573,9 @@ static void ssdfs_seg_attr_release(struct kobject *kobj)
 	struct ssdfs_segment_info *si = container_of(kobj,
 						     struct ssdfs_segment_info,
 						     seg_kobj_buf);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release seg %llu group\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&si->seg_kobj_unregister);
 }
 
@@ -582,7 +597,9 @@ int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si)
 	int i;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create seg %llu group\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si->seg_kobj = &si->seg_kobj_buf;
 
@@ -637,7 +654,9 @@ void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si)
 	if (!si || !si->seg_kobj)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete seg %llu group\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
 		pebc = &si->peb_array[i];
@@ -783,7 +802,9 @@ static void ssdfs_segments_attr_release(struct kobject *kobj)
 {
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 segments_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release segments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&fsi->segments_kobj_unregister);
 }
 
@@ -802,7 +823,9 @@ static int ssdfs_sysfs_create_segments_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create segments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->segments_kobj.kset = ssdfs_kset;
 	init_completion(&fsi->segments_kobj_unregister);
@@ -816,7 +839,9 @@ static int ssdfs_sysfs_create_segments_group(struct ssdfs_fs_info *fsi)
 
 static void ssdfs_sysfs_delete_segments_group(struct ssdfs_fs_info *fsi)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete segments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kobject_del(&fsi->segments_kobj);
 	kobject_put(&fsi->segments_kobj);
@@ -1079,7 +1104,9 @@ static void ssdfs_segbmap_attr_release(struct kobject *kobj)
 {
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 segbmap_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release segbmap group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&fsi->segbmap_kobj_unregister);
 }
 
@@ -1098,7 +1125,9 @@ int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create segbmap group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->segbmap_kobj.kset = ssdfs_kset;
 	init_completion(&fsi->segbmap_kobj_unregister);
@@ -1112,7 +1141,9 @@ int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 
 void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete segbmap group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kobject_del(&fsi->segbmap_kobj);
 	kobject_put(&fsi->segbmap_kobj);
@@ -1394,7 +1425,9 @@ static void ssdfs_maptbl_attr_release(struct kobject *kobj)
 {
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 maptbl_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release maptbl group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&fsi->maptbl_kobj_unregister);
 }
 
@@ -1413,7 +1446,9 @@ int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create maptbl group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->maptbl_kobj.kset = ssdfs_kset;
 	init_completion(&fsi->maptbl_kobj_unregister);
@@ -1427,7 +1462,9 @@ int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
 
 void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete maptbl group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kobject_del(&fsi->maptbl_kobj);
 	kobject_put(&fsi->maptbl_kobj);
@@ -1811,7 +1848,9 @@ static void ssdfs_dev_attr_release(struct kobject *kobj)
 {
 	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
 						 dev_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("release device group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	complete_all(&fsi->dev_kobj_unregister);
 }
 
@@ -1831,7 +1870,9 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("create device group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->dev_kobj.kset = ssdfs_kset;
 	init_completion(&fsi->dev_kobj_unregister);
@@ -1852,7 +1893,9 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	if (err)
 		goto delete_segbmap_group;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create device group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 
@@ -1873,7 +1916,9 @@ free_dev_subgroups:
 
 void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete device group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_sysfs_delete_maptbl_group(fsi);
 	ssdfs_sysfs_delete_segbmap_group(fsi);
@@ -1930,7 +1975,9 @@ int ssdfs_sysfs_init(void)
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("try to initialize sysfs entry\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_kset = kset_create_and_add("ssdfs", NULL, fs_kobj);
 	if (!ssdfs_kset) {
@@ -1956,7 +2003,9 @@ failed_sysfs_init:
 
 void ssdfs_sysfs_exit(void)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("deinitialize sysfs entry\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sysfs_remove_group(&ssdfs_kset->kobj, &ssdfs_feature_attr_group);
 	kset_unregister(ssdfs_kset);

@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/snapshot_requests_queue.c - snapshot requests queue implementation.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -123,10 +124,10 @@ void ssdfs_snapshot_reqs_queue_add_head(struct ssdfs_snapshot_reqs_queue *rq,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rq || !snr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("operation %#x\n",
 		  snr->operation);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rq->lock);
 	list_add(&snr->list, &rq->list);
@@ -143,10 +144,10 @@ void ssdfs_snapshot_reqs_queue_add_tail(struct ssdfs_snapshot_reqs_queue *rq,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rq || !snr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("operation %#x\n",
 		  snr->operation);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rq->lock);
 	list_add_tail(&snr->list, &rq->list);
@@ -496,9 +497,9 @@ int ssdfs_execute_create_snapshots(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	rq = &fsi->snapshots.reqs_queue;
 	rl = &fsi->snapshots.rules_list;
@@ -632,8 +633,10 @@ int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_subsystem *ptr,
 		err = -E2BIG;
 		snr->info.buf_size = snapshots_count * desc_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("buf_size %llu\n",
 			  snr->info.buf_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		err = ssdfs_convert_time2timestamp_range(tree->fsi,
 							 &snr->info.time_range,
@@ -654,17 +657,21 @@ int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_subsystem *ptr,
 		do {
 			ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("range (start %llx, end %llx)\n",
 				  range.start, range.end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_snapshots_tree_find_leaf_node(tree,
 								  &range,
 								  search);
 			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to find a leaf node: "
 					  "range (start %llx, end %llx), "
 					  "err %d\n",
 					  range.start, range.end, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto free_search_object;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to find a leaf node: "
@@ -746,10 +753,12 @@ int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_subsystem *ptr,
 
 				if (tmp.create_time > range.end) {
 					err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("stop extract snapshots: "
 						  "create_time %llx, "
 						  "range.end %llx\n",
 						  tmp.create_time, range.end);
+#endif /* CONFIG_SSDFS_DEBUG */
 					goto free_search_object;
 				}
 
@@ -845,8 +854,10 @@ int ssdfs_execute_list_snapshot_rules_request(struct ssdfs_fs_info *fsi,
 		err = -E2BIG;
 		snr->info.buf_size = rules_count * details_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("buf_size %llu\n",
 			  snr->info.buf_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		spin_lock(&rules_list->lock);
 		list_for_each_safe(this, next, &rules_list->list) {

@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/xattr.c - extended attributes support implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -57,10 +60,10 @@ int ssdfs_xattrs_tree_get_start_hash(struct ssdfs_xattrs_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !start_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, start_hash %p\n",
 		  tree, start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = U64_MAX;
 
@@ -88,7 +91,9 @@ int ssdfs_xattrs_tree_get_start_hash(struct ssdfs_xattrs_btree_info *tree,
 	index = &tree->root->indexes[SSDFS_ROOT_NODE_LEFT_LEAF_NODE];
 	*start_hash = le64_to_cpu(index->hash);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx\n", *start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_get_start_hash:
 	up_read(&tree->lock);
@@ -110,8 +115,10 @@ int ssdfs_xattrs_tree_get_next_hash(struct ssdfs_xattrs_btree_info *tree,
 
 	old_hash = le64_to_cpu(search->node.found_index.index.hash);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search %p, next_hash %p, old (node %u, hash %llx)\n",
 		  search, next_hash, search->node.id, old_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_XATTR:
@@ -148,11 +155,11 @@ int ssdfs_xattrs_tree_node_hash_range(struct ssdfs_xattrs_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!search || !start_hash || !end_hash || !items_count);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("search %p, start_hash %p, "
 		  "end_hash %p, items_count %p\n",
 		  tree, start_hash, end_hash, items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = *end_hash = U64_MAX;
 	*items_count = 0;
@@ -606,8 +613,10 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 	int i;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, buffer %p, size %zu\n",
 		  inode->i_ino, buffer, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dict = fsi->shdictree;
 	if (!dict) {
@@ -628,9 +637,11 @@ ssize_t ssdfs_listxattr_inline_tree(struct inode *inode,
 					      SSDFS_DEFAULT_INLINE_XATTR_COUNT,
 					      search);
 	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to extract inline xattr: "
 			  "ino %lu\n",
 			  inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_tree_processing;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to extract inline xattr: "
@@ -683,7 +694,10 @@ finish_tree_processing:
 	}
 
 clean_up:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("copied %zd\n", copied);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err < 0 ? err : copied;
 }
 
@@ -703,8 +717,10 @@ ssize_t ssdfs_listxattr_generic_tree(struct inode *inode,
 	int i;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, buffer %p, size %zu\n",
 		  inode->i_ino, buffer, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	dict = fsi->shdictree;
 	if (!dict) {
@@ -738,9 +754,11 @@ finish_get_start_hash:
 
 	if (err == -ENOENT) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to extract start hash: "
 			  "ino %lu\n",
 			  inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto clean_up;
 	} else if (unlikely(err))
 		goto clean_up;
@@ -761,9 +779,11 @@ finish_get_start_hash:
 							start_hash,
 							search);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find a leaf node: "
 				  "hash %llx, err %d\n",
 				  start_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_tree_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a leaf node: "
@@ -905,8 +925,10 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	ssize_t copied = 0;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, buffer %p, size %zu\n",
 		  inode->i_ino, buffer, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	private_flags = atomic_read(&ii->private_flags);
 
@@ -917,9 +939,11 @@ ssize_t ssdfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		break;
 
 	default:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("xattrs tree is absent: "
 			  "ino %lu\n",
 			  inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1233,8 +1257,10 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("name_index %d, name %s, value %p, size %zu\n",
 		  name_index, name, value, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	name_len = strlen(name);
 	if (name_len > SSDFS_MAX_NAME_LEN)
@@ -1267,9 +1293,11 @@ ssize_t __ssdfs_getxattr(struct inode *inode, int name_index, const char *name,
 					     search);
 
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("inode %lu hasn't xattr %s\n",
 				  (unsigned long)inode->i_ino,
 				  name);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto xattr_is_not_available;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the xattr: "
@@ -1407,9 +1435,11 @@ finish_search_xattr:
 
 	default:
 		err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("xattrs tree is absent: "
 			  "ino %lu\n",
 			  (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 		break;
 	}
 
@@ -1446,9 +1476,11 @@ int __ssdfs_setxattr(struct inode *inode, int name_index, const char *name,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("name_index %d, name %s, value %p, "
 		  "size %zu, flags %#x\n",
 		  name_index, name, value, size, flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (value == NULL)
 		size = 0;
@@ -1523,9 +1555,11 @@ finish_create_xattrs_tree:
 						name, name_len,
 						search);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to remove xattr: "
 				  "ino %lu, name %s, err %d\n",
 				  inode->i_ino, name, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remove xattr: "
@@ -1541,9 +1575,11 @@ finish_create_xattrs_tree:
 					    ii,
 					    search);
 		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to create xattr: "
 				  "ino %lu, name %s, err %d\n",
 				  inode->i_ino, name, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create xattr: "
@@ -1559,9 +1595,11 @@ finish_create_xattrs_tree:
 						value, size,
 						search);
 		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to replace xattr: "
 				  "ino %lu, name %s, err %d\n",
 				  inode->i_ino, name, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to replace xattr: "
@@ -1576,9 +1614,11 @@ finish_create_xattrs_tree:
 						search);
 		if (err == -ENODATA) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no requested xattr in the tree: "
 				  "ino %lu, name %s\n",
 				  inode->i_ino, name);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remove xattr: "
 				  "ino %lu, name %s, err %d\n",
@@ -1595,9 +1635,11 @@ finish_create_xattrs_tree:
 					    ii,
 					    search);
 		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to create xattr: "
 				  "ino %lu, name %s, err %d\n",
 				  inode->i_ino, name, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto clean_up;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create xattr: "

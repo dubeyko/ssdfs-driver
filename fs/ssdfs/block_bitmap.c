@@ -4,17 +4,23 @@
  *
  * fs/ssdfs/block_bitmap.c - PEB's block bitmap implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
+ *                  Cong Wang
  */
 
 #include <linux/pagemap.h>
@@ -776,9 +782,11 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 					blk_bmap->items_count,
 					blk_state, &found);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find more valid blocks: "
 				  "start_item %u\n",
 				  start_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto check_pre_allocated_blocks;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find range: err %d\n", err);
@@ -805,9 +813,11 @@ check_pre_allocated_blocks:
 					blk_bmap->items_count,
 					blk_state, &found);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find more pre-allocated blocks: "
 				  "start_item %u\n",
 				  start_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_block_bmap_init;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find range: err %d\n", err);
@@ -870,9 +880,11 @@ int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 						  found_blk);
 		if (err == -ENODATA) {
 			*found_blk = blk_bmap->items_count;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find last free block: "
 				  "found_blk %u\n",
 				  *found_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_define_last_free_page;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find last free block: err %d\n",
@@ -907,9 +919,11 @@ int ssdfs_define_last_free_page(struct ssdfs_block_bmap *blk_bmap,
 							  found_blk);
 			if (err == -ENODATA) {
 				*found_blk = blk_bmap->items_count;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to find last free block: "
 					  "found_blk %u\n",
 					  *found_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_define_last_free_page;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to find last free block: err %d\n",
@@ -1409,7 +1423,9 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (is_block_state_cached(blk_bmap, blk)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block %u has been cached already\n", blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1425,7 +1441,9 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 		}
 
 		if (page_index >= ssdfs_page_vector_count(array)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("absent page index %d\n", page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOENT;
 		}
 
@@ -2295,9 +2313,11 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 	page_index = aligned_start / items_per_page;
 
 	if (page_index >= ssdfs_page_vector_capacity(array)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_index %d >= capacity %u\n",
 			  page_index,
 			  ssdfs_page_vector_capacity(array));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -2395,6 +2415,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		kunmap_local(kaddr);
 
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no item has been found: "
 				  "page_index %d, "
 				  "page_vector_count %u, "
@@ -2402,6 +2423,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 				  page_index,
 				  ssdfs_page_vector_count(array),
 				  ssdfs_page_vector_capacity(array));
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find block: "
@@ -2577,9 +2599,11 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 							     blk_state,
 							     found_blk);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find block in pagevec: "
 				  "start %u, max_blk %u, state %#x\n",
 				  0, max_blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find block in pagevec: "
@@ -2606,9 +2630,11 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 							   blk_state,
 							   found_blk);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find block in cache: "
 				  "start %u, max_blk %u, state %#x\n",
 				  start, max_blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 			/*
 			 * Continue to search in pagevec
 			 */
@@ -2624,9 +2650,11 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 	err = ssdfs_block_bmap_find_block_in_storage(blk_bmap, start, max_blk,
 						     blk_state, found_blk);
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find block in pagevec: "
 			  "start %u, max_blk %u, state %#x\n",
 			  start, max_blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find block in pagevec: "
@@ -2721,8 +2749,10 @@ u8 GET_FIRST_DIFF_STATE(u8 *value, int blk_state, u8 start_off)
 
 	for (i = bits_off; i < BITS_PER_BYTE; i += SSDFS_BLK_STATE_BITS) {
 		if (((*value >> i) & SSDFS_BLK_STATE_MASK) != blk_state) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("blk_state %#x, start_off %u, blk_off %u\n",
 				  blk_state, start_off, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return i / SSDFS_BLK_STATE_BITS;
 		}
 	}
@@ -2931,8 +2961,10 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 							     &found_off);
 	if (err == -ENODATA) {
 		*found_end = max_blk;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("area end %u has been found for state %#x\n",
 			  *found_end, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find state area's end: "
@@ -3023,13 +3055,19 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 	page_index = aligned_start / items_per_page;
 
 	if (page_index >= ssdfs_page_vector_count(array)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page_index %d >= count %u\n",
 			  page_index,
 			  ssdfs_page_vector_count(array));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		*found_end = max_blk;
+
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("area end %u has been found for state %#x\n",
 			  *found_end, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		return 0;
 	}
 
@@ -3708,16 +3746,20 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 	range->len = 0;
 
 	if (start >= max_blk) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start %u >= max_blk %u\n", start, max_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
 	err = ssdfs_block_bmap_find_block(blk_bmap, start, max_blk,
 					  blk_state, &found_start);
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find block: "
 			  "start %u, max_blk %u, state %#x, err %d\n",
 			  start, max_blk, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find block: "
@@ -3967,8 +4009,10 @@ bool ssdfs_block_bmap_test_block(struct ssdfs_block_bmap *blk_bmap,
 	err = ssdfs_block_bmap_find_block(blk_bmap, blk, blk + 1, blk_state,
 					  &found);
 	if (err) {
-		SSDFS_DBG("fail to find block %u, state %#x, err %d\n",
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find block %u, state %#x, err %d\n",
 			  blk, blk_state, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -4023,7 +4067,9 @@ bool ssdfs_block_bmap_test_range(struct ssdfs_block_bmap *blk_bmap,
 					  range->start + range->len,
 					  blk_state, &found);
 	if (unlikely(err)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find range: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -4084,7 +4130,9 @@ int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 	}
 
 	if (found != blk) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found (%u) != blk (%u)\n", found, blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
@@ -4217,9 +4265,11 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (free_pages < count) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to reserve metadata pages: "
 			  "free_pages %d, count %u\n",
 			  free_pages, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOSPC;
 	}
 
@@ -4311,8 +4361,10 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	freed_items = count;
 
 	if (blk_bmap->metadata_items < count) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("correct value: metadata_items %u < count %u\n",
 			  blk_bmap->metadata_items, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		freed_items = blk_bmap->metadata_items;
 	}
 
@@ -4388,9 +4440,11 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 		err = ssdfs_define_last_free_page(blk_bmap, &found_blk);
 
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find last free block: "
 			  "found_blk %u\n",
 			  found_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find last free block: err %d\n",
 			  err);
@@ -4486,9 +4540,11 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	err = ssdfs_define_last_free_page(blk_bmap, &found_blk);
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find last free block: "
 			  "found_blk %u\n",
 			  found_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find last free block: err %d\n",
 			  err);
@@ -4653,9 +4709,11 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		u32 start_blk = 0;
 
 		if (free_pages < *len) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to pre_allocate: "
 				  "free_pages %d, count %u\n",
 				  free_pages, *len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		}
 
@@ -4675,9 +4733,11 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 						  max_blk,
 						  SSDFS_BLK_FREE, range);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find free blocks: "
 				  "start_blk %u, max_blk %u, len %u\n",
 				  start_blk, max_blk, *len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		} else if (err) {
 			SSDFS_ERR("fail to find free blocks: err %d\n", err);
@@ -4685,9 +4745,11 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		}
 	} else {
 		if (free_pages < range->len) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to pre_allocate: "
 				  "free_pages %d, count %u\n",
 				  free_pages, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		}
 
@@ -4827,9 +4889,11 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 		u32 start_blk = 0;
 
 		if (free_pages < *len) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to allocate: "
 				  "free_pages %d, count %u\n",
 				  free_pages, *len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		}
 
@@ -4849,9 +4913,11 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 						  max_blk, SSDFS_BLK_FREE,
 						  range);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find free blocks: "
 				  "start_blk %u, max_blk %u, len %u\n",
 				  start_blk, max_blk, *len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		} else if (err) {
 			SSDFS_ERR("fail to find free blocks: err %d\n", err);
@@ -5097,8 +5163,10 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len, max_len,
 					  blk_state, range);
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("range (start %u, len %u) hasn't valid blocks\n",
 			  start, max_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (err) {
 		SSDFS_ERR("fail to find valid blocks: err %d\n", err);

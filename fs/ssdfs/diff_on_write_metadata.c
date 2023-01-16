@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/diff_on_write_metadata.c - Diff-On-Write metadata implementation.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -193,10 +194,12 @@ void ssdfs_calculate_diff_bits_range(u32 blk_index, u32 pagesize,
 	blk_offset = blk_index * pagesize;
 
 	if (blk_offset >= (area_offset + area_size)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical block hasn't items: "
 			  "blk_index %u, area_offset %u, "
 			  "area_size %u\n",
 			  blk_index, area_offset, area_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 
@@ -634,9 +637,11 @@ int ssdfs_btree_node_save_diff_blob_metadata(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (start_bit == max_bit) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no items in the logical block: "
 				  "blk_index %u\n",
 				  blk_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto unlock_bmap;
 		} else if (start_bit > max_bit) {
 			err = -ERANGE;
@@ -872,13 +877,17 @@ int ssdfs_metadata_find_first_dirty_item(unsigned long *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (*found_item >= max) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("item is out of range: "
 				  "found_item %lu, max %lu\n",
 				  *found_item, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("item %lu has been found\n",
 				  *found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		return 0;
@@ -1015,17 +1024,20 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 	}
 
 	if (!is_ssdfs_btree_node_index_area_exist(node)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node hasn't indexes: "
 			  "node_id %u, height %u, type %#x\n",
 			  node->node_id,
 			  atomic_read(&node->height),
 			  atomic_read(&node->type));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
 	blk_offset = blk_index * fsi->pagesize;
 
 	if (blk_offset >= (area_offset + area_size)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical block hasn't indexes: "
 			  "node_id %u, height %u, "
 			  "type %#x, blk_index %u\n",
@@ -1033,6 +1045,7 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 			  atomic_read(&node->height),
 			  atomic_read(&node->type),
 			  blk_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1088,9 +1101,11 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 
 	if (start == max) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block hasn't indexes: "
 			  "blk_index %u\n",
 			  blk_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_copy_indexes;
 	}
 
@@ -1100,9 +1115,11 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 							     &found_item);
 		if (err == -ENODATA) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no more dirty indexes: "
 				  "start %lu, max %lu\n",
 				  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_copy_indexes;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find dirty index: "
@@ -1119,9 +1136,11 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 		if (err == -ENODATA) {
 			err = 0;
 			is_deleted_index = true;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("deleted index: "
 				  "found_item %lu\n",
 				  found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to extract index: "
 				  "node_id %u, index %d, err %d\n",
@@ -1244,17 +1263,20 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 	}
 
 	if (!is_ssdfs_btree_node_items_area_exist(node)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node hasn't items: "
 			  "node_id %u, height %u, type %#x\n",
 			  node->node_id,
 			  atomic_read(&node->height),
 			  atomic_read(&node->type));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
 	blk_offset = blk_index * fsi->pagesize;
 
 	if (blk_offset >= (area_offset + area_size)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical block hasn't items: "
 			  "node_id %u, height %u, "
 			  "type %#x, blk_index %u\n",
@@ -1262,6 +1284,7 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 			  atomic_read(&node->height),
 			  atomic_read(&node->type),
 			  blk_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1312,9 +1335,11 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start == max) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block hasn't items: "
 			  "blk_index %u\n",
 			  blk_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1332,9 +1357,11 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 
 		if (err == -ENODATA) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no more dirty items: "
 				  "start %lu, max %lu\n",
 				  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_copy_items;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find dirty item: "
@@ -1345,8 +1372,10 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 
 		ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found_item %lu\n",
 			  found_item - item_start_bit);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = __ssdfs_btree_node_extract_range(node,
 						found_item - item_start_bit,
@@ -1355,9 +1384,11 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 		if (err == -ENODATA) {
 			err = 0;
 			is_deleted_item = true;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("deleted item: "
 				  "found_item %lu\n",
 				  found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to extract an item: "
 				  "found_item %lu, err %d\n",
@@ -1541,13 +1572,17 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 		}
 
 		if (!IS_SSDFS_BLK_DESC_READY_FOR_DIFF(&pos.blk_desc.buf)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("logical block %u is not ready for diff\n",
 				  cur_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EAGAIN;
 		} else if (IS_SSDFS_BLK_DESC_EXHAUSTED(&pos.blk_desc.buf)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("block descripor is exhausted: "
 				  "seg %llu, peb_index %u\n",
 				  seg_id, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EAGAIN;
 		} else {
 			struct ssdfs_peb_info *pebi = NULL;
@@ -1587,23 +1622,29 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 			ssdfs_peb_current_log_unlock(pebi);
 			ssdfs_unlock_current_peb(pebc);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb_id %llu, is_peb_exhausted %#x, "
 				  "is_peb_ready_to_exhaust %#x, "
 				  "migration_id1 %u, migration_id2 %d\n",
 				  peb_id, is_peb_exhausted,
 				  is_peb_ready_to_exhaust,
 				  migration_id1, migration_id2);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (is_peb_exhausted || is_peb_ready_to_exhaust) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("PEB is exhausted: "
 					  "seg %llu, peb_id %llu\n",
 					  pebc->parent_si->seg_id, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return -EAGAIN;
 			} else if (migration_id1 != migration_id2) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("migration has been started: "
 					  "migration_id1 %u, "
 					  "migration_id2 %d\n",
 					  migration_id1, migration_id2);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return -EAGAIN;
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1689,9 +1730,11 @@ bool is_ssdfs_btree_node_logical_block_modified(struct ssdfs_btree_node *node,
 						      &max);
 		if (start >= max) {
 			/* do nothing */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("index area: blk_index %u, "
 				  "start %lu, max %lu\n",
 				  blk_index, start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			down_read(&node->bmap_array.lock);
 			err = ssdfs_btree_node_find_first_dirty_item(node,
@@ -1700,13 +1743,17 @@ bool is_ssdfs_btree_node_logical_block_modified(struct ssdfs_btree_node *node,
 			up_read(&node->bmap_array.lock);
 
 			if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("no dirty indexes: "
 					  "start %lu, max %lu\n",
 					  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("found dirty index: "
 					  "found_item %lu\n",
 					  found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return true;
 			}
 		}
@@ -1724,9 +1771,11 @@ bool is_ssdfs_btree_node_logical_block_modified(struct ssdfs_btree_node *node,
 						      &max);
 		if (start >= max) {
 			/* do nothing */
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("items area: blk_index %u, "
 				  "start %lu, max %lu\n",
 				  blk_index, start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			down_read(&node->bmap_array.lock);
 			err = ssdfs_btree_node_find_first_dirty_item(node,
@@ -1735,13 +1784,17 @@ bool is_ssdfs_btree_node_logical_block_modified(struct ssdfs_btree_node *node,
 			up_read(&node->bmap_array.lock);
 
 			if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("no dirty items: "
 					  "start %lu, max %lu\n",
 					  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("found dirty item: "
 					  "found_item %lu\n",
 					  found_item);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return true;
 			}
 		}
@@ -1812,11 +1865,11 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_btree_node_logical_block_modified(node, blk_index)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical block has not been modified: "
 			  "logical_blk %u\n",
 			  logical_blk);
 
-#ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(node->flush_req.result.pvec.pages[blk_index] != NULL);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1860,8 +1913,10 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 	ssdfs_btree_node_reserve_diff_blob_header(node, blk_index,
 						  &hdr, &write_offset);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("RESERVE DIFF BLOB HEADER: write_offset %u\n",
 		  write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page = ssdfs_request_allocate_locked_page(&node->flush_req,
 						  blk_index);
@@ -1888,8 +1943,10 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 		goto finish_prepare_diff_blob;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SAVE DIFF BLOB METADATA: write_offset %u\n",
 		  write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	blob_offset = write_offset;
 
@@ -1906,8 +1963,10 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("SAVE BTREE NODE HEADER: write_offset %u\n",
 			  write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	err = ssdfs_btree_node_copy_dirty_indexes(node,
@@ -1924,8 +1983,10 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SAVE DIRTY INDEXES: write_offset %u\n",
 		  write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_node_copy_dirty_items(node,
 						items_area_offset,
@@ -1943,8 +2004,10 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 		goto finish_prepare_diff_blob;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("SAVE DIRTY ITEMS: write_offset %u\n",
 		  write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	blob_size = write_offset - blob_offset;
 
@@ -2014,8 +2077,10 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 
 	err = ssdfs_btree_node_ready_for_diff(node);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node %u is not ready for diff\n",
 			  node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to check readiness for diff: "
@@ -2283,9 +2348,11 @@ int ssdfs_btree_node_apply_indexes(struct ssdfs_fs_info *fsi,
 							   &found_item);
 		if (err == -ENODATA) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no more dirty indexes: "
 				  "start %lu, max %u\n",
 				  search_start, max_bit);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_apply_indexes;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find dirty index: "
@@ -2294,10 +2361,12 @@ int ssdfs_btree_node_apply_indexes(struct ssdfs_fs_info *fsi,
 			goto finish_apply_indexes;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found bit %lu: "
 			  "start_bit %lu, max_bit %u\n",
 			  found_item,
 			  search_start, max_bit);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		index_offset = req->result.processed_blks * fsi->pagesize;
 
@@ -2306,8 +2375,10 @@ int ssdfs_btree_node_apply_indexes(struct ssdfs_fs_info *fsi,
 
 		index_offset += ((found_item - start_bit) * index_size);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found bit %lu, index_offset %u\n",
 			  found_item, index_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_unaligned_write_pagevec(&req->result.pvec,
 						    index_offset, index_size,
@@ -2409,9 +2480,11 @@ int ssdfs_btree_node_apply_items(struct ssdfs_fs_info *fsi,
 							   &found_item);
 		if (err == -ENODATA) {
 			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no more dirty items: "
 				  "start %lu, max %u\n",
 				  search_start, max_bit);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_apply_items;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find dirty item: "
@@ -2420,10 +2493,12 @@ int ssdfs_btree_node_apply_items(struct ssdfs_fs_info *fsi,
 			goto finish_apply_items;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found bit %lu: "
 			  "start_bit %lu, max_bit %u\n",
 			  found_item,
 			  search_start, max_bit);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		item_offset = req->result.processed_blks * fsi->pagesize;
 
@@ -2433,8 +2508,10 @@ int ssdfs_btree_node_apply_items(struct ssdfs_fs_info *fsi,
 		item_offset += indexes_capacity * index_size;
 		item_offset += (found_item - start_bit) * item_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found_item %lu, item_offset %u\n",
 			  found_item - start_bit, item_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_unaligned_write_pagevec(&req->result.pvec,
 						    item_offset, item_size,
@@ -2535,11 +2612,13 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 	item_size = le16_to_cpu(hdr->item_size);
 	diff_flags = le16_to_cpu(hdr->diff.flags);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("index_start_bit %u, item_start_bit %u, "
 		  "indexes_capacity %u, item_size %u, "
 		  "diff_flags %#x\n",
 		  index_start_bit, item_start_bit,
 		  indexes_capacity, item_size, diff_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (index_start_bit >= bits_count) {
 		err = -EIO;
@@ -2591,8 +2670,10 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 	}
 
 	if (diff_flags & SSDFS_DIFF_BLOB_HAS_BTREE_NODE_HEADER) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("APPLY HEADER: offset %u\n",
 			  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_btree_node_apply_header(fsi, req, kaddr, &offset);
 		if (unlikely(err)) {
@@ -2603,8 +2684,10 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("APPLY INDEXES: offset %u\n",
 		  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_node_apply_indexes(fsi, req, index_size,
 					     bmap, bmap_bytes,
@@ -2618,8 +2701,10 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 		goto finish_apply_diff_page;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("APPLY ITEMS: offset %u\n",
 		  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_node_apply_items(fsi, req,
 					   index_size, indexes_capacity,
@@ -2737,6 +2822,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 	fsi = pebi->pebc->parent_si->fsi;
 
 	if (pagevec_count(&req->result.diffs) == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("diff pagevec is empty: "
 			  "seg %llu, peb %llu, "
 			  "class %#x, cmd %#x, type %#x, "
@@ -2746,6 +2832,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 			  req->private.type, req->extent.ino,
 			  req->extent.logical_offset,
 			  req->extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -2793,7 +2880,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 
 		err = ssdfs_btree_node_apply_diff_page(fsi, req, page);
 		if (unlikely(err)) {
-			SSDFS_DBG("fail to apply diff page: "
+			SSDFS_ERR("fail to apply diff page: "
 				  "seg %llu, peb %llu, page_index %d, "
 				  "class %#x, cmd %#x, type %#x, "
 				  "ino %llu, logical_offset %llu, "

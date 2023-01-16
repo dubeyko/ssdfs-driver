@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/segment.c - segment concept related functionality.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/pagemap.h>
@@ -171,8 +174,10 @@ struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
 	atomic_set(&ptr->refs_count, 0);
 	init_waitqueue_head(&ptr->object_queue);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment object %p, seg_id %llu\n",
 		  ptr, seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ptr;
 }
@@ -185,12 +190,16 @@ struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
  */
 void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment object %p\n", si);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!si)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&si->obj_state)) {
 	case SSDFS_SEG_OBJECT_UNDER_CREATION:
@@ -273,8 +282,10 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 
 	refs_count = atomic_read(&si->refs_count);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("si %p, seg %llu, refs_count %d\n",
 		  si, si->seg_id, refs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (refs_count != 0) {
 		wait_queue_head_t *wq = &si->object_queue;
@@ -572,8 +583,10 @@ int ssdfs_segment_create_object(struct ssdfs_fs_info *fsi,
 		struct ssdfs_peb_container *pebc = &si->peb_array[i];
 
 		if (is_peb_container_empty(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("segment %llu hasn't PEB %d\n",
 				  seg, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
@@ -630,10 +643,10 @@ void ssdfs_segment_get_object(struct ssdfs_segment_info *si)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, refs_count %d\n",
 		  si->seg_id, atomic_read(&si->refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	WARN_ON(atomic_inc_return(&si->refs_count) <= 0);
 }
@@ -647,8 +660,10 @@ void ssdfs_segment_put_object(struct ssdfs_segment_info *si)
 	if (!si)
 		return;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, refs_count %d\n",
 		  si->seg_id, atomic_read(&si->refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	WARN_ON(atomic_dec_return(&si->refs_count) < 0);
 
@@ -688,8 +703,10 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*start_seg >= fsi->nsegs) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start_seg %llu >= nsegs %llu\n",
 			  *start_seg, fsi->nsegs);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENOENT;
 	}
 
@@ -724,8 +741,10 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 	if (err == -ENOENT) {
 		*start_seg = U64_MAX;
 		*end_seg = U64_MAX;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find search range: leb_id %llu\n",
 			  start_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_seg_id_correction;
 	} else if (unlikely(err)) {
 		*start_seg = U64_MAX;
@@ -740,8 +759,10 @@ int ssdfs_segment_detect_search_range(struct ssdfs_fs_info *fsi,
 	*end_seg = SSDFS_LEB2SEG(fsi, end_leb);
 
 finish_seg_id_correction:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_seg %llu, end_seg %llu, err %d\n",
 		  *start_seg, *end_seg, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -811,9 +832,11 @@ int __ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 						&start_seg,
 						&end_seg);
 	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find fragment for search: "
 			  "start_seg %llu, end_seg %llu\n",
 			  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_search;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define a search range: "
@@ -850,9 +873,11 @@ int __ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 			*seg_state = res;
 		} else if (res == -ENODATA) {
 			err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find segment in range: "
 				  "start_seg %llu, end_seg %llu\n",
 				  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		} else {
 			err = res;
@@ -863,9 +888,11 @@ int __ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 		}
 	} else if (res == -ENODATA) {
 		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find segment in range: "
 			  "start_seg %llu, end_seg %llu\n",
 			  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_search;
 	} else {
 		SSDFS_ERR("fail to find segment in range: "
@@ -909,10 +936,10 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !seg_id || !seg_state);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg_type %#x, start_search_id %llu\n",
 		  fsi, seg_type, start_search_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	while (cur_id < fsi->nsegs) {
 		err = __ssdfs_find_new_segment(fsi, seg_type, cur_id,
@@ -927,7 +954,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 				  cur_id, err);
 			return err;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found seg_id %llu\n", *seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return 0;
 		}
 	}
@@ -947,12 +976,16 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi, int seg_type,
 				  cur_id, err);
 			return err;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found seg_id %llu\n", *seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return 0;
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("no free space for a new segment\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return -ENOSPC;
 }
@@ -1005,11 +1038,11 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 			  create_threads);
 		return ERR_PTR(-EINVAL);
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg %llu, seg_state %#x, log_pages %u, "
 		  "create_threads %u\n",
 		  fsi, seg_id, seg_state, log_pages, create_threads);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	si = ssdfs_segment_allocate_object(seg_id);
 	if (IS_ERR_OR_NULL(si)) {
@@ -1303,7 +1336,6 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -1311,6 +1343,7 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	table = si->blk2off_table;
 	logical_blk = req->place.start.blk_index;
@@ -1369,7 +1402,6 @@ int ssdfs_segment_read_block_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -1377,6 +1409,7 @@ int ssdfs_segment_read_block_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    SSDFS_READ_PAGE,
@@ -1399,7 +1432,6 @@ int ssdfs_segment_read_block_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -1407,6 +1439,7 @@ int ssdfs_segment_read_block_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -1446,9 +1479,9 @@ int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < si->pebs_count; i++) {
 		struct ssdfs_peb_container *pebc = &si->peb_array[i];
@@ -1727,12 +1760,14 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("old_state %#x, new_state %#x, "
 		  "need_change_state %#x, free_pages %d, "
 		  "invalid_pages %d, used_logical_blks %u\n",
 		  seg_state, new_seg_state,
 		  need_change_state, free_pages,
 		  invalid_pages, used_logical_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_change_state) {
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -1799,8 +1834,10 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 	seg_id = si->seg_id;
 	seg_state = atomic_read(&cur_seg->real_seg->seg_state);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("cur_seg %p, si %p, seg_id %llu, seg_state %#x\n",
 		  cur_seg, si, seg_id, seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (seg_state) {
 	case SSDFS_SEG_CLEAN:
@@ -1873,8 +1910,10 @@ int CHECKED_SEG_TYPE(struct ssdfs_fs_info *fsi, int cur_seg_type)
 	case SSDFS_CUR_LNODE_SEG:
 	case SSDFS_CUR_HNODE_SEG:
 	case SSDFS_CUR_IDXNODE_SEG:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment type %#x is corrected to %#x\n",
 			  cur_seg_type, SSDFS_CUR_LNODE_SEG);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return SSDFS_CUR_LNODE_SEG;
 
 	default:
@@ -1992,8 +2031,10 @@ add_new_current_segment:
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to create segment object: "
 					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
 				SSDFS_ERR("fail to create segment object: "
 					  "err %d\n", err);
@@ -2020,8 +2061,10 @@ add_new_current_segment:
 
 		err = ssdfs_segment_blk_bmap_reserve_block(&si->blk_bmap);
 		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("segment %llu hasn't enough free pages\n",
 				  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_current_segment_change_state(cur_seg);
 			if (unlikely(err)) {
@@ -2038,8 +2081,10 @@ add_new_current_segment:
 			}
 
 			err = -ENOSPC;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to add current segment: "
 				  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_add_block;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical block: "
@@ -2119,9 +2164,11 @@ finish_add_block:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add block: "
 			  "ino %llu, logical_offset %llu, err %d\n",
 			  req->extent.ino, req->extent.logical_offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (err) {
 		SSDFS_ERR("fail to add block: "
@@ -2196,8 +2243,10 @@ add_new_current_segment:
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to create segment object: "
 					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
 				SSDFS_ERR("fail to create segment object: "
 					  "err %d\n", err);
@@ -2236,8 +2285,10 @@ add_new_current_segment:
 		err = ssdfs_segment_blk_bmap_reserve_extent(&si->blk_bmap,
 							    blks_count);
 		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("segment %llu hasn't enough free pages\n",
 				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_current_segment_change_state(cur_seg);
 			if (unlikely(err)) {
@@ -2254,8 +2305,10 @@ add_new_current_segment:
 			}
 
 			err = -ENOSPC;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to add current segment: "
 				  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_add_extent;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical extent: "
@@ -2337,9 +2390,11 @@ finish_add_extent:
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add extent: "
 			  "ino %llu, logical_offset %llu, err %d\n",
 			  req->extent.ino, req->extent.logical_offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (err) {
 		SSDFS_ERR("fail to add extent: "
@@ -3070,13 +3125,13 @@ int __ssdfs_segment_add_extent_sync(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !req);
 	BUG_ON(req_class <= SSDFS_PEB_READ_REQ ||
 		req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(req_class,
 					    SSDFS_CREATE_EXTENT,
@@ -3704,8 +3759,10 @@ int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
 	if (!is_ssdfs_peb_containing_user_data(pebc))
 		return 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index, count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&fsi->volume_state_lock);
 	updated = fsi->updated_user_data_pages;
@@ -3732,10 +3789,12 @@ int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
 		spin_unlock(&pebc->pending_lock);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_index %u, "
 		  "updated %llu, pending %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  updated, pending);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -3823,6 +3882,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 	rq = &pebc->update_rq;
 
 	if (req->private.cmd != SSDFS_COMMIT_LOG_NOW) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 			  "logical_blk %u, data_bytes %u, blks %u, "
 			  "cno %llu, parent_snapshot %llu\n",
@@ -3833,6 +3893,7 @@ int __ssdfs_segment_update_block(struct ssdfs_segment_info *si,
 			  req->extent.cno, req->extent.parent_snapshot);
 		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 			  req->private.class, req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (len > 0) {
 			err = ssdfs_account_user_data_pages_as_pending(pebc,
@@ -3889,7 +3950,6 @@ int ssdfs_segment_update_block_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -3897,6 +3957,7 @@ int ssdfs_segment_update_block_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
 					    SSDFS_UPDATE_BLOCK,
@@ -3927,7 +3988,6 @@ int ssdfs_segment_update_block_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -3935,6 +3995,7 @@ int ssdfs_segment_update_block_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -4065,6 +4126,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 	rq = &pebc->update_rq;
 
 	if (req->private.cmd != SSDFS_COMMIT_LOG_NOW) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 			  "logical_blk %u, data_bytes %u, blks %u, "
 			  "cno %llu, parent_snapshot %llu\n",
@@ -4075,6 +4137,7 @@ int __ssdfs_segment_update_extent(struct ssdfs_segment_info *si,
 			  req->extent.cno, req->extent.parent_snapshot);
 		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 			  req->private.class, req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (len > 0) {
 			err = ssdfs_account_user_data_pages_as_pending(pebc,
@@ -4131,7 +4194,6 @@ int ssdfs_segment_update_extent_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4139,6 +4201,7 @@ int ssdfs_segment_update_extent_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
 					    SSDFS_UPDATE_EXTENT,
@@ -4169,7 +4232,6 @@ int ssdfs_segment_update_extent_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4177,6 +4239,7 @@ int ssdfs_segment_update_extent_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -4216,7 +4279,6 @@ int ssdfs_segment_update_pre_alloc_block_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4224,6 +4286,7 @@ int ssdfs_segment_update_pre_alloc_block_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_PRE_ALLOC_UPDATE_REQ,
 					    SSDFS_UPDATE_PRE_ALLOC_BLOCK,
@@ -4254,7 +4317,6 @@ int ssdfs_segment_update_pre_alloc_block_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4262,6 +4324,7 @@ int ssdfs_segment_update_pre_alloc_block_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -4301,7 +4364,6 @@ int ssdfs_segment_update_pre_alloc_extent_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4309,6 +4371,7 @@ int ssdfs_segment_update_pre_alloc_extent_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_PRE_ALLOC_UPDATE_REQ,
 					    SSDFS_UPDATE_PRE_ALLOC_EXTENT,
@@ -4339,7 +4402,6 @@ int ssdfs_segment_update_pre_alloc_extent_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4347,6 +4409,7 @@ int ssdfs_segment_update_pre_alloc_extent_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -4561,7 +4624,6 @@ int ssdfs_segment_prepare_migration_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4569,6 +4631,7 @@ int ssdfs_segment_prepare_migration_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
 					    SSDFS_START_MIGRATION_NOW,
@@ -4600,7 +4663,6 @@ int ssdfs_segment_prepare_migration_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4608,6 +4670,7 @@ int ssdfs_segment_prepare_migration_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -4648,7 +4711,6 @@ int ssdfs_segment_commit_log_sync(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4656,6 +4718,7 @@ int ssdfs_segment_commit_log_sync(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
 					    SSDFS_COMMIT_LOG_NOW,
@@ -4687,7 +4750,6 @@ int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -4695,6 +4757,7 @@ int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -4741,7 +4804,6 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "ino %llu, logical_offset %llu, "
@@ -4750,6 +4812,7 @@ int __ssdfs_segment_commit_log2(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (peb_index >= si->pebs_count) {
 		SSDFS_ERR("peb_index %u >= si->pebs_count %u\n",
@@ -4800,7 +4863,6 @@ int ssdfs_segment_commit_log_sync2(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "ino %llu, logical_offset %llu, "
@@ -4809,6 +4871,7 @@ int ssdfs_segment_commit_log_sync2(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,
 					    SSDFS_COMMIT_LOG_NOW,
@@ -4841,7 +4904,6 @@ int ssdfs_segment_commit_log_async2(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "ino %llu, logical_offset %llu, "
@@ -4850,6 +4912,7 @@ int ssdfs_segment_commit_log_async2(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (req_type) {
 	case SSDFS_REQ_ASYNC:
@@ -5007,9 +5070,11 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			goto finish_invalidate_block;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("valid_blks %d, invalid_blks %d\n",
 			  atomic_read(&si->blk_bmap.seg_valid_blks),
 			  atomic_read(&si->blk_bmap.seg_invalid_blks));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		req = ssdfs_request_alloc();
 		if (IS_ERR_OR_NULL(req)) {
@@ -5105,7 +5170,6 @@ int ssdfs_segment_migrate_range_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -5113,6 +5177,7 @@ int ssdfs_segment_migrate_range_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_COLLECT_GARBAGE_REQ,
 					    SSDFS_MIGRATE_RANGE,
@@ -5142,7 +5207,6 @@ int ssdfs_segment_migrate_pre_alloc_page_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -5150,6 +5214,7 @@ int ssdfs_segment_migrate_pre_alloc_page_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_COLLECT_GARBAGE_REQ,
 					    SSDFS_MIGRATE_PRE_ALLOC_PAGE,
@@ -5179,7 +5244,6 @@ int ssdfs_segment_migrate_fragment_async(struct ssdfs_segment_info *si,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
@@ -5187,6 +5251,7 @@ int ssdfs_segment_migrate_fragment_async(struct ssdfs_segment_info *si,
 		  req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_COLLECT_GARBAGE_REQ,
 					    SSDFS_MIGRATE_FRAGMENT,

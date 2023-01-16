@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/super.c - module and superblock management.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -732,11 +735,13 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 
 		if (fsi->sbi.last_log.peb_id == cur_peb) {
 			if ((offset + (2 * log_size)) > fsi->pages_per_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("sb PEB %llu is full: "
 					  "(offset %u + (2 * log_size %u)) > "
 					  "pages_per_peb %u\n",
 					  cur_peb, offset, log_size,
 					  fsi->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 				return -EFBIG;
 			}
 
@@ -887,8 +892,10 @@ static u64 ssdfs_correct_start_leb_id(struct ssdfs_fs_info *fsi,
 		}
 
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 				  cur_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_leb_id_correction;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to convert LEB to PEB: "
@@ -965,9 +972,11 @@ static int __ssdfs_reserve_clean_segment(struct ssdfs_fs_info *fsi,
 							&start_seg,
 							&end_seg);
 		if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find fragment for search: "
 				  "start_seg %llu, end_seg %llu\n",
 				  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to define a search range: "
@@ -1005,9 +1014,11 @@ static int __ssdfs_reserve_clean_segment(struct ssdfs_fs_info *fsi,
 
 	if (err == -ENODATA) {
 		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to reserve segment: "
 			  "type %#x, start_seg %llu, end_seg %llu\n",
 			  sb_seg_type, start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_search;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve segment: "
@@ -1119,7 +1130,9 @@ static int ssdfs_reserve_clean_segment(struct super_block *sb,
 		if (err == -ENOENT) {
 			err = 0;
 			cur_id = *reserved_seg;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_id %llu\n", cur_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a new segment: "
@@ -1127,7 +1140,9 @@ static int ssdfs_reserve_clean_segment(struct super_block *sb,
 				  cur_id, err);
 			return err;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found seg_id %llu\n", *reserved_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return 0;
 		}
 	}
@@ -1140,7 +1155,9 @@ static int ssdfs_reserve_clean_segment(struct super_block *sb,
 		if (err == -ENOENT) {
 			err = 0;
 			cur_id = *reserved_seg;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_id %llu\n", cur_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find a new segment: "
@@ -1148,7 +1165,9 @@ static int ssdfs_reserve_clean_segment(struct super_block *sb,
 				  cur_id, err);
 			return err;
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found seg_id %llu\n", *reserved_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return 0;
 		}
 	}
@@ -1283,7 +1302,9 @@ static int ssdfs_move_on_next_peb_in_sb_seg(struct super_block *sb,
 	}
 
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("LEB %llu doesn't mapped\n", next_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_move_sb_seg;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to convert LEB %llu to PEB: err %d\n",
@@ -1734,9 +1755,11 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 		err = ssdfs_move_on_next_peb_in_sb_seg(sb, sb_seg_type,
 							sb_lebs, sb_pebs);
 		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to move on next PEB of segment: "
 				  "cur_leb %llu, next_leb %llu\n",
 				  cur_leb, next_leb);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto try_move_on_first_peb_next_sb_seg;
 		}
 	} else {
@@ -3464,7 +3487,9 @@ static void ssdfs_put_super(struct super_block *sb)
 			  "err %d\n", err);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("GC threads have been stoped\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_shared_dict_stop_thread(fsi->shdictree);
 	if (err == -EIO) {
@@ -3476,7 +3501,9 @@ static void ssdfs_put_super(struct super_block *sb)
 			   err);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("shared dictionary thread has been stoped\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
 		err = ssdfs_shextree_stop_thread(fsi->shextree, i);
@@ -3490,7 +3517,9 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("shared extents threads have been stoped\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_stop_snapshots_btree_thread(fsi);
 	if (err == -EIO) {
@@ -3502,7 +3531,9 @@ static void ssdfs_put_super(struct super_block *sb)
 			   err);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("snaphots btree thread has been stoped\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_maptbl_stop_thread(fsi->maptbl);
 	if (unlikely(err)) {
@@ -3510,7 +3541,9 @@ static void ssdfs_put_super(struct super_block *sb)
 			   err);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("mapping table thread has been stoped\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&fsi->volume_state_lock);
 	fs_feature_compat = fsi->fs_feature_compat;
@@ -3519,7 +3552,9 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	pagevec_init(&payload.maptbl_cache.pvec);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("Wait unfinished user data requests...\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unfinished_user_data_requests_exist(fsi)) {
 		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;

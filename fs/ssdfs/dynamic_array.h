@@ -4,10 +4,15 @@
  *
  * fs/ssdfs/dynamic_array.h - dynamic array's declarations.
  *
- * Copyright (c) 2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
+ * Copyright (c) 2022-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cong Wang
  */
 
 #ifndef _SSDFS_DYNAMIC_ARRAY_H

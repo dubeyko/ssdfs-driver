@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/dev_bdev.c - Block device access code.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/mm.h>
@@ -219,8 +222,10 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_opf = op | op_flags;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_bdev_bio_add_page(bio, page, PAGE_SIZE, 0);
 	if (unlikely(err)) {
@@ -264,10 +269,10 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("offset %llu, op %#x, op_flags %#x\n",
 		  offset, op, op_flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (pagevec_count(pvec) == 0) {
 		SSDFS_WARN("empty page vector\n");
@@ -292,10 +297,10 @@ static int ssdfs_bdev_sync_pvec_request(struct super_block *sb,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_bdev_bio_add_page(bio, page,
 					      PAGE_SIZE,
@@ -438,8 +443,10 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 	int i;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
 		  sb, (unsigned long long)offset, len, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*read_bytes = 0;
 
@@ -467,8 +474,10 @@ static int ssdfs_bdev_read_pvec(struct super_block *sb,
 		ssdfs_lock_page(page);
 		pagevec_add(&pvec, page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	err = ssdfs_bdev_sync_pvec_request(sb, &pvec, offset,
@@ -517,8 +526,10 @@ finish_bdev_read_pvec:
 			ssdfs_unlock_page(page);
 			ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_dev_bdev_free_page(page);
 			pvec.pages[i] = NULL;
@@ -561,8 +572,10 @@ int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
 	u8 *ptr = (u8 *)buf;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
 		  sb, (unsigned long long)offset, len, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (len == 0) {
 		SSDFS_WARN("len is zero\n");
@@ -615,8 +628,10 @@ int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 	void *buf;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, need_check %d\n",
 		  sb, (unsigned long long)offset, (int)need_check);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_check)
 		return 0;
@@ -633,8 +648,10 @@ int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 
 	if (memchr_inv(buf, 0xff, fsi->pagesize)) {
 		if (memchr_inv(buf, 0x00, fsi->pagesize)) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("area with offset %llu contains data\n",
 				  (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 			err = -EIO;
 		}
 	}
@@ -671,8 +688,10 @@ int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, to_off %llu, page %p, from_off %u, len %zu\n",
 		  sb, to_off, page, from_off, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
@@ -709,8 +728,10 @@ int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
 		wake_up_all(&wq);
@@ -748,8 +769,10 @@ int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, to_off %llu, pvec %p, from_off %u, len %zu\n",
 		  sb, to_off, pvec, from_off, len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (sb->s_flags & SB_RDONLY) {
 		SSDFS_WARN("unable to write on RO file system\n");
@@ -805,8 +828,10 @@ int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 		ssdfs_unlock_page(page);
 		ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (atomic_dec_and_test(&fsi->pending_bios))
@@ -962,10 +987,10 @@ static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
 	u32 remainder;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
 		  sb, (unsigned long long)offset, len);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	div_u64_rem((u64)len, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
 	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
@@ -1045,10 +1070,10 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	sector_t sectors_count;
 	int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
 		  sb, (unsigned long long)offset, len);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	div_u64_rem((u64)len, (u64)erase_size, &remainder);
 	BUG_ON(remainder);
 	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
@@ -1136,7 +1161,9 @@ static void ssdfs_bdev_sync(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("device %s\n", sb->s_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_event(wq, atomic_read(&fsi->pending_bios) == 0);
 }

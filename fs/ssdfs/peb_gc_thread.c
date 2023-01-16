@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/peb_gc_thread.c - GC thread functionality.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/pagemap.h>
@@ -148,7 +151,6 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebi->peb_id,
 		  req->private.class, req->private.cmd, req->private.type);
-
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
 		  "processed_blks %d, logical_block %u, data_bytes %u, "
 		  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
@@ -182,6 +184,7 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 		err = -EAGAIN;
 		req->place.len = req->result.processed_blks;
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("OFFSET DESCRIPTOR: "
 			  "logical_offset %u, logical_blk %u, "
 			  "peb_page %u, log_start_page %u, "
@@ -194,7 +197,6 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 			  desc_off->blk_state.log_area,
 			  desc_off->blk_state.peb_migration_id,
 			  le32_to_cpu(desc_off->blk_state.byte_offset));
-
 		SSDFS_DBG("BLOCK DECRIPTOR: "
 			  "ino %llu, logical_offset %u, "
 			  "peb_index %u, peb_page %u, "
@@ -209,7 +211,6 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 			  blk_desc->state[0].log_area,
 			  blk_desc->state[0].peb_migration_id,
 			  le32_to_cpu(blk_desc->state[0].byte_offset));
-
 		SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
 			  "processed_blks %d, logical_block %u, "
 			  "data_bytes %u, blks %u, "
@@ -223,11 +224,11 @@ int __ssdfs_peb_define_extent(struct ssdfs_fs_info *fsi,
 			  req->extent.data_bytes, req->extent.cno,
 			  req->extent.parent_snapshot,
 			  req->private.cmd, req->private.type);
-
 		SSDFS_DBG("ino1 %llu != ino2 %llu, peb %llu\n",
 			   req->extent.ino,
 			   le64_to_cpu(blk_desc->ino),
 			   pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		goto finish_define_extent;
 	}
@@ -360,12 +361,12 @@ int ssdfs_peb_define_extent(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!desc_off || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x\n",
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd, req->private.type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -550,7 +551,6 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x, "
@@ -558,6 +558,7 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd, req->private.type,
 		  logical_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
@@ -599,9 +600,11 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 
 	err = __ssdfs_peb_copy_page(pebc, desc_off, &pos, req);
 	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to copy the whole range: "
 			  "logical_blk %u, peb_index %u\n",
 			  logical_blk, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_copy_page;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to copy page: "
@@ -653,7 +656,6 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!range || !req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "class %#x, cmd %#x, type %#x, "
@@ -661,6 +663,7 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index,
 		  req->private.class, req->private.cmd, req->private.type,
 		  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range->len == 0) {
 		SSDFS_WARN("empty pages range request\n");
@@ -684,10 +687,12 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 		err = ssdfs_peb_copy_page(pebc, logical_blk, req);
 		if (err == -EAGAIN) {
 			req->place.len = req->result.processed_blks;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to copy the whole range: "
 				  "seg %llu, logical_blk %u, len %u\n",
 				  pebc->parent_si->seg_id,
 				  logical_blk, req->place.len);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy page: "
@@ -727,10 +732,10 @@ int ssdfs_peb_gc_thread_func(void *data)
 		SSDFS_ERR("pointer on PEB container is NULL\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: seg %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_GC_THREAD];
 
@@ -816,17 +821,21 @@ check_segment_state:
 				} else {
 					start_seg_id = *seg_id + 1;
 					*seg_id = U64_MAX;
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("res %#x != seg_type %#x\n",
 						  res, seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 					goto try_to_find_victim;
 				}
 			}
 			break;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found segment: "
 			  "seg_id %llu, state %#x\n",
 			  *seg_id, res);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (res == -EAGAIN) {
 		err = SSDFS_WAIT_COMPLETION(init_end);
 		if (unlikely(err)) {
@@ -850,9 +859,11 @@ check_segment_state:
 			goto fail_find_segment;
 	} else if (res == -ENODATA) {
 finish_search_segments:
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("no more victim segments: "
 			  "start_seg_id %llu, max_seg_id %llu\n",
 			  start_seg_id, max_seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return res;
 	} else {
 fail_find_segment:
@@ -887,7 +898,9 @@ int ssdfs_gc_convert_leb2peb(struct ssdfs_fs_info *fsi,
 			     struct ssdfs_maptbl_peb_relation *pebr)
 {
 	struct completion *init_end;
+#ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_maptbl_peb_descriptor *ptr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	u8 peb_type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
 	int err;
 
@@ -915,8 +928,10 @@ int ssdfs_gc_convert_leb2peb(struct ssdfs_fs_info *fsi,
 	}
 
 	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 			  leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to convert LEB to PEB: "
@@ -925,6 +940,7 @@ int ssdfs_gc_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("LEB %llu\n", leb_id);
 
 	ptr = &pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX];
@@ -941,6 +957,7 @@ int ssdfs_gc_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		  ptr->peb_id, ptr->shared_peb_index,
 		  ptr->erase_cycles, ptr->type,
 		  ptr->state, ptr->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -967,11 +984,11 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("seg_id %llu, refs_count %d\n",
 		  si->seg_id,
 		  atomic_read(&si->refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&si->refs_count) > 0)
 		return false;
@@ -999,6 +1016,7 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_id %llu, peb_id %llu, refs_count %d, "
 			  "peb_has_dirty_pages %#x, "
 			  "not empty: (read %#x, flush %#x), "
@@ -1008,6 +1026,7 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 			  peb_has_dirty_pages,
 			  !is_rq_empty, !is_fq_empty,
 			  dont_touch, is_blk_bmap_dirty);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!is_rq_empty || !is_fq_empty ||
 		    peb_has_dirty_pages || is_blk_bmap_dirty)
@@ -1083,10 +1102,10 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !io_stats);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, io_stats %p, measurements %u\n",
 		  fsi, io_stats, io_stats->measurements);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (io_stats->measurements > SSDFS_MEASUREMENTS_MAX) {
 		SSDFS_ERR("invalid count: "
@@ -1127,19 +1146,25 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 	}
 
 	if (reqs_count <= SSDFS_GC_LOW_BOUND_THRESHOLD) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("reqs_count %lld\n", reqs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return SSDFS_COLLECT_GARBAGE_NOW;
 	}
 
 	if (reqs_count >= SSDFS_GC_UPPER_BOUND_THRESHOLD) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("reqs_count %lld\n", reqs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return SSDFS_STOP_GC_ACTIVITY_NOW;
 	}
 
 	if (io_stats->measurements < 3) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("measurement %u, reqs_count %lld\n",
 			  io_stats->measurements,
 			  reqs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return SSDFS_WAIT_IDLE_STATE;
 	}
 
@@ -1159,10 +1184,12 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 		distance = div_u64((u64)cur_diff, abs(average_diff));
 
 		if (distance < SSDFS_GC_DISTANCE_THRESHOLD) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("I/O load is decreasing: "
 				  "average_diff %lld : "
 				  "Start GC activity.\n",
 				  average_diff);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return SSDFS_COLLECT_GARBAGE_NOW;
 		}
 	} else {
@@ -1170,10 +1197,12 @@ int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 		 * I/O load is increasing.
 		 */
 		if (io_stats->measurements >= SSDFS_MEASUREMENTS_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("I/O load is increasing: "
 				  "average_diff %lld : "
 				  "Stop GC activity.\n",
 				  average_diff);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return SSDFS_STOP_GC_ACTIVITY_NOW;
 		}
 	}
@@ -1208,7 +1237,9 @@ bool is_seg2req_pair_array_exhausted(struct ssdfs_seg2req_pair_array *array)
 
 	is_exhausted = array->items_count >= SSDFS_SEG2REQ_PAIR_CAPACITY;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("is_exhausted %#x\n", is_exhausted);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_exhausted;
 }
@@ -1233,9 +1264,9 @@ int ssdfs_gc_check_request(struct ssdfs_segment_request *req)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("req %p\n", req);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 check_req_state:
 	switch (atomic_read(&req->result.state)) {
@@ -1299,9 +1330,9 @@ void ssdfs_gc_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("items_count %u\n", array->items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	items_count = min_t(u32, array->items_count,
 			    SSDFS_SEG2REQ_PAIR_CAPACITY);
@@ -1393,9 +1424,11 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (have_flush_requests(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("Do nothing: request queue is not empty: "
 			  "seg %llu, peb_index %u\n",
 			  si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1469,9 +1502,11 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 			  "err %d\n", err);
 	} else if (count == 0) {
 		err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("no data for migration: "
 			  "seg %llu, peb_index %u\n",
 			  si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	mutex_unlock(&pebc->migration_lock);
@@ -1539,9 +1574,11 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (have_flush_requests(pebc)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("Do nothing: request queue is not empty: "
 			  "seg %llu, peb_index %u\n",
 			  si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -1639,13 +1676,17 @@ int ssdfs_mark_segment_under_gc_activity(struct ssdfs_segment_info *si)
 				SSDFS_SEG_UNDER_GC_ACTIVITY);
 	if (activity_type < SSDFS_SEG_OBJECT_REGULAR_ACTIVITY ||
 	    activity_type >= SSDFS_SEG_UNDER_GC_ACTIVITY) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy under activity %#x\n",
 			   si->seg_id, activity_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EBUSY;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment %llu is under GC activity\n",
 		  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1664,8 +1705,10 @@ int ssdfs_revert_segment_to_regular_activity(struct ssdfs_segment_info *si)
 		return -EFAULT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment %llu has been reverted from GC activity\n",
 		  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1715,11 +1758,11 @@ int ssdfs_generic_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: thread_type %#x, "
 		  "seg_state %#x, seg_state_mask %#x\n",
 		  thread_type, seg_state, seg_state_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wq = &fsi->gc_wait_queue[thread_type];
 	lebs_per_segment = fsi->pebs_per_seg;
@@ -1774,9 +1817,11 @@ repeat:
 			goto sleep_failed_gc_thread;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found segment: "
 			  "seg_id %llu, seg_state %#x\n",
 			  seg_id, seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (kthread_should_stop())
 			goto finish_seg_processing;
@@ -1788,9 +1833,11 @@ repeat:
 								    seg_id,
 								    i);
 			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unexpected leb_id: "
 					  "seg_id %llu, peb_index %u\n",
 					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
@@ -1799,8 +1846,10 @@ repeat:
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -1818,13 +1867,17 @@ repeat:
 				break;
 
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("SRC PEB %llu is dirty\n",
 					  pebd->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 
 			default:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB %llu is not migrating\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
@@ -1902,9 +1955,11 @@ try_collect_garbage:
 								    seg_id,
 								    i);
 			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unexpected leb_id: "
 					  "seg_id %llu, peb_index %u\n",
 					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
@@ -1915,8 +1970,10 @@ try_collect_garbage:
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -1936,8 +1993,10 @@ try_collect_garbage:
 				break;
 
 			default:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB %llu is not migrating\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
@@ -2014,8 +2073,10 @@ collect_garbage_now:
 
 			err = ssdfs_mark_segment_under_gc_activity(si);
 			if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("segment %llu is busy\n",
 					  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto check_next_segment;
 			}
 
@@ -2043,10 +2104,12 @@ collect_garbage_now:
 				err = ssdfs_gc_stimulate_migration(si, pebc,
 								   &reqs_array);
 				if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("no data for migration: "
 						  "seg %llu, leb_id %llu, "
 						  "err %d\n",
 						  seg_id, cur_leb_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 					err = 0;
 					ssdfs_segment_put_object(si);
 				} else if (unlikely(err)) {
@@ -2220,9 +2283,11 @@ repeat:
 			goto sleep_failed_gc_thread;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found segment: "
 			  "seg_id %llu, seg_state %#x\n",
 			  seg_id, seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!should_continue_processing(mandatory_ops))
 			goto finish_seg_processing;
@@ -2234,16 +2299,20 @@ repeat:
 								    seg_id,
 								    i);
 			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unexpected leb_id: "
 					  "seg_id %llu, peb_index %u\n",
 					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2260,9 +2329,11 @@ repeat:
 				break;
 
 			default:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB %llu is not dirty: "
 					  "pebd->state %u\n",
 					  cur_leb_id, pebd->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto check_next_segment;
 			}
 
@@ -2313,16 +2384,20 @@ try_set_pre_erase_state:
 								    seg_id,
 								    i);
 			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unexpected leb_id: "
 					  "seg_id %llu, peb_index %u\n",
 					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2339,9 +2414,11 @@ try_set_pre_erase_state:
 				break;
 
 			default:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB %llu is not dirty: "
 					  "pebd->state %u\n",
 					  cur_leb_id, pebd->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto check_next_segment;
 			}
 
@@ -2365,9 +2442,11 @@ try_set_pre_erase_state:
 
 			if (err == -EBUSY) {
 				err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to prepare pre-erase state: "
 					  "leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_seg_processing;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare pre-erase state: "
@@ -2479,9 +2558,11 @@ int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
 			return err;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("found segment: "
 			  "seg_id %llu, seg_state %#x\n",
 			  seg_id, seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		i = 0;
 
@@ -2490,16 +2571,20 @@ int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
 								    seg_id,
 								    i);
 			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unexpected leb_id: "
 					  "seg_id %llu, peb_index %u\n",
 					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
-				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2516,9 +2601,11 @@ int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
 				break;
 
 			default:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB %llu is not dirty: "
 					  "pebd->state %u\n",
 					  cur_leb_id, pebd->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto check_next_segment;
 			}
 
@@ -2566,16 +2653,20 @@ try_set_pre_erase_state:
 								    seg_id,
 								    i);
 			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unexpected leb_id: "
 					  "seg_id %llu, peb_index %u\n",
 					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			}
 
 			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
 			if (err == -ENODATA) {
-				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2592,9 +2683,11 @@ try_set_pre_erase_state:
 				break;
 
 			default:
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("LEB %llu is not dirty: "
 					  "pebd->state %u\n",
 					  cur_leb_id, pebd->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto check_next_segment;
 			}
 
@@ -2618,9 +2711,11 @@ try_set_pre_erase_state:
 
 			if (err == -EBUSY) {
 				err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to prepare pre-erase state: "
 					  "leb_id %llu\n",
 					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto check_next_segment;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to prepare pre-erase state: "
@@ -2667,9 +2762,9 @@ int ssdfs_using_seg_gc_thread_func(void *data)
 		SSDFS_ERR("invalid shared FS object\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: using segments\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_generic_seg_gc_thread_func(fsi,
 				SSDFS_SEG_USING_GC_THREAD,
@@ -2689,9 +2784,9 @@ int ssdfs_used_seg_gc_thread_func(void *data)
 		SSDFS_ERR("invalid shared FS object\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: used segments\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_generic_seg_gc_thread_func(fsi,
 				SSDFS_SEG_USED_GC_THREAD,
@@ -2708,9 +2803,9 @@ int ssdfs_pre_dirty_seg_gc_thread_func(void *data)
 		SSDFS_ERR("invalid shared FS object\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: pre-dirty segments\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_generic_seg_gc_thread_func(fsi,
 				SSDFS_SEG_PRE_DIRTY_GC_THREAD,
@@ -2727,9 +2822,9 @@ int ssdfs_dirty_seg_gc_thread_func(void *data)
 		SSDFS_ERR("invalid shared FS object\n");
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("GC thread: dirty segments\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return __ssdfs_dirty_seg_gc_thread_func(fsi,
 				SSDFS_SEG_DIRTY_GC_THREAD,
@@ -2763,9 +2858,9 @@ int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type)
 		SSDFS_ERR("invalid GC thread type %d\n", type);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("thread_type %d\n", type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	threadfn = thread_desc[type].threadfn;
 	fmt = thread_desc[type].fmt;
@@ -2823,10 +2918,10 @@ int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type)
 		SSDFS_ERR("invalid GC thread type %d\n", type);
 		return -EINVAL;
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("type %#x, task %p\n",
 		  type, fsi->gc_thread[type].task);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!fsi->gc_thread[type].task)
 		return 0;

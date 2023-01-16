@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/shared_dictionary_thread.c - shared dictionary tree's thread impl.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -67,10 +70,10 @@ int ssdfs_shared_dict_pre_fetch_nodes(struct ssdfs_shared_dict_btree_info *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !ptr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("tree %p, queue %p\n",
 		  tree, ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	do {
 		err = ssdfs_names_queue_remove_first(&ptr->queue, &ni);
@@ -173,9 +176,9 @@ int ssdfs_shared_dict_thread_func(void *data)
 		SSDFS_ERR("pointer on shared dictionary tree is NULL\n");
 		BUG();
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("shared dictionary tree's thread\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_queue = &tree->wait_queue;
 	ptr = &tree->requests;

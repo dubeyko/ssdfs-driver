@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/peb.c - Physical Erase Block (PEB) object's functionality.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/pagemap.h>
@@ -230,8 +233,10 @@ int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 
 	fsi = pebi->pebc->parent_si->fsi;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi %p, peb_id %llu\n",
 		  pebi, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
 
@@ -270,15 +275,19 @@ int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (buf->size >= PAGE_SIZE) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to realloc buffer: "
 			  "old_size %zu\n",
 			  buf->size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -E2BIG;
 	}
 
 	if (buf->size == new_size) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("do nothing: old_size %zu, new_size %zu\n",
 			  buf->size, new_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
@@ -311,9 +320,11 @@ int ssdfs_peb_realloc_write_buffer(struct ssdfs_peb_temp_buffer *buf)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (buf->size >= PAGE_SIZE) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to realloc buffer: "
 			  "old_size %zu\n",
 			  buf->size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -E2BIG;
 	}
 
@@ -368,8 +379,10 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	pebi->current_log.last_log_time = U64_MAX;
 	pebi->current_log.last_log_cno = U64_MAX;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_data_pages %u\n",
 		  pebi->current_log.free_data_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	bmap_bytes = BLK_BMAP_BYTES(fsi->pages_per_peb);
 	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -763,7 +776,9 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	fsi = pebi->pebc->parent_si->fsi;
 
 	if (pebi->peb_id >= (fsi->nsegs * fsi->pebs_per_seg)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid PEB id %llu\n", pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EINVAL;
 	}
 

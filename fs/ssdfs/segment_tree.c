@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/segment_tree.c - segment tree implementation.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/slab.h>
@@ -101,8 +104,10 @@ static
 void ssdfs_segment_tree_invalidate_folio(struct folio *folio, size_t offset,
 					 size_t length)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
 		  offset, length);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -176,9 +181,9 @@ int ssdfs_create_segment_tree_inode(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode = iget_locked(fsi->sb, SSDFS_SEG_TREE_INO);
 	if (unlikely(!inode)) {
@@ -237,9 +242,9 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 	BUG_ON(!rwsem_is_locked(&fsi->volume_sem));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi->segs_tree =
 		ssdfs_seg_tree_kzalloc(sizeof(struct ssdfs_segment_tree),
@@ -282,7 +287,9 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 	ssdfs_segment_tree_mapping_init(&fsi->segs_tree->pages,
 					fsi->segs_tree_inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create segment tree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 
@@ -309,9 +316,9 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!page || !fsi || !fsi->segs_tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("page %p\n", page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_lock_page(page);
 
@@ -324,7 +331,9 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 			wait_queue_head_t *wq = &si->object_queue;
 			int err = 0;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("si %p, seg_id %llu\n", si, si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			if (atomic_read(&si->refs_count) > 0) {
 				ssdfs_unlock_page(page);
@@ -357,10 +366,12 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 	SSDFS_DBG("page_index %ld, flags %#lx\n",
 		  page->index, page->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -379,10 +390,10 @@ void ssdfs_segment_tree_destroy_objects_in_array(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, pages_count %zu\n",
 		  array, pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < pages_count; i++) {
 		page = array[i];
@@ -414,9 +425,9 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	do {
 		pages_count = find_get_pages_range_tag(&fsi->segs_tree->pages,
@@ -425,8 +436,10 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 					    SSDFS_MEM_PAGE_ARRAY_SIZE,
 					    &array[0]);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start %lu, pages_count %zu\n",
 			  start, pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (pages_count != 0) {
 			ssdfs_segment_tree_destroy_objects_in_array(fsi,
@@ -450,9 +463,9 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock(fsi->segs_tree_inode);
 
@@ -494,16 +507,18 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree || !si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, si %p, seg %llu\n",
 		  fsi, si, si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index %lu, object_index %u\n",
 		  page_index, object_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock(fsi->segs_tree_inode);
 
@@ -521,8 +536,10 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	object = *(kaddr + object_index);
 	if (object) {
 		err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("object exists for segment %llu\n",
 			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else
 		*(kaddr + object_index) = si;
 	kunmap_local(kaddr);
@@ -534,15 +551,19 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
 	SSDFS_DBG("page_index %ld, flags %#lx\n",
 		  page->index, page->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_add_segment:
 	inode_unlock(fsi->segs_tree_inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -572,16 +593,18 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree || !si);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, si %p, seg %llu\n",
 		  fsi, si, si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index %lu, object_index %u\n",
 		  page_index, object_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock(fsi->segs_tree_inode);
 
@@ -617,8 +640,10 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	/*
 	 * Prevent from error of creation
@@ -629,7 +654,9 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 finish_remove_segment:
 	inode_unlock(fsi->segs_tree_inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -665,25 +692,29 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 			  seg_id, fsi->nsegs);
 		return ERR_PTR(-EINVAL);
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, seg_id %llu\n",
 		  fsi, seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	page_index = div_u64_rem(seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index %lu, object_index %u\n",
 		  page_index, object_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock_shared(fsi->segs_tree_inode);
 
 	page = find_lock_page(&fsi->segs_tree->pages, page_index);
 	if (!page) {
 		object = ERR_PTR(-ENODATA);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find segment object: "
 			  "seg %llu\n",
 			  seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_find_segment;
 	}
 
@@ -692,21 +723,27 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 	object = *(kaddr + object_index);
 	if (!object) {
 		object = ERR_PTR(-ENODATA);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find segment object: "
 			  "seg %llu\n",
 			  seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 	kunmap_local(kaddr);
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_find_segment:
 	inode_unlock_shared(fsi->segs_tree_inode);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return object;
 }

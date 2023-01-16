@@ -4,17 +4,23 @@
  *
  * fs/ssdfs/offset_translation_table.h - offset table declarations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
+ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
+ *              https://www.bytedance.com/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
+ *                  Cong Wang
  */
 
 #ifndef _SSDFS_OFFSET_TRANSLATION_TABLE_H
@@ -297,8 +303,10 @@ size_t ssdfs_blk2off_table_bmap_bytes(size_t items_count)
 
 	bytes = (items_count + BITS_PER_LONG - 1) / BITS_PER_BYTE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %zu, bmap_bytes %zu\n",
 		  items_count, bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return bytes;
 }

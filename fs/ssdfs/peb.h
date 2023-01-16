@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/peb.h - Physical Erase Block (PEB) object declarations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #ifndef _SSDFS_PEB_H
@@ -733,10 +736,10 @@ void ssdfs_set_peb_migration_id(struct ssdfs_peb_info *pebi,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("peb_id %llu, peb_migration_id %d\n",
 		  pebi->peb_id, id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic_set(&pebi->peb_migration_id, id);
 }
@@ -832,22 +835,26 @@ bool IS_SSDFS_BLK_STATE_OFFSET_INVALID(struct ssdfs_blk_state_offset *desc)
 	    desc->log_area == U8_MAX &&
 	    desc->peb_migration_id == U8_MAX &&
 	    le32_to_cpu(desc->byte_offset) == U32_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("log_start_page %u, log_area %u, "
 			  "peb_migration_id %u, byte_offset %u\n",
 			  le16_to_cpu(desc->log_start_page),
 			  desc->log_area,
 			  desc->peb_migration_id,
 			  le32_to_cpu(desc->byte_offset));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return true;
 	}
 
 	if (desc->peb_migration_id == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("log_start_page %u, log_area %u, "
 			  "peb_migration_id %u, byte_offset %u\n",
 			  le16_to_cpu(desc->log_start_page),
 			  desc->log_area,
 			  desc->peb_migration_id,
 			  le32_to_cpu(desc->byte_offset));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return true;
 	}
 

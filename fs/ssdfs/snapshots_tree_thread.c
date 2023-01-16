@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/snapshots_tree_thread.c - snapshots btree's thread implementation.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -388,16 +389,20 @@ try_process_queue:
 
 			ssdfs_btree_search_init(search);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("start_hash %llx\n",
 				  start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_snapshots_tree_find_leaf_node(tree,
 								  &range,
 								  search);
 			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to find a leaf node: "
 					  "hash %llx, err %d\n",
 					  start_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_snapshots_tree_processing;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to find a leaf node: "
@@ -552,9 +557,9 @@ int ssdfs_start_snapshots_btree_thread(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	threadfn = thread_desc[0].threadfn;
 	fmt = thread_desc[0].fmt;
@@ -610,7 +615,9 @@ int ssdfs_stop_snapshots_btree_thread(struct ssdfs_fs_info *fsi)
 
 	thread = &fsi->snapshots.tree->requests.thread;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("task %p\n", thread->task);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!thread->task)
 		return 0;

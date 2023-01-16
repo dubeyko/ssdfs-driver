@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/common_bitmap.h - shared declarations for all bitmaps.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #ifndef _SSDFS_COMMON_BITMAP_H
@@ -86,8 +89,10 @@ u8 FIRST_STATE_IN_BYTE(u8 *value, int state,
 	i = start_offset * state_bits;
 	for (; i < BITS_PER_BYTE; i += state_bits) {
 		if (((*value >> i) & state_mask) == state) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("found bit %u, found item %u\n",
 				  i, i / state_bits);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return i / state_bits;
 		}
 	}
@@ -143,8 +148,10 @@ int FIND_FIRST_ITEM_IN_BYTE(u8 *value, int state, u8 state_bits,
 		if (offset < SSDFS_ITEMS_PER_BYTE(state_bits)) {
 			*found_offset = offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("item's offset %u for state %#x\n",
 				  *found_offset, state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			return 0;
 		}
@@ -185,9 +192,11 @@ int ssdfs_find_first_dirty_fragment(unsigned long *addr,
 	found = find_first_bit(addr, max_fragment);
 
 	if (found >= max_fragment) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find fragment: "
 			  "found %lu, max_fragment %lu\n",
 			  found, max_fragment);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 

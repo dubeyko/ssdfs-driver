@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/block_bitmap.h - PEB's block bitmap declarations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #ifndef _SSDFS_BLOCK_BITMAP_H
@@ -78,12 +81,14 @@ int SSDFS_BLK2PAGE(u32 blk, u8 item_bits, u16 *offset)
 		*offset = off;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk %u, item_bits %u, blks_per_byte %u, "
 		  "blks_per_long %u, blks_per_page %u, "
 		  "page_index %u\n",
 		  blk, item_bits, blks_per_byte,
 		  blks_per_long, blks_per_page,
 		  blk / blks_per_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return blk / blks_per_page;
 }
@@ -106,11 +111,13 @@ u32 SSDFS_FIRST_CACHED_BLOCK(struct ssdfs_last_bmap_search *search)
 	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	u32 blks_per_page = PAGE_SIZE * blks_per_byte;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_index %d, offset %u, "
 		  "blks_per_byte %u, blks_per_page %u\n",
 		  search->page_index,
 		  search->offset,
 		  blks_per_byte, blks_per_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (search->page_index * blks_per_page) +
 		(search->offset * blks_per_byte);
@@ -247,10 +254,10 @@ bool ranges_have_intersection(struct ssdfs_block_bmap_range *range1,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!range1 || !range2);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("range1 (start %u, len %u), range2 (start %u, len %u)\n",
 		  range1->start, range1->len, range2->start, range2->len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if ((range2->start + range2->len) <= range1->start)
 		return false;

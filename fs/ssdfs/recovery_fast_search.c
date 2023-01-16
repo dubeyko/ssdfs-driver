@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/recovery_fast_search.c - fast superblock search.
  *
- * Copyright (c) 2020-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2020-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -251,9 +252,11 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 		return -EOPNOTSUPP;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("env %p, start_peb %llu, pebs_count %u\n",
 		  env, env->found->start_peb,
 		  env->found->pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!env->fsi->devops->read) {
 		SSDFS_ERR("unable to read from device\n");
@@ -277,14 +280,18 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 	env->found->middle_offset = lower_off;
 	env->found->upper_offset = upper_off;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lower_peb %llu, upper_peb %llu\n",
 		  lower_peb, upper_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	while (lower_peb <= upper_peb) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("lower_peb %llu, lower_off %llu\n",
 			  lower_peb, (u64)lower_off);
 		SSDFS_DBG("upper_peb %llu, upper_off %llu\n",
 			  upper_peb, (u64)upper_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = env->fsi->devops->read(sb,
 					     lower_off,
@@ -309,9 +316,11 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 					     vh_size);
 				ssdfs_backup_sb_info2(env);
 
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("FOUND: lower_peb %llu, "
 					  "lower_bound %llu\n",
 					  lower_peb, lower_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 				goto define_last_cno_peb;
 			}
@@ -320,9 +329,11 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 						SSDFS_UPPER_PEB_INDEX,
 						lower_peb);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("FOUND: lower_peb %llu, "
 				  "lower_bound %llu\n",
 				  lower_peb, lower_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 define_last_cno_peb:
 			if (last_cno >= U64_MAX) {
@@ -336,10 +347,12 @@ define_last_cno_peb:
 				ssdfs_backup_sb_info2(env);
 				last_cno = cno;
 
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("FOUND: lower_peb %llu, "
 					  "middle_offset %llu, "
 					  "cno %llu\n",
 					  lower_peb, lower_off, cno);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else if (cno > last_cno) {
 				env->found->middle_offset = lower_off;
 				ssdfs_store_protected_peb_info(env,
@@ -351,23 +364,29 @@ define_last_cno_peb:
 				ssdfs_backup_sb_info2(env);
 				last_cno = cno;
 
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("FOUND: lower_peb %llu, "
 					  "middle_offset %llu, "
 					  "cno %llu\n",
 					  lower_peb, lower_off, cno);
+#endif /* CONFIG_SSDFS_DEBUG */
 			} else {
 				ssdfs_restore_sb_info2(env);
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("ignore valid PEB: "
 					  "lower_peb %llu, lower_off %llu, "
 					  "cno %llu, last_cno %llu\n",
 					  lower_peb, lower_off,
 					  cno, last_cno);
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 		} else {
 			ssdfs_restore_sb_info2(env);
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb %llu (offset %llu) is corrupted\n",
 				  lower_peb,
 				  (unsigned long long)lower_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		lower_peb += SSDFS_MAPTBL_PROTECTION_STEP;
@@ -382,19 +401,23 @@ define_last_cno_peb:
 	if (found->peb.peb_id >= U64_MAX)
 		goto finish_search;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("env->lower_offset %llu, "
 		  "env->middle_offset %llu, "
 		  "env->upper_offset %llu\n",
 		  env->found->lower_offset,
 		  env->found->middle_offset,
 		  env->found->upper_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_RECOVERY_SET_FAST_SEARCH_TRY(env);
 
 	return 0;
 
 finish_search:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("unable to find valid PEB\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_RECOVERY_SET_FAST_SEARCH_TRY(env);
 
@@ -424,8 +447,10 @@ int ssdfs_read_sb_peb_checked(struct ssdfs_recovery_env *env,
 	if (err || !magic_valid) {
 		err = -ENODATA;
 		ssdfs_restore_sb_info2(env);
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb %llu is corrupted\n",
 			  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_check;
 	} else {
 		ssdfs_memcpy(&env->last_vh, 0, vh_size,
@@ -492,9 +517,11 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 
 			if (new_leb_id != leb_id || new_peb_id != peb_id) {
 				err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("SB segment not found: "
 					  "peb %llu\n",
 					  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_search;
 			}
 
@@ -507,8 +534,10 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 			if (IS_SB_PEB(env)) {
 				if (is_cur_main_sb_peb_exhausted(env)) {
 					err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 					SSDFS_DBG("peb %llu is exhausted\n",
 						  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 					goto try_next_sb_peb;
 				} else {
 					err = 0;
@@ -516,9 +545,11 @@ int ssdfs_find_last_sb_seg_outside_fragment(struct ssdfs_recovery_env *env)
 				}
 			} else {
 				err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("SB segment not found: "
 					  "peb %llu\n",
 					  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_search;
 			}
 		}
@@ -536,8 +567,11 @@ try_next_sb_peb:
 	} while (magic_valid);
 
 finish_search:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search outside fragment is finished: "
 		  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -579,9 +613,11 @@ int ssdfs_check_cur_main_sb_peb(struct ssdfs_recovery_env *env)
 
 		if (new_leb_id != leb_id || new_peb_id != peb_id) {
 			err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("SB segment not found: "
 				  "peb %llu\n",
 				  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_check;
 		}
 
@@ -594,8 +630,10 @@ int ssdfs_check_cur_main_sb_peb(struct ssdfs_recovery_env *env)
 		if (IS_SB_PEB(env)) {
 			if (is_cur_main_sb_peb_exhausted(env)) {
 				err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("peb %llu is exhausted\n",
 					  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_check;
 			} else {
 				err = 0;
@@ -603,9 +641,11 @@ int ssdfs_check_cur_main_sb_peb(struct ssdfs_recovery_env *env)
 			}
 		} else {
 			err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("SB segment not found: "
 				  "peb %llu\n",
 				  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_check;
 		}
 	}
@@ -652,9 +692,11 @@ int ssdfs_check_cur_copy_sb_peb(struct ssdfs_recovery_env *env)
 
 		if (new_leb_id != leb_id || new_peb_id != peb_id) {
 			err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("SB segment not found: "
 				  "peb %llu\n",
 				  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_check;
 		}
 
@@ -667,8 +709,10 @@ int ssdfs_check_cur_copy_sb_peb(struct ssdfs_recovery_env *env)
 		if (IS_SB_PEB(env)) {
 			if (is_cur_copy_sb_peb_exhausted(env)) {
 				err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("peb %llu is exhausted\n",
 					  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto finish_check;
 			} else {
 				err = 0;
@@ -676,9 +720,11 @@ int ssdfs_check_cur_copy_sb_peb(struct ssdfs_recovery_env *env)
 			}
 		} else {
 			err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("SB segment not found: "
 				  "peb %llu\n",
 				  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_check;
 		}
 	}
@@ -777,8 +823,11 @@ check_reserved_sb_pebs_pair:
 		goto try_next_peb;
 
 finish_search:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search inside fragment is finished: "
 		  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -815,8 +864,10 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 	peb_id = ptr->peb_id;
 	offset = peb_id * env->fsi->erasesize;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb_id %llu, offset %llu\n",
 		  peb_id, offset);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = env->fsi->devops->read(sb, offset, hdr_size,
 				     env->sbi.vh_buf);
@@ -826,8 +877,10 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 	if (err || !magic_valid) {
 		ssdfs_restore_sb_info2(env);
 		ptr->state = SSDFS_FOUND_PEB_INVALID;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb %llu is corrupted\n",
 			  peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		if (ptr->peb_id >= env->found->start_peb &&
 		    ptr->peb_id < threshold_peb) {
 			/* try again */
@@ -845,8 +898,10 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 		ptr->cno = cno;
 		ptr->is_superblock_peb = IS_SB_PEB(env);
 		ptr->state = SSDFS_FOUND_PEB_VALID;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb_id %llu, cno %llu, is_superblock_peb %#x\n",
 			  peb_id, cno, ptr->is_superblock_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (ptr->peb_id >= env->found->start_peb &&
@@ -854,9 +909,11 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 		err = ssdfs_find_last_sb_seg_inside_fragment(env);
 		if (err == -ENODATA || err == -ENOENT) {
 			ssdfs_restore_sb_info2(env);
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("nothing has been found inside fragment: "
 				  "peb_id %llu\n",
 				  ptr->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -EAGAIN;
 		} else if (err) {
 			SSDFS_ERR("search inside fragment has failed: "
@@ -867,9 +924,11 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 		err = ssdfs_find_last_sb_seg_outside_fragment(env);
 		if (err == -ENODATA || err == -ENOENT) {
 			ssdfs_restore_sb_info2(env);
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("nothing has been found outside fragment: "
 				  "peb_id %llu\n",
 				  ptr->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -E2BIG;
 		} else if (err) {
 			SSDFS_ERR("search outside fragment has failed: "
@@ -918,8 +977,10 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 
 	err = ssdfs_find_last_sb_seg_starting_from_peb(env, cur_peb);
 	if (err == -EAGAIN || err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing was found for peb %llu\n",
 			  cur_peb->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		/* continue search */
 	} else if (err) {
 		SSDFS_ERR("fail to find last superblock segment: "
@@ -936,8 +997,10 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 
 	err = ssdfs_find_last_sb_seg_starting_from_peb(env, cur_peb);
 	if (err == -EAGAIN || err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing was found for peb %llu\n",
 			  cur_peb->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		/* continue search */
 	} else if (err) {
 		SSDFS_ERR("fail to find last superblock segment: "
@@ -954,8 +1017,10 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 
 	err = ssdfs_find_last_sb_seg_starting_from_peb(env, cur_peb);
 	if (err == -EAGAIN || err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing was found for peb %llu\n",
 			  cur_peb->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		/* continue search */
 	} else if (err) {
 		SSDFS_ERR("fail to find last superblock segment: "
@@ -972,8 +1037,10 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 
 	err = ssdfs_find_last_sb_seg_starting_from_peb(env, cur_peb);
 	if (err == -EAGAIN || err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing was found for peb %llu\n",
 			  cur_peb->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		/* continue search */
 	} else if (err) {
 		SSDFS_ERR("fail to find last superblock segment: "
@@ -990,8 +1057,10 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 
 	err = ssdfs_find_last_sb_seg_starting_from_peb(env, cur_peb);
 	if (err == -EAGAIN || err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing was found for peb %llu\n",
 			  cur_peb->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		/* continue search */
 	} else if (err) {
 		SSDFS_ERR("fail to find last superblock segment: "
@@ -1008,8 +1077,10 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 
 	err = ssdfs_find_last_sb_seg_starting_from_peb(env, cur_peb);
 	if (err == -EAGAIN || err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("nothing was found for peb %llu\n",
 			  cur_peb->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_search;
 	} else if (err) {
 		SSDFS_ERR("fail to find last superblock segment: "
@@ -1019,8 +1090,11 @@ int ssdfs_find_last_sb_seg_for_protected_peb(struct ssdfs_recovery_env *env)
 		goto finish_search;
 
 finish_search:
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search is finished: "
 		  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -1072,10 +1146,12 @@ int ssdfs_recovery_try_fast_search(struct ssdfs_recovery_env *env)
 		found = &env->found->array[SSDFS_LOWER_PEB_INDEX];
 
 		if (found->peb.peb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no valid protected PEBs in fragment: "
 				  "start_peb %llu, pebs_count %u\n",
 				  env->found->start_peb,
 				  env->found->pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_fast_search;
 		} else {
 			/* search only in the last valid section */

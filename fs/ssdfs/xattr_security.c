@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/xattr_security.c - handler for storing security labels as xattrs.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -40,9 +43,11 @@ int ssdfs_security_getxattr(const struct xattr_handler *handler,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, name %s, buffer %p, size %zu\n",
 		  (unsigned long)inode->i_ino,
 		  name, buffer, size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
 
@@ -67,9 +72,11 @@ int ssdfs_security_setxattr(const struct xattr_handler *handler,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, name %s, value %p, size %zu, flags %#x\n",
 		  (unsigned long)inode->i_ino,
 		  name, value, size, flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	len = strlen(name);
 
@@ -87,9 +94,11 @@ int ssdfs_initxattrs(struct inode *inode, const struct xattr *xattr_array,
 	const struct xattr *xattr;
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, xattr_array %p, fs_info %p\n",
 		  (unsigned long)inode->i_ino,
 		  xattr_array, fs_info);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (xattr = xattr_array; xattr->name != NULL; xattr++) {
 		size_t name_len;
@@ -115,9 +124,11 @@ int ssdfs_initxattrs(struct inode *inode, const struct xattr *xattr_array,
 int ssdfs_init_security(struct inode *inode, struct inode *dir,
 			const struct qstr *qstr)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir_ino %lu, ino %lu\n",
 		  (unsigned long)dir->i_ino,
 		  (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return security_inode_init_security(inode, dir, qstr,
 					    &ssdfs_initxattrs, NULL);
@@ -128,9 +139,11 @@ int ssdfs_init_inode_security(struct inode *inode, struct inode *dir,
 {
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir_ino %lu, ino %lu\n",
 		  (unsigned long)dir->i_ino,
 		  (unsigned long)inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_init_acl(inode, dir);
 	if (!err)

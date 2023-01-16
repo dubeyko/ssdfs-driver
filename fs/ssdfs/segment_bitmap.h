@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/segment_bitmap.h - segment bitmap declarations.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Badic
  */
 
 #ifndef _SSDFS_SEGMENT_BITMAP_H
@@ -163,8 +166,10 @@ u32 SEG_BMAP_BYTES(u64 items_count)
 
 	BUG_ON(bytes >= U32_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %llu, bytes %llu\n",
 		  items_count, bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (u32)bytes;
 }
@@ -182,10 +187,12 @@ u16 SEG_BMAP_FRAGMENTS(u64 items_count)
 	fragments = (bytes + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	BUG_ON(fragments >= U16_MAX);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %llu, pages %u, "
 		  "bytes %u, fragments %u\n",
 		  items_count, pages,
 		  bytes, fragments);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return (u16)fragments;
 }
@@ -258,9 +265,9 @@ bool ssdfs_segbmap_fragment_has_content(struct page *page)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("page %p\n", page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kaddr = kmap_local_page(page);
 	if (memchr_inv(kaddr, 0xff, PAGE_SIZE) != NULL)
@@ -320,8 +327,10 @@ bool IS_STATE_GOOD_FOR_MASK(int mask, int state)
 		BUG();
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("mask %#x, state %#x, is_good %#x\n",
 		  mask, state, is_good);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_good;
 }

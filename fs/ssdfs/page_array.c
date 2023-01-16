@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/page_array.c - page array object's functionality.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -124,8 +127,10 @@ int ssdfs_create_page_array(int capacity, struct ssdfs_page_array *array)
 	array->pages_count = 0;
 	array->last_page = SSDFS_PAGE_ARRAY_INVALID_LAST_PAGE;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pages_count %lu, last_page %lu\n",
 		  array->pages_count, array->last_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	array->pages = ssdfs_parray_kcalloc(capacity, sizeof(struct page *),
 					    GFP_KERNEL);
@@ -220,8 +225,10 @@ void ssdfs_destroy_page_array(struct ssdfs_page_array *array)
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pages_count %lu, last_page %lu\n",
 		  array->pages_count, array->last_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic_set(&array->pages_capacity, 0);
 	array->pages_count = 0;
@@ -525,8 +532,10 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 	} else {
 		ssdfs_get_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		array->pages[page_index] = page;
 		page->index = page_index;
@@ -540,8 +549,10 @@ int ssdfs_page_array_add_page(struct ssdfs_page_array *array,
 	else if (array->last_page < page_index)
 		array->last_page = page_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pages_count %lu, last_page %lu\n",
 		  array->pages_count, array->last_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_add_page:
 	up_write(&array->lock);
@@ -692,8 +703,10 @@ struct page *ssdfs_page_array_get_page(struct ssdfs_page_array *array,
 	spin_unlock(&bmap->lock);
 
 	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %lu is not allocated yet\n",
 			  page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_get_page;
 	}
 
@@ -713,8 +726,10 @@ finish_get_page:
 
 	ssdfs_get_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return page;
 }
@@ -750,8 +765,10 @@ struct page *ssdfs_page_array_get_page_locked(struct ssdfs_page_array *array,
 
 	page = ssdfs_page_array_get_page(array, page_index);
 	if (PTR_ERR(page) == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %lu is not allocated yet\n",
 			  page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else if (IS_ERR_OR_NULL(page)) {
 		SSDFS_ERR("fail to get the page: "
 			  "page_index %lu, err %d\n",
@@ -806,8 +823,10 @@ struct page *ssdfs_page_array_grab_page(struct ssdfs_page_array *array,
 		} else {
 			ssdfs_get_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	} else if (IS_ERR_OR_NULL(page)) {
 		if (!page)
@@ -917,8 +936,10 @@ int ssdfs_page_array_set_page_dirty(struct ssdfs_page_array *array,
 
 	if (err) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %lu is dirty already\n",
 			  page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	page = array->pages[page_index];
@@ -1289,8 +1310,10 @@ int ssdfs_page_array_lookup_range(struct ssdfs_page_array *array,
 			}
 			ssdfs_get_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			pagevec_add(pvec, page);
 			count++;
@@ -1477,8 +1500,10 @@ struct page *ssdfs_page_array_delete_page(struct ssdfs_page_array *array,
 	if (array->last_page == page_index)
 		ssdfs_page_array_define_last_page(array, capacity);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pages_count %lu, last_page %lu\n",
 		  array->pages_count, array->last_page);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_clean)
 		atomic_set(&array->state, SSDFS_PAGE_ARRAY_CREATED);
@@ -1491,8 +1516,10 @@ finish_delete_page:
 
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_parray_forget_page(page);
 
@@ -1566,8 +1593,10 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 	if (array->pages_count == 0) {
 		err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("pages_count %lu\n",
 			  array->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_release_pages_range;
 	}
 
@@ -1636,8 +1665,10 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 			ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page %p, count %d\n",
 				  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_parray_free_page(page);
 			array->pages[found] = NULL;
@@ -1663,10 +1694,10 @@ int ssdfs_page_array_release_pages(struct ssdfs_page_array *array,
 
 	ssdfs_page_array_define_last_page(array, capacity);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pages_count %lu, last_page %lu\n",
 		  array->pages_count, array->last_page);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	released -= array->pages_count;
 
 	SSDFS_DBG("released %lu, pages_count %lu, "

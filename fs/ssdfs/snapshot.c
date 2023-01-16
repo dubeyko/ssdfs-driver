@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/snapshot.c - snapshots subsystem implementation.
  *
- * Copyright (c) 2021-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -41,9 +42,9 @@ int ssdfs_snapshot_subsystem_init(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_snapshot_reqs_queue_init(&fsi->snapshots.reqs_queue);
 	ssdfs_snapshot_rules_list_init(&fsi->snapshots.rules_list);
@@ -84,9 +85,9 @@ int ssdfs_snapshot_subsystem_destroy(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_snapshot_reqs_queue_remove_all(&fsi->snapshots.reqs_queue);
 	ssdfs_snapshot_rules_list_remove_all(&fsi->snapshots.rules_list);

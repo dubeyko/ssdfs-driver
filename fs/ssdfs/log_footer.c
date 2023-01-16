@@ -4,17 +4,20 @@
  *
  * fs/ssdfs/log_footer.c - operations with log footer.
  *
- * Copyright (c) 2014-2022 HGST, a Western Digital Company.
+ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
+ * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  *
  * HGST Confidential
- * (C) Copyright 2014-2022, HGST, Inc., All rights reserved.
+ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
- * Authors: Vyacheslav Dubeyko <slava@dubeyko.com>
  *
- * Acknowledgement: Cyril Guyot <Cyril.Guyot@wdc.com>
- *                  Zvonimir Bandic <Zvonimir.Bandic@wdc.com>
+ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
+ *
+ * Acknowledgement: Cyril Guyot
+ *                  Zvonimir Bandic
  */
 
 #include <linux/kernel.h>
@@ -145,8 +148,10 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 	nsegs = le64_to_cpu(footer->volume_state.nsegs);
 
 	if (nsegs == 0 || nsegs > (dev_size >> log_segsize)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid nsegs %llu, dev_size %llu, seg_size) %u\n",
 			  nsegs, dev_size, seg_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -154,49 +159,63 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 
 	pages_count = div_u64_rem(dev_size, page_size, &remainder);
 	if (remainder) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("dev_size %llu is unaligned on page_size %u\n",
 			  dev_size, page_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (free_pages > pages_count) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("free_pages %llu is greater than pages_count %llu\n",
 			  free_pages, pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	pages_per_seg = seg_size / page_size;
 	if (nsegs <= div_u64(free_pages, pages_per_seg)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid nsegs %llu, free_pages %llu, "
 			  "pages_per_seg %u\n",
 			  nsegs, free_pages, pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	if (cno > le64_to_cpu(footer->cno)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("create_cno %llu is greater than write_cno %llu\n",
 			  cno, le64_to_cpu(footer->cno));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	log_bytes = (u32)log_pages * fsi->pagesize;
 	if (le32_to_cpu(footer->log_bytes) > log_bytes) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("hdr log_bytes %u > footer log_bytes %u\n",
 			  log_bytes,
 			  le32_to_cpu(footer->log_bytes));
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
 	}
 
 	fs_state = le16_to_cpu(footer->volume_state.state);
 	if (fs_state > SSDFS_LAST_KNOWN_FS_STATE) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unknown FS state %#x\n",
 			  fs_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
 	fs_errors = le16_to_cpu(footer->volume_state.errors);
 	if (fs_errors > SSDFS_LAST_KNOWN_FS_ERROR) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unknown FS error %#x\n",
 			  fs_errors);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return false;
 	}
 
@@ -345,9 +364,11 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 				  "peb_id %llu, bytes_off %u, err %d\n",
 				  peb_id, bytes_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read log footer: "
 				  "peb_id %llu, bytes_off %u, err %d\n",
 				  peb_id, bytes_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -459,9 +480,11 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 				  "peb_id %llu, bytes_off %u\n",
 				  peb_id, bytes_off);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log footer is corrupted: "
 				  "peb_id %llu, bytes_off %u\n",
 				  peb_id, bytes_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		return -EIO;
@@ -515,9 +538,11 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  "peb_id %llu, bytes_off %u, err %d\n",
 				  peb_id, bytes_off, err);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read log footer: "
 				  "peb_id %llu, bytes_off %u, err %d\n",
 				  peb_id, bytes_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
 	}
@@ -543,9 +568,11 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 					  "peb_id %llu, bytes_off %u, err %d\n",
 					  peb_id, bytes_off, err);
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("log footer is corrupted: "
 					  "peb_id %llu, bytes_off %u, err %d\n",
 					  peb_id, bytes_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 			return err;
 		}
@@ -559,9 +586,11 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 					  "peb_id %llu, bytes_off %u\n",
 					  peb_id, bytes_off);
 			} else {
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("partial log header is corrupted: "
 					  "peb_id %llu, bytes_off %u\n",
 					  peb_id, bytes_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 			return err;
@@ -572,9 +601,11 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  "peb_id %llu, bytes_off %u\n",
 				  peb_id, bytes_off);
 		} else {
+#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log footer is corrupted: "
 				  "peb_id %llu, bytes_off %u\n",
 				  peb_id, bytes_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		return -EIO;
@@ -655,15 +686,17 @@ int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
 			real_seg = fsi->cur_segs->objects[i]->real_seg;
 			if (real_seg) {
 				seg = real_seg->seg_id;
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("index %d, seg_id %llu\n",
 					  i, seg);
+#endif /* CONFIG_SSDFS_DEBUG */
 				array[i] = cpu_to_le64(seg);
 			} else {
 				seg = fsi->cur_segs->objects[i]->seg_id;
-
+#ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("index %d, seg_id %llu\n",
 					  i, seg);
-
+#endif /* CONFIG_SSDFS_DEBUG */
 				array[i] = cpu_to_le64(seg);
 			}
 
@@ -703,9 +736,9 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !vs);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("fsi %p, fs_state %#x\n", fsi, fs_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (size != (sizeof(__le64) * SSDFS_CUR_SEGS_COUNT)) {
 		SSDFS_ERR("invalid array size %zu\n",
@@ -753,8 +786,10 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 
 	spin_unlock(&fsi->volume_state_lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("open_zones %d\n",
 		  atomic_read(&fsi->open_zones));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(&vs->blkbmap,
 		     0, sizeof(struct ssdfs_blk_bmap_options),
@@ -829,8 +864,10 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 	u16 data_size = sizeof(struct ssdfs_log_footer);
 	int err;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, log_pages %u, log_flags %#x, footer %p\n",
 		  fsi, log_pages, log_flags, footer);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	footer->volume_state.magic.key = cpu_to_le16(SSDFS_LOG_FOOTER_MAGIC);
 

@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/sequence_array.c - sequence array implementation.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -95,7 +96,9 @@ ssdfs_create_sequence_array(unsigned long revert_threshold)
 {
 	struct ssdfs_sequence_array *ptr;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("revert_threshold %lu\n", revert_threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (revert_threshold == 0) {
 		SSDFS_ERR("invalid revert_threshold %lu\n",
@@ -136,9 +139,9 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !free_item);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p\n", array);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	rcu_read_lock();
 	spin_lock(&array->lock);
@@ -148,8 +151,10 @@ void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
 		spin_unlock(&array->lock);
 		rcu_read_unlock();
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("index %llu, ptr %p\n",
 			  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!item_ptr) {
 			SSDFS_WARN("empty node pointer: "
@@ -192,10 +197,10 @@ int ssdfs_sequence_array_init_item(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !item);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, id %lu, item %p\n",
 		  array, id, item);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (id > array->revert_threshold) {
 		SSDFS_ERR("invalid input: "
@@ -253,10 +258,10 @@ int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !item || !id);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, item %p, id %p\n",
 		  array, item, id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
 
@@ -294,7 +299,9 @@ finish_add_item:
 
 	radix_tree_preload_end();
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("id %lu\n", *id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add item into radix tree: "
@@ -329,22 +336,26 @@ void *ssdfs_sequence_array_get_item(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, id %lu\n",
 		  array, id);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&array->lock);
 	item_ptr = radix_tree_lookup(&array->map, id);
 	spin_unlock(&array->lock);
 
 	if (!item_ptr) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find the item: id %llu\n",
 			  (u64)id);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return ERR_PTR(-ENOENT);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("item_ptr %p\n", item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return item_ptr;
 }
@@ -372,9 +383,9 @@ int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !apply_action);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p\n", array);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	rcu_read_lock();
 
@@ -390,8 +401,10 @@ int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
 
 		rcu_read_unlock();
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("id %llu, item_ptr %p\n",
 			  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = apply_action(item_ptr);
 		if (unlikely(err)) {
@@ -450,13 +463,13 @@ int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !change_state);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, id %lu, "
 		  "old_tag %#x, new_tag %#x, "
 		  "old_state %#x, new_state %#x\n",
 		  array, id, old_tag, new_tag,
 		  old_state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	rcu_read_lock();
 
@@ -478,8 +491,10 @@ int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
 		goto finish_change_state;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("id %llu, item_ptr %p\n",
 		  (u64)id, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = change_state(item_ptr, old_state, new_state);
 	if (unlikely(err)) {
@@ -533,13 +548,13 @@ int ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !change_state || !found_items);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, "
 		  "old_tag %#x, new_tag %#x, "
 		  "old_state %#x, new_state %#x\n",
 		  ptr, old_tag, new_tag,
 		  old_state, new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*found_items = 0;
 
@@ -558,8 +573,10 @@ int ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
 
 		rcu_read_unlock();
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("id %llu, item_ptr %p\n",
 			  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = change_state(item_ptr, old_state, new_state);
 		if (unlikely(err)) {
@@ -606,15 +623,17 @@ bool has_ssdfs_sequence_array_state(struct ssdfs_sequence_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	SSDFS_DBG("array %p, tag %#x\n", array, tag);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&array->lock);
 	res = radix_tree_tagged(&array->map, tag);
 	spin_unlock(&array->lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("res %#x\n", res);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return res;
 }

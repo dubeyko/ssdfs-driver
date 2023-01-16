@@ -4,7 +4,8 @@
  *
  * fs/ssdfs/peb_mapping_queue.c - PEB mappings queue implementation.
  *
- * Copyright (c) 2019-2022 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
@@ -262,9 +263,11 @@ void ssdfs_peb_mapping_queue_remove_all(struct ssdfs_peb_mapping_queue *pmq)
 		pmi = list_entry(this, struct ssdfs_peb_mapping_info, list);
 		list_del(&pmi->list);
 
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("delete PEB mapping: "
 			  "leb_id %llu, peb_id %llu, consistency %d\n",
 			  pmi->leb_id, pmi->peb_id, pmi->consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_peb_mapping_info_free(pmi);
 	}
