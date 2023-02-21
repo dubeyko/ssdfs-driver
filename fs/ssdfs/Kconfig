@@ -1,15 +1,12 @@
 config SSDFS
-	tristate "SSDFS file system support (EXPERIMENTAL)"
+	tristate "SSDFS file system support"
 	depends on BLOCK || MTD
 	help
-	  SSDFS experimental file system. The architecture of
+	  SSDFS is flash-friendly file system. The architecture of
 	  file system has been designed to be the LFS file system
 	  that can: (1) exclude the GC overhead, (2) prolong NAND
 	  flash devices lifetime, (3) achieve a good performance
 	  balance even if the NAND flash device's lifetime is a priority.
-
-	  In its current state it is very experimental and should
-	  not be used for other than testing purposes.
 
 	  If unsure, say N.
 

@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * SSDFS -- SSD-oriented File System.
  *
@@ -9,7 +9,6 @@
  * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  *
- * HGST Confidential
  * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group

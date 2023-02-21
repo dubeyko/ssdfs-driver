@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * SSDFS -- SSD-oriented File System.
  *

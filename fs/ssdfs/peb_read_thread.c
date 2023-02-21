@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * SSDFS -- SSD-oriented File System.
  *
@@ -11,7 +11,6 @@
  * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
  *              https://www.bytedance.com/
  *
- * HGST Confidential
  * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
@@ -8155,7 +8154,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("blk2off table has been initialized: "
 			  "peb_id %llu\n",
-	  		  pebi->peb_id);
+			  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 

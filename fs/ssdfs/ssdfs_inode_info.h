@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * SSDFS -- SSD-oriented File System.
  *
@@ -30,7 +30,7 @@
 #define SSDFS_COMPRBLK_FL		FS_COMPRBLK_FL	/* One or more compressed clusters */
 #define SSDFS_NOCOMP_FL			FS_NOCOMP_FL	/* Don't compress */
 #define SSDFS_ECOMPR_FL			FS_ECOMPR_FL	/* Compression error */
-/* End compression flags --- maybe not all used */	
+/* End compression flags --- maybe not all used */
 #define SSDFS_BTREE_FL			FS_BTREE_FL	/* btree format dir */
 #define SSDFS_INDEX_FL			FS_INDEX_FL	/* hash-indexed directory */
 #define SSDFS_IMAGIC_FL			FS_IMAGIC_FL	/* AFS directory */

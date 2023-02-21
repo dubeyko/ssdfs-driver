@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: BSD-3-Clause-Clear
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * SSDFS -- SSD-oriented File System.
  *
@@ -11,7 +11,6 @@
  * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
  *              https://www.bytedance.com/
  *
- * HGST Confidential
  * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
  *
  * Created by HGST, San Jose Research Center, Storage Architecture Group
