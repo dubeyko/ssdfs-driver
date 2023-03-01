@@ -1969,6 +1969,40 @@ bool can_current_segment_be_added(struct ssdfs_segment_info *si)
 }
 
 /*
+ * ssdfs_remove_current_segment() - remove current segment
+ */
+static inline
+int ssdfs_remove_current_segment(struct ssdfs_current_segment *cur_seg)
+{
+	struct ssdfs_segment_info *si;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !cur_seg->real_seg);
+
+	SSDFS_DBG("seg %llu\n",
+		  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = cur_seg->real_seg;
+
+	err = ssdfs_current_segment_change_state(cur_seg);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change segment state: "
+			  "seg %llu, err %d\n",
+			  si->seg_id, err);
+		return err;
+	}
+
+	if (can_current_segment_be_added(si)) {
+		ssdfs_current_segment_remove(cur_seg);
+		return 0;
+	}
+
+	return -ENOSPC;
+}
+
+/*
  * __ssdfs_segment_add_block() - add new block into segment
  * @cur_seg: current segment container
  * @req: segment request [in|out]
@@ -2065,26 +2099,20 @@ add_new_current_segment:
 				  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			err = ssdfs_current_segment_change_state(cur_seg);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to change segment state: "
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_block;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
 					  "seg %llu, err %d\n",
 					  si->seg_id, err);
 				goto finish_add_block;
-			}
-
-			if (can_current_segment_be_added(si)) {
-				err = 0;
-				ssdfs_current_segment_remove(cur_seg);
+			} else
 				goto add_new_current_segment;
-			}
-
-			err = -ENOSPC;
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add current segment: "
-				  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_add_block;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical block: "
 				  "seg %llu, err %d\n",
@@ -2289,26 +2317,20 @@ add_new_current_segment:
 				  cur_seg->real_seg->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			err = ssdfs_current_segment_change_state(cur_seg);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to change segment state: "
-					  "seg %llu, err %d\n",
-					  cur_seg->real_seg->seg_id, err);
-				goto finish_add_extent;
-			}
-
-			if (can_current_segment_be_added(si)) {
-				err = 0;
-				ssdfs_current_segment_remove(cur_seg);
-				goto add_new_current_segment;
-			}
-
-			err = -ENOSPC;
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add current segment: "
-				  "err %d\n", err);
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_add_extent;
+				goto finish_add_extent;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_extent;
+			} else
+				goto add_new_current_segment;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical extent: "
 				  "seg %llu, err %d\n",
@@ -2345,11 +2367,32 @@ add_new_current_segment:
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to allocate logical extent\n");
 				goto finish_add_extent;
+			} else if (extent->len != blks_count) {
+				SSDFS_DBG("unable to allocate: "
+					  "extent (start_lblk %u, len %u), "
+					  "blks_count %u\n",
+					  extent->start_lblk,
+					  extent->len,
+					  blks_count);
+
+				err = ssdfs_remove_current_segment(cur_seg);
+				if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("unable to add current segment: "
+						  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+					goto finish_add_extent;
+				} else if (unlikely(err)) {
+					SSDFS_ERR("fail to remove current segment: "
+						  "seg %llu, err %d\n",
+						  si->seg_id, err);
+					goto finish_add_extent;
+				} else
+					goto add_new_current_segment;
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(extent->start_lblk >= U16_MAX);
-			BUG_ON(extent->len != blks_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_request_define_volume_extent(extent->start_lblk,

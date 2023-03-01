@@ -6714,15 +6714,15 @@ int ssdfs_blk2off_table_bmap_allocate(struct ssdfs_bitmap_array *lbmap,
 	extent->start_lblk = (u16)found;
 	extent->len = (u16)(end - found);
 
+	if (extent->len < len)
+		return -EAGAIN;
+
 	bitmap_set(lbmap->array[bitmap_index], extent->start_lblk, extent->len);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("found extent (start %u, len %u)\n",
 		  extent->start_lblk, extent->len);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (extent->len < len)
-		return -EAGAIN;
 
 	return 0;
 }
@@ -6822,7 +6822,8 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 			SSDFS_DBG("table is not initialized yet\n");
 			goto finish_allocation;
 		}
-	}
+	} else
+		start_blk = table->last_allocated_blk;
 
 	err = ssdfs_blk2off_table_bmap_allocate(&table->lbmap,
 						SSDFS_LBMAP_STATE_INDEX,
@@ -6831,8 +6832,8 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 						extent);
 	if (err == -EAGAIN) {
 		err = 0;
-		SSDFS_DBG("requested extent doesn't allocated fully\n");
-		goto finish_allocation;
+		SSDFS_DBG("requested extent is not allocated fully\n");
+		goto try_next_range;
 	} else if (err == -ENODATA)
 		goto try_next_range;
 	else if (unlikely(err)) {
@@ -6854,8 +6855,8 @@ try_next_range:
 						0, len, start_blk,
 						extent);
 	if (err == -EAGAIN) {
-		err = 0;
-		SSDFS_DBG("requested extent doesn't allocated fully\n");
+		err = -ENODATA;
+		SSDFS_DBG("requested extent is not allocated fully\n");
 		goto finish_allocation;
 	} else if (err == -ENODATA) {
 		SSDFS_DBG("bitmap hasn't vacant logical blocks\n");
