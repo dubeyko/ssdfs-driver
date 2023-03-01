@@ -4326,6 +4326,7 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
  *
  * %-EINVAL     - invalid input value.
  * %-ENOENT     - block bitmap doesn't initialized.
+ * %-ENODATA    - no reservation took place
  * %-ERANGE     - internal error.
  */
 int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
@@ -4365,6 +4366,15 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->metadata_items, count);
 #endif /* CONFIG_SSDFS_DEBUG */
 		freed_items = blk_bmap->metadata_items;
+
+		if (freed_items == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to free metapages: "
+				  "freed_items %u\n",
+				  freed_items);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -ENODATA;
+		}
 	}
 
 	blk_bmap->metadata_items -= freed_items;

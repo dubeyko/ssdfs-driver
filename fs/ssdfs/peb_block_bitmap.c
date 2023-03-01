@@ -1837,7 +1837,11 @@ init_failed:
 	err = ssdfs_block_bmap_free_metadata_pages(cur_bmap, count);
 	ssdfs_block_bmap_unlock(cur_bmap);
 
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		err = 0;
+		SSDFS_DBG("nothing has been reserved\n");
+		goto finish_free_metapages;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to free metadata pages: "
 			  "count %u, err %d\n",
 			  count, err);
@@ -3608,7 +3612,10 @@ finish_process_source_bmap:
 
 		err = ssdfs_block_bmap_free_metadata_pages(dst,
 							   freed_metapages);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+			err = 0;
+			SSDFS_DBG("there is no metadata page reservation\n");
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to free metadata pages: err %d\n",
 				  err);
 			goto do_bmap_unlock;
