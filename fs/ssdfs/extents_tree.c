@@ -3257,7 +3257,7 @@ int ssdfs_add_extent_into_fork(u64 blk,
 	blks_count = le64_to_cpu(fork->blks_count);
 	search->request.start.hash = start_offset;
 	search->request.end.hash = start_offset + blks_count - 1;
-	search->request.count = (int)blks_count;
+	search->request.count = 1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("search (request.start.hash %llx, "
@@ -4217,6 +4217,7 @@ int ssdfs_extents_tree_add_extent_nolock(struct ssdfs_extents_btree_info *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	forks_count = atomic64_read(&tree->forks_count);
+	len = le32_to_cpu(extent->len);
 
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_FORKS_ARRAY:
@@ -4288,6 +4289,14 @@ add_new_inline_fork:
 					search->request.start.hash = blk;
 					search->request.end.hash = blk + len - 1;
 					search->request.count = 1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("search (start_hash %llu, "
+						  "end_hash %llu)\n",
+						  search->request.start.hash,
+						  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 					goto try_to_add_into_generic_tree;
 				}
 			} else if (unlikely(err)) {
@@ -4364,6 +4373,12 @@ add_new_generic_fork:
 					  err);
 				goto finish_add_extent;
 			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("search (start_hash %llu, end_hash %llu)\n",
+				  search->request.start.hash,
+				  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
 			err = ssdfs_extents_tree_add_fork(tree, search);
@@ -4459,11 +4474,12 @@ int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 		search->request.flags = init_flags;
 		search->request.start.hash = blk;
 		search->request.end.hash = blk + len - 1;
-		/* no information about forks count */
-		search->request.count = 0;
+		search->request.count = 1;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_btree_search_object(search);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_EXTENTS_BTREE_CREATED:
@@ -4494,7 +4510,9 @@ finish_add_extent:
 	ssdfs_btree_search_forget_parent_node(search);
 	ssdfs_btree_search_forget_child_node(search);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_extents_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -8948,13 +8966,7 @@ void ssdfs_btree_search_result_no_data(struct ssdfs_btree_node *node,
 			break;
 
 		default:
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			search->result.buf_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-			search->result.buf = NULL;
+			ssdfs_btree_search_free_result_buf(search);
 			search->result.buf_size = 0;
 			search->result.items_in_buffer = 0;
 			break;
@@ -8994,11 +9006,12 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !search);
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llx, end_hash %llx, "
+		  "start_hash %llx, end_hash %llx, count %u, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
 		  search->request.start.hash, search->request.end.hash,
+		  search->request.count,
 		  atomic_read(&node->state), node->node_id,
 		  atomic_read(&node->height), search->node.parent,
 		  search->node.child);
@@ -9078,17 +9091,38 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 
 	res = ssdfs_extract_range_by_lookup_index(node, lookup_index,
 						  search);
-	search->request.count = search->result.count;
+
+	if (!is_btree_search_contains_new_item(search)) {
+		/*
+		 * Result buffer contains real number of items
+		 */
+		search->request.count = search->result.count;
+	} else {
+		/*
+		 * ssdfs_generic_insert_range uses result.count
+		 */
+		search->result.count = search->request.count;
+	}
+
 	search->result.search_cno = ssdfs_current_cno(node->tree->fsi->sb);
 
 	ssdfs_debug_btree_search_object(search);
 
 	if (res == -ENODATA) {
 		err = res;
+
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("node_id %u is empty\n",
+		SSDFS_DBG("node_id %u has position for insert\n",
 			  node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (is_btree_search_contains_new_item(search)) {
+			/*
+			 * Keep SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM
+			 * Do not clear the flag!!!!
+			 */
+			return err;
+		}
 	} else if (res == -EAGAIN) {
 		err = -ENODATA;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10041,14 +10075,14 @@ int __ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 	BUG_ON(!node || !search);
 
 	SSDFS_DBG("type %#x, flags %#x, "
-		  "start_hash %llx, end_hash %llx, "
+		  "start_hash %llx, end_hash %llx, count %u, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
 		  search->request.type, search->request.flags,
 		  search->request.start.hash, search->request.end.hash,
-		  atomic_read(&node->state), node->node_id,
-		  atomic_read(&node->height), search->node.parent,
-		  search->node.child);
+		  search->request.count, atomic_read(&node->state),
+		  node->node_id, atomic_read(&node->height),
+		  search->node.parent, search->node.child);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->items_area.state)) {
@@ -10187,6 +10221,11 @@ int __ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 
 	range_len = items_area.items_count - search->result.start_index;
 	forks_count = range_len + search->request.count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("search->request.count %u\n",
+		  search->request.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
 	if ((item_index + forks_count) > items_area.items_capacity) {

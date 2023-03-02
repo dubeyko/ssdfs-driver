@@ -6757,13 +6757,7 @@ void ssdfs_btree_search_result_no_data(struct ssdfs_btree_node *node,
 			break;
 
 		default:
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			search->result.buf_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-			search->result.buf = NULL;
+			ssdfs_btree_search_free_result_buf(search);
 			search->result.buf_size = 0;
 			search->result.items_in_buffer = 0;
 			break;

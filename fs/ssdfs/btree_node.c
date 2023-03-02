@@ -15261,7 +15261,7 @@ int ssdfs_generic_insert_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range_len == 0) {
-		SSDFS_WARN("search->request.count == 0\n");
+		SSDFS_WARN("search->result.count == 0\n");
 		return -ERANGE;
 	}
 

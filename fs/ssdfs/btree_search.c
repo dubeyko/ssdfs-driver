@@ -613,6 +613,10 @@ void ssdfs_btree_search_free_result_buf(struct ssdfs_btree_search *search)
 			search->result.buf_state =
 				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 		}
+	} else {
+		search->result.buf = NULL;
+		search->result.buf_state =
+			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 	}
 }
 
@@ -659,6 +663,10 @@ void ssdfs_btree_search_free_result_name(struct ssdfs_btree_search *search)
 			search->result.name =
 				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 		}
+	} else {
+		search->result.name = NULL;
+		search->result.name =
+			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 	}
 }
 
