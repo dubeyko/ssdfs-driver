@@ -4436,6 +4436,7 @@ int __ssdfs_btree_find_item(struct ssdfs_btree *tree,
 	case SSDFS_BTREE_SEARCH_ADD_RANGE:
 	case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
+	case SSDFS_BTREE_SEARCH_DELETE_ALL:
 	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		/* expected state */
 		break;
@@ -6021,6 +6022,7 @@ int ssdfs_btree_delete_item(struct ssdfs_btree *tree,
 
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
+	case SSDFS_BTREE_SEARCH_DELETE_ALL:
 	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		/* expected type */
 		break;
@@ -6202,6 +6204,7 @@ int ssdfs_btree_delete_range(struct ssdfs_btree *tree,
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_DELETE_RANGE:
 	case SSDFS_BTREE_SEARCH_DELETE_ALL:
+	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		/* expected state */
 		break;
 
@@ -6821,8 +6824,11 @@ bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
 		goto finish_check_tree;
 	}
 
-	if (is_ssdfs_btree_node_index_area_empty(node))
+	if (is_ssdfs_btree_node_index_area_empty(node)) {
+		/* time to migrate */
+		need_migrate = true;
 		goto finish_check_tree;
+	}
 
 	down_read(&node->full_lock);
 	err = __ssdfs_btree_root_node_extract_index(node,

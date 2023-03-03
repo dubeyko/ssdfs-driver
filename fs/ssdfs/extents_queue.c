@@ -1672,7 +1672,12 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	}
 
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to invalidate logical extent: "
+			  "seg %llu, extent (start_blk %u, len %u), err %d\n",
+			  seg_id, start_blk, len, err);
+		goto revert_invalidation_state;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate logical extent: "
 			  "seg %llu, extent (start_blk %u, len %u), err %d\n",
 			  seg_id, start_blk, len, err);

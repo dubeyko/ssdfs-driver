@@ -350,7 +350,28 @@ try_invalidate_queue:
 		} while (err == 0);
 
 		err = ssdfs_shextree_invalidate_extent(tree, ei);
-		if (err == -EBUSY) {
+		if (err == -ENODATA) {
+			if (kthread_should_stop()) {
+				ssdfs_fs_error(tree->fsi->sb,
+					__FILE__, __func__, __LINE__,
+					"fail to invalidate extent: "
+					"(seg_id %llu, logical_blk %u, len %u), "
+					"err %d\n",
+					le64_to_cpu(ei->raw.extent.seg_id),
+					le32_to_cpu(ei->raw.extent.logical_blk),
+					le32_to_cpu(ei->raw.extent.len),
+					err);
+				ssdfs_extent_info_free(ei);
+				goto repeat;
+			} else {
+				err = 0;
+				ssdfs_extents_queue_add_tail(eq, ei);
+				wait_event_interruptible_timeout(*wait_queue,
+							kthread_should_stop(),
+							HZ);
+				continue;
+			}
+		} else if (err == -EBUSY) {
 			err = 0;
 			ssdfs_extents_queue_add_tail(eq, ei);
 			wait_event_interruptible_timeout(*wait_queue,

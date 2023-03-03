@@ -5056,9 +5056,17 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 
 		if (IS_ERR_OR_NULL(off_desc)) {
 			err = !off_desc ? -ERANGE : PTR_ERR(off_desc);
-			SSDFS_ERR("fail to convert logical block: "
-				  "blk %u, err %d\n",
-				  blk, err);
+
+			if (err == -ENODATA) {
+				SSDFS_DBG("unable to convert logical block: "
+					  "blk %u, err %d\n",
+					  blk, err);
+			} else {
+				SSDFS_ERR("fail to convert logical block: "
+					  "blk %u, err %d\n",
+					  blk, err);
+			}
+
 			return err;
 		}
 

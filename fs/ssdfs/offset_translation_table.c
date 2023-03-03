@@ -5363,7 +5363,7 @@ int ssdfs_blk2off_table_get_checked_position(struct ssdfs_blk2off_table *table,
 					    SSDFS_LBMAP_STATE_INDEX,
 					    table->lblk2off_capacity,
 					    logical_blk)) {
-		SSDFS_ERR("requested block %u hasn't been allocated\n",
+		SSDFS_DBG("requested block %u hasn't been allocated\n",
 			  logical_blk);
 		return -ENODATA;
 	}
@@ -5622,6 +5622,11 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 				  logical_blk, err);
 			goto finish_translation;
 		}
+	} else if (err == -ENODATA) {
+		SSDFS_DBG("unable to get checked offset's position: "
+			  "logical_block %u, err %d\n",
+			  logical_blk, err);
+		goto finish_translation;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get checked offset's position: "
 			  "logical_block %u, err %d\n",

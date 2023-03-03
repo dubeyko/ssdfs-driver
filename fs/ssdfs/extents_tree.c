@@ -5911,6 +5911,11 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 
 	tree->generic_tree = NULL;
 
+	memset(inline_forks, 0xFF, fork_size * SSDFS_INLINE_FORKS_COUNT);
+
+	if (forks_count == 0)
+		goto destroy_root_node;
+
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
 		SSDFS_ERR("fail to allocate btree search object\n");
@@ -5945,8 +5950,6 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 			  search->result.state);
 		goto finish_process_range;
 	}
-
-	memset(inline_forks, 0xFF, fork_size * SSDFS_INLINE_FORKS_COUNT);
 
 	if (search->result.buf_size != (fork_size * forks_count) ||
 	    search->result.items_in_buffer != forks_count) {
@@ -6041,19 +6044,20 @@ int ssdfs_migrate_generic2inline_tree(struct ssdfs_extents_btree_info *tree)
 		goto finish_process_range;
 	}
 
-	err = ssdfs_btree_destroy_node_range(&tree->buffer.tree,
-					     0);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to destroy nodes' range: err %d\n",
-			  err);
-		goto finish_process_range;
-	}
-
 finish_process_range:
 	ssdfs_btree_search_free(search);
 
 	if (unlikely(err))
 		return err;
+
+destroy_root_node:
+	err = ssdfs_btree_destroy_node_range(&tree->buffer.tree,
+					     0);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to destroy nodes' range: err %d\n",
+			  err);
+		return err;
+	}
 
 	ssdfs_btree_destroy(&tree->buffer.tree);
 
@@ -6109,6 +6113,7 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_raw_fork fork;
 	u64 blks_count;
 	ino_t ino;
+	bool need_delete_whole_tree = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6140,6 +6145,9 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 			  atomic_read(&tree->state));
 		return -ERANGE;
 	};
+
+	if (blk == 0 && new_len == 0)
+		need_delete_whole_tree = true;
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
@@ -6185,8 +6193,14 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 
 		switch (search->result.state) {
 		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-			search->request.type =
-				SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+			if (need_delete_whole_tree) {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_DELETE_ALL;
+			} else {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+			}
+
 			err = ssdfs_extents_tree_delete_inline_fork(tree,
 								   search);
 			if (unlikely(err)) {
@@ -6210,8 +6224,14 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 			}
 
 			if (err == -ENODATA) {
-				search->request.type =
-					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				if (need_delete_whole_tree) {
+					search->request.type =
+					    SSDFS_BTREE_SEARCH_DELETE_ALL;
+				} else {
+					search->request.type =
+					    SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				}
+
 				err =
 				    ssdfs_extents_tree_delete_inline_fork(tree,
 									search);
@@ -6309,10 +6329,19 @@ finish_truncate_inline_fork:
 
 		switch (search->result.state) {
 		case SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND:
-			search->request.type =
-				SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+			if (need_delete_whole_tree) {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_DELETE_ALL;
+			} else {
+				search->request.type =
+					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+			}
+
 			err = ssdfs_extents_tree_delete_fork(tree, search);
-			if (unlikely(err)) {
+			if (err == -ENOENT) {
+				err = 0;
+				SSDFS_DBG("tree is empty\n");
+			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to delete fork: err %d\n", err);
 				goto finish_truncate_generic_fork;
 			}
@@ -6332,11 +6361,20 @@ finish_truncate_inline_fork:
 			}
 
 			if (err == -ENODATA) {
-				search->request.type =
-					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				if (need_delete_whole_tree) {
+					search->request.type =
+					    SSDFS_BTREE_SEARCH_DELETE_ALL;
+				} else {
+					search->request.type =
+					    SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
+				}
+
 				err = ssdfs_extents_tree_delete_fork(tree,
 								     search);
-				if (unlikely(err)) {
+				if (err == -ENOENT) {
+					err = 0;
+					SSDFS_DBG("tree is empty\n");
+				} else if (unlikely(err)) {
 					SSDFS_ERR("fail to delete fork: "
 						  "err %d\n", err);
 					goto finish_truncate_generic_fork;
@@ -12296,6 +12334,13 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 	forks_count = items_area.items_count;
 	item_index = search->result.start_index;
 
+	if (item_index >= forks_count) {
+		SSDFS_ERR("invalid request: "
+			  "item_index %u >= forks_count %u\n",
+			  item_index, forks_count);
+		return -ERANGE;
+	}
+
 	range_len = search->request.count;
 	if (range_len == 0) {
 		SSDFS_ERR("range_len == 0\n");
@@ -12304,6 +12349,7 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
+	case SSDFS_BTREE_SEARCH_DELETE_RANGE:
 		if ((item_index + range_len) > items_area.items_count) {
 			SSDFS_ERR("invalid request: "
 				  "item_index %d, count %u\n",
@@ -12312,10 +12358,14 @@ int __ssdfs_extents_btree_node_delete_range(struct ssdfs_btree_node *node,
 		}
 		break;
 
-	case SSDFS_BTREE_SEARCH_DELETE_RANGE:
 	case SSDFS_BTREE_SEARCH_DELETE_ALL:
+		/* request can be distributed between several nodes */
+		range_len = forks_count;
+		break;
+
 	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		/* request can be distributed between several nodes */
+		range_len = forks_count - item_index;
 		break;
 
 	default:
@@ -12494,12 +12544,12 @@ finish_detect_affected_items:
 
 	down_write(&node->header_lock);
 
-	if (node->items_area.items_count < search->request.count)
+	if (node->items_area.items_count < range_len)
 		node->items_area.items_count = 0;
 	else
-		node->items_area.items_count -= search->request.count;
+		node->items_area.items_count -= range_len;
 
-	deleted_space = (u32)search->request.count * item_size;
+	deleted_space = (u32)range_len * item_size;
 	free_space = node->items_area.free_space;
 	if ((free_space + deleted_space) > node->items_area.area_size) {
 		err = -ERANGE;
