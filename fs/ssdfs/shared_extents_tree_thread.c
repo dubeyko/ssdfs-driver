@@ -366,6 +366,15 @@ try_invalidate_queue:
 			} else {
 				err = 0;
 				ssdfs_extents_queue_add_tail(eq, ei);
+
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("return extent to queue: "
+					  "(seg_id %llu, logical_blk %u, len %u)\n",
+					  le64_to_cpu(ei->raw.extent.seg_id),
+					  le32_to_cpu(ei->raw.extent.logical_blk),
+					  le32_to_cpu(ei->raw.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 				wait_event_interruptible_timeout(*wait_queue,
 							kthread_should_stop(),
 							HZ);

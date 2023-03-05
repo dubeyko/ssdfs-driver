@@ -1846,6 +1846,7 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 	case SSDFS_SEG_INDEX_NODE_USING:
 	case SSDFS_SEG_USED:
 	case SSDFS_SEG_PRE_DIRTY:
+	case SSDFS_SEG_DIRTY:
 		err = ssdfs_segment_change_state(si);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change segment's state: "
@@ -1855,7 +1856,6 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 		}
 		break;
 
-	case SSDFS_SEG_DIRTY:
 	case SSDFS_SEG_BAD:
 	case SSDFS_SEG_RESERVED:
 		SSDFS_ERR("invalid segment state: %#x\n",
@@ -2040,12 +2040,16 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
 #else
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = cur_seg->fsi;
@@ -2245,6 +2249,8 @@ int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
 		  req->extent.ino, req->extent.logical_offset,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot);
+	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
 #else
 	SSDFS_DBG("ino %llu, logical_offset %llu, "
 		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",

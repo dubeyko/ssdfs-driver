@@ -967,7 +967,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	u32 i;
 	u32 start_blk;
 	u32 len;
-	int err = 0;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !index);
@@ -1258,8 +1258,8 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 revert_invalidation_state:
-	err = ssdfs_revert_invalidation_to_regular_activity(si);
-	if (unlikely(err)) {
+	err1 = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err1)) {
 		SSDFS_ERR("unexpected segment %llu activity\n",
 			  si->seg_id);
 	}
@@ -1310,7 +1310,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	u32 i;
 	u32 start_blk;
 	u32 len;
-	int err = 0;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !index);
@@ -1600,8 +1600,8 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 revert_invalidation_state:
-	err = ssdfs_revert_invalidation_to_regular_activity(si);
-	if (unlikely(err)) {
+	err1 = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err1)) {
 		SSDFS_ERR("unexpected segment %llu activity\n",
 			  si->seg_id);
 	}
@@ -1636,7 +1636,7 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	u32 start_blk;
 	u32 len;
 	int i;
-	int err = 0;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !extent);
@@ -1711,8 +1711,8 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	}
 
 revert_invalidation_state:
-	err = ssdfs_revert_invalidation_to_regular_activity(si);
-	if (unlikely(err)) {
+	err1 = ssdfs_revert_invalidation_to_regular_activity(si);
+	if (unlikely(err1)) {
 		SSDFS_ERR("unexpected segment %llu activity\n",
 			  si->seg_id);
 	}

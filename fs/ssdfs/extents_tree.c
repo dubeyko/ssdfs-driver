@@ -3777,7 +3777,7 @@ int ssdfs_invalidate_inline_tail_forks(struct ssdfs_extents_btree_info *tree,
 	ino = tree->owner->vfs_inode.i_ino;
 	forks_count = atomic64_read(&tree->forks_count);
 
-	lower_bound = search->result.start_index + 1;
+	lower_bound = search->result.start_index;
 	upper_bound = forks_count - 1;
 
 	for (i = upper_bound; i >= lower_bound; i--) {
@@ -6111,7 +6111,6 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_raw_fork fork;
-	u64 blks_count;
 	ino_t ino;
 	bool need_delete_whole_tree = false;
 	int err = 0;
@@ -6252,28 +6251,6 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 					goto finish_truncate_inline_fork;
 				}
 			}
-
-			blks_count = le64_to_cpu(fork.blks_count);
-
-			if (blks_count == 0 || blks_count >= U64_MAX) {
-				/*
-				 * empty fork -> do nothing
-				 */
-			} else {
-				err =
-				    ssdfs_shextree_add_pre_invalid_fork(shextree,
-									ino,
-									&fork);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to pre-invalidate: "
-						  "(start_offset %llu, "
-						  "blks_count %llu), err %d\n",
-						le64_to_cpu(fork.start_offset),
-						le64_to_cpu(fork.blks_count),
-						err);
-					goto finish_truncate_inline_fork;
-				}
-			}
 			break;
 
 		default:
@@ -6387,28 +6364,6 @@ finish_truncate_inline_fork:
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to change fork: "
 						  "err %d\n", err);
-					goto finish_truncate_generic_fork;
-				}
-			}
-
-			blks_count = le64_to_cpu(fork.blks_count);
-
-			if (blks_count == 0 || blks_count >= U64_MAX) {
-				/*
-				 * empty fork -> do nothing
-				 */
-			} else {
-				err =
-				 ssdfs_shextree_add_pre_invalid_fork(shextree,
-								     ino,
-								     &fork);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to pre-invalidate: "
-						  "(start_offset %llu, "
-						  "blks_count %llu), err %d\n",
-						le64_to_cpu(fork.start_offset),
-						le64_to_cpu(fork.blks_count),
-						err);
 					goto finish_truncate_generic_fork;
 				}
 			}
@@ -11216,12 +11171,14 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 
 	if (is_ssdfs_btree_node_items_area_exist(node)) {
 		err = ssdfs_invalidate_forks_range(node, &items_area,
-						   0, items_area.items_count);
+						   start_index,
+						   items_area.items_count);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate forks range: "
 				  "node_id %u, range (start %u, count %u), "
 				  "err %d\n",
-				  node->node_id, 0, items_area.items_count,
+				  node->node_id, start_index,
+				  items_area.items_count,
 				  err);
 			goto finish_invalidate_index_tail;
 		}
