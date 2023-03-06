@@ -7708,6 +7708,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_extents_btree_node_header *hdr;
 	size_t hdr_size = sizeof(struct ssdfs_extents_btree_node_header);
+	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
 	struct page *page;
 	void *kaddr;
@@ -7716,6 +7717,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	u16 item_size;
 	u16 parent_ino;
 	u32 forks_count;
+	u32 used_space;
 	u16 items_capacity;
 	u32 allocated_extents, valid_extents;
 	u64 calculated_extents;
@@ -7905,6 +7907,16 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	default:
 		BUG();
 	}
+
+	used_space = forks_count * fork_size;
+	if (used_space > node->items_area.area_size) {
+		err = -EIO;
+		SSDFS_ERR("used_space %u > items_area.area_size %u\n",
+			  used_space,
+			  node->items_area.area_size);
+		goto finish_header_init;
+	}
+	node->items_area.free_space = node->items_area.area_size - used_space;
 
 	node->items_area.items_count = (u16)forks_count;
 	node->items_area.items_capacity = items_capacity;
@@ -10141,6 +10153,15 @@ int __ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 		return -EFAULT;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_area.free_space %u, items_area.area_size %u, "
+		  "items_area.items_count %u, items_area.items_capacity %u\n",
+		  items_area.free_space,
+		  items_area.area_size,
+		  items_area.items_count,
+		  items_area.items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (items_area.free_space > items_area.area_size) {
 		atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 		SSDFS_ERR("free_space %u > area_size %u\n",
@@ -10340,9 +10361,12 @@ finish_detect_affected_items:
 		  "start_hash %llx, end_hash %llx\n",
 		  node->items_area.start_hash,
 		  node->items_area.end_hash);
-	SSDFS_DBG("items_area.items_count %u, items_area.items_capacity %u\n",
+	SSDFS_DBG("items_area.items_count %u, items_area.items_capacity %u, "
+		  "items_area.free_space %u, items_area.area_size %u\n",
 		  node->items_area.items_count,
-		  node->items_area.items_capacity);
+		  node->items_area.items_capacity,
+		  node->items_area.free_space,
+		  node->items_area.area_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_correct_lookup_table(node, &node->items_area,

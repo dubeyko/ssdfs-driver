@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.48 [March 05, 2023]
+    (*) Fix issue with free space initialization in extents btree's node.
+
 v.4.47 [March 04, 2023]
     (*) Fix issue with double invalidation of the fork in extents tree.
 
