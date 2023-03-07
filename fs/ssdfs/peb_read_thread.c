@@ -29,15 +29,15 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "page_vector.h"
 #include "ssdfs.h"
 #include "compression.h"
-#include "page_vector.h"
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
-#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
+#include "offset_translation_table.h"
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
@@ -142,24 +142,93 @@ void ssdfs_prepare_blk_bmap_init_env(struct ssdfs_blk_bmap_init_env *env,
 	env->read_bytes = 0;
 }
 
-static void
-ssdfs_prepare_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
+static
+void ssdfs_destroy_blk_bmap_init_env(struct ssdfs_blk_bmap_init_env *env)
 {
-	memset(&env->tbl_hdr, 0, sizeof(struct ssdfs_blk2off_table_header));
-	pagevec_init(&env->pvec);
-	env->blk2off_tbl_hdr_off = 0;
+	ssdfs_page_vector_release(&env->array);
+	ssdfs_page_vector_destroy(&env->array);
+}
+
+static void
+ssdfs_prepare_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env,
+				     u32 pages_per_peb)
+{
+	memset(&env->hdr, 0, sizeof(struct ssdfs_blk2off_table_header));
+
+	ssdfs_page_vector_create(&env->extents.pvec, pages_per_peb);
+	env->extents.write_off = 0;
+	env->extents.bytes_count = 0;
+
+	ssdfs_page_vector_create(&env->descriptors.pvec, pages_per_peb);
+	env->descriptors.write_off = 0;
+	env->descriptors.bytes_count = 0;
+
+	env->area_offset = 0;
+	env->read_off = 0;
+}
+
+static void
+ssdfs_reinit_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
+{
+	memset(&env->hdr, 0, sizeof(struct ssdfs_blk2off_table_header));
+
+	ssdfs_page_vector_release(&env->extents.pvec);
+	ssdfs_page_vector_reinit(&env->extents.pvec);
+	env->extents.write_off = 0;
+	env->extents.bytes_count = 0;
+
+	ssdfs_page_vector_release(&env->descriptors.pvec);
+	ssdfs_page_vector_reinit(&env->descriptors.pvec);
+	env->descriptors.write_off = 0;
+	env->descriptors.bytes_count = 0;
+
+	env->read_off = 0;
+}
+
+static void
+ssdfs_destroy_blk2off_table_init_env(struct ssdfs_blk2off_table_init_env *env)
+{
+	ssdfs_page_vector_release(&env->extents.pvec);
+	ssdfs_page_vector_destroy(&env->extents.pvec);
+	env->extents.write_off = 0;
+	env->extents.bytes_count = 0;
+
+	ssdfs_page_vector_release(&env->descriptors.pvec);
+	ssdfs_page_vector_destroy(&env->descriptors.pvec);
+	env->descriptors.write_off = 0;
+	env->descriptors.bytes_count = 0;
+
+	env->area_offset = 0;
+	env->read_off = 0;
+}
+
+static void
+ssdfs_prepare_blk_desc_table_init_env(struct ssdfs_blk_desc_table_init_env *env,
+				      u32 pages_per_peb)
+{
+	memset(&env->hdr, 0, sizeof(struct ssdfs_area_block_table));
+	ssdfs_page_vector_create(&env->array, pages_per_peb);
 	env->read_off = 0;
 	env->write_off = 0;
 }
 
 static void
-ssdfs_prepare_blk_desc_table_init_env(struct ssdfs_blk_desc_table_init_env *env)
+ssdfs_reinit_blk_desc_table_init_env(struct ssdfs_blk_desc_table_init_env *env)
 {
-	pagevec_init(&env->pvec);
-	env->compressed_buf = NULL;
-	env->buf_size = 0;
+	memset(&env->hdr, 0, sizeof(struct ssdfs_area_block_table));
+
+	ssdfs_page_vector_release(&env->array);
+	ssdfs_page_vector_reinit(&env->array);
+
 	env->read_off = 0;
 	env->write_off = 0;
+}
+
+static void
+ssdfs_destroy_blk_desc_table_init_env(struct ssdfs_blk_desc_table_init_env *env)
+{
+	ssdfs_page_vector_release(&env->array);
+	ssdfs_page_vector_destroy(&env->array);
 }
 
 static
@@ -202,8 +271,8 @@ int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env,
 	env->log_bytes = U32_MAX;
 
 	ssdfs_prepare_blk_bmap_init_env(&env->b_init, pages_per_peb);
-	ssdfs_prepare_blk2off_table_init_env(&env->t_init);
-	ssdfs_prepare_blk_desc_table_init_env(&env->bdt_init);
+	ssdfs_prepare_blk2off_table_init_env(&env->t_init, pages_per_peb);
+	ssdfs_prepare_blk_desc_table_init_env(&env->bdt_init, pages_per_peb);
 
 	return 0;
 }
@@ -227,19 +296,10 @@ void ssdfs_destroy_init_env(struct ssdfs_read_init_env *env)
 	env->footer = NULL;
 	env->has_footer = false;
 
-	ssdfs_page_vector_release(&env->b_init.array);
-	ssdfs_page_vector_destroy(&env->b_init.array);
-
-	ssdfs_read_pagevec_release(&env->t_init.pvec);
-	ssdfs_read_pagevec_release(&env->bdt_init.pvec);
-
-	if (env->bdt_init.compressed_buf)
-		ssdfs_read_kfree(env->bdt_init.compressed_buf);
+	ssdfs_destroy_blk_bmap_init_env(&env->b_init);
+	ssdfs_destroy_blk2off_table_init_env(&env->t_init);
+	ssdfs_destroy_blk_desc_table_init_env(&env->bdt_init);
 }
-
-static
-int ssdfs_read_blk2off_table_fragment(struct ssdfs_peb_info *pebi,
-				      struct ssdfs_read_init_env *env);
 
 /******************************************************************************
  *                          READ THREAD FUNCTIONALITY                         *
@@ -717,14 +777,14 @@ fail_read_page:
 }
 
 /*
- * __ssdfs_decompress_blk_desc_fragment() - decompress blk desc fragment
+ * __ssdfs_decompress_blk2off_fragment() - decompress blk2off fragment
  * @pebi: pointer on PEB object
  * @frag: fragment descriptor
  * @area_offset: area offset in bytes
  * @read_buffer: buffer to read [out]
  * @buf_size: size of buffer in bytes
  *
- * This function tries to decompress block descriptor fragment.
+ * This function tries to decompress offset translation table's fragment.
  *
  * RETURN:
  * [success]
@@ -735,10 +795,10 @@ fail_read_page:
  * %-ENOMEM     - fail to allocate memory.
  */
 static
-int __ssdfs_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
-					 struct ssdfs_fragment_desc *frag,
-					 u32 area_offset,
-					 void *read_buffer, size_t buf_size)
+int __ssdfs_decompress_blk2off_fragment(struct ssdfs_peb_info *pebi,
+					struct ssdfs_fragment_desc *frag,
+					u32 area_offset,
+					void *read_buffer, size_t buf_size)
 {
 	void *cdata_buf = NULL;
 	u32 frag_offset;
@@ -789,10 +849,14 @@ int __ssdfs_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 
 	switch (frag->type) {
 	case SSDFS_DATA_BLK_DESC_ZLIB:
+	case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
+	case SSDFS_BLK2OFF_DESC_ZLIB:
 		compr_type = SSDFS_COMPR_ZLIB;
 		break;
 
 	case SSDFS_DATA_BLK_DESC_LZO:
+	case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+	case SSDFS_BLK2OFF_DESC_LZO:
 		compr_type = SSDFS_COMPR_LZO;
 		break;
 
@@ -835,7 +899,7 @@ int __ssdfs_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("BLK DESC FRAGMENT DUMP\n");
+	SSDFS_DBG("FRAGMENT DUMP\n");
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     read_buffer, buf_size);
 	SSDFS_DBG("\n");
@@ -898,8 +962,8 @@ int ssdfs_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 		}
 	}
 
-	return __ssdfs_decompress_blk_desc_fragment(pebi, frag, area_offset,
-						    buf->ptr, buf->size);
+	return __ssdfs_decompress_blk2off_fragment(pebi, frag, area_offset,
+						   buf->ptr, buf->size);
 }
 
 /*
@@ -5106,6 +5170,866 @@ finish_read_page:
 }
 
 /*
+ * ssdfs_read_blk2off_table_header() - read blk2off table header
+ * @pebi: pointer on PEB object
+ * @env: init environment [in|out]
+ *
+ * This function tries to read blk2off table header.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_read_blk2off_table_header(struct ssdfs_peb_info *pebi,
+				    struct ssdfs_read_init_env *env)
+{
+	struct ssdfs_blk2off_table_header *hdr = NULL;
+	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env || !env->log_hdr || !env->footer);
+	BUG_ON(ssdfs_page_vector_count(&env->t_init.extents.pvec) != 0);
+	BUG_ON(ssdfs_page_vector_count(&env->t_init.descriptors.pvec) != 0);
+
+	SSDFS_DBG("seg %llu, peb %llu, read_off %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_unaligned_read_cache(pebi,
+					 env->t_init.read_off, hdr_size,
+					 &env->t_init.hdr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read table's header: "
+			  "seg %llu, peb %llu, offset %u, size %zu, err %d\n",
+			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+			  env->t_init.read_off, hdr_size, err);
+		return err;
+	}
+
+	hdr = &env->t_init.hdr;
+
+	if (le32_to_cpu(hdr->magic.common) != SSDFS_SUPER_MAGIC ||
+	    le16_to_cpu(hdr->magic.key) != SSDFS_BLK2OFF_TABLE_HDR_MAGIC) {
+		SSDFS_ERR("invalid magic of blk2off_table\n");
+		return -EIO;
+	}
+
+	env->t_init.read_off += hdr_size;
+
+	return 0;
+}
+
+/*
+ * __ssdfs_read_blk2off_byte_stream() - read blk2off byte stream
+ * @pebi: pointer on PEB object
+ * @frag_type: fragment type
+ * @frag_offset: fragment offset
+ * @read_bytes: amount of bytes for reading
+ * @env: init environment [in|out]
+ *
+ * This function tries to read blk2off table's byte stream.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int __ssdfs_read_blk2off_byte_stream(struct ssdfs_peb_info *pebi,
+				     int frag_type,
+				     u32 frag_offset,
+				     u32 read_bytes,
+				     struct ssdfs_read_init_env *env)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_content_stream *stream = NULL;
+	struct page *page = NULL;
+	void *kaddr;
+	u32 diff;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env);
+
+	SSDFS_DBG("seg %llu, peb %llu, frag_type %#x, "
+		  "frag_offset %u, read_bytes %u, read_off %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  frag_type, frag_offset, read_bytes,
+		  env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+
+	diff = env->t_init.read_off - env->t_init.area_offset;
+	if (diff != frag_offset) {
+		SSDFS_ERR("invalid fragment offset: "
+			  "seg %llu, peb %llu, "
+			  "area_offset %u, read_off %u, "
+			  "frag_offset %u\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  env->t_init.area_offset,
+			  env->t_init.read_off,
+			  frag_offset);
+		return -ERANGE;
+	}
+
+	switch (frag_type) {
+	case SSDFS_BLK2OFF_EXTENT_DESC:
+		stream = &env->t_init.extents;
+		break;
+
+	case SSDFS_BLK2OFF_DESC:
+		stream = &env->t_init.descriptors;
+		break;
+
+	default:
+		BUG();
+	}
+
+	if (read_bytes > PAGE_SIZE) {
+		SSDFS_ERR("invalid size: read_bytes %u\n",
+			  read_bytes);
+		return -E2BIG;
+	}
+
+	page = ssdfs_page_vector_allocate(&stream->pvec);
+	if (unlikely(IS_ERR_OR_NULL(page))) {
+		err = !page ? -ENOMEM : PTR_ERR(page);
+		SSDFS_ERR("fail to add pagevec page: err %d\n",
+			  err);
+		return err;
+	}
+
+	ssdfs_lock_page(page);
+	kaddr = kmap_local_page(page);
+	err = ssdfs_unaligned_read_cache(pebi,
+					 env->t_init.read_off, read_bytes,
+					 (u8 *)kaddr);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
+	ssdfs_unlock_page(page);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read page: "
+			  "seg %llu, peb %llu, offset %u, "
+			  "size %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, env->t_init.read_off,
+			  read_bytes, err);
+		return err;
+	}
+
+	env->t_init.read_off += read_bytes;
+	stream->write_off += PAGE_SIZE;
+	stream->bytes_count += read_bytes;
+
+	return 0;
+}
+
+/*
+ * ssdfs_read_blk2off_pot_fragment() - read blk2off table's POT fragment
+ * @pebi: pointer on PEB object
+ * @frag_type: fragment type
+ * @frag_offset: fragment offset
+ * @frag_size: fragment size
+ * @env: init environment [in|out]
+ *
+ * This function tries to read blk2off table's Physical Offsets Table
+ * fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
+				    int frag_type,
+				    u32 frag_offset,
+				    u32 frag_size,
+				    struct ssdfs_read_init_env *env)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_phys_offset_table_header hdr;
+	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
+	u32 start_off, next_frag_off;
+	u32 read_bytes;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env);
+
+	SSDFS_DBG("seg %llu, peb %llu, frag_type %#x, "
+		  "frag_offset %u, frag_size %u, read_off %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  frag_type, frag_offset, frag_size,
+		  env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	start_off = env->t_init.read_off;
+
+	err = ssdfs_unaligned_read_cache(pebi,
+					 start_off, hdr_size,
+					 &hdr);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read page: "
+			  "seg %llu, peb %llu, offset %u, "
+			  "size %zu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, start_off,
+			  hdr_size, err);
+		return err;
+	}
+
+	if (le32_to_cpu(hdr.magic) != SSDFS_PHYS_OFF_TABLE_MAGIC) {
+		SSDFS_ERR("invalid magic\n");
+		return -EIO;
+	}
+
+	read_bytes = le32_to_cpu(hdr.byte_size);
+
+	if (read_bytes != frag_size) {
+		SSDFS_ERR("corrupted fragment: "
+			  "read_bytes %u != frag_size %u\n",
+			  read_bytes, frag_size);
+		return -EIO;
+	}
+
+	err = __ssdfs_read_blk2off_byte_stream(pebi, frag_type,
+						frag_offset, read_bytes,
+						env);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read byte stream: err %d\n",
+			  err);
+		return err;
+	}
+
+	next_frag_off = le16_to_cpu(hdr.next_fragment_off);
+
+	if (next_frag_off >= U16_MAX)
+		goto finish_read_blk2off_pot_fragment;
+
+	next_frag_off += start_off;
+
+	if (next_frag_off != env->t_init.read_off) {
+		SSDFS_ERR("next_frag_off %u != read_off %u\n",
+			  next_frag_off, env->t_init.read_off);
+		return -EIO;
+	}
+
+finish_read_blk2off_pot_fragment:
+	return 0;
+}
+
+/*
+ * ssdfs_read_blk2off_compressed_byte_stream() - read compressed byte stream
+ * @pebi: pointer on PEB object
+ * @frag: pointer on fragment descriptor
+ * @env: init environment [in|out]
+ * @processed_bytes: number of processed bytes [in|out]
+ *
+ * This function tries to read blk2off table's compressed stream.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_read_blk2off_compressed_byte_stream(struct ssdfs_peb_info *pebi,
+					      struct ssdfs_fragment_desc *frag,
+					      struct ssdfs_read_init_env *env,
+					      u32 *processed_bytes)
+{
+	struct ssdfs_content_stream *stream = NULL;
+	struct ssdfs_phys_offset_table_header *hdr;
+	struct page *page = NULL;
+	void *kaddr;
+	u32 area_offset;
+	u32 frag_offset;
+	u16 frag_compr_size;
+	u16 frag_uncompr_size;
+	u32 magic;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!frag || !env || !processed_bytes);
+
+	SSDFS_DBG("seg %llu, peb %llu, frag_type %#x, "
+		  "frag_offset %u, compr_size %u, "
+		  "uncompr_size %u, read_off %u, "
+		  "processed_bytes %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  frag->type,
+		  le32_to_cpu(frag->offset),
+		  le16_to_cpu(frag->compr_size),
+		  le16_to_cpu(frag->uncompr_size),
+		  env->t_init.read_off,
+		  *processed_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (frag->type) {
+	case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
+	case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+		stream = &env->t_init.extents;
+		page = ssdfs_page_vector_allocate(&stream->pvec);
+		if (unlikely(IS_ERR_OR_NULL(page))) {
+			err = !page ? -ENOMEM : PTR_ERR(page);
+			SSDFS_ERR("fail to add pagevec page: err %d\n",
+				  err);
+			return err;
+		}
+		break;
+
+	case SSDFS_BLK2OFF_DESC_ZLIB:
+	case SSDFS_BLK2OFF_DESC_LZO:
+		stream = &env->t_init.descriptors;
+		page = ssdfs_page_vector_allocate(&stream->pvec);
+		if (unlikely(IS_ERR_OR_NULL(page))) {
+			err = !page ? -ENOMEM : PTR_ERR(page);
+			SSDFS_ERR("fail to add pagevec page: err %d\n",
+				  err);
+			return err;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected fragment's type %#x\n",
+			  frag->type);
+		return -EIO;
+	}
+
+	area_offset = env->t_init.area_offset;
+	frag_offset = le32_to_cpu(frag->offset);
+	frag_compr_size = le16_to_cpu(frag->compr_size);
+	frag_uncompr_size = le16_to_cpu(frag->uncompr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_lock_page(page);
+	kaddr = kmap_local_page(page);
+	err = __ssdfs_decompress_blk2off_fragment(pebi, frag,
+						  area_offset,
+						  kaddr, PAGE_SIZE);
+	hdr = (struct ssdfs_phys_offset_table_header *)kaddr;
+	magic = le32_to_cpu(hdr->magic);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
+	ssdfs_unlock_page(page);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read page: "
+			  "seg %llu, peb %llu, offset %u, "
+			  "size %u, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, env->t_init.read_off,
+			  frag_uncompr_size, err);
+		return err;
+	}
+
+	if (magic != SSDFS_PHYS_OFF_TABLE_MAGIC) {
+		SSDFS_ERR("invalid magic\n");
+		return -EIO;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!stream);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	env->t_init.read_off += frag_compr_size;
+	stream->write_off += PAGE_SIZE;
+	stream->bytes_count += frag_uncompr_size;
+	*processed_bytes += frag_compr_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("compr_size %u, uncompr_size %u, "
+		  "processed_bytes %u\n",
+		  frag_compr_size, frag_uncompr_size,
+		  *processed_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * __ssdfs_read_blk2off_compressed_fragment() - read compressed fragment
+ * @pebi: pointer on PEB object
+ * @env: init environment [in|out]
+ * @processed_bytes: number of processed bytes [in|out]
+ *
+ * This function tries to read blk2off table's Physical Offsets Table
+ * compressed fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int __ssdfs_read_blk2off_compressed_fragment(struct ssdfs_peb_info *pebi,
+					     struct ssdfs_read_init_env *env,
+					     u32 *processed_bytes)
+{
+	struct ssdfs_fragment_desc *frag;
+	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
+	u32 area_offset;
+	u32 frag_offset;
+	u16 fragments_count;
+	u16 frag_uncompr_size;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env || !processed_bytes);
+
+	SSDFS_DBG("seg %llu, peb %llu, "
+		  "read_off %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*processed_bytes = 0;
+
+	err = ssdfs_read_blk2off_table_header(pebi, env);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read blk2off table header: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	*processed_bytes += hdr_size;
+
+	area_offset = env->t_init.area_offset;
+
+	if (env->t_init.hdr.chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
+		SSDFS_ERR("corrupted chain header: "
+			  "magic (expected %#x, found %#x)\n",
+			  SSDFS_CHAIN_HDR_MAGIC,
+			  env->t_init.hdr.chain_hdr.magic);
+		return -EIO;
+	}
+
+	switch (env->t_init.hdr.chain_hdr.type) {
+	case SSDFS_BLK2OFF_ZLIB_CHAIN_HDR:
+	case SSDFS_BLK2OFF_LZO_CHAIN_HDR:
+		/* expected type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected chain header's type %#x\n",
+			  env->t_init.hdr.chain_hdr.type);
+		return -EIO;
+	}
+
+	fragments_count =
+		le16_to_cpu(env->t_init.hdr.chain_hdr.fragments_count);
+
+	for (i = 0; i < fragments_count; i++) {
+		frag = &env->t_init.hdr.blk[i];
+
+		if (frag->magic != SSDFS_FRAGMENT_DESC_MAGIC) {
+			SSDFS_ERR("corrupted fragment: "
+				  "magic (expected %#x, found %#x)\n",
+				  SSDFS_FRAGMENT_DESC_MAGIC,
+				  frag->magic);
+			return -EIO;
+		}
+
+		frag_offset = le32_to_cpu(frag->offset);
+		frag_uncompr_size = le16_to_cpu(frag->uncompr_size);
+
+		switch (frag->type) {
+		case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
+		case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+		case SSDFS_BLK2OFF_DESC_ZLIB:
+		case SSDFS_BLK2OFF_DESC_LZO:
+			err = ssdfs_read_blk2off_compressed_byte_stream(pebi,
+							    frag, env,
+							    processed_bytes);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read compressed stream: "
+					  "index %d, err %d\n",
+					  i, err);
+				return err;
+			}
+			break;
+
+		case SSDFS_BLK2OFF_EXTENT_DESC:
+			err = __ssdfs_read_blk2off_byte_stream(pebi,
+							frag->type,
+							frag_offset,
+							frag_uncompr_size,
+							env);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read fragment: "
+					  "seg %llu, peb %llu, index %d, "
+					  "frag_offset %u, frag_size %u\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  i,
+					  frag_offset,
+					  frag_uncompr_size);
+				return err;
+			}
+
+			*processed_bytes += frag_uncompr_size;
+			break;
+
+			case SSDFS_BLK2OFF_DESC:
+				err = ssdfs_read_blk2off_pot_fragment(pebi,
+							      frag->type,
+							      frag_offset,
+							      frag_uncompr_size,
+							      env);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read fragment: "
+					  "seg %llu, peb %llu, index %d, "
+					  "frag_offset %u, frag_size %u\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  i,
+					  frag_offset,
+					  frag_uncompr_size);
+				return err;
+			}
+
+			*processed_bytes += frag_uncompr_size;
+			break;
+
+		case SSDFS_NEXT_TABLE_DESC:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(i != SSDFS_NEXT_BLK2OFF_TBL_INDEX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			env->t_init.read_off = area_offset + frag_offset;
+
+			SSDFS_DBG("process next table descriptor: "
+				  "offset %u\n",
+				  env->t_init.read_off);
+			return -EAGAIN;
+
+		default:
+			SSDFS_ERR("unexpected fragment's type %#x\n",
+				  frag->type);
+			return -EIO;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_read_blk2off_compressed_fragment() - read compressed fragment
+ * @pebi: pointer on PEB object
+ * @read_bytes: size of fragment in bytes
+ * @env: init environment [in|out]
+ *
+ * This function tries to read blk2off table's Physical Offsets Table
+ * compressed fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_read_blk2off_compressed_fragment(struct ssdfs_peb_info *pebi,
+					   u32 read_bytes,
+					   struct ssdfs_read_init_env *env)
+{
+	u32 processed_bytes = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env);
+
+	SSDFS_DBG("seg %llu, peb %llu, read_bytes %u, "
+		  "read_off %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  read_bytes, env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		u32 bytes_count = 0;
+
+		err = __ssdfs_read_blk2off_compressed_fragment(pebi, env,
+							       &bytes_count);
+		if (err == -EAGAIN) {
+			/*
+			 * continue logic
+			 */
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to read compressed stream: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		processed_bytes += bytes_count;
+	} while (err == -EAGAIN);
+
+	if (processed_bytes != read_bytes) {
+		SSDFS_ERR("corrupted compressed stream: "
+			  "processed_bytes %u != read_bytes %u\n",
+			  processed_bytes, read_bytes);
+		return -ERANGE;
+	}
+
+	return err;
+}
+
+/*
+ * __ssdfs_read_blk2off_fragment() - read blk2off table's log's fragment
+ * @pebi: pointer on PEB object
+ * @env: init environment [in|out]
+ * @processed_bytes: number of processed bytes [in|out]
+ *
+ * This function tries to read blk2off table's log's fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int __ssdfs_read_blk2off_fragment(struct ssdfs_peb_info *pebi,
+				  struct ssdfs_read_init_env *env,
+				  u32 *processed_bytes)
+{
+	struct ssdfs_fragment_desc *frag;
+	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
+	u32 area_offset;
+	u32 frag_offset;
+	u16 fragments_count;
+	u16 frag_size;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env || !processed_bytes);
+
+	SSDFS_DBG("seg %llu, peb %llu, read_off %u\n",
+		  pebi->pebc->parent_si->seg_id,
+		  pebi->peb_id,
+		  env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*processed_bytes = 0;
+
+	err = ssdfs_read_blk2off_table_header(pebi, env);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to read blk2off table header: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	*processed_bytes += hdr_size;
+
+	area_offset = env->t_init.area_offset;
+
+	if (env->t_init.hdr.chain_hdr.magic != SSDFS_CHAIN_HDR_MAGIC) {
+		SSDFS_ERR("corrupted chain header: "
+			  "magic (expected %#x, found %#x)\n",
+			  SSDFS_CHAIN_HDR_MAGIC,
+			  env->t_init.hdr.chain_hdr.magic);
+		return -EIO;
+	}
+
+	switch (env->t_init.hdr.chain_hdr.type) {
+	case SSDFS_BLK2OFF_CHAIN_HDR:
+		/* expected type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected chain header's type %#x\n",
+			  env->t_init.hdr.chain_hdr.type);
+		return -EIO;
+	}
+
+	fragments_count =
+		le16_to_cpu(env->t_init.hdr.chain_hdr.fragments_count);
+
+	for (i = 0; i < fragments_count; i++) {
+		frag = &env->t_init.hdr.blk[i];
+
+		if (frag->magic != SSDFS_FRAGMENT_DESC_MAGIC) {
+			SSDFS_ERR("corrupted fragment: "
+				  "magic (expected %#x, found %#x)\n",
+				  SSDFS_FRAGMENT_DESC_MAGIC,
+				  frag->magic);
+			return -EIO;
+		}
+
+		frag_offset = le32_to_cpu(frag->offset);
+		frag_size = le16_to_cpu(frag->uncompr_size);
+
+		switch (frag->type) {
+		case SSDFS_BLK2OFF_EXTENT_DESC:
+			err = __ssdfs_read_blk2off_byte_stream(pebi,
+								frag->type,
+								frag_offset,
+								frag_size,
+								env);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read fragment: "
+					  "seg %llu, peb %llu, index %d, "
+					  "frag_offset %u, frag_size %u\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  i,
+					  frag_offset,
+					  frag_size);
+				return err;
+			}
+			break;
+
+		case SSDFS_BLK2OFF_DESC:
+			err = ssdfs_read_blk2off_pot_fragment(pebi,
+							      frag->type,
+							      frag_offset,
+							      frag_size,
+							      env);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read fragment: "
+					  "seg %llu, peb %llu, index %d, "
+					  "frag_offset %u, frag_size %u\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  i,
+					  frag_offset,
+					  frag_size);
+				return err;
+			}
+			break;
+
+		case SSDFS_NEXT_TABLE_DESC:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(i != SSDFS_NEXT_BLK2OFF_TBL_INDEX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			env->t_init.read_off = area_offset + frag_offset;
+
+			SSDFS_DBG("process next table descriptor: "
+				  "offset %u\n",
+				  env->t_init.read_off);
+			return -EAGAIN;
+
+		default:
+			SSDFS_ERR("unexpected fragment's type %#x\n",
+				  frag->type);
+			return -EIO;
+		}
+
+		*processed_bytes += frag_size;
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_read_blk2off_fragment() - read blk2off table's log's fragments
+ * @pebi: pointer on PEB object
+ * @read_bytes: amount of bytes for reading
+ * @env: init environment [in|out]
+ *
+ * This function tries to read blk2off table's log's fragments.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate memory.
+ * %-EIO        - I/O error.
+ */
+static
+int ssdfs_read_blk2off_fragment(struct ssdfs_peb_info *pebi,
+				u32 read_bytes,
+				struct ssdfs_read_init_env *env)
+{
+	u32 processed_bytes = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebi->pebc->parent_si->fsi);
+	BUG_ON(!env);
+
+	SSDFS_DBG("seg %llu, peb %llu, read_bytes %u, "
+		  "read_off %u\n",
+		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+		  read_bytes, env->t_init.read_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		u32 bytes_count = 0;
+
+		err = __ssdfs_read_blk2off_fragment(pebi, env, &bytes_count);
+		if (err == -EAGAIN) {
+			/*
+			 * continue logic
+			 */
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to read stream: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		processed_bytes += bytes_count;
+	} while (err == -EAGAIN);
+
+	if (processed_bytes != read_bytes) {
+		SSDFS_ERR("corrupted stream: "
+			  "processed_bytes %u != read_bytes %u\n",
+			  processed_bytes, read_bytes);
+		return -ERANGE;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_pre_fetch_blk2off_table_area() - pre-fetch blk2off table
  * @pebi: pointer on PEB object
  * @env: init environment [in|out]
@@ -5132,6 +6056,8 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 	struct page *page;
 	u32 pages_off;
 	size_t hdr_buf_size = sizeof(struct ssdfs_segment_header);
+	u16 flags;
+	bool is_compressed = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5201,9 +6127,42 @@ int ssdfs_pre_fetch_blk2off_table_area(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
+	env->t_init.area_offset = le32_to_cpu(desc->offset);
+	env->t_init.read_off = env->t_init.area_offset;
+	env->t_init.extents.write_off = 0;
+	env->t_init.descriptors.write_off = 0;
+
 	err = ssdfs_pre_fetch_metadata_area(pebi, desc);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-fetch a metadata area: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	flags = le16_to_cpu(desc->check.flags);
+
+	if ((flags & SSDFS_ZLIB_COMPRESSED) && (flags & SSDFS_LZO_COMPRESSED)) {
+		SSDFS_ERR("invalid set of flags: "
+			  "flags %#x\n",
+			  flags);
+		return -ERANGE;
+	}
+
+	is_compressed = (flags & SSDFS_ZLIB_COMPRESSED) ||
+			(flags & SSDFS_LZO_COMPRESSED);
+
+	if (is_compressed) {
+		err = ssdfs_read_blk2off_compressed_fragment(pebi,
+						      le32_to_cpu(desc->size),
+						      env);
+	} else {
+		err = ssdfs_read_blk2off_fragment(pebi,
+						  le32_to_cpu(desc->size),
+						  env);
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare block descriptor table: "
 			  "err %d\n", err);
 		return err;
 	}
@@ -5233,6 +6192,7 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 				    struct ssdfs_read_init_env *env)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_page_vector *array;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5248,16 +6208,21 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
+	array = &env->bdt_init.array;
 
 	while (read_bytes > 0) {
 		struct page *page = NULL;
 		void *kaddr;
-		pgoff_t page_index = env->bdt_init.write_off >> PAGE_SHIFT;
-		u32 capacity = pagevec_count(&env->bdt_init.pvec) << PAGE_SHIFT;
+		pgoff_t page_index;
+		u32 capacity;
 		u32 offset, bytes;
 
+		page_index = env->bdt_init.write_off >> PAGE_SHIFT;
+		capacity = ssdfs_page_vector_count(array);
+		capacity <<= PAGE_SHIFT;
+
 		if (env->bdt_init.write_off >= capacity) {
-			if (pagevec_space(&env->bdt_init.pvec) == 0) {
+			if (ssdfs_page_vector_capacity(array) == 0) {
 				/*
 				 * Block descriptor table byte stream could be
 				 * bigger than page vector capacity.
@@ -5265,13 +6230,13 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 				 * read and initialization will be done only
 				 * partially. The rest byte stream will be
 				 * extracted and be used for initialization
-				 * for request of particular logical block.
+				 * of request of particular logical block.
 				 */
 				SSDFS_DBG("pagevec is full\n");
 				return 0;
 			}
 
-			page = ssdfs_read_add_pagevec_page(&env->bdt_init.pvec);
+			page = ssdfs_page_vector_allocate(array);
 			if (unlikely(IS_ERR_OR_NULL(page))) {
 				err = !page ? -ENOMEM : PTR_ERR(page);
 				SSDFS_ERR("fail to add pagevec page: err %d\n",
@@ -5279,7 +6244,7 @@ int ssdfs_read_blk_desc_byte_stream(struct ssdfs_peb_info *pebi,
 				return err;
 			}
 		} else {
-			page = env->bdt_init.pvec.pages[page_index];
+			page = env->bdt_init.array.pages[page_index];
 			if (unlikely(!page)) {
 				err = -ERANGE;
 				SSDFS_ERR("fail to get page: err %d\n",
@@ -5427,7 +6392,7 @@ int ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 
 		frag_uncompr_size = le16_to_cpu(frag->uncompr_size);
 
-		page = ssdfs_read_add_pagevec_page(&env->bdt_init.pvec);
+		page = ssdfs_page_vector_allocate(&env->bdt_init.array);
 		if (unlikely(IS_ERR_OR_NULL(page))) {
 			err = !page ? -ENOMEM : PTR_ERR(page);
 			SSDFS_ERR("fail to add pagevec page: err %d\n",
@@ -5437,9 +6402,9 @@ int ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 
 		ssdfs_lock_page(page);
 		kaddr = kmap_local_page(page);
-		err = __ssdfs_decompress_blk_desc_fragment(pebi, frag,
-							   area_offset,
-							   kaddr, PAGE_SIZE);
+		err = __ssdfs_decompress_blk2off_fragment(pebi, frag,
+							  area_offset,
+							  kaddr, PAGE_SIZE);
 		flush_dcache_page(page);
 		kunmap_local(kaddr);
 		ssdfs_unlock_page(page);
@@ -6168,432 +7133,6 @@ fail_init_blk_bmap_fragment:
 }
 
 /*
- * ssdfs_read_blk2off_table_header() - read blk2off table header
- * @pebi: pointer on PEB object
- * @env: init environment [in|out]
- *
- * This function tries to read blk2off table header.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOMEM     - fail to allocate memory.
- * %-EIO        - I/O error.
- */
-static
-int ssdfs_read_blk2off_table_header(struct ssdfs_peb_info *pebi,
-				    struct ssdfs_read_init_env *env)
-{
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_metadata_descriptor *desc = NULL;
-	struct ssdfs_blk2off_table_header *hdr = NULL;
-	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
-	struct page *page;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env || !env->log_hdr || !env->footer);
-	BUG_ON(pagevec_count(&env->t_init.pvec) != 0);
-
-	SSDFS_DBG("seg %llu, peb %llu, read_off %u, write_off %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  env->t_init.read_off, env->t_init.write_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fsi = pebi->pebc->parent_si->fsi;
-
-	if (env->has_seg_hdr) {
-		err = ssdfs_get_segment_header_blk2off_tbl_desc(pebi, env,
-								&desc);
-	} else {
-		err = ssdfs_get_partial_header_blk2off_tbl_desc(pebi, env,
-								&desc);
-	}
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to get descriptor: "
-			  "err %d\n", err);
-		return err;
-	}
-
-	if (!desc) {
-		SSDFS_ERR("invalid descriptor pointer\n");
-		return -ERANGE;
-	}
-
-	env->t_init.read_off = le32_to_cpu(desc->offset);
-	env->t_init.blk2off_tbl_hdr_off = env->t_init.read_off;
-	env->t_init.write_off = 0;
-
-	err = ssdfs_unaligned_read_cache(pebi,
-					 env->t_init.read_off, hdr_size,
-					 &env->t_init.tbl_hdr);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read table's header: "
-			  "seg %llu, peb %llu, offset %u, size %zu, err %d\n",
-			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-			  env->t_init.read_off, hdr_size, err);
-		return err;
-	}
-
-	hdr = &env->t_init.tbl_hdr;
-
-	if (le32_to_cpu(hdr->magic.common) != SSDFS_SUPER_MAGIC ||
-	    le16_to_cpu(hdr->magic.key) != SSDFS_BLK2OFF_TABLE_HDR_MAGIC) {
-		SSDFS_ERR("invalid magic of blk2off_table\n");
-		return -EIO;
-	}
-
-	page = ssdfs_read_add_pagevec_page(&env->t_init.pvec);
-	if (unlikely(IS_ERR_OR_NULL(page))) {
-		err = !page ? -ENOMEM : PTR_ERR(page);
-		SSDFS_ERR("fail to add pagevec page: err %d\n",
-			  err);
-		return err;
-	}
-
-	ssdfs_lock_page(page);
-	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
-			     hdr, 0, hdr_size,
-			     hdr_size);
-	ssdfs_unlock_page(page);
-
-	env->t_init.read_off += offsetof(struct ssdfs_blk2off_table_header,
-					sequence);
-	env->t_init.write_off += offsetof(struct ssdfs_blk2off_table_header,
-					sequence);
-
-	return 0;
-}
-
-/*
- * ssdfs_read_blk2off_byte_stream() - read blk2off's byte stream
- * @pebi: pointer on PEB object
- * @read_bytes: amount of bytes for reading
- * @env: init environment [in|out]
- *
- * This function tries to read blk2off table's byte stream.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- * %-EIO        - I/O error.
- */
-static
-int ssdfs_read_blk2off_byte_stream(struct ssdfs_peb_info *pebi,
-				   u32 read_bytes,
-				   struct ssdfs_read_init_env *env)
-{
-	struct ssdfs_fs_info *fsi;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env);
-
-	SSDFS_DBG("seg %llu, peb %llu, read_bytes %u, "
-		  "read_off %u, write_off %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  read_bytes, env->t_init.read_off,
-		  env->t_init.write_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fsi = pebi->pebc->parent_si->fsi;
-
-	while (read_bytes > 0) {
-		struct page *page = NULL;
-		void *kaddr;
-		pgoff_t page_index = env->t_init.write_off >> PAGE_SHIFT;
-		u32 capacity = pagevec_count(&env->t_init.pvec) << PAGE_SHIFT;
-		u32 offset, bytes;
-
-		if (env->t_init.write_off >= capacity) {
-			page = ssdfs_read_add_pagevec_page(&env->t_init.pvec);
-			if (unlikely(IS_ERR_OR_NULL(page))) {
-				err = !page ? -ENOMEM : PTR_ERR(page);
-				SSDFS_ERR("fail to add pagevec page: err %d\n",
-					  err);
-				return err;
-			}
-		} else {
-			page = env->t_init.pvec.pages[page_index];
-			if (unlikely(!page)) {
-				err = -ERANGE;
-				SSDFS_ERR("fail to get page: err %d\n",
-					  err);
-				return err;
-			}
-		}
-
-		offset = env->t_init.write_off % PAGE_SIZE;
-		bytes = min_t(u32, read_bytes, PAGE_SIZE - offset);
-
-		ssdfs_lock_page(page);
-		kaddr = kmap_local_page(page);
-		err = ssdfs_unaligned_read_cache(pebi,
-						 env->t_init.read_off, bytes,
-						 (u8 *)kaddr + offset);
-		flush_dcache_page(page);
-		kunmap_local(kaddr);
-		ssdfs_unlock_page(page);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to read page: "
-				  "seg %llu, peb %llu, offset %u, "
-				  "size %u, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, env->t_init.read_off,
-				  bytes, err);
-			return err;
-		}
-
-		read_bytes -= bytes;
-		env->t_init.read_off += bytes;
-		env->t_init.write_off += bytes;
-	};
-
-	return 0;
-}
-
-/*
- * ssdfs_read_blk2off_table_extents() - read blk2off table's extents
- * @pebi: pointer on PEB object
- * @env: init environment [in|out]
- *
- * This function tries to read blk2off table's extents.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- * %-EIO        - I/O error.
- */
-static
-int ssdfs_read_blk2off_table_extents(struct ssdfs_peb_info *pebi,
-				     struct ssdfs_read_init_env *env)
-{
-	struct ssdfs_fs_info *fsi;
-	u16 extents_off;
-	u16 extent_count;
-	size_t extent_size = sizeof(struct ssdfs_translation_extent);
-	u32 offset = offsetof(struct ssdfs_blk2off_table_header, sequence);
-	u32 read_bytes;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	extents_off = le16_to_cpu(env->t_init.tbl_hdr.extents_off);
-	extent_count = le16_to_cpu(env->t_init.tbl_hdr.extents_count);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("seg %llu, peb %llu, "
-		  "extents_off %u, extent_count %u, "
-		  "read_off %u, write_off %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  extents_off, extent_count,
-		  env->t_init.read_off,
-		  env->t_init.write_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fsi = pebi->pebc->parent_si->fsi;
-
-	if (offset != extents_off) {
-		SSDFS_ERR("extents_off %u != offset %u\n",
-			  extents_off, offset);
-		return -EIO;
-	}
-
-	if (extent_count == 0 || extent_count == U16_MAX) {
-		SSDFS_ERR("invalid extent_count %u\n",
-			  extent_count);
-		return -EIO;
-	}
-
-	read_bytes = extent_size * extent_count;
-
-	err = ssdfs_read_blk2off_byte_stream(pebi, read_bytes, env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read byte stream: err %d\n",
-			  err);
-		return err;
-	}
-
-	return 0;
-}
-
-/*
- * ssdfs_read_blk2off_pot_fragment() - read blk2off table's POT fragment
- * @pebi: pointer on PEB object
- * @env: init environment [in|out]
- *
- * This function tries to read blk2off table's Physical Offsets Table
- * fragment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- * %-EIO        - I/O error.
- */
-static
-int ssdfs_read_blk2off_pot_fragment(struct ssdfs_peb_info *pebi,
-				    struct ssdfs_read_init_env *env)
-{
-	struct ssdfs_phys_offset_table_header hdr;
-	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
-	u32 fragment_start;
-	u32 next_frag_off;
-	u32 read_bytes;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env);
-
-	SSDFS_DBG("seg %llu, peb %llu, "
-		  "read_off %u, write_off %u\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  env->t_init.read_off, env->t_init.write_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fragment_start = env->t_init.read_off;
-
-	err = ssdfs_unaligned_read_cache(pebi,
-					 env->t_init.read_off, hdr_size,
-					 &hdr);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read page: "
-			  "seg %llu, peb %llu, offset %u, "
-			  "size %zu, err %d\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id, env->t_init.read_off,
-			  hdr_size, err);
-		return err;
-	}
-
-	if (le32_to_cpu(hdr.magic) != SSDFS_PHYS_OFF_TABLE_MAGIC) {
-		SSDFS_ERR("invalid magic\n");
-		return -EIO;
-	}
-
-	read_bytes = le32_to_cpu(hdr.byte_size);
-
-	err = ssdfs_read_blk2off_byte_stream(pebi, read_bytes, env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read byte stream: err %d\n",
-			  err);
-		return err;
-	}
-
-	next_frag_off = le16_to_cpu(hdr.next_fragment_off);
-
-	if (next_frag_off >= U16_MAX)
-		goto finish_read_blk2off_pot_fragment;
-
-	env->t_init.read_off = fragment_start + next_frag_off;
-
-finish_read_blk2off_pot_fragment:
-	return 0;
-}
-
-/*
- * ssdfs_read_blk2off_table_fragment() - read blk2off table's log's fragments
- * @pebi: pointer on PEB object
- * @env: init environment [in|out]
- *
- * This function tries to read blk2off table's log's fragments.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- * %-ENOMEM     - fail to allocate memory.
- * %-EIO        - I/O error.
- */
-static
-int ssdfs_read_blk2off_table_fragment(struct ssdfs_peb_info *pebi,
-				      struct ssdfs_read_init_env *env)
-{
-	struct ssdfs_fs_info *fsi;
-	u16 fragment_count;
-	int i;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
-	BUG_ON(!pebi->pebc->parent_si->fsi);
-	BUG_ON(!env || !env->log_hdr || !env->footer);
-	BUG_ON(pagevec_count(&env->t_init.pvec) != 0);
-
-	SSDFS_DBG("seg %llu, peb %llu\n",
-		  pebi->pebc->parent_si->seg_id, pebi->peb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fsi = pebi->pebc->parent_si->fsi;
-	env->t_init.read_off = 0;
-	env->t_init.write_off = 0;
-
-	err = ssdfs_read_blk2off_table_header(pebi, env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read translation table header: "
-			  "seg %llu, peb %llu, "
-			  "read_off %u, write_off %u, err %d\n",
-			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-			  env->t_init.read_off, env->t_init.write_off,
-			  err);
-		goto fail_read_blk2off_fragments;
-	}
-
-	err = ssdfs_read_blk2off_table_extents(pebi, env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read translation table's extents: "
-			  "seg %llu, peb %llu, "
-			  "read_off %u, write_off %u, err %d\n",
-			  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-			  env->t_init.read_off, env->t_init.write_off,
-			  err);
-		goto fail_read_blk2off_fragments;
-	}
-
-	fragment_count = le16_to_cpu(env->t_init.tbl_hdr.fragments_count);
-
-	for (i = 0; i < fragment_count; i++) {
-		err = ssdfs_read_blk2off_pot_fragment(pebi, env);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to read physical offset table's "
-				  "fragment: seg %llu, peb %llu, "
-				  "fragment_index %d, "
-				  "read_off %u, write_off %u, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id,
-				  i, env->t_init.read_off,
-				  env->t_init.write_off, err);
-			goto fail_read_blk2off_fragments;
-		}
-	}
-
-fail_read_blk2off_fragments:
-	return err;
-}
-
-/*
  * ssdfs_correct_zone_block_bitmap() - set all migrated blocks as invalidated
  * @pebi: pointer on PEB object
  *
@@ -6976,14 +7515,6 @@ fail_init_using_blk_bmap:
 		goto fail_init_using_peb;
 	}
 
-	err = ssdfs_read_blk2off_table_fragment(pebi, env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read translation table fragments: "
-			  "seg %llu, peb %llu, err %d\n",
-			  si->seg_id, pebi->peb_id, err);
-		goto fail_init_using_peb;
-	}
-
 	if (env->has_seg_hdr) {
 		seg_hdr = SSDFS_SEG_HDR(env->log_hdr);
 		cno = le64_to_cpu(seg_hdr->cno);
@@ -6992,9 +7523,7 @@ fail_init_using_blk_bmap:
 		cno = le64_to_cpu(pl_hdr->cno);
 	}
 
-	err = ssdfs_blk2off_table_partial_init(si->blk2off_table,
-						&env->t_init.pvec,
-						&env->bdt_init.pvec,
+	err = ssdfs_blk2off_table_partial_init(si->blk2off_table, env,
 						pebi->peb_index, cno);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start initialization of offset table: "
@@ -7172,14 +7701,6 @@ fail_init_used_blk_bmap:
 		goto fail_init_used_peb;
 	}
 
-	err = ssdfs_read_blk2off_table_fragment(pebi, env);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read translation table fragments: "
-			  "seg %llu, peb %llu, err %d\n",
-			  si->seg_id, pebi->peb_id, err);
-		goto fail_init_used_peb;
-	}
-
 	if (env->has_seg_hdr) {
 		seg_hdr = SSDFS_SEG_HDR(env->log_hdr);
 		cno = le64_to_cpu(seg_hdr->cno);
@@ -7188,11 +7709,8 @@ fail_init_used_blk_bmap:
 		cno = le64_to_cpu(pl_hdr->cno);
 	}
 
-	err = ssdfs_blk2off_table_partial_init(si->blk2off_table,
-						&env->t_init.pvec,
-						&env->bdt_init.pvec,
-						pebi->peb_index,
-						cno);
+	err = ssdfs_blk2off_table_partial_init(si->blk2off_table, env,
+						pebi->peb_index, cno);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start initialization of offset table: "
 			  "seg %llu, peb %llu, err %d\n",
@@ -8251,15 +8769,6 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 			goto fail_init_blk2off_table;
 		}
 
-		err = ssdfs_read_blk2off_table_fragment(pebi, &pebi->env);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to read translation table fragments: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
-			goto fail_init_blk2off_table;
-		}
-
 		if (pebi->env.has_seg_hdr) {
 			struct ssdfs_segment_header *seg_hdr = NULL;
 
@@ -8280,8 +8789,7 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_blk2off_table_partial_init(blk2off_table,
-						       &pebi->env.t_init.pvec,
-						       &pebi->env.bdt_init.pvec,
+						       &pebi->env,
 						       pebi->peb_index,
 						       cno);
 		if (unlikely(err)) {
@@ -8293,8 +8801,8 @@ int ssdfs_peb_complete_init_blk2off_table(struct ssdfs_peb_info *pebi,
 		}
 
 try_next_log:
-		ssdfs_read_pagevec_release(&pebi->env.t_init.pvec);
-		ssdfs_read_pagevec_release(&pebi->env.bdt_init.pvec);
+		ssdfs_reinit_blk2off_table_init_env(&pebi->env.t_init);
+		ssdfs_reinit_blk_desc_table_init_env(&pebi->env.bdt_init);
 		log_diff = 0;
 	} while (pebi->env.log_offset > 0);
 

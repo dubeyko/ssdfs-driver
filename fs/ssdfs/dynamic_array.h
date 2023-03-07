@@ -25,6 +25,7 @@
  * @state: array state
  * @item_size: size of item in bytes
  * @items_per_mem_page: number of items per memory page
+ * @items_count: items count in array
  * @capacity: maximum available items count
  * @bytes_count: currently allocated bytes count
  * @alloc_pattern: pattern to init memory pages
@@ -35,6 +36,7 @@ struct ssdfs_dynamic_array {
 	int state;
 	size_t item_size;
 	u32 items_per_mem_page;
+	u32 items_count;
 	u32 capacity;
 	u32 bytes_count;
 	u8 alloc_pattern;
@@ -92,5 +94,9 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 			    u32 index, void *ptr);
 int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				     void *copy_buf, size_t buf_size);
+void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
+					     u32 index, u32 *items_count);
+int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
+					    u32 start_index, u32 shift);
 
 #endif /* _SSDFS_DYNAMIC_ARRAY_H */

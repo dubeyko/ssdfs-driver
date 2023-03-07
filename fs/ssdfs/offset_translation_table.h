@@ -233,6 +233,8 @@ struct ssdfs_blk2off_table {
 	((struct ssdfs_offset_position *)(ptr))
 #define SSDFS_MIGRATING_BLK(ptr) \
 	((struct ssdfs_migrating_block *)(ptr))
+#define SSDFS_TRANS_EXT(ptr) \
+	((struct ssdfs_translation_extent *)(ptr))
 
 enum {
 	SSDFS_BLK2OFF_OBJECT_UNKNOWN,
@@ -336,8 +338,7 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 			   int state);
 void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table);
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
-				     struct pagevec *blk2off_pvec,
-				     struct pagevec *blk2_desc_pvec,
+				     struct ssdfs_read_init_env *env,
 				     u16 peb_index,
 				     u64 cno);
 int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
@@ -350,20 +351,20 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 				 struct ssdfs_blk2off_table_snapshot *snapshot);
 void ssdfs_blk2off_table_free_snapshot(struct ssdfs_blk2off_table_snapshot *sp);
 int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
-					struct ssdfs_translation_extent *array,
-					u16 capacity,
-					u16 *extent_count);
-int ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
-				    u16 peb_index, u16 sequence_id,
-				    u32 *offset_table_off,
-				    struct ssdfs_blk2off_table_snapshot *sp);
+					struct ssdfs_dynamic_array *array,
+					u16 capacity, u16 *extent_count);
+
+int
+ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
+				       u16 peb_index, u16 sequence_id,
+				       struct ssdfs_blk2off_table_snapshot *sp);
 int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
 					 struct ssdfs_blk2off_table_header *hdr,
 					 pgoff_t *cur_page,
 					 u32 *write_offset);
 int
 ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
-				      struct ssdfs_translation_extent *array,
+				      struct ssdfs_dynamic_array *array,
 				      u16 extent_count,
 				      pgoff_t *cur_page,
 				      u32 *write_offset);
@@ -379,7 +380,7 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 int
 ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 				    struct ssdfs_blk2off_table_snapshot *sp,
-				    struct ssdfs_translation_extent *array,
+				    struct ssdfs_dynamic_array *array,
 				    u16 extent_count);
 
 bool ssdfs_blk2off_table_dirtied(struct ssdfs_blk2off_table *table,

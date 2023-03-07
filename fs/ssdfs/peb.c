@@ -26,14 +26,15 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "page_vector.h"
 #include "ssdfs.h"
 #include "compression.h"
 #include "page_vector.h"
 #include "block_bitmap.h"
 #include "segment_bitmap.h"
-#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
+#include "offset_translation_table.h"
 #include "peb_container.h"
 #include "segment.h"
 #include "peb_mapping_table.h"
@@ -351,6 +352,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	struct ssdfs_peb_area *area;
 	struct ssdfs_peb_temp_buffer *write_buf;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
+	size_t blk2off_tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	size_t buf_size;
 	u16 flags;
 	size_t bmap_bytes;
@@ -394,6 +396,12 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 			  bmap_pages, err);
 		return err;
 	}
+
+	memset(&pebi->current_log.blk2off_tbl.hdr, 0xFF,
+		sizeof(struct ssdfs_blk2off_table_header));
+	pebi->current_log.blk2off_tbl.reserved_offset = U32_MAX;
+	pebi->current_log.blk2off_tbl.compressed_offset = blk2off_tbl_hdr_size;
+	pebi->current_log.blk2off_tbl.sequence_id = 0;
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		struct ssdfs_peb_area_metadata *metadata;

@@ -64,7 +64,7 @@
 
 /* SSDFS revision */
 #define SSDFS_MAJOR_REVISION		1
-#define SSDFS_MINOR_REVISION		15
+#define SSDFS_MINOR_REVISION		16
 
 /* SSDFS constants */
 #define SSDFS_MAX_NAME_LEN		255

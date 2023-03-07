@@ -21,6 +21,7 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "page_vector.h"
 #include "ssdfs.h"
 #include "dynamic_array.h"
 
@@ -120,6 +121,7 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 	}
 
 	array->capacity = capacity;
+	array->items_count = 0;
 	array->item_size = item_size;
 	array->items_per_mem_page = PAGE_SIZE / item_size;
 
@@ -234,6 +236,7 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
 	}
 
 	array->capacity = 0;
+	array->items_count = 0;
 	array->item_size = 0;
 	array->items_per_mem_page = 0;
 	array->bytes_count = 0;
@@ -386,6 +389,149 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 		SSDFS_WARN("unexpected state %#x\n", array->state);
 		return ERR_PTR(-ERANGE);
 	}
+
+	if (index >= array->items_count)
+		array->items_count = index + 1;
+
+	return ptr;
+}
+
+/*
+ * ssdfs_dynamic_array_get_content_locked() - get locked items range
+ * @array: pointer on dynamic array object
+ * @index: item index
+ * @items_count: items count in range [out]
+ *
+ * This method tries to get pointer on range of items. If short buffer
+ * (< 4K) represents dynamic array, then the logic is pretty
+ * straitforward. Otherwise, memory page is locked. The release
+ * method should be called to unlock memory page.
+ *
+ * RETURN:
+ * [success] - pointer on requested range.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-E2BIG      - request is out of array capacity.
+ * %-ERANGE     - internal error.
+ */
+void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
+					     u32 index, u32 *items_count)
+{
+	struct page *page;
+	void *ptr = NULL;
+	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
+	u64 item_offset = 0;
+	u64 page_index;
+	u32 page_off;
+	u32 first_index_in_page;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+
+	SSDFS_DBG("array %p, index %u, capacity %u, "
+		  "item_size %zu, bytes_count %u\n",
+		  array, index, array->capacity,
+		  array->item_size, array->bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*items_count = 0;
+
+	switch (array->state) {
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected state %#x\n", array->state);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
+		SSDFS_ERR("invalid item_size %zu\n",
+			  array->item_size);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (array->capacity == 0) {
+		SSDFS_ERR("invalid capacity %u\n",
+			  array->capacity);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (array->bytes_count == 0) {
+		SSDFS_ERR("invalid bytes_count %u\n",
+			  array->bytes_count);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (array->items_count > array->capacity) {
+		SSDFS_ERR("corrupted array: "
+			  "items_count %u > capacity %u\n",
+			  array->items_count,
+			  array->capacity);
+		return ERR_PTR(-ERANGE);
+	}
+
+	if (index >= array->capacity) {
+		SSDFS_ERR("invalid index: index %u, capacity %u\n",
+			  index, array->capacity);
+		return ERR_PTR(-ERANGE);
+	}
+
+	item_offset = (u64)array->item_size * index;
+
+	if (item_offset >= max_threshold) {
+		SSDFS_ERR("invalid item_offset: "
+			  "index %u, item_size %zu, "
+			  "item_offset %llu, bytes_count %u, "
+			  "max_threshold %llu\n",
+			  index, array->item_size,
+			  item_offset, array->bytes_count,
+			  max_threshold);
+		return ERR_PTR(-E2BIG);
+	}
+
+	switch (array->state) {
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+		page_index = index / array->items_per_mem_page;
+
+		if (page_index >= ssdfs_page_vector_count(&array->pvec)) {
+			SSDFS_ERR("invalid page index: "
+				  "page_index %llu, item_offset %llu\n",
+				  page_index, item_offset);
+			return ERR_PTR(-E2BIG);
+		}
+
+		page = array->pvec.pages[page_index];
+
+		first_index_in_page = index % array->items_per_mem_page;
+		page_off = first_index_in_page * array->item_size;
+
+		ssdfs_lock_page(page);
+		ptr = kmap_local_page(page);
+		ptr = (u8 *)ptr + page_off;
+
+		*items_count = array->items_count - index;
+		*items_count = min_t(u32, *items_count,
+					array->items_per_mem_page -
+						first_index_in_page);
+		break;
+
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		ptr = (u8 *)array->buf + item_offset;
+		*items_count = array->items_count - index;
+		break;
+
+	default:
+		SSDFS_WARN("unexpected state %#x\n", array->state);
+		return ERR_PTR(-ERANGE);
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_count %u\n", *items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ptr;
 }
@@ -631,7 +777,8 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set item: index %u, err %d\n",
 			  index, err);
-	}
+	} else if (index >= array->items_count)
+		array->items_count = index + 1;
 
 	return err;
 }
@@ -657,6 +804,8 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 	struct page *page;
 	u32 copied_bytes = 0;
 	u32 pages_count;
+	size_t bytes_count;
+	u32 items_count;
 	int i;
 	int err = 0;
 
@@ -693,8 +842,6 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 		pages_count = ssdfs_page_vector_count(&array->pvec);
 
 		for (i = 0; i < pages_count; i++) {
-			size_t bytes_count;
-
 			if (copied_bytes >= buf_size) {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("stop copy: "
@@ -725,8 +872,22 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				goto finish_copy_content;
 			}
 
-			bytes_count =
-				array->item_size * array->items_per_mem_page;
+			items_count = i * array->items_per_mem_page;
+
+			if (items_count >= array->items_count) {
+				SSDFS_DBG("stop copy: "
+					  "items_count %u, "
+					  "array->items_count %u\n",
+					  items_count,
+					  array->items_count);
+				break;
+			}
+
+			items_count = min_t(u32,
+					    array->items_count - items_count,
+					    array->items_per_mem_page);
+
+			bytes_count = array->item_size * items_count;
 			bytes_count = min_t(size_t, bytes_count,
 						buf_size - copied_bytes);
 
@@ -766,9 +927,18 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 		break;
 
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		bytes_count = array->item_size * array->items_count;
+
+		if (bytes_count > array->bytes_count) {
+			SSDFS_ERR("corrupted array: "
+				  "bytes_count %zu > array->bytes_count %u\n",
+				  bytes_count, array->bytes_count);
+			return -ERANGE;
+		}
+
 		err = ssdfs_memcpy(copy_buf, 0, buf_size,
 				   array->buf, 0, array->bytes_count,
-				   array->bytes_count);
+				   bytes_count);
 		break;
 
 	default:
@@ -778,4 +948,459 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 
 finish_copy_content:
 	return err;
+}
+
+/*
+ * ssdfs_shift_page_vector_content_right() - shift page vector content right
+ * @array: pointer on dynamic array object
+ * @start_index: starting item index
+ * @shift: shift value
+ *
+ * This method tries to shift range of items in array's content.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
+					  u32 start_index, u32 shift)
+{
+	int page_index1, page_index2;
+	int src_index, dst_index;
+	struct page *page1, *page2;
+	u32 item_offset1, item_offset2;
+	void *kaddr;
+	u32 vector_capacity;
+	u32 range_len;
+	u32 moved_items = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+
+	SSDFS_DBG("array %p, start_index %u, shift %u, "
+		  "capacity %u, item_size %zu, bytes_count %u\n",
+		  array, start_index, shift, array->capacity,
+		  array->item_size, array->bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (array->state) {
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected state %#x\n", array->state);
+		return -ERANGE;
+	}
+
+	vector_capacity = ssdfs_page_vector_capacity(&array->pvec);
+
+	range_len = array->items_count - start_index;
+	src_index = start_index + range_len - 1;
+	dst_index = src_index + shift;
+
+	if (dst_index >= array->capacity) {
+		SSDFS_ERR("shift is out of area: "
+			  "src_index %d, shift %u, "
+			  "capacity %u\n",
+			  src_index, shift,
+			  array->capacity);
+		return -ERANGE;
+	}
+
+	do {
+		u32 offset_diff;
+		u32 index_diff;
+		int moving_items;
+		u32 moving_bytes;
+
+		page_index2 = dst_index / array->items_per_mem_page;
+		if (page_index2 >= vector_capacity) {
+			SSDFS_ERR("invalid page index: "
+				  "page_index %d, capacity %u\n",
+				  page_index2, vector_capacity);
+			return -E2BIG;
+		}
+
+		while (page_index2 >= ssdfs_page_vector_count(&array->pvec)) {
+			struct page *page;
+
+			page = ssdfs_page_vector_allocate(&array->pvec);
+			if (IS_ERR_OR_NULL(page)) {
+				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+				SSDFS_ERR("unable to allocate page\n");
+				return err;
+			}
+
+			ssdfs_lock_page(page);
+			ssdfs_memset_page(page, 0, PAGE_SIZE,
+					  array->alloc_pattern, PAGE_SIZE);
+			ssdfs_unlock_page(page);
+
+			SSDFS_DBG("page %p, count %d\n",
+				  page, page_ref_count(page));
+
+			array->bytes_count += PAGE_SIZE;
+		}
+
+		item_offset2 = (u32)page_index2 * array->items_per_mem_page;
+		index_diff = dst_index % array->items_per_mem_page;
+		item_offset2 += index_diff * array->item_size;
+
+		offset_diff = item_offset2 - (page_index2 * PAGE_SIZE);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(offset_diff % array->item_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		index_diff = offset_diff / array->item_size;
+		index_diff++;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(index_diff >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (index_diff < shift) {
+			/*
+			 * The shift moves data out of the page.
+			 * This is the reason that index_diff is
+			 * lesser than shift. Keep the index_diff
+			 * the same.
+			 */
+			SSDFS_DBG("index_diff %u, shift %u\n",
+				  index_diff, shift);
+		} else if (index_diff == shift) {
+			/*
+			 * It's the case when destination page
+			 * has no items at all. Otherwise,
+			 * it is the case of presence of free
+			 * space in the begin of the page is equal
+			 * to the @shift. This space was prepared
+			 * by previous move operation. Simply,
+			 * keep the index_diff the same.
+			 */
+			SSDFS_DBG("index_diff %u, shift %u\n",
+				  index_diff, shift);
+		} else {
+			/*
+			 * It needs to know the number of items
+			 * from the page's beginning.
+			 * So, excluding the shift from the account.
+			 */
+			index_diff -= shift;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(moved_items > range_len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		moving_items = range_len - moved_items;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(moving_items < 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		moving_items = min_t(int, moving_items, (int)index_diff);
+
+		if (moving_items == 0) {
+			SSDFS_WARN("no items for moving\n");
+			return -ERANGE;
+		}
+
+		moving_bytes = moving_items * array->item_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(moving_items >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		src_index -= moving_items - 1;
+		dst_index = src_index + shift;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("moving_items %d, src_index %d, dst_index %d\n",
+			  moving_items, src_index, dst_index);
+
+		BUG_ON(start_index > src_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		page_index1 = src_index / array->items_per_mem_page;
+		item_offset1 = (u32)page_index1 * array->items_per_mem_page;
+		index_diff = src_index % array->items_per_mem_page;
+		item_offset1 += index_diff * array->item_size;
+
+		page_index2 = dst_index / array->items_per_mem_page;
+		item_offset2 = (u32)page_index2 * array->items_per_mem_page;
+		index_diff = dst_index % array->items_per_mem_page;
+		item_offset2 += index_diff * array->item_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("items_offset1 %u, item_offset2 %u\n",
+			  item_offset1, item_offset2);
+
+		if ((item_offset1 + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset1 %u, moving_bytes %u\n",
+				   item_offset1, moving_bytes);
+			return -ERANGE;
+		}
+
+		if ((item_offset2 + moving_bytes) > PAGE_SIZE) {
+			SSDFS_WARN("invalid offset: "
+				   "item_offset2 %u, moving_bytes %u\n",
+				   item_offset2, moving_bytes);
+			return -ERANGE;
+		}
+
+		SSDFS_DBG("page_index1 %d, item_offset1 %u, "
+			  "page_index2 %d, item_offset2 %u, "
+			  "moving_bytes %u\n",
+			  page_index1, item_offset1,
+			  page_index2, item_offset2,
+			  moving_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (page_index1 != page_index2) {
+			page1 = array->pvec.pages[page_index1];
+			page2 = array->pvec.pages[page_index2];
+			ssdfs_lock_page(page1);
+			ssdfs_lock_page(page2);
+			err = ssdfs_memmove_page(page2, item_offset2, PAGE_SIZE,
+						 page1, item_offset1, PAGE_SIZE,
+						 moving_bytes);
+			ssdfs_unlock_page(page1);
+			ssdfs_unlock_page(page2);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to move: err %d\n", err);
+				return err;
+			}
+		} else {
+			page1 = array->pvec.pages[page_index1];
+			ssdfs_lock_page(page1);
+			kaddr = kmap_local_page(page1);
+			err = ssdfs_memmove(kaddr, item_offset2, PAGE_SIZE,
+					    kaddr, item_offset1, PAGE_SIZE,
+					    moving_bytes);
+			flush_dcache_page(page1);
+			kunmap_local(kaddr);
+			ssdfs_unlock_page(page1);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to move: err %d\n", err);
+				return err;
+			}
+		}
+
+		src_index--;
+		dst_index--;
+		moved_items += moving_items;
+	} while (src_index >= start_index);
+
+	if (moved_items != range_len) {
+		SSDFS_ERR("moved_items %u != range_len %u\n",
+			  moved_items, range_len);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_shift_buffer_content_right() - shift buffer content right
+ * @array: pointer on dynamic array object
+ * @start_index: starting item index
+ * @shift: shift value
+ *
+ * This method tries to shift range of items in array's content.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static inline
+int ssdfs_shift_buffer_content_right(struct ssdfs_dynamic_array *array,
+				     u32 start_index, u32 shift)
+{
+	u32 src_off, dst_off;
+	u32 bytes_count;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+
+	SSDFS_DBG("array %p, start_index %u, shift %u, "
+		  "capacity %u, item_size %zu, bytes_count %u\n",
+		  array, start_index, shift, array->capacity,
+		  array->item_size, array->bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (array->state) {
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected state %#x\n", array->state);
+		return -ERANGE;
+	}
+
+	src_off = start_index * array->item_size;
+	dst_off = src_off + (shift * array->item_size);
+
+	bytes_count = array->items_count - start_index;
+	bytes_count *= array->item_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("start_index %u, shift %u, "
+		  "src_off %u, dst_off %u, "
+		  "bytes_count %u\n",
+		  start_index, shift,
+		  src_off, dst_off,
+		  bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_memmove(array->buf, dst_off, array->bytes_count,
+			    array->buf, src_off, array->bytes_count,
+			    bytes_count);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: src_off %u, dst_off %u, "
+			  "bytes_count %u, array->bytes_count %u, "
+			  "err %d\n",
+			  src_off, dst_off,
+			  bytes_count, array->bytes_count,
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_dynamic_array_shift_content_right() - shift content right
+ * @array: pointer on dynamic array object
+ * @start_index: starting item index
+ * @shift: shift value
+ *
+ * This method tries to shift range of items in array's content.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-E2BIG      - request is out of array capacity.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
+					    u32 start_index, u32 shift)
+{
+	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
+	u64 item_offset = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+
+	SSDFS_DBG("array %p, start_index %u, shift %u, "
+		  "capacity %u, item_size %zu, bytes_count %u\n",
+		  array, start_index, shift, array->capacity,
+		  array->item_size, array->bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (array->state) {
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_WARN("unexpected state %#x\n", array->state);
+		return -ERANGE;
+	}
+
+	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
+		SSDFS_ERR("invalid item_size %zu\n",
+			  array->item_size);
+		return -ERANGE;
+	}
+
+	if (array->capacity == 0) {
+		SSDFS_ERR("invalid capacity %u\n",
+			  array->capacity);
+		return -ERANGE;
+	}
+
+	if (array->bytes_count == 0) {
+		SSDFS_ERR("invalid bytes_count %u\n",
+			  array->bytes_count);
+		return -ERANGE;
+	}
+
+	if (array->items_count > array->capacity) {
+		SSDFS_ERR("corrupted array: "
+			  "items_count %u > capacity %u\n",
+			  array->items_count,
+			  array->capacity);
+		return -ERANGE;
+	}
+
+	if ((start_index + shift) >= array->capacity) {
+		SSDFS_ERR("invalid index: start_index %u, "
+			  "shift %u, capacity %u\n",
+			  start_index, shift, array->capacity);
+		return -ERANGE;
+	}
+
+	item_offset = (u64)array->item_size * start_index;
+
+	if (item_offset >= max_threshold) {
+		SSDFS_ERR("invalid item_offset: "
+			  "start_index %u, item_size %zu, "
+			  "item_offset %llu, bytes_count %u, "
+			  "max_threshold %llu\n",
+			  start_index, array->item_size,
+			  item_offset, array->bytes_count,
+			  max_threshold);
+		return -E2BIG;
+	}
+
+	switch (array->state) {
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+		err = ssdfs_shift_page_vector_content_right(array,
+							    start_index,
+							    shift);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move: "
+				  "start_index %u, shift %u, err %d\n",
+				  start_index, shift, err);
+			return err;
+		}
+		break;
+
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		err = ssdfs_shift_buffer_content_right(array,
+							start_index,
+							shift);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move: "
+				  "start_index %u, shift %u, err %d\n",
+				  start_index, shift, err);
+			return err;
+		}
+		break;
+
+	default:
+		BUG();
+		break;
+	}
+
+	return 0;
 }

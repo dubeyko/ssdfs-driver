@@ -22,6 +22,7 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "page_vector.h"
 #include "ssdfs.h"
 #include "compression.h"
 
@@ -124,8 +125,10 @@ static int ssdfs_none_compress(struct list_head *ws_ptr,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*srclen > *destlen) {
-		SSDFS_ERR("src_len %zu > dest_len %zu\n",
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("src_len %zu > dest_len %zu\n",
 			  *srclen, *destlen);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -E2BIG;
 	}
 

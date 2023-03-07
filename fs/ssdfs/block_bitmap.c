@@ -28,8 +28,8 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "ssdfs.h"
 #include "page_vector.h"
+#include "ssdfs.h"
 #include "block_bitmap.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING

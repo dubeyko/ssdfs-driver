@@ -52,35 +52,47 @@ struct ssdfs_blk_bmap_init_env {
 	u32 read_bytes;
 };
 
+
+/*
+ * struct ssdfs_content_stream - content stream
+ * @pvec: page vector
+ * @write_off: current write offset
+ * @bytes_count: total size of content in bytes
+ */
+struct ssdfs_content_stream {
+	struct ssdfs_page_vector pvec;
+	u32 write_off;
+	u32 bytes_count;
+};
+
 /*
  * struct ssdfs_blk2off_table_init_env - blk2off table init environment
- * @tbl_hdr: blk2off table header
- * @pvec: pagevec with blk2off table fragment
- * @blk2off_tbl_hdr_off: blk2off table header offset
+ * @hdr: blk2off table header
+ * @extents: translation extents sequence
+ * @extents_count: count of extents in sequence
+ * @descriptors: phys offset descriptors sequence
+ * @area_offset: offset to the blk2off area
  * @read_off: current read offset
- * @write_off: current write offset
  */
 struct ssdfs_blk2off_table_init_env {
-	struct ssdfs_blk2off_table_header tbl_hdr;
-	struct pagevec pvec;
-	u32 blk2off_tbl_hdr_off;
+	struct ssdfs_blk2off_table_header hdr;
+	struct ssdfs_content_stream extents;
+	u32 extents_count;
+	struct ssdfs_content_stream descriptors;
+	u32 area_offset;
 	u32 read_off;
-	u32 write_off;
 };
 
 /*
  * struct ssdfs_blk_desc_table_init_env - blk desc table init environment
- * @tbl_hdr: blk2off table header
- * @pvec: pagevec with blk2off table fragment
- * @compressed_buf: buffer for compressed blk2off table fragment
- * @buf_size: size of compressed buffer
+ * @hdr: blk desc table header
+ * @array pagevec with blk desc table fragment
  * @read_off: current read offset
  * @write_off: current write offset
  */
 struct ssdfs_blk_desc_table_init_env {
-	struct pagevec pvec;
-	void *compressed_buf;
-	u32 buf_size;
+	struct ssdfs_area_block_table hdr;
+	struct ssdfs_page_vector array;
 	u32 read_off;
 	u32 write_off;
 };
@@ -241,6 +253,21 @@ struct ssdfs_peb_area {
 	struct ssdfs_page_array array;
 };
 
+/*
+ * struct ssdfs_blk2off_table_area - blk2off table descriptor
+ * @hdr: offset descriptors area table's header
+ * @reserved_offset: reserved header offset
+ * @compressed_offset: current write offset for compressed data
+ * @sequence_id: fragment's sequence number
+ */
+struct ssdfs_blk2off_table_area {
+	struct ssdfs_blk2off_table_header hdr;
+
+	u32 reserved_offset;
+	u32 compressed_offset;
+	u8 sequence_id;
+};
+
 /* Log possible states */
 enum {
 	SSDFS_LOG_UNKNOWN,
@@ -264,6 +291,7 @@ enum {
  * @last_log_time: creation timestamp of last log
  * @last_log_cno: last log checkpoint
  * @bmap_snapshot: snapshot of block bitmap
+ * @blk2off_tbl: blk2off table descriptor
  * @area: log's areas (main, diff updates, journal)
  */
 struct ssdfs_peb_log {
@@ -278,6 +306,7 @@ struct ssdfs_peb_log {
 	u64 last_log_time;
 	u64 last_log_cno;
 	struct ssdfs_page_vector bmap_snapshot;
+	struct ssdfs_blk2off_table_area blk2off_tbl;
 	struct ssdfs_peb_area area[SSDFS_LOG_AREA_MAX];
 };
 

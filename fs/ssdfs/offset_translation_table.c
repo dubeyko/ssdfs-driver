@@ -28,14 +28,15 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "ssdfs.h"
-#include "offset_translation_table.h"
-#include "page_array.h"
 #include "page_vector.h"
+#include "ssdfs.h"
+#include "page_array.h"
 #include "peb.h"
+#include "offset_translation_table.h"
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
+#include "compression.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -208,40 +209,29 @@ void ssdfs_blk2off_frag_free(void *ptr)
 /*
  * struct ssdfs_blk2off_init - initialization environment
  * @table: pointer on translation table object
- * @blk2off_pvec: blk2off table fragment
- * @blk_desc_pvec: blk desc table fragment
+ * @env: read init environment
  * @peb_index: PEB's index
  * @cno: checkpoint
  * @fragments_count: count of fragments in portion
  * @capacity: maximum amount of items
- * @tbl_hdr: portion header
- * @tbl_hdr_off: portion header's offset
  * @pot_hdr: fragment header
  * @pot_hdr_off: fragment header's offset
  * @bmap: temporary bitmap
  * @bmap_bytes: bytes in temporaray bitmap
- * @extent_array: translation extents temporary array
- * @extents_count: count of extents in array
  */
 struct ssdfs_blk2off_init {
 	struct ssdfs_blk2off_table *table;
-	struct pagevec *blk2off_pvec;
-	struct pagevec *blk_desc_pvec;
+	struct ssdfs_read_init_env *env;
 	u16 peb_index;
 	u64 cno;
 	u32 fragments_count;
 	u16 capacity;
 
-	struct ssdfs_blk2off_table_header tbl_hdr;
-	u32 tbl_hdr_off;
 	struct ssdfs_phys_offset_table_header pot_hdr;
 	u32 pot_hdr_off;
 
 	unsigned long *bmap;
 	u32 bmap_bytes;
-
-	struct ssdfs_translation_extent *extent_array;
-	u16 extents_count;
 };
 
 static
@@ -1055,62 +1045,6 @@ bool is_ssdfs_table_header_magic_valid(struct ssdfs_blk2off_table_header *hdr)
 }
 
 /*
- * ssdfs_check_table_header() - check table header
- * @hdr: table header
- * @size: size of header
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EIO     - header is invalid.
- */
-static
-int ssdfs_check_table_header(struct ssdfs_blk2off_table_header *hdr,
-			     size_t size)
-{
-	u16 extents_off = offsetof(struct ssdfs_blk2off_table_header,
-				   sequence);
-	size_t extent_size = sizeof(struct ssdfs_translation_extent);
-	size_t extent_area;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!hdr);
-
-	SSDFS_DBG("hdr %p, size %zu\n", hdr, size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (!is_ssdfs_magic_valid(&hdr->magic) ||
-	    !is_ssdfs_table_header_magic_valid(hdr)) {
-		SSDFS_ERR("invalid table magic\n");
-		return -EIO;
-	}
-
-	if (!is_csum_valid(&hdr->check, hdr, size)) {
-		SSDFS_ERR("invalid checksum\n");
-		return -EIO;
-	}
-
-	if (extents_off != le16_to_cpu(hdr->extents_off)) {
-		SSDFS_ERR("invalid extents offset %u\n",
-			  le16_to_cpu(hdr->extents_off));
-		return -EIO;
-	}
-
-	extent_area = extent_size * le16_to_cpu(hdr->extents_count);
-	if (le16_to_cpu(hdr->offset_table_off) != (extents_off + extent_area)) {
-		SSDFS_ERR("invalid table offset: extents_off %u, "
-			  "extents_count %u, offset_table_off %u\n",
-			  le16_to_cpu(hdr->extents_off),
-			  le16_to_cpu(hdr->extents_count),
-			  le16_to_cpu(hdr->offset_table_off));
-		return -EIO;
-	}
-
-	return 0;
-}
-
-/*
  * ssdfs_check_fragment() - check table's fragment
  * @table: pointer on table object
  * @peb_index: PEB's index
@@ -1234,67 +1168,6 @@ int ssdfs_check_fragment(struct ssdfs_blk2off_table *table,
 }
 
 /*
- * ssdfs_get_checked_table_header() - get and check table header
- * @portion: pointer on portion init environment [out]
- */
-static
-int ssdfs_get_checked_table_header(struct ssdfs_blk2off_init *portion)
-{
-	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
-	struct page *page;
-	int page_index;
-	u32 page_off;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !portion->blk2off_pvec);
-
-	SSDFS_DBG("source %p, offset %u\n",
-		  portion->blk2off_pvec, portion->tbl_hdr_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	page_index = portion->tbl_hdr_off >> PAGE_SHIFT;
-	if (portion->tbl_hdr_off >= PAGE_SIZE)
-		page_off = portion->tbl_hdr_off % PAGE_SIZE;
-	else
-		page_off = portion->tbl_hdr_off;
-
-	if (page_index >= pagevec_count(portion->blk2off_pvec)) {
-		SSDFS_ERR("invalid page index %d: "
-			  "offset %u, pagevec_count %u\n",
-			  page_index, portion->tbl_hdr_off,
-			  pagevec_count(portion->blk2off_pvec));
-		return -EINVAL;
-	}
-
-	page = portion->blk2off_pvec->pages[page_index];
-
-	ssdfs_lock_page(page);
-	err = ssdfs_memcpy_from_page(&portion->tbl_hdr, 0, hdr_size,
-				     page, page_off, PAGE_SIZE,
-				     hdr_size);
-	ssdfs_unlock_page(page);
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: "
-			  "page_off %u, hdr_size %zu\n",
-			  page_off, hdr_size);
-		return err;
-	}
-
-	err = ssdfs_check_table_header(&portion->tbl_hdr, hdr_size);
-	if (err) {
-		SSDFS_ERR("invalid table header\n");
-		return err;
-	}
-
-	portion->fragments_count =
-		le16_to_cpu(portion->tbl_hdr.fragments_count);
-
-	return 0;
-}
-
-/*
  * ssdfs_blk2off_prepare_temp_bmap() - prepare temporary bitmap
  * @portion: initialization environment [in | out]
  */
@@ -1317,115 +1190,142 @@ int ssdfs_blk2off_prepare_temp_bmap(struct ssdfs_blk2off_init *portion)
 }
 
 /*
- * ssdfs_blk2off_prepare_extent_array() - prepare extents array
+ * ssdfs_blk2off_detect_extents_count() - calculate available extents number
  * @portion: initialization environment [in | out]
  */
-static
-int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
+static inline
+int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 {
-	size_t extent_size = sizeof(struct ssdfs_translation_extent);
-	u32 extents_off, table_off;
-	size_t ext_array_size;
+	struct ssdfs_blk2off_table_init_env *env;
+	u32 page_count;
+	u32 extents_per_page;
+	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
+	u32 extents_capacity;
+	u32 extents_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!portion);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	env = &portion->env->t_init;
+	page_count = ssdfs_page_vector_count(&env->extents.pvec);
+
+	if (page_count == 0 || page_count >= U32_MAX) {
+		SSDFS_ERR("extents array is empty\n");
+		return -ENODATA;
+	}
+
+	extents_per_page = PAGE_SIZE / extent_desc_size;
+	extents_capacity = page_count * extents_per_page;
+
+	extents_count = env->extents.bytes_count / extent_desc_size;
+
+	if (extents_count == 0) {
+		SSDFS_ERR("extents array is empty: "
+			  "bytes_count %u, extent_desc_size %zu\n",
+			  env->extents.bytes_count,
+			  extent_desc_size);
+		return -ERANGE;
+	}
+
+	if (extents_count > extents_capacity) {
+		SSDFS_ERR("corrupted extents array: "
+			  "extents_count %u > extents_capacity %u\n",
+			  extents_count, extents_capacity);
+		return -ERANGE;
+	}
+
+	env->extents_count = extents_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("page_count %u, bytes_count %u, "
+		  "extent_desc_size %zu, extents_count %u\n",
+		  page_count,
+		  env->extents.bytes_count,
+		  extent_desc_size, extents_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * ssdfs_blk2off_get_extent() - read extent by index into buffer
+ * @portion: initialization environment [in | out]
+ * @extent_index: index of extent
+ * @extent: pointer on extent buffer [out]
+ */
+static inline
+int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
+			     int extent_index,
+			     struct ssdfs_translation_extent *extent)
+{
+	struct ssdfs_blk2off_table_init_env *env;
+	u32 page_count;
+	u32 extents_per_page;
+	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
+	u32 extents_capacity;
+	u32 extents_count;
+	u32 page_index;
+	u32 page_off;
+	u32 offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !portion->blk2off_pvec || portion->extent_array);
+	BUG_ON(!portion || !extent);
+
+	SSDFS_DBG("extent_index %d\n", extent_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	extents_off = offsetof(struct ssdfs_blk2off_table_header, sequence);
-	if (extents_off != le16_to_cpu(portion->tbl_hdr.extents_off)) {
-		SSDFS_ERR("invalid extents offset %u\n",
-			  le16_to_cpu(portion->tbl_hdr.extents_off));
-		return -EIO;
+	env = &portion->env->t_init;
+	page_count = ssdfs_page_vector_count(&env->extents.pvec);
+
+	if (page_count == 0 || page_count >= U32_MAX) {
+		SSDFS_ERR("extents array is empty\n");
+		return -ENODATA;
 	}
 
-	portion->extents_count = le16_to_cpu(portion->tbl_hdr.extents_count);
-	ext_array_size = extent_size * portion->extents_count;
-	table_off = le16_to_cpu(portion->tbl_hdr.offset_table_off);
+	extents_per_page = PAGE_SIZE / extent_desc_size;
+	extents_capacity = page_count * extents_per_page;
 
-	if (ext_array_size == 0 ||
-	    (extents_off + ext_array_size) != table_off) {
-		SSDFS_ERR("invalid table header: "
-			  "extents_off %u, extents_count %u, "
-			  "offset_table_off %u\n",
-			  extents_off, portion->extents_count, table_off);
-		return -EIO;
+	extents_count = env->extents.bytes_count / extent_desc_size;
+
+	if (extents_count == 0) {
+		SSDFS_ERR("extents array is empty: "
+			  "bytes_count %u, extent_desc_size %zu\n",
+			  env->extents.bytes_count,
+			  extent_desc_size);
+		return -ERANGE;
 	}
 
-	if (ext_array_size > 0) {
-		u32 array_size = ext_array_size;
-		u32 read_bytes = 0;
-		int page_index;
-		u32 page_off;
-#ifdef CONFIG_SSDFS_DEBUG
-		int i;
-#endif /* CONFIG_SSDFS_DEBUG */
+	if (extent_index > extents_count) {
+		SSDFS_ERR("invalid request: "
+			  "extent_index %d > extents_count %u\n",
+			  extent_index, extents_count);
+		return -EINVAL;
+	}
 
-		portion->extent_array = ssdfs_blk2off_kzalloc(ext_array_size,
-							      GFP_KERNEL);
-		if (unlikely(!portion->extent_array)) {
-			SSDFS_ERR("fail to allocate memory\n");
-			return -ENOMEM;
-		}
+	page_index = extent_index / extents_per_page;
 
-		extents_off = offsetof(struct ssdfs_blk2off_table_header,
-					sequence);
-		page_index = extents_off >> PAGE_SHIFT;
-		page_off = extents_off % PAGE_SIZE;
+	if (page_index > page_count) {
+		SSDFS_ERR("invalid request: "
+			  "page_index %u > page_count %u\n",
+			  page_index, page_count);
+		return -ERANGE;
+	}
 
-		while (array_size > 0) {
-			u32 size;
-			struct page *page;
+	page_off = extent_index % extents_per_page;
+	page_off *= extent_desc_size;
 
-			if (page_index >= pagevec_count(portion->blk2off_pvec)) {
-				SSDFS_ERR("invalid request: "
-					  "page_index %d, pagevec_size %u\n",
-					  page_index,
-					  pagevec_count(portion->blk2off_pvec));
-				return -ERANGE;
-			}
+	offset = page_index * PAGE_SIZE;
+	offset += page_off;
 
-			size = min_t(u32, PAGE_SIZE - page_off,
-					array_size);
-			page = portion->blk2off_pvec->pages[page_index];
-
-			ssdfs_lock_page(page);
-			err = ssdfs_memcpy_from_page(portion->extent_array,
-						     read_bytes, ext_array_size,
-						     page,
-						     page_off, PAGE_SIZE,
-						     size);
-			ssdfs_unlock_page(page);
-
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to copy: err %d\n",
-					  err);
-				return err;
-			}
-
-			read_bytes += size;
-			array_size -= size;
-			extents_off += size;
-
-			page_index = extents_off >> PAGE_SHIFT;
-			page_off = extents_off % PAGE_SIZE;
-		};
-
-#ifdef CONFIG_SSDFS_DEBUG
-		for (i = 0; i < portion->extents_count; i++) {
-			struct ssdfs_translation_extent *extent;
-			extent = &portion->extent_array[i];
-
-			SSDFS_DBG("index %d, logical_blk %u, offset_id %u, "
-				  "len %u, sequence_id %u, state %u\n",
-				  i,
-				  le16_to_cpu(extent->logical_blk),
-				  le16_to_cpu(extent->offset_id),
-				  le16_to_cpu(extent->len),
-				  extent->sequence_id,
-				  extent->state);
-		}
-#endif /* CONFIG_SSDFS_DEBUG */
+	err = ssdfs_unaligned_read_page_vector(&env->extents.pvec,
+						offset,
+						extent_desc_size,
+						extent);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy extent: err %d\n", err);
+		return err;
 	}
 
 	return 0;
@@ -1434,26 +1334,26 @@ int ssdfs_blk2off_prepare_extent_array(struct ssdfs_blk2off_init *portion)
 /*
  * ssdfs_get_fragment_header() - get fragment header
  * @portion: initialization environment [in | out]
- * @offset: header offset in bytes
  */
 static
-int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion,
-			      u32 offset)
+int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
 {
+	struct ssdfs_blk2off_table_init_env *env;
 	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !portion->blk2off_pvec);
+	BUG_ON(!portion || !portion->env);
 
-	SSDFS_DBG("source %p, offset %u\n",
-		  portion->blk2off_pvec, offset);
+	SSDFS_DBG("env %p, offset %u\n",
+		  portion->env, portion->pot_hdr_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_unaligned_read_pagevec(portion->blk2off_pvec,
-					   offset,
-					   hdr_size,
-					   &portion->pot_hdr);
+	env = &portion->env->t_init;
+	err = ssdfs_unaligned_read_page_vector(&env->descriptors.pvec,
+						portion->pot_hdr_off,
+						hdr_size,
+						&portion->pot_hdr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -1490,17 +1390,14 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 	u16 sequence_id;
 	int state;
 	u32 read_bytes;
-#ifdef CONFIG_SSDFS_DEBUG
-	int i;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !portion->table || !portion->blk2off_pvec);
+	BUG_ON(!portion || !portion->table);
 
-	SSDFS_DBG("table %p, peb_index %u, source %p, offset %u\n",
+	SSDFS_DBG("table %p, peb_index %u, offset %u\n",
 		  portion->table, portion->peb_index,
-		  portion->blk2off_pvec, portion->pot_hdr_off);
+		  portion->pot_hdr_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragment_size = le32_to_cpu(portion->pot_hdr.byte_size);
@@ -1514,22 +1411,6 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 	if (fragment_size > PAGE_SIZE) {
 		SSDFS_ERR("invalid fragment_size %zu\n",
 			  fragment_size);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		for (i = 0; i < pagevec_count(portion->blk2off_pvec); i++) {
-			page = portion->blk2off_pvec->pages[i];
-
-			kaddr = kmap_local_page(page);
-			SSDFS_DBG("PAGE DUMP: index %d\n",
-				  i);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		return -EIO;
 	}
 
@@ -1598,20 +1479,24 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 
 	read_bytes = 0;
 	while (fragment_size > 0) {
+		struct ssdfs_blk2off_table_init_env *env;
+		struct ssdfs_content_stream *stream;
 		u32 size;
 
+		env = &portion->env->t_init;
+		stream = &env->descriptors;
 		size = min_t(u32, PAGE_SIZE - page_off, fragment_size);
 
-		if (page_index >= pagevec_count(portion->blk2off_pvec)) {
+		if (page_index >= ssdfs_page_vector_count(&stream->pvec)) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid request: "
 				  "page_index %d, pvec_size %u\n",
 				  page_index,
-				  pagevec_count(portion->blk2off_pvec));
+				  ssdfs_page_vector_count(&stream->pvec));
 			goto finish_fragment_read;
 		}
 
-		page = portion->blk2off_pvec->pages[page_index];
+		page = stream->pvec.pages[page_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("read_bytes %u, fragment->buf_size %zu, "
@@ -1768,6 +1653,7 @@ int ssdfs_check_translation_extent(struct ssdfs_translation_extent *extent,
  * ssdfs_process_used_translation_extent() - process used translation extent
  * @portion: pointer on portion init environment [in | out]
  * @extent_index: index of extent
+ * @extent: pointer on translation extent
  *
  * This method checks translation extent, to set bitmap for
  * logical blocks in the extent and to fill portion of
@@ -1783,13 +1669,14 @@ int ssdfs_check_translation_extent(struct ssdfs_translation_extent *extent,
  */
 static
 int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
-					  int *extent_index)
+					int *extent_index,
+					struct ssdfs_translation_extent *extent)
 {
 	struct ssdfs_sequence_array *sequence = NULL;
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
 	struct ssdfs_phys_offset_descriptor *phys_off = NULL;
-	struct ssdfs_translation_extent *extent = NULL;
 	struct ssdfs_dynamic_array *lblk2off;
+	struct ssdfs_blk_desc_table_init_env *bdt_init;
 	void *ptr;
 	u16 peb_index;
 	u16 sequence_id;
@@ -1802,18 +1689,22 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	u16 len;
 	int phys_off_index;
 	bool is_partially_processed = false;
+	int i;
+#ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_blk_state_offset *state_off;
-	int i, j;
+	int j;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !extent_index);
-	BUG_ON(!portion->bmap || !portion->extent_array);
+	BUG_ON(!portion || !extent_index || !extent);
+	BUG_ON(!portion->bmap);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
-	BUG_ON(*extent_index >= portion->extents_count);
+	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	lblk2off = &portion->table->lblk2off;
+	bdt_init = &portion->env->bdt_init;
 
 	peb_index = portion->peb_index;
 	sequence_id = le16_to_cpu(portion->pot_hdr.sequence_id);
@@ -1836,8 +1727,6 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	SSDFS_DBG("start_id %u, id_count %u\n",
 		  start_id, id_count);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	extent = &portion->extent_array[*extent_index];
 
 	err = ssdfs_check_translation_extent(extent, portion->capacity,
 					     *extent_index);
@@ -1933,9 +1822,9 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	down_read(&frag->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (j = 0; j < pagevec_count(portion->blk_desc_pvec); j++) {
+	for (j = 0; j < ssdfs_page_vector_count(&bdt_init->array); j++) {
 		void *kaddr;
-		struct page *page = portion->blk_desc_pvec->pages[j];
+		struct page *page = bdt_init->array.pages[j];
 
 		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
@@ -2037,10 +1926,10 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		pos->sequence_id = sequence_id;
 		pos->offset_index = phys_off_index + i;
 
-		err = ssdfs_unaligned_read_pagevec(portion->blk_desc_pvec,
-						   byte_offset,
-						   desc_size,
-						   &pos->blk_desc.buf);
+		err = ssdfs_unaligned_read_page_vector(&bdt_init->array,
+							byte_offset,
+							desc_size,
+							&pos->blk_desc.buf);
 		if (err == -E2BIG) {
 			err = 0;
 
@@ -2199,6 +2088,7 @@ finish_process_fragment:
  * ssdfs_process_free_translation_extent() - process free translation extent
  * @portion: pointer on portion init environment [in | out]
  * @extent_index: index of extent
+ * @extent: pointer on translation extent
  *
  * This method checks translation extent, to set bitmap for
  * logical blocks in the extent and to fill portion of
@@ -2213,11 +2103,11 @@ finish_process_fragment:
  */
 static
 int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
-					  int *extent_index)
+					int *extent_index,
+					struct ssdfs_translation_extent *extent)
 {
 	struct ssdfs_sequence_array *sequence = NULL;
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
-	struct ssdfs_translation_extent *extent = NULL;
 	struct ssdfs_dynamic_array *lblk2off;
 	void *ptr;
 	u16 peb_index;
@@ -2230,10 +2120,9 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !extent_index);
-	BUG_ON(!portion->extent_array);
+	BUG_ON(!portion || !extent_index || !extent);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
-	BUG_ON(*extent_index >= portion->extents_count);
+	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	lblk2off = &portion->table->lblk2off;
@@ -2252,7 +2141,6 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 	}
 	frag = (struct ssdfs_phys_offset_table_fragment *)ptr;
 
-	extent = &portion->extent_array[*extent_index];
 	logical_blk = le16_to_cpu(extent->logical_blk);
 	len = le16_to_cpu(extent->len);
 
@@ -2387,16 +2275,14 @@ finish_process_fragment:
 /*
  * ssdfs_blk2off_fragment_init() - initialize portion's fragment
  * @portion: pointer on portion init environment [in | out]
- * @fragment_index: index of fragment
  * @extent_index: pointer on extent index [in | out]
  */
 static
 int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
-				int fragment_index,
 				int *extent_index)
 {
 	struct ssdfs_sequence_array *sequence = NULL;
-	struct ssdfs_translation_extent *extent = NULL;
+	struct ssdfs_translation_extent extent;
 	u16 logical_blk;
 	u16 offset_id;
 	u16 len;
@@ -2407,27 +2293,17 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!portion || !portion->table || !portion->blk2off_pvec);
-	BUG_ON(!portion->bmap || !portion->extent_array);
+	BUG_ON(!portion || !portion->table);
+	BUG_ON(!portion->bmap);
 	BUG_ON(!extent_index);
 	BUG_ON(portion->peb_index >= portion->table->pebs_count);
 
-	SSDFS_DBG("peb_index %u, fragment_index %d, "
-		  "extent_index %u, extents_count %u\n",
-		  portion->peb_index, fragment_index,
-		  *extent_index, portion->extents_count);
+	SSDFS_DBG("peb_index %u, extent_index %u, extents_count %u\n",
+		  portion->peb_index, *extent_index,
+		  portion->env->t_init.extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fragment_index == 0) {
-		portion->pot_hdr_off = portion->tbl_hdr_off +
-				le16_to_cpu(portion->tbl_hdr.offset_table_off);
-		err = ssdfs_get_fragment_header(portion, portion->pot_hdr_off);
-	} else {
-		portion->pot_hdr_off = portion->tbl_hdr_off +
-				le16_to_cpu(portion->pot_hdr.next_fragment_off);
-		err = ssdfs_get_fragment_header(portion, portion->pot_hdr_off);
-	}
-
+	err = ssdfs_get_fragment_header(portion);
 	if (err) {
 		SSDFS_ERR("fail to get fragment header: err %d\n",
 			  err);
@@ -2451,10 +2327,10 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		return err;
 	}
 
-	if (*extent_index >= portion->extents_count) {
+	if (*extent_index >= portion->env->t_init.extents_count) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("extent_index %u >= extents_count %u\n",
-			  *extent_index, portion->extents_count);
+			  *extent_index, portion->env->t_init.extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -2466,12 +2342,21 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		  start_id, id_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	while (*extent_index < portion->extents_count) {
-		extent = &portion->extent_array[*extent_index];
-		logical_blk = le16_to_cpu(extent->logical_blk);
-		offset_id = le16_to_cpu(extent->offset_id);
-		len = le16_to_cpu(extent->len);
-		state = extent->state;
+	while (*extent_index < portion->env->t_init.extents_count) {
+		err = ssdfs_blk2off_get_extent(portion,
+						*extent_index,
+						&extent);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get extent: "
+				  "extent_index %d, err %d\n",
+				  *extent_index, err);
+			return err;
+		}
+
+		logical_blk = le16_to_cpu(extent.logical_blk);
+		offset_id = le16_to_cpu(extent.offset_id);
+		len = le16_to_cpu(extent.len);
+		state = extent.state;
 
 		if (processed_offset_ids > id_count) {
 			SSDFS_ERR("processed_offset_ids %u > id_count %u\n",
@@ -2512,7 +2397,8 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 
 		if (state == SSDFS_LOGICAL_BLK_USED) {
 			err = ssdfs_process_used_translation_extent(portion,
-								extent_index);
+								extent_index,
+								&extent);
 			if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("extent has been processed partially: "
@@ -2527,7 +2413,8 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 			}
 		} else if (state == SSDFS_LOGICAL_BLK_FREE) {
 			err = ssdfs_process_free_translation_extent(portion,
-								extent_index);
+								extent_index,
+								&extent);
 			if (err) {
 				SSDFS_ERR("invalid translation extent: "
 					  "sequence_id %u, err %d\n",
@@ -2766,8 +2653,7 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table)
 /*
  * ssdfs_blk2off_table_partial_init() - initialize PEB's table fragment
  * @table: pointer on translation table object
- * @blk2off_pvec: blk2off fragment
- * @blk_desc_pvec: blk desc fragment
+ * @env: read init environment
  * @peb_index: PEB's index
  * @cno: fragment's checkpoint (log's checkpoint)
  *
@@ -2782,8 +2668,7 @@ int ssdfs_define_blk2off_table_object_state(struct ssdfs_blk2off_table *table)
  * %-EIO        - corrupted translation extent.
  */
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
-				     struct pagevec *blk2off_pvec,
-				     struct pagevec *blk_desc_pvec,
+				     struct ssdfs_read_init_env *env,
 				     u16 peb_index,
 				     u64 cno)
 {
@@ -2793,7 +2678,7 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!table || !blk2off_pvec || !blk_desc_pvec);
+	BUG_ON(!table || !env);
 	BUG_ON(peb_index >= table->pebs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2807,11 +2692,6 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 
 	memset(&portion, 0, sizeof(struct ssdfs_blk2off_init));
 
-	if (pagevec_count(blk2off_pvec) == 0) {
-		SSDFS_ERR("fail to init because of empty pagevec\n");
-		return -EINVAL;
-	}
-
 	if (ssdfs_blk2off_table_initialized(table, peb_index)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("PEB's table has been initialized already: "
@@ -2822,17 +2702,9 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	}
 
 	portion.table = table;
-	portion.blk2off_pvec = blk2off_pvec;
-	portion.blk_desc_pvec = blk_desc_pvec;
+	portion.env = env;
 	portion.peb_index = peb_index;
 	portion.cno = cno;
-
-	portion.tbl_hdr_off = 0;
-	err = ssdfs_get_checked_table_header(&portion);
-	if (err) {
-		SSDFS_ERR("invalid table header\n");
-		return err;
-	}
 
 	down_write(&table->translation_lock);
 
@@ -2840,42 +2712,75 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 
 	err = ssdfs_blk2off_prepare_temp_bmap(&portion);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to allocate memory\n");
+		SSDFS_ERR("fail to allocate memory: "
+			  "err %d\n", err);
 		goto unlock_translation_table;
 	}
 
-	err = ssdfs_blk2off_prepare_extent_array(&portion);
+	err = ssdfs_blk2off_detect_extents_count(&portion);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to allocate memory\n");
+		SSDFS_ERR("fail to detect extents count: "
+			  "err %d\n", err);
 		goto unlock_translation_table;
 	}
 
-	portion.pot_hdr_off = portion.tbl_hdr_off +
-			le16_to_cpu(portion.tbl_hdr.offset_table_off);
+	portion.fragments_count =
+		ssdfs_page_vector_count(&env->t_init.descriptors.pvec);
+	if (portion.fragments_count == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("fragments array is empty\n");
+		goto unlock_translation_table;
+	}
 
 	for (i = 0; i < portion.fragments_count; i++) {
+		portion.pot_hdr_off = i * PAGE_SIZE;
+
 		err = ssdfs_blk2off_fragment_init(&portion,
-						  i,
 						  &extent_index);
 		if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("continue to process extent: "
-				  "fragment %d, extent_index %d\n",
-				  i, extent_index);
+				  "fragment %d, extent_index %d, "
+				  "fragments_count %u\n",
+				  i, extent_index,
+				  portion.fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
-			continue;
+
+			if ((i + 1) >= portion.fragments_count) {
+				err = -ERANGE;
+				SSDFS_ERR("fail to initialize fragment: "
+					  "fragment_index %d, extent_index %d, "
+					  "fragments_count %u, err %d\n",
+					  i, extent_index,
+					  portion.fragments_count, err);
+				goto unlock_translation_table;
+			} else
+				continue;
 		} else if (err == -EEXIST) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment has been initiliazed already: "
-				  "fragment_index %d, extent_index %d\n",
-				  i, extent_index);
+				  "fragment_index %d, extent_index %d, "
+				  "fragments_count %u\n",
+				  i, extent_index,
+				  portion.fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
-			continue;
+
+			if ((i + 1) >= portion.fragments_count) {
+				err = -ERANGE;
+				SSDFS_ERR("fail to initialize fragment: "
+					  "fragment_index %d, extent_index %d, "
+					  "fragments_count %u, err %d\n",
+					  i, extent_index,
+					  portion.fragments_count, err);
+				goto unlock_translation_table;
+			} else
+				continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to initialize fragment: "
 				  "fragment_index %d, extent_index %d, "
-				  "err %d\n",
-				  i, extent_index, err);
+				  "fragments_count %u, err %d\n",
+				  i, extent_index,
+				  portion.fragments_count, err);
 			goto unlock_translation_table;
 		}
 	}
@@ -2901,8 +2806,6 @@ unlock_translation_table:
 
 	ssdfs_blk2off_kvfree(portion.bmap);
 	portion.bmap = NULL;
-	ssdfs_blk2off_kfree(portion.extent_array);
-	portion.extent_array = NULL;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -3758,17 +3661,16 @@ int ssdfs_merge_translation_extent(struct ssdfs_translation_extent *extent,
  */
 static inline
 int ssdfs_insert_translation_extent(struct ssdfs_blk2off_found_range *found,
-				    struct ssdfs_translation_extent *array,
+				    struct ssdfs_dynamic_array *array,
 				    u16 capacity, u16 *extent_count)
 {
-	struct ssdfs_translation_extent *extent;
+	struct ssdfs_translation_extent *extent = NULL;
 	size_t extent_size = sizeof(struct ssdfs_translation_extent);
-	size_t array_bytes = extent_size * capacity;
 	u16 logical_blk;
 	u16 offset_id;
 	u16 len;
 	int i, j;
-	int err;
+	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!found || !extent_count);
@@ -3782,54 +3684,114 @@ int ssdfs_insert_translation_extent(struct ssdfs_blk2off_found_range *found,
 	BUG_ON(*extent_count >= capacity);
 
 	if (found->start_id == SSDFS_BLK2OFF_TABLE_INVALID_ID) {
-		extent = &array[*extent_count];
-		ssdfs_translation_extent_init(found, *extent_count, extent);
-		(*extent_count)++;
+		extent = SSDFS_TRANS_EXT(ssdfs_dynamic_array_get_locked(array,
+								*extent_count));
+		if (IS_ERR_OR_NULL(extent)) {
+			err = (extent == NULL ? -ENOENT : PTR_ERR(extent));
+			SSDFS_ERR("fail to get extent: "
+				  "index %u, err %d\n",
+				  *extent_count, err);
+			return err;
+		}
 
+		ssdfs_translation_extent_init(found, *extent_count, extent);
+
+		err = ssdfs_dynamic_array_release(array, *extent_count, extent);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "index %u, err %d\n",
+				  *extent_count, err);
+			return err;
+		}
+
+		(*extent_count)++;
 		return 0;
 	}
 
 	for (i = 0; i < *extent_count; i++) {
-		extent = &array[i];
+		extent = SSDFS_TRANS_EXT(ssdfs_dynamic_array_get_locked(array,
+									i));
+		if (IS_ERR_OR_NULL(extent)) {
+			err = (extent == NULL ? -ENOENT : PTR_ERR(extent));
+			SSDFS_ERR("fail to get extent: "
+				  "index %u, err %d\n",
+				  *extent_count, err);
+			return err;
+		}
 
 		logical_blk = le16_to_cpu(extent->logical_blk);
 		offset_id = le16_to_cpu(extent->offset_id);
 		len = le16_to_cpu(extent->len);
 
+		err = -EAGAIN;
+
 		if (offset_id >= SSDFS_BLK2OFF_TABLE_INVALID_ID)
-			continue;
+			goto finish_process_cur_extent;
 
 		if (found->start_id == offset_id) {
+			err = -ERANGE;
 			SSDFS_ERR("start_id %u == offset_id %u\n",
 				  found->start_id, offset_id);
-			return -ERANGE;
-		} else if (found->start_id > offset_id &&
-			   can_translation_extent_be_merged(extent, found)) {
+			goto finish_process_cur_extent;
+		} else if (can_translation_extent_be_merged(extent, found)) {
 			err = ssdfs_merge_translation_extent(extent, found);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to merge extent: "
 					  "err %d\n", err);
-				return err;
-			} else
-				return 0;
-		} else if (found->start_id < offset_id) {
-			if (can_translation_extent_be_merged(extent, found)) {
-				err = ssdfs_merge_translation_extent(extent,
-								     found);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to merge extent: "
-						  "err %d\n", err);
-					return err;
-				} else
-					return 0;
+				goto finish_process_cur_extent;
 			} else {
-				i++;
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to merge: index %d\n", i);
-#endif /* CONFIG_SSDFS_DEBUG */
-				break;
+				/*
+				 * Merge was successful.
+				 * Finish insert operation.
+				 */
+				err = -ENOENT;
+				goto finish_process_cur_extent;
 			}
+		} else if (found->start_id > offset_id) {
+			err = 0;
+			i++;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to merge: "
+				  "found->start_id %u, offset_id %u, "
+				  "index %d, extent_count %u\n",
+				  found->start_id, offset_id,
+				  i, *extent_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_process_cur_extent;
+		} else {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to merge: "
+				  "found->start_id %u, offset_id %u, "
+				  "index %d, extent_count %u\n",
+				  found->start_id, offset_id,
+				  i, *extent_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_process_cur_extent;
 		}
+
+finish_process_cur_extent:
+		err1 = ssdfs_dynamic_array_release(array, i, extent);
+		if (unlikely(err1)) {
+			SSDFS_ERR("fail to release: "
+				  "index %u, err %d\n",
+				  i, err1);
+			return err1;
+		}
+
+		if (err == -ENOENT) {
+			/*
+			 * Merge was successful.
+			 * Finish insert operation.
+			 */
+			return 0;
+		} else if (err == -EAGAIN) {
+			err = 0;
+			continue;
+		} else if (unlikely(err))
+			return err;
+		else
+			break;
 	}
 
 	if (i < *extent_count) {
@@ -3843,43 +3805,64 @@ int ssdfs_insert_translation_extent(struct ssdfs_blk2off_found_range *found,
 			  *extent_count, i, extent_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_memmove(array, (i + 1) * extent_size, array_bytes,
-				    array, i * extent_size, array_bytes,
-				    (*extent_count - i) * extent_size);
+		err = ssdfs_dynamic_array_shift_content_right(array, i, 1);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to move: err %d\n", err);
+			SSDFS_ERR("fail to shift extents array: "
+				  "start extent %d, err %d\n",
+				  i, err);
 			return err;
 		}
 
 		for (j = i + 1; j <= *extent_count; j++) {
-			extent = &array[j];
+			void *kaddr;
+
+			kaddr = ssdfs_dynamic_array_get_locked(array, j);
+			extent = SSDFS_TRANS_EXT(kaddr);
+			if (IS_ERR_OR_NULL(extent)) {
+				err = (extent == NULL ? -ENOENT :
+							PTR_ERR(extent));
+				SSDFS_ERR("fail to get extent: "
+					  "index %u, err %d\n",
+					  j, err);
+				return err;
+			}
+
 			extent->sequence_id = j;
+
+			err = ssdfs_dynamic_array_release(array, j, extent);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to release: "
+					  "index %u, err %d\n",
+					  j, err);
+				return err;
+			}
 		}
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("extent_count %u, index %d, extent_size %zu\n",
-		  *extent_count, i, extent_size);
-#endif /* CONFIG_SSDFS_DEBUG */
+	extent = SSDFS_TRANS_EXT(ssdfs_dynamic_array_get_locked(array, i));
+	if (IS_ERR_OR_NULL(extent)) {
+		err = (extent == NULL ? -ENOENT : PTR_ERR(extent));
+		SSDFS_ERR("fail to get extent: "
+			  "index %u, err %d\n",
+			  i, err);
+		return err;
+	}
 
-	extent = &array[i];
 	ssdfs_translation_extent_init(found, i, extent);
+
+	err = ssdfs_dynamic_array_release(array, i, extent);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to release: "
+			  "index %u, err %d\n",
+			  i, err);
+		return err;
+	}
 
 	(*extent_count)++;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (i = 0; i < *extent_count; i++) {
-		extent = &array[i];
-
-		SSDFS_DBG("index %d, logical_blk %u, offset_id %u, "
-			  "len %u, sequence_id %u, state %u\n",
-			  i,
-			  le16_to_cpu(extent->logical_blk),
-			  le16_to_cpu(extent->offset_id),
-			  le16_to_cpu(extent->len),
-			  extent->sequence_id,
-			  extent->state);
-	}
+	SSDFS_DBG("extent_count %u\n",
+		  *extent_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -3951,7 +3934,7 @@ bool is_found_extent_ended(struct ssdfs_blk2off_table_snapshot *sp,
  * %-ERANGE     - internal logic error.
  */
 int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
-					struct ssdfs_translation_extent *array,
+					struct ssdfs_dynamic_array *array,
 					u16 capacity, u16 *extent_count)
 {
 	unsigned long start = 0;
@@ -4163,7 +4146,6 @@ finish_extract_extents:
  * @table: pointer on table object
  * @peb_index: PEB's index
  * @sequence_id: fragment's sequence ID
- * @offset_table_off: pointer on current offset to offset table header [in|out]
  * @sp: pointer on snapshot
  *
  * RETURN:
@@ -4175,7 +4157,6 @@ finish_extract_extents:
 int
 ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 				       u16 peb_index, u16 sequence_id,
-				       u32 *offset_table_off,
 				       struct ssdfs_blk2off_table_snapshot *sp)
 {
 	struct ssdfs_fs_info *fsi;
@@ -4191,14 +4172,12 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!table || !sp || !table->fsi || !offset_table_off);
+	BUG_ON(!table || !sp || !table->fsi);
 	BUG_ON(peb_index >= table->pebs_count);
 	BUG_ON(peb_index != sp->peb_index);
 
-	SSDFS_DBG("table %p, peb_index %u, sequence_id %u, "
-		  "offset_table_off %p, sp %p\n",
-		  table, peb_index, sequence_id,
-		  offset_table_off, sp);
+	SSDFS_DBG("table %p, peb_index %u, sequence_id %u, sp %p\n",
+		  table, peb_index, sequence_id, sp);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = table->fsi;
@@ -4235,16 +4214,10 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	id_count = (u16)atomic_read(&fragment->id_count);
 	fragment->hdr->id_count = cpu_to_le16(id_count);
 	byte_size = sizeof(struct ssdfs_phys_offset_table_header);
-	byte_size += (u32)id_count * sizeof(struct ssdfs_phys_offset_descriptor);
+	byte_size += id_count * sizeof(struct ssdfs_phys_offset_descriptor);
 	fragment->hdr->byte_size = cpu_to_le32(byte_size);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("hdr_size %zu, id_count %u, "
-		  "desc_size %zu, byte_size %u\n",
-		  sizeof(struct ssdfs_phys_offset_table_header),
-		  id_count,
-		  sizeof(struct ssdfs_phys_offset_descriptor),
-		  byte_size);
 	SSDFS_DBG("fragment: start_id %u, id_count %u\n",
 		  le16_to_cpu(fragment->hdr->start_id),
 		  le16_to_cpu(fragment->hdr->id_count));
@@ -4289,19 +4262,10 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 	BUG_ON(byte_size >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*offset_table_off += byte_size;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset_table_off %u\n", *offset_table_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (has_next_fragment) {
-		fragment->hdr->next_fragment_off =
-				cpu_to_le16((u16)byte_size);
-	} else {
-		fragment->hdr->next_fragment_off =
-				cpu_to_le16(U16_MAX);
-	}
+	if (has_next_fragment)
+		fragment->hdr->next_fragment_off = cpu_to_le16((u16)byte_size);
+	else
+		fragment->hdr->next_fragment_off = cpu_to_le16(U16_MAX);
 
 	fragment->hdr->checksum = ssdfs_crc32_le(fragment->hdr, byte_size);
 
@@ -4317,7 +4281,7 @@ finish_prepare_for_commit:
  * ssdfs_blk2off_table_forget_snapshot() - undirty PEB's table
  * @table: pointer on table object
  * @sp: pointer on snapshot
- * @array: extents array
+ * @extent_array: extents array
  * @extent_count: count of extents in array
  *
  * RETURN:
@@ -4330,26 +4294,28 @@ finish_prepare_for_commit:
 int
 ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 				    struct ssdfs_blk2off_table_snapshot *sp,
-				    struct ssdfs_translation_extent *array,
+				    struct ssdfs_dynamic_array *extent_array,
 				    u16 extent_count)
 {
 	struct ssdfs_phys_offset_table_array *pot_table;
 	struct ssdfs_sequence_array *sequence;
+	struct ssdfs_translation_extent *extent;
 	struct ssdfs_offset_position *pos;
 	u16 last_sequence_id;
 	unsigned long commited_fragments = 0;
+	void *kaddr;
 	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!table || !sp || !array);
+	BUG_ON(!table || !sp || !extent_array);
 	BUG_ON(sp->peb_index >= table->pebs_count);
 	BUG_ON(extent_count == 0);
 
 	SSDFS_DBG("table %p, peb_index %u, sp %p, "
-		  "extents %p, extents_count %u\n",
+		  "extent_array %p, extents_count %u\n",
 		  table, sp->peb_index, sp,
-		  array, extent_count);
+		  extent_array, extent_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&table->translation_lock);
@@ -4385,13 +4351,37 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 	}
 
 	for (i = 0; i < extent_count; i++) {
-		u16 start_blk = le16_to_cpu(array[i].logical_blk);
-		u16 len = le16_to_cpu(array[i].len);
+		u16 start_blk;
+		u16 len;
+		u8 state;
+
+		kaddr = ssdfs_dynamic_array_get_locked(extent_array,
+							i);
+		if (IS_ERR_OR_NULL(kaddr)) {
+			err = (kaddr == NULL ? -ENOENT : PTR_ERR(kaddr));
+			SSDFS_ERR("fail to get extent: "
+				  "index %d, err %d\n",
+				  i, err);
+			goto finish_forget_snapshot;
+		}
+
+		extent = (struct ssdfs_translation_extent *)kaddr;
+		start_blk = le16_to_cpu(extent->logical_blk);
+		len = le16_to_cpu(extent->len);
+		state = extent->state;
+
+		err = ssdfs_dynamic_array_release(extent_array,
+						  i, extent);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release extent: "
+				  "index %d, err %d\n",
+				  i, err);
+			goto finish_forget_snapshot;
+		}
 
 		for (j = 0; j < len; j++) {
 			u16 blk = start_blk + j;
 			u64 cno1, cno2;
-			void *kaddr;
 
 			kaddr = ssdfs_dynamic_array_get_locked(&table->lblk2off,
 								blk);
@@ -4428,7 +4418,7 @@ ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 			 * this information will be lost during
 			 * the PEBs migration.
 			 */
-			if (array[i].state != SSDFS_LOGICAL_BLK_FREE) {
+			if (state != SSDFS_LOGICAL_BLK_FREE) {
 				err =
 				   ssdfs_blk2off_table_bmap_clear(&table->lbmap,
 					   SSDFS_LBMAP_MODIFICATION_INDEX, blk);
@@ -4461,73 +4451,209 @@ finish_forget_snapshot:
 	return err;
 }
 
+#define SSDFS_UNCOMPRESSED_BLOB_SIZE		(64)
+
 /*
- * ssdfs_peb_store_offsets_table_header() - store offsets table header
+ * ssdfs_blk2off_table_compression_type() - detect blk2off table compression
  * @pebi: pointer on PEB object
- * @hdr: table header
+ * @uncompr_size: size of uncompressed fragment in bytes
+ */
+static inline
+u8 ssdfs_blk2off_table_compression_type(struct ssdfs_peb_info *pebi,
+					size_t uncompr_size)
+{
+	struct ssdfs_fs_info *fsi = pebi->pebc->parent_si->fsi;
+	u8 compr_type = SSDFS_COMPR_NONE;
+
+	switch (fsi->metadata_options.blk2off_tbl.compression) {
+	case SSDFS_BLK2OFF_TBL_NOCOMPR_TYPE:
+		compr_type = SSDFS_COMPR_NONE;
+		break;
+	case SSDFS_BLK2OFF_TBL_ZLIB_COMPR_TYPE:
+		if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+			compr_type = SSDFS_COMPR_NONE;
+		else
+			compr_type = SSDFS_COMPR_ZLIB;
+		break;
+	case SSDFS_BLK2OFF_TBL_LZO_COMPR_TYPE:
+		if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+			compr_type = SSDFS_COMPR_NONE;
+		else
+			compr_type = SSDFS_COMPR_LZO;
+		break;
+	default:
+		BUG();
+	}
+
+	return compr_type;
+}
+
+enum {
+	SSDFS_BLK2OFF_EXTENT,
+	SSDFS_BLK2OFF_PHYS_OFFSET,
+};
+
+/*
+ * ssdfs_blk2off_table_fragment_type() - detect fragment type
+ * @pebi: pointer on PEB object
+ * @object_type: type of object (extent|phys offset)
+ * @uncompr_size: size of uncompressed fragment in bytes
+ */
+static inline
+u8 ssdfs_blk2off_table_fragment_type(struct ssdfs_peb_info *pebi,
+				     int object_type,
+				     size_t uncompr_size)
+{
+	struct ssdfs_fs_info *fsi = pebi->pebc->parent_si->fsi;
+	u8 fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+
+	switch (fsi->metadata_options.blk2off_tbl.compression) {
+	case SSDFS_BLK2OFF_TBL_NOCOMPR_TYPE:
+		switch (object_type) {
+		case SSDFS_BLK2OFF_EXTENT:
+			fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			break;
+		case SSDFS_BLK2OFF_PHYS_OFFSET:
+			fragment_type = SSDFS_BLK2OFF_DESC;
+			break;
+		default:
+			BUG();
+		}
+		break;
+	case SSDFS_BLK2OFF_TBL_ZLIB_COMPR_TYPE:
+		switch (object_type) {
+		case SSDFS_BLK2OFF_EXTENT:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC_ZLIB;
+			break;
+		case SSDFS_BLK2OFF_PHYS_OFFSET:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_DESC_ZLIB;
+			break;
+		default:
+			BUG();
+		}
+		break;
+	case SSDFS_BLK2OFF_TBL_LZO_COMPR_TYPE:
+		switch (object_type) {
+		case SSDFS_BLK2OFF_EXTENT:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC_LZO;
+			break;
+		case SSDFS_BLK2OFF_PHYS_OFFSET:
+			if (uncompr_size <= SSDFS_UNCOMPRESSED_BLOB_SIZE)
+				fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+			else
+				fragment_type = SSDFS_BLK2OFF_DESC_LZO;
+			break;
+		default:
+			BUG();
+		}
+		break;
+	default:
+		BUG();
+	}
+
+	return fragment_type;
+}
+
+/*
+ * ssdfs_peb_compress_fragment_in_place() - compress fragment in place
+ * @pebi: pointer on PEB object
+ * @uncompr_buf: buffer with uncompressed data
+ * @uncompr_size: uncompressed size [in|out]
+ * @compr_size: compressed size of data [out]
  * @cur_page: pointer on current page value [in|out]
  * @write_offset: pointer on write offset value [in|out]
  *
- * This function tries to store table header into log.
+ * This method tries to compressed data directly into destination
+ * page. If available space is not enough, then method returns error.
  *
  * RETURN:
  * [success]
  * [failure] - error code:
  *
- * %-ENOMEM     - fail to find memory page.
+ * %-ENOENT     - memory page is not available.
+ * %-E2BIG      - available space is not enough for compression.
+ * %-ERANGE     - internal error.
  */
-int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
-					 struct ssdfs_blk2off_table_header *hdr,
+static
+int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
+					 void *uncompr_buf,
+					 size_t *uncompr_size,
+					 size_t *compr_size,
 					 pgoff_t *cur_page,
 					 u32 *write_offset)
 {
-	size_t hdr_sz = sizeof(struct ssdfs_blk2off_table_header);
 	struct page *page;
-	u32 page_off, cur_offset;
+	void *kaddr;
+	u8 compr_type;
+	u32 cur_off;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-	BUG_ON(!hdr || !cur_page || !write_offset);
+	BUG_ON(!pebi || !uncompr_buf);
+	BUG_ON(!uncompr_size || !compr_size);
+	BUG_ON(!cur_page || !write_offset);
 
 	SSDFS_DBG("peb %llu, current_log.start_page %u, "
-		  "hdr %p, cur_page %lu, write_offset %u\n",
+		  "uncompr_size %zu, "
+		  "cur_page %lu, write_offset %u\n",
 		  pebi->peb_id,
 		  pebi->current_log.start_page,
-		  hdr, *cur_page, *write_offset);
+		  *uncompr_size,
+		  *cur_page, *write_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_off = *write_offset % PAGE_SIZE;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON((PAGE_SIZE - page_off) < hdr_sz);
-#endif /* CONFIG_SSDFS_DEBUG */
+	compr_type = ssdfs_blk2off_table_compression_type(pebi, *uncompr_size);
 
 	page = ssdfs_page_array_grab_page(&pebi->cache, *cur_page);
 	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOENT : PTR_ERR(page));
 		SSDFS_ERR("fail to get cache page: index %lu\n",
 			  *cur_page);
-		return -ENOMEM;
+		return err;
 	}
 
-	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
-				   hdr, 0, hdr_sz,
-				   hdr_sz);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		goto finish_copy;
+	cur_off = *write_offset % PAGE_SIZE;
+	*compr_size = PAGE_SIZE - cur_off;
+
+	kaddr = kmap_local_page(page);
+	err = ssdfs_compress(compr_type,
+			     uncompr_buf, (u8 *)kaddr + cur_off,
+			     uncompr_size, compr_size);
+	flush_dcache_page(page);
+	kunmap_local(kaddr);
+
+	if (err == -E2BIG) {
+		SSDFS_DBG("unable to compress fragment in place: "
+			  "cur_page %lu, cur_off %u, "
+			  "uncompr_size %zu\n",
+			  *cur_page, cur_off, *uncompr_size);
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to compress fragment in place: "
+			  "cur_page %lu, cur_off %u, "
+			  "uncompr_size %zu, err %d\n",
+			  *cur_page, cur_off, *uncompr_size, err);
+	} else {
+		ssdfs_set_page_private(page, 0);
+		SetPageUptodate(page);
+
+		err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
+				  *cur_page, err);
+		}
+
+		*write_offset += *compr_size;
 	}
 
-	ssdfs_set_page_private(page, 0);
-	SetPageUptodate(page);
-
-	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-			  *cur_page, err);
-	}
-
-finish_copy:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
@@ -4536,15 +4662,364 @@ finish_copy:
 		  page, page_ref_count(page));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (unlikely(err))
+	return err;
+}
+
+/*
+ * ssdfs_peb_compress_fragment_in_buffer() - compress fragment in buffer
+ * @pebi: pointer on PEB object
+ * @uncompr_buf: buffer with uncompressed data
+ * @uncompr_size: uncompressed size [in|out]
+ * @compr_size: compressed size of data [out]
+ * @cur_page: pointer on current page value [in|out]
+ * @write_offset: pointer on write offset value [in|out]
+ *
+ * This method allocates temporary buffer, compress data into
+ * the buffer, and store the compressed data in two memory pages.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_compress_fragment_in_buffer(struct ssdfs_peb_info *pebi,
+					  void *uncompr_buf,
+					  size_t *uncompr_size,
+					  size_t *compr_size,
+					  pgoff_t *cur_page,
+					  u32 *write_offset)
+{
+	struct page *page;
+	void *kaddr;
+	void *compr_buf = NULL;
+	u8 compr_type;
+	u32 cur_off;
+	u32 copy_len;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !uncompr_buf);
+	BUG_ON(!uncompr_size || !compr_size);
+	BUG_ON(!cur_page || !write_offset);
+
+	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+		  "uncompr_size %zu, "
+		  "cur_page %lu, write_offset %u\n",
+		  pebi->peb_id,
+		  pebi->current_log.start_page,
+		  *uncompr_size,
+		  *cur_page, *write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	compr_type = ssdfs_blk2off_table_compression_type(pebi, *uncompr_size);
+
+	compr_buf = ssdfs_blk2off_kzalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!compr_buf) {
+		SSDFS_ERR("fail to allocate buffer\n");
+		return -ENOMEM;
+	}
+
+	page = ssdfs_page_array_grab_page(&pebi->cache, *cur_page);
+	if (IS_ERR_OR_NULL(page)) {
+		err = (page == NULL ? -ENOENT : PTR_ERR(page));
+		SSDFS_ERR("fail to get cache page: index %lu\n",
+			  *cur_page);
+		goto free_compr_buf;
+	}
+
+	*compr_size = PAGE_SIZE;
+
+	kaddr = kmap_local_page(page);
+	err = ssdfs_compress(compr_type,
+			     uncompr_buf, compr_buf,
+			     uncompr_size, compr_size);
+	kunmap_local(kaddr);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to compress fragment in buffer: "
+			  "cur_page %lu, cur_off %u, "
+			  "uncompr_size %zu, err %d\n",
+			  *cur_page, cur_off, *uncompr_size, err);
+		goto unlock_grabbed_page;
+	}
+
+	cur_off = *write_offset % PAGE_SIZE;
+	copy_len = PAGE_SIZE - cur_off;
+
+	err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
+				   compr_buf, 0, PAGE_SIZE,
+				   copy_len);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		goto unlock_grabbed_page;
+	}
+
+	ssdfs_set_page_private(page, 0);
+	SetPageUptodate(page);
+
+	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set page %lu dirty: "
+			  "err %d\n",
+			  *cur_page, err);
+		goto unlock_grabbed_page;
+	}
+
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	(*cur_page)++;
+
+	page = ssdfs_page_array_grab_page(&pebi->cache, *cur_page);
+	if (IS_ERR_OR_NULL(page)) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get page %lu\n",
+			  *cur_page);
+		goto free_compr_buf;
+	}
+
+	err = ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
+				   compr_buf, copy_len, PAGE_SIZE,
+				   *compr_size - copy_len);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		goto unlock_grabbed_page;
+	}
+
+	ssdfs_set_page_private(page, 0);
+	SetPageUptodate(page);
+
+	err = ssdfs_page_array_set_page_dirty(&pebi->cache, *cur_page);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set page %lu dirty: "
+			  "err %d\n",
+			  *cur_page, err);
+		goto unlock_grabbed_page;
+	}
+
+	*write_offset += *compr_size;
+
+unlock_grabbed_page:
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+free_compr_buf:
+	ssdfs_blk2off_kfree(compr_buf);
+
+	return err;
+}
+
+/*
+ * ssdfs_get_blk2off_tbl_next_frag_desc() - get next fragment descriptor
+ * @pebi: pointer on PEB object
+ */
+static
+struct ssdfs_fragment_desc *
+ssdfs_get_blk2off_tbl_next_frag_desc(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_blk2off_table_header *hdr;
+	u16 fragments_count;
+	u16 cur_item = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	hdr = &pebi->current_log.blk2off_tbl.hdr;
+	fragments_count = le16_to_cpu(hdr->chain_hdr.fragments_count);
+	cur_item = fragments_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cur_item %u\n", cur_item);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	BUG_ON(cur_item >= SSDFS_NEXT_BLK_TABLE_INDEX);
+
+	return &hdr->blk[cur_item];
+}
+
+/*
+ * ssdfs_peb_prepare_blk2off_table_header() - prepare blk2off table header
+ * @pebi: pointer on PEB object
+ * @write_offset: write offset to store header
+ */
+static
+void ssdfs_peb_prepare_blk2off_table_header(struct ssdfs_peb_info *pebi,
+					    u32 write_offset)
+{
+	struct ssdfs_blk2off_table_area *blk2off_tbl;
+	size_t blk2off_tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
+	size_t desc_size = sizeof(struct ssdfs_phys_offset_descriptor);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+
+	SSDFS_DBG("write_offset %u\n", write_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	blk2off_tbl = &pebi->current_log.blk2off_tbl;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(write_offset >= pebi->pebc->parent_si->fsi->erasesize);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memset(&blk2off_tbl->hdr, 0xFF, blk2off_tbl_hdr_size);
+
+	blk2off_tbl->hdr.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
+	blk2off_tbl->hdr.magic.key = cpu_to_le16(SSDFS_BLK2OFF_TABLE_HDR_MAGIC);
+	blk2off_tbl->hdr.magic.version.major = SSDFS_MAJOR_REVISION;
+	blk2off_tbl->hdr.magic.version.minor = SSDFS_MINOR_REVISION;
+
+	blk2off_tbl->hdr.chain_hdr.compr_bytes = 0;
+	blk2off_tbl->hdr.chain_hdr.uncompr_bytes = 0;
+	blk2off_tbl->hdr.chain_hdr.fragments_count = 0;
+	blk2off_tbl->hdr.chain_hdr.desc_size = le16_to_cpu(desc_size);
+	blk2off_tbl->hdr.chain_hdr.magic = SSDFS_CHAIN_HDR_MAGIC;
+	blk2off_tbl->hdr.chain_hdr.flags = 0;
+
+	memset(blk2off_tbl->hdr.blk, 0,
+		sizeof(struct ssdfs_fragment_desc) * SSDFS_BLK2OFF_TBL_MAX);
+
+	blk2off_tbl->reserved_offset = write_offset;
+	blk2off_tbl->compressed_offset = blk2off_tbl_hdr_size;
+	blk2off_tbl->sequence_id = 0;
+}
+
+/*
+ * ssdfs_peb_store_blk2off_table_header() - store blk2off table header
+ * @pebi: pointer on PEB object
+ * @flags: flags that need to be stored into header
+ *
+ * This method tries to store blk2off table header into
+ * reserved offset.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_blk2off_table_area *blk2off_tbl;
+	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
+	u16 fragments;
+	u16 hdr_flags;
+	u32 reserved_offset;
+	struct page *page;
+	pgoff_t page_index;
+	u32 page_off;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+
+	SSDFS_DBG("reserved_offset %u\n",
+		  pebi->current_log.blk2off_tbl.reserved_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebi->pebc->parent_si->fsi;
+	blk2off_tbl = &pebi->current_log.blk2off_tbl;
+	fragments = le16_to_cpu(blk2off_tbl->hdr.chain_hdr.fragments_count);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fragments_count %u\n", fragments);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fragments < SSDFS_NEXT_BLK_TABLE_INDEX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(flags & SSDFS_MULTIPLE_HDR_CHAIN);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	hdr_flags = le16_to_cpu(blk2off_tbl->hdr.chain_hdr.flags);
+	hdr_flags |= flags;
+	blk2off_tbl->hdr.chain_hdr.flags = cpu_to_le16(hdr_flags);
+
+	switch (fsi->metadata_options.blk2off_tbl.compression) {
+	case SSDFS_BLK2OFF_TBL_NOCOMPR_TYPE:
+		blk2off_tbl->hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
+		blk2off_tbl->hdr.chain_hdr.type = SSDFS_BLK2OFF_CHAIN_HDR;
+		break;
+	case SSDFS_BLK2OFF_TBL_ZLIB_COMPR_TYPE:
+		blk2off_tbl->hdr.check.flags = cpu_to_le16(SSDFS_CRC32 |
+						SSDFS_BLK2OFF_TBL_ZLIB_COMPR);
+		blk2off_tbl->hdr.chain_hdr.type = SSDFS_BLK2OFF_ZLIB_CHAIN_HDR;
+		break;
+	case SSDFS_BLK2OFF_TBL_LZO_COMPR_TYPE:
+		blk2off_tbl->hdr.check.flags = cpu_to_le16(SSDFS_CRC32 |
+						SSDFS_BLK2OFF_TBL_LZO_COMPR);
+		blk2off_tbl->hdr.chain_hdr.type = SSDFS_BLK2OFF_LZO_CHAIN_HDR;
+		break;
+	default:
+		BUG();
+	}
+
+	blk2off_tbl->hdr.check.bytes = cpu_to_le16(hdr_size);
+
+	err = ssdfs_calculate_csum(&blk2off_tbl->hdr.check,
+				   &blk2off_tbl->hdr, hdr_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to calculate checksum: err %d\n", err);
 		return err;
+	}
 
-	*write_offset += hdr_sz;
+	reserved_offset = blk2off_tbl->reserved_offset;
+	page_index = reserved_offset / PAGE_SIZE;
+	page_index += pebi->current_log.start_page;
 
-	cur_offset = (*cur_page << PAGE_SHIFT) + page_off + hdr_sz;
-	*cur_page = cur_offset >> PAGE_SHIFT;
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("reserved_offset %u, page_index %lu\n",
+		  reserved_offset, page_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	return 0;
+	page = ssdfs_page_array_grab_page(&pebi->cache, page_index);
+	if (IS_ERR_OR_NULL(page)) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to get cache page: index %lu\n",
+			  page_index);
+		return err;
+	}
+
+	page_off = reserved_offset % PAGE_SIZE;
+
+	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
+				   &blk2off_tbl->hdr, 0, hdr_size,
+				   hdr_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		goto finish_copy;
+	}
+
+	ssdfs_set_page_private(page, 0);
+	SetPageUptodate(page);
+
+	err = ssdfs_page_array_set_page_dirty(&pebi->cache, page_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
+			  page_index, err);
+	}
+
+finish_copy:
+	ssdfs_unlock_page(page);
+	ssdfs_put_page(page);
+
+	SSDFS_DBG("page %p, count %d\n",
+		  page, page_ref_count(page));
+
+	return err;
 }
 
 /*
@@ -4565,16 +5040,20 @@ finish_copy:
  */
 int
 ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
-				      struct ssdfs_translation_extent *array,
+				      struct ssdfs_dynamic_array *array,
 				      u16 extent_count,
 				      pgoff_t *cur_page,
 				      u32 *write_offset)
 {
-	struct page *page;
+	struct ssdfs_blk2off_table_area *blk2off_tbl;
+	struct ssdfs_fragment_desc *meta_desc;
+	struct ssdfs_fragments_chain_header *chain_hdr;
 	size_t extent_size = sizeof(struct ssdfs_translation_extent);
-	size_t array_size = extent_size * extent_count;
 	u32 rest_bytes, written_bytes = 0;
-	int err = 0;
+	u32 rest_items, processed_items = 0;
+	u16 fragments_count;
+	u8 fragment_type = SSDFS_BLK2OFF_EXTENT_DESC;
+	int err = 0, res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi);
@@ -4590,73 +5069,210 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		  *cur_page, *write_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	blk2off_tbl = &pebi->current_log.blk2off_tbl;
+
+	rest_items = extent_count;
 	rest_bytes = extent_count * extent_size;
 
-	while (rest_bytes > 0) {
+	while (rest_items > 0) {
 		u32 bytes;
 		u32 cur_off = *write_offset % PAGE_SIZE;
 		u32 new_off;
+		u32 items_count = 0;
+		size_t uncompr_size;
+		size_t compr_size;
+		void *uncompr_buf;
 
-		bytes = min_t(u32, rest_bytes, PAGE_SIZE - cur_off);
+		meta_desc = ssdfs_get_blk2off_tbl_next_frag_desc(pebi);
+		if (IS_ERR(meta_desc)) {
+			err = PTR_ERR(meta_desc);
+			SSDFS_ERR("fail to get current fragment descriptor: "
+				  "err %d\n", err);
+			goto finish_copy;
+		} else if (!meta_desc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get current fragment descriptor: "
+				  "err %d\n",
+				  err);
+			goto finish_copy;
+		}
+
+		uncompr_buf = ssdfs_dynamic_array_get_content_locked(array,
+								processed_items,
+								&items_count);
+		if (IS_ERR_OR_NULL(uncompr_buf)) {
+			err = (uncompr_buf == NULL ? -ENOENT :
+							PTR_ERR(uncompr_buf));
+			SSDFS_ERR("fail to get extents range: "
+				  "processed_items %u, err %d\n",
+				  processed_items, err);
+			goto finish_copy;
+		}
+
+		bytes = min_t(u32, items_count * extent_size, PAGE_SIZE);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(bytes < extent_size);
 		BUG_ON(written_bytes > (extent_count * extent_size));
-#endif /* CONFIG_SSDFS_DEBUG */
 
-		page = ssdfs_page_array_grab_page(&pebi->cache,
-						  *cur_page);
-		if (IS_ERR_OR_NULL(page)) {
-			SSDFS_ERR("fail to get cache page: index %lu\n",
-				  *cur_page);
-			return -ENOMEM;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("cur_off %u, written_bytes %u, bytes %u\n",
 			  cur_off, written_bytes, bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
-					   array, written_bytes, array_size,
-					   bytes);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: err %d\n", err);
+		uncompr_size = bytes;
+
+		fragment_type = ssdfs_blk2off_table_fragment_type(pebi,
+							SSDFS_BLK2OFF_EXTENT,
+							uncompr_size);
+
+		meta_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
+		meta_desc->type = fragment_type;
+
+		meta_desc->flags = SSDFS_FRAGMENT_HAS_CSUM;
+		meta_desc->checksum = ssdfs_crc32_le(uncompr_buf, uncompr_size);
+
+		if (le32_to_cpu(meta_desc->checksum) == 0) {
+			err = -ERANGE;
+			SSDFS_WARN("checksum is invalid: "
+				   "seg %llu, peb %llu, bytes_count %zu\n",
+				   pebi->pebc->parent_si->seg_id,
+				   pebi->peb_id,
+				   uncompr_size);
+			goto unlock_uncompr_data;
+		}
+
+		err = ssdfs_peb_compress_fragment_in_place(pebi,
+							   uncompr_buf,
+							   &uncompr_size,
+							   &compr_size,
+							   cur_page,
+							   write_offset);
+
+unlock_uncompr_data:
+		res = ssdfs_dynamic_array_release(array,
+						  processed_items,
+						  uncompr_buf);
+		if (unlikely(res)) {
+			SSDFS_ERR("fail to release extents array: "
+				  "processed_items %u, err %d\n",
+				  processed_items, res);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
+		if (err == -E2BIG) {
+			uncompr_buf =
+				ssdfs_dynamic_array_get_content_locked(array,
+								processed_items,
+								&items_count);
+			if (IS_ERR_OR_NULL(uncompr_buf)) {
+				err = (uncompr_buf == NULL ? -ENOENT :
+							 PTR_ERR(uncompr_buf));
+				SSDFS_ERR("fail to get extents range: "
+					  "processed_items %u, err %d\n",
+					  processed_items, err);
+				goto finish_copy;
+			}
+
+			err = ssdfs_peb_compress_fragment_in_buffer(pebi,
+								uncompr_buf,
+								&uncompr_size,
+								&compr_size,
+								cur_page,
+								write_offset);
+
+			res = ssdfs_dynamic_array_release(array,
+							  processed_items,
+							  uncompr_buf);
+			if (unlikely(res)) {
+				SSDFS_ERR("fail to release extents array: "
+					  "processed_items %u, err %d\n",
+					  processed_items, res);
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+			}
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to compress fragment: "
+					  "uncompr_size %zu, "
+					  "cur_page %lu, "
+					  "write_offset %u, "
+					  "err %d\n",
+					  uncompr_size,
+					  *cur_page,
+					  *write_offset,
+					  err);
+				goto finish_copy;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to compress fragment: "
+				  "data_bytes %zu, free_space %zu, err %d\n",
+				  uncompr_size, compr_size, err);
 			goto finish_copy;
 		}
 
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-
-		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
-						      *cur_page);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-				  *cur_page, err);
-		}
-
-finish_copy:
-		ssdfs_unlock_page(page);
-		ssdfs_put_page(page);
+		meta_desc->offset = cpu_to_le32(blk2off_tbl->compressed_offset);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		WARN_ON(compr_size > U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+		meta_desc->compr_size = cpu_to_le16((u16)compr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		WARN_ON(uncompr_size > U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+		meta_desc->uncompr_size = cpu_to_le16((u16)uncompr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("offset %u, compr_size %u, "
+			  "uncompr_size %u, checksum %#x\n",
+			  le32_to_cpu(meta_desc->offset),
+			  le16_to_cpu(meta_desc->compr_size),
+			  le16_to_cpu(meta_desc->uncompr_size),
+			  le32_to_cpu(meta_desc->checksum));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (unlikely(err))
-			return err;
+		blk2off_tbl->compressed_offset += compr_size;
 
-		*write_offset += bytes;
+		chain_hdr = &blk2off_tbl->hdr.chain_hdr;
+		le32_add_cpu(&chain_hdr->compr_bytes, compr_size);
+		le32_add_cpu(&chain_hdr->uncompr_bytes, uncompr_size);
+		le16_add_cpu(&chain_hdr->fragments_count, 1);
 
-		new_off = (*cur_page << PAGE_SHIFT) + cur_off + bytes;
+		if (blk2off_tbl->sequence_id == U8_MAX)
+			blk2off_tbl->sequence_id = 0;
+
+		meta_desc->sequence_id = blk2off_tbl->sequence_id++;
+
+		fragments_count = le16_to_cpu(chain_hdr->fragments_count);
+
+		new_off = (*cur_page << PAGE_SHIFT) + cur_off + compr_size;
 		*cur_page = new_off >> PAGE_SHIFT;
 
 		rest_bytes -= bytes;
 		written_bytes += bytes;
-	};
 
-	return 0;
+		rest_items -= items_count;
+		processed_items += items_count;
+
+		if (fragments_count == SSDFS_NEXT_BLK2OFF_TBL_INDEX) {
+			err = ssdfs_peb_store_blk2off_table_header(pebi,
+						SSDFS_MULTIPLE_HDR_CHAIN);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to store blk2off table header: "
+					  "err %d\n", err);
+				goto finish_copy;
+			}
+
+			ssdfs_peb_prepare_blk2off_table_header(pebi,
+							       *write_offset);
+		}
+	}
+
+finish_copy:
+	return err;
 }
 
 /*
@@ -4684,20 +5300,22 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 					   pgoff_t *cur_page,
 					   u32 *write_offset)
 {
+	struct ssdfs_blk2off_table_area *blk2off_tbl;
 	struct ssdfs_phys_offset_table_array *pot_table;
 	struct ssdfs_sequence_array *sequence;
 	struct ssdfs_phys_offset_table_fragment *fragment;
 	struct ssdfs_phys_offset_table_header *hdr;
+	struct ssdfs_fragment_desc *meta_desc;
+	struct ssdfs_fragments_chain_header *chain_hdr;
 	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
-	struct page *page;
+	size_t tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	void *kaddr;
 	u32 fragment_size;
-	u16 flags;
-	u32 next_fragment_off;
-	u32 rest_bytes, written_bytes = 0;
-	u32 cur_off;
-	u32 new_off;
-	u32 diff;
+	u32 rest_bytes;
+	u8 fragment_type = SSDFS_BLK2OFF_DESC;
+	u16 fragments_count;
+	size_t uncompr_size;
+	size_t compr_size;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4713,6 +5331,8 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		  peb_index, sequence_id,
 		  *cur_page, *write_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	blk2off_tbl = &pebi->current_log.blk2off_tbl;
 
 	down_read(&table->translation_lock);
 
@@ -4756,118 +5376,152 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		goto finish_fragment_copy;
 	}
 
-	next_fragment_off = ssdfs_peb_correct_area_write_offset(*write_offset +
-								fragment_size,
-								hdr_size);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("cur_page %lu, write_offset %u, fragment_size %u, "
-		  "hdr_size %zu, next_fragment_off %u\n",
-		  *cur_page, *write_offset, fragment_size,
-		  hdr_size, next_fragment_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	flags = le16_to_cpu(hdr->flags);
-	if (flags & SSDFS_OFF_TABLE_HAS_NEXT_FRAGMENT) {
-		diff = next_fragment_off - *write_offset;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(diff >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		hdr->next_fragment_off = cpu_to_le16((u16)diff);
-		hdr->checksum = ssdfs_crc32_le(hdr,
-						le32_to_cpu(hdr->byte_size));
+	meta_desc = ssdfs_get_blk2off_tbl_next_frag_desc(pebi);
+	if (IS_ERR(meta_desc)) {
+		err = PTR_ERR(meta_desc);
+		SSDFS_ERR("fail to get current fragment descriptor: "
+			  "err %d\n", err);
+		goto finish_fragment_copy;
+	} else if (!meta_desc) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to get current fragment descriptor: "
+			  "err %d\n",
+			  err);
+		goto finish_fragment_copy;
 	}
 
-	while (rest_bytes > 0) {
-		u32 bytes;
-		cur_off = *write_offset % PAGE_SIZE;
+	uncompr_size = fragment_size;
 
-		bytes = min_t(u32, rest_bytes, PAGE_SIZE - cur_off);
+	fragment_type = ssdfs_blk2off_table_fragment_type(pebi,
+						SSDFS_BLK2OFF_PHYS_OFFSET,
+						uncompr_size);
+
+	meta_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
+	meta_desc->type = fragment_type;
+
+	meta_desc->flags = SSDFS_FRAGMENT_HAS_CSUM;
+	meta_desc->checksum = ssdfs_crc32_le(hdr, uncompr_size);
+
+	if (le32_to_cpu(meta_desc->checksum) == 0) {
+		err = -ERANGE;
+		SSDFS_WARN("checksum is invalid: "
+			   "seg %llu, peb %llu, bytes_count %zu\n",
+			   pebi->pebc->parent_si->seg_id,
+			   pebi->peb_id,
+			   uncompr_size);
+		goto finish_fragment_copy;
+	}
+
+	err = ssdfs_peb_compress_fragment_in_place(pebi,
+						   hdr,
+						   &uncompr_size,
+						   &compr_size,
+						   cur_page,
+						   write_offset);
+
+	if (err == -E2BIG) {
+		err = ssdfs_peb_compress_fragment_in_buffer(pebi,
+							    hdr,
+							    &uncompr_size,
+							    &compr_size,
+							    cur_page,
+							    write_offset);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to compress fragment: "
+				  "uncompr_size %zu, "
+				  "cur_page %lu, "
+				  "write_offset %u, "
+				  "err %d\n",
+				  uncompr_size,
+				  *cur_page,
+				  *write_offset,
+				  err);
+			goto finish_fragment_copy;
+		}
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to compress fragment: "
+			  "data_bytes %zu, free_space %zu, err %d\n",
+			  uncompr_size, compr_size, err);
+		goto finish_fragment_copy;
+	}
+
+	meta_desc->offset = cpu_to_le32(blk2off_tbl->compressed_offset);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(written_bytes > fragment_size);
+	WARN_ON(compr_size > U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+	meta_desc->compr_size = cpu_to_le16((u16)compr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	WARN_ON(uncompr_size > U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+	meta_desc->uncompr_size = cpu_to_le16((u16)uncompr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("offset %u, compr_size %u, "
+		  "uncompr_size %u, checksum %#x\n",
+		  le32_to_cpu(meta_desc->offset),
+		  le16_to_cpu(meta_desc->compr_size),
+		  le16_to_cpu(meta_desc->uncompr_size),
+		  le32_to_cpu(meta_desc->checksum));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		page = ssdfs_page_array_grab_page(&pebi->cache,
-						  *cur_page);
-		if (IS_ERR_OR_NULL(page)) {
-			err = -ENOMEM;
-			SSDFS_ERR("fail to get cache page: index %lu\n",
-				  *cur_page);
+	blk2off_tbl->compressed_offset += compr_size;
+
+	chain_hdr = &blk2off_tbl->hdr.chain_hdr;
+	le32_add_cpu(&chain_hdr->compr_bytes, compr_size);
+	le32_add_cpu(&chain_hdr->uncompr_bytes, uncompr_size);
+	le16_add_cpu(&chain_hdr->fragments_count, 1);
+
+	if (blk2off_tbl->sequence_id == U8_MAX)
+		blk2off_tbl->sequence_id = 0;
+
+	meta_desc->sequence_id = blk2off_tbl->sequence_id++;
+
+	fragments_count = le16_to_cpu(chain_hdr->fragments_count);
+
+	if (fragments_count == SSDFS_NEXT_BLK2OFF_TBL_INDEX) {
+		meta_desc = ssdfs_get_blk2off_tbl_next_frag_desc(pebi);
+		if (IS_ERR(meta_desc)) {
+			err = PTR_ERR(meta_desc);
+			SSDFS_ERR("fail to get next fragment descriptor: "
+				  "err %d\n", err);
+			goto finish_fragment_copy;
+		} else if (!meta_desc) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get next fragment descriptor: "
+				  "err %d\n",  err);
 			goto finish_fragment_copy;
 		}
 
-		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
-					   hdr, written_bytes, fragment_size,
-					   bytes);
+		*write_offset =
+			ssdfs_peb_correct_area_write_offset(*write_offset,
+								tbl_hdr_size);
+		meta_desc->offset = cpu_to_le32(*write_offset);
+
+		meta_desc->compr_size = cpu_to_le16(tbl_hdr_size);
+		meta_desc->uncompr_size = cpu_to_le16(tbl_hdr_size);
+		meta_desc->flags = 0;
+		meta_desc->checksum = 0;
+
+		if (blk2off_tbl->sequence_id == U8_MAX)
+			blk2off_tbl->sequence_id = 0;
+
+		meta_desc->sequence_id = blk2off_tbl->sequence_id++;
+
+		meta_desc->magic = SSDFS_FRAGMENT_DESC_MAGIC;
+		meta_desc->type = SSDFS_NEXT_TABLE_DESC;
+
+		err = ssdfs_peb_store_blk2off_table_header(pebi,
+						SSDFS_MULTIPLE_HDR_CHAIN);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: err %d\n", err);
-			goto finish_cur_copy;
-		}
-
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("ssdfs_page_array_set_page_dirty %lu\n",
-			  *cur_page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
-						      *cur_page);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-				  *cur_page, err);
-		}
-
-finish_cur_copy:
-		ssdfs_unlock_page(page);
-		ssdfs_put_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (unlikely(err))
+			SSDFS_ERR("fail to store blk2off table header: "
+				  "err %d\n", err);
 			goto finish_fragment_copy;
+		}
 
-		*write_offset += bytes;
-
-		new_off = (*cur_page << PAGE_SHIFT) + cur_off + bytes;
-		*cur_page = new_off >> PAGE_SHIFT;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("cur_off %u, bytes %u, new_off %u, cur_page %lu\n",
-			  cur_off, bytes, new_off, *cur_page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		rest_bytes -= bytes;
-		written_bytes += bytes;
-	};
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(*write_offset > next_fragment_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	diff = next_fragment_off - *write_offset;
-
-	if (diff > 0) {
-		cur_off = *write_offset % PAGE_SIZE;
-		*write_offset = next_fragment_off;
-
-		new_off = (*cur_page << PAGE_SHIFT) + cur_off + diff;
-		*cur_page = new_off >> PAGE_SHIFT;
+		ssdfs_peb_prepare_blk2off_table_header(pebi, *write_offset);
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("cur_page %lu, write_offset %u, "
-		  "next_fragment_off %u\n",
-		  *cur_page, *write_offset,
-		  next_fragment_off);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_copy:
 	up_write(&fragment->lock);
@@ -4925,16 +5579,17 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_blk2off_table_snapshot snapshot = {0};
-	struct ssdfs_blk2off_table_header hdr;
-	struct ssdfs_translation_extent *extents = NULL;
+	struct ssdfs_dynamic_array extents;
+	size_t ext_desc_size = sizeof(struct ssdfs_translation_extent);
 	size_t tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
-	u16 extents_off = offsetof(struct ssdfs_blk2off_table_header, sequence);
 	u16 extent_count = 0;
-	u32 offset_table_off;
 	u16 peb_index;
 	u32 table_start_offset;
 	u16 sequence_id;
 	u32 fragments_count = 0;
+	u16 flags;
+	u8 compression;
+	u16 metadata_flags = 0;
 	int i;
 	int err = 0;
 
@@ -4964,7 +5619,6 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	table = pebi->pebc->parent_si->blk2off_table;
 
 	memset(desc, 0, sizeof(struct ssdfs_metadata_descriptor));
-	memset(&hdr, 0, tbl_hdr_size);
 
 	err = ssdfs_blk2off_table_snapshot(table, peb_index, &snapshot);
 	if (err == -ENODATA) {
@@ -4983,7 +5637,7 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 		err = -ERANGE;
 		SSDFS_ERR("peb_index %u != snapshot.peb_index %u\n",
 			  peb_index, snapshot.peb_index);
-		goto fail_store_off_table;
+		goto finish_store_off_table;
 	}
 
 	if (unlikely(!snapshot.bmap_copy || !snapshot.tbl_copy)) {
@@ -4993,24 +5647,21 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 			  peb_index,
 			  snapshot.bmap_copy,
 			  snapshot.tbl_copy);
-		goto fail_store_off_table;
+		goto finish_store_off_table;
 	}
 
-	extents = ssdfs_blk2off_kcalloc(snapshot.capacity,
-				sizeof(struct ssdfs_translation_extent),
-				GFP_KERNEL);
-	if (unlikely(!extents)) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate extent array\n");
-		goto fail_store_off_table;
+	err = ssdfs_dynamic_array_create(&extents,
+					 snapshot.capacity,
+					 ext_desc_size,
+					 0);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create extents array: "
+			  "capacity %u, desc_size %zu, err %d\n",
+			  snapshot.capacity, ext_desc_size, err);
+		goto finish_store_off_table;
 	}
 
-	hdr.magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
-	hdr.magic.key = cpu_to_le16(SSDFS_BLK2OFF_TABLE_HDR_MAGIC);
-	hdr.magic.version.major = SSDFS_MAJOR_REVISION;
-	hdr.magic.version.minor = SSDFS_MINOR_REVISION;
-
-	err = ssdfs_blk2off_table_extract_extents(&snapshot, extents,
+	err = ssdfs_blk2off_table_extract_extents(&snapshot, &extents,
 						  snapshot.capacity,
 						  &extent_count);
 	if (unlikely(err)) {
@@ -5024,8 +5675,36 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 		goto fail_store_off_table;
 	}
 
-	hdr.extents_off = cpu_to_le16(extents_off);
-	hdr.extents_count = cpu_to_le16(extent_count);
+	*write_offset = ssdfs_peb_correct_area_write_offset(*write_offset,
+							    tbl_hdr_size);
+	table_start_offset = *write_offset;
+
+	desc->offset = cpu_to_le32(*write_offset +
+				(pebi->current_log.start_page * fsi->pagesize));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("write_offset %u, desc->offset %u, "
+		  "current_log.start_page %u\n",
+		  *write_offset,
+		  le32_to_cpu(desc->offset),
+		  pebi->current_log.start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_peb_prepare_blk2off_table_header(pebi, *write_offset);
+
+	/* reserve space for table header */
+	*write_offset += tbl_hdr_size;
+
+	err = ssdfs_peb_store_offsets_table_extents(pebi, &extents,
+						    extent_count,
+						    cur_page,
+						    write_offset);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to store offsets table's extents: "
+			  "cur_page %lu, write_offset %u, err %d\n",
+			  *cur_page, *write_offset, err);
+		goto fail_store_off_table;
+	}
 
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 	fragments_count = snapshot.fragments_count;
@@ -5033,22 +5712,15 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	fragments_count = snapshot.dirty_fragments;
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
-	offset_table_off = tbl_hdr_size +
-			   ((extent_count - 1) *
-			    sizeof(struct ssdfs_translation_extent));
-
-	hdr.offset_table_off = cpu_to_le16((u16)offset_table_off);
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fragments_count %u\n",
+		  fragments_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sequence_id = snapshot.start_sequence_id;
 	for (i = 0; i < fragments_count; i++) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fragment_index %d, offset_table_off %u\n",
-			  i, offset_table_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		err = ssdfs_blk2off_table_prepare_for_commit(table, peb_index,
 							     sequence_id,
-							     &offset_table_off,
 							     &snapshot);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to prepare fragment for commit: "
@@ -5062,50 +5734,6 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 			err = -ERANGE;
 			SSDFS_ERR("invalid next sequence_id %u\n",
 				  sequence_id);
-			goto fail_store_off_table;
-		}
-	}
-
-	hdr.fragments_count = cpu_to_le16(snapshot.dirty_fragments);
-
-	ssdfs_memcpy(hdr.sequence, 0, sizeof(struct ssdfs_translation_extent),
-		     extents, 0, sizeof(struct ssdfs_translation_extent),
-		     sizeof(struct ssdfs_translation_extent));
-
-	hdr.check.bytes = cpu_to_le16(tbl_hdr_size);
-	hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
-
-	err = ssdfs_calculate_csum(&hdr.check, &hdr, tbl_hdr_size);
-	if (unlikely(err)) {
-		SSDFS_ERR("unable to calculate checksum: err %d\n", err);
-		goto fail_store_off_table;
-	}
-
-	*write_offset = ssdfs_peb_correct_area_write_offset(*write_offset,
-							    tbl_hdr_size);
-	table_start_offset = *write_offset;
-
-	desc->offset = cpu_to_le32(*write_offset +
-				(pebi->current_log.start_page * fsi->pagesize));
-
-	err = ssdfs_peb_store_offsets_table_header(pebi, &hdr,
-						   cur_page, write_offset);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to store offsets table's header: "
-			  "cur_page %lu, write_offset %u, err %d\n",
-			  *cur_page, *write_offset, err);
-		goto fail_store_off_table;
-	}
-
-	if (extent_count > 1) {
-		err = ssdfs_peb_store_offsets_table_extents(pebi, &extents[1],
-							    extent_count - 1,
-							    cur_page,
-							    write_offset);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to store offsets table's extents: "
-				  "cur_page %lu, write_offset %u, err %d\n",
-				  *cur_page, *write_offset, err);
 			goto fail_store_off_table;
 		}
 	}
@@ -5135,8 +5763,15 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 		}
 	}
 
+	err = ssdfs_peb_store_blk2off_table_header(pebi, 0);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to store blk2off table header: "
+			  "err %d\n", err);
+		goto fail_store_off_table;
+	}
+
 	err = ssdfs_blk2off_table_forget_snapshot(table, &snapshot,
-						  extents, extent_count);
+						  &extents, extent_count);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to forget snapshot state: "
 			  "peb_index %u, err %d\n",
@@ -5147,12 +5782,34 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	BUG_ON(*write_offset <= table_start_offset);
 	desc->size = cpu_to_le32(*write_offset - table_start_offset);
 
+	compression = fsi->metadata_options.blk2off_tbl.compression;
+
+	flags = fsi->metadata_options.blk2off_tbl.flags;
+	if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
+		switch (compression) {
+		case SSDFS_BLK2OFF_TBL_ZLIB_COMPR_TYPE:
+			metadata_flags |= SSDFS_ZLIB_COMPRESSED;
+			break;
+
+		case SSDFS_BLK2OFF_TBL_LZO_COMPR_TYPE:
+			metadata_flags |= SSDFS_LZO_COMPRESSED;
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+	}
+
+	desc->check.flags = cpu_to_le16(metadata_flags);
+
 	pebi->current_log.seg_flags |= SSDFS_SEG_HDR_HAS_OFFSET_TABLE;
 
 fail_store_off_table:
-	ssdfs_blk2off_table_free_snapshot(&snapshot);
+	ssdfs_dynamic_array_destroy(&extents);
 
-	ssdfs_blk2off_kfree(extents);
+finish_store_off_table:
+	ssdfs_blk2off_table_free_snapshot(&snapshot);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -6928,7 +7585,9 @@ finish_allocation:
 	SSDFS_DBG("finished: err %d\n", err);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_blk2off_table_object(table);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }

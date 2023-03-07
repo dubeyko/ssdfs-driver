@@ -25,6 +25,7 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "page_vector.h"
 #include "ssdfs.h"
 
 #include <trace/events/ssdfs.h>
@@ -531,12 +532,87 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (page_off >= pagevec_count(pvec)) {
-#ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page out of range: index %u: "
 				  "offset %zu, pagevec_count %u\n",
 				  page_off, cur_off,
 				  pagevec_count(pvec));
+			return -E2BIG;
+		}
+
+		page = pvec->pages[page_off];
+
+		ssdfs_lock_page(page);
+		err = ssdfs_memcpy_from_page(buf, read_bytes, size,
+					     page, cur_off, PAGE_SIZE,
+					     iter_read_bytes);
+		ssdfs_unlock_page(page);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "read_bytes %zu, offset %zu, "
+				  "iter_read_bytes %zu, err %d\n",
+				  read_bytes, cur_off,
+				  iter_read_bytes, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		read_bytes += iter_read_bytes;
+	} while (read_bytes < size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("BUF DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     buf, size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
+				     u32 offset, u32 size,
+				     void *buf)
+{
+	struct page *page;
+	u32 page_off;
+	u32 bytes_off;
+	size_t read_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pvec || !buf);
+
+	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
+		  pvec, offset, size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		size_t iter_read_bytes;
+		size_t cur_off;
+
+		bytes_off = offset + read_bytes;
+		page_off = bytes_off / PAGE_SIZE;
+		cur_off = bytes_off % PAGE_SIZE;
+
+		iter_read_bytes = min_t(size_t,
+					(size_t)(size - read_bytes),
+					(size_t)(PAGE_SIZE - cur_off));
+
+		SSDFS_DBG("page_off %u, cur_off %zu, "
+			  "iter_read_bytes %zu\n",
+			  page_off, cur_off,
+			  iter_read_bytes);
+
+		if (page_off >= ssdfs_page_vector_count(pvec)) {
+			SSDFS_DBG("page out of range: index %u: "
+				  "offset %zu, pagevec_count %u\n",
+				  page_off, cur_off,
+				  ssdfs_page_vector_count(pvec));
 			return -E2BIG;
 		}
 
@@ -617,6 +693,79 @@ int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 				  "offset %zu, pagevec_count %u\n",
 				  page_off, cur_off,
 				  pagevec_count(pvec));
+			return -EINVAL;
+		}
+
+		page = pvec->pages[page_off];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!page);
+		WARN_ON(!PageLocked(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
+					   buf, written_bytes, size,
+					   iter_write_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "written_bytes %zu, offset %zu, "
+				  "iter_write_bytes %zu, err %d\n",
+				  written_bytes, cur_off,
+				  iter_write_bytes, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("page %p, count %d\n",
+			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		written_bytes += iter_write_bytes;
+	} while (written_bytes < size);
+
+	return 0;
+}
+
+int ssdfs_unaligned_write_page_vector(struct ssdfs_page_vector *pvec,
+					u32 offset, u32 size,
+					void *buf)
+{
+	struct page *page;
+	u32 page_off;
+	u32 bytes_off;
+	size_t written_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pvec || !buf);
+
+	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
+		  pvec, offset, size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		size_t iter_write_bytes;
+		size_t cur_off;
+
+		bytes_off = offset + written_bytes;
+		page_off = bytes_off / PAGE_SIZE;
+		cur_off = bytes_off % PAGE_SIZE;
+
+		iter_write_bytes = min_t(size_t,
+					(size_t)(size - written_bytes),
+					(size_t)(PAGE_SIZE - cur_off));
+
+		SSDFS_DBG("bytes_off %u, page_off %u, "
+			  "cur_off %zu, written_bytes %zu, "
+			  "iter_write_bytes %zu\n",
+			  bytes_off, page_off, cur_off,
+			  written_bytes, iter_write_bytes);
+
+		if (page_off >= ssdfs_page_vector_count(pvec)) {
+			SSDFS_ERR("invalid page index %u: "
+				  "offset %zu, pagevec_count %u\n",
+				  page_off, cur_off,
+				  ssdfs_page_vector_count(pvec));
 			return -EINVAL;
 		}
 

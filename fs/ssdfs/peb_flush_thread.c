@@ -30,15 +30,15 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "page_vector.h"
 #include "ssdfs.h"
 #include "compression.h"
-#include "page_vector.h"
 #include "block_bitmap.h"
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
-#include "offset_translation_table.h"
 #include "page_array.h"
 #include "peb.h"
+#include "offset_translation_table.h"
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
@@ -907,6 +907,7 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_log *log;
 	struct ssdfs_metadata_options *options;
+	size_t blk2off_tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	int log_state;
 	int log_strategy;
 	u32 pages_per_peb;
@@ -1076,6 +1077,11 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 
 	log->free_data_pages -= log->reserved_pages;
 	pebi->current_log.seg_flags = 0;
+
+	memset(&log->blk2off_tbl.hdr, 0xFF,
+		sizeof(struct ssdfs_blk2off_table_header));
+	log->blk2off_tbl.reserved_offset = U32_MAX;
+	log->blk2off_tbl.compressed_offset = blk2off_tbl_hdr_size;
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		struct ssdfs_peb_area *area;
@@ -5945,6 +5951,17 @@ int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
 	BUG_ON((req->extent.data_bytes /
 		pebi->pebc->parent_si->fsi->pagesize) < 1);
+
+	SSDFS_DBG("peb %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu, "
+		  "seg %llu, logical_block %u, cmd %#x, type %#x, "
+		  "processed_blks %d\n",
+		  pebi->peb_id, req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot,
+		  req->place.start.seg_id, req->place.start.blk_index,
+		  req->private.cmd, req->private.type,
+		  req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = __ssdfs_peb_pre_allocate_extent(pebi, req);

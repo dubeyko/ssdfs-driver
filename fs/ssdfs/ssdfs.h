@@ -35,6 +35,7 @@
 #include "snapshot_rules.h"
 #include "ssdfs_fs_info.h"
 #include "ssdfs_inline.h"
+#include "page_vector.h"
 
 /*
  * struct ssdfs_value_pair - value/position pair
@@ -246,6 +247,12 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 				  u32 offset, u32 size,
 				  void *buf);
+int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
+				     u32 offset, u32 size,
+				     void *buf);
+int ssdfs_unaligned_write_page_vector(struct ssdfs_page_vector *pvec,
+					u32 offset, u32 size,
+					void *buf);
 
 /* recovery.c */
 int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
