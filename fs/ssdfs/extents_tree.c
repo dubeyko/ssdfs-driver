@@ -7506,6 +7506,16 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 		node->index_area.index_capacity = index_area_size / index_size;
 		index_capacity = node->index_area.index_capacity;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("node_id %u, state %#x, type %#x, "
+			  "index_area_min_size %u, index_size %u, "
+			  "index_capacity %u\n",
+			  node->node_id, atomic_read(&node->state),
+			  atomic_read(&node->type),
+			  index_area_min_size, index_size,
+			  index_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		node->items_area.offset = node->index_area.offset +
 						node->index_area.area_size;
 
@@ -7537,6 +7547,16 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.items_count = 0;
 		node->items_area.items_capacity = items_area_size / item_size;
 		items_capacity = node->items_area.items_capacity;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("node_id %u, state %#x, type %#x, "
+			  "items_area_size %u, item_size %u, "
+			  "items_capacity %u\n",
+			  node->node_id, atomic_read(&node->state),
+			  atomic_read(&node->type),
+			  items_area_size, item_size,
+			  items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (node->items_area.items_capacity == 0) {
 			err = -ERANGE;
@@ -7596,6 +7616,16 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 	}
 
 	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node_id %u, state %#x, type %#x, "
+		  "index_capacity %u, items_capacity %u, "
+		  "bits_count %lu\n",
+		  node->node_id, atomic_read(&node->state),
+		  atomic_read(&node->type),
+		  index_capacity, items_capacity,
+		  node->bmap_array.bits_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (item_size > 0)
 		items_capacity = node_size / item_size;
@@ -11007,8 +11037,10 @@ int ssdfs_invalidate_forks_range(struct ssdfs_btree_node *node,
 
 	if ((start_index + range_len) > area->items_count) {
 		SSDFS_ERR("invalid request: "
-			  "start_index %u, range_len %u\n",
-			  start_index, range_len);
+			  "start_index %u, range_len %u, "
+			  "area->items_count %u\n",
+			  start_index, range_len,
+			  area->items_count);
 		return -ERANGE;
 	}
 
@@ -11403,7 +11435,7 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	if (!(search->request.flags & SSDFS_BTREE_SEARCH_NOT_INVALIDATE))
+	if (search->request.flags & SSDFS_BTREE_SEARCH_NOT_INVALIDATE)
 		goto finish_invalidate_items_area;
 
 	if (!items_area_empty)

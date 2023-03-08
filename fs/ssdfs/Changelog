@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.50 [March 07, 2023]
+    (*) Fix issue with wrong invalidation of moving forks between nodes.
+
 v.4.49 [March 06, 2023]
     (*) Introduce blk2off table compression support.
 

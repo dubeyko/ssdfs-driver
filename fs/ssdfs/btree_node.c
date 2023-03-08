@@ -16415,6 +16415,8 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 	items_capacity = node->items_area.items_capacity;
 	index_start_bit = node->bmap_array.index_start_bit;
 	item_start_bit = node->bmap_array.item_start_bit;
+
+	node->bmap_array.bits_count = index_capacity + items_capacity + 1;
 	bits_count = node->bmap_array.bits_count;
 
 	if ((index_start_bit + index_capacity) > item_start_bit) {

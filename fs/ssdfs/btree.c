@@ -2909,7 +2909,7 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 	int node_type;
 	u32 node_id;
 	bool is_found = false;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree || !node || !search);
@@ -2928,6 +2928,9 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
+
+	SSDFS_DBG("parent node_id %u\n",
+		  node->node_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&node->header_lock);
@@ -2940,6 +2943,9 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 
 	default:
 		err = -ERANGE;
+		SSDFS_ERR("node_id %u, index_area.state %#x\n",
+			  node->node_id,
+			  atomic_read(&node->index_area.state));
 		break;
 	}
 

@@ -8924,6 +8924,9 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		return err;
 	}
 
+	if (search->request.flags & SSDFS_BTREE_SEARCH_NOT_INVALIDATE)
+		goto finish_invalidate_items_area;
+
 	switch (search->request.type) {
 	case SSDFS_BTREE_SEARCH_DELETE_ITEM:
 	case SSDFS_BTREE_SEARCH_DELETE_RANGE:
@@ -8989,6 +8992,7 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
+finish_invalidate_items_area:
 	return 0;
 }
 
