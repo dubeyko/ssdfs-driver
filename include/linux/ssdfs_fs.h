@@ -3032,7 +3032,7 @@ struct ssdfs_shared_dictionary_node_header {
  * @node: generic btree node's header
  * @parent_ino: parent inode number
  * @blks_count: count of blocks in all valid extents
- * @forks_count: count of forks in the node
+ * @forks_count: count of forks in the leaf node or sub-tree (hybrid/index node)
  * @allocated_extents: count of allocated extents in all forks
  * @valid_extents: count of valid extents
  * @max_extent_blks: maximal number of blocks in one extent

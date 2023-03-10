@@ -6654,7 +6654,11 @@ bool is_ssdfs_btree_empty(struct ssdfs_btree *tree)
 	err = ssdfs_btree_radix_tree_find(tree,
 					  SSDFS_BTREE_ROOT_NODE_ID,
 					  &node);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		err = 0;
+		SSDFS_DBG("root node is absent: tree is empty\n");
+		goto finish_check_tree;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find root node: err %d\n",
 			  err);
 		goto finish_check_tree;

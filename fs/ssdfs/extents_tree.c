@@ -6207,6 +6207,9 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 				SSDFS_ERR("fail to delete fork: err %d\n", err);
 				goto finish_truncate_inline_fork;
 			}
+
+			if (need_delete_whole_tree)
+				atomic64_set(&tree->forks_count, 0);
 			break;
 
 		case SSDFS_BTREE_SEARCH_VALID_ITEM:
@@ -6240,6 +6243,9 @@ int ssdfs_extents_tree_truncate_extent(struct ssdfs_extents_btree_info *tree,
 						  "err %d\n", err);
 					goto finish_truncate_inline_fork;
 				}
+
+				if (need_delete_whole_tree)
+					atomic64_set(&tree->forks_count, 0);
 			} else {
 				search->request.type =
 					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
@@ -6323,6 +6329,9 @@ finish_truncate_inline_fork:
 				SSDFS_ERR("fail to delete fork: err %d\n", err);
 				goto finish_truncate_generic_fork;
 			}
+
+			if (need_delete_whole_tree)
+				atomic64_set(&tree->forks_count, 0);
 			break;
 
 		case SSDFS_BTREE_SEARCH_VALID_ITEM:
@@ -6357,6 +6366,9 @@ finish_truncate_inline_fork:
 						  "err %d\n", err);
 					goto finish_truncate_generic_fork;
 				}
+
+				if (need_delete_whole_tree)
+					atomic64_set(&tree->forks_count, 0);
 			} else {
 				search->request.type =
 					SSDFS_BTREE_SEARCH_INVALIDATE_TAIL;
@@ -7483,6 +7495,8 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
 		node->bmap_array.item_start_bit =
 			node->bmap_array.index_start_bit + index_capacity;
+
+		node->raw.extents_header.forks_count = cpu_to_le32(0);
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -10070,6 +10084,70 @@ int ssdfs_calculate_range_blocks_in_node(struct ssdfs_btree_node *node,
 }
 
 /*
+ * ssdfs_increase_forks_count_in_parent_nodes() - increase forks count in parent
+ * @node: pointer on node object
+ * @count: number of added forks
+ */
+static
+int ssdfs_increase_forks_count_in_parent_nodes(struct ssdfs_btree_node *node,
+						u32 count)
+{
+	struct ssdfs_btree_node *parent_node;
+	struct ssdfs_extents_btree_node_header *hdr;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+
+	SSDFS_DBG("node_id %u, height %u, count %u\n",
+		  node->node_id,
+		  atomic_read(&node->height),
+		  count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (count == 0) {
+		SSDFS_ERR("invalid count %u\n",
+			  count);
+		return -EINVAL;
+	}
+
+	do {
+		spin_lock(&node->descriptor_lock);
+		parent_node = node->parent_node;
+		spin_unlock(&node->descriptor_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!parent_node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		switch (atomic_read(&parent_node->type)) {
+		case SSDFS_BTREE_ROOT_NODE:
+			/* do nothing */
+			goto finish_increase_forks_count;
+
+		case SSDFS_BTREE_INDEX_NODE:
+		case SSDFS_BTREE_HYBRID_NODE:
+			/* continue logic */
+			break;
+
+		default:
+			SSDFS_ERR("unexpected node type %#x\n",
+				  atomic_read(&parent_node->type));
+			return -ERANGE;
+		}
+
+		down_write(&parent_node->header_lock);
+		hdr = &parent_node->raw.extents_header;
+		le32_add_cpu(&hdr->forks_count, count);
+		up_write(&parent_node->header_lock);
+
+		node = parent_node;
+	} while (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE);
+
+finish_increase_forks_count:
+	return 0;
+}
+
+/*
  * __ssdfs_extents_btree_node_insert_range() - insert range of forks into node
  * @node: pointer on node object
  * @search: search object
@@ -10477,6 +10555,15 @@ finish_insert_range:
 
 	if (unlikely(err))
 		return err;
+
+	err = ssdfs_increase_forks_count_in_parent_nodes(node,
+						search->request.count);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to increase forks count in parent nodes: "
+			  "node_id %u, err %d\n",
+			  node->node_id, err);
+		return err;
+	}
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -11146,6 +11233,85 @@ int ssdfs_define_first_invalid_index(struct ssdfs_btree_node *node,
 }
 
 /*
+ * ssdfs_decrease_forks_count_in_parent_nodes() - decrease forks count in parent
+ * @node: pointer on node object
+ * @count: number of deleted forks
+ */
+static
+int ssdfs_decrease_forks_count_in_parent_nodes(struct ssdfs_btree_node *node,
+						u32 count)
+{
+	struct ssdfs_btree_node *parent_node;
+	struct ssdfs_extents_btree_node_header *hdr;
+	u32 forks_count;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+
+	SSDFS_DBG("node_id %u, height %u, count %u\n",
+		  node->node_id,
+		  atomic_read(&node->height),
+		  count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (count == 0) {
+		SSDFS_ERR("invalid count %u\n",
+			  count);
+		return -EINVAL;
+	}
+
+	do {
+		spin_lock(&node->descriptor_lock);
+		parent_node = node->parent_node;
+		spin_unlock(&node->descriptor_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!parent_node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		switch (atomic_read(&parent_node->type)) {
+		case SSDFS_BTREE_ROOT_NODE:
+			/* do nothing */
+			goto finish_decrease_forks_count;
+
+		case SSDFS_BTREE_INDEX_NODE:
+		case SSDFS_BTREE_HYBRID_NODE:
+			/* continue logic */
+			break;
+
+		default:
+			SSDFS_ERR("unexpected node type %#x\n",
+				  atomic_read(&parent_node->type));
+			return -ERANGE;
+		}
+
+		down_write(&parent_node->header_lock);
+		hdr = &parent_node->raw.extents_header;
+		forks_count = le32_to_cpu(hdr->forks_count);
+		if (count > forks_count)
+			err = -ERANGE;
+		else {
+			forks_count -= count;
+			hdr->forks_count = cpu_to_le32(forks_count);
+		}
+		up_write(&parent_node->header_lock);
+
+		if (unlikely(err)) {
+			SSDFS_WARN("invalid request: "
+				   "forks_count %u < count %u\n",
+				   forks_count, count);
+			goto finish_decrease_forks_count;
+		}
+
+		node = parent_node;
+	} while (atomic_read(&node->type) != SSDFS_BTREE_ROOT_NODE);
+
+finish_decrease_forks_count:
+	return err;
+}
+
+/*
  * ssdfs_invalidate_index_tail() - invalidate the tail of index sequence
  * @node: pointer on node object
  * @start_index: starting index
@@ -11165,12 +11331,16 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_shared_extents_tree *shextree;
 	struct ssdfs_btree *tree;
+	struct ssdfs_extents_btree_info *etree;
+	struct ssdfs_extents_btree_node_header *hdr;
 	struct ssdfs_btree_node_items_area items_area;
 	struct ssdfs_btree_node_index_area index_area;
 	struct ssdfs_btree_index_key index;
 	int node_type;
 	int index_type = SSDFS_EXTENT_INFO_UNKNOWN_TYPE;
 	u64 ino;
+	u32 range_len;
+	u32 forks_count = 0;
 	int i;
 	int err = 0;
 
@@ -11198,15 +11368,14 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 		index_type = SSDFS_EXTENT_INFO_INDEX_DESCRIPTOR;
 		break;
 
-	case SSDFS_DENTRIES_BTREE:
-		index_type = SSDFS_EXTENT_INFO_DENTRY_INDEX_DESCRIPTOR;
-		break;
-
 	default:
 		SSDFS_ERR("unsupported tree type %#x\n",
 			  tree->type);
 		return -ERANGE;
 	}
+
+	etree = container_of(tree, struct ssdfs_extents_btree_info,
+			     buffer.tree);
 
 	if (!is_ssdfs_btree_node_index_area_exist(node)) {
 		SSDFS_ERR("index area is absent\n");
@@ -11226,17 +11395,26 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
 
+	if (start_index >= items_area.items_count) {
+		err = -ERANGE;
+		SSDFS_ERR("start_index %u >= items_count %u\n",
+			  start_index,
+			  items_area.items_count);
+		goto finish_invalidate_index_tail;
+	}
+
 	if (is_ssdfs_btree_node_items_area_exist(node)) {
+		range_len = items_area.items_count - start_index;
+
 		err = ssdfs_invalidate_forks_range(node, &items_area,
 						   start_index,
-						   items_area.items_count);
+						   range_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate forks range: "
 				  "node_id %u, range (start %u, count %u), "
 				  "err %d\n",
 				  node->node_id, start_index,
-				  items_area.items_count,
-				  err);
+				  range_len, err);
 			goto finish_invalidate_index_tail;
 		}
 	}
@@ -11291,6 +11469,46 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 		}
 	}
 
+	for (i = 0; i < start_index; i++) {
+		struct ssdfs_btree_node *child;
+		u64 hash;
+
+		if (node_type == SSDFS_BTREE_ROOT_NODE) {
+			err = __ssdfs_btree_root_node_extract_index(node,
+								    (u16)i,
+								    &index);
+		} else {
+			err = ssdfs_btree_node_get_index(&node->content.pvec,
+							 index_area.offset,
+							 index_area.area_size,
+							 node->node_size,
+							 (u16)i, &index);
+		}
+
+		if (unlikely(err)) {
+			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to extract index: "
+				  "node_id %u, index %d, err %d\n",
+				  node->node_id, i, err);
+			goto finish_process_index_area;
+		}
+
+		hash = le64_to_cpu(index.index.hash);
+		child = ssdfs_btree_get_child_node_for_hash(tree,
+							    node, hash);
+		if (IS_ERR_OR_NULL(child)) {
+			err = !child ? -ERANGE : PTR_ERR(child);
+			SSDFS_ERR("fail to get the child node: err %d\n",
+				  err);
+			goto finish_process_index_area;
+		}
+
+		down_write(&child->header_lock);
+		hdr = &child->raw.extents_header;
+		forks_count += le32_to_cpu(hdr->forks_count);
+		up_write(&child->header_lock);
+	}
+
 	down_write(&node->header_lock);
 
 	for (i = index_area.index_count - 1; i >= start_index; i--) {
@@ -11311,11 +11529,48 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 		}
 	}
 
+	hdr = &node->raw.extents_header;
+	range_len = le32_to_cpu(hdr->forks_count);
+
+	if (forks_count > range_len) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to define deleted forks count: "
+			  "new_forks_count %u, old_forks_count %u\n",
+			  forks_count, range_len);
+		goto finish_index_deletion;
+	}
+
+	range_len -= forks_count;
+
+	hdr->forks_count = cpu_to_le32(forks_count);
+	atomic64_sub(range_len, &etree->forks_count);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("forks_count %lld\n",
+		  atomic64_read(&etree->forks_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic64_read(&etree->forks_count) < 0) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid total forks_count %lld\n",
+			  atomic64_read(&etree->forks_count));
+	}
+
 finish_index_deletion:
 	up_write(&node->header_lock);
 
 finish_process_index_area:
 	ssdfs_unlock_whole_index_area(node);
+
+	if (!err) {
+		err = ssdfs_decrease_forks_count_in_parent_nodes(node,
+								 range_len);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to decrease forks count: "
+				  "err %d\n", err);
+			return err;
+		}
+	}
 
 finish_invalidate_index_tail:
 	return err;

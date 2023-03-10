@@ -1577,6 +1577,7 @@ int ssdfs_shextree_add_pre_invalid_index(struct ssdfs_shared_extents_tree *tree,
 	switch (node_type) {
 	case SSDFS_BTREE_INDEX_NODE:
 	case SSDFS_BTREE_HYBRID_NODE:
+	case SSDFS_BTREE_LEAF_NODE:
 		/* expected node type */
 		break;
 

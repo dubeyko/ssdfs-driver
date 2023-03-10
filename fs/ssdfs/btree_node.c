@@ -8872,6 +8872,7 @@ int ssdfs_btree_node_delete_index(struct ssdfs_btree_node *node,
 
 	case SSDFS_BTREE_NODE_INITIALIZED:
 	case SSDFS_BTREE_NODE_DIRTY:
+	case SSDFS_BTREE_NODE_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -8908,6 +8909,12 @@ int ssdfs_btree_node_delete_index(struct ssdfs_btree_node *node,
 		down_read(&node->full_lock);
 		down_write(&node->header_lock);
 
+		if (is_ssdfs_btree_node_pre_deleted(node)) {
+			SSDFS_DBG("node %u is pre-deleted\n",
+				  node->node_id);
+			goto finish_change_root_node;
+		}
+
 		err = ssdfs_find_index_by_hash(node, &node->index_area,
 						hash, &found);
 		if (err == -EEXIST) {
@@ -8942,6 +8949,13 @@ finish_change_root_node:
 	} else {
 		down_write(&node->full_lock);
 		down_write(&node->header_lock);
+
+		if (is_ssdfs_btree_node_pre_deleted(node)) {
+			SSDFS_DBG("node %u is pre-deleted\n",
+				  node->node_id);
+			downgrade_write(&node->full_lock);
+			goto finish_change_common_node;
+		}
 
 		err = ssdfs_find_index_by_hash(node, &node->index_area,
 						hash, &found);
@@ -8984,6 +8998,7 @@ finish_change_root_node:
 		if (!err)
 			err = ssdfs_set_dirty_index_range(node, found, count);
 
+finish_change_common_node:
 		up_write(&node->header_lock);
 		up_read(&node->full_lock);
 
@@ -8994,6 +9009,13 @@ finish_change_root_node:
 				  node->node_id, node_type,
 				  found, err);
 		}
+	}
+
+	if (is_ssdfs_btree_node_pre_deleted(node)) {
+		SSDFS_DBG("no other activity is necessary: "
+			  "node %u is pre-deleted\n",
+			  node->node_id);
+		return 0;
 	}
 
 	ssdfs_set_node_update_cno(node);
@@ -15445,7 +15467,7 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 	struct ssdfs_shared_extents_tree *shextree;
 	u16 index_count;
 	int index_type = SSDFS_EXTENT_INFO_UNKNOWN_TYPE;
-	u16 i;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -15499,7 +15521,7 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 							    &indexes[i]);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to extract the index: "
-				  "index_id %u, err %d\n",
+				  "index_id %d, err %d\n",
 				  i, err);
 			goto finish_invalidate_root_node_hierarchy;
 		}
@@ -15516,10 +15538,10 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 		goto finish_process_root_node;
 	}
 
-	for (i = 0; i < index_count; i++) {
+	for (i = index_count - 1; i >= 0; i--) {
 		if (le64_to_cpu(indexes[i].index.hash) >= U64_MAX) {
 			err = -ERANGE;
-			SSDFS_ERR("index %u has invalid hash\n", i);
+			SSDFS_ERR("index %d has invalid hash\n", i);
 			goto finish_process_root_node;
 		}
 
@@ -15527,7 +15549,7 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 		if (unlikely(err)) {
 			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 			SSDFS_ERR("fail to delete index: "
-				  "index_id %u, err %d\n",
+				  "index_id %d, err %d\n",
 				  i, err);
 			goto finish_process_root_node;
 		}
@@ -15539,11 +15561,13 @@ int ssdfs_invalidate_root_node_hierarchy(struct ssdfs_btree_node *node)
 		if (unlikely(err)) {
 			atomic_set(&node->state, SSDFS_BTREE_NODE_CORRUPTED);
 			SSDFS_ERR("fail to pre-invalid index: "
-				  "index_id %u, err %d\n",
+				  "index_id %d, err %d\n",
 				  i, err);
 			goto finish_process_root_node;
 		}
 	}
+
+	set_ssdfs_btree_node_pre_deleted(node);
 
 finish_process_root_node:
 	up_write(&node->header_lock);
