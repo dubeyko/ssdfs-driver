@@ -98,6 +98,18 @@ void ssdfs_btree_node_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+void ssdfs_btree_node_forget_pagevec(struct pagevec *pvec)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	int i;
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		ssdfs_btree_node_forget_page(pvec->pages[i]);
+	}
+
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
 /******************************************************************************
  *                            BTREE NODE CACHE                                *
  ******************************************************************************/
@@ -1109,7 +1121,12 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 							      &pos);
 	}
 
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to convert: "
+			  "seg_id %llu, logical_blk %u, len %u, err %d\n",
+			  seg_id, logical_blk, len, err);
+		goto fail_read_node;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to convert: "
 			  "seg_id %llu, logical_blk %u, len %u, err %d\n",
 			  seg_id, logical_blk, len, err);
@@ -11734,7 +11751,15 @@ int ssdfs_btree_node_delete_item(struct ssdfs_btree_search *search)
 		  search->result.search_cno);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	set_ssdfs_btree_node_dirty(node);
+	switch (search->request.type) {
+	case SSDFS_BTREE_SEARCH_DELETE_ALL:
+		set_ssdfs_btree_node_pre_deleted(node);
+		break;
+
+	default:
+		set_ssdfs_btree_node_dirty(node);
+		break;
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -11915,7 +11940,15 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search)
 		  search->result.search_cno);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	set_ssdfs_btree_node_dirty(node);
+	switch (search->request.type) {
+	case SSDFS_BTREE_SEARCH_DELETE_ALL:
+		set_ssdfs_btree_node_pre_deleted(node);
+		break;
+
+	default:
+		set_ssdfs_btree_node_dirty(node);
+		break;
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");

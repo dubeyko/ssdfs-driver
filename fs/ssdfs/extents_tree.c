@@ -1636,14 +1636,6 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 
 	down_write(&tree->lock);
 
-	err = ssdfs_extents_tree_commit_logs_now(tree);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to commit logs: "
-			  "ino %lu, err %d\n",
-			  ii->vfs_inode.i_ino, err);
-		goto finish_extents_tree_flush;
-	}
-
 	switch (atomic_read(&tree->state)) {
 	case SSDFS_EXTENTS_BTREE_DIRTY:
 		/* need to flush */
@@ -1795,6 +1787,15 @@ finish_generic_tree_flush:
 	}
 
 	ii->raw_inode.count_of.forks = cpu_to_le32((u32)forks_count);
+
+	err = ssdfs_extents_tree_commit_logs_now(tree);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to commit logs: "
+			  "ino %lu, err %d\n",
+			  ii->vfs_inode.i_ino, err);
+		goto finish_extents_tree_flush;
+	}
+
 	atomic_set(&tree->state, SSDFS_EXTENTS_BTREE_INITIALIZED);
 
 finish_extents_tree_flush:
@@ -8228,8 +8229,10 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 
-	SSDFS_DBG("node_id %u, state %#x\n",
-		  node->node_id, atomic_read(&node->state));
+	SSDFS_DBG("node_id %u, state %#x, type %#x\n",
+		  node->node_id,
+		  atomic_read(&node->state),
+		  atomic_read(&node->type));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&node->state)) {
@@ -8315,10 +8318,33 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	blks_count = le64_to_cpu(extents_header.blks_count);
 
 	if (forks_count != items_count) {
-		err = -ERANGE;
-		SSDFS_ERR("forks_count %u != items_count %u\n",
-			  forks_count, items_count);
-		goto finish_extents_header_preparation;
+		switch (atomic_read(&node->type)) {
+		case SSDFS_BTREE_INDEX_NODE:
+		case SSDFS_BTREE_HYBRID_NODE:
+			/*
+			 * Index and hybrid nodes account
+			 * number of forks for all sub-hierarchy.
+			 * Ignore the check.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("node_id %u, state %#x, type %#x, "
+				  "forks_count %u, items_count %u\n",
+				  node->node_id,
+				  atomic_read(&node->state),
+				  atomic_read(&node->type),
+				  forks_count, items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		case SSDFS_BTREE_LEAF_NODE:
+			err = -ERANGE;
+			SSDFS_ERR("forks_count %u != items_count %u\n",
+				  forks_count, items_count);
+			goto finish_extents_header_preparation;
+
+		default:
+			BUG();
+		}
 	}
 
 	if (valid_extents > allocated_extents) {
@@ -8330,10 +8356,37 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 
 	calculated_extents = (u64)forks_count * SSDFS_INLINE_EXTENTS_COUNT;
 	if (calculated_extents != allocated_extents) {
-		err = -ERANGE;
-		SSDFS_ERR("calculated_extents %llu != allocated_extents %u\n",
-			  calculated_extents, allocated_extents);
-		goto finish_extents_header_preparation;
+		switch (atomic_read(&node->type)) {
+		case SSDFS_BTREE_INDEX_NODE:
+		case SSDFS_BTREE_HYBRID_NODE:
+			/*
+			 * Index and hybrid nodes account
+			 * number of forks for all sub-hierarchy.
+			 * Ignore the check.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("node_id %u, state %#x, type %#x, "
+				  "forks_count %u, items_count %u, "
+				  "calculated_extents %llu, "
+				  "allocated_extents %u\n",
+				  node->node_id,
+				  atomic_read(&node->state),
+				  atomic_read(&node->type),
+				  forks_count, items_count,
+				  calculated_extents,
+				  allocated_extents);
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		case SSDFS_BTREE_LEAF_NODE:
+			err = -ERANGE;
+			SSDFS_ERR("calculated_extents %llu != allocated_extents %u\n",
+				  calculated_extents, allocated_extents);
+			goto finish_extents_header_preparation;
+
+		default:
+			BUG();
+		}
 	}
 
 	calculated_blks = (u64)valid_extents * max_extent_blks;
@@ -8684,8 +8737,7 @@ int ssdfs_check_found_fork(struct ssdfs_fs_info *fsi,
 			break;
 		}
 	} else if ((*end_hash + 1) == search->request.start.hash) {
-		err = -EAGAIN;
-		*found_index = item_index + 1;
+		*found_index = item_index;
 
 		search->result.state =
 			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
@@ -9174,17 +9226,32 @@ int ssdfs_extents_btree_node_find_range(struct ssdfs_btree_node *node,
 			return err;
 		}
 	} else if (res == -EAGAIN) {
-		err = -ENODATA;
+		if ((end_hash + 1) == search->request.start.hash) {
+			err = -ENODATA;
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("node %u contains not all requested blocks: "
-			  "node (start_hash %llx, end_hash %llx), "
-			  "request (start_hash %llx, end_hash %llx)\n",
-			  node->node_id,
-			  start_hash, end_hash,
-			  search->request.start.hash,
-			  search->request.end.hash);
+			SSDFS_DBG("try to merge extent into fork: "
+				  "node %u (start_hash %llx, end_hash %llx), "
+				  "request (start_hash %llx, end_hash %llx)\n",
+				  node->node_id,
+				  start_hash, end_hash,
+				  search->request.start.hash,
+				  search->request.end.hash);
 #endif /* CONFIG_SSDFS_DEBUG */
-		ssdfs_btree_search_result_no_data(node, lookup_index, search);
+		} else {
+			err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("node %u contains not all requested blocks: "
+				  "node (start_hash %llx, end_hash %llx), "
+				  "request (start_hash %llx, end_hash %llx)\n",
+				  node->node_id,
+				  start_hash, end_hash,
+				  search->request.start.hash,
+				  search->request.end.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+			ssdfs_btree_search_result_no_data(node,
+							  lookup_index,
+							  search);
+		}
 	} else if (unlikely(res)) {
 		SSDFS_ERR("fail to extract range: "
 			  "node %u (start_hash %llx, end_hash %llx), "
@@ -11222,6 +11289,12 @@ int ssdfs_define_first_invalid_index(struct ssdfs_btree_node *node,
 		SSDFS_ERR("fail to find an index: "
 			  "node_id %u, hash %llx, err %d\n",
 			  node->node_id, hash, err);
+	} else {
+		/*
+		 * We already invalidated items in currrent node.
+		 * Let's start from the next one.
+		 */
+		++(*start_index);
 	}
 
 	if (!node_locked_outside) {
@@ -11333,7 +11406,6 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 	struct ssdfs_btree *tree;
 	struct ssdfs_extents_btree_info *etree;
 	struct ssdfs_extents_btree_node_header *hdr;
-	struct ssdfs_btree_node_items_area items_area;
 	struct ssdfs_btree_node_index_area index_area;
 	struct ssdfs_btree_index_key index;
 	int node_type;
@@ -11383,41 +11455,12 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 	}
 
 	down_read(&node->header_lock);
-	ssdfs_memcpy(&items_area,
-		     0, sizeof(struct ssdfs_btree_node_items_area),
-		     &node->items_area,
-		     0, sizeof(struct ssdfs_btree_node_items_area),
-		     sizeof(struct ssdfs_btree_node_items_area));
 	ssdfs_memcpy(&index_area,
 		     0, sizeof(struct ssdfs_btree_node_index_area),
 		     &node->index_area,
 		     0, sizeof(struct ssdfs_btree_node_index_area),
 		     sizeof(struct ssdfs_btree_node_index_area));
 	up_read(&node->header_lock);
-
-	if (start_index >= items_area.items_count) {
-		err = -ERANGE;
-		SSDFS_ERR("start_index %u >= items_count %u\n",
-			  start_index,
-			  items_area.items_count);
-		goto finish_invalidate_index_tail;
-	}
-
-	if (is_ssdfs_btree_node_items_area_exist(node)) {
-		range_len = items_area.items_count - start_index;
-
-		err = ssdfs_invalidate_forks_range(node, &items_area,
-						   start_index,
-						   range_len);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to invalidate forks range: "
-				  "node_id %u, range (start %u, count %u), "
-				  "err %d\n",
-				  node->node_id, start_index,
-				  range_len, err);
-			goto finish_invalidate_index_tail;
-		}
-	}
 
 	err = ssdfs_lock_whole_index_area(node);
 	if (unlikely(err)) {
@@ -11546,6 +11589,8 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 	atomic64_sub(range_len, &etree->forks_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node_id %u, forks_count %u\n",
+		  node->node_id, forks_count);
 	SSDFS_DBG("forks_count %lld\n",
 		  atomic64_read(&etree->forks_count));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -11647,7 +11692,14 @@ int __ssdfs_invalidate_items_area(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (!(search->request.flags & SSDFS_BTREE_SEARCH_NOT_INVALIDATE)) {
+	if (search->request.flags & SSDFS_BTREE_SEARCH_NOT_INVALIDATE) {
+		SSDFS_DBG("Do not invalidate node %u\n",
+			  node->node_id);
+	} else if (search->request.type == SSDFS_BTREE_SEARCH_DELETE_ALL) {
+		SSDFS_DBG("Invalidate the whole hierarchy: "
+			  "do not invalidate node %u now\n",
+			  node->node_id);
+	} else {
 		err = ssdfs_invalidate_forks_range(node, area,
 						   start_index, range_len);
 		if (unlikely(err)) {
@@ -12768,6 +12820,10 @@ finish_detect_affected_items:
 		break;
 
 	case SSDFS_BTREE_SEARCH_DELETE_ALL:
+		err = -EBUSY;
+		SSDFS_DBG("invalidation logic takes care for the whole tree\n");
+		goto finish_delete_range;
+
 	case SSDFS_BTREE_SEARCH_INVALIDATE_TAIL:
 		err = ssdfs_set_node_header_dirty(node,
 						  items_area.items_capacity);
@@ -12936,7 +12992,7 @@ finish_detect_affected_items:
 			hdr->max_extent_blks = cpu_to_le32(0);
 		} else {
 			forks_count = le32_to_cpu(hdr->forks_count);
-			forks_count -= search->request.count;
+			forks_count -= range_len;
 			hdr->forks_count = cpu_to_le32(forks_count);
 
 			allocated_extents = le32_to_cpu(hdr->allocated_extents);
@@ -12970,6 +13026,8 @@ finish_detect_affected_items:
 	atomic64_sub(forks_diff, &etree->forks_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node_id %u, forks_count %u\n",
+		  node->node_id, forks_count);
 	SSDFS_DBG("forks_count %lld\n",
 		  atomic64_read(&etree->forks_count));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -13012,7 +13070,10 @@ finish_delete_range:
 	ssdfs_unlock_items_range(node, item_index, locked_len);
 	up_read(&node->full_lock);
 
-	if (unlikely(err)) {
+	if (err == -EBUSY) {
+		SSDFS_DBG("no more logic required for delete all items\n");
+		return 0;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to delete range: err %d\n",
 			  err);
 		return err;

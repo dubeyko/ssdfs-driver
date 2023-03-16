@@ -274,24 +274,24 @@ int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 	BUG_ON(!buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (buf->size >= PAGE_SIZE) {
+	if (buf->buf_size >= PAGE_SIZE) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to realloc buffer: "
 			  "old_size %zu\n",
-			  buf->size);
+			  buf->buf_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -E2BIG;
 	}
 
-	if (buf->size == new_size) {
+	if (buf->buf_size == new_size) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("do nothing: old_size %zu, new_size %zu\n",
-			  buf->size, new_size);
+			  buf->buf_size, new_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
 
-	if (buf->size > new_size) {
+	if (buf->buf_size > new_size) {
 		SSDFS_ERR("shrink not supported\n");
 		return -EOPNOTSUPP;
 	}
@@ -302,7 +302,7 @@ int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 		return -ENOMEM;
 	}
 
-	buf->size = new_size;
+	buf->buf_size = new_size;
 
 	return 0;
 }
@@ -658,11 +658,13 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		}
 
 		pebi->read_buffer.blk_desc.offset = U32_MAX;
-		pebi->read_buffer.blk_desc.size = buf_size;
+		pebi->read_buffer.blk_desc.fragment_size = 0;
+		pebi->read_buffer.blk_desc.buf_size = buf_size;
 	} else {
 		pebi->read_buffer.blk_desc.ptr = NULL;
 		pebi->read_buffer.blk_desc.offset = U32_MAX;
-		pebi->read_buffer.blk_desc.size = 0;
+		pebi->read_buffer.blk_desc.fragment_size = 0;
+		pebi->read_buffer.blk_desc.buf_size = 0;
 	}
 
 	pebi->pebc = pebc;
@@ -796,7 +798,8 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 		ssdfs_peb_kfree(pebi->read_buffer.blk_desc.ptr);
 		pebi->read_buffer.blk_desc.ptr = NULL;
 		pebi->read_buffer.blk_desc.offset = U32_MAX;
-		pebi->read_buffer.blk_desc.size = 0;
+		pebi->read_buffer.blk_desc.fragment_size = 0;
+		pebi->read_buffer.blk_desc.buf_size = 0;
 	}
 	up_write(&pebi->read_buffer.lock);
 

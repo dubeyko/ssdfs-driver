@@ -426,6 +426,9 @@ int ssdfs_shextree_index_thread_func(void *data)
 	struct ssdfs_shared_extents_tree *tree = data;
 	wait_queue_head_t *wait_queue = NULL;
 	struct ssdfs_invalidation_queue *ptr = NULL;
+	struct ssdfs_btree_index_key *key;
+	struct ssdfs_btree_index *index;
+	struct ssdfs_raw_extent *extent;
 	int id = SSDFS_INDEX_INVALIDATION_QUEUE;
 	int err = 0;
 
@@ -486,7 +489,53 @@ try_invalidate_queue:
 		}
 
 		err = ssdfs_shextree_invalidate_index(tree, ei);
-		if (err == -EBUSY) {
+		if (err == -ENODATA) {
+			key = &ei->raw.index;
+			index = &key->index;
+			extent = &index->extent;
+
+			if (kthread_should_stop()) {
+				ssdfs_fs_error(tree->fsi->sb,
+					__FILE__, __func__, __LINE__,
+					"fail to invalidate index: "
+					"node_id %u, node_type %#x, "
+					"height %u, hash %#llx, "
+					"(seg_id %llu, logical_blk %u, len %u), "
+					"err %d\n",
+					le32_to_cpu(key->node_id),
+					key->node_type,
+					key->height,
+					le64_to_cpu(index->hash),
+					le64_to_cpu(extent->seg_id),
+					le32_to_cpu(extent->logical_blk),
+					le32_to_cpu(extent->len),
+					err);
+				ssdfs_extent_info_free(ei);
+				goto repeat;
+			} else {
+				err = 0;
+				ssdfs_extents_queue_add_tail(&ptr->queue, ei);
+
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("return extent to queue: "
+					  "node_id %u, node_type %#x, "
+					  "height %u, hash %#llx, "
+					  "(seg_id %llu, logical_blk %u, len %u)\n",
+					  le32_to_cpu(key->node_id),
+					  key->node_type,
+					  key->height,
+					  le64_to_cpu(index->hash),
+					  le64_to_cpu(extent->seg_id),
+					  le32_to_cpu(extent->logical_blk),
+					  le32_to_cpu(extent->len));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				wait_event_interruptible_timeout(*wait_queue,
+							kthread_should_stop(),
+							HZ);
+				continue;
+			}
+		} else if (err == -EBUSY) {
 			err = 0;
 			ssdfs_extents_queue_add_tail(&ptr->queue, ei);
 			wait_event_interruptible_timeout(*wait_queue,

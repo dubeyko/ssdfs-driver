@@ -166,12 +166,14 @@ struct ssdfs_peb_journal_area_metadata {
  * struct ssdfs_peb_read_buffer - read buffer
  * @ptr: pointer on buffer
  * @offset: logical offset in metadata structure
- * @size: buffer size in bytes
+ * @fragment_size: size of fragment in bytes
+ * @buf_size: buffer size in bytes
  */
 struct ssdfs_peb_read_buffer {
 	void *ptr;
 	u32 offset;
-	size_t size;
+	size_t fragment_size;
+	size_t buf_size;
 };
 
 /*

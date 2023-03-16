@@ -841,11 +841,18 @@ int __ssdfs_decompress_blk2off_fragment(struct ssdfs_peb_info *pebi,
 					 cdata_buf);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read blk desc fragment: "
-			  "frag_offset %u, compr_size %u, "
+			  "area_offset %u, frag_offset %u, compr_size %u, "
 			  "err %d\n",
-			  frag_offset, compr_size, err);
+			  area_offset, frag_offset, compr_size, err);
 		goto free_buf;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("COMPRESSED FRAGMENT DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     cdata_buf, compr_size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (frag->type) {
 	case SSDFS_DATA_BLK_DESC_ZLIB:
@@ -935,7 +942,7 @@ int ssdfs_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_peb_read_buffer *buf;
 	u16 uncompr_size;
-	int err = 0;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -952,18 +959,27 @@ int ssdfs_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 	buf = &pebi->read_buffer.blk_desc;
 	uncompr_size = le16_to_cpu(frag->uncompr_size);
 
-	if (buf->size < uncompr_size) {
+	if (buf->buf_size < uncompr_size) {
 		err = ssdfs_peb_realloc_read_buffer(buf, uncompr_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to realloc read buffer: "
 				  "old_size %zu, new_size %u, err %d\n",
-				  buf->size, uncompr_size, err);
+				  buf->buf_size, uncompr_size, err);
 			return err;
 		}
 	}
 
-	return __ssdfs_decompress_blk2off_fragment(pebi, frag, area_offset,
-						   buf->ptr, buf->size);
+	err = __ssdfs_decompress_blk2off_fragment(pebi, frag, area_offset,
+						  buf->ptr, buf->buf_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to decompress blk desc fragment: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	buf->fragment_size = uncompr_size;
+
+	return 0;
 }
 
 /*
@@ -989,8 +1005,9 @@ int ssdfs_peb_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_area_block_table table;
 	size_t tbl_size = sizeof(struct ssdfs_area_block_table);
-	u32 area_offset;
-	u32 area_size;
+	u32 portion_offset;
+	u32 portion_size;
+	u32 fragment_offset;
 	u32 tbl_offset = 0;
 	u32 compr_bytes = 0;
 	u32 uncompr_bytes = 0;
@@ -1009,26 +1026,31 @@ int ssdfs_peb_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 		  offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	area_offset = le32_to_cpu(meta_desc->offset);
-	area_size = le32_to_cpu(meta_desc->size);
+	portion_offset = le32_to_cpu(meta_desc->offset);
+	portion_size = le32_to_cpu(meta_desc->size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("portion_offset %u, portion_size %u\n",
+		  portion_offset, portion_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 try_read_area_block_table:
-	if ((tbl_offset + tbl_size) > area_size) {
+	if ((tbl_offset + tbl_size) > portion_size) {
 		SSDFS_ERR("area block table out of area: "
-			  "tbl_offset %u, tbl_size %zu, area_size %u\n",
-			  tbl_offset, tbl_size, area_size);
+			  "tbl_offset %u, tbl_size %zu, portion_size %u\n",
+			  tbl_offset, tbl_size, portion_size);
 		return -ERANGE;
 	}
 
 	err = ssdfs_unaligned_read_cache(pebi,
-					 area_offset + tbl_offset,
+					 portion_offset + tbl_offset,
 					 tbl_size,
 					 &table);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read area block table: "
-			  "area_offset %u, area_size %u, "
+			  "portion_offset %u, portion_size %u, "
 			  "tbl_offset %u, tbl_size %zu, err %d\n",
-			  area_offset, area_size,
+			  portion_offset, portion_size,
 			  tbl_offset, tbl_size, err);
 		return err;
 	}
@@ -1054,15 +1076,21 @@ try_read_area_block_table:
 	}
 
 	compr_bytes = le32_to_cpu(table.chain_hdr.compr_bytes);
-	uncompr_bytes += le32_to_cpu(table.chain_hdr.uncompr_bytes);
+	uncompr_bytes = le32_to_cpu(table.chain_hdr.uncompr_bytes);
 
-	if (offset < uncompr_bytes) {
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("compr_bytes %u, uncompr_bytes %u\n",
+		  compr_bytes, uncompr_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fragment_offset = portion_offset + tbl_offset + tbl_size;
+
+	if (offset < (fragment_offset + uncompr_bytes)) {
 		struct ssdfs_fragment_desc *frag;
 		u16 fragments_count;
 		u16 frag_uncompr_size;
 		int i;
 
-		uncompr_bytes -= le32_to_cpu(table.chain_hdr.uncompr_bytes);
 		fragments_count = le16_to_cpu(table.chain_hdr.fragments_count);
 
 		for (i = 0; i < fragments_count; i++) {
@@ -1088,12 +1116,13 @@ try_read_area_block_table:
 				return -EIO;
 			}
 
+			fragment_offset = portion_offset + tbl_offset +
+						le32_to_cpu(frag->offset);
 			frag_uncompr_size = le16_to_cpu(frag->uncompr_size);
-			uncompr_bytes += frag_uncompr_size;
 
-			if (offset < uncompr_bytes) {
+			if (offset < (fragment_offset + frag_uncompr_size)) {
 				err = ssdfs_decompress_blk_desc_fragment(pebi,
-							    frag, area_offset);
+							frag, portion_offset);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to decompress: "
 						  "err %d\n", err);
@@ -1120,11 +1149,27 @@ try_read_area_block_table:
 			return -EIO;
 		}
 
-		tbl_offset += compr_bytes;
+		tbl_offset += tbl_size + compr_bytes;
 		goto try_read_area_block_table;
 	}
 
 	return 0;
+}
+
+static inline
+bool is_read_buffer_offset_invalid(struct ssdfs_peb_temp_read_buffers *buf)
+{
+	return buf->blk_desc.offset >= U32_MAX;
+}
+
+static inline
+bool read_buffer_has_no_requested_data(struct ssdfs_peb_temp_read_buffers *buf,
+				       u32 offset)
+{
+	u32 lower_bound = buf->blk_desc.offset;
+	u32 upper_bound = buf->blk_desc.offset + buf->blk_desc.fragment_size;
+
+	return offset < lower_bound || upper_bound;
 }
 
 /*
@@ -1154,8 +1199,6 @@ int ssdfs_peb_read_block_descriptor(struct ssdfs_peb_info *pebi,
 	struct ssdfs_peb_temp_read_buffers *buf;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	int compr_type = SSDFS_COMPR_NONE;
-	u32 lower_bound = U32_MAX;
-	u32 upper_bound = U32_MAX;
 	u16 flags;
 	int err = 0;
 
@@ -1196,10 +1239,18 @@ int ssdfs_peb_read_block_descriptor(struct ssdfs_peb_info *pebi,
 			goto finish_decompress;
 		}
 
-		lower_bound = buf->blk_desc.offset;
-		upper_bound = buf->blk_desc.offset + buf->blk_desc.size;
+		if (is_read_buffer_offset_invalid(buf)) {
+			err = ssdfs_peb_decompress_blk_desc_fragment(pebi,
+								     meta_desc,
+								     offset);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to decompress: err %d\n",
+					  err);
+				goto finish_decompress;
+			}
 
-		if (buf->blk_desc.offset >= U32_MAX) {
+			buf->blk_desc.offset = offset;
+		} else if (read_buffer_has_no_requested_data(buf, offset)) {
 			err = ssdfs_peb_decompress_blk_desc_fragment(pebi,
 								     meta_desc,
 								     offset);
@@ -1208,15 +1259,12 @@ int ssdfs_peb_read_block_descriptor(struct ssdfs_peb_info *pebi,
 					  err);
 				goto finish_decompress;
 			}
-		} else if (offset < lower_bound || offset >= upper_bound) {
-			err = ssdfs_peb_decompress_blk_desc_fragment(pebi,
-								     meta_desc,
-								     offset);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to decompress: err %d\n",
-					  err);
-				goto finish_decompress;
-			}
+
+			buf->blk_desc.offset = offset;
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("Read block descsriptor from the buffer\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 finish_decompress:
@@ -1231,14 +1279,15 @@ finish_decompress:
 		err = ssdfs_memcpy(blk_desc,
 				   0, blk_desc_size,
 				   buf->blk_desc.ptr,
-				   offset - lower_bound, buf->blk_desc.size,
+				   offset - buf->blk_desc.offset,
+				   buf->blk_desc.fragment_size,
 				   blk_desc_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("invalid buffer state: "
 				  "offset %u, buffer (offset %u, size %zu)\n",
 				  offset,
 				  buf->blk_desc.offset,
-				  buf->blk_desc.size);
+				  buf->blk_desc.fragment_size);
 			goto finish_read_compressed_blk_desc;
 		}
 

@@ -96,6 +96,18 @@ void ssdfs_ext_queue_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+void ssdfs_ext_queue_account_pagevec(struct pagevec *pvec)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	int i;
+
+	for (i = 0; i < pagevec_count(pvec); i++) {
+		ssdfs_ext_queue_account_page(pvec->pages[i]);
+	}
+
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
 static struct kmem_cache *ssdfs_extent_info_cachep;
 
 void ssdfs_zero_extent_info_cache_ptr(void)
@@ -490,6 +502,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 	u32 area_offset, area_size;
 	u16 flags;
 	int index_type = SSDFS_EXTENT_INFO_UNKNOWN_TYPE;
+	u32 node_id1, node_id2;
 	int i;
 	int err;
 
@@ -551,18 +564,41 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 			return err;
 		}
 
-		if (le32_to_cpu(cur_index.node_id) >= U32_MAX) {
+		node_id1 = le32_to_cpu(cur_index.node_id);
+		node_id2 = le32_to_cpu(hdr->node_id);
+
+		if (node_id1 >= U32_MAX) {
 			SSDFS_ERR("corrupted index: "
 				  "node_id %u\n",
-				  le32_to_cpu(cur_index.node_id));
+				  node_id1);
+			return -EIO;
+		}
+
+		if (node_id2 >= U32_MAX) {
+			SSDFS_ERR("corrupted node header: "
+				  "node_id %u\n",
+				  node_id2);
 			return -EIO;
 		}
 
 		switch (cur_index.node_type) {
-		case SSDFS_BTREE_INDEX_NODE:
 		case SSDFS_BTREE_HYBRID_NODE:
+			if (node_id1 == node_id2) {
+				SSDFS_DBG("items area has been invalidated: "
+					  "node_id %u\n",
+					  node_id2);
+				continue;
+			}
+			break;
+
+		case SSDFS_BTREE_INDEX_NODE:
 		case SSDFS_BTREE_LEAF_NODE:
-			/* expected state */
+			if (node_id1 == node_id2) {
+				SSDFS_DBG("corrupted index area: "
+					  "node_id %u\n",
+					  node_id2);
+				return -EFAULT;
+			}
 			break;
 
 		default:
@@ -676,14 +712,22 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
 						 owner_ino, &si, &pvec);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to prepare node's content: "
+			  "node_id %u, node_type %#x, "
+			  "owner_ino %llu, err %d\n",
+			  le32_to_cpu(index->node_id),
+			  index->node_type,
+			  owner_ino, err);
+		goto fail_invalidate_index;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare node's content: "
 			  "node_id %u, node_type %#x, "
 			  "owner_ino %llu, err %d\n",
 			  le32_to_cpu(index->node_id),
 			  index->node_type,
 			  owner_ino, err);
-		goto finish_invalidate_index;
+		goto fail_invalidate_index;
 	}
 
 	if (pagevec_count(&pvec) == 0) {
@@ -692,6 +736,9 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
+
+	ssdfs_btree_node_forget_pagevec(&pvec);
+	ssdfs_ext_queue_account_pagevec(&pvec);
 
 	page = pvec.pages[0];
 
@@ -835,8 +882,10 @@ revert_invalidation_state:
 	}
 
 finish_invalidate_index:
-	ssdfs_ext_queue_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
+
+fail_invalidate_index:
+	ssdfs_ext_queue_pagevec_release(&pvec);
 	return err;
 }
 
@@ -994,14 +1043,22 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
 						 owner_ino, &si, &pvec);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to prepare node's content: "
+			  "node_id %u, node_type %#x, "
+			  "owner_ino %llu, err %d\n",
+			  le32_to_cpu(index->node_id),
+			  index->node_type,
+			  owner_ino, err);
+		goto fail_invalidate_extents_btree_index;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare node's content: "
 			  "node_id %u, node_type %#x, "
 			  "owner_ino %llu, err %d\n",
 			  le32_to_cpu(index->node_id),
 			  index->node_type,
 			  owner_ino, err);
-		goto finish_invalidate_index;
+		goto fail_invalidate_extents_btree_index;
 	}
 
 	if (pagevec_count(&pvec) == 0) {
@@ -1010,6 +1067,9 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
+
+	ssdfs_btree_node_forget_pagevec(&pvec);
+	ssdfs_ext_queue_account_pagevec(&pvec);
 
 	page = pvec.pages[0];
 
@@ -1266,8 +1326,10 @@ revert_invalidation_state:
 	}
 
 finish_invalidate_index:
-	ssdfs_ext_queue_pagevec_release(&pvec);
 	ssdfs_segment_put_object(si);
+
+fail_invalidate_extents_btree_index:
+	ssdfs_ext_queue_pagevec_release(&pvec);
 	return err;
 }
 
@@ -1353,6 +1415,9 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
+
+	ssdfs_btree_node_forget_pagevec(&pvec);
+	ssdfs_ext_queue_account_pagevec(&pvec);
 
 	page = pvec.pages[0];
 

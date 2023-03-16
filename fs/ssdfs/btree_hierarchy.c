@@ -2760,8 +2760,20 @@ bool need_update_parent_index_area(u64 start_hash,
 		return false;
 	}
 
-	if (start_hash <= child_start_hash)
-		need_update = true;
+	switch (atomic_read(&child->state)) {
+	case SSDFS_BTREE_NODE_PRE_DELETED:
+	case SSDFS_BTREE_NODE_INVALID:
+	case SSDFS_BTREE_NODE_CORRUPTED:
+		need_update = false;
+		break;
+
+	default:
+		if (start_hash < child_start_hash)
+			need_update = true;
+		else
+			need_update = false;
+		break;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, child_start_hash %llx, "

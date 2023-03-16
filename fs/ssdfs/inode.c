@@ -693,7 +693,9 @@ int ssdfs_getattr(struct user_namespace *mnt_userns,
 
 static int ssdfs_truncate(struct inode *inode)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_extents_btree_info *tree = NULL;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -732,11 +734,36 @@ static int ssdfs_truncate(struct inode *inode)
 			memset((u8 *)ii->inline_file + newsize, 0, size);
 		}
 	} else {
+		tree = SSDFS_EXTREE(ii);
+		if (!tree) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("extents tree is absent: ino %lu\n",
+				  ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -ENOENT;
+		}
+
+		switch (atomic_read(&tree->state)) {
+		case SSDFS_EXTENTS_BTREE_DIRTY:
+			down_write(&ii->lock);
+			err = ssdfs_extents_tree_flush(fsi, ii);
+			up_write(&ii->lock);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to flush extents tree: "
+					  "ino %lu, err %d\n",
+					  inode->i_ino, err);
+				return err;
+			}
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
 		err = ssdfs_extents_tree_truncate(inode);
-		if (err == -ENOENT) {
-			err = 0;
-			SSDFS_DBG("extents tree is absent\n");
-		} else if (unlikely(err)) {
+		if (unlikely(err)) {
 			SSDFS_ERR("fail to truncate extents tree: "
 				  "err %d\n",
 				  err);

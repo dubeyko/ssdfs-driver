@@ -6402,7 +6402,12 @@ int ssdfs_blk2off_table_get_offset_position(struct ssdfs_blk2off_table *table,
 
 	err = ssdfs_blk2off_table_get_checked_position(table, logical_blk,
 							pos);
-	if (unlikely(err)) {
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to get checked offset's position: "
+			  "logical_block %u, err %d\n",
+			  logical_blk, err);
+		goto finish_extract_position;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to get checked offset's position: "
 			  "logical_block %u, err %d\n",
 			  logical_blk, err);
@@ -7412,6 +7417,7 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 	void *kaddr;
 	size_t off_pos_size = sizeof(struct ssdfs_offset_position);
 	u16 start_blk = 0;
+	u32 new_last_allocated_blk;
 	u16 i;
 	int err = 0;
 
@@ -7567,7 +7573,17 @@ save_found_extent:
 	table->free_logical_blks -= extent->len;
 
 	BUG_ON(extent->len == 0);
-	table->last_allocated_blk = extent->start_lblk + extent->len - 1;
+
+	new_last_allocated_blk = (u32)extent->start_lblk + extent->len - 1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(new_last_allocated_blk >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (table->last_allocated_blk >= U16_MAX)
+		table->last_allocated_blk = (u16)new_last_allocated_blk;
+	else if (new_last_allocated_blk > table->last_allocated_blk)
+		table->last_allocated_blk = (u16)new_last_allocated_blk;
 
 finish_allocation:
 	up_write(&table->translation_lock);

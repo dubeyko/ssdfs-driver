@@ -762,6 +762,7 @@ int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
 					struct page *page,
 					u32 *write_offset);
 
+void ssdfs_btree_node_forget_pagevec(struct pagevec *pvec);
 void ssdfs_show_btree_node_info(struct ssdfs_btree_node *node);
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);
 
