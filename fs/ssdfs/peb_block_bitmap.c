@@ -167,6 +167,11 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 		atomic_add(items_count, &parent->seg_free_blks);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_free_blks %d\n",
+		  atomic_read(&parent->seg_free_blks));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	bmap->src = &bmap->buffer[SSDFS_PEB_BLK_BMAP1];
 	bmap->dst = NULL;
 
@@ -1657,6 +1662,7 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	atomic_sub(reserving_blks, &bmap->parent->seg_free_blks);
+	atomic_add(reserving_blks, &bmap->parent->seg_reserved_metapages);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("parent->free_logical_blks %u, "
@@ -1731,6 +1737,8 @@ finish_calculate_reserving_blks:
 		down_write(&bmap->modification_lock);
 		atomic_add(reserving_blks, &bmap->peb_free_blks);
 		atomic_add(reserving_blks, &bmap->parent->seg_free_blks);
+		atomic_sub(reserving_blks,
+				&bmap->parent->seg_reserved_metapages);
 		up_write(&bmap->modification_lock);
 		up_write(&bmap->parent->modification_lock);
 
@@ -1744,6 +1752,8 @@ finish_calculate_reserving_blks:
 		down_write(&bmap->modification_lock);
 		atomic_add(reserving_blks, &bmap->peb_free_blks);
 		atomic_add(reserving_blks, &bmap->parent->seg_free_blks);
+		atomic_sub(reserving_blks,
+				&bmap->parent->seg_reserved_metapages);
 		up_write(&bmap->modification_lock);
 		up_write(&bmap->parent->modification_lock);
 
@@ -1775,6 +1785,7 @@ int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 				      u32 count)
 {
 	struct ssdfs_block_bmap *cur_bmap = NULL;
+	u32 freed_metapages = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1835,7 +1846,8 @@ init_failed:
 		goto finish_free_metapages;
 	}
 
-	err = ssdfs_block_bmap_free_metadata_pages(cur_bmap, count);
+	err = ssdfs_block_bmap_free_metadata_pages(cur_bmap, count,
+						   &freed_metapages);
 	ssdfs_block_bmap_unlock(cur_bmap);
 
 	if (err == -ENODATA) {
@@ -1852,7 +1864,9 @@ init_failed:
 	down_write(&bmap->parent->modification_lock);
 	down_write(&bmap->modification_lock);
 
-	atomic_add(count, &bmap->peb_free_blks);
+	if (freed_metapages > 0) {
+		atomic_add(freed_metapages, &bmap->peb_free_blks);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("free_logical_blks %u, valid_logical_blks %u, "
@@ -1875,28 +1889,33 @@ init_failed:
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	atomic_add(count, &bmap->parent->seg_free_blks);
+	if (freed_metapages > 0) {
+		atomic_add(freed_metapages,
+			   &bmap->parent->seg_free_blks);
+		atomic_sub(freed_metapages,
+			   &bmap->parent->seg_reserved_metapages);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("parent->free_logical_blks %u, "
 		  "parent->valid_logical_blks %u, "
 		  "parent->invalid_logical_blks %u, "
-		  "pages_per_peb %u\n",
+		  "pages_per_seg %u\n",
 		  atomic_read(&bmap->parent->seg_free_blks),
 		  atomic_read(&bmap->parent->seg_valid_blks),
 		  atomic_read(&bmap->parent->seg_invalid_blks),
-		  bmap->parent->pages_per_peb);
+		  bmap->parent->pages_per_seg);
 
-	if ((atomic_read(&bmap->peb_free_blks) +
-	     atomic_read(&bmap->peb_valid_blks) +
-	     atomic_read(&bmap->peb_invalid_blks)) >
-					bmap->pages_per_peb) {
+	if ((atomic_read(&bmap->parent->seg_free_blks) +
+	     atomic_read(&bmap->parent->seg_valid_blks) +
+	     atomic_read(&bmap->parent->seg_invalid_blks)) >
+					bmap->parent->pages_per_seg) {
 		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
-			   "invalid_logical_blks %u, pages_per_peb %u\n",
-			   atomic_read(&bmap->peb_free_blks),
-			   atomic_read(&bmap->peb_valid_blks),
-			   atomic_read(&bmap->peb_invalid_blks),
-			   bmap->pages_per_peb);
+			   "invalid_logical_blks %u, pages_per_seg %u\n",
+			   atomic_read(&bmap->parent->seg_free_blks),
+			   atomic_read(&bmap->parent->seg_valid_blks),
+			   atomic_read(&bmap->parent->seg_invalid_blks),
+			   bmap->parent->pages_per_seg);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3609,10 +3628,11 @@ finish_process_source_bmap:
 	}
 
 	if (free_blks < range->len) {
-		u32 freed_metapages = range->len - free_blks;
+		u32 count = range->len - free_blks;
+		u32 freed_metapages;
 
-		err = ssdfs_block_bmap_free_metadata_pages(dst,
-							   freed_metapages);
+		err = ssdfs_block_bmap_free_metadata_pages(dst, count,
+							   &freed_metapages);
 		if (err == -ENODATA) {
 			err = 0;
 			SSDFS_DBG("there is no metadata page reservation\n");

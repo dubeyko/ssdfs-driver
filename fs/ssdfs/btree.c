@@ -4564,7 +4564,7 @@ try_find_item_again:
 			SSDFS_DBG("node hasn't requested data\n");
 			goto finish_search_item;
 		}
-	} else if (err == -ENODATA) {
+	} else if (err == -ENODATA || err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find item: "
 			  "start_hash %llx, end_hash %llx\n",
@@ -4815,7 +4815,7 @@ try_find_range_again:
 			SSDFS_DBG("try next search\n");
 			goto try_next_search;
 		}
-	} else if (err == -ENODATA) {
+	} else if (err == -ENODATA || err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find range: "
 			  "start_hash %llx, end_hash %llx\n",

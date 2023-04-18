@@ -13236,6 +13236,12 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("reserved_pages %u, current_log.reserved_pages %u\n",
+		  reserved_pages,
+		  pebi->current_log.reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (reserved_pages > pebi->current_log.reserved_pages) {
 		diff = reserved_pages - pebi->current_log.reserved_pages;
 

@@ -593,6 +593,46 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 }
 
 /*
+ * ssdfs_dirty_pages_batch_add_page() - add memory page into batch
+ * @page: memory page
+ * @batch: dirty pages batch [out]
+ */
+int ssdfs_dirty_pages_batch_add_page(struct page *page,
+				     struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page || !batch);
+
+	switch (batch->state) {
+	case SSDFS_DIRTY_BATCH_CREATED:
+	case SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected state %#x\n",
+			  batch->state);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pagevec_space(&batch->pvec) == 0) {
+		SSDFS_WARN("batch's pagevec is full\n");
+		return -E2BIG;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("page_index %llu\n",
+		  (u64)page_index(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pagevec_add(&batch->pvec, page);
+	batch->state = SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES;
+	return 0;
+
+}
+
+/*
  * ssdfs_request_add_page() - add memory page into segment request
  * @page: memory page
  * @req: segment request [out]

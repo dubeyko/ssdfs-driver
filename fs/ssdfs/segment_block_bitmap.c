@@ -163,6 +163,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	atomic_set(&bmap->seg_valid_blks, 0);
 	atomic_set(&bmap->seg_invalid_blks, 0);
 	atomic_set(&bmap->seg_free_blks, 0);
+	atomic_set(&bmap->seg_reserved_metapages, 0);
 
 	bmap->pebs_count = si->pebs_count;
 
@@ -230,6 +231,7 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 	atomic_set(&ptr->seg_valid_blks, 0);
 	atomic_set(&ptr->seg_invalid_blks, 0);
 	atomic_set(&ptr->seg_free_blks, 0);
+	atomic_set(&ptr->seg_reserved_metapages, 0);
 
 	for (i = 0; i < ptr->pebs_count; i++)
 		ssdfs_peb_blk_bmap_destroy(&ptr->peb[i]);
@@ -679,6 +681,7 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
  * ssdfs_segment_blk_bmap_reserve_extent() - reserve free extent
  * @ptr: segment block bitmap object
  * @count: number of logical blocks
+ * @reserved_blks: number of reserved logical blocks [out]
  *
  * This function tries to reserve some number of free blocks.
  *
@@ -687,18 +690,21 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - extent has been reserved partially.
  * %-E2BIG      - segment hasn't enough free space.
  */
 int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
-					  u32 count)
+					  u32 count, u32 *reserved_blks)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
-	int free_blks;
-	int err = 0;
+	u32 reserved_threshold;
+	int free_blks = 0;
+	int reserved_metapages;
+	int err = 0, err1 = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si);
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !reserved_blks);
 
 	SSDFS_DBG("seg_id %llu\n",
 		  ptr->parent_si->seg_id);
@@ -710,37 +716,79 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		  ptr->pages_per_seg);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	*reserved_blks = 0;
+	si = ptr->parent_si;
+	fsi = si->fsi;
+
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
 		SSDFS_ERR("invalid segment block bitmap state %#x\n",
 			  atomic_read(&ptr->state));
 		return -ERANGE;
 	}
 
-	down_read(&ptr->modification_lock);
+	reserved_threshold = (u32)ptr->pebs_count *
+				SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
+
+	down_write(&ptr->modification_lock);
 
 	free_blks = atomic_read(&ptr->seg_free_blks);
+	reserved_metapages = atomic_read(&ptr->seg_reserved_metapages);
 
-	if (free_blks < count) {
+	if (reserved_threshold < reserved_metapages)
+		reserved_threshold = 0;
+	else
+		reserved_threshold -= reserved_metapages;
+
+	if (free_blks <= reserved_threshold) {
 		err = -E2BIG;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu hasn't enough free pages: "
-			  "free_pages %u, requested_pages %u\n",
-			  ptr->parent_si->seg_id, free_blks, count);
+			  "free_pages %u, reserved_threshold %u\n",
+			  ptr->parent_si->seg_id, free_blks,
+			  reserved_threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		atomic_set(&ptr->seg_free_blks, 0);
 	} else {
-		atomic_sub(count, &ptr->seg_free_blks);
+		free_blks -= reserved_threshold;
+
+		if (free_blks < count) {
+			if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+				err = -EAGAIN;
+				*reserved_blks = free_blks;
+				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
+			} else {
+				err = -E2BIG;
+				*reserved_blks = free_blks;
+				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
+			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("segment %llu hasn't enough free pages: "
+			  "free_pages %u, requested_pages %u, "
+			  "reserved_blks %u\n",
+			  ptr->parent_si->seg_id, free_blks,
+			  count, *reserved_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else {
+			*reserved_blks = count;
+			atomic_sub(*reserved_blks, &ptr->seg_free_blks);
+		}
 	}
 
-	up_read(&ptr->modification_lock);
+	up_write(&ptr->modification_lock);
 
-	if (err)
+	if (err == -EAGAIN) {
+		/*
+		 * Continue logic
+		 */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("extent has been allocated partially: "
+			  "free_pages %u, requested_pages %u, "
+			  "reserved_blks %u\n",
+			  free_blks, count, *reserved_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (err)
 		goto finish_reserve_extent;
-
-	si = ptr->parent_si;
-	fsi = si->fsi;
 
 	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
 		u64 reserved = 0;
@@ -748,20 +796,21 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 		spin_lock(&fsi->volume_state_lock);
 		reserved = fsi->reserved_new_user_data_pages;
-		if (fsi->reserved_new_user_data_pages >= count) {
-			fsi->reserved_new_user_data_pages -= count;
+		if (fsi->reserved_new_user_data_pages >= *reserved_blks) {
+			fsi->reserved_new_user_data_pages -= *reserved_blks;
 		} else
-			err = -ERANGE;
+			err1 = -ERANGE;
 		spin_unlock(&fsi->volume_state_lock);
 
-		if (err) {
+		if (err1) {
+			err = err1;
 			SSDFS_ERR("count %u is bigger than reserved %llu\n",
-				  count, reserved);
+				  *reserved_blks, reserved);
 			goto finish_reserve_extent;
 		}
 
 		spin_lock(&si->pending_lock);
-		si->pending_new_user_data_pages += count;
+		si->pending_new_user_data_pages += *reserved_blks;
 		pending = si->pending_new_user_data_pages;
 		spin_unlock(&si->pending_lock);
 
@@ -800,7 +849,9 @@ finish_reserve_extent:
  */
 int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
 {
-	return ssdfs_segment_blk_bmap_reserve_extent(ptr, 1);
+	u32 reserved_blks;
+
+	return ssdfs_segment_blk_bmap_reserve_extent(ptr, 1, &reserved_blks);
 }
 
 /*

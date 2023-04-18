@@ -1722,7 +1722,7 @@ finish_copy:
 		set_page_writeback(page);
 	}
 
-	err = ssdfs_segment_add_data_extent_async(fsi, req, &seg_id, &extent);
+	err = ssdfs_segment_add_xattr_blob_async(fsi, req, &seg_id, &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to add external blob: "
 			  "size %zu, err %d\n",

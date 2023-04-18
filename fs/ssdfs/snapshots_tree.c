@@ -162,14 +162,14 @@ int ssdfs_snapshots_btree_create(struct ssdfs_fs_info *fsi)
 	init_waitqueue_head(&ptr->wait_queue);
 	ssdfs_snapshot_reqs_queue_init(&ptr->requests.queue);
 
+	atomic_set(&ptr->state, SSDFS_SNAPSHOTS_BTREE_CREATED);
+
 	err = ssdfs_start_snapshots_btree_thread(fsi);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to start snapshots tree's thread: "
 			  "err %d\n", err);
 		goto destroy_snapshots_tree_object;
 	}
-
-	atomic_set(&ptr->state, SSDFS_SNAPSHOTS_BTREE_CREATED);
 
 	ssdfs_debug_snapshots_btree_object(ptr);
 

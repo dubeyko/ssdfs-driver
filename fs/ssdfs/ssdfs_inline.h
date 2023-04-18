@@ -840,6 +840,34 @@ u64 ssdfs_current_cno(struct super_block *sb)
 	((struct ssdfs_phys_offset_descriptor *)(ptr))
 
 static inline
+u32 ssdfs_phys_page_to_mem_page_count(struct ssdfs_fs_info *fsi,
+				      u32 phys_page_count)
+{
+	u64 bytes_count = (u64)fsi->pagesize * phys_page_count;
+	u64 mem_page_count = bytes_count >> PAGE_SHIFT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(mem_page_count >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)mem_page_count;
+}
+
+static inline
+u32 ssdfs_mem_page_to_phys_page_count(struct ssdfs_fs_info *fsi,
+				      u32 mem_page_count)
+{
+	u64 bytes_count = (u64)PAGE_SIZE * mem_page_count;
+	u64 phys_page_count = bytes_count >> fsi->log_pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(phys_page_count >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)phys_page_count;
+}
+
+static inline
 pgoff_t ssdfs_phys_page_to_mem_page(struct ssdfs_fs_info *fsi,
 				    pgoff_t index)
 {
@@ -963,16 +991,16 @@ int ssdfs_memcpy(void *dst, u32 dst_off, u32 dst_size,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	if ((src_off + copy_size) > src_size) {
-		SSDFS_ERR("fail to copy: "
-			  "src_off %u, copy_size %u, src_size %u\n",
-			  src_off, copy_size, src_size);
+		SSDFS_WARN("fail to copy: "
+			   "src_off %u, copy_size %u, src_size %u\n",
+			   src_off, copy_size, src_size);
 		return -ERANGE;
 	}
 
 	if ((dst_off + copy_size) > dst_size) {
-		SSDFS_ERR("fail to copy: "
-			  "dst_off %u, copy_size %u, dst_size %u\n",
-			  dst_off, copy_size, dst_size);
+		SSDFS_WARN("fail to copy: "
+			   "dst_off %u, copy_size %u, dst_size %u\n",
+			   dst_off, copy_size, dst_size);
 		return -ERANGE;
 	}
 

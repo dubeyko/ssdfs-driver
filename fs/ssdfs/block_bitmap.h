@@ -310,7 +310,7 @@ int ssdfs_get_range_state(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 					    u32 count);
 int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
-					 u32 count);
+					 u32 count, u32 *freed_items);
 int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap);

@@ -2785,6 +2785,55 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		}
 	}
 
+	/* process rest free extents */
+	while (extent_index < portion.env->t_init.extents_count) {
+		struct ssdfs_translation_extent extent;
+		u16 logical_blk;
+		u16 len;
+		int state;
+
+		err = ssdfs_blk2off_get_extent(&portion,
+						extent_index,
+						&extent);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to get extent: "
+				  "extent_index %d, err %d\n",
+				  extent_index, err);
+			goto unlock_translation_table;
+		}
+
+		logical_blk = le16_to_cpu(extent.logical_blk);
+		len = le16_to_cpu(extent.len);
+		state = extent.state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("logical_blk %u, len %u, "
+			  "state %#x, extent_index %d\n",
+			  logical_blk, len, state, extent_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (logical_blk >= portion.capacity) {
+			err = -ERANGE;
+			SSDFS_ERR("logical_blk %u >= capacity %u\n",
+				  logical_blk, portion.capacity);
+			goto unlock_translation_table;
+		}
+
+		if (state == SSDFS_LOGICAL_BLK_FREE) {
+			err = ssdfs_process_free_translation_extent(&portion,
+								&extent_index,
+								&extent);
+			if (err) {
+				SSDFS_ERR("invalid translation extent: "
+					  "sequence_id %u, err %d\n",
+					  extent_index, err);
+				goto unlock_translation_table;
+			}
+		}
+
+		++extent_index;
+	};
+
 	err = ssdfs_define_peb_table_state(table, peb_index);
 	if (err) {
 		SSDFS_ERR("fail to define PEB's table state: "

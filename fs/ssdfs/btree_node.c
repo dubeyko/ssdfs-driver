@@ -2731,6 +2731,17 @@ int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
 	hdr->create_cno = cpu_to_le64(node->create_cno);
 	hdr->node_id = cpu_to_le32(node->node_id);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node_id %u, node_type %#x, "
+		  "start_hash %llx, end_hash %llx, "
+		  "items_capacity %u\n",
+		  node->node_id,
+		  atomic_read(&node->type),
+		  le64_to_cpu(hdr->start_hash),
+		  le64_to_cpu(hdr->end_hash),
+		  le16_to_cpu(hdr->items_capacity));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -3045,6 +3056,12 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
 	BUG_ON(seg_id != si->seg_id);
+
+	SSDFS_DBG("node_id %u, height %u, type %#x, "
+		  "seg_id %llu, logical_blk %u, len %u\n",
+		  node->node_id, atomic_read(&node->height),
+		  atomic_read(&node->type),
+		  seg_id, logical_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_define_segment(seg_id, &node->flush_req);
@@ -10537,11 +10554,13 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("node %u hasn't items area\n",
-			  node->node_id);
+		SSDFS_DBG("node %u "
+			  "hasn't all items for request "
+			  "(start_hash %llx, end_hash %llx)\n",
+			  node->node_id,
+			  search->request.start.hash,
+			  search->request.end.hash);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
 		search->result.err = err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find: "
@@ -10704,11 +10723,13 @@ int ssdfs_btree_node_find_range(struct ssdfs_btree_search *search)
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("node %u hasn't items area\n",
-			  node->node_id);
+		SSDFS_DBG("node %u "
+			  "hasn't all items for request "
+			  "(start_hash %llx, end_hash %llx)\n",
+			  node->node_id,
+			  search->request.start.hash,
+			  search->request.end.hash);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		search->result.state = SSDFS_BTREE_SEARCH_FAILURE;
 		search->result.err = err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find: "

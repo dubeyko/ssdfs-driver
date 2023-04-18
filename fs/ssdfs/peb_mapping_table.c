@@ -7090,7 +7090,7 @@ int ssdfs_maptbl_reserve_free_pages(struct ssdfs_fs_info *fsi)
 	spin_unlock(&fsi->volume_state_lock);
 
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to reserve PEB: "
+		SSDFS_WARN("fail to reserve PEB: "
 			  "free_pages %llu, err %d\n",
 			  free_pages, err);
 	} else {

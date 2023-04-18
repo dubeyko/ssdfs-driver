@@ -280,16 +280,6 @@ struct ssdfs_blk2off_table_snapshot {
 };
 
 /*
- * struct ssdfs_blk2off_range - extent of logical blocks
- * @start_lblk: start logical block number
- * @len: count of logical blocks in extent
- */
-struct ssdfs_blk2off_range {
-	u16 start_lblk;
-	u16 len;
-};
-
-/*
  * Inline functions
  */
 

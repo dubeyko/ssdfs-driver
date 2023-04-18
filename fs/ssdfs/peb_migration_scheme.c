@@ -1059,6 +1059,10 @@ check_migration_state:
 		goto finish_migration_done;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("used_pages %d\n", used_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	switch (old_migration_state) {
 	case SSDFS_PEB_NOT_MIGRATING:
 	case SSDFS_PEB_MIGRATION_PREPARATION:

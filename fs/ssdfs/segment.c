@@ -36,6 +36,10 @@
 #include "segment.h"
 #include "current_segment.h"
 #include "segment_tree.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "btree.h"
+#include "extents_tree.h"
 #include "peb_mapping_table.h"
 
 #include <trace/events/ssdfs.h>
@@ -1156,6 +1160,7 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
 	struct ssdfs_segment_info *si;
 	int seg_state = SSDFS_SEG_STATE_MAX;
 	struct completion *init_end;
+	wait_queue_head_t *wq;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1304,7 +1309,27 @@ create_segment_object:
 		}
 	}
 
+	wq = &si->object_queue;
 	ssdfs_segment_get_object(si);
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_CREATED:
+	case SSDFS_CURRENT_SEG_OBJECT:
+		/* do nothing */
+		break;
+
+	default:
+		err = wait_event_killable_timeout(*wq,
+				is_ssdfs_segment_created(si),
+				SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0) {
+			ssdfs_segment_put_object(si);
+			SSDFS_WARN("fail to grab segment: "
+				   "seg %llu\n",
+				   seg_id);
+			return ERR_PTR(-ERANGE);
+		}
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -2004,6 +2029,867 @@ int ssdfs_remove_current_segment(struct ssdfs_current_segment *cur_seg)
 }
 
 /*
+ * ssdfs_add_request_into_create_queue() - add request into create queue
+ * @cur_seg: current segment container
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add segment request into create queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - request pool is full.
+ * %-ENODATA    - all pages have been processed.
+ * %-EAGAIN     - not all memory pages have been processed.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_requests_queue *create_rq;
+	struct ssdfs_segment_request *req;
+	struct inode *inode;
+	struct page *page;
+	struct ssdfs_inode_info *ii;
+	struct ssdfs_extents_btree_info *etree;
+	u32 not_proccessed;
+	u32 mem_pages_count;
+	u32 data_bytes;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !pool || !batch);
+	BUG_ON(pool->req_class <= SSDFS_PEB_READ_REQ ||
+		pool->req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = cur_seg->fsi;
+	si = cur_seg->real_seg;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+
+	SSDFS_DBG("seg_id %llu, req_class %d, req_type %d\n",
+		  si->seg_id, pool->req_class, pool->req_type);
+
+	if (pool->count > SSDFS_SEG_REQ_PTR_NUMBER_MAX) {
+		SSDFS_ERR("request pool is corrupted: "
+			  "count %u\n", pool->count);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pool->count >= SSDFS_SEG_REQ_PTR_NUMBER_MAX) {
+		SSDFS_DBG("request pool is full: "
+			  "count %u\n", pool->count);
+		return -ENOSPC;
+	}
+
+	if (batch->processed_pages >= pagevec_count(&batch->pvec)) {
+		SSDFS_ERR("all pages have been processed: "
+			  "dirty_pages %u, processed_pages %u\n",
+			  pagevec_count(&batch->pvec),
+			  batch->processed_pages);
+		return -ENODATA;
+	}
+
+	not_proccessed = pagevec_count(&batch->pvec) - batch->processed_pages;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(batch->allocated_extent.start_lblk >= U16_MAX);
+	BUG_ON(batch->allocated_extent.len == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	mem_pages_count = ssdfs_phys_page_to_mem_page_count(fsi,
+						batch->allocated_extent.len);
+	if (mem_pages_count > not_proccessed) {
+		SSDFS_ERR("mem_pages_count %u > not_proccessed %u\n",
+			  mem_pages_count, not_proccessed);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("pvec_size %u, batch->processed_pages %u, "
+		  "not_proccessed %u, batch->allocated_extent.len %u, "
+		  "mem_pages_count %u\n",
+		  pagevec_count(&batch->pvec),
+		  batch->processed_pages,
+		  not_proccessed,
+		  batch->allocated_extent.len,
+		  mem_pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (mem_pages_count == 0) {
+		SSDFS_ERR("pvec_size %u, batch->processed_pages %u, "
+			  "not_proccessed %u, batch->allocated_extent.len %u, "
+			  "mem_pages_count %u\n",
+			  pagevec_count(&batch->pvec),
+			  batch->processed_pages,
+			  not_proccessed,
+			  batch->allocated_extent.len,
+			  mem_pages_count);
+		return -ERANGE;
+	}
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		return err;
+	}
+
+	ssdfs_request_init(req);
+	ssdfs_get_request(req);
+
+	ssdfs_request_prepare_internal_data(pool->req_class,
+					    pool->req_command,
+					    pool->req_type,
+					    req);
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	switch (si->seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		req->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	data_bytes = (u32)batch->allocated_extent.len * fsi->pagesize;
+	data_bytes = min_t(u32, data_bytes, batch->requested_extent.data_bytes);
+
+	ssdfs_request_prepare_logical_extent(batch->requested_extent.ino,
+					batch->requested_extent.logical_offset,
+					data_bytes,
+					batch->requested_extent.cno,
+					batch->requested_extent.parent_snapshot,
+					req);
+
+	ssdfs_request_define_volume_extent(batch->allocated_extent.start_lblk,
+					   batch->allocated_extent.len,
+					   req);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON((batch->processed_pages + mem_pages_count) >
+					pagevec_count(&batch->pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < mem_pages_count; i++) {
+		u32 page_index = batch->processed_pages + i;
+
+		err = ssdfs_request_add_page(batch->pvec.pages[page_index],
+					     req);
+		if (err) {
+			SSDFS_ERR("fail to add page into request: "
+				  "ino %llu, page_index %d, err %d\n",
+				  batch->requested_extent.ino,
+				  page_index, err);
+			goto fail_add_request_into_create_queue;
+		}
+	}
+
+	err = ssdfs_current_segment_change_state(cur_seg);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change segment state: "
+			  "seg %llu, err %d\n",
+			  cur_seg->real_seg->seg_id, err);
+		goto fail_add_request_into_create_queue;
+	}
+
+	ssdfs_account_user_data_flush_request(si);
+	ssdfs_segment_create_request_cno(si);
+
+	page = batch->pvec.pages[batch->processed_pages];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!page);
+#endif /* CONFIG_SSDFS_DEBUG */
+	inode = page->mapping->host;
+
+	err = ssdfs_extents_tree_add_extent(inode, req);
+	if (err) {
+		SSDFS_ERR("fail to add extent: "
+			  "ino %llu, page_index %llu, "
+			  "err %d\n",
+			  batch->requested_extent.ino,
+			  (u64)page_index(page), err);
+		goto fail_add_request_into_create_queue;
+	}
+
+	inode_add_bytes(inode, data_bytes);
+
+	ii = SSDFS_I(inode);
+	etree = SSDFS_EXTREE(ii);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!etree);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&etree->lock);
+	err = ssdfs_extents_tree_add_updated_seg_id(etree, si->seg_id);
+	up_write(&etree->lock);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add updated segment in queue: "
+			  "seg_id %llu, err %d\n",
+			  si->seg_id, err);
+		goto fail_add_request_into_create_queue;
+	}
+
+	batch->processed_pages += mem_pages_count;
+
+	if (batch->requested_extent.data_bytes > data_bytes) {
+		batch->requested_extent.logical_offset += data_bytes;
+		batch->requested_extent.data_bytes -= data_bytes;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("PROCESSED: data_bytes %u, "
+			  "NEW STATE: logical_offset %llu, data_bytes %u\n",
+			  data_bytes,
+			  batch->requested_extent.logical_offset,
+			  batch->requested_extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = -EAGAIN;
+	}
+
+	pool->pointers[pool->count] = req;
+	pool->count++;
+
+	create_rq = &si->create_rq;
+	ssdfs_requests_queue_add_tail_inc(fsi, create_rq, req);
+	wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+
+	return err;
+
+fail_add_request_into_create_queue:
+	ssdfs_put_request(req);
+	ssdfs_request_free(req);
+	return err;
+}
+
+/*
+ * ssdfs_segment_allocate_data_extent() - allocate data extent
+ * @cur_seg: current segment container
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to allocate data extent in current segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - request pool is full.
+ * %-EAGAIN     - not all memory pages have been processed.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_segment_allocate_data_extent(struct ssdfs_current_segment *cur_seg,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_blk_bmap *blk_bmap;
+	struct ssdfs_blk2off_table *table;
+	struct ssdfs_blk2off_range *extent;
+	u32 extent_bytes;
+	u32 blks_count;
+	u32 reserved_blks = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = cur_seg->fsi;
+	si = cur_seg->real_seg;
+	table = si->blk2off_table;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+
+	SSDFS_DBG("seg_id %llu, req_class %d, req_type %d\n",
+		  si->seg_id, pool->req_class, pool->req_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pool->count >= SSDFS_SEG_REQ_PTR_NUMBER_MAX) {
+		SSDFS_DBG("request pool is full: "
+			  "count %u\n", pool->count);
+		return -ENOSPC;
+	}
+
+	extent_bytes = batch->requested_extent.data_bytes;
+
+	if (fsi->pagesize > PAGE_SIZE)
+		extent_bytes += fsi->pagesize - 1;
+	else if (fsi->pagesize <= PAGE_SIZE)
+		extent_bytes += PAGE_SIZE - 1;
+
+	blk_bmap = &si->blk_bmap;
+	blks_count = extent_bytes >> fsi->log_pagesize;
+
+	err = ssdfs_segment_blk_bmap_reserve_extent(blk_bmap, blks_count,
+						    &reserved_blks);
+	if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("segment %llu hasn't enough free pages\n",
+			  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_allocate_extent;
+	} else if (err == -EAGAIN) {
+		extent = &batch->allocated_extent;
+		err = ssdfs_blk2off_table_allocate_extent(table,
+							  reserved_blks,
+							  extent);
+		if (err == -EAGAIN) {
+			struct completion *end;
+			end = &table->partial_init_end;
+
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
+				SSDFS_ERR("blk2off init failed: "
+					  "err %d\n", err);
+				goto finish_allocate_extent;
+			}
+
+			err = ssdfs_blk2off_table_allocate_extent(table,
+								  reserved_blks,
+								  extent);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to allocate logical extent: "
+				  "err %d\n", err);
+			goto finish_allocate_extent;
+		} else if (extent->len != reserved_blks) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to allocate logical extent: "
+				  "extent->len %u != reserved_blks %u\n",
+				  extent->len, reserved_blks);
+			goto finish_allocate_extent;
+		}
+
+		err = ssdfs_add_request_into_create_queue(cur_seg, pool, batch);
+		if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("NEW STATE: logical_offset %llu, data_bytes %u\n",
+				  batch->requested_extent.logical_offset,
+				  batch->requested_extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_allocate_extent;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to process extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_allocate_extent;
+		} else {
+			/*
+			 * Extent is processed partially.
+			 * -EAGAIN is expected error here.
+			 */
+			err = -ERANGE;
+			SSDFS_ERR("fail to process extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_allocate_extent;
+		}
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to reserve logical extent: "
+			  "seg %llu, err %d\n",
+			  cur_seg->real_seg->seg_id, err);
+		goto finish_allocate_extent;
+	} else {
+		if (reserved_blks != blks_count) {
+			SSDFS_WARN("reserved_blks %u != blks_count %u\n",
+				   reserved_blks, blks_count);
+		}
+
+		extent = &batch->allocated_extent;
+		err = ssdfs_blk2off_table_allocate_extent(table,
+							  reserved_blks,
+							  extent);
+		if (err == -EAGAIN) {
+			struct completion *end;
+			end = &table->partial_init_end;
+
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
+				SSDFS_ERR("blk2off init failed: "
+					  "err %d\n", err);
+				goto finish_allocate_extent;
+			}
+
+			err = ssdfs_blk2off_table_allocate_extent(table,
+								  reserved_blks,
+								  extent);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to allocate logical extent: "
+				  "err %d\n", err);
+			goto finish_allocate_extent;
+		} else if (extent->len != reserved_blks) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to allocate logical extent: "
+				  "extent->len %u != reserved_blks %u\n",
+				  extent->len, reserved_blks);
+			goto finish_allocate_extent;
+		}
+
+		err = ssdfs_add_request_into_create_queue(cur_seg, pool, batch);
+		if (unlikely(err == -EAGAIN)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to process extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_allocate_extent;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to process extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_allocate_extent;
+		}
+	}
+
+finish_allocate_extent:
+	return err;
+}
+
+/*
+ * __ssdfs_segment_add_data_block() - add new data block into segment
+ * @cur_seg: current segment container
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_block(struct ssdfs_current_segment *cur_seg,
+				   struct ssdfs_segment_request_pool *pool,
+				   struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int seg_type;
+	u64 start = U64_MAX;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#else
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = cur_seg->fsi;
+
+	ssdfs_current_segment_lock(cur_seg);
+
+	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(pool->req_class));
+
+try_current_segment:
+	if (is_ssdfs_current_segment_empty(cur_seg)) {
+add_new_current_segment:
+		start = cur_seg->seg_id + 1;
+		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
+		if (IS_ERR_OR_NULL(si)) {
+			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
+			goto finish_add_block;
+		}
+
+		if (cur_seg->seg_id == si->seg_id) {
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			err = -ENOSPC;
+			SSDFS_DBG("there is no more clean segments\n");
+			goto finish_add_block;
+		}
+
+		err = ssdfs_current_segment_add(cur_seg, si);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+			goto finish_add_block;
+		}
+
+		goto try_current_segment;
+	} else {
+		err = ssdfs_segment_allocate_data_extent(cur_seg, pool, batch);
+		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_block;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_block;
+			} else
+				goto add_new_current_segment;
+		} else if (err == -ENOSPC) {
+			err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("request pool is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_add_block;
+		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_block;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_block;
+			} else
+				goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve logical extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_add_block;
+		}
+	}
+
+finish_add_block:
+	ssdfs_current_segment_unlock(cur_seg);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	if (cur_seg->real_seg) {
+		SSDFS_ERR("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#else
+	if (cur_seg->real_seg) {
+		SSDFS_DBG("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to add block: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("request pool is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err) {
+		SSDFS_ERR("fail to add block: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * __ssdfs_segment_add_data_block_sync() - add new data block synchronously
+ * @fsi: pointer on shared file system object
+ * @req_class: request class
+ * @req_type: request type
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
+					int req_class,
+					int req_type,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+	BUG_ON(pool->req_class <= SSDFS_PEB_READ_REQ ||
+		pool->req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = req_class;
+	pool->req_command = SSDFS_CREATE_BLOCK;
+	pool->req_type = req_type;
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(pool->req_class)];
+	err = __ssdfs_segment_add_data_block(cur_seg, pool, batch);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
+}
+
+/*
+ * __ssdfs_segment_add_data_block_async() - add new data block asynchronously
+ * @fsi: pointer on shared file system object
+ * @req_class: request class
+ * @req_type: request type
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
+					 int req_class,
+					 int req_type,
+					 struct ssdfs_segment_request_pool *pool,
+					 struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+	BUG_ON(req_class <= SSDFS_PEB_READ_REQ ||
+		req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	pool->req_class = req_class;
+	pool->req_command = SSDFS_CREATE_BLOCK;
+	pool->req_type = req_type;
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(pool->req_class)];
+	err = __ssdfs_segment_add_data_block(cur_seg, pool, batch);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_segment_pre_alloc_data_block_sync() - synchronous pre-alloc data block
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to pre-allocate a new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	return __ssdfs_segment_add_data_block_sync(fsi,
+					      SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
+					      SSDFS_REQ_SYNC,
+					      pool, batch);
+}
+
+/*
+ * ssdfs_segment_pre_alloc_data_block_async() - async pre-alloc data block
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to pre-allocate a new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	return __ssdfs_segment_add_data_block_async(fsi,
+					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
+					       SSDFS_REQ_ASYNC,
+					       pool, batch);
+}
+
+/*
+ * ssdfs_segment_add_data_block_sync() - add new data block synchronously
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	return __ssdfs_segment_add_data_block_sync(fsi,
+						SSDFS_PEB_CREATE_DATA_REQ,
+						SSDFS_REQ_SYNC,
+						pool, batch);
+}
+
+/*
+ * ssdfs_segment_add_data_block_async() - add new data block asynchronously
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data block into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	return __ssdfs_segment_add_data_block_async(fsi,
+						SSDFS_PEB_CREATE_DATA_REQ,
+						SSDFS_REQ_ASYNC,
+						pool, batch);
+}
+
+/*
  * __ssdfs_segment_add_block() - add new block into segment
  * @cur_seg: current segment container
  * @req: segment request [in|out]
@@ -2063,7 +2949,7 @@ int __ssdfs_segment_add_block(struct ssdfs_current_segment *cur_seg,
 try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
 add_new_current_segment:
-		start = cur_seg->seg_id;
+		start = cur_seg->seg_id + 1;
 		si = ssdfs_grab_segment(cur_seg->fsi, seg_type,
 					U64_MAX, start);
 		if (IS_ERR_OR_NULL(si)) {
@@ -2078,6 +2964,16 @@ add_new_current_segment:
 					  "err %d\n", err);
 			}
 
+			goto finish_add_block;
+		}
+
+		if (cur_seg->seg_id == si->seg_id) {
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			err = -ENOSPC;
+			SSDFS_DBG("there is no more clean segments\n");
 			goto finish_add_block;
 		}
 
@@ -2213,249 +3109,6 @@ finish_add_block:
 }
 
 /*
- * __ssdfs_segment_add_extent() - add new extent into segment
- * @cur_seg: current segment container
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to add new extent into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-static
-int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
-			       struct ssdfs_segment_request *req,
-			       u64 *seg_id,
-			       struct ssdfs_blk2off_range *extent)
-{
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_segment_info *si;
-	int seg_type;
-	u64 start = U64_MAX;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg || !req || !seg_id || !extent);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("ino %llu, logical_offset %llu, "
-		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
-		  req->extent.ino, req->extent.logical_offset,
-		  req->extent.data_bytes, req->extent.cno,
-		  req->extent.parent_snapshot);
-	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
-		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
-#else
-	SSDFS_DBG("ino %llu, logical_offset %llu, "
-		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
-		  req->extent.ino, req->extent.logical_offset,
-		  req->extent.data_bytes, req->extent.cno,
-		  req->extent.parent_snapshot);
-	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
-		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	fsi = cur_seg->fsi;
-	*seg_id = U64_MAX;
-
-	ssdfs_current_segment_lock(cur_seg);
-
-	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(req->private.class));
-
-try_current_segment:
-	if (is_ssdfs_current_segment_empty(cur_seg)) {
-add_new_current_segment:
-		start = cur_seg->seg_id;
-		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
-		if (IS_ERR_OR_NULL(si)) {
-			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to create segment object: "
-					  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			} else {
-				SSDFS_ERR("fail to create segment object: "
-					  "err %d\n", err);
-			}
-
-			goto finish_add_extent;
-		}
-
-		err = ssdfs_current_segment_add(cur_seg, si);
-		/*
-		 * ssdfs_grab_segment() has got object already.
-		 */
-		ssdfs_segment_put_object(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
-			goto finish_add_extent;
-		}
-
-		goto try_current_segment;
-	} else {
-		struct ssdfs_segment_blk_bmap *blk_bmap;
-		u32 extent_bytes = req->extent.data_bytes;
-		u16 blks_count;
-
-		if (fsi->pagesize > PAGE_SIZE)
-			extent_bytes += fsi->pagesize - 1;
-		else if (fsi->pagesize <= PAGE_SIZE)
-			extent_bytes += PAGE_SIZE - 1;
-
-		si = cur_seg->real_seg;
-		blk_bmap = &si->blk_bmap;
-		blks_count = extent_bytes >> fsi->log_pagesize;
-
-		err = ssdfs_segment_blk_bmap_reserve_extent(&si->blk_bmap,
-							    blks_count);
-		if (err == -E2BIG) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("segment %llu hasn't enough free pages\n",
-				  cur_seg->real_seg->seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			err = ssdfs_remove_current_segment(cur_seg);
-			if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to add current segment: "
-					  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_add_extent;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to remove current segment: "
-					  "seg %llu, err %d\n",
-					  si->seg_id, err);
-				goto finish_add_extent;
-			} else
-				goto add_new_current_segment;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to reserve logical extent: "
-				  "seg %llu, err %d\n",
-				  cur_seg->real_seg->seg_id, err);
-			goto finish_add_extent;
-		} else {
-			struct ssdfs_blk2off_table *table;
-			struct ssdfs_requests_queue *create_rq;
-
-			table = si->blk2off_table;
-
-			*seg_id = si->seg_id;
-			ssdfs_request_define_segment(si->seg_id, req);
-
-			err = ssdfs_blk2off_table_allocate_extent(table,
-								  blks_count,
-								  extent);
-			if (err == -EAGAIN) {
-				struct completion *end;
-				end = &table->partial_init_end;
-
-				err = SSDFS_WAIT_COMPLETION(end);
-				if (unlikely(err)) {
-					SSDFS_ERR("blk2off init failed: "
-						  "err %d\n", err);
-					goto finish_add_extent;
-				}
-
-				err = ssdfs_blk2off_table_allocate_extent(table,
-								     blks_count,
-								     extent);
-			}
-
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to allocate logical extent\n");
-				goto finish_add_extent;
-			} else if (extent->len != blks_count) {
-				SSDFS_DBG("unable to allocate: "
-					  "extent (start_lblk %u, len %u), "
-					  "blks_count %u\n",
-					  extent->start_lblk,
-					  extent->len,
-					  blks_count);
-
-				err = ssdfs_remove_current_segment(cur_seg);
-				if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-					SSDFS_DBG("unable to add current segment: "
-						  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-					goto finish_add_extent;
-				} else if (unlikely(err)) {
-					SSDFS_ERR("fail to remove current segment: "
-						  "seg %llu, err %d\n",
-						  si->seg_id, err);
-					goto finish_add_extent;
-				} else
-					goto add_new_current_segment;
-			}
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(extent->start_lblk >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			ssdfs_request_define_volume_extent(extent->start_lblk,
-							   extent->len, req);
-
-			err = ssdfs_current_segment_change_state(cur_seg);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to change segment state: "
-					  "seg %llu, err %d\n",
-					  cur_seg->real_seg->seg_id, err);
-				goto finish_add_extent;
-			}
-
-			ssdfs_account_user_data_flush_request(si);
-			ssdfs_segment_create_request_cno(si);
-
-			create_rq = &si->create_rq;
-			ssdfs_requests_queue_add_tail_inc(si->fsi,
-							create_rq, req);
-			wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
-		}
-	}
-
-finish_add_extent:
-	ssdfs_current_segment_unlock(cur_seg);
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	if (cur_seg->real_seg) {
-		SSDFS_ERR("finished: seg %llu\n",
-			  cur_seg->real_seg->seg_id);
-	}
-#else
-	if (cur_seg->real_seg) {
-		SSDFS_DBG("finished: seg %llu\n",
-			  cur_seg->real_seg->seg_id);
-	}
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to add extent: "
-			  "ino %llu, logical_offset %llu, err %d\n",
-			  req->extent.ino, req->extent.logical_offset, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return err;
-	} else if (err) {
-		SSDFS_ERR("fail to add extent: "
-			  "ino %llu, logical_offset %llu, err %d\n",
-			  req->extent.ino, req->extent.logical_offset, err);
-		return err;
-	}
-
-	return 0;
-}
-
-/*
  * __ssdfs_segment_add_block_sync() - add new block synchronously
  * @fsi: pointer on shared file system object
  * @req_class: request class
@@ -2582,60 +3235,6 @@ int __ssdfs_segment_add_block_async(struct ssdfs_fs_info *fsi,
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
-}
-
-/*
- * ssdfs_segment_pre_alloc_data_block_sync() - synchronous pre-alloc data block
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to pre-allocate a new data block into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_block_sync(fsi,
-					      SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-					      SSDFS_REQ_SYNC,
-					      req, seg_id, extent);
-}
-
-/*
- * ssdfs_segment_pre_alloc_data_block_async() - async pre-alloc data block
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to pre-allocate a new data block into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_block_async(fsi,
-					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-					       SSDFS_REQ_ASYNC,
-					       req, seg_id, extent);
 }
 
 /*
@@ -2798,60 +3397,6 @@ int ssdfs_segment_pre_alloc_index_node_block_async(struct ssdfs_fs_info *fsi,
 					     SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ,
 					     SSDFS_REQ_ASYNC,
 					     req, seg_id, extent);
-}
-
-/*
- * ssdfs_segment_add_data_block_sync() - add new data block synchronously
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to add new data block into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_block_sync(fsi,
-						SSDFS_PEB_CREATE_DATA_REQ,
-						SSDFS_REQ_SYNC,
-						req, seg_id, extent);
-}
-
-/*
- * ssdfs_segment_add_data_block_async() - add new data block asynchronously
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to add new data block into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_block_async(fsi,
-						SSDFS_PEB_CREATE_DATA_REQ,
-						SSDFS_REQ_ASYNC,
-						req, seg_id, extent);
 }
 
 /*
@@ -3144,6 +3689,670 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
 }
 
 /*
+ * __ssdfs_segment_add_data_extent() - add new data extent into segment
+ * @cur_seg: current segment container
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_extent(struct ssdfs_current_segment *cur_seg,
+				    struct ssdfs_segment_request_pool *pool,
+				    struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int seg_type;
+	u64 start = U64_MAX;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#else
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = cur_seg->fsi;
+
+	ssdfs_current_segment_lock(cur_seg);
+
+	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(pool->req_class));
+
+try_current_segment:
+	if (is_ssdfs_current_segment_empty(cur_seg)) {
+add_new_current_segment:
+		start = cur_seg->seg_id + 1;
+		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
+		if (IS_ERR_OR_NULL(si)) {
+			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
+			goto finish_add_extent;
+		}
+
+		if (cur_seg->seg_id == si->seg_id) {
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			err = -ENOSPC;
+			SSDFS_DBG("there is no more clean segments\n");
+			goto finish_add_extent;
+		}
+
+		err = ssdfs_current_segment_add(cur_seg, si);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+			goto finish_add_extent;
+		}
+
+		goto try_current_segment;
+	} else {
+		err = ssdfs_segment_allocate_data_extent(cur_seg, pool, batch);
+		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_extent;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_extent;
+			} else
+				goto add_new_current_segment;
+		} else if (err == -ENOSPC) {
+			err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("request pool is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_add_extent;
+		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_extent;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_extent;
+			} else
+				goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve logical extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_add_extent;
+		}
+	}
+
+finish_add_extent:
+	ssdfs_current_segment_unlock(cur_seg);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	if (cur_seg->real_seg) {
+		SSDFS_ERR("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#else
+	if (cur_seg->real_seg) {
+		SSDFS_DBG("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("request pool is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err) {
+		SSDFS_ERR("fail to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * __ssdfs_segment_add_data_extent_sync() - add new extent synchronously
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+	BUG_ON(pool->req_class <= SSDFS_PEB_READ_REQ ||
+		pool->req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_command = SSDFS_CREATE_EXTENT;
+	pool->req_type = SSDFS_REQ_SYNC;
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(pool->req_class)];
+	err = __ssdfs_segment_add_data_extent(cur_seg, pool, batch);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
+}
+
+/*
+ * __ssdfs_segment_add_data_extent_async() - add new data extent asynchronously
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_current_segment *cur_seg;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+	BUG_ON(pool->req_class <= SSDFS_PEB_READ_REQ ||
+		pool->req_class > SSDFS_PEB_CREATE_IDXNODE_REQ);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_command = SSDFS_CREATE_EXTENT;
+	pool->req_type = SSDFS_REQ_ASYNC;
+
+	down_read(&fsi->cur_segs->lock);
+	cur_seg = fsi->cur_segs->objects[CUR_SEG_TYPE(pool->req_class)];
+	err = __ssdfs_segment_add_data_extent(cur_seg, pool, batch);
+	up_read(&fsi->cur_segs->lock);
+
+	return err;
+}
+
+/*
+ * ssdfs_segment_pre_alloc_data_extent_sync() - sync pre-alloc a data extent
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to pre-allocate a new data extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_PEB_PRE_ALLOCATE_DATA_REQ;
+	return __ssdfs_segment_add_data_extent_sync(fsi, pool, batch);
+}
+
+/*
+ * ssdfs_segment_pre_alloc_data_extent_async() - async pre-alloc a data extent
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to pre-allocate a new data extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_PEB_PRE_ALLOCATE_DATA_REQ;
+	return __ssdfs_segment_add_data_extent_async(fsi, pool, batch);
+}
+
+/*
+ * ssdfs_segment_add_data_extent_sync() - add new data extent synchronously
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_PEB_CREATE_DATA_REQ;
+	return __ssdfs_segment_add_data_extent_sync(fsi, pool, batch);
+}
+
+/*
+ * ssdfs_segment_add_data_extent_async() - add new data extent asynchronously
+ * @fsi: pointer on shared file system object
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new data extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_PEB_CREATE_DATA_REQ;
+	return __ssdfs_segment_add_data_extent_async(fsi, pool, batch);
+}
+
+/*
+ * __ssdfs_segment_add_extent() - add new extent into segment
+ * @cur_seg: current segment container
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to add new extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_extent(struct ssdfs_current_segment *cur_seg,
+			       struct ssdfs_segment_request *req,
+			       u64 *seg_id,
+			       struct ssdfs_blk2off_range *extent)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int seg_type;
+	u64 start = U64_MAX;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !req || !seg_id || !extent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#else
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->extent.data_bytes, req->extent.cno,
+		  req->extent.parent_snapshot);
+	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = cur_seg->fsi;
+	*seg_id = U64_MAX;
+
+	ssdfs_current_segment_lock(cur_seg);
+
+	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(req->private.class));
+
+try_current_segment:
+	if (is_ssdfs_current_segment_empty(cur_seg)) {
+add_new_current_segment:
+		start = cur_seg->seg_id + 1;
+		si = ssdfs_grab_segment(fsi, seg_type, U64_MAX, start);
+		if (IS_ERR_OR_NULL(si)) {
+			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
+			goto finish_add_extent;
+		}
+
+		if (cur_seg->seg_id == si->seg_id) {
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			err = -ENOSPC;
+			SSDFS_DBG("there is no more clean segments\n");
+			goto finish_add_extent;
+		}
+
+		err = ssdfs_current_segment_add(cur_seg, si);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+			goto finish_add_extent;
+		}
+
+		goto try_current_segment;
+	} else {
+		struct ssdfs_segment_blk_bmap *blk_bmap;
+		u32 extent_bytes = req->extent.data_bytes;
+		u16 blks_count;
+		u32 reserved_blks = 0;
+
+		if (fsi->pagesize > PAGE_SIZE)
+			extent_bytes += fsi->pagesize - 1;
+		else if (fsi->pagesize <= PAGE_SIZE)
+			extent_bytes += PAGE_SIZE - 1;
+
+		si = cur_seg->real_seg;
+		blk_bmap = &si->blk_bmap;
+		blks_count = extent_bytes >> fsi->log_pagesize;
+
+		err = ssdfs_segment_blk_bmap_reserve_extent(&si->blk_bmap,
+							    blks_count,
+							    &reserved_blks);
+		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_extent;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_extent;
+			} else
+				goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve logical extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_add_extent;
+		} else {
+			struct ssdfs_blk2off_table *table;
+			struct ssdfs_requests_queue *create_rq;
+
+			table = si->blk2off_table;
+
+			*seg_id = si->seg_id;
+			ssdfs_request_define_segment(si->seg_id, req);
+
+			err = ssdfs_blk2off_table_allocate_extent(table,
+								  reserved_blks,
+								  extent);
+			if (err == -EAGAIN) {
+				struct completion *end;
+				end = &table->partial_init_end;
+
+				err = SSDFS_WAIT_COMPLETION(end);
+				if (unlikely(err)) {
+					SSDFS_ERR("blk2off init failed: "
+						  "err %d\n", err);
+					goto finish_add_extent;
+				}
+
+				err = ssdfs_blk2off_table_allocate_extent(table,
+								reserved_blks,
+								extent);
+			}
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to allocate logical extent\n");
+				goto finish_add_extent;
+			} else if (extent->len != reserved_blks) {
+				SSDFS_DBG("unable to allocate: "
+					  "extent (start_lblk %u, len %u), "
+					  "reserved_blks %u\n",
+					  extent->start_lblk,
+					  extent->len,
+					  reserved_blks);
+
+				err = ssdfs_remove_current_segment(cur_seg);
+				if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("unable to add current segment: "
+						  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+					goto finish_add_extent;
+				} else if (unlikely(err)) {
+					SSDFS_ERR("fail to remove current segment: "
+						  "seg %llu, err %d\n",
+						  si->seg_id, err);
+					goto finish_add_extent;
+				} else
+					goto add_new_current_segment;
+			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(extent->start_lblk >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			ssdfs_request_define_volume_extent(extent->start_lblk,
+							   extent->len, req);
+
+			err = ssdfs_current_segment_change_state(cur_seg);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to change segment state: "
+					  "seg %llu, err %d\n",
+					  cur_seg->real_seg->seg_id, err);
+				goto finish_add_extent;
+			}
+
+			ssdfs_account_user_data_flush_request(si);
+			ssdfs_segment_create_request_cno(si);
+
+			create_rq = &si->create_rq;
+			ssdfs_requests_queue_add_tail_inc(si->fsi,
+							create_rq, req);
+			wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+		}
+	}
+
+finish_add_extent:
+	ssdfs_current_segment_unlock(cur_seg);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	if (cur_seg->real_seg) {
+		SSDFS_ERR("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#else
+	if (cur_seg->real_seg) {
+		SSDFS_DBG("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  req->extent.ino, req->extent.logical_offset, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err) {
+		SSDFS_ERR("fail to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  req->extent.ino, req->extent.logical_offset, err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
  * __ssdfs_segment_add_extent_sync() - add new extent synchronously
  * @fsi: pointer on shared file system object
  * @req_class: request class
@@ -3245,58 +4454,6 @@ int __ssdfs_segment_add_extent_async(struct ssdfs_fs_info *fsi,
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
-}
-
-/*
- * ssdfs_segment_pre_alloc_data_extent_sync() - sync pre-alloc a data extent
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to pre-allocate a new data extent into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_extent_sync(fsi,
-					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-					       req, seg_id, extent);
-}
-
-/*
- * ssdfs_segment_pre_alloc_data_extent_async() - async pre-alloc a data extent
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to pre-allocate a new data extent into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_extent_async(fsi,
-						SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
-						req, seg_id, extent);
 }
 
 /*
@@ -3456,58 +4613,6 @@ int ssdfs_segment_pre_alloc_index_node_extent_async(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_segment_add_data_extent_sync() - add new data extent synchronously
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to add new data extent into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_extent_sync(fsi,
-						SSDFS_PEB_CREATE_DATA_REQ,
-						req, seg_id, extent);
-}
-
-/*
- * ssdfs_segment_add_data_extent_async() - add new data extent asynchronously
- * @fsi: pointer on shared file system object
- * @req: segment request [in|out]
- * @seg_id: segment ID [out]
- * @extent: (pre-)allocated extent [out]
- *
- * This function tries to add new data extent into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-ERANGE     - internal error.
- */
-int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
-					struct ssdfs_segment_request *req,
-					u64 *seg_id,
-					struct ssdfs_blk2off_range *extent)
-{
-	return __ssdfs_segment_add_extent_async(fsi,
-						SSDFS_PEB_CREATE_DATA_REQ,
-						req, seg_id, extent);
-}
-
-/*
  * ssdfs_segment_migrate_zone_extent_sync() - migrate zone extent synchronously
  * @fsi: pointer on shared file system object
  * @req_type: request type
@@ -3628,6 +4733,58 @@ int ssdfs_segment_migrate_zone_extent_async(struct ssdfs_fs_info *fsi,
 	up_read(&fsi->cur_segs->lock);
 
 	return err;
+}
+
+/*
+ * ssdfs_segment_add_xattr_blob_sync() - store xattr blob synchronously
+ * @fsi: pointer on shared file system object
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to xattr blob into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_add_xattr_blob_sync(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
+{
+	return __ssdfs_segment_add_extent_sync(fsi,
+						SSDFS_PEB_CREATE_DATA_REQ,
+						req, seg_id, extent);
+}
+
+/*
+ * ssdfs_segment_add_xattr_blob_async() - store xattr blob asynchronously
+ * @fsi: pointer on shared file system object
+ * @req: segment request [in|out]
+ * @seg_id: segment ID [out]
+ * @extent: (pre-)allocated extent [out]
+ *
+ * This function tries to xattr blob into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_add_xattr_blob_async(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent)
+{
+	return __ssdfs_segment_add_extent_async(fsi,
+						SSDFS_PEB_CREATE_DATA_REQ,
+						req, seg_id, extent);
 }
 
 /*
@@ -3849,6 +5006,375 @@ int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
 }
 
 /*
+ * ssdfs_add_request_into_update_queue() - add request into update queue
+ * @si: segment info
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add segment request into update queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - request pool is full.
+ * %-ENODATA    - all pages have been processed.
+ * %-EAGAIN     - not all memory pages have been processed.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_blk2off_table *table;
+	struct ssdfs_phys_offset_descriptor *po_desc;
+	struct ssdfs_peb_container *pebc;
+	struct ssdfs_requests_queue *update_rq;
+	struct ssdfs_segment_request *req;
+	wait_queue_head_t *wait;
+	struct ssdfs_offset_position pos = {0};
+	u16 peb_index = U16_MAX;
+	u16 logical_blk;
+	u16 len;
+	u32 not_proccessed;
+	u32 mem_pages_count;
+	u32 data_bytes;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = si->fsi;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, req_class %d, req_type %d\n",
+		  si->seg_id, pool->req_class, pool->req_type);
+
+	if (pool->count > SSDFS_SEG_REQ_PTR_NUMBER_MAX) {
+		SSDFS_ERR("request pool is corrupted: "
+			  "count %u\n", pool->count);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (pool->count >= SSDFS_SEG_REQ_PTR_NUMBER_MAX) {
+		SSDFS_DBG("request pool is full: "
+			  "count %u\n", pool->count);
+		return -ENOSPC;
+	}
+
+	if (batch->processed_pages >= pagevec_count(&batch->pvec)) {
+		SSDFS_ERR("all pages have been processed: "
+			  "dirty_pages %u, processed_pages %u\n",
+			  pagevec_count(&batch->pvec),
+			  batch->processed_pages);
+		return -ENODATA;
+	}
+
+	not_proccessed = pagevec_count(&batch->pvec) - batch->processed_pages;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(batch->place.start.seg_id >= U64_MAX);
+	BUG_ON(batch->place.start.blk_index >= U16_MAX);
+	BUG_ON(batch->place.len == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	mem_pages_count = ssdfs_phys_page_to_mem_page_count(fsi,
+							batch->place.len);
+	if (mem_pages_count > not_proccessed) {
+		SSDFS_ERR("mem_pages_count %u > not_proccessed %u\n",
+			  mem_pages_count, not_proccessed);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("pvec_size %u, batch->processed_pages %u, "
+		  "not_proccessed %u, batch->place.len %u, "
+		  "mem_pages_count %u\n",
+		  pagevec_count(&batch->pvec),
+		  batch->processed_pages,
+		  not_proccessed,
+		  batch->place.len,
+		  mem_pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (mem_pages_count == 0) {
+		SSDFS_ERR("pvec_size %u, batch->processed_pages %u, "
+			  "not_proccessed %u, batch->place.len %u, "
+			  "mem_pages_count %u\n",
+			  pagevec_count(&batch->pvec),
+			  batch->processed_pages,
+			  not_proccessed,
+			  batch->place.len,
+			  mem_pages_count);
+		return -ERANGE;
+	}
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		return err;
+	}
+
+	ssdfs_request_init(req);
+	ssdfs_get_request(req);
+
+	ssdfs_request_prepare_internal_data(pool->req_class,
+					    pool->req_command,
+					    pool->req_type,
+					    req);
+
+	if (batch->place.start.seg_id != si->seg_id) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid request: "
+			  "seg_id1 %llu != seg_id2 %llu\n",
+			  batch->place.start.seg_id,
+			  si->seg_id);
+		goto fail_add_request_into_update_queue;
+	}
+
+	ssdfs_request_define_segment(si->seg_id, req);
+
+	switch (si->seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		req->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	data_bytes = (u32)batch->place.len * fsi->pagesize;
+	data_bytes = min_t(u32, data_bytes, batch->requested_extent.data_bytes);
+
+	ssdfs_request_prepare_logical_extent(batch->requested_extent.ino,
+					batch->requested_extent.logical_offset,
+					data_bytes,
+					batch->requested_extent.cno,
+					batch->requested_extent.parent_snapshot,
+					req);
+	ssdfs_request_define_volume_extent(batch->place.start.blk_index,
+					   batch->place.len,
+					   req);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON((batch->processed_pages + mem_pages_count) >
+					pagevec_count(&batch->pvec));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < mem_pages_count; i++) {
+		u32 page_index = batch->processed_pages + i;
+
+		err = ssdfs_request_add_page(batch->pvec.pages[page_index],
+					     req);
+		if (err) {
+			SSDFS_ERR("fail to add page into request: "
+				  "ino %llu, page_index %d, err %d\n",
+				  batch->requested_extent.ino,
+				  page_index, err);
+			goto fail_add_request_into_update_queue;
+		}
+	}
+
+	batch->processed_pages += mem_pages_count;
+
+	if (batch->requested_extent.data_bytes > data_bytes) {
+		batch->requested_extent.logical_offset += data_bytes;
+		batch->requested_extent.data_bytes -= data_bytes;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("PROCESSED: data_bytes %u, "
+			  "NEW STATE: logical_offset %llu, data_bytes %u\n",
+			  data_bytes,
+			  batch->requested_extent.logical_offset,
+			  batch->requested_extent.data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = -EAGAIN;
+	}
+
+	pool->pointers[pool->count] = req;
+	pool->count++;
+
+	table = si->blk2off_table;
+	logical_blk = batch->place.start.blk_index;
+	len = batch->place.len;
+
+	po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
+						&peb_index, NULL, &pos);
+	if (IS_ERR(po_desc) && PTR_ERR(po_desc) == -EAGAIN) {
+		struct completion *end;
+		end = &table->full_init_end;
+
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
+			SSDFS_ERR("blk2off init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		po_desc = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index, NULL,
+							&pos);
+	}
+
+	if (IS_ERR_OR_NULL(po_desc)) {
+		err = (po_desc == NULL ? -ERANGE : PTR_ERR(po_desc));
+		SSDFS_ERR("fail to convert: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto fail_add_request_into_update_queue;
+	}
+
+	if (peb_index >= si->pebs_count) {
+		err = -ERANGE;
+		SSDFS_ERR("peb_index %u >= si->pebs_count %u\n",
+			  peb_index, si->pebs_count);
+		goto fail_add_request_into_update_queue;
+	}
+
+	pebc = &si->peb_array[peb_index];
+	update_rq = &pebc->update_rq;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "logical_blk %u, data_bytes %u, blks %u, "
+		  "cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  req->extent.ino, req->extent.logical_offset,
+		  req->place.start.blk_index,
+		  req->extent.data_bytes, req->place.len,
+		  req->extent.cno, req->extent.parent_snapshot);
+	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
+		  req->private.class, req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (len > 0) {
+		err = ssdfs_account_user_data_pages_as_pending(pebc, len);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to make pages as pending: "
+				  "len %u, err %d\n",
+				  len, err);
+			return err;
+		}
+	} else {
+		SSDFS_WARN("unexpected len %u\n", len);
+	}
+
+	ssdfs_account_user_data_flush_request(si);
+	ssdfs_segment_create_request_cno(si);
+
+	switch (req->private.class) {
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		ssdfs_requests_queue_add_head_inc(si->fsi, update_rq, req);
+		break;
+
+	default:
+		ssdfs_requests_queue_add_tail_inc(si->fsi, update_rq, req);
+		break;
+	}
+
+	wait = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+	wake_up_all(wait);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+
+fail_add_request_into_update_queue:
+	ssdfs_put_request(req);
+	ssdfs_request_free(req);
+	return err;
+}
+
+/*
+ * ssdfs_segment_update_data_block_sync() - update block in segment
+ * @si: segment info
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to update a block in segment.
+ */
+int ssdfs_segment_update_data_block_sync(struct ssdfs_segment_info *si,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !pool || !batch);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_PEB_UPDATE_REQ;
+	pool->req_command = SSDFS_UPDATE_BLOCK;
+	pool->req_type = SSDFS_REQ_SYNC;
+
+	return ssdfs_add_request_into_update_queue(si, pool, batch);
+}
+
+/*
+ * ssdfs_segment_update_data_block_async() - update block in segment
+ * @si: segment info
+ * @req_type: request type
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to update a block in segment.
+ */
+int ssdfs_segment_update_data_block_async(struct ssdfs_segment_info *si,
+					int req_type,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !pool || !batch);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	pool->req_class = SSDFS_PEB_UPDATE_REQ;
+	pool->req_command = SSDFS_UPDATE_BLOCK;
+	pool->req_type = req_type;
+
+	return ssdfs_add_request_into_update_queue(si, pool, batch);
+}
+
+/*
  * __ssdfs_segment_update_block() - update block in segment
  * @si: segment info
  * @req: segment request [in|out]
@@ -4064,6 +5590,84 @@ int ssdfs_segment_update_block_async(struct ssdfs_segment_info *si,
 	ssdfs_request_define_segment(si->seg_id, req);
 
 	return __ssdfs_segment_update_block(si, req);
+}
+
+/*
+ * ssdfs_segment_update_data_extent_sync() - update extent in segment
+ * @si: segment info
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to update an extent in segment.
+ */
+int ssdfs_segment_update_data_extent_sync(struct ssdfs_segment_info *si,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !pool || !batch);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_PEB_UPDATE_REQ;
+	pool->req_command = SSDFS_UPDATE_EXTENT;
+	pool->req_type = SSDFS_REQ_SYNC;
+
+	return ssdfs_add_request_into_update_queue(si, pool, batch);
+}
+
+/*
+ * ssdfs_segment_update_data_extent_sync() - update extent in segment
+ * @si: segment info
+ * @req_type: request type
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to update an extent in segment.
+ */
+int ssdfs_segment_update_data_extent_async(struct ssdfs_segment_info *si,
+					int req_type,
+					struct ssdfs_segment_request_pool *pool,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !pool || !batch);
+
+	SSDFS_DBG("seg %llu, ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  si->seg_id,
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (req_type) {
+	case SSDFS_REQ_ASYNC:
+	case SSDFS_REQ_ASYNC_NO_FREE:
+		/* expected request type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected request type %#x\n",
+			  req_type);
+		return -EINVAL;
+	}
+
+	pool->req_class = SSDFS_PEB_UPDATE_REQ;
+	pool->req_command = SSDFS_UPDATE_EXTENT;
+	pool->req_type = req_type;
+
+	return ssdfs_add_request_into_update_queue(si, pool, batch);
 }
 
 /*

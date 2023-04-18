@@ -1817,9 +1817,11 @@ finish_extents_tree_flush:
 }
 
 /*
- * ssdfs_prepare_volume_extent() - convert requested byte stream into extent
+ * __ssdfs_prepare_volume_extent() - convert requested byte stream into extent
  * @fsi: pointer on shared file system object
- * @req: request object
+ * @inode: pointer on VFS inode
+ * @requested: logical extent descriptor
+ * @place: logical blocks placement in segment [out]
  *
  * This method tries to convert logical byte stream into extent of blocks.
  *
@@ -1830,9 +1832,12 @@ finish_extents_tree_flush:
  * %-ERANGE      - internal error.
  * %-ENOMEM      - fail to allocate memory.
  * %-ENODATA     - unable to convert byte stream into extent.
+ * %-EAGAIN      - logical extent is processed partially.
  */
-int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
-				struct ssdfs_segment_request *req)
+int __ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
+				  struct inode *inode,
+				  struct ssdfs_logical_extent *requested,
+				  struct ssdfs_volume_extent *place)
 {
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_extents_btree_info *tree;
@@ -1850,20 +1855,17 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !req);
-	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
+	BUG_ON(!fsi || !inode || !requested || !place);
 
-	SSDFS_DBG("fsi %p, req %p, ino %llu, "
+	SSDFS_DBG("fsi %p, ino %llu, "
 		  "logical_offset %llu, data_bytes %u, "
 		  "cno %llu, parent_snapshot %llu\n",
-		  fsi, req, req->extent.ino,
-		  req->extent.logical_offset,
-		  req->extent.data_bytes,
-		  req->extent.cno,
-		  req->extent.parent_snapshot);
+		  fsi, requested->ino, requested->logical_offset,
+		  requested->data_bytes, requested->cno,
+		  requested->parent_snapshot);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ii = SSDFS_I(req->result.pvec.pages[0]->mapping->host);
+	ii = SSDFS_I(inode);
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
@@ -1879,9 +1881,14 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 			tree = SSDFS_EXTREE(ii);
 	}
 
-	requested_blk = req->extent.logical_offset >> fsi->log_pagesize;
-	requested_len = (req->extent.data_bytes + pagesize - 1) >>
+	requested_blk = requested->logical_offset >> fsi->log_pagesize;
+	requested_len = (requested->data_bytes + pagesize - 1) >>
 				fsi->log_pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("requested_blk %llu, requested_len %llu\n",
+		  requested_blk, requested_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	search = ssdfs_btree_search_alloc();
 	if (!search) {
@@ -1942,7 +1949,7 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 	blks_count = le64_to_cpu(fork->blks_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("start_blk %llu, blks_count %llu\n",
+	SSDFS_DBG("found fork: start_blk %llu, blks_count %llu\n",
 		  start_blk, blks_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1993,17 +2000,65 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 	BUG_ON(len >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_request_define_segment(seg_id, req);
-	ssdfs_request_define_volume_extent((u16)logical_blk, (u16)len, req);
+	place->start.seg_id = seg_id;
+	place->start.blk_index = (u16)logical_blk;
+	place->len = (u16)len;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("logical_blk %u, len %u\n",
+	SSDFS_DBG("FOUND: logical_blk %u, len %u\n",
 		  logical_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (requested_len != place->len) {
+		err = -EAGAIN;
+		SSDFS_DBG("logical extent is processed partially: "
+			  "requested_len %llu != place->len %u\n",
+			  requested_len, place->len);
+	}
 
 finish_prepare_volume_extent:
 	ssdfs_btree_search_free(search);
 	return err;
+}
+
+/*
+ * ssdfs_prepare_volume_extent() - convert requested byte stream into extent
+ * @fsi: pointer on shared file system object
+ * @req: request object
+ *
+ * This method tries to convert logical byte stream into extent of blocks.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE      - internal error.
+ * %-ENOMEM      - fail to allocate memory.
+ * %-ENODATA     - unable to convert byte stream into extent.
+ */
+int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
+				struct ssdfs_segment_request *req)
+{
+	struct inode *inode;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !req);
+	BUG_ON((req->extent.logical_offset >> fsi->log_pagesize) >= U32_MAX);
+
+	SSDFS_DBG("fsi %p, req %p, ino %llu, "
+		  "logical_offset %llu, data_bytes %u, "
+		  "cno %llu, parent_snapshot %llu\n",
+		  fsi, req, req->extent.ino,
+		  req->extent.logical_offset,
+		  req->extent.data_bytes,
+		  req->extent.cno,
+		  req->extent.parent_snapshot);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	inode = req->result.pvec.pages[0]->mapping->host;
+
+	return __ssdfs_prepare_volume_extent(fsi, inode,
+					     &req->extent, &req->place);
 }
 
 /*
@@ -3098,6 +3153,9 @@ int ssdfs_add_extent_into_fork(u64 blk,
 	u64 start_offset;
 	u64 blks_count;
 	u32 len;
+#ifdef CONFIG_SSDFS_DEBUG
+	int i;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3144,6 +3202,20 @@ int ssdfs_add_extent_into_fork(u64 blk,
 	start_offset = le64_to_cpu(fork->start_offset);
 	blks_count = le64_to_cpu(fork->blks_count);
 	len = le32_to_cpu(extent->len);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("fork (start %llu, blks_count %llu)\n",
+		  start_offset, blks_count);
+
+	for (i = 0; i < SSDFS_INLINE_EXTENTS_COUNT; i++) {
+		SSDFS_DBG("extent[%d]: seg_id %llu, "
+			  "logical_blk %u, len %u\n",
+			  i,
+			  le64_to_cpu(fork->extents[i].seg_id),
+			  le32_to_cpu(fork->extents[i].logical_blk),
+			  le32_to_cpu(fork->extents[i].len));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (start_offset >= U64_MAX || blks_count >= U64_MAX) {
 		SSDFS_ERR("invalid fork state: "
@@ -4335,7 +4407,7 @@ try_to_add_into_generic_tree:
 			 * Fork doesn't exist for requested extent.
 			 * It needs to create a new fork.
 			 */
-		} else if (err == -ENODATA) {
+		} else if (err == -ENODATA || search->result.err == -ENODATA) {
 			/*
 			 * Fork doesn't contain the requested extent.
 			 * It needs to add a new extent.
@@ -4458,7 +4530,7 @@ int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 
 	ii = tree->owner;
 
-	down_write(&ii->lock);
+	down_read(&ii->lock);
 	down_write(&tree->lock);
 
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
@@ -4507,7 +4579,7 @@ int __ssdfs_extents_tree_add_extent(struct ssdfs_extents_btree_info *tree,
 
 finish_add_extent:
 	up_write(&tree->lock);
-	up_write(&ii->lock);
+	up_read(&ii->lock);
 
 	ssdfs_btree_search_forget_parent_node(search);
 	ssdfs_btree_search_forget_child_node(search);
@@ -7764,13 +7836,13 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	u16 parent_ino;
 	u32 forks_count;
 	u32 used_space;
+	u32 items_count;
 	u16 items_capacity;
 	u32 allocated_extents, valid_extents;
 	u64 calculated_extents;
 	u32 max_extent_blks;
 	u64 calculated_blks;
 	u64 blks_count;
-	u32 items_count;
 	u16 flags;
 	u8 index_size;
 	u16 index_capacity = 0;
@@ -7869,10 +7941,12 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	blks_count = le64_to_cpu(hdr->blks_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("start_hash %llx, end_hash %llx, forks_count %u, "
+	SSDFS_DBG("start_hash %llx, end_hash %llx, "
+		  "forks_count %u, items_capacity %u, "
 		  "allocated_extents %u, valid_extents %u, "
 		  "blks_count %llu\n",
-		  start_hash, end_hash, forks_count,
+		  start_hash, end_hash,
+		  forks_count, items_capacity,
 		  allocated_extents, valid_extents,
 		  blks_count);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -7888,10 +7962,71 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_ROOT_NODE:
 	case SSDFS_BTREE_INDEX_NODE:
-		/* do nothing */
+		node->items_area.free_space = 0;
+		node->items_area.items_count = 0;
+		node->items_area.items_capacity = 0;
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
+		if (item_size == 0 || node_size % item_size) {
+			err = -EIO;
+			SSDFS_ERR("invalid size: item_size %u, node_size %u\n",
+				  item_size, node_size);
+			goto finish_header_init;
+		}
+
+		if (item_size != sizeof(struct ssdfs_raw_fork)) {
+			err = -EIO;
+			SSDFS_ERR("invalid item_size: "
+				  "size %u, expected size %zu\n",
+				  item_size,
+				  sizeof(struct ssdfs_raw_fork));
+			goto finish_header_init;
+		}
+
+		if (items_capacity == 0 ||
+		    items_capacity > (node_size / item_size)) {
+			err = -EIO;
+			SSDFS_ERR("invalid items_capacity %u\n",
+				  items_capacity);
+			goto finish_header_init;
+		}
+
+		if (valid_extents > allocated_extents) {
+			err = -EIO;
+			SSDFS_ERR("valid_extents %u > allocated_extents %u\n",
+				  valid_extents, allocated_extents);
+			goto finish_header_init;
+		}
+
+		calculated_blks = (u64)valid_extents * max_extent_blks;
+		if (calculated_blks < blks_count) {
+			err = -EIO;
+			SSDFS_ERR("calculated_blks %llu < blks_count %llu\n",
+				  calculated_blks, blks_count);
+			goto finish_header_init;
+		}
+
+		items_count = allocated_extents / SSDFS_INLINE_EXTENTS_COUNT;
+		used_space = items_count * fork_size;
+		if (used_space > node->items_area.area_size) {
+			err = -EIO;
+			SSDFS_ERR("used_space %u > items_area.area_size %u\n",
+				  used_space,
+				  node->items_area.area_size);
+			goto finish_header_init;
+		}
+		node->items_area.free_space =
+				node->items_area.area_size - used_space;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(items_count >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		node->items_area.items_count = (u16)items_count;
+		node->items_area.items_capacity = items_capacity;
+		break;
+
 	case SSDFS_BTREE_LEAF_NODE:
 		if (item_size == 0 || node_size % item_size) {
 			err = -EIO;
@@ -7948,24 +8083,25 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 				  calculated_blks, blks_count);
 			goto finish_header_init;
 		}
+
+		used_space = forks_count * fork_size;
+		if (used_space > node->items_area.area_size) {
+			err = -EIO;
+			SSDFS_ERR("used_space %u > items_area.area_size %u\n",
+				  used_space,
+				  node->items_area.area_size);
+			goto finish_header_init;
+		}
+		node->items_area.free_space =
+				node->items_area.area_size - used_space;
+
+		node->items_area.items_count = (u16)forks_count;
+		node->items_area.items_capacity = items_capacity;
 		break;
 
 	default:
 		BUG();
 	}
-
-	used_space = forks_count * fork_size;
-	if (used_space > node->items_area.area_size) {
-		err = -EIO;
-		SSDFS_ERR("used_space %u > items_area.area_size %u\n",
-			  used_space,
-			  node->items_area.area_size);
-		goto finish_header_init;
-	}
-	node->items_area.free_space = node->items_area.area_size - used_space;
-
-	node->items_area.items_count = (u16)forks_count;
-	node->items_area.items_capacity = items_capacity;
 
 finish_header_init:
 	up_write(&node->header_lock);
@@ -8316,6 +8452,14 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	valid_extents = le32_to_cpu(extents_header.valid_extents);
 	max_extent_blks = le32_to_cpu(extents_header.max_extent_blks);
 	blks_count = le64_to_cpu(extents_header.blks_count);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node_id %u, items_count %u, forks_count %u, "
+		  "allocated_extents %u, valid_extents %u\n",
+		  node->node_id,
+		  items_count, forks_count,
+		  allocated_extents, valid_extents);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (forks_count != items_count) {
 		switch (atomic_read(&node->type)) {
@@ -8737,19 +8881,27 @@ int ssdfs_check_found_fork(struct ssdfs_fs_info *fsi,
 			break;
 		}
 	} else if ((*end_hash + 1) == search->request.start.hash) {
-		*found_index = item_index;
-
-		search->result.state =
-			SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
-		search->result.err = -ENODATA;
-		search->result.start_index = *found_index;
-		search->result.count = 1;
-
 		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_FIND_ITEM:
+		case SSDFS_BTREE_SEARCH_FIND_RANGE:
+			err = -EAGAIN;
+			*found_index = item_index + 1;
+			search->result.state =
+				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+			search->result.err = -ENODATA;
+			search->result.start_index = *found_index;
+			search->result.count = 1;
+			break;
+
 		case SSDFS_BTREE_SEARCH_ADD_ITEM:
 		case SSDFS_BTREE_SEARCH_ADD_RANGE:
 		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
-			/* do nothing */
+			*found_index = item_index;
+			search->result.state =
+				SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
+			search->result.err = -ENODATA;
+			search->result.start_index = *found_index;
+			search->result.count = 1;
 			break;
 
 		default:
@@ -8896,6 +9048,10 @@ int ssdfs_prepare_forks_buffer(struct ssdfs_btree_search *search,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	ssdfs_debug_btree_search_object(search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -8931,6 +9087,8 @@ int ssdfs_extract_found_fork(struct ssdfs_fs_info *fsi,
 	BUG_ON(!start_hash || !end_hash);
 
 	SSDFS_DBG("kaddr %p\n", kaddr);
+
+	ssdfs_debug_btree_search_object(search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*start_hash = U64_MAX;
@@ -10413,8 +10571,15 @@ int __ssdfs_extents_btree_node_insert_range(struct ssdfs_btree_node *node,
 	forks_count = range_len + search->request.count;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("search->request.count %u\n",
-		  search->request.count);
+	SSDFS_DBG("items_area.items_count %u, "
+		  "search->result.start_index %u, "
+		  "range_len %u, search->request.count %u, "
+		  "forks_count %u\n",
+		  items_area.items_count,
+		  search->result.start_index,
+		  range_len,
+		  search->request.count,
+		  forks_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	item_index = search->result.start_index;
@@ -10586,7 +10751,7 @@ finish_detect_affected_items:
 	atomic64_add(search->request.count, &etree->forks_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("forks_count %lld\n",
+	SSDFS_DBG("total tree: forks_count %lld\n",
 		  atomic64_read(&etree->forks_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 

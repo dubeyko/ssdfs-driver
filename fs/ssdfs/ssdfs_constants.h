@@ -78,4 +78,13 @@ enum {
 #define SSDFS_DAYS_PER_WEEK	(7)
 #define SSDFS_WEEKS_PER_MONTH	(4)
 
+/*
+ * Every PEB contains a sequence of logs. Log starts from
+ * header and could be ended by footer. Header and footer
+ * requires as minimum 2 logical blocks for metadata.
+ * It needs to prevent 2 logical blocks from allocation
+ * in every erase block (PEB).
+ */
+#define SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB	(2)
+
 #endif /* _SSDFS_CONSTANTS_H */

@@ -231,8 +231,149 @@ struct ssdfs_seg2req_pair {
 };
 
 /*
+ * struct ssdfs_segment_request_pool - segment requests pool
+ * @pointers: array of pointers on segment requests
+ * @count: current number of requests in pool
+ * @req_class: request class
+ * @req_command: request command
+ * @req_type: request type
+ */
+struct ssdfs_segment_request_pool {
+#define SSDFS_SEG_REQ_PTR_NUMBER_MAX	(15)
+	struct ssdfs_segment_request *pointers[SSDFS_SEG_REQ_PTR_NUMBER_MAX];
+	u8 count;
+
+	int req_class;
+	int req_command;
+	int req_type;
+};
+
+/*
+ * struct ssdfs_dirty_pages_batch - dirty pages batch
+ * @state: batch state
+ * @pvec: page vector with dirty pages
+ * @processed_pages: number processed pages
+ * @requested_extent: requested to store extent
+ * @allocated_extent: really allocated extent of logical blocks
+ * @place: logical blocks placement in segment
+ */
+struct ssdfs_dirty_pages_batch {
+	int state;
+
+	struct pagevec pvec;
+	u8 processed_pages;
+
+	struct ssdfs_logical_extent requested_extent;
+	struct ssdfs_blk2off_range allocated_extent;
+	struct ssdfs_volume_extent place;
+};
+
+/*
+ * Dirty batch states
+ */
+enum {
+	SSDFS_DIRTY_BATCH_UNKNOWN_STATE,
+	SSDFS_DIRTY_BATCH_CREATED,
+	SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES,
+	SSDFS_DIRTY_BATCH_STATE_MAX
+};
+
+/*
  * Request's inline functions
  */
+
+/*
+ * ssdfs_segment_request_pool_init() - initialize request pool
+ * @pool: request pool
+ */
+static inline
+void ssdfs_segment_request_pool_init(struct ssdfs_segment_request_pool *pool)
+{
+	size_t item_size = sizeof(struct ssdfs_segment_request *);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pool);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pool->req_class = SSDFS_UNKNOWN_REQ_CLASS;
+	pool->req_command = SSDFS_UNKNOWN_CMD;
+	pool->req_type = SSDFS_UNKNOWN_REQ_TYPE;
+
+	memset(pool->pointers, 0, item_size * SSDFS_SEG_REQ_PTR_NUMBER_MAX);
+	pool->count = 0;
+}
+
+/*
+ * ssdfs_dirty_pages_batch_init() - initialize dirty pages batch
+ * @batch: dirty pages batch
+ */
+static inline
+void ssdfs_dirty_pages_batch_init(struct ssdfs_dirty_pages_batch *batch)
+{
+	size_t extent_desc_size = sizeof(struct ssdfs_logical_extent);
+	size_t range_desc_size = sizeof(struct ssdfs_blk2off_range);
+	size_t place_desc_size = sizeof(struct ssdfs_volume_extent);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	batch->state = SSDFS_DIRTY_BATCH_CREATED;
+
+	pagevec_init(&batch->pvec);
+	batch->processed_pages = 0;
+
+	memset(&batch->requested_extent, 0xFF, extent_desc_size);
+	memset(&batch->allocated_extent, 0xFF, range_desc_size);
+	memset(&batch->place, 0xFF, place_desc_size);
+}
+
+/*
+ * is_ssdfs_dirty_batch_not_processed() - check that dirty batch is not processed
+ * @batch: dirty pages batch
+ */
+static inline
+bool is_ssdfs_dirty_batch_not_processed(struct ssdfs_dirty_pages_batch *batch)
+{
+	return batch->state == SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES;
+}
+
+/*
+ * is_ssdfs_logical_extent_invalid() - check that logical extent is invalid
+ */
+static inline
+bool is_ssdfs_logical_extent_invalid(struct ssdfs_logical_extent *extent)
+{
+	return extent->ino >= U64_MAX ||
+		extent->logical_offset >= U64_MAX ||
+		extent->data_bytes >= U32_MAX ||
+		extent->cno >= U64_MAX ||
+		extent->parent_snapshot >= U64_MAX;
+}
+
+/*
+ * ssdfs_dirty_pages_batch_prepare_logical_extent() - prepare logical extent
+ * @ino: inode id
+ * @logical_offset: logical offset in bytes from file's beginning
+ * @data_bytes: extent length in bytes
+ * @cno: checkpoint number
+ * @parent_snapshot: parent snapshot number
+ * @req: segment request [out]
+ */
+static inline
+void ssdfs_dirty_pages_batch_prepare_logical_extent(u64 ino,
+					u64 logical_offset,
+					u32 data_bytes,
+					u64 cno,
+					u64 parent_snapshot,
+					struct ssdfs_dirty_pages_batch *batch)
+{
+	batch->requested_extent.ino = ino;
+	batch->requested_extent.logical_offset = logical_offset;
+	batch->requested_extent.data_bytes = data_bytes;
+	batch->requested_extent.cno = cno;
+	batch->requested_extent.parent_snapshot = parent_snapshot;
+}
 
 /*
  * ssdfs_request_prepare_logical_extent() - prepare logical extent
@@ -376,6 +517,9 @@ void ssdfs_zero_seg_req_obj_cache_ptr(void);
 int ssdfs_init_seg_req_obj_cache(void);
 void ssdfs_shrink_seg_req_obj_cache(void);
 void ssdfs_destroy_seg_req_obj_cache(void);
+
+int ssdfs_dirty_pages_batch_add_page(struct page *page,
+				     struct ssdfs_dirty_pages_batch *batch);
 
 struct ssdfs_segment_request *ssdfs_request_alloc(void);
 void ssdfs_request_free(struct ssdfs_segment_request *req);

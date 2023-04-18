@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.53 [April 17, 2023]
+    (*) Rework write path for user data.
+
 v.4.52 [March 15, 2023]
     (*) Fix multiple issues with truncate the whole extents tree.
 

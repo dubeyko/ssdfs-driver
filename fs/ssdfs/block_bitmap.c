@@ -4306,6 +4306,12 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	blk_bmap->metadata_items += count;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_count %zu, used_blks %u, "
+		  "metadata_items %u\n",
+		  blk_bmap->items_count,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items);
+
 	BUG_ON(blk_bmap->metadata_items == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -4316,6 +4322,7 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
  * ssdfs_block_bmap_free_metadata_pages() - free metadata pages
  * @blk_bmap: pointer on block bitmap
  * @count: count of metadata pages for freeing
+ * @freed_items: count of really freed metadata pages [out]
  *
  * This function tries to free @count of metadata pages in
  * block bitmap's space.
@@ -4330,13 +4337,13 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
  * %-ERANGE     - internal error.
  */
 int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
-					 u32 count)
+					 u32 count, u32 *freed_items)
 {
+	u32 threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
 	u32 metadata_items;
-	u32 freed_items;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!blk_bmap);
+	BUG_ON(!blk_bmap || !freed_items);
 
 	if (!mutex_is_locked(&blk_bmap->lock)) {
 		SSDFS_WARN("block bitmap mutex should be locked\n");
@@ -4352,34 +4359,55 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->metadata_items);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	*freed_items = 0;
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
 	}
 
 	metadata_items = blk_bmap->metadata_items;
-	freed_items = count;
+	*freed_items = count;
 
-	if (blk_bmap->metadata_items < count) {
+	if (metadata_items <= threshold) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("correct value: metadata_items %u < count %u\n",
-			  blk_bmap->metadata_items, count);
+		SSDFS_DBG("unable to free metapages: "
+			  "metadata_items %u, threshold %u, "
+			  "freed_items %u\n",
+			  metadata_items, threshold, *freed_items);
 #endif /* CONFIG_SSDFS_DEBUG */
-		freed_items = blk_bmap->metadata_items;
+		return -ENODATA;
+	}
 
-		if (freed_items == 0) {
+	metadata_items -= threshold;
+
+	if (metadata_items < *freed_items) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("correct value: metadata_items %u < freed_items %u\n",
+			  metadata_items, *freed_items);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		*freed_items = metadata_items;
+
+		if (*freed_items == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to free metapages: "
 				  "freed_items %u\n",
-				  freed_items);
+				  *freed_items);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -ENODATA;
 		}
 	}
 
-	blk_bmap->metadata_items -= freed_items;
+	blk_bmap->metadata_items -= *freed_items;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_count %zu, used_blks %u, "
+		  "metadata_items %u\n",
+		  blk_bmap->items_count,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items);
+
 	if (blk_bmap->metadata_items == 0) {
 		SSDFS_ERR("BEFORE: metadata_items %u, count %u, "
 			  "items_count %zu, used_blks %u, "
@@ -4389,7 +4417,7 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->used_blks,
 			  blk_bmap->invalid_blks);
 		SSDFS_ERR("AFTER: metadata_items %u, freed_items %u\n",
-			  blk_bmap->metadata_items, freed_items);
+			  blk_bmap->metadata_items, *freed_items);
 	}
 	BUG_ON(blk_bmap->metadata_items == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
