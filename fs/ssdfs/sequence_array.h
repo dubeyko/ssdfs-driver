@@ -74,6 +74,10 @@ void ssdfs_sequence_array_set_last_id(struct ssdfs_sequence_array *array,
 	spin_lock(&array->lock);
 	array->last_allocated_id = id;
 	spin_unlock(&array->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("set last id %lu\n", id);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 static inline

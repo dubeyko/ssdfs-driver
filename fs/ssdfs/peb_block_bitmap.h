@@ -108,6 +108,7 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 			    struct ssdfs_page_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno);
+int ssdfs_peb_blk_bmap_clean_init(struct ssdfs_peb_blk_bmap *bmap);
 void ssdfs_peb_blk_bmap_init_failed(struct ssdfs_peb_blk_bmap *bmap);
 
 bool has_ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *bmap);

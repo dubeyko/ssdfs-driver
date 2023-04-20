@@ -276,8 +276,8 @@ int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
 	spin_lock(&array->lock);
 
 	if (array->last_allocated_id == SSDFS_SEQUENCE_ARRAY_INVALID_ID) {
-		err = -ERANGE;
-		goto finish_add_item;
+		*id = 0;
+		array->last_allocated_id = 0;
 	} else {
 		if ((array->last_allocated_id + 1) > array->revert_threshold) {
 			*id = 0;

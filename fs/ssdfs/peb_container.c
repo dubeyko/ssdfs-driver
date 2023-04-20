@@ -488,9 +488,9 @@ static
 int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
-	struct ssdfs_segment_info *si;
-	struct ssdfs_blk2off_table *blk2off_table;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_segment_request *req;
+	int command;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -503,36 +503,29 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	si = pebc->parent_si;
-	blk2off_table = si->blk2off_table;
+	command = SSDFS_READ_BLK_BMAP_INIT_CLEAN_PEB;
 
-	atomic_set(&blk2off_table->peb[pebc->peb_index].state,
-		   SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		req = NULL;
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		goto fail_create_clean_peb_obj;
+	}
 
-	peb_blkbmap = &si->blk_bmap.peb[pebc->peb_index];
-	ssdfs_set_block_bmap_initialized(peb_blkbmap->src);
-	atomic_set(&peb_blkbmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
-
-	if (selected_peb == SSDFS_SRC_PEB) {
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!pebc->src_peb);
-#endif /* CONFIG_SSDFS_DEBUG */
-		ssdfs_set_peb_migration_id(pebc->src_peb,
-					   SSDFS_PEB_MIGRATION_ID_START);
-		atomic_set(&pebc->src_peb->state,
-			   SSDFS_PEB_OBJECT_INITIALIZED);
-		complete_all(&pebc->src_peb->init_end);
-	} else if (selected_peb == SSDFS_DST_PEB) {
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!pebc->dst_peb);
-#endif /* CONFIG_SSDFS_DEBUG */
-		ssdfs_set_peb_migration_id(pebc->dst_peb,
-					   SSDFS_PEB_MIGRATION_ID_START);
-		atomic_set(&pebc->dst_peb->state,
-			   SSDFS_PEB_OBJECT_INITIALIZED);
-		complete_all(&pebc->dst_peb->init_end);
-	} else
-		BUG();
+	ssdfs_request_init(req);
+	/* read thread puts request */
+	ssdfs_get_request(req);
+	/* it needs to be sure that request will be not freed */
+	ssdfs_get_request(req);
+	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
+					    command,
+					    SSDFS_REQ_ASYNC,
+					    req);
+	ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
+	ssdfs_peb_read_request_cno(pebc);
+	ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
 
 	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
 	if (err == -EINTR) {
@@ -560,9 +553,48 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
+	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+
+	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
+		err = SSDFS_WAIT_COMPLETION(&req->result.wait);
+		if (unlikely(err)) {
+			SSDFS_ERR("read thread fails: err %d\n",
+				  err);
+			goto stop_flush_thread;
+		}
+	}
+
+	ssdfs_put_request(req);
+
+	if (selected_peb == SSDFS_SRC_PEB) {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!pebc->src_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+		ssdfs_set_peb_migration_id(pebc->src_peb,
+					   SSDFS_PEB_MIGRATION_ID_START);
+		atomic_set(&pebc->src_peb->state,
+			   SSDFS_PEB_OBJECT_INITIALIZED);
+		complete_all(&pebc->src_peb->init_end);
+	} else if (selected_peb == SSDFS_DST_PEB) {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!pebc->dst_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+		ssdfs_set_peb_migration_id(pebc->dst_peb,
+					   SSDFS_PEB_MIGRATION_ID_START);
+		atomic_set(&pebc->dst_peb->state,
+			   SSDFS_PEB_OBJECT_INITIALIZED);
+		complete_all(&pebc->dst_peb->init_end);
+	} else
+		BUG();
+
 	return 0;
 
+stop_flush_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
+
 stop_read_thread:
+	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
 fail_create_clean_peb_obj:
@@ -1652,47 +1684,14 @@ int ssdfs_peb_container_get_peb_relation(struct ssdfs_fs_info *fsi,
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
-		err = ssdfs_peb_map_leb2peb(fsi, leb_id, peb_type,
-					    pebr);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("can't map LEB to PEB: "
-				  "leb_id %llu, peb_type %#x, err %d\n",
-				  leb_id, peb_type, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			return err;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to map LEB to PEB: "
-				  "leb_id %llu, peb_type %#x, err %d\n",
-				  leb_id, peb_type, err);
-			return err;
-		}
-		break;
-
 	case SSDFS_SEG_USED:
 	case SSDFS_SEG_PRE_DIRTY:
-		err = ssdfs_peb_convert_leb2peb(fsi, leb_id, peb_type,
-						pebr);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
-				  leb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-			return err;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to convert LEB to PEB: "
-				  "leb_id %llu, peb_type %#x, err %d\n",
-				  leb_id, peb_type, err);
-			return err;
-		}
-		break;
-
 	case SSDFS_SEG_DIRTY:
 		err = ssdfs_peb_convert_leb2peb(fsi, leb_id, peb_type,
 						pebr);
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
+			SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 				  leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return err;
@@ -5098,6 +5097,8 @@ int ssdfs_peb_join_create_requests_queue(struct ssdfs_peb_container *pebc,
 	spin_lock(&pebc->crq_ptr_lock);
 	pebc->create_rq = create_rq;
 	spin_unlock(&pebc->crq_ptr_lock);
+
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
 
 	return 0;
 }

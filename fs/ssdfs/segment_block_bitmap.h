@@ -74,6 +74,9 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 				    struct ssdfs_page_vector *source,
 				    struct ssdfs_block_bitmap_fragment *hdr,
 				    u64 cno);
+int
+ssdfs_segment_blk_bmap_partial_clean_init(struct ssdfs_segment_blk_bmap *bmap,
+					  u16 peb_index);
 void ssdfs_segment_blk_bmap_init_failed(struct ssdfs_segment_blk_bmap *bmap,
 					u16 peb_index);
 

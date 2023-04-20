@@ -457,7 +457,7 @@ int ssdfs_segbmap_segment_init(struct ssdfs_segment_bmap *segbmap,
 			(u64)segbmap->fragments_per_peb * fragment_bytes;
 		logical_offset *= si->pebs_count;
 		logical_offset *= seg_index;
-		ssdfs_request_prepare_logical_extent(SSDFS_MAPTBL_INO,
+		ssdfs_request_prepare_logical_extent(SSDFS_SEG_BMAP_INO,
 						     logical_offset,
 						     fragment_bytes,
 						     0, 0, req);

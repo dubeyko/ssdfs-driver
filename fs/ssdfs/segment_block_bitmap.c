@@ -303,6 +303,52 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 }
 
 /*
+ * ssdfs_segment_blk_bmap_partial_clean_init() - partial init of segment bitmap
+ * @bmap: pointer on segment block bitmap
+ * @peb_index: PEB's index
+ */
+int
+ssdfs_segment_blk_bmap_partial_clean_init(struct ssdfs_segment_blk_bmap *bmap,
+					  u16 peb_index)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u",
+		  bmap->parent_si->seg_id, peb_index);
+#else
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  bmap->parent_si->seg_id, peb_index);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (atomic_read(&bmap->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&bmap->state));
+		return -ERANGE;
+	}
+
+	if (peb_index >= bmap->pebs_count) {
+		SSDFS_ERR("peb_index %u >= seg_blkbmap->pebs_count %u\n",
+			  peb_index, bmap->pebs_count);
+		return -ERANGE;
+	}
+
+	err = ssdfs_peb_blk_bmap_clean_init(&bmap->peb[peb_index]);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
+/*
  * ssdfs_segment_blk_bmap_init_failed() - process failure of segment bitmap init
  * @bmap: pointer on segment block bitmap
  * @peb_index: PEB's index

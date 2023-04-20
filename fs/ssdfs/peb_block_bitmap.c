@@ -178,7 +178,11 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 	init_completion(&bmap->init_end);
 
 	atomic_set(&bmap->buffers_state, SSDFS_PEB_BMAP1_SRC);
-	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_CREATED);
+
+	if (init_flag == SSDFS_BLK_BMAP_CREATE)
+		atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
+	else
+		atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_CREATED);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -731,6 +735,65 @@ fail_init_blk_bmap:
 
 finish_init_blk_bmap:
 	up_write(&bmap->lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
+/*
+ * ssdfs_peb_blk_bmap_clean_init() - init clean PEB's block bitmap
+ * @bmap: pointer on PEB's block bitmap object
+ */
+int ssdfs_peb_blk_bmap_clean_init(struct ssdfs_peb_blk_bmap *bmap)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
+	BUG_ON(!bmap->parent->parent_si->peb_array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = bmap->parent->parent_si->fsi;
+	si = bmap->parent->parent_si;
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  bmap->parent->parent_si->seg_id,
+		  bmap->peb_index);
+#else
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  bmap->parent->parent_si->seg_id,
+		  bmap->peb_index);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	switch (atomic_read(&bmap->state)) {
+	case SSDFS_PEB_BLK_BMAP_INITIALIZED:
+		goto finish_clean_blk_bmap_init;
+
+	case SSDFS_PEB_BLK_BMAP_CREATED:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_ERR("invalid PEB block bitmap state %#x\n",
+			  atomic_read(&bmap->state));
+		return -ERANGE;
+	}
+
+	atomic_set(&bmap->peb_free_blks, fsi->pages_per_peb);
+	atomic_add(fsi->pages_per_peb, &si->blk_bmap.seg_free_blks);
+	ssdfs_set_block_bmap_initialized(bmap->src);
+	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
+
+finish_clean_blk_bmap_init:
+	complete_all(&bmap->init_end);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -1668,37 +1731,42 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 	SSDFS_DBG("parent->free_logical_blks %u, "
 		  "parent->valid_logical_blks %u, "
 		  "parent->invalid_logical_blks %u, "
-		  "pages_per_peb %u\n",
+		  "pages_per_seg %u\n",
 		  atomic_read(&bmap->parent->seg_free_blks),
 		  atomic_read(&bmap->parent->seg_valid_blks),
 		  atomic_read(&bmap->parent->seg_invalid_blks),
-		  bmap->parent->pages_per_peb);
+		  bmap->parent->pages_per_seg);
 
-	if (atomic_read(&bmap->peb_free_blks) < 0) {
+	if (atomic_read(&bmap->parent->seg_free_blks) < 0) {
 		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
-			   "invalid_logical_blks %u, pages_per_peb %u\n",
-			   atomic_read(&bmap->peb_free_blks),
-			   atomic_read(&bmap->peb_valid_blks),
-			   atomic_read(&bmap->peb_invalid_blks),
-			   bmap->pages_per_peb);
+			   "invalid_logical_blks %u, pages_per_seg %u\n",
+			   atomic_read(&bmap->parent->seg_free_blks),
+			   atomic_read(&bmap->parent->seg_valid_blks),
+			   atomic_read(&bmap->parent->seg_invalid_blks),
+			   bmap->parent->pages_per_seg);
 	}
 
-	if ((atomic_read(&bmap->peb_free_blks) +
-	     atomic_read(&bmap->peb_valid_blks) +
-	     atomic_read(&bmap->peb_invalid_blks)) >
-					bmap->pages_per_peb) {
+	if ((atomic_read(&bmap->parent->seg_free_blks) +
+	     atomic_read(&bmap->parent->seg_valid_blks) +
+	     atomic_read(&bmap->parent->seg_invalid_blks)) >
+					bmap->parent->pages_per_seg) {
 		SSDFS_WARN("free_logical_blks %u, valid_logical_blks %u, "
 			   "invalid_logical_blks %u, pages_per_peb %u\n",
-			   atomic_read(&bmap->peb_free_blks),
-			   atomic_read(&bmap->peb_valid_blks),
-			   atomic_read(&bmap->peb_invalid_blks),
-			   bmap->pages_per_peb);
+			   atomic_read(&bmap->parent->seg_free_blks),
+			   atomic_read(&bmap->parent->seg_valid_blks),
+			   atomic_read(&bmap->parent->seg_invalid_blks),
+			   bmap->parent->pages_per_seg);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_calculate_reserving_blks:
 	up_write(&bmap->modification_lock);
 	up_write(&bmap->parent->modification_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("reserving_blks %d, err %d\n",
+		  reserving_blks, err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (reserving_blks <= 0 && err)
 		goto finish_reserve_metapages;

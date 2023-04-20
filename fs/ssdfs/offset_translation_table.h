@@ -327,6 +327,8 @@ ssdfs_blk2off_table_create(struct ssdfs_fs_info *fsi,
 			   u16 items_count, u8 type,
 			   int state);
 void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table);
+int ssdfs_blk2off_table_partial_clean_init(struct ssdfs_blk2off_table *table,
+					   u16 peb_index);
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     struct ssdfs_read_init_env *env,
 				     u16 peb_index,

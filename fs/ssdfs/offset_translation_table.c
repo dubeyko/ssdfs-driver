@@ -2865,6 +2865,81 @@ unlock_translation_table:
 	return err;
 }
 
+/*
+ * ssdfs_blk2off_table_partial_clean_init() - initialize PEB's table fragment
+ * @table: pointer on translation table object
+ * @peb_index: PEB's index
+ *
+ * This method tries to initialize PEB's table clean fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_blk2off_table_partial_clean_init(struct ssdfs_blk2off_table *table,
+					   u16 peb_index)
+{
+	int state;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!table);
+	BUG_ON(peb_index >= table->pebs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("table %p, peb_index %u\n",
+		  table, peb_index);
+#else
+	SSDFS_DBG("table %p, peb_index %u\n",
+		  table, peb_index);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (ssdfs_blk2off_table_initialized(table, peb_index)) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("PEB's table has been initialized already: "
+			   "peb_index %u\n",
+			   peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return 0;
+	}
+
+	down_write(&table->translation_lock);
+
+	state = atomic_cmpxchg(&table->peb[peb_index].state,
+				SSDFS_BLK2OFF_TABLE_CREATED,
+				SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
+	if (state <= SSDFS_BLK2OFF_TABLE_UNDEFINED ||
+	    state > SSDFS_BLK2OFF_TABLE_CREATED) {
+		err = -ERANGE;
+		SSDFS_WARN("unexpected state %#x\n",
+			   state);
+		goto unlock_translation_table;
+	}
+
+	err = ssdfs_define_blk2off_table_object_state(table);
+	if (err) {
+		SSDFS_ERR("fail to define table object state: "
+			  "err %d\n",
+			  err);
+		goto unlock_translation_table;
+	}
+
+unlock_translation_table:
+	up_write(&table->translation_lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
 const u16 last_used_blk[U8_MAX + 1] = {
 /* 00 - 0x00 */	U16_MAX, 0, 1, 1,
 /* 01 - 0x04 */	2, 2, 2, 2,
@@ -5065,8 +5140,10 @@ finish_copy:
 	ssdfs_unlock_page(page);
 	ssdfs_put_page(page);
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d\n",
 		  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }

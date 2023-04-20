@@ -445,6 +445,11 @@ u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
 
 	reserved_pages = reserved_bytes / page_size;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("reserved_bytes %u, reserved_pages %u\n",
+		  reserved_bytes, reserved_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	BUG_ON(reserved_pages >= U16_MAX);
 
 	return reserved_pages;
@@ -5352,10 +5357,12 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
 
-	SSDFS_DBG("ino %llu, seg %llu, peb %llu, logical_offset %llu, "
+	SSDFS_DBG("ino %llu, seg %llu, peb %llu, "
+		  "peb_index %u, logical_offset %llu, "
 		  "processed_blks %d, logical_block %u, data_bytes %u, "
 		  "cno %llu, parent_snapshot %llu, cmd %#x, type %#x\n",
-		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
+		  req->extent.ino, req->place.start.seg_id,
+		  pebi->peb_id, pebi->peb_index,
 		  req->extent.logical_offset, req->result.processed_blks,
 		  req->place.start.blk_index,
 		  req->extent.data_bytes, req->extent.cno,
@@ -5373,10 +5380,11 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	logical_offset /= fsi->pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("seg %llu, peb %llu, logical_block %u, "
-		  "logical_offset %llu, "
+	SSDFS_DBG("seg %llu, peb %llu, peb_index %u, "
+		  "logical_block %u, logical_offset %llu, "
 		  "processed_blks %d, rest_size %u\n",
-		  req->place.start.seg_id, pebi->peb_id,
+		  req->place.start.seg_id,
+		  pebi->peb_id, pebi->peb_index,
 		  logical_block, logical_offset,
 		  processed_blks, rest_bytes);
 
@@ -5435,8 +5443,13 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	}
 
 	if (err == -ENOSPC) {
-		SSDFS_DBG("block bitmap hasn't free space\n");
-		return err;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("try again to add block: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id, logical_block,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
 	} else if (unlikely(err || (len != range.len))) {
 		SSDFS_ERR("fail to allocate range: "
 			  "seg %llu, peb %llu, "
@@ -13237,7 +13250,8 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("reserved_pages %u, current_log.reserved_pages %u\n",
+	SSDFS_DBG("reserved_pages %u, "
+		  "pebi->current_log.reserved_pages %u\n",
 		  reserved_pages,
 		  pebi->current_log.reserved_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -13497,6 +13511,13 @@ int ssdfs_peb_delegate_log_creation_role(struct ssdfs_peb_container *pebc,
 			  found_pebc->peb_index, err);
 		return err;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %d, peb_free_pages %d\n",
+		  found_pebc->parent_si->seg_id,
+		  found_pebc->peb_index,
+		  peb_free_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (peb_free_pages == 0)
 		return -EAGAIN;

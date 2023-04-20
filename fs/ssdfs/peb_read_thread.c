@@ -8432,6 +8432,88 @@ finish_dst_init_used_metadata_state:
 }
 
 /*
+ * ssdfs_peb_init_clean_metadata_state() - init clean PEB container
+ * @pebc: pointer on PEB container
+ * @req: read request
+ *
+ * This function tries to initialize clean PEB container.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_init_clean_metadata_state(struct ssdfs_peb_container *pebc,
+					struct ssdfs_segment_request *req)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int items_state;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#else
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id, pebc->peb_index);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = pebc->parent_si->fsi;
+	si = pebc->parent_si;
+
+	items_state = atomic_read(&pebc->items_state);
+	switch(items_state) {
+	case SSDFS_PEB1_SRC_CONTAINER:
+	case SSDFS_PEB2_SRC_CONTAINER:
+		/* valid states */
+		break;
+
+	default:
+		SSDFS_WARN("invalid items_state %#x\n",
+			   items_state);
+		return -ERANGE;
+	};
+
+	err = ssdfs_segment_blk_bmap_partial_clean_init(&si->blk_bmap,
+							pebc->peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to initialize block bitmap: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err);
+		goto fail_init_clean_metadata_state;
+	}
+
+	err = ssdfs_blk2off_table_partial_clean_init(si->blk2off_table,
+						     pebc->peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to initialize blk2off table: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err);
+		goto fail_init_clean_metadata_state;
+	}
+
+fail_init_clean_metadata_state:
+	complete(&req->result.wait);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
+/*
  * ssdfs_find_prev_partial_log() - find previous partial log
  * @fsi: file system info object
  * @pebi: pointer on PEB object
@@ -10815,6 +10897,21 @@ int ssdfs_process_read_request(struct ssdfs_peb_container *pebc,
 			ssdfs_fs_error(pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"fail to read log headers: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		break;
+
+	case SSDFS_READ_BLK_BMAP_INIT_CLEAN_PEB:
+		err = ssdfs_peb_init_clean_metadata_state(pebc, req);
+		if (unlikely(err)) {
+			ssdfs_fs_error(pebc->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to init clean block bitmap: "
 				"seg %llu, peb_index %u, err %d\n",
 				pebc->parent_si->seg_id,
 				pebc->peb_index, err);

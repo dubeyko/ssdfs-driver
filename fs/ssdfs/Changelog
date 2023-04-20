@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.54 [April 19, 2023]
+    (*) Fix bugs in logic of supporting multiple PEBs in segment.
+
 v.4.53 [April 17, 2023]
     (*) Rework write path for user data.
 
