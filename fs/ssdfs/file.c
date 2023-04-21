@@ -554,126 +554,6 @@ int ssdfs_read_folio(struct file *file, struct folio *folio)
 }
 
 static
-struct ssdfs_segment_request *
-ssdfs_issue_read_request(struct file *file, struct page *page)
-{
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(file_inode(file)->i_sb);
-	struct ssdfs_segment_request *req = NULL;
-	struct ssdfs_segment_info *si;
-	ino_t ino = file_inode(file)->i_ino;
-	pgoff_t index = page_index(page);
-	loff_t logical_offset;
-	loff_t data_bytes;
-	loff_t file_size;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, page_index %lu\n",
-		  file_inode(file)->i_ino, page_index(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	logical_offset = (loff_t)index << PAGE_SHIFT;
-
-	file_size = i_size_read(file_inode(file));
-	data_bytes = file_size - logical_offset;
-	data_bytes = min_t(loff_t, PAGE_SIZE, data_bytes);
-
-	BUG_ON(data_bytes > U32_MAX);
-
-	ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
-
-	if (logical_offset >= file_size) {
-		/* Reading beyond inode */
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("Reading beyond inode: "
-			  "logical_offset %llu, file_size %llu\n",
-			  logical_offset, file_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-		SetPageUptodate(page);
-		ClearPageError(page);
-		flush_dcache_page(page);
-		return ERR_PTR(-ENODATA);
-	}
-
-	req = ssdfs_request_alloc();
-	if (IS_ERR_OR_NULL(req)) {
-		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
-		SSDFS_ERR("fail to allocate segment request: err %d\n",
-			  err);
-		return req;
-	}
-
-	ssdfs_request_init(req);
-	ssdfs_get_request(req);
-
-	ssdfs_request_prepare_logical_extent(ino,
-					     (u64)logical_offset,
-					     (u32)data_bytes,
-					     0, 0, req);
-
-	err = ssdfs_request_add_page(page, req);
-	if (err) {
-		SSDFS_ERR("fail to add page into request: "
-			  "ino %lu, page_index %lu, err %d\n",
-			  ino, index, err);
-		goto fail_issue_read_request;
-	}
-
-	err = ssdfs_prepare_volume_extent(fsi, req);
-	if (err == -EAGAIN) {
-		err = 0;
-		SSDFS_DBG("logical extent processed partially\n");
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to prepare volume extent: "
-			  "ino %llu, logical_offset %llu, "
-			  "data_bytes %u, cno %llu, "
-			  "parent_snapshot %llu, err %d\n",
-			  req->extent.ino,
-			  req->extent.logical_offset,
-			  req->extent.data_bytes,
-			  req->extent.cno,
-			  req->extent.parent_snapshot,
-			  err);
-		goto fail_issue_read_request;
-	}
-
-	req->place.len = 1;
-
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id, U64_MAX);
-	if (unlikely(IS_ERR_OR_NULL(si))) {
-		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-		SSDFS_ERR("fail to grab segment object: "
-			  "seg %llu, err %d\n",
-			  req->place.start.seg_id,
-			  err);
-		goto fail_issue_read_request;
-	}
-
-	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC_NO_FREE, req);
-	if (unlikely(err)) {
-		SSDFS_ERR("read request failed: "
-			  "ino %llu, logical_offset %llu, size %u, err %d\n",
-			  req->extent.ino, req->extent.logical_offset,
-			  req->extent.data_bytes, err);
-		goto fail_issue_read_request;
-	}
-
-	ssdfs_segment_put_object(si);
-
-	return req;
-
-fail_issue_read_request:
-	ClearPageUptodate(page);
-	ssdfs_clear_page_private(page, 0);
-	SetPageError(page);
-	ssdfs_put_request(req);
-	ssdfs_request_free(req);
-
-	return ERR_PTR(err);
-}
-
-static
 int ssdfs_check_read_request(struct ssdfs_segment_request *req)
 {
 	wait_queue_head_t *wq = NULL;
@@ -754,61 +634,236 @@ int ssdfs_wait_read_request_end(struct ssdfs_segment_request *req)
 
 struct ssdfs_readahead_env {
 	struct file *file;
+	unsigned mem_pages_count;
 	struct ssdfs_segment_request **reqs;
 	unsigned count;
 	unsigned capacity;
+
+	struct pagevec pvec;
+	struct ssdfs_logical_extent requested;
+	struct ssdfs_volume_extent place;
+	struct ssdfs_volume_extent cur_extent;
 };
 
-static inline
-int ssdfs_readahead_page(void *data, struct page *page)
+static
+struct ssdfs_segment_request *
+ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 {
-	struct ssdfs_readahead_env *env = (struct ssdfs_readahead_env *)data;
-	unsigned index;
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_request *req = NULL;
+	struct ssdfs_segment_info *si;
+	loff_t data_bytes;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!env);
+
+	SSDFS_DBG("requested (ino %llu, logical_offset %llu, "
+		  "cno %llu, parent_snapshot %llu), "
+		  "current extent (seg_id %llu, logical_blk %u, len %u)\n",
+		  env->requested.ino,
+		  env->requested.logical_offset,
+		  env->requested.cno,
+		  env->requested.parent_snapshot,
+		  env->cur_extent.start.seg_id,
+		  env->cur_extent.start.blk_index,
+		  env->cur_extent.len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = SSDFS_FS_I(file_inode(env->file)->i_sb);
+
+	req = ssdfs_request_alloc();
+	if (IS_ERR_OR_NULL(req)) {
+		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+		SSDFS_ERR("fail to allocate segment request: err %d\n",
+			  err);
+		return req;
+	}
+
+	ssdfs_request_init(req);
+	ssdfs_get_request(req);
+
+	data_bytes = pagevec_count(&env->pvec) * PAGE_SIZE;
+
+	ssdfs_request_prepare_logical_extent(env->requested.ino,
+					     env->requested.logical_offset,
+					     (u32)data_bytes,
+					     env->requested.cno,
+					     env->requested.parent_snapshot,
+					     req);
+
+	ssdfs_request_define_segment(env->cur_extent.start.seg_id, req);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(env->cur_extent.start.blk_index >= U16_MAX);
+	BUG_ON(env->cur_extent.len >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+	ssdfs_request_define_volume_extent(env->cur_extent.start.blk_index,
+					   env->cur_extent.len,
+					   req);
+
+	for (i = 0; i < pagevec_count(&env->pvec); i++) {
+		err = ssdfs_request_add_page(env->pvec.pages[i], req);
+		if (err) {
+			SSDFS_ERR("fail to add page into request: "
+				  "ino %llu, index %d, err %d\n",
+				  env->requested.ino, i, err);
+			goto fail_issue_read_request;
+		}
+	}
+
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				req->place.start.seg_id, U64_MAX);
+	if (unlikely(IS_ERR_OR_NULL(si))) {
+		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+		SSDFS_ERR("fail to grab segment object: "
+			  "seg %llu, err %d\n",
+			  req->place.start.seg_id,
+			  err);
+		goto fail_issue_read_request;
+	}
+
+	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC_NO_FREE, req);
+	if (unlikely(err)) {
+		SSDFS_ERR("read request failed: "
+			  "ino %llu, logical_offset %llu, size %u, err %d\n",
+			  req->extent.ino, req->extent.logical_offset,
+			  req->extent.data_bytes, err);
+		goto fail_issue_read_request;
+	}
+
+	ssdfs_segment_put_object(si);
+
+	return req;
+
+fail_issue_read_request:
+	ssdfs_put_request(req);
+	ssdfs_request_free(req);
+
+	return ERR_PTR(err);
+}
+
+static
+int ssdfs_readahead_block(struct ssdfs_readahead_env *env)
+{
+	struct ssdfs_fs_info *fsi;
+	struct inode *inode;
+	struct page *page;
+	ino_t ino;
+	pgoff_t index;
+	loff_t logical_offset;
+	loff_t data_bytes;
+	loff_t file_size;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, page_index %lu, page %p, "
-		  "count %d, flags %#lx\n",
-		  file_inode(env->file)->i_ino, page_index(page),
-		  page, page_ref_count(page), page->flags);
+	BUG_ON(!env);
+
+	SSDFS_DBG("pages_count %u\n",
+		  pagevec_count(&env->pvec));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (env->count >= env->capacity) {
-		SSDFS_ERR("count %u >= capacity %u\n",
-			  env->count, env->capacity);
+	inode = file_inode(env->file);
+	fsi = SSDFS_FS_I(inode->i_sb);
+	ino = inode->i_ino;
+
+	if (pagevec_count(&env->pvec) == 0) {
+		SSDFS_ERR("empty pagevec\n");
 		return -ERANGE;
 	}
 
-	index = env->count;
+	page = env->pvec.pages[0];
 
-	ssdfs_get_page(page);
-	ssdfs_account_locked_page(page);
+	index = page_index(page);
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 
-	env->reqs[index] = ssdfs_issue_read_request(env->file, page);
-	if (IS_ERR_OR_NULL(env->reqs[index])) {
-		err = (env->reqs[index] == NULL ? -ENOMEM :
-						PTR_ERR(env->reqs[index]));
-		env->reqs[index] = NULL;
+	file_size = i_size_read(inode);
+	data_bytes = file_size - logical_offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(data_bytes > U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	env->requested.ino = ino;
+	env->requested.logical_offset = logical_offset;
+	env->requested.data_bytes = data_bytes;
+	env->requested.cno = 0;
+	env->requested.parent_snapshot = 0;
+
+	if (env->place.len == 0) {
+		err = __ssdfs_prepare_volume_extent(fsi, inode,
+						    &env->requested,
+						    &env->place);
+		if (err == -EAGAIN) {
+			err = 0;
+			SSDFS_DBG("logical extent processed partially\n");
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare volume extent: "
+				  "ino %llu, logical_offset %llu, "
+				  "data_bytes %u, cno %llu, "
+				  "parent_snapshot %llu, err %d\n",
+				  env->requested.ino,
+				  env->requested.logical_offset,
+				  env->requested.data_bytes,
+				  env->requested.cno,
+				  env->requested.parent_snapshot,
+				  err);
+			goto fail_readahead_block;
+		}
+	}
+
+	if (env->place.len == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("found empty extent\n");
+		goto fail_readahead_block;
+	}
+
+	env->cur_extent.start.seg_id = env->place.start.seg_id;
+	env->cur_extent.start.blk_index = env->place.start.blk_index;
+	env->cur_extent.len = 1;
+
+	env->place.start.blk_index++;
+	env->place.len--;
+
+	env->reqs[env->count] = ssdfs_issue_read_request(env);
+	if (IS_ERR_OR_NULL(env->reqs[env->count])) {
+		err = (env->reqs[env->count] == NULL ? -ENOMEM :
+					PTR_ERR(env->reqs[env->count]));
+		env->reqs[env->count] = NULL;
 
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("no data for the page: "
-				  "index %d\n", index);
+			SSDFS_DBG("no data for the block: "
+				  "index %d\n", env->count);
 #endif /* CONFIG_SSDFS_DEBUG */
+			goto fail_readahead_block;
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to issue request: "
 				  "index %d, err %d\n",
-				  index, err);
+				  env->count, err);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-			SetPageError(page);
-			zero_user_segment(page, 0, PAGE_SIZE);
-			ssdfs_unlock_page(page);
-			ssdfs_put_page(page);
+			goto fail_readahead_block;
 		}
 	} else
 		env->count++;
+
+	return 0;
+
+fail_readahead_block:
+	for (i = 0; i < pagevec_count(&env->pvec); i++) {
+		page = env->pvec.pages[i];
+
+		zero_user_segment(page, 0, PAGE_SIZE);
+
+		SetPageError(page);
+		ClearPageUptodate(page);
+		ssdfs_clear_page_private(page, 0);
+		ssdfs_unlock_page(page);
+		ssdfs_put_page(page);
+	}
 
 	return err;
 }
@@ -827,15 +882,21 @@ void ssdfs_readahead(struct readahead_control *rac)
 {
 	struct inode *inode = file_inode(rac->file);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_readahead_env env;
 	struct page *page;
-	unsigned i;
+	u32 mem_pages_per_block;
+	pgoff_t index;
+	loff_t logical_offset;
+	loff_t file_size;
+	unsigned i, j;
 	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, nr_pages %u\n",
-		  file_inode(rac->file)->i_ino, readahead_count(rac));
+		  file_inode(rac->file)->i_ino,
+		  readahead_count(rac));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_ssdfs_file_inline(ii)) {
@@ -843,11 +904,19 @@ void ssdfs_readahead(struct readahead_control *rac)
 		return;
 	}
 
-	env.file = rac->file;
-	env.count = 0;
-	env.capacity = readahead_count(rac);
+	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
 
-	env.reqs = ssdfs_file_kcalloc(readahead_count(rac),
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(mem_pages_per_block > PAGEVEC_SIZE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	env.file = rac->file;
+	env.mem_pages_count = readahead_count(rac);
+	env.count = 0;
+	env.capacity = env.mem_pages_count + mem_pages_per_block - 1;
+	env.capacity /= mem_pages_per_block;
+
+	env.reqs = ssdfs_file_kcalloc(env.capacity,
 				  sizeof(struct ssdfs_segment_request *),
 				  GFP_KERNEL);
 	if (!env.reqs) {
@@ -855,16 +924,57 @@ void ssdfs_readahead(struct readahead_control *rac)
 		return;
 	}
 
-	while ((page = readahead_page(rac))) {
-		prefetchw(&page->flags);
-		err = ssdfs_readahead_page((void *)&env, page);
+	pagevec_init(&env.pvec);
+	memset(&env.requested, 0, sizeof(struct ssdfs_logical_extent));
+	memset(&env.place, 0, sizeof(struct ssdfs_volume_extent));
+	memset(&env.cur_extent, 0, sizeof(struct ssdfs_volume_extent));
+
+	for (i = 0; i < env.capacity; i++) {
+		pagevec_reinit(&env.pvec);
+
+		for (j = 0; j < mem_pages_per_block; j++) {
+			page = readahead_page(rac);
+			if (!page) {
+				SSDFS_DBG("no more pages\n");
+				break;
+			}
+
+			prefetchw(&page->flags);
+
+			index = page_index(page);
+			logical_offset = (loff_t)index << PAGE_SHIFT;
+			file_size = i_size_read(file_inode(env.file));
+
+			if (logical_offset >= file_size) {
+				/* Reading beyond inode */
+				err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("Reading beyond inode: "
+					  "logical_offset %llu, file_size %llu\n",
+					  logical_offset, file_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+				SetPageUptodate(page);
+				ClearPageError(page);
+				flush_dcache_page(page);
+				break;
+			}
+
+			ssdfs_get_page(page);
+			ssdfs_account_locked_page(page);
+
+			ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
+
+			pagevec_add(&env.pvec, page);
+		}
+
+		err = ssdfs_readahead_block(&env);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to process page: "
+			SSDFS_ERR("fail to process block: "
 				  "index %u, err %d\n",
 				  env.count, err);
 			break;
 		}
-	};
+	}
 
 	for (i = 0; i < env.count; i++) {
 		res = ssdfs_wait_read_request_end(env.reqs[i]);
