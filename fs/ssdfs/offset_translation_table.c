@@ -234,8 +234,10 @@ struct ssdfs_blk2off_init {
 	u32 bmap_bytes;
 };
 
+#ifdef CONFIG_SSDFS_DEBUG
 static
 void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 /*
  * ssdfs_blk2off_table_init_fragment() - init PEB's fragment
@@ -1677,6 +1679,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	struct ssdfs_phys_offset_descriptor *phys_off = NULL;
 	struct ssdfs_dynamic_array *lblk2off;
 	struct ssdfs_blk_desc_table_init_env *bdt_init;
+	struct ssdfs_blk_state_offset *state_off;
 	void *ptr;
 	u16 peb_index;
 	u16 sequence_id;
@@ -1689,11 +1692,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	u16 len;
 	int phys_off_index;
 	bool is_partially_processed = false;
-	int i;
-#ifdef CONFIG_SSDFS_DEBUG
-	struct ssdfs_blk_state_offset *state_off;
-	int j;
-#endif /* CONFIG_SSDFS_DEBUG */
+	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8889,10 +8888,10 @@ int ssdfs_show_fragment_details(void *ptr)
 	return 0;
 }
 
+#ifdef CONFIG_SSDFS_DEBUG
 static
 void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 {
-#ifdef CONFIG_SSDFS_DEBUG
 	u32 items_count;
 	int i;
 
@@ -8963,5 +8962,5 @@ void ssdfs_debug_blk2off_table_object(struct ssdfs_blk2off_table *tbl)
 		ssdfs_sequence_array_apply_for_all(peb->sequence,
 						ssdfs_show_fragment_details);
 	}
-#endif /* CONFIG_SSDFS_DEBUG */
 }
+#endif /* CONFIG_SSDFS_DEBUG */
