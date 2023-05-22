@@ -840,7 +840,7 @@ int ssdfs_setattr(struct user_namespace *mnt_userns,
 
 		if (attr->ia_valid & ATTR_MODE) {
 			err = posix_acl_chmod(&init_user_ns,
-					      dentry, inode->i_mode);
+					      inode, inode->i_mode);
 		}
 	}
 
