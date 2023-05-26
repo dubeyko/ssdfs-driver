@@ -370,6 +370,14 @@ void ssdfs_file_memory_leaks_init(void);
 void ssdfs_file_check_memory_leaks(void);
 void ssdfs_fs_error_memory_leaks_init(void);
 void ssdfs_fs_error_check_memory_leaks(void);
+void ssdfs_flush_memory_leaks_init(void);
+void ssdfs_flush_check_memory_leaks(void);
+void ssdfs_gc_memory_leaks_init(void);
+void ssdfs_gc_check_memory_leaks(void);
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+void ssdfs_fsck_memory_leaks_init(void);
+void ssdfs_fsck_check_memory_leaks(void);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 void ssdfs_inode_memory_leaks_init(void);
 void ssdfs_inode_check_memory_leaks(void);
 void ssdfs_ino_tree_memory_leaks_init(void);
@@ -380,10 +388,6 @@ void ssdfs_parray_memory_leaks_init(void);
 void ssdfs_parray_check_memory_leaks(void);
 void ssdfs_page_vector_memory_leaks_init(void);
 void ssdfs_page_vector_check_memory_leaks(void);
-void ssdfs_flush_memory_leaks_init(void);
-void ssdfs_flush_check_memory_leaks(void);
-void ssdfs_gc_memory_leaks_init(void);
-void ssdfs_gc_check_memory_leaks(void);
 void ssdfs_map_queue_memory_leaks_init(void);
 void ssdfs_map_queue_check_memory_leaks(void);
 void ssdfs_map_tbl_memory_leaks_init(void);

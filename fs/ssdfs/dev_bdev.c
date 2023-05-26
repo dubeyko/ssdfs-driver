@@ -651,6 +651,12 @@ int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("area with offset %llu contains data\n",
 				  (unsigned long long)offset);
+
+			SSDFS_DBG("PAGE DUMP:\n");
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     buf,
+					     PAGE_SIZE);
+			SSDFS_DBG("\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 			err = -EIO;
 		}
@@ -841,207 +847,12 @@ int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
 }
 
 /*
- * ssdfs_bdev_erase_end_io() - callback for erase operation end
- */
-static void ssdfs_bdev_erase_end_io(struct bio *bio)
-{
-	struct super_block *sb = bio->bi_private;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-
-	BUG_ON(bio->bi_vcnt == 0);
-
-	ssdfs_bdev_bio_put(bio);
-	if (atomic_dec_and_test(&fsi->pending_bios))
-		wake_up_all(&wq);
-}
-
-/*
  * ssdfs_bdev_support_discard() - check that block device supports discard
  */
 static inline bool ssdfs_bdev_support_discard(struct block_device *bdev)
 {
 	return bdev_max_discard_sectors(bdev) ||
 		bdev_is_zoned(bdev);
-}
-
-/*
- * ssdfs_bdev_erase_request() - initiate erase request
- * @sb: superblock object
- * @nr_iovecs: number of pages for erase
- * @offset: offset in bytes from partition's begin
- *
- * This function tries to make erase operation.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EFAULT      - erase operation error.
- */
-static int ssdfs_bdev_erase_request(struct super_block *sb,
-				    unsigned int nr_iovecs,
-				    loff_t offset)
-{
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	struct page *erase_page = fsi->erase_page;
-	struct bio *bio;
-	unsigned int max_pages;
-	pgoff_t index = (pgoff_t)(offset >> PAGE_SHIFT);
-	int i;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!erase_page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (nr_iovecs == 0) {
-		SSDFS_WARN("empty vector\n");
-		return 0;
-	}
-
-	max_pages = min_t(unsigned int, nr_iovecs, BIO_MAX_VECS);
-
-	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, max_pages,
-				   REQ_OP_DISCARD, GFP_NOFS);
-	if (IS_ERR_OR_NULL(bio)) {
-		err = !bio ? -ERANGE : PTR_ERR(bio);
-		SSDFS_ERR("fail to allocate bio: err %d\n",
-			  err);
-		return err;
-	}
-
-	for (i = 0; i < nr_iovecs; i++) {
-		if (i >= max_pages) {
-			bio_set_dev(bio, sb->s_bdev);
-			bio->bi_opf = REQ_OP_DISCARD | REQ_BACKGROUND;
-			bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
-			bio->bi_private = sb;
-			bio->bi_end_io = ssdfs_bdev_erase_end_io;
-			atomic_inc(&fsi->pending_bios);
-			submit_bio(bio);
-
-			index += i;
-			nr_iovecs -= i;
-			i = 0;
-
-			bio = ssdfs_bdev_bio_alloc(sb->s_bdev, max_pages,
-						   REQ_OP_DISCARD, GFP_NOFS);
-			if (IS_ERR_OR_NULL(bio)) {
-				err = !bio ? -ERANGE : PTR_ERR(bio);
-				SSDFS_ERR("fail to allocate bio: err %d\n",
-					  err);
-				return err;
-			}
-		}
-
-		err = ssdfs_bdev_bio_add_page(bio, erase_page,
-					      PAGE_SIZE,
-					      0);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add page %d into bio: "
-				  "err %d\n",
-				  i, err);
-			goto finish_erase_request;
-		}
-	}
-
-	bio_set_dev(bio, sb->s_bdev);
-	bio->bi_opf = REQ_OP_DISCARD | REQ_BACKGROUND;
-	bio->bi_iter.bi_sector = index * (PAGE_SIZE >> 9);
-	bio->bi_private = sb;
-	bio->bi_end_io = ssdfs_bdev_erase_end_io;
-	atomic_inc(&fsi->pending_bios);
-	submit_bio(bio);
-
-	return 0;
-
-finish_erase_request:
-	ssdfs_bdev_bio_put(bio);
-
-	return err;
-}
-
-/*
- * ssdfs_bdev_erase() - make erase operation
- * @sb: superblock object
- * @offset: offset in bytes from partition's begin
- * @len: size in bytes
- *
- * This function tries to make erase operation.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EROFS       - file system in RO mode.
- * %-EFAULT      - erase operation error.
- */
-static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
-{
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	u32 erase_size = fsi->erasesize;
-	loff_t page_start, page_end;
-	u32 pages_count;
-	sector_t start_sector;
-	sector_t sectors_count;
-	u32 remainder;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, len %zu\n",
-		  sb, (unsigned long long)offset, len);
-
-	div_u64_rem((u64)len, (u64)erase_size, &remainder);
-	BUG_ON(remainder);
-	div_u64_rem((u64)offset, (u64)erase_size, &remainder);
-	BUG_ON(remainder);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (sb->s_flags & SB_RDONLY)
-		return -EROFS;
-
-	div_u64_rem((u64)len, (u64)erase_size, &remainder);
-	if (remainder) {
-		SSDFS_WARN("len %llu, erase_size %u, remainder %u\n",
-			   (unsigned long long)len,
-			   erase_size, remainder);
-		return -ERANGE;
-	}
-
-	page_start = offset >> PAGE_SHIFT;
-	page_end = (offset + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	pages_count = (u32)(page_end - page_start);
-
-	if (pages_count == 0) {
-		SSDFS_WARN("pages_count equals to zero\n");
-		return -ERANGE;
-	}
-
-	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
-		err = ssdfs_bdev_erase_request(sb, pages_count, offset);
-		if (unlikely(err))
-			goto try_zeroout;
-	} else {
-try_zeroout:
-		start_sector = page_start <<
-					(PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
-		sectors_count = pages_count <<
-					(PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
-
-		err = blkdev_issue_zeroout(sb->s_bdev,
-					   start_sector, sectors_count,
-					   GFP_NOFS, 0);
-	}
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to erase: "
-			  "offset %llu, len %zu, err %d\n",
-			  (unsigned long long)offset,
-			  len, err);
-		return err;
-	}
-
-	return 0;
 }
 
 /*
@@ -1104,10 +915,10 @@ static int ssdfs_bdev_trim(struct super_block *sb, loff_t offset, size_t len)
 	sectors_count = pages_count << (PAGE_SHIFT - SSDFS_SECTOR_SHIFT);
 
 	if (ssdfs_bdev_support_discard(sb->s_bdev)) {
-		err = blkdev_issue_discard(sb->s_bdev,
-					   start_sector, sectors_count,
-					   GFP_NOFS);
-		if (unlikely(err))
+		err = blkdev_issue_secure_erase(sb->s_bdev,
+						start_sector, sectors_count,
+						GFP_NOFS);
+		if (err)
 			goto try_zeroout;
 	} else {
 try_zeroout:
@@ -1125,6 +936,26 @@ try_zeroout:
 	}
 
 	return 0;
+}
+
+/*
+ * ssdfs_bdev_erase() - make erase operation
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ * @len: size in bytes
+ *
+ * This function tries to make erase operation.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EROFS       - file system in RO mode.
+ * %-EFAULT      - erase operation error.
+ */
+static int ssdfs_bdev_erase(struct super_block *sb, loff_t offset, size_t len)
+{
+	return ssdfs_bdev_trim(sb, offset, len);
 }
 
 /*

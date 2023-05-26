@@ -2794,6 +2794,11 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_ext_tree_memory_leaks_init();
 	ssdfs_file_memory_leaks_init();
 	ssdfs_fs_error_memory_leaks_init();
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	ssdfs_fsck_memory_leaks_init();
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	ssdfs_inode_memory_leaks_init();
 	ssdfs_ino_tree_memory_leaks_init();
 	ssdfs_invext_tree_memory_leaks_init();
@@ -2868,6 +2873,11 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_ext_tree_check_memory_leaks();
 	ssdfs_file_check_memory_leaks();
 	ssdfs_fs_error_check_memory_leaks();
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	ssdfs_fsck_check_memory_leaks();
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	ssdfs_inode_check_memory_leaks();
 	ssdfs_ino_tree_check_memory_leaks();
 	ssdfs_invext_tree_check_memory_leaks();
@@ -2964,6 +2974,10 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	fs_info->zone_size = U64_MAX;
 	fs_info->zone_capacity = U64_MAX;
 	atomic_set(&fs_info->open_zones, 0);
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	atomic_set(&fs_info->fsck_priority, 0);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 #ifdef CONFIG_SSDFS_MTD_DEVICE
 	fs_info->mtd = sb->s_mtd;

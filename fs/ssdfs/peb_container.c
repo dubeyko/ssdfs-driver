@@ -58,6 +58,10 @@ struct ssdfs_thread_descriptor thread_desc[SSDFS_PEB_THREAD_TYPE_MAX] = {
 	 .fmt = "ssdfs-f%llu-%u",},
 	{.threadfn = ssdfs_peb_gc_thread_func,
 	 .fmt = "ssdfs-gc%llu-%u",},
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	{.threadfn = ssdfs_peb_fsck_thread_func,
+	 .fmt = "ssdfs-fsck%llu-%u",},
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 };
 
 /*
@@ -553,6 +557,21 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto stop_flush_thread;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to start fsck thread: "
+			  "peb_index %u, err %d\n",
+			  pebc->peb_index, err);
+		goto stop_flush_thread;
+	}
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -560,7 +579,11 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+			goto stop_fsck_thread;
+#else
 			goto stop_flush_thread;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 		}
 	}
 
@@ -588,6 +611,11 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		BUG();
 
 	return 0;
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+stop_fsck_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -806,6 +834,21 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto stop_flush_thread;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to start fsck thread: "
+			  "peb_index %u, err %d\n",
+			  pebc->peb_index, err);
+		goto stop_flush_thread;
+	}
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -813,7 +856,11 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+			goto stop_fsck_thread;
+#else
 			goto stop_flush_thread;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 		}
 
 		/*
@@ -839,6 +886,11 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+stop_fsck_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -1002,6 +1054,21 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto stop_flush_thread;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to start fsck thread: "
+			  "peb_index %u, err %d\n",
+			  pebc->peb_index, err);
+		goto stop_flush_thread;
+	}
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -1009,7 +1076,11 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+			goto stop_fsck_thread;
+#else
 			goto stop_flush_thread;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 		}
 
 		/*
@@ -1035,6 +1106,11 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+stop_fsck_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -1358,6 +1434,21 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto stop_flush_thread;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to start fsck thread: "
+			  "peb_index %u, err %d\n",
+			  pebc->peb_index, err);
+		goto stop_flush_thread;
+	}
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -1365,7 +1456,11 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+			goto stop_fsck_thread;
+#else
 			goto stop_flush_thread;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 		}
 
 		/*
@@ -1391,6 +1486,11 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+stop_fsck_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -1572,6 +1672,21 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		goto stop_read_thread;
 	}
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		goto stop_flush_thread;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to start fsck thread: "
+			  "peb_index %u, err %d\n",
+			  pebc->peb_index, err);
+		goto stop_flush_thread;
+	}
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
 
 	if (!ssdfs_peb_blk_bmap_initialized(peb_blkbmap)) {
@@ -1579,7 +1694,11 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		if (unlikely(err)) {
 			SSDFS_ERR("read thread fails: err %d\n",
 				  err);
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+			goto stop_fsck_thread;
+#else
 			goto stop_flush_thread;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 		}
 
 		/*
@@ -1605,6 +1724,11 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 
 	return 0;
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+stop_fsck_thread:
+	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FSCK_THREAD);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
@@ -2216,6 +2340,10 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	spin_lock_init(&pebc->crq_ptr_lock);
 	pebc->create_rq = NULL;
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	ssdfs_requests_queue_init(&pebc->fsck_rq);
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	spin_lock_init(&pebc->cache_protection.cno_lock);
 	pebc->cache_protection.create_cno = ssdfs_current_cno(fsi->sb);
 	pebc->cache_protection.last_request_cno =
@@ -2527,6 +2655,16 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 		err = -EIO;
 		ssdfs_requests_queue_remove_all(&ptr->update_rq, err);
 	}
+
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	if (!is_ssdfs_requests_queue_empty(&ptr->fsck_rq)) {
+		ssdfs_fs_error(ptr->parent_si->fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"FSCK requests queue isn't empty\n");
+		err = -EIO;
+		ssdfs_requests_queue_remove_all(&ptr->fsck_rq, err);
+	}
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 	if (is_peb_container_empty(ptr)) {
 #ifdef CONFIG_SSDFS_DEBUG

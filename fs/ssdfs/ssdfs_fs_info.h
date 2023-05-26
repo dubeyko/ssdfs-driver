@@ -255,6 +255,7 @@ struct ssdfs_snapshot_subsystem {
  * @zone_capacity: zone capacity in bytes available for write operations
  * @max_open_zones: open zones limitation (upper bound)
  * @open_zones: current number of opened zones
+ * @fsck_priority: define priority of FSCK operations
  * @dev_kobj: /sys/fs/ssdfs/<device> kernel object
  * @dev_kobj_unregister: completion state for <device> kernel object
  * @maptbl_kobj: /sys/fs/<ssdfs>/<device>/maptbl kernel object
@@ -366,6 +367,10 @@ struct ssdfs_fs_info {
 	u32 max_open_zones;
 	atomic_t open_zones;
 
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	atomic_t fsck_priority;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
 	/* /sys/fs/ssdfs/<device> */
 	struct kobject dev_kobj;
 	struct completion dev_kobj_unregister;
@@ -393,6 +398,49 @@ struct ssdfs_fs_info {
 	((struct ssdfs_fs_info *)(sb->s_fs_info))
 
 /*
+ * GC constants
+ */
+#define SSDFS_GC_LOW_BOUND_THRESHOLD	(50)
+#define SSDFS_GC_UPPER_BOUND_THRESHOLD	(1000)
+#define SSDFS_GC_DISTANCE_THRESHOLD	(5)
+#define SSDFS_GC_DEFAULT_SEARCH_STEP	(100)
+#define SSDFS_GC_DIRTY_SEG_SEARCH_STEP	(1000)
+#define SSDFS_GC_DIRTY_SEG_DEFAULT_OPS	(50)
+
+/*
+ * GC possible states
+ */
+enum {
+	SSDFS_UNDEFINED_GC_STATE,
+	SSDFS_COLLECT_GARBAGE_NOW,
+	SSDFS_WAIT_IDLE_STATE,
+	SSDFS_STOP_GC_ACTIVITY_NOW,
+	SSDFS_GC_STATE_MAX
+};
+
+/*
+ * FSCK possible states
+ */
+enum {
+	SSDFS_UNDEFINED_FSCK_STATE = SSDFS_UNDEFINED_GC_STATE,
+	SSDFS_DO_FSCK_CHECK_NOW = SSDFS_COLLECT_GARBAGE_NOW,
+	SSDFS_FSCK_WAIT_IDLE_STATE = SSDFS_WAIT_IDLE_STATE,
+	SSDFS_STOP_FSCK_ACTIVITY_NOW = SSDFS_STOP_GC_ACTIVITY_NOW,
+	SSDFS_FSCK_STATE_MAX
+};
+
+/*
+ * struct ssdfs_io_load_stats - I/O load estimation
+ * @measurements: number of executed measurements
+ * @reqs_count: number of I/O requests for every measurement
+ */
+struct ssdfs_io_load_stats {
+	u32 measurements;
+#define SSDFS_MEASUREMENTS_MAX		(10)
+	s64 reqs_count[SSDFS_MEASUREMENTS_MAX];
+};
+
+/*
  * GC thread functions
  */
 int ssdfs_using_seg_gc_thread_func(void *data);
@@ -401,6 +449,8 @@ int ssdfs_pre_dirty_seg_gc_thread_func(void *data);
 int ssdfs_dirty_seg_gc_thread_func(void *data);
 int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type);
 int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type);
+int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
+			    struct ssdfs_io_load_stats *io_stats);
 
 /*
  * Device operations

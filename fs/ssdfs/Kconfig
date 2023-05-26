@@ -192,6 +192,20 @@ config SSDFS_CHECK_LOGICAL_BLOCK_EMPTYNESS
 
 	  If unsure, say N.
 
+config SSDFS_ONLINE_FSCK
+	bool "SSDFS online fsck functionality"
+	depends on SSDFS
+	help
+	  This option enables the online FSCK functionality. Every erase
+	  block or zone will have a dedicated fsck thread that is triggered
+	  after some number of log commit operations. The responsibility of
+	  this thread is to check checksums and correctness of metadata
+	  structures. If any corruptions have been detected, then the thread
+	  will report about it and it will try to recover the corruption(s)
+	  in the background.
+
+	  If unsure, say N.
+
 endmenu
 
 menu "Development"

@@ -3788,7 +3788,6 @@ int ssdfs_insert_translation_extent(struct ssdfs_blk2off_found_range *found,
 				    u16 capacity, u16 *extent_count)
 {
 	struct ssdfs_translation_extent *extent = NULL;
-	size_t extent_size = sizeof(struct ssdfs_translation_extent);
 	u16 logical_blk;
 	u16 offset_id;
 	u16 len;
@@ -3919,6 +3918,8 @@ finish_process_cur_extent:
 
 	if (i < *extent_count) {
 #ifdef CONFIG_SSDFS_DEBUG
+		size_t extent_size = sizeof(struct ssdfs_translation_extent);
+
 		if (((i + 1) + (*extent_count - i)) > capacity) {
 			SSDFS_WARN("value is out capacity\n");
 			return -ERANGE;

@@ -1051,35 +1051,6 @@ bool should_gc_work(struct ssdfs_fs_info *fsi, int type)
 #define GLOBAL_GC_FAILED_THREAD_WAKE_CONDITION() \
 	(kthread_should_stop())
 
-#define SSDFS_GC_LOW_BOUND_THRESHOLD	(50)
-#define SSDFS_GC_UPPER_BOUND_THRESHOLD	(1000)
-#define SSDFS_GC_DISTANCE_THRESHOLD	(5)
-#define SSDFS_GC_DEFAULT_SEARCH_STEP	(100)
-#define SSDFS_GC_DIRTY_SEG_SEARCH_STEP	(1000)
-#define SSDFS_GC_DIRTY_SEG_DEFAULT_OPS	(50)
-
-/*
- * GC possible states
- */
-enum {
-	SSDFS_UNDEFINED_GC_STATE,
-	SSDFS_COLLECT_GARBAGE_NOW,
-	SSDFS_WAIT_IDLE_STATE,
-	SSDFS_STOP_GC_ACTIVITY_NOW,
-	SSDFS_GC_STATE_MAX
-};
-
-/*
- * struct ssdfs_io_load_stats - I/O load estimation
- * @measurements: number of executed measurements
- * @reqs_count: number of I/O requests for every measurement
- */
-struct ssdfs_io_load_stats {
-	u32 measurements;
-#define SSDFS_MEASUREMENTS_MAX		(10)
-	s64 reqs_count[SSDFS_MEASUREMENTS_MAX];
-};
-
 /*
  * is_time_collect_garbage() - check that it's good time for GC activity
  * @fsi: pointer on shared file system object
@@ -1088,7 +1059,6 @@ struct ssdfs_io_load_stats {
  * This method tries to estimate the I/O load with
  * the goal to define the good time for GC activity.
  */
-static
 int is_time_collect_garbage(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_io_load_stats *io_stats)
 {

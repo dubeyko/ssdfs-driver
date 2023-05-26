@@ -80,6 +80,7 @@ enum {
  * @update_rq: update requests queue
  * @crq_ptr_lock: lock of pointer on create requests queue
  * @create_rq: pointer on shared new page requests queue
+ * @fsck_rq: online FSCK requests queue
  * @parent_si: pointer on parent segment object
  * @migration_lock: migration lock
  * @migration_state: PEB migration state
@@ -117,6 +118,11 @@ struct ssdfs_peb_container {
 	/* Shared new page requests queue */
 	spinlock_t crq_ptr_lock;
 	struct ssdfs_requests_queue *create_rq;
+
+	/* Online FSCK requests queue */
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	struct ssdfs_requests_queue fsck_rq;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
 	/* Parent segment */
 	struct ssdfs_segment_info *parent_si;
@@ -201,6 +207,20 @@ bool have_flush_requests(struct ssdfs_peb_container *pebc)
 	return !is_create_rq_empty || !is_update_rq_empty;
 }
 
+/*
+ * is_fsck_requests_queue_empty() - check that FSCK queue has requests
+ * @pebc: pointer on PEB container
+ */
+static inline
+bool is_fsck_requests_queue_empty(struct ssdfs_peb_container *pebc)
+{
+#ifdef CONFIG_SSDFS_ONLINE_FSCK
+	return is_ssdfs_requests_queue_empty(&pebc->fsck_rq);
+#else
+	return true;
+#endif /* CONFIG_SSDFS_ONLINE_FSCK */
+}
+
 static inline
 bool is_ssdfs_peb_containing_user_data(struct ssdfs_peb_container *pebc)
 {
@@ -246,6 +266,7 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc);
 int ssdfs_peb_gc_thread_func(void *data);
 int ssdfs_peb_read_thread_func(void *data);
 int ssdfs_peb_flush_thread_func(void *data);
+int ssdfs_peb_fsck_thread_func(void *data);
 
 u16 ssdfs_peb_estimate_reserved_metapages(u32 page_size, u32 pages_per_peb,
 					  u16 log_pages, u32 pebs_per_seg,
