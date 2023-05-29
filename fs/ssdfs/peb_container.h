@@ -71,10 +71,32 @@ enum {
 };
 
 /*
+ * struct ssdfs_thread_state - PEB container's thread state
+ * @state: current state of the thread
+ * @req: pointer on segment request
+ * @postponed_req: pointer on postponed segment request
+ * @skip_finish_flush_request: should commit skip the finish request?
+ * @has_extent_been_invalidated: has been extent invalidated?
+ * @has_migration_check_requested: has migration check been requested?
+ * @err: current error
+ */
+struct ssdfs_thread_state {
+#define SSDFS_THREAD_UNKNOWN_STATE	(-1)
+	int state;
+	struct ssdfs_segment_request *req;
+	struct ssdfs_segment_request *postponed_req;
+	bool skip_finish_flush_request;
+	bool has_extent_been_invalidated;
+	bool has_migration_check_requested;
+	int err;
+};
+
+/*
  * struct ssdfs_peb_container - PEB container
  * @peb_type: type of PEB
  * @peb_index: index of PEB in the array
  * @log_pages: count of pages in full log
+ * @thread_state: threads state
  * @threads: PEB container's threads array
  * @read_rq: read requests queue
  * @update_rq: update requests queue
@@ -104,6 +126,7 @@ struct ssdfs_peb_container {
 	u32 log_pages;
 
 	/* PEB container's threads */
+	struct ssdfs_thread_state thread_state[SSDFS_PEB_THREAD_TYPE_MAX];
 	struct ssdfs_thread_info thread[SSDFS_PEB_THREAD_TYPE_MAX];
 
 	/* Read requests queue */
@@ -225,6 +248,18 @@ static inline
 bool is_ssdfs_peb_containing_user_data(struct ssdfs_peb_container *pebc)
 {
 	return pebc->peb_type == SSDFS_MAPTBL_DATA_PEB_TYPE;
+}
+
+static inline
+void SSDFS_THREAD_STATE_INIT(struct ssdfs_thread_state *thread_state)
+{
+	thread_state->state = SSDFS_THREAD_UNKNOWN_STATE;
+	thread_state->req = NULL;
+	thread_state->postponed_req = NULL;
+	thread_state->skip_finish_flush_request = false;
+	thread_state->has_extent_been_invalidated = false;
+	thread_state->has_migration_check_requested = false;
+	thread_state->err = 0;
 }
 
 /*

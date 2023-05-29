@@ -2276,6 +2276,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	int dst_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 	u8 src_peb_flags = 0;
 	u8 dst_peb_flags = 0;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2315,6 +2316,10 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	init_waitqueue_head(&pebc->migration_wq);
 	init_rwsem(&pebc->lock);
 	atomic_set(&pebc->dst_peb_refs, 0);
+
+	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
+		SSDFS_THREAD_STATE_INIT(&pebc->thread_state[i]);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("shared_free_dst_blks %d\n",
