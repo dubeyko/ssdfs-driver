@@ -15039,6 +15039,233 @@ int ssdfs_check_peb_container_init_state(struct ssdfs_peb_container *pebc)
 }
 
 /*
+ * ssdfs_process_get_create_request_state() - get create request
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to get a create request from the queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOENT     - create and update queues are empty.
+ */
+static
+int ssdfs_process_get_create_request_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] GET CREATE REQUEST: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!have_flush_requests(pebc)) {
+		thread_state->state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+		return -ENOENT;
+	}
+
+	if (!is_peb_joined_into_create_requests_queue(pebc) ||
+	    is_create_requests_queue_empty(pebc)) {
+		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		return 0;
+	}
+
+	spin_lock(&pebc->crq_ptr_lock);
+	err = ssdfs_requests_queue_remove_first(pebc->create_rq,
+						&thread_state->req);
+	spin_unlock(&pebc->crq_ptr_lock);
+
+	if (err == -ENODATA) {
+		SSDFS_DBG("empty create queue\n");
+		thread_state->err = 0;
+		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		return 0;
+	} else if (err == -ENOENT) {
+		SSDFS_WARN("request queue contains NULL request\n");
+		thread_state->err = 0;
+		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		return 0;
+	} else if (unlikely(err < 0)) {
+		SSDFS_CRIT("fail to get request from create queue: "
+			   "err %d\n", err);
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
+		  thread_state->req->private.class,
+		  thread_state->req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state->state = SSDFS_FLUSH_THREAD_PROCESS_CREATE_REQUEST;
+	return 0;
+}
+
+/*
+ * ssdfs_process_get_update_request_state() - get update request
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to get an update request from the queue.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOENT     - create and update queues are empty.
+ */
+static
+int ssdfs_process_get_update_request_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] GET UPDATE REQUEST: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
+		if (have_flush_requests(pebc)) {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+			return 0;
+		} else {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+			return -ENOENT;
+		}
+	}
+
+	err = ssdfs_requests_queue_remove_first(&pebc->update_rq,
+						&thread_state->req);
+	if (err == -ENODATA) {
+		SSDFS_DBG("empty update queue\n");
+		thread_state->err = 0;
+		thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+		return 0;
+	} else if (err == -ENOENT) {
+		SSDFS_WARN("request queue contains NULL request\n");
+		thread_state->err = 0;
+		thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+		return 0;
+	} else if (unlikely(err < 0)) {
+		SSDFS_CRIT("fail to get request from update queue: "
+			   "err %d\n", err);
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
+		  thread_state->req->private.class,
+		  thread_state->req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state->state = SSDFS_FLUSH_THREAD_PROCESS_UPDATE_REQUEST;
+	return 0;
+}
+
+/*
+ * ssdfs_process_delegate_create_role_state() - process delegate create role
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to delegate a create role to the next PEB
+ * of segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_process_delegate_create_role_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_DELEGATE_CREATE_ROLE);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] DELEGATE CREATE ROLE: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_peb_joined_into_create_requests_queue(pebc)) {
+		if (thread_state->err) {
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			return thread_state->err;
+		} else {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+			return 0;
+		}
+	}
+
+	err = ssdfs_peb_find_next_log_creation_thread(pebc);
+	if (unlikely(err)) {
+		SSDFS_WARN("fail to delegate log creation role: "
+			   "seg %llu, peb_index %u, err %d\n",
+			   pebc->parent_si->seg_id,
+			   pebc->peb_index, err);
+		thread_state->err = err;
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+	} else {
+		thread_state->state =
+			SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_peb_flush_thread_func() - main fuction of flush thread
  * @data: pointer on data object
  *
@@ -15069,6 +15296,7 @@ int ssdfs_peb_flush_thread_func(void *data)
 	bool has_partial_empty_log = false;
 	bool need_create_log = true;
 	bool is_user_data = false;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
@@ -15816,56 +16044,17 @@ process_flush_requests:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		if (!have_flush_requests(pebc)) {
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+		err = ssdfs_process_get_create_request_state(pebc);
+		if (err == -ENOENT) {
+			err = 0;
 			if (kthread_should_stop())
 				goto repeat;
 			else
 				goto sleep_flush_thread;
-		}
-
-		if (!is_peb_joined_into_create_requests_queue(pebc) ||
-		    is_create_requests_queue_empty(pebc)) {
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		} else if (unlikely(err))
 			goto repeat;
-		}
-
-		spin_lock(&pebc->crq_ptr_lock);
-		thread_state->err =
-			ssdfs_requests_queue_remove_first(pebc->create_rq,
-							  &thread_state->req);
-		spin_unlock(&pebc->crq_ptr_lock);
-
-		if (thread_state->err == -ENODATA) {
-			SSDFS_DBG("empty create queue\n");
-			thread_state->err = 0;
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-			goto repeat;
-		} else if (thread_state->err == -ENOENT) {
-			SSDFS_WARN("request queue contains NULL request\n");
-			thread_state->err = 0;
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-			goto repeat;
-		} else if (unlikely(thread_state->err < 0)) {
-			SSDFS_CRIT("fail to get request from create queue: "
-				   "err %d\n",
-				   thread_state->err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			goto repeat;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
-			  thread_state->req->private.class,
-			  thread_state->req->private.cmd);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		thread_state->state = SSDFS_FLUSH_THREAD_PROCESS_CREATE_REQUEST;
-		goto next_partial_step;
+		else
+			goto next_partial_step;
 		break;
 
 	case SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST:
@@ -15881,50 +16070,17 @@ process_flush_requests:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		if (is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
-			if (have_flush_requests(pebc)) {
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-				goto next_partial_step;
-			} else {
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+		err = ssdfs_process_get_update_request_state(pebc);
+		if (err == -ENOENT) {
+			err = 0;
+			if (kthread_should_stop())
+				goto repeat;
+			else
 				goto sleep_flush_thread;
-			}
-		}
-
-		thread_state->err =
-			ssdfs_requests_queue_remove_first(&pebc->update_rq,
-							  &thread_state->req);
-		if (thread_state->err == -ENODATA) {
-			SSDFS_DBG("empty update queue\n");
-			thread_state->err = 0;
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		} else if (unlikely(err))
 			goto repeat;
-		} else if (thread_state->err == -ENOENT) {
-			SSDFS_WARN("request queue contains NULL request\n");
-			thread_state->err = 0;
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-			goto repeat;
-		} else if (unlikely(thread_state->err < 0)) {
-			SSDFS_CRIT("fail to get request from update queue: "
-				   "err %d\n",
-				   thread_state->err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			goto repeat;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
-			  thread_state->req->private.class,
-			  thread_state->req->private.cmd);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		thread_state->state =
-			SSDFS_FLUSH_THREAD_PROCESS_UPDATE_REQUEST;
-		goto next_partial_step;
+		else
+			goto next_partial_step;
 		break;
 
 	case SSDFS_FLUSH_THREAD_PROCESS_CREATE_REQUEST:
@@ -16986,28 +17142,11 @@ finish_check_migration_need:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (!is_peb_joined_into_create_requests_queue(pebc)) {
-finish_delegation:
-			if (thread_state->err) {
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			} else {
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
-				goto sleep_flush_thread;
-			}
-		}
-
-		thread_state->err =
-			ssdfs_peb_find_next_log_creation_thread(pebc);
-		if (unlikely(thread_state->err)) {
-			SSDFS_WARN("fail to delegate log creation role: "
-				   "seg %llu, peb_index %u, err %d\n",
-				   pebc->parent_si->seg_id,
-				   pebc->peb_index,
-				   thread_state->err);
-		}
-		goto finish_delegation;
+		err = ssdfs_process_delegate_create_role_state(pebc);
+		if (err)
+			goto repeat;
+		else
+			goto sleep_flush_thread;
 		break;
 
 	default:
