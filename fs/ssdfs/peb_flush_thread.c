@@ -15860,6 +15860,380 @@ int ssdfs_process_get_update_request_state(struct ssdfs_peb_container *pebc)
 }
 
 /*
+ * ssdfs_process_commit_log_state() - commit current log
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to commit a current log.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	wait_queue_head_t *wait_queue = NULL;
+	struct ssdfs_segment_info *si = NULL;
+	struct ssdfs_fs_info *fsi = NULL;
+	struct ssdfs_peb_mapping_table *maptbl = NULL;
+	struct ssdfs_peb_info *pebi = NULL;
+	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
+	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
+	u64 peb_id;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_COMMIT_LOG);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] COMMIT LOG: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebc->parent_si;
+	fsi = si->fsi;
+	maptbl = fsi->maptbl;
+
+	if (thread_state->postponed_req) {
+		thread_state->req = thread_state->postponed_req;
+		thread_state->postponed_req = NULL;
+		thread_state->has_migration_check_requested = false;
+	} else if (thread_state->req != NULL) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("req->private.class %#x, "
+			  "req->private.cmd %#x\n",
+			  thread_state->req->private.class,
+			  thread_state->req->private.cmd);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		switch (thread_state->req->private.class) {
+		case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+			/* ignore this case */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("ignore request class %#x\n",
+				  thread_state->req->private.class);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto make_log_commit;
+
+		default:
+			/* Try to stimulate the migration */
+			break;
+		}
+
+		if (is_peb_under_migration(pebc) &&
+		    !thread_state->has_migration_check_requested) {
+			SSDFS_DBG("Try to stimulate the migration\n");
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_CHECK_MIGRATION_NEED;
+			thread_state->has_migration_check_requested = true;
+			thread_state->postponed_req = thread_state->req;
+			thread_state->req = NULL;
+			return 0;
+		} else {
+			thread_state->has_migration_check_requested = false;
+		}
+	}
+
+make_log_commit:
+	err = ssdfs_prepare_current_segment_ids(fsi, cur_segs, size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare current segments IDs: "
+			  "err %d\n",
+			  err);
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+		return err;
+	}
+
+	pebi = ssdfs_get_current_peb_locked(pebc);
+	if (IS_ERR_OR_NULL(pebi)) {
+		err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+		SSDFS_ERR("fail to get PEB object: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err);
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+		return err;
+	}
+
+	ssdfs_peb_current_log_lock(pebi);
+	mutex_lock(&pebc->migration_lock);
+	peb_id = pebi->peb_id;
+	err = ssdfs_peb_commit_log(pebi, cur_segs, size);
+	mutex_unlock(&pebc->migration_lock);
+
+	if (err) {
+		ssdfs_peb_clear_current_log_pages(pebi);
+		ssdfs_peb_clear_cache_dirty_pages(pebi);
+		ssdfs_requests_queue_remove_all(&pebc->update_rq,
+						-EROFS);
+
+		ssdfs_fs_error(fsi->sb,
+				__FILE__, __func__, __LINE__,
+				"fail to commit log: "
+				"seg %llu, peb_index %u, err %d\n",
+				pebc->parent_si->seg_id,
+				pebc->peb_index, err);
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+	}
+	ssdfs_peb_current_log_unlock(pebi);
+
+	if (!err) {
+		thread_state->has_extent_been_invalidated = false;
+
+		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
+			SSDFS_WARN("mapping table is near destroy: "
+				   "seg %llu, peb_index %u, "
+				   "peb_id %llu, peb_type %#x, "
+				   "req->private.class %#x, "
+				   "req->private.cmd %#x\n",
+				   pebc->parent_si->seg_id,
+				   pebc->peb_index,
+				   peb_id,
+				   pebc->peb_type,
+				   thread_state->req->private.class,
+				   thread_state->req->private.cmd);
+		}
+
+		ssdfs_forget_invalidated_user_data_pages(si);
+
+		err = ssdfs_peb_container_change_state(pebc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change peb state: "
+				  "err %d\n", err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+		}
+	}
+
+	ssdfs_peb_current_log_lock(pebi);
+	if (thread_state->skip_finish_flush_request)
+		thread_state->skip_finish_flush_request = false;
+	else {
+		ssdfs_finish_flush_request(pebc, thread_state->req,
+					   wait_queue, err);
+	}
+	ssdfs_peb_current_log_unlock(pebi);
+
+	ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	ssdfs_peb_check_update_queue(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (!err) {
+		thread_state->state = SSDFS_FLUSH_THREAD_DELEGATE_CREATE_ROLE;
+	} else {
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_process_check_migration_state() - stimulate migration
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to stimulate migration of valid blocks
+ * from source PEB in migration chain.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	struct ssdfs_peb_info *pebi = NULL;
+	bool peb_has_dirty_pages = false;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_CHECK_MIGRATION_NEED);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] CHECK MIGRATION NEED REQUEST: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (is_peb_under_migration(pebc)) {
+		u32 free_space1, free_space2;
+		u16 free_data_pages;
+
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (IS_ERR_OR_NULL(pebi)) {
+			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+			SSDFS_ERR("fail to get PEB object: "
+				  "seg %llu, peb_index %u, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		ssdfs_peb_current_log_lock(pebi);
+		free_space1 = ssdfs_area_free_space(pebi,
+					SSDFS_LOG_JOURNAL_AREA);
+		free_space2 = ssdfs_area_free_space(pebi,
+					SSDFS_LOG_DIFFS_AREA);
+		free_data_pages = pebi->current_log.free_data_pages;
+		peb_has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+		ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("free_space1 %u, free_space2 %u, "
+			  "free_data_pages %u, peb_has_dirty_pages %#x\n",
+			  free_space1, free_space2,
+			  free_data_pages, peb_has_dirty_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!peb_has_dirty_pages) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("PEB has no dirty pages: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_check_migration_need;
+		}
+
+		if (free_data_pages == 0) {
+			/*
+			 * No free space for shadow migration.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("No free space for shadow migration: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_check_migration_need;
+		}
+
+		if (free_space1 < (PAGE_SIZE / 2) &&
+		    free_space2 < (PAGE_SIZE / 2)) {
+			/*
+			 * No free space for shadow migration.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("No free space for shadow migration: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_check_migration_need;
+		}
+
+		if (!has_ssdfs_source_peb_valid_blocks(pebc)) {
+			/*
+			 * No used blocks in the source PEB.
+			 */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("No used blocks in the source PEB: "
+				  "seg_id %llu, peb_index %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_check_migration_need;
+		}
+
+		mutex_lock(&pebc->migration_lock);
+
+		if (free_space1 >= (PAGE_SIZE / 2)) {
+			err = ssdfs_peb_prepare_range_migration(pebc, 1,
+						SSDFS_BLK_PRE_ALLOCATED);
+			if (err == -ENODATA) {
+				err = 0;
+				SSDFS_DBG("unable to migrate: "
+					  "no pre-allocated blocks\n");
+			} else
+				goto stimulate_migration_done;
+		}
+
+		if (free_space2 >= (PAGE_SIZE / 2)) {
+			err = ssdfs_peb_prepare_range_migration(pebc, 1,
+						SSDFS_BLK_VALID);
+			if (err == -ENODATA) {
+				SSDFS_DBG("unable to migrate: "
+					  "no valid blocks\n");
+			}
+		}
+
+stimulate_migration_done:
+		mutex_unlock(&pebc->migration_lock);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished: err %d\n", err);
+#else
+		SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		if (err == -ENODATA) {
+			err = 0;
+			goto finish_check_migration_need;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare range migration: "
+				  "err %d\n", err);
+			thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+			return err;
+		}
+
+		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+	} else {
+finish_check_migration_need:
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("no migration necessary: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+		thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_process_delegate_create_role_state() - process delegate create role
  * @pebc: pointer on PEB container
  *
@@ -15945,13 +16319,11 @@ int ssdfs_peb_flush_thread_func(void *data)
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_thread_state *thread_state = NULL;
 	struct ssdfs_peb_info *pebi = NULL;
-	u64 peb_id = U64_MAX;
 	int state;
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
 	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
 	bool is_peb_exhausted = false;
 	bool is_peb_ready_to_exhaust = false;
-	bool peb_has_dirty_pages = false;
 	bool has_partial_empty_log = false;
 	bool is_user_data = false;
 	int err;
@@ -16999,151 +17371,12 @@ process_migration_failure:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		if (thread_state->postponed_req) {
-			thread_state->req = thread_state->postponed_req;
-			thread_state->postponed_req = NULL;
-			thread_state->has_migration_check_requested = false;
-		} else if (thread_state->req != NULL) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("req->private.class %#x, "
-				  "req->private.cmd %#x\n",
-				  thread_state->req->private.class,
-				  thread_state->req->private.cmd);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			switch (thread_state->req->private.class) {
-			case SSDFS_PEB_COLLECT_GARBAGE_REQ:
-				/* ignore this case */
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("ignore request class %#x\n",
-					  thread_state->req->private.class);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto make_log_commit;
-
-			default:
-				/* Try to stimulate the migration */
-				break;
-			}
-
-			if (is_peb_under_migration(pebc) &&
-			    !thread_state->has_migration_check_requested) {
-				SSDFS_DBG("Try to stimulate the migration\n");
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_CHECK_MIGRATION_NEED;
-				thread_state->has_migration_check_requested =
-									    true;
-				thread_state->postponed_req = thread_state->req;
-				thread_state->req = NULL;
-				goto next_partial_step;
-			} else {
-				thread_state->has_migration_check_requested =
-									false;
-			}
-		}
-
-make_log_commit:
-		thread_state->err =
-			ssdfs_prepare_current_segment_ids(fsi, cur_segs, size);
-		if (unlikely(thread_state->err)) {
-			SSDFS_ERR("fail to prepare current segments IDs: "
-				  "err %d\n",
-				  thread_state->err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		err = ssdfs_process_commit_log_state(pebc);
+		if (err) {
 			goto repeat;
+		} else {
+			goto next_partial_step;
 		}
-
-		pebi = ssdfs_get_current_peb_locked(pebc);
-		if (IS_ERR_OR_NULL(pebi)) {
-			thread_state->err =
-				pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index,
-				  thread_state->err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			goto repeat;
-		}
-
-		ssdfs_peb_current_log_lock(pebi);
-		mutex_lock(&pebc->migration_lock);
-		peb_id = pebi->peb_id;
-		thread_state->err = ssdfs_peb_commit_log(pebi, cur_segs, size);
-		mutex_unlock(&pebc->migration_lock);
-
-		if (thread_state->err) {
-			ssdfs_peb_clear_current_log_pages(pebi);
-			ssdfs_peb_clear_cache_dirty_pages(pebi);
-			ssdfs_requests_queue_remove_all(&pebc->update_rq,
-							-EROFS);
-
-			ssdfs_fs_error(fsi->sb,
-					__FILE__, __func__, __LINE__,
-					"fail to commit log: "
-					"seg %llu, peb_index %u, err %d\n",
-					pebc->parent_si->seg_id,
-					pebc->peb_index,
-					thread_state->err);
-		}
-		ssdfs_peb_current_log_unlock(pebi);
-
-		if (!thread_state->err) {
-			thread_state->has_extent_been_invalidated = false;
-
-			if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
-				SSDFS_WARN("mapping table is near destroy: "
-					   "seg %llu, peb_index %u, "
-					   "peb_id %llu, peb_type %#x, "
-					   "req->private.class %#x, "
-					   "req->private.cmd %#x\n",
-					   pebc->parent_si->seg_id,
-					   pebc->peb_index,
-					   peb_id,
-					   pebc->peb_type,
-					   thread_state->req->private.class,
-					   thread_state->req->private.cmd);
-			}
-
-			ssdfs_forget_invalidated_user_data_pages(si);
-
-			thread_state->err =
-				ssdfs_peb_container_change_state(pebc);
-			if (unlikely(thread_state->err)) {
-				SSDFS_ERR("fail to change peb state: "
-					  "err %d\n",
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			}
-		}
-
-		ssdfs_peb_current_log_lock(pebi);
-		if (thread_state->skip_finish_flush_request)
-			thread_state->skip_finish_flush_request = false;
-		else {
-			ssdfs_finish_flush_request(pebc,
-						   thread_state->req,
-						   wait_queue,
-						   thread_state->err);
-		}
-		ssdfs_peb_current_log_unlock(pebi);
-
-		ssdfs_unlock_current_peb(pebc);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		ssdfs_peb_check_update_queue(pebc);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-		SSDFS_ERR("finished: err %d\n", thread_state->err);
-#else
-		SSDFS_DBG("finished: err %d\n", thread_state->err);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-		if (unlikely(thread_state->err))
-			goto repeat;
-
-		thread_state->state = SSDFS_FLUSH_THREAD_DELEGATE_CREATE_ROLE;
-		goto next_partial_step;
 		break;
 
 	case SSDFS_FLUSH_THREAD_CHECK_MIGRATION_NEED:
@@ -17159,147 +17392,10 @@ make_log_commit:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		if (is_peb_under_migration(pebc)) {
-			u32 free_space1, free_space2;
-			u16 free_data_pages;
-
-			pebi = ssdfs_get_current_peb_locked(pebc);
-			if (IS_ERR_OR_NULL(pebi)) {
-				thread_state->err =
-					pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-				SSDFS_ERR("fail to get PEB object: "
-					  "seg %llu, peb_index %u, err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index,
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			}
-
-			ssdfs_peb_current_log_lock(pebi);
-			free_space1 = ssdfs_area_free_space(pebi,
-						SSDFS_LOG_JOURNAL_AREA);
-			free_space2 = ssdfs_area_free_space(pebi,
-						SSDFS_LOG_DIFFS_AREA);
-			free_data_pages = pebi->current_log.free_data_pages;
-			peb_has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
-			ssdfs_peb_current_log_unlock(pebi);
-			ssdfs_unlock_current_peb(pebc);
-
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("free_space1 %u, free_space2 %u, "
-				  "free_data_pages %u, peb_has_dirty_pages %#x\n",
-				  free_space1, free_space2,
-				  free_data_pages, peb_has_dirty_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			if (!peb_has_dirty_pages) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("PEB has no dirty pages: "
-					  "seg_id %llu, peb_index %u\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_check_migration_need;
-			}
-
-			if (free_data_pages == 0) {
-				/*
-				 * No free space for shadow migration.
-				 */
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("No free space for shadow migration: "
-					  "seg_id %llu, peb_index %u\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_check_migration_need;
-			}
-
-			if (free_space1 < (PAGE_SIZE / 2) &&
-			    free_space2 < (PAGE_SIZE / 2)) {
-				/*
-				 * No free space for shadow migration.
-				 */
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("No free space for shadow migration: "
-					  "seg_id %llu, peb_index %u\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_check_migration_need;
-			}
-
-			if (!has_ssdfs_source_peb_valid_blocks(pebc)) {
-				/*
-				 * No used blocks in the source PEB.
-				 */
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("No used blocks in the source PEB: "
-					  "seg_id %llu, peb_index %u\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_check_migration_need;
-			}
-
-			mutex_lock(&pebc->migration_lock);
-
-			if (free_space1 >= (PAGE_SIZE / 2)) {
-				thread_state->err =
-				    ssdfs_peb_prepare_range_migration(pebc, 1,
-						    SSDFS_BLK_PRE_ALLOCATED);
-				if (thread_state->err == -ENODATA) {
-					thread_state->err = 0;
-					SSDFS_DBG("unable to migrate: "
-						  "no pre-allocated blocks\n");
-				} else
-					goto stimulate_migration_done;
-			}
-
-			if (free_space2 >= (PAGE_SIZE / 2)) {
-				thread_state->err =
-				    ssdfs_peb_prepare_range_migration(pebc, 1,
-						    SSDFS_BLK_VALID);
-				if (thread_state->err == -ENODATA) {
-					SSDFS_DBG("unable to migrate: "
-						  "no valid blocks\n");
-				}
-			}
-
-stimulate_migration_done:
-			mutex_unlock(&pebc->migration_lock);
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-			SSDFS_ERR("finished: err %d\n", thread_state->err);
-#else
-			SSDFS_DBG("finished: err %d\n", thread_state->err);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-			if (thread_state->err == -ENODATA) {
-				thread_state->err = 0;
-				goto finish_check_migration_need;
-			} else if (unlikely(thread_state->err)) {
-				SSDFS_ERR("fail to prepare range migration: "
-					  "err %d\n",
-					  thread_state->err);
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_COMMIT_LOG;
-				goto next_partial_step;
-			}
-
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-			goto next_partial_step;
+		err = ssdfs_process_check_migration_state(pebc);
+		if (err) {
+			goto repeat;
 		} else {
-finish_check_migration_need:
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("no migration necessary: "
-				  "seg_id %llu, peb_index %u\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-			thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			goto next_partial_step;
 		}
 		break;
