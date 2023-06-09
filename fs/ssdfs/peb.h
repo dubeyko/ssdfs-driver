@@ -87,12 +87,14 @@ struct ssdfs_blk2off_table_init_env {
  * struct ssdfs_blk_desc_table_init_env - blk desc table init environment
  * @hdr: blk desc table header
  * @array pagevec with blk desc table fragment
+ * @area_offset: offset to the blk2off area
  * @read_off: current read offset
  * @write_off: current write offset
  */
 struct ssdfs_blk_desc_table_init_env {
 	struct ssdfs_area_block_table hdr;
 	struct ssdfs_page_vector array;
+	u32 area_offset;
 	u32 read_off;
 	u32 write_off;
 };
@@ -313,6 +315,20 @@ struct ssdfs_peb_log {
 };
 
 /*
+ * struct ssdfs_peb_log_offset - current log offset
+ * @log_pages: count of pages in full partial log
+ * @start_page: current log's start page index
+ * @cur_page: current page in the log
+ * @offset_into_page: current offset into page
+ */
+struct ssdfs_peb_log_offset {
+	u32 log_pages;
+	pgoff_t start_page;
+	pgoff_t cur_page;
+	u32 offset_into_page;
+};
+
+/*
  * struct ssdfs_peb_info - Physical Erase Block (PEB) description
  * @peb_id: PEB number
  * @peb_index: PEB index
@@ -444,6 +460,201 @@ enum {
  */
 
 /*
+ * SSDFS_LOG_OFFSET_INIT() - init log offset
+ */
+static inline
+void SSDFS_LOG_OFFSET_INIT(struct ssdfs_peb_log_offset *log,
+			   u32 log_pages,
+			   pgoff_t start_page)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+
+	SSDFS_DBG("log_pages %u, start_page %lu\n",
+		  log_pages, start_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	log->log_pages = log_pages;
+	log->start_page = start_page;
+	log->cur_page = start_page;
+	log->offset_into_page = 0;
+}
+
+/*
+ * IS_SSDFS_LOG_OFFSET_VALID() - check log offset validity
+ */
+static inline
+bool IS_SSDFS_LOG_OFFSET_VALID(struct ssdfs_peb_log_offset *log)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (log->start_page > log->cur_page) {
+		SSDFS_ERR("inconsistent log offset: "
+			  "start_page %lu > cur_page %lu\n",
+			  log->start_page, log->cur_page);
+		return false;
+	}
+
+	if ((log->cur_page - log->start_page) >= log->log_pages) {
+		SSDFS_ERR("inconsistent log offset: "
+			  "start_page %lu, cur_page %lu, "
+			  "log_pages %u\n",
+			  log->start_page, log->cur_page,
+			  log->log_pages);
+		return false;
+	}
+
+	if (log->offset_into_page >= PAGE_SIZE) {
+		SSDFS_ERR("inconsistent log offset: "
+			  "offset_into_page %u\n",
+			  log->offset_into_page);
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * SSDFS_ABSOLUTE_LOG_OFFSET() - get offset in bytes from PEB's beginning
+ */
+static inline
+u64 SSDFS_ABSOLUTE_LOG_OFFSET(struct ssdfs_peb_log_offset *log)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = (u64)log->cur_page << PAGE_SHIFT;
+	offset += log->offset_into_page;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U64_MAX);
+
+	SSDFS_DBG("cur_page %lu, offset_into_page %u, "
+		  "offset %llu\n",
+		  log->cur_page, log->offset_into_page,
+		  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return offset;
+}
+
+/*
+ * SSDFS_LOCAL_LOG_OFFSET() - get offset in bytes from log's beginning
+ */
+static inline
+u32 SSDFS_LOCAL_LOG_OFFSET(struct ssdfs_peb_log_offset *log)
+{
+	u32 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = (log->cur_page - log->start_page) << PAGE_SHIFT;
+	offset += log->offset_into_page;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+
+	SSDFS_DBG("start_page %lu, cur_page %lu, "
+		  "offset_into_page %u, offset %u\n",
+		  log->start_page, log->cur_page,
+		  log->offset_into_page, offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return offset;
+}
+
+/*
+ * SSDFS_SHIFT_LOG_OFFSET() - move log offset
+ */
+static inline
+int SSDFS_SHIFT_LOG_OFFSET(struct ssdfs_peb_log_offset *log,
+			   u32 shift)
+{
+	u32 offset_into_page;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log));
+
+	if (!IS_SSDFS_LOG_OFFSET_VALID(log)) {
+		SSDFS_ERR("inconsistent log offset: "
+			  "start_page %lu, cur_page %lu, "
+			  "offset_into_page %u\n",
+			  log->start_page, log->cur_page,
+			  log->offset_into_page);
+		return -ERANGE;
+	}
+
+	SSDFS_DBG("shift %u\n", shift);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset_into_page = log->offset_into_page;
+	offset_into_page += shift;
+
+	if (offset_into_page < PAGE_SIZE) {
+		log->offset_into_page = offset_into_page;
+	} else if (offset_into_page == PAGE_SIZE) {
+		log->cur_page++;
+		log->offset_into_page = 0;
+	} else {
+		log->cur_page += offset_into_page >> PAGE_SHIFT;
+		log->offset_into_page = offset_into_page % PAGE_SIZE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("start_page %lu, cur_page %lu, "
+		  "offset_into_page %u\n",
+		  log->start_page, log->cur_page,
+		  log->offset_into_page);
+
+	if (!IS_SSDFS_LOG_OFFSET_VALID(log)) {
+		SSDFS_ERR("inconsistent log offset: "
+			  "start_page %lu, cur_page %lu, "
+			  "offset_into_page %u\n",
+			  log->start_page, log->cur_page,
+			  log->offset_into_page);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * IS_SSDFS_LOG_OFFSET_UNALIGNED() - check that log offset is aligned
+ */
+static inline
+bool IS_SSDFS_LOG_OFFSET_UNALIGNED(struct ssdfs_peb_log_offset *log)
+{
+	return SSDFS_LOCAL_LOG_OFFSET(log) % PAGE_SIZE;
+}
+
+/*
+ * SSDFS_ALIGN_LOG_OFFSET() - align log offset on page size
+ */
+static inline
+void SSDFS_ALIGN_LOG_OFFSET(struct ssdfs_peb_log_offset *log)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (IS_SSDFS_LOG_OFFSET_UNALIGNED(log)) {
+		log->cur_page++;
+		log->offset_into_page = 0;
+	}
+}
+
+/*
  * ssdfs_peb_correct_area_write_offset() - correct write offset
  * @write_offset: current write offset
  * @data_size: requested size of data
@@ -472,6 +683,44 @@ u32 ssdfs_peb_correct_area_write_offset(u32 write_offset, u32 data_size)
 	}
 
 	return write_offset;
+}
+
+/*
+ * SSDFS_CORRECT_LOG_OFFSET() - correct log offset
+ */
+static inline
+int SSDFS_CORRECT_LOG_OFFSET(struct ssdfs_peb_log_offset *log,
+			     u32 data_size)
+{
+	u32 old_offset;
+	u32 new_offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!log);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_offset = SSDFS_LOCAL_LOG_OFFSET(log);
+	new_offset = ssdfs_peb_correct_area_write_offset(old_offset, data_size);
+
+	if (old_offset != new_offset) {
+		u32 diff;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(old_offset > new_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		diff = new_offset - old_offset;
+		err = SSDFS_SHIFT_LOG_OFFSET(log, diff);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to shift log offset: "
+				  "shift %u, err %d\n",
+				  diff, err);
+			return err;
+		}
+	}
+
+	return 0;
 }
 
 /*
@@ -982,6 +1231,7 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi);
  * PEB internal functions declaration
  */
 int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
 				u32 area_offset, u32 area_size,
 				void *buf);
 int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,

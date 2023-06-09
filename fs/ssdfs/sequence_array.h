@@ -16,10 +16,11 @@
 
 #define SSDFS_SEQUENCE_ARRAY_INVALID_ID		ULONG_MAX
 
-#define SSDFS_SEQUENCE_ITEM_NO_TAG		0
-#define SSDFS_SEQUENCE_ITEM_DIRTY_TAG		1
-#define SSDFS_SEQUENCE_ITEM_UNDER_COMMIT_TAG	2
-#define SSDFS_SEQUENCE_ITEM_COMMITED_TAG	3
+/*
+ * Number of tags cannot be bigger than RADIX_TREE_MAX_TAGS
+ */
+#define SSDFS_SEQUENCE_ITEM_DIRTY_TAG		XA_MARK_0
+#define SSDFS_SEQUENCE_MAX_TAGS			RADIX_TREE_MAX_TAGS
 
 /*
  * struct ssdfs_sequence_array - sequence of pointers on items
@@ -56,9 +57,25 @@ typedef int (*ssdfs_change_item_state)(void *item,
  * Inline functions
  */
 static inline
+bool is_ssdfs_sequence_array_last_id_invalid(struct ssdfs_sequence_array *ptr)
+{
+	bool is_invalid = false;
+
+	spin_lock(&ptr->lock);
+	is_invalid = ptr->last_allocated_id == SSDFS_SEQUENCE_ARRAY_INVALID_ID;
+	spin_unlock(&ptr->lock);
+
+	return is_invalid;
+}
+
+static inline
 unsigned long ssdfs_sequence_array_last_id(struct ssdfs_sequence_array *array)
 {
 	unsigned long last_id = ULONG_MAX;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(is_ssdfs_sequence_array_last_id_invalid(array));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&array->lock);
 	last_id = array->last_allocated_id;
@@ -78,18 +95,6 @@ void ssdfs_sequence_array_set_last_id(struct ssdfs_sequence_array *array,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("set last id %lu\n", id);
 #endif /* CONFIG_SSDFS_DEBUG */
-}
-
-static inline
-bool is_ssdfs_sequence_array_last_id_invalid(struct ssdfs_sequence_array *ptr)
-{
-	bool is_invalid = false;
-
-	spin_lock(&ptr->lock);
-	is_invalid = ptr->last_allocated_id == SSDFS_SEQUENCE_ARRAY_INVALID_ID;
-	spin_unlock(&ptr->lock);
-
-	return is_invalid;
 }
 
 /*

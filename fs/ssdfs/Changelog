@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.57 [June 09, 2023]
+    (*) Implement support of saving the whole offset translation table
+        in every PEB's log.
+
 v.4.56 [May 25, 2023]
     (*) Introduce online FSCK logic initial infrastructure.
 

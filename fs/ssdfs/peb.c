@@ -352,7 +352,6 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	struct ssdfs_peb_area *area;
 	struct ssdfs_peb_temp_buffer *write_buf;
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
-	size_t blk2off_tbl_hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	size_t buf_size;
 	u16 flags;
 	size_t bmap_bytes;
@@ -400,7 +399,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	memset(&pebi->current_log.blk2off_tbl.hdr, 0xFF,
 		sizeof(struct ssdfs_blk2off_table_header));
 	pebi->current_log.blk2off_tbl.reserved_offset = U32_MAX;
-	pebi->current_log.blk2off_tbl.compressed_offset = blk2off_tbl_hdr_size;
+	pebi->current_log.blk2off_tbl.compressed_offset = 0;
 	pebi->current_log.blk2off_tbl.sequence_id = 0;
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {

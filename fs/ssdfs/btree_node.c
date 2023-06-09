@@ -14247,7 +14247,7 @@ int __ssdfs_shift_range_right(struct ssdfs_btree_node *node,
 		src_index--;
 		dst_index--;
 		moved_items += moving_items;
-	} while (src_index >= start_index);
+	} while (src_index >= (int)start_index);
 
 	if (moved_items != range_len) {
 		SSDFS_ERR("moved_items %u != range_len %u\n",

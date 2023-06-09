@@ -37,6 +37,9 @@ enum {
 	SSDFS_COMPR_TYPES_CNT,
 };
 
+#define SSDFS_UNCOMPRESSED_BLOB_SIZE		(64)
+#define SSDFS_UNCOMPR_BLOB_UPPER_THRESHOLD	(128)
+
 /*
  * struct ssdfs_compress_ops - compressor operations
  * @alloc_workspace - prepare workspace for (de)compression

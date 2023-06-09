@@ -157,6 +157,7 @@ config SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
 config SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 	bool "Save whole offset translation table in every log"
 	depends on SSDFS
+	default y
 	help
 	  This option enables the technique of storing the whole
 	  offset translation table in every log. SSDFS can distribute

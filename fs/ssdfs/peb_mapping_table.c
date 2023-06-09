@@ -1914,8 +1914,9 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 finish_fragment_init:
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fragment init failed: portion_id %u\n",
-			  area->portion_id);
+		SSDFS_DBG("fragment init failed: "
+			  "portion_id %u, fdesc->fragment_id %u\n",
+			  area->portion_id, fdesc->fragment_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		state = atomic_cmpxchg(&fdesc->state,
@@ -1927,8 +1928,9 @@ finish_fragment_init:
 		}
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fragment init finished; portion_id %u\n",
-			  area->portion_id);
+		SSDFS_DBG("fragment init finished: "
+			  "portion_id %u, fdesc->fragment_id %u\n",
+			  area->portion_id, fdesc->fragment_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		state = atomic_cmpxchg(&fdesc->state,
@@ -1938,6 +1940,13 @@ finish_fragment_init:
 			err = -ERANGE;
 			SSDFS_ERR("invalid fragment state %#x\n", state);
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fragment: fdesc->fragment_id %u, state %#x\n",
+			  fdesc->fragment_id,
+			  atomic_read(&fdesc->state));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	}
 
 	up_write(&fdesc->lock);
@@ -5645,7 +5654,9 @@ start_convert_leb2peb:
 	} else if (state == SSDFS_MAPTBL_FRAG_CREATED) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fragment is under initialization: "
-			  "leb_id %llu\n", leb_id);
+			  "leb_id %llu, fragment_id %u, state %#x\n",
+			  leb_id, fdesc->fragment_id,
+			  atomic_read(&fdesc->state));
 #endif /* CONFIG_SSDFS_DEBUG */
 		err = -EAGAIN;
 		goto finish_conversion;

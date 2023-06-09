@@ -38,6 +38,7 @@
  * @sequence_id: fragment's sequence_id in PEB
  * @id_count: count of id numbers in sequence
  * @state: fragment state
+ * @peb_id: PEB ID containing the fragment
  * @hdr: pointer on fragment's header
  * @phys_offs: array of physical offsets in fragment
  * @buf: buffer of fragment
@@ -53,6 +54,7 @@ struct ssdfs_phys_offset_table_fragment {
 	u16 sequence_id;
 	atomic_t id_count;
 	atomic_t state;
+	u64 peb_id;
 
 	struct ssdfs_phys_offset_table_header *hdr;
 	struct ssdfs_phys_offset_descriptor *phys_offs;
@@ -255,6 +257,9 @@ enum {
  * @last_allocated_blk: last allocated block (hint for allocation)
  * @peb_index: PEB index
  * @start_sequence_id: sequence ID of the first dirty fragment
+ * @new_sequence_id: sequence ID of the first newly added fragment
+ * @start_offset_id: starting offset ID
+ * @end_offset_id: ending offset ID
  * @dirty_fragments: count of dirty fragments
  * @fragments_count: total count of fragments
  *
@@ -275,6 +280,9 @@ struct ssdfs_blk2off_table_snapshot {
 
 	u16 peb_index;
 	u16 start_sequence_id;
+	u16 new_sequence_id;
+	u16 start_offset_id;
+	u16 end_offset_id;
 	u16 dirty_fragments;
 	u32 fragments_count;
 };
@@ -331,15 +339,14 @@ int ssdfs_blk2off_table_partial_clean_init(struct ssdfs_blk2off_table *table,
 					   u16 peb_index);
 int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     struct ssdfs_read_init_env *env,
-				     u16 peb_index,
-				     u64 cno);
+				     u16 peb_index, u64 peb_id, u64 cno);
 int ssdfs_blk2off_table_blk_desc_init(struct ssdfs_blk2off_table *table,
 					u16 logical_blk,
 					struct ssdfs_offset_position *pos);
 int ssdfs_blk2off_table_resize(struct ssdfs_blk2off_table *table,
 				u16 new_items_count);
 int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
-				 u16 peb_index,
+				 u16 peb_index, u64 peb_id,
 				 struct ssdfs_blk2off_table_snapshot *snapshot);
 void ssdfs_blk2off_table_free_snapshot(struct ssdfs_blk2off_table_snapshot *sp);
 int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
@@ -351,24 +358,20 @@ ssdfs_blk2off_table_prepare_for_commit(struct ssdfs_blk2off_table *table,
 				       u16 peb_index, u16 sequence_id,
 				       struct ssdfs_blk2off_table_snapshot *sp);
 int ssdfs_peb_store_offsets_table_header(struct ssdfs_peb_info *pebi,
-					 struct ssdfs_blk2off_table_header *hdr,
-					 pgoff_t *cur_page,
-					 u32 *write_offset);
+					struct ssdfs_blk2off_table_header *hdr,
+					struct ssdfs_peb_log_offset *log_offset);
 int
 ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 				      struct ssdfs_dynamic_array *array,
 				      u16 extent_count,
-				      pgoff_t *cur_page,
-				      u32 *write_offset);
+				      struct ssdfs_peb_log_offset *log_offset);
 int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
-					   struct ssdfs_blk2off_table *table,
-					   u16 peb_index, u16 sequence_id,
-					   pgoff_t *cur_page,
-					   u32 *write_offset);
+					struct ssdfs_blk2off_table *table,
+					u16 peb_index, u16 sequence_id,
+					struct ssdfs_peb_log_offset *log_offset);
 int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 				  struct ssdfs_metadata_descriptor *desc,
-				  pgoff_t *cur_page,
-				  u32 *write_offset);
+				  struct ssdfs_peb_log_offset *log_offset);
 int
 ssdfs_blk2off_table_forget_snapshot(struct ssdfs_blk2off_table *table,
 				    struct ssdfs_blk2off_table_snapshot *sp,

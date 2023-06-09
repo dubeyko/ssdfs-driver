@@ -1102,6 +1102,11 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 		moving_items = range_len - moved_items;
 
 #ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("range_len %u, moved_items %u, "
+			  "moving_items %d, index_diff %u\n",
+			  range_len, moved_items,
+			  moving_items, index_diff);
+
 		BUG_ON(moving_items < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1199,7 +1204,14 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 		src_index--;
 		dst_index--;
 		moved_items += moving_items;
-	} while (src_index >= start_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("start_index %u, src_index %d, "
+			  "dst_index %d, moved_items %u\n",
+			  start_index, src_index,
+			  dst_index, moved_items);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} while (src_index >= (int)start_index);
 
 	if (moved_items != range_len) {
 		SSDFS_ERR("moved_items %u != range_len %u\n",

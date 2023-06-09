@@ -178,9 +178,8 @@ void ssdfs_commit_queue_destroy(struct ssdfs_extents_btree_info *tree)
 		SSDFS_ERR("NOT processed segments:\n");
 
 		for (i = 0; i < tree->updated_segs.count; i++) {
-			SSDFS_ERR("ino %lu --> seg %llu\n",
-				  tree->owner->vfs_inode.i_ino,
-				  tree->updated_segs.ids[i]);
+			SSDFS_ERR("index %u --> seg %llu\n",
+				  i, tree->updated_segs.ids[i]);
 		}
 
 		SSDFS_WARN("commit queue contains not processed segments: "
@@ -1644,7 +1643,7 @@ int ssdfs_extents_tree_flush(struct ssdfs_fs_info *fsi,
 	case SSDFS_EXTENTS_BTREE_CREATED:
 	case SSDFS_EXTENTS_BTREE_INITIALIZED:
 		/* do nothing */
-		goto finish_extents_tree_flush;
+		goto commit_logs_now;
 
 	case SSDFS_EXTENTS_BTREE_CORRUPTED:
 		err = -EOPNOTSUPP;
@@ -1788,6 +1787,7 @@ finish_generic_tree_flush:
 
 	ii->raw_inode.count_of.forks = cpu_to_le32((u32)forks_count);
 
+commit_logs_now:
 	err = ssdfs_extents_tree_commit_logs_now(tree);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to commit logs: "
