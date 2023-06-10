@@ -28,6 +28,7 @@
 #include "peb_mapping_table_cache.h"
 #include "page_vector.h"
 #include "ssdfs.h"
+#include "extents_queue.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
 #include "page_array.h"
@@ -3749,20 +3750,28 @@ int ssdfs_btree_insert_node(struct ssdfs_btree *tree,
 static
 int ssdfs_segment_invalidate_node(struct ssdfs_btree_node *node)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *seg;
+	struct ssdfs_raw_extent extent;
 	u32 start_blk;
 	u32 len;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!node);
+	BUG_ON(!node || !node->tree || !node->tree->fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = node->tree->fsi;
+
 	spin_lock(&node->descriptor_lock);
-	start_blk = le32_to_cpu(node->extent.logical_blk);
-	len = le32_to_cpu(node->extent.len);
+	ssdfs_memcpy(&extent, 0, sizeof(struct ssdfs_raw_extent),
+		     &node->extent, 0, sizeof(struct ssdfs_raw_extent),
+		     sizeof(struct ssdfs_raw_extent));
 	seg = node->seg;
 	spin_unlock(&node->descriptor_lock);
+
+	start_blk = le32_to_cpu(extent.logical_blk);
+	len = le32_to_cpu(extent.len);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!seg);
@@ -3771,7 +3780,7 @@ int ssdfs_segment_invalidate_node(struct ssdfs_btree_node *node)
 		  node->node_id, seg->seg_id, start_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_segment_invalidate_logical_extent(seg, start_blk, len);
+	err = ssdfs_invalidate_extent(fsi, &extent);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate node: "
 			  "node_id %u, seg_id %llu, "

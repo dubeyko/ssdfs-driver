@@ -898,7 +898,13 @@ void ssdfs_evict_inode(struct inode *inode)
 		i_size_write(inode, 0);
 
 		err = ssdfs_truncate(inode);
-		if (err) {
+		if (err == -ENOENT) {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("extents tree is absent: ino %lu\n",
+				  ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else if (err) {
 			SSDFS_WARN("fail to truncate inode: "
 				   "ino %lu, err %d\n",
 				   ino, err);

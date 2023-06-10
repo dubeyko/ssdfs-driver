@@ -3134,13 +3134,25 @@ ssdfs_dentries_tree_delete_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 	index = search->result.start_index;
 
 	if ((index + 1) < dentries_count) {
+		u16 src_index, dst_index;
+
+		src_index = index + 1;
+		dst_index = index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("src_index %u, dst_index %u, "
+		  "dentries_count %lld, dentry_size %zu\n",
+		  src_index, dst_index,
+		  dentries_count, dentry_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_memmove(tree->inline_dentries,
-				    index * dentry_size,
+				    dst_index * dentry_size,
 				    ssdfs_inline_dentries_size(),
 				    tree->inline_dentries,
-				    (index + 1) * dentry_size,
+				    src_index * dentry_size,
 				    ssdfs_inline_dentries_size(),
-				    (dentries_count - index) * dentry_size);
+				    (dentries_count - src_index) * dentry_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move: err %d\n", err);
 			return err;
