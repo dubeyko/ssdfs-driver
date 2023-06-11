@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.59 [June 11, 2023]
+    (*) Fix bugs in inodes b-tree logic.
+
 v.4.58 [June 10, 2023]
     (*) Fix bugs in delete file logic.
 

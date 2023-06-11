@@ -4995,6 +4995,8 @@ try_next_search:
 				  err);
 			goto finish_allocate_item;
 		}
+
+		search->result.state = SSDFS_BTREE_SEARCH_POSSIBLE_PLACE_FOUND;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find leaf node: err %d\n",
 			  err);

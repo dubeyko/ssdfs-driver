@@ -5191,7 +5191,6 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 	u64 start_item_hash;
 	u16 items_count;
 	u32 prev_node_id;
-	int counter = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5277,20 +5276,26 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 			return node;
 		}
 
-		if (prev_node_id == node->node_id) {
-			counter++;
+		type = atomic_read(&node->type);
 
-			if (counter > 3) {
-				SSDFS_ERR("infinite cycle suspected: "
-					  "node_id %u, counter %d\n",
+		if (prev_node_id == node->node_id) {
+			switch (type) {
+			case SSDFS_BTREE_HYBRID_NODE:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("node_id %u, type %#x\n",
+				  node->node_id, type);
+#endif /* CONFIG_SSDFS_DEBUG */
+				return node;
+
+			default:
+				SSDFS_ERR("infinite cycle detected: "
+					  "node_id %u, type %#x\n",
 					  node->node_id,
-					  counter);
+					  type);
 				return ERR_PTR(-ERANGE);
 			}
 		} else
 			prev_node_id = node->node_id;
-
-		type = atomic_read(&node->type);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("node_id %u, type %#x, "
