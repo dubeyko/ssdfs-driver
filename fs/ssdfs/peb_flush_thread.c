@@ -15167,6 +15167,7 @@ enum {
 	SSDFS_FLUSH_THREAD_START_MIGRATION_NOW,
 	SSDFS_FLUSH_THREAD_COMMIT_LOG,
 	SSDFS_FLUSH_THREAD_DELEGATE_CREATE_ROLE,
+	SSDFS_FLUSH_THREAD_MUST_STOP_NOW,
 };
 
 #define FLUSH_THREAD_WAKE_CONDITION(pebc) \
@@ -16207,6 +16208,155 @@ fail_create_log:
 }
 
 /*
+ * ssdfs_process_check_stop_state() - check necessity to stop thread
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to check the necessity to stop thread.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EAGAIN     - execute/check a next thread's state.
+ */
+static
+int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_info *pebi = NULL;
+	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
+	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
+	int state;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] CHECK NECESSITY TO STOP: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebc->parent_si;
+	fsi = si->fsi;
+
+	if (kthread_should_stop()) {
+		if (have_flush_requests(pebc)) {
+			state = ssdfs_peb_get_current_log_state(pebc);
+			if (state <= SSDFS_LOG_UNKNOWN ||
+			    state >= SSDFS_LOG_STATE_MAX) {
+				err = -ERANGE;
+				SSDFS_WARN("invalid log state: "
+					   "state %#x\n",
+					   state);
+				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+				thread_state->err = err;
+				return err;
+			}
+
+			if (state != SSDFS_LOG_CREATED) {
+				thread_state->state =
+					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+				return -EAGAIN;
+			} else
+				goto process_flush_requests;
+		}
+
+		err = ssdfs_prepare_current_segment_ids(fsi,
+							cur_segs,
+							size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare current seg IDs: "
+				  "err %d\n",
+				  err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (IS_ERR_OR_NULL(pebi)) {
+			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+			SSDFS_ERR("fail to get PEB object: "
+				  "seg %llu, peb_index %u, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		ssdfs_peb_current_log_lock(pebi);
+		mutex_lock(&pebc->migration_lock);
+		err = ssdfs_peb_commit_log_on_thread_stop(pebi,
+							  cur_segs,
+							  size);
+		mutex_unlock(&pebc->migration_lock);
+		ssdfs_peb_current_log_unlock(pebi);
+
+		if (unlikely(err)) {
+			SSDFS_CRIT("fail to commit log: "
+				   "seg %llu, peb_index %u, err %d\n",
+				   pebc->parent_si->seg_id,
+				   pebc->peb_index, err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("finished: err %d\n", err);
+#else
+		SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		thread_state->state = SSDFS_FLUSH_THREAD_MUST_STOP_NOW;
+	} else {
+process_flush_requests:
+		state = ssdfs_peb_get_current_log_state(pebc);
+		if (state <= SSDFS_LOG_UNKNOWN ||
+		    state >= SSDFS_LOG_STATE_MAX) {
+			err = -ERANGE;
+			SSDFS_WARN("invalid log state: "
+				   "state %#x\n",
+				   state);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		if (state != SSDFS_LOG_CREATED) {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+		} else {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+		}
+
+		if (have_flush_requests(pebc))
+			err = -EAGAIN;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_process_get_create_request_state() - get create request
  * @pebc: pointer on PEB container
  *
@@ -16365,6 +16515,127 @@ int ssdfs_process_get_update_request_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	thread_state->state = SSDFS_FLUSH_THREAD_PROCESS_UPDATE_REQUEST;
+	return 0;
+}
+
+/*
+ * ssdfs_process_invalidated_extent_state() - process invalidated extent
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to process an invalidated extent.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_process_invalidated_extent_state(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+	wait_queue_head_t *wait_queue;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_mapping_table *maptbl;
+	struct ssdfs_peb_info *pebi = NULL;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(thread_state->state !=
+			SSDFS_FLUSH_THREAD_PROCESS_INVALIDATED_EXTENT);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] PROCESS INVALIDATED EXTENT: "
+		  "seg_id %llu, peb_index %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebc->parent_si;
+	fsi = si->fsi;
+	maptbl = fsi->maptbl;
+
+	pebi = ssdfs_get_current_peb_locked(pebc);
+	if (IS_ERR_OR_NULL(pebi)) {
+		err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+		SSDFS_ERR("fail to get PEB object: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index, err);
+		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		thread_state->err = err;
+		return err;
+	}
+
+	if (is_peb_under_migration(pebc) &&
+	    has_peb_migration_done(pebc)) {
+		ssdfs_unlock_current_peb(pebc);
+
+		err = __ssdfs_peb_finish_migration(pebc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to finish migration: "
+				  "seg %llu, peb_index %u, "
+				  "err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (IS_ERR_OR_NULL(pebi)) {
+			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
+			SSDFS_ERR("fail to get PEB object: "
+				  "seg %llu, peb_index %u, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+
+		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
+			SSDFS_WARN("seg %llu, peb_index %u\n",
+				   pebc->parent_si->seg_id,
+				   pebc->peb_index);
+		}
+
+		err = ssdfs_peb_container_change_state(pebc);
+		if (unlikely(err)) {
+			ssdfs_unlock_current_peb(pebc);
+			SSDFS_ERR("fail to change peb state: "
+				  "err %d\n", err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			return err;
+		}
+	}
+
+	ssdfs_peb_current_log_lock(pebi);
+	ssdfs_finish_flush_request(pebc, thread_state->req, wait_queue, err);
+	ssdfs_peb_current_log_unlock(pebi);
+
+	ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 	return 0;
 }
 
@@ -17038,8 +17309,6 @@ int ssdfs_peb_flush_thread_func(void *data)
 	struct ssdfs_thread_state *thread_state = NULL;
 	struct ssdfs_peb_info *pebi = NULL;
 	int state;
-	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
-	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
 	bool is_user_data = false;
 	int err;
 
@@ -17109,7 +17378,6 @@ check_necessity_to_stop_thread:
 		if (kthread_should_stop()) {
 			struct completion *ptr;
 
-stop_flush_thread:
 			ptr = &pebc->thread[SSDFS_PEB_FLUSH_THREAD].full_stop;
 			complete_all(ptr);
 			return thread_state->err;
@@ -17193,98 +17461,14 @@ stop_flush_thread:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		if (kthread_should_stop()) {
-			if (have_flush_requests(pebc)) {
-				state = ssdfs_peb_get_current_log_state(pebc);
-				if (state <= SSDFS_LOG_UNKNOWN ||
-				    state >= SSDFS_LOG_STATE_MAX) {
-					thread_state->err = -ERANGE;
-					SSDFS_WARN("invalid log state: "
-						   "state %#x\n",
-						   state);
-					goto repeat;
-				}
-
-				if (state != SSDFS_LOG_CREATED) {
-					thread_state->state =
-					    SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-					goto next_partial_step;
-				} else
-					goto process_flush_requests;
-			}
-
-			thread_state->err =
-				ssdfs_prepare_current_segment_ids(fsi,
-								cur_segs,
-								size);
-			if (unlikely(thread_state->err)) {
-				SSDFS_ERR("fail to prepare current seg IDs: "
-					  "err %d\n",
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			}
-
-			pebi = ssdfs_get_current_peb_locked(pebc);
-			if (IS_ERR_OR_NULL(pebi)) {
-				thread_state->err =
-					pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-				SSDFS_ERR("fail to get PEB object: "
-					  "seg %llu, peb_index %u, err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index,
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			}
-
-			ssdfs_peb_current_log_lock(pebi);
-			mutex_lock(&pebc->migration_lock);
-			thread_state->err =
-				ssdfs_peb_commit_log_on_thread_stop(pebi,
-								  cur_segs,
-								  size);
-			mutex_unlock(&pebc->migration_lock);
-			ssdfs_peb_current_log_unlock(pebi);
-
-			if (unlikely(thread_state->err)) {
-				SSDFS_CRIT("fail to commit log: "
-					   "seg %llu, peb_index %u, err %d\n",
-					   pebc->parent_si->seg_id,
-					   pebc->peb_index,
-					   thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			}
-
-			ssdfs_unlock_current_peb(pebc);
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-			SSDFS_ERR("finished: err %d\n", thread_state->err);
-#else
-			SSDFS_DBG("finished: err %d\n", thread_state->err);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-			goto stop_flush_thread;
-		} else {
-process_flush_requests:
-			state = ssdfs_peb_get_current_log_state(pebc);
-			if (state <= SSDFS_LOG_UNKNOWN ||
-			    state >= SSDFS_LOG_STATE_MAX) {
-				thread_state->err = -ERANGE;
-				SSDFS_WARN("invalid log state: "
-					   "state %#x\n",
-					   state);
-				goto repeat;
-			}
-
-			if (state != SSDFS_LOG_CREATED) {
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-			} else {
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-			}
+		err = ssdfs_process_check_stop_state(pebc);
+		if (err == -EAGAIN) {
+			err = 0;
+			goto next_partial_step;
+		} else if (err) {
 			goto repeat;
+		} else {
+			goto next_partial_step;
 		}
 		break;
 
@@ -17814,83 +17998,12 @@ finish_wait_next_data_request:
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		pebi = ssdfs_get_current_peb_locked(pebc);
-		if (IS_ERR_OR_NULL(pebi)) {
-			thread_state->err =
-				pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index,
-				  thread_state->err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		err = ssdfs_process_invalidated_extent_state(pebc);
+		if (err) {
 			goto repeat;
+		} else {
+			goto next_partial_step;
 		}
-
-		if (is_peb_under_migration(pebc) &&
-		    has_peb_migration_done(pebc)) {
-			ssdfs_unlock_current_peb(pebc);
-
-			thread_state->err = __ssdfs_peb_finish_migration(pebc);
-			if (unlikely(thread_state->err)) {
-				SSDFS_ERR("fail to finish migration: "
-					  "seg %llu, peb_index %u, "
-					  "err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index,
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			}
-
-			pebi = ssdfs_get_current_peb_locked(pebc);
-			if (IS_ERR_OR_NULL(pebi)) {
-				thread_state->err =
-					pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-				SSDFS_ERR("fail to get PEB object: "
-					  "seg %llu, peb_index %u, err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index,
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			}
-
-			if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
-				SSDFS_WARN("seg %llu, peb_index %u\n",
-					   pebc->parent_si->seg_id,
-					   pebc->peb_index);
-			}
-
-			thread_state->err =
-				ssdfs_peb_container_change_state(pebc);
-			if (unlikely(thread_state->err)) {
-				ssdfs_unlock_current_peb(pebc);
-				SSDFS_ERR("fail to change peb state: "
-					  "err %d\n",
-					  thread_state->err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				goto repeat;
-			}
-		}
-
-		ssdfs_peb_current_log_lock(pebi);
-		ssdfs_finish_flush_request(pebc,
-					   thread_state->req,
-					   wait_queue,
-					   thread_state->err);
-		ssdfs_peb_current_log_unlock(pebi);
-
-		ssdfs_unlock_current_peb(pebc);
-
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-		SSDFS_ERR("finished\n");
-#else
-		SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-		goto next_partial_step;
 		break;
 
 	case SSDFS_FLUSH_THREAD_START_MIGRATION_NOW:
@@ -17969,6 +18082,29 @@ finish_wait_next_data_request:
 			goto repeat;
 		else
 			goto sleep_flush_thread;
+		break;
+
+	case SSDFS_FLUSH_THREAD_MUST_STOP_NOW:
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+		SSDFS_ERR("[FLUSH THREAD STATE] STOP THREAD NOW: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+#else
+		SSDFS_DBG("[FLUSH THREAD STATE] STOP THREAD NOW: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+		if (kthread_should_stop()) {
+			struct completion *ptr;
+
+			ptr = &pebc->thread[SSDFS_PEB_FLUSH_THREAD].full_stop;
+			complete_all(ptr);
+			return thread_state->err;
+		} else
+			goto sleep_failed_flush_thread;
 		break;
 
 	default:
