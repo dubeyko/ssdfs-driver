@@ -15549,6 +15549,75 @@ int ssdfs_check_peb_container_init_state(struct ssdfs_peb_container *pebc)
 }
 
 /*
+ * ssdfs_process_error_state() - process error state
+ * @pebc: pointer on PEB container
+ *
+ * This function tries to process the erroneous state.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EFAULT     - failed thread goes to sleep.
+ */
+static
+int ssdfs_process_error_state(struct ssdfs_peb_container *pebc,
+			       int err)
+{
+	struct ssdfs_thread_state *thread_state = NULL;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!pebc) {
+		SSDFS_ERR("pointer on PEB container is NULL\n");
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state = &pebc->thread_state[SSDFS_PEB_FLUSH_THREAD];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(err == 0);
+	BUG_ON(thread_state->state != SSDFS_FLUSH_THREAD_ERROR);
+
+	SSDFS_DBG("[FLUSH THREAD STATE] ERROR\n");
+	SSDFS_DBG("thread after-error state: "
+		  "seg %llu, peb_index %u, err %d\n",
+		  pebc->parent_si->seg_id, pebc->peb_index, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	thread_state->err = err;
+
+	if (have_flush_requests(pebc)) {
+		ssdfs_requests_queue_remove_all(&pebc->update_rq,
+						-EROFS);
+	}
+
+	if (is_peb_joined_into_create_requests_queue(pebc))
+		ssdfs_peb_find_next_log_creation_thread(pebc);
+
+	/*
+	 * Check that we've delegated log creation role.
+	 * Otherwise, simply forget about creation queue.
+	 */
+	if (is_peb_joined_into_create_requests_queue(pebc)) {
+		spin_lock(&pebc->crq_ptr_lock);
+		ssdfs_requests_queue_remove_all(pebc->create_rq,
+						-EROFS);
+		spin_unlock(&pebc->crq_ptr_lock);
+
+		ssdfs_peb_forget_create_requests_queue(pebc);
+	}
+
+	thread_state->state = SSDFS_FLUSH_THREAD_MUST_STOP_NOW;
+
+	if (kthread_should_stop())
+		return 0;
+
+	/* failed thread goes to sleep */
+	return -EFAULT;
+}
+
+/*
  * ssdfs_process_free_space_absent_state() - process absence of free space
  * @pebc: pointer on PEB container
  *
@@ -17352,37 +17421,12 @@ next_partial_step:
 			  pebc->parent_si->seg_id, pebc->peb_index,
 			  thread_state->err);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		if (have_flush_requests(pebc)) {
-			ssdfs_requests_queue_remove_all(&pebc->update_rq,
-							-EROFS);
-		}
-
-		if (is_peb_joined_into_create_requests_queue(pebc))
-			ssdfs_peb_find_next_log_creation_thread(pebc);
-
-		/*
-		 * Check that we've delegated log creation role.
-		 * Otherwise, simply forget about creation queue.
-		 */
-		if (is_peb_joined_into_create_requests_queue(pebc)) {
-			spin_lock(&pebc->crq_ptr_lock);
-			ssdfs_requests_queue_remove_all(pebc->create_rq,
-							-EROFS);
-			spin_unlock(&pebc->crq_ptr_lock);
-
-			ssdfs_peb_forget_create_requests_queue(pebc);
-		}
-
-check_necessity_to_stop_thread:
-		if (kthread_should_stop()) {
-			struct completion *ptr;
-
-			ptr = &pebc->thread[SSDFS_PEB_FLUSH_THREAD].full_stop;
-			complete_all(ptr);
-			return thread_state->err;
-		} else
+		err = ssdfs_process_error_state(pebc, err);
+		if (err) {
 			goto sleep_failed_flush_thread;
+		} else {
+			goto next_partial_step;
+		}
 		break;
 
 	case SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT:
@@ -17394,9 +17438,7 @@ check_necessity_to_stop_thread:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_process_free_space_absent_state(pebc, err);
-		if (err == -ENOSPC) {
-			goto check_necessity_to_stop_thread;
-		} else if (err) {
+		if (err) {
 			goto repeat;
 		} else {
 			goto next_partial_step;
@@ -17412,9 +17454,7 @@ check_necessity_to_stop_thread:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_process_read_only_state(pebc);
-		if (err == -EFAULT) {
-			goto check_necessity_to_stop_thread;
-		} else if (err) {
+		if (err) {
 			goto repeat;
 		} else {
 			goto next_partial_step;
@@ -18103,8 +18143,10 @@ finish_wait_next_data_request:
 			ptr = &pebc->thread[SSDFS_PEB_FLUSH_THREAD].full_stop;
 			complete_all(ptr);
 			return thread_state->err;
-		} else
+		} else {
+			thread_state->state = SSDFS_FLUSH_THREAD_MUST_STOP_NOW;
 			goto sleep_failed_flush_thread;
+		}
 		break;
 
 	default:
