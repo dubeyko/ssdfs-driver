@@ -4298,6 +4298,16 @@ int ssdfs_btree_check_hybrid_nothing_pair(struct ssdfs_btree *tree,
 		ssdfs_btree_prepare_add_node(tree, SSDFS_BTREE_HYBRID_NODE,
 					     start_hash, end_hash,
 					     parent, parent_node);
+
+		err = ssdfs_btree_prepare_add_index(parent, start_hash,
+						    end_hash, parent_node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare level: "
+				  "node_id %u, height %u\n",
+				  parent_node->node_id,
+				  atomic_read(&parent_node->height));
+			return err;
+		}
 	}
 
 	if (!parent->flags) {
@@ -7419,6 +7429,12 @@ int ssdfs_btree_move_indexes_to_child(struct ssdfs_btree_state_descriptor *desc,
 		return -ERANGE;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("parent node %u, child node %u\n",
+		  parent_node->node_id,
+		  child_node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	type = atomic_read(&parent_node->type);
 	switch (type) {
 	case SSDFS_BTREE_ROOT_NODE:
@@ -7553,6 +7569,15 @@ int ssdfs_btree_move_indexes_to_child(struct ssdfs_btree_state_descriptor *desc,
 	parent->index_area.hash.end = parent_node->index_area.end_hash;
 	parent->items_area.hash.start = parent_node->items_area.start_hash;
 	parent->items_area.hash.end = parent_node->items_area.end_hash;
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("parent node: "
+		  "index_area (start_hash %#llx, end_hash %#llx), "
+		  "items_area (start_hash %#llx, end_hash %#llx)\n",
+		  parent_node->index_area.start_hash,
+		  parent_node->index_area.end_hash,
+		  parent_node->items_area.start_hash,
+		  parent_node->items_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 	up_read(&parent_node->header_lock);
 
 	down_read(&child_node->header_lock);
@@ -7560,6 +7585,15 @@ int ssdfs_btree_move_indexes_to_child(struct ssdfs_btree_state_descriptor *desc,
 	child->index_area.hash.end = child_node->index_area.end_hash;
 	child->items_area.hash.start = child_node->items_area.start_hash;
 	child->items_area.hash.end = child_node->items_area.end_hash;
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("child node: "
+		  "index_area (start_hash %#llx, end_hash %#llx), "
+		  "items_area (start_hash %#llx, end_hash %#llx)\n",
+		  child_node->index_area.start_hash,
+		  child_node->index_area.end_hash,
+		  child_node->items_area.start_hash,
+		  child_node->items_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
 	up_read(&child_node->header_lock);
 
 	parent->index_area.move.op_state = SSDFS_BTREE_AREA_OP_DONE;

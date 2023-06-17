@@ -1042,6 +1042,8 @@ finish_inode_allocation:
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
@@ -2908,37 +2910,85 @@ int ssdfs_inodes_btree_add_node(struct ssdfs_btree_node *node)
 }
 
 static
+int ssdfs_correct_hybrid_node_hashes(struct ssdfs_btree_node *node);
+
+/*
+ * ssdfs_inodes_btree_delete_node() - prepare node for deletion
+ * @node: pointer on node object
+ *
+ * This method tries to finish deletion of node from inodes btree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
 int ssdfs_inodes_btree_delete_node(struct ssdfs_btree_node *node)
 {
-	/* TODO: implement */
-	SSDFS_DBG("TODO: implement %s\n", __func__);
+	struct ssdfs_btree_node *parent;
+	u16 items_count;
+	u64 old_hash;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+
+	SSDFS_DBG("node_id %u, state %#x\n",
+		  node->node_id, atomic_read(&node->state));
+
+	ssdfs_debug_btree_node_object(node);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_LEAF_NODE:
+		spin_lock(&node->descriptor_lock);
+		parent = node->parent_node;
+		spin_unlock(&node->descriptor_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!parent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		switch (atomic_read(&parent->type)) {
+		case SSDFS_BTREE_HYBRID_NODE:
+			down_read(&parent->header_lock);
+			items_count = parent->items_area.items_count;
+			old_hash = parent->items_area.start_hash;
+			up_read(&parent->header_lock);
+
+			if (items_count == 0) {
+				err = ssdfs_btree_node_delete_index(parent,
+								    old_hash);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to delete index: "
+						  "old_hash %llx, err %d\n",
+						  old_hash, err);
+					return err;
+				}
+
+				err = ssdfs_correct_hybrid_node_hashes(parent);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to correct hybrid nodes: "
+						  "err %d\n", err);
+					return err;
+				}
+			}
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
 	return 0;
-
-/*
- * TODO: it needs to add special free space descriptor in the
- *       index area for the case of deleted nodes. Code of
- *       allocation of new items should create empty node
- *       with completely free items during passing through
- *       index level.
- */
-
-
-
-/*
- * TODO: node can be really deleted/invalidated. But index
- *       area should contain index for deleted node with
- *       special flag. In this case it will be clear that
- *       we have some capacity without real node allocation.
- *       If some item will be added in the node then node
- *       has to be allocated. It means that if you delete
- *       a node then index hierachy will be the same without
- *       necessity to delete or modify it.
- */
-
-
-
-	/* TODO:  decrement nodes_count and/or leaf_nodes counters */
-	/* TODO:  decrease inodes_capacity and/or free_inodes */
 }
 
 /*
@@ -3729,7 +3779,33 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 		return -ENOSPC;
 	}
 
+	if (search->request.start.hash < start_hash) {
+		SSDFS_ERR("invalid request: "
+			  "node (start_hash %llx, end_hash %llx), "
+			  "request (start_hash %llx, end_hash %llx)\n",
+			  start_hash, end_hash,
+			  search->request.start.hash,
+			  search->request.end.hash);
+		return -ERANGE;
+	}
+
+	if (search->request.end.hash > end_hash) {
+		SSDFS_ERR("invalid request: "
+			  "node (start_hash %llx, end_hash %llx), "
+			  "request (start_hash %llx, end_hash %llx)\n",
+			  start_hash, end_hash,
+			  search->request.start.hash,
+			  search->request.end.hash);
+		return -ERANGE;
+	}
+
 	item_index = search->result.start_index;
+
+	if (start != item_index) {
+		search->result.start_index = start;
+		item_index = search->result.start_index;
+	}
+
 	if ((item_index + search->request.count) > items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "item_index %u, count %u, "
@@ -3745,12 +3821,6 @@ int __ssdfs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 			   start_hash, item_index,
 			   search->request.start.hash,
 			   search->request.end.hash);
-		return -ERANGE;
-	}
-
-	if (start != item_index) {
-		SSDFS_WARN("start %u != item_index %u\n",
-			   start, item_index);
 		return -ERANGE;
 	}
 
@@ -4825,6 +4895,13 @@ int ssdfs_correct_hybrid_node_hashes(struct ssdfs_btree_node *node)
 	start_hash += items_capacity;
 	end_hash = start_hash + node->items_area.items_capacity - 1;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("node_id %u, index_count %u, index_id %u, "
+		  "start_hash %llx, end_hash %llx\n",
+		  node->node_id, index_count, index_id,
+		  start_hash, end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = end_hash;
 
@@ -4916,10 +4993,11 @@ int __ssdfs_inodes_btree_node_delete_range(struct ssdfs_btree_node *node,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !search);
 
-	SSDFS_DBG("type %#x, flags %#x, "
+	SSDFS_DBG("node_id %u, type %#x, flags %#x, "
 		  "start_hash %llx, end_hash %llx, "
 		  "state %#x, node_id %u, height %u, "
 		  "parent %p, child %p\n",
+		  node->node_id,
 		  search->request.type, search->request.flags,
 		  search->request.start.hash, search->request.end.hash,
 		  atomic_read(&node->state), node->node_id,

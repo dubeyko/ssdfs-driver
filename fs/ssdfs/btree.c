@@ -907,15 +907,6 @@ clear_towrite_tag:
 							node->node_id);
 
 				if (tree->btree_ops &&
-				    tree->btree_ops->delete_node) {
-					err = tree->btree_ops->delete_node(node);
-					if (unlikely(err)) {
-						SSDFS_ERR("delete node failure: "
-							  "err %d\n", err);
-					}
-				}
-
-				if (tree->btree_ops &&
 				    tree->btree_ops->destroy_node)
 					tree->btree_ops->destroy_node(node);
 
@@ -4076,6 +4067,8 @@ int ssdfs_btree_delete_node(struct ssdfs_btree *tree,
 
 	down_write(&tree->lock);
 	err = ssdfs_btree_delete_index_in_parent_node(tree, search);
+	if (!err && tree->btree_ops && tree->btree_ops->delete_node)
+		err = tree->btree_ops->delete_node(node);
 	up_write(&tree->lock);
 
 	if (unlikely(err)) {
@@ -5040,6 +5033,8 @@ finish_allocate_item:
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
+#else
+	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	ssdfs_debug_btree_object(tree);

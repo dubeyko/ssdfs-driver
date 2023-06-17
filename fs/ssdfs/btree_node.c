@@ -8753,16 +8753,6 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 
 	node->index_area.index_count--;
 
-	switch (node->tree->type) {
-	case SSDFS_INODES_BTREE:
-		/* keep the index range unchanged */
-		goto finish_common_node_delete_index;
-
-	default:
-		/* continue logic */
-		break;
-	}
-
 	if (node->index_area.index_count == 0) {
 		node->index_area.start_hash = U64_MAX;
 		node->index_area.end_hash = U64_MAX;
@@ -8776,7 +8766,6 @@ int ssdfs_btree_common_node_delete_index(struct ssdfs_btree_node *node,
 		}
 	}
 
-finish_common_node_delete_index:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start_hash %llx, end_hash %llx, "
 		  "index_count %u, index_capacity %u\n",
@@ -9181,6 +9170,21 @@ int ssdfs_move_root2common_node_index_range(struct ssdfs_btree_node *src,
 		}
 
 		up_write(&src->full_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("btree index %d, "
+			  "node_id %u, node_type %#x, "
+			  "height %u, hash %#llx, "
+			  "extent (seg_id %llu, logical_blk %u, len %u)\n",
+			  i,
+			  le32_to_cpu(index.node_id),
+			  index.node_type,
+			  index.height,
+			  le64_to_cpu(index.index.hash),
+			  le64_to_cpu(index.index.extent.seg_id),
+			  le32_to_cpu(index.index.extent.logical_blk),
+			  le32_to_cpu(index.index.extent.len));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err)) {
 			atomic_set(&src->state, SSDFS_BTREE_NODE_CORRUPTED);
