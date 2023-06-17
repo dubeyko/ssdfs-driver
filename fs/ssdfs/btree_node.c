@@ -6940,12 +6940,27 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 			     0, index_size,
 			     &ptr->index, 0, index_size,
 			     index_size);
+		ssdfs_memcpy(&node->raw.root_node.header.node_ids[position],
+			     0, sizeof(__le32),
+			     &ptr->node_id, 0, sizeof(__le32),
+		     sizeof(__le32));
 	} else if (hash1 < hash2) {
-		ssdfs_memcpy(&node->raw.root_node.indexes[position + 1],
+		position++;
+
+		if (position >= SSDFS_BTREE_ROOT_NODE_INDEX_COUNT) {
+			SSDFS_ERR("invalid position %u\n",
+				  position);
+			return -ERANGE;
+		}
+
+		ssdfs_memcpy(&node->raw.root_node.indexes[position],
 			     0, index_size,
 			     &ptr->index, 0, index_size,
 			     index_size);
-		position++;
+		ssdfs_memcpy(&node->raw.root_node.header.node_ids[position],
+			     0, sizeof(__le32),
+			     &ptr->node_id, 0, sizeof(__le32),
+			     sizeof(__le32));
 		node->index_area.index_count++;
 	} else {
 		void *indexes = node->raw.root_node.indexes;
@@ -6954,6 +6969,13 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 		u32 array_size = index_size * SSDFS_BTREE_ROOT_NODE_INDEX_COUNT;
 		u32 move_size = (u32)(node->index_area.index_count - position) *
 					index_size;
+		__le32 *node_ids;
+
+		if ((position + 1) >= SSDFS_BTREE_ROOT_NODE_INDEX_COUNT) {
+			SSDFS_ERR("invalid position %u\n",
+				  position);
+			return -ERANGE;
+		}
 
 		err = ssdfs_memmove(indexes, dst_off, array_size,
 				    indexes, src_off, array_size,
@@ -6963,10 +6985,23 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 			return err;
 		}
 
+		node_ids = node->raw.root_node.header.node_ids;
+		err = ssdfs_memmove(&node_ids[position + 1], 0, sizeof(__le32),
+				    &node_ids[position], 0, sizeof(__le32),
+				    sizeof(__le32));
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to move: err %d\n", err);
+			return err;
+		}
+
 		ssdfs_memcpy(&node->raw.root_node.indexes[position],
 			     0, index_size,
 			     &ptr->index, 0, index_size,
 			     index_size);
+		ssdfs_memcpy(&node->raw.root_node.header.node_ids[position],
+			     0, sizeof(__le32),
+			     &ptr->node_id, 0, sizeof(__le32),
+			     sizeof(__le32));
 		node->index_area.index_count++;
 	}
 
@@ -6979,6 +7014,7 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 		  le64_to_cpu(ptr->index.extent.seg_id),
 		  le32_to_cpu(ptr->index.extent.logical_blk),
 		  le32_to_cpu(ptr->index.extent.len));
+	BUG_ON(node->index_area.index_count > SSDFS_BTREE_ROOT_NODE_INDEX_COUNT);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	found = &node->raw.root_node.indexes[0];
@@ -6986,11 +7022,6 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 
 	found = &node->raw.root_node.indexes[node->index_area.index_count - 1];
 	node->index_area.end_hash = le64_to_cpu(found->hash);
-
-	ssdfs_memcpy(&node->raw.root_node.header.node_ids[position],
-		     0, sizeof(__le32),
-		     &ptr->node_id, 0, sizeof(__le32),
-		     sizeof(__le32));
 
 	return 0;
 }
