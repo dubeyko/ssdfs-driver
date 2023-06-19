@@ -74,7 +74,7 @@ unsigned long ssdfs_sequence_array_last_id(struct ssdfs_sequence_array *array)
 	unsigned long last_id = ULONG_MAX;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(is_ssdfs_sequence_array_last_id_invalid(array));
+	SSDFS_DBG("last_allocated_id is invalid!!!\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&array->lock);
