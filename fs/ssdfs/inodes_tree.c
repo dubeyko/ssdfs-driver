@@ -1732,6 +1732,9 @@ int ssdfs_inodes_btree_create_node(struct ssdfs_btree_node *node)
 		node->index_area.index_capacity = index_area_size / index_size;
 		index_capacity = node->index_area.index_capacity;
 
+		atomic_set(&node->index_area.flags,
+			   SSDFS_PLEASE_ADD_HYBRID_NODE_SELF_INDEX);
+
 		node->items_area.offset = node->index_area.offset +
 						node->index_area.area_size;
 
@@ -1768,6 +1771,9 @@ int ssdfs_inodes_btree_create_node(struct ssdfs_btree_node *node)
 		node->items_area.end_hash = node->items_area.start_hash +
 					    node->items_area.items_capacity - 1;
 
+		atomic_set(&node->items_area.flags,
+			   SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE);
+
 		node->bmap_array.index_start_bit =
 			SSDFS_BTREE_NODE_HEADER_INDEX + 1;
 		node->bmap_array.item_start_bit =
@@ -1791,6 +1797,9 @@ int ssdfs_inodes_btree_create_node(struct ssdfs_btree_node *node)
 
 		node->items_area.end_hash = node->items_area.start_hash +
 					    node->items_area.items_capacity - 1;
+
+		atomic_set(&node->items_area.flags,
+			   SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE);
 
 		node->bmap_array.item_start_bit =
 				SSDFS_BTREE_NODE_HEADER_INDEX + 1;
@@ -2638,10 +2647,14 @@ void ssdfs_inodes_btree_destroy_node(struct ssdfs_btree_node *node)
 }
 
 /*
- * ssdfs_inodes_btree_node_correct_hash_range() - correct node's hash range
- * @node: pointer on node object
+ * ssdfs_add_free_items_range() - add free items range
+ * @itree: pointer on inodes tree
+ * @node_id: node identification number
+ * @start_hash: start hash of the range
+ * @items_count: items count in items area
+ * @items_capacity: capacity of items area
  *
- * This method tries to correct node's hash range.
+ * This method tries to add free items range.
  *
  * RETURN:
  * [success]
@@ -2651,16 +2664,84 @@ void ssdfs_inodes_btree_destroy_node(struct ssdfs_btree_node *node)
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
+int ssdfs_add_free_items_range(struct ssdfs_inodes_btree_info *itree,
+				u32 node_id, u64 start_hash,
+				u16 items_count, u16 items_capacity)
+{
+	struct ssdfs_inodes_btree_range *range = NULL;
+	u16 free_items;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!itree);
+	BUG_ON(start_hash >= U64_MAX);
+	BUG_ON(items_capacity == 0);
+	BUG_ON(items_count > items_capacity);
+
+	SSDFS_DBG("node_id %u, start_hash %#llx, "
+		  "items_count %u, items_capacity %u\n",
+		  node_id, start_hash,
+		  items_count, items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	free_items = items_capacity - items_count;
+
+	range = ssdfs_free_inodes_range_alloc();
+	if (unlikely(!range)) {
+		SSDFS_ERR("fail to allocate inodes range\n");
+		return -ENOMEM;
+	}
+
+	ssdfs_free_inodes_range_init(range);
+	range->node_id = node_id;
+	range->area.start_hash = start_hash + items_count;
+	range->area.start_index = items_count;
+	range->area.count = free_items;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("add free range: node_id %u, "
+		  "start_hash %llx, start_index %u, "
+		  "count %u\n",
+		  range->node_id,
+		  range->area.start_hash,
+		  range->area.start_index,
+		  range->area.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_free_inodes_queue_add_tail(&itree->free_inodes_queue, range);
+
+	spin_lock(&itree->lock);
+	if (range->area.start_hash > itree->last_free_ino) {
+		itree->last_free_ino =
+			range->area.start_hash + range->area.count;
+	}
+	spin_unlock(&itree->lock);
+
+	return 0;
+}
+
+/*
+ * ssdfs_inodes_btree_correct_leaf_node_hash_range() - correct node's hash range
+ * @node: pointer on node object
+ * @start_hash: start hash of the range
+ *
+ * This method tries to correct leaf node's hash range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static int
+ssdfs_inodes_btree_correct_leaf_node_hash_range(struct ssdfs_btree_node *node,
 						u64 start_hash)
 {
 	struct ssdfs_inodes_btree_info *itree;
 	u16 items_count;
 	u16 items_capacity;
-	u16 free_items;
-	struct ssdfs_inodes_btree_range *range = NULL;
-	struct ssdfs_btree_index_key new_key;
 	int type;
+	int items_area_flags = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2676,113 +2757,307 @@ int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
 	itree = (struct ssdfs_inodes_btree_info *)node->tree;
 	type = atomic_read(&node->type);
 
-	switch (type) {
-	case SSDFS_BTREE_LEAF_NODE:
-	case SSDFS_BTREE_HYBRID_NODE:
-		/* expected state */
-		break;
-
-	default:
-		/* do nothing */
-		return 0;
-	}
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(type != SSDFS_BTREE_LEAF_NODE);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&node->header_lock);
 
 	items_count = node->items_area.items_count;
 	items_capacity = node->items_area.items_capacity;
 
-	switch (type) {
-	case SSDFS_BTREE_LEAF_NODE:
-	case SSDFS_BTREE_HYBRID_NODE:
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(items_capacity == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-		node->items_area.start_hash = start_hash;
-		node->items_area.end_hash = start_hash + items_capacity - 1;
-		break;
+	node->items_area.start_hash = start_hash;
+	node->items_area.end_hash = start_hash + items_capacity - 1;
 
-	default:
-		/* do nothing */
-		break;
-	}
+	items_area_flags = atomic_read(&node->items_area.flags);
+	atomic_set(&node->items_area.flags,
+		    items_area_flags & ~SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE);
 
 	up_write(&node->header_lock);
-
-	switch (atomic_read(&node->type)) {
-	case SSDFS_BTREE_HYBRID_NODE:
-		spin_lock(&node->descriptor_lock);
-		ssdfs_memcpy(&new_key,
-			     0, sizeof(struct ssdfs_btree_index_key),
-			     &node->node_index,
-			     0, sizeof(struct ssdfs_btree_index_key),
-			     sizeof(struct ssdfs_btree_index_key));
-		spin_unlock(&node->descriptor_lock);
-
-		new_key.index.hash = cpu_to_le64(start_hash);
-
-		err = ssdfs_btree_node_add_index(node, &new_key);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add index: err %d\n",
-				  err);
-			return err;
-		}
-		break;
-
-	default:
-		/* do nothing */
-		break;
-	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(items_count > items_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	free_items = items_capacity - items_count;
-
 	if (items_capacity == 0) {
-		if (type == SSDFS_BTREE_LEAF_NODE ||
-		    type == SSDFS_BTREE_HYBRID_NODE) {
-			SSDFS_ERR("invalid node state: "
-				  "type %#x, items_capacity %u\n",
-				  type, items_capacity);
-			return -ERANGE;
-		}
+		SSDFS_ERR("invalid node state: "
+			  "type %#x, items_capacity %u\n",
+			  type, items_capacity);
+		return -ERANGE;
 	} else {
-		range = ssdfs_free_inodes_range_alloc();
-		if (unlikely(!range)) {
-			SSDFS_ERR("fail to allocate inodes range\n");
-			return -ENOMEM;
+		err = ssdfs_add_free_items_range(itree, node->node_id,
+						 start_hash, items_count,
+						 items_capacity);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add free range: "
+				  "node_id %u, start_hash %#llx, "
+				  "items_count %u, items_capacity %u\n",
+				  node->node_id, start_hash,
+				  items_count, items_capacity);
+			return err;
 		}
-
-		ssdfs_free_inodes_range_init(range);
-		range->node_id = node->node_id;
-		range->area.start_hash = start_hash + items_count;
-		range->area.start_index = items_count;
-		range->area.count = free_items;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("add free range: node_id %u, "
-			  "start_hash %llx, start_index %u, "
-			  "count %u\n",
-			  range->node_id,
-			  range->area.start_hash,
-			  range->area.start_index,
-			  range->area.count);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ssdfs_free_inodes_queue_add_tail(&itree->free_inodes_queue,
-						 range);
-
-		spin_lock(&itree->lock);
-		if (range->area.start_hash > itree->last_free_ino) {
-			itree->last_free_ino =
-				range->area.start_hash + range->area.count;
-		}
-		spin_unlock(&itree->lock);
 	}
 
 	ssdfs_debug_btree_node_object(node);
+
+	return 0;
+}
+
+/*
+ * ssdfs_add_hybrid_node_self_index() - add hybrid node's self index
+ * @node: pointer on node object
+ * @start_hash: start hash of the range
+ *
+ * This method tries to add hybrid node's self index.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_add_hybrid_node_self_index(struct ssdfs_btree_node *node,
+				     u64 start_hash)
+{
+	struct ssdfs_btree_index_key new_key;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+	BUG_ON(start_hash >= U64_MAX);
+
+	SSDFS_DBG("node_id %u, state %#x, "
+		  "node_type %#x, start_hash %llx\n",
+		  node->node_id, atomic_read(&node->state),
+		  atomic_read(&node->type), start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&node->descriptor_lock);
+	ssdfs_memcpy(&new_key,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     &node->node_index,
+		     0, sizeof(struct ssdfs_btree_index_key),
+		     sizeof(struct ssdfs_btree_index_key));
+	spin_unlock(&node->descriptor_lock);
+
+	new_key.index.hash = cpu_to_le64(start_hash);
+
+	err = ssdfs_btree_node_add_index(node, &new_key);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add index: err %d\n",
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_inodes_btree_correct_hybrid_node_hash_range() - correct node's hash range
+ * @node: pointer on node object
+ * @start_hash: start hash of the range
+ *
+ * This method tries to correct hybrid node's hash range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static int
+ssdfs_inodes_btree_correct_hybrid_node_hash_range(struct ssdfs_btree_node *node,
+						  u64 start_hash)
+{
+	struct ssdfs_inodes_btree_info *itree;
+	u64 end_hash;
+	u64 old_start_hash, old_end_hash;
+	u16 items_count;
+	u16 items_capacity;
+	int type;
+	int index_area_flags = 0;
+	int items_area_flags = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+	BUG_ON(start_hash >= U64_MAX);
+
+	SSDFS_DBG("node_id %u, state %#x, "
+		  "node_type %#x, start_hash %llx\n",
+		  node->node_id, atomic_read(&node->state),
+		  atomic_read(&node->type), start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	itree = (struct ssdfs_inodes_btree_info *)node->tree;
+	type = atomic_read(&node->type);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(type != SSDFS_BTREE_HYBRID_NODE);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&node->header_lock);
+
+	items_count = node->items_area.items_count;
+	items_capacity = node->items_area.items_capacity;
+	old_start_hash = node->items_area.start_hash;
+	old_end_hash = node->items_area.end_hash;
+	end_hash = start_hash + items_capacity - 1;
+
+	index_area_flags = atomic_read(&node->index_area.flags);
+	atomic_set(&node->index_area.flags,
+		    index_area_flags & ~SSDFS_PLEASE_ADD_HYBRID_NODE_SELF_INDEX);
+
+	items_area_flags = atomic_read(&node->items_area.flags);
+	atomic_set(&node->items_area.flags,
+		    items_area_flags & ~SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE);
+
+	if (old_start_hash == end_hash) {
+		err = -ERANGE;
+		SSDFS_ERR("corrupted node: "
+			  "request (start_hash %#llx, end_hash %#llx), "
+			  "node (start_hash %#llx, end_hash %#llx)\n",
+			  start_hash, end_hash,
+			  old_start_hash, old_end_hash);
+	} else if (old_start_hash > end_hash) {
+		/*
+		 * Hybrid node has free indexes.
+		 * Do nothing.
+		 */
+	} else {
+		node->items_area.start_hash = start_hash;
+		node->items_area.end_hash = end_hash;
+	}
+
+	up_write(&node->header_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(items_count > items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (items_capacity == 0) {
+		SSDFS_ERR("invalid node state: "
+			  "type %#x, items_capacity %u\n",
+			  type, items_capacity);
+		return -ERANGE;
+	}
+
+	if (old_start_hash > end_hash) {
+		err = ssdfs_add_free_items_range(itree, U32_MAX,
+						 start_hash, items_count,
+						 items_capacity);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add free range: "
+				  "node_id %u, start_hash %#llx, "
+				  "items_count %u, items_capacity %u\n",
+				  node->node_id, start_hash,
+				  items_count, items_capacity);
+			return err;
+		}
+	} else if (old_start_hash == start_hash) {
+		if (index_area_flags & SSDFS_PLEASE_ADD_HYBRID_NODE_SELF_INDEX) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("add self index: "
+				  "node_id %u, state %#x, "
+				  "node_type %#x, start_hash %llx\n",
+				  node->node_id, atomic_read(&node->state),
+				  atomic_read(&node->type), start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_add_hybrid_node_self_index(node,
+								start_hash);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add index: err %d\n",
+					  err);
+				return err;
+			}
+		}
+
+		if (items_area_flags & SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE) {
+			err = ssdfs_add_free_items_range(itree,
+							 node->node_id,
+							 start_hash,
+							 items_count,
+							 items_capacity);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add free range: "
+					  "node_id %u, start_hash %#llx, "
+					  "items_count %u, items_capacity %u\n",
+					  node->node_id, start_hash,
+					  items_count, items_capacity);
+				return err;
+			}
+		}
+	} else {
+		err = ssdfs_add_hybrid_node_self_index(node, start_hash);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add index: err %d\n",
+				  err);
+			return err;
+		}
+
+		err = ssdfs_add_free_items_range(itree, node->node_id,
+						 start_hash, items_count,
+						 items_capacity);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add free range: "
+				  "node_id %u, start_hash %#llx, "
+				  "items_count %u, items_capacity %u\n",
+				  node->node_id, start_hash,
+				  items_count, items_capacity);
+			return err;
+		}
+	}
+
+	ssdfs_debug_btree_node_object(node);
+
+	return 0;
+}
+
+/*
+ * ssdfs_inodes_btree_node_correct_hash_range() - correct node's hash range
+ * @node: pointer on node object
+ * @start_hash: start hash of the range
+ *
+ * This method tries to correct node's hash range.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_inodes_btree_node_correct_hash_range(struct ssdfs_btree_node *node,
+						u64 start_hash)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node);
+	BUG_ON(start_hash >= U64_MAX);
+
+	SSDFS_DBG("node_id %u, state %#x, "
+		  "node_type %#x, start_hash %llx\n",
+		  node->node_id, atomic_read(&node->state),
+		  atomic_read(&node->type), start_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&node->type)) {
+	case SSDFS_BTREE_LEAF_NODE:
+		return ssdfs_inodes_btree_correct_leaf_node_hash_range(node,
+								start_hash);
+
+	case SSDFS_BTREE_HYBRID_NODE:
+		return ssdfs_inodes_btree_correct_hybrid_node_hash_range(node,
+								    start_hash);
+
+	default:
+		/* do nothing */
+		break;
+	}
 
 	return 0;
 }

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.63 [June 21, 2023]
+    (*) Fix bugs in logic of inodes b-tree's hash range correction.
+
 v.4.62 [June 18, 2023]
     (*) Fix bugs in logic of offset translation table's logic of extents
         extraction for the case of multiple erase blocks in segment.

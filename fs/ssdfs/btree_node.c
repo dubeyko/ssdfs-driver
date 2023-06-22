@@ -239,6 +239,8 @@ int ssdfs_btree_node_create_empty_index_area(struct ssdfs_btree *tree,
 	memset(&node->index_area, 0xFF,
 		sizeof(struct ssdfs_btree_node_index_area));
 
+	atomic_set(&node->index_area.flags, 0);
+
 	switch (type) {
 	case SSDFS_BTREE_ROOT_NODE:
 		atomic_set(&node->index_area.state,
@@ -327,6 +329,8 @@ int ssdfs_btree_node_create_empty_items_area(struct ssdfs_btree *tree,
 
 	memset(&node->items_area, 0xFF,
 		sizeof(struct ssdfs_btree_node_items_area));
+
+	atomic_set(&node->items_area.flags, 0);
 
 	switch (type) {
 	case SSDFS_BTREE_ROOT_NODE:
@@ -8328,10 +8332,15 @@ int ssdfs_btree_root_node_delete_index(struct ssdfs_btree_node *node,
 		if ((position + 1) < node->index_area.index_count) {
 			node->index_area.start_hash = node->index_area.end_hash;
 			ssdfs_memcpy(&node->raw.root_node.indexes[position],
-				     0, index_size,
-				     &node->raw.root_node.indexes[position + 1],
-				     0, index_size,
-				     index_size);
+				0, index_size,
+				&node->raw.root_node.indexes[position + 1],
+				0, index_size,
+				index_size);
+			ssdfs_memcpy(&node->raw.root_node.header.node_ids[position],
+				0, sizeof(__le32),
+				&node->raw.root_node.header.node_ids[position + 1],
+				0, sizeof(__le32),
+				sizeof(__le32));
 			memset(&node->raw.root_node.indexes[position + 1], 0xFF,
 				index_size);
 			node->raw.root_node.header.node_ids[position + 1] =

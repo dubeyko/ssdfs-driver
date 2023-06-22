@@ -82,6 +82,7 @@ enum {
 /*
  * struct ssdfs_btree_node_index_area - btree node's index area
  * @state: area state
+ * @flags: index area's flags
  * @offset: area offset from node's beginning
  * @area_size: area size in bytes
  * @index_size: index size in bytes
@@ -92,6 +93,10 @@ enum {
  */
 struct ssdfs_btree_node_index_area {
 	atomic_t state;
+
+#define SSDFS_PLEASE_ADD_HYBRID_NODE_SELF_INDEX		(1 << 0)
+#define SSDFS_BTREE_NODE_INDEX_AREA_FLAGS_MASK		0x1
+	atomic_t flags;
 
 	u32 offset;
 	u32 area_size;
@@ -107,6 +112,7 @@ struct ssdfs_btree_node_index_area {
 /*
  * struct ssdfs_btree_node_items_area - btree node's data area
  * @state: area state
+ * @flags: items area's flags
  * @offset: area offset from node's beginning
  * @area_size: area size in bytes
  * @free_space: free space in bytes
@@ -120,6 +126,10 @@ struct ssdfs_btree_node_index_area {
  */
 struct ssdfs_btree_node_items_area {
 	atomic_t state;
+
+#define SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE		(1 << 0)
+#define SSDFS_BTREE_NODE_ITEMS_AREA_FLAGS_MASK		0x1
+	atomic_t flags;
 
 	u32 offset;
 	u32 area_size;

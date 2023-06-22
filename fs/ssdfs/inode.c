@@ -888,6 +888,16 @@ void ssdfs_evict_inode(struct inode *inode)
 	else
 		want_delete = false;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu mode %o count %d nlink %u, "
+		  "is_bad_inode %#x, want_delete %#x\n",
+		  ino, inode->i_mode,
+		  atomic_read(&inode->i_count),
+		  inode->i_nlink,
+		  is_bad_inode(inode),
+		  want_delete);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	trace_ssdfs_inode_evict(inode);
 
 	truncate_inode_pages_final(&inode->i_data);
