@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.64 [July 01, 2023]
+    (*) Implement read thread's logic optimization.
+
 v.4.63 [June 21, 2023]
     (*) Fix bugs in logic of inodes b-tree's hash range correction.
 

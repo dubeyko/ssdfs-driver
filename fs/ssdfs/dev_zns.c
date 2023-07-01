@@ -417,6 +417,58 @@ u64 ssdfs_zns_zone_capacity(struct super_block *sb, loff_t offset)
 }
 
 /*
+ * ssdfs_zns_zone_write_pointer() - retrieve zone's write pointer
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ *
+ * This function tries to retrieve zone's write pointer.
+ */
+u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset)
+{
+	struct blk_zone zone;
+	sector_t zone_sector = offset >> SECTOR_SHIFT;
+	int res;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu\n",
+		  sb, (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	res = blkdev_report_zones(sb->s_bdev, zone_sector, 1,
+				  ssdfs_report_zone, &zone);
+	if (res != 1) {
+		SSDFS_ERR("fail to take report zone: "
+			  "zone_sector %llu, err %d\n",
+			  zone_sector, res);
+		return U64_MAX;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("zone: start %llu, len %llu, wp %llu, "
+		  "type %#x, cond %#x, non_seq %#x, "
+		  "reset %#x, capacity %llu\n",
+		  zone.start, zone.len, zone.wp,
+		  zone.type, zone.cond, zone.non_seq,
+		  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (zone.wp >= (zone.start + zone.capacity)) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("zone is closed: "
+			  "start %llu, len %llu, "
+			  "wp %llu, type %#x, cond %#x, non_seq %#x, "
+			  "reset %#x, capacity %llu\n",
+			  zone.start, zone.len, zone.wp,
+			  zone.type, zone.cond, zone.non_seq,
+			  zone.reset, zone.capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return U64_MAX;
+	}
+
+	return (u64)zone.wp << SECTOR_SHIFT;
+}
+
+/*
  * ssdfs_zns_sync_page_request() - submit page request
  * @sb: superblock object
  * @page: memory page

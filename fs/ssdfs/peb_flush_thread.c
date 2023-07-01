@@ -16511,7 +16511,6 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 	struct ssdfs_thread_state *thread_state = NULL;
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct ssdfs_peb_info *pebi;
-	u64 reserved_pages = 0;
 	int state;
 	bool is_current_seg = false;
 	bool has_dirty_pages = false;
@@ -16587,13 +16586,11 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("request commit log now: reserved_pages %llu\n",
-			  reserved_pages);
+		SSDFS_DBG("request commit log now\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("get next create request: reserved_pages %llu\n",
-			  reserved_pages);
+		SSDFS_DBG("get next create request\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -16699,8 +16696,10 @@ int ssdfs_process_wait_next_create_state(struct ssdfs_peb_container *pebc)
 static
 int ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct ssdfs_fs_info *fsi = si->fsi;
+#endif /* CONFIG_SSDFS_DEBUG */
 	struct ssdfs_thread_state *thread_state = NULL;
 	int err = 0;
 
@@ -17057,7 +17056,6 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 	struct ssdfs_thread_state *thread_state = NULL;
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct ssdfs_peb_info *pebi;
-	u64 updated_pages = 0;
 	bool has_dirty_pages = false;
 	bool need_commit_log = false;
 	struct ssdfs_segment_request *req;
@@ -17121,13 +17119,11 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("request commit log now: updated_pages %llu\n",
-			  updated_pages);
+		SSDFS_DBG("request commit log now\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("get next create request: updated_pages %llu\n",
-			  updated_pages);
+		SSDFS_DBG("get next create request\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -18277,7 +18273,9 @@ int ssdfs_peb_flush_thread_func(void *data)
 	struct ssdfs_fs_info *fsi;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_thread_state *thread_state = NULL;
+#ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_peb_info *pebi = NULL;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
