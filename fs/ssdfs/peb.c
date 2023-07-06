@@ -768,6 +768,11 @@ fail_conctruct_peb_obj:
 int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 {
 	struct ssdfs_fs_info *fsi;
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+	struct ssdfs_segment_info *si;
+	struct ssdfs_blk2off_table *blk2off_table;
+	struct ssdfs_sequence_array *sequence;
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 	int state;
 	int err = 0;
 
@@ -789,6 +794,29 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+	state = atomic_read(&pebi->state);
+	if (state >= SSDFS_PEB_OBJECT_CREATED) {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!pebi->pebc || !pebi->pebc->parent_si);
+		BUG_ON(!pebi->pebc->parent_si->blk2off_table);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		si = pebi->pebc->parent_si;
+		blk2off_table = si->blk2off_table;
+		sequence = blk2off_table->peb[pebi->peb_index].sequence;
+
+		err = ssdfs_sequence_array_pre_delete_all(sequence,
+					ssdfs_blk2off_table_pre_delete_fragment,
+					pebi->peb_id);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to pre-delete blk2off table fragments: "
+				  "peb_id %llu, err %d\n",
+				  pebi->peb_id, err);
+		}
+	}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
 	err = ssdfs_peb_current_log_destroy(pebi);
 

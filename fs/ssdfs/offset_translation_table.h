@@ -69,6 +69,7 @@ enum {
 	SSDFS_BLK2OFF_FRAG_DIRTY,
 	SSDFS_BLK2OFF_FRAG_UNDER_COMMIT,
 	SSDFS_BLK2OFF_FRAG_COMMITED,
+	SSDFS_BLK2OFF_PLEASE_DELETE_FRAGMENT,
 	SSDFS_BLK2OFF_FRAG_STATE_MAX,
 };
 
@@ -369,6 +370,7 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 					struct ssdfs_blk2off_table *table,
 					u16 peb_index, u16 sequence_id,
 					struct ssdfs_peb_log_offset *log_offset);
+int ssdfs_blk2off_table_pre_delete_fragment(void *item, u64 peb_id);
 int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 				  struct ssdfs_metadata_descriptor *desc,
 				  struct ssdfs_peb_log_offset *log_offset);

@@ -2135,6 +2135,153 @@ finish_process_fragment:
 }
 
 /*
+ * __ssdfs_process_free_translation_extent() - process free translation extent
+ * @portion: pointer on portion init environment [in | out]
+ * @extent_index: index of extent
+ * @extent: pointer on translation extent
+ *
+ * This method checks translation extent, to set bitmap for
+ * logical blocks in the extent and to fill portion of
+ * offset position array by physical offsets id.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-EIO        - corrupted translation extent.
+ */
+static
+int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
+					int *extent_index,
+					struct ssdfs_translation_extent *extent)
+{
+	struct ssdfs_dynamic_array *lblk2off;
+	size_t pos_size = sizeof(struct ssdfs_offset_position);
+	u32 logical_blk;
+	u16 len;
+	int i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!portion || !extent_index || !extent);
+	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
+	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	lblk2off = &portion->table->lblk2off;
+
+	logical_blk = le16_to_cpu(extent->logical_blk);
+	len = le16_to_cpu(extent->len);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("logical_blk %u, len %u, "
+		  "sequence_id %u, state %#x\n",
+		  logical_blk, len,
+		  extent->sequence_id, extent->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < len; i++) {
+		struct ssdfs_offset_position *pos;
+		u32 cur_blk = logical_blk + i;
+
+		pos = SSDFS_OFF_POS(ssdfs_dynamic_array_get_locked(lblk2off,
+								   cur_blk));
+		if (IS_ERR_OR_NULL(pos)) {
+			err = (pos == NULL ? -ENOENT : PTR_ERR(pos));
+			SSDFS_ERR("fail to get logical block: "
+				  "cur_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_extent;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("portion->cno %#llx, "
+			  "pos (cno %#llx, id %u, peb_index %u, "
+			  "sequence_id %u, offset_index %u)\n",
+			  portion->cno,
+			  pos->cno, pos->id, pos->peb_index,
+			  pos->sequence_id, pos->offset_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (is_ssdfs_offset_position_older(pos, portion->cno)) {
+			/* logical block has been initialized already */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("logical block %u has been initialized already\n",
+				  cur_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+			err = ssdfs_dynamic_array_release(lblk2off,
+							  cur_blk, pos);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to release: "
+					  "cur_blk %u, err %d\n",
+					  cur_blk, err);
+				goto finish_process_extent;
+			} else
+				continue;
+		}
+
+		err = ssdfs_blk2off_table_bmap_clear(&portion->table->lbmap,
+						     SSDFS_LBMAP_STATE_INDEX,
+						     cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to clear state bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_extent;
+		}
+
+		memset(pos, 0xFF, pos_size);
+
+		pos->cno = portion->cno;
+		pos->peb_index = portion->peb_index;
+
+		err = ssdfs_dynamic_array_release(lblk2off, cur_blk, pos);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to release: "
+				  "cur_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_extent;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("set init bitmap: cur_blk %u\n",
+			  cur_blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
+						   SSDFS_LBMAP_INIT_INDEX,
+						   cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set init bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_extent;
+		}
+
+		/*
+		 * Free block needs to be marked as modified
+		 * with the goal not to lose the information
+		 * about free blocks in the case of PEB migration.
+		 * Because, offsets translation table's snapshot
+		 * needs to contain information about free blocks.
+		 */
+		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
+						SSDFS_LBMAP_MODIFICATION_INDEX,
+						cur_blk);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set modification bitmap: "
+				  "logical_blk %u, err %d\n",
+				  cur_blk, err);
+			goto finish_process_extent;
+		}
+	}
+
+finish_process_extent:
+	return err;
+}
+
+/*
  * ssdfs_process_free_translation_extent() - process free translation extent
  * @portion: pointer on portion init environment [in | out]
  * @extent_index: index of extent
@@ -2158,24 +2305,19 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 {
 	struct ssdfs_sequence_array *sequence = NULL;
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
-	struct ssdfs_dynamic_array *lblk2off;
 	void *ptr;
 	u16 peb_index;
 	u16 sequence_id;
 	u16 pos_array_items;
-	size_t pos_size = sizeof(struct ssdfs_offset_position);
 	u32 logical_blk;
 	u16 len;
-	int i;
-	int err = 0;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !extent_index || !extent);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
 	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	lblk2off = &portion->table->lblk2off;
 
 	peb_index = portion->peb_index;
 	sequence_id = le16_to_cpu(portion->pot_hdr.sequence_id);
@@ -2219,107 +2361,19 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 	}
 
 	down_read(&frag->lock);
-
-	for (i = 0; i < len; i++) {
-		struct ssdfs_offset_position *pos;
-		u32 cur_blk = logical_blk + i;
-
-		pos = SSDFS_OFF_POS(ssdfs_dynamic_array_get_locked(lblk2off,
-								   cur_blk));
-		if (IS_ERR_OR_NULL(pos)) {
-			err = (pos == NULL ? -ENOENT : PTR_ERR(pos));
-			SSDFS_ERR("fail to get logical block: "
-				  "cur_blk %u, err %d\n",
-				  cur_blk, err);
-			goto finish_process_fragment;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("portion->cno %#llx, "
-			  "pos (cno %#llx, id %u, peb_index %u, "
-			  "sequence_id %u, offset_index %u)\n",
-			  portion->cno,
-			  pos->cno, pos->id, pos->peb_index,
-			  pos->sequence_id, pos->offset_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (is_ssdfs_offset_position_older(pos, portion->cno)) {
-			/* logical block has been initialized already */
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("logical block %u has been initialized already\n",
-				  cur_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-			err = ssdfs_dynamic_array_release(lblk2off,
-							  cur_blk, pos);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to release: "
-					  "cur_blk %u, err %d\n",
-					  cur_blk, err);
-				goto finish_process_fragment;
-			} else
-				continue;
-		}
-
-		err = ssdfs_blk2off_table_bmap_clear(&portion->table->lbmap,
-						     SSDFS_LBMAP_STATE_INDEX,
-						     cur_blk);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to clear state bitmap: "
-				  "logical_blk %u, err %d\n",
-				  cur_blk, err);
-			goto finish_process_fragment;
-		}
-
-		memset(pos, 0xFF, pos_size);
-
-		pos->cno = portion->cno;
-		pos->peb_index = portion->peb_index;
-
-		err = ssdfs_dynamic_array_release(lblk2off, cur_blk, pos);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to release: "
-				  "cur_blk %u, err %d\n",
-				  cur_blk, err);
-			goto finish_process_fragment;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("set init bitmap: cur_blk %u\n",
-			  cur_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
-						   SSDFS_LBMAP_INIT_INDEX,
-						   cur_blk);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set init bitmap: "
-				  "logical_blk %u, err %d\n",
-				  cur_blk, err);
-			goto finish_process_fragment;
-		}
-
-		/*
-		 * Free block needs to be marked as modified
-		 * with the goal not to lose the information
-		 * about free blocks in the case of PEB migration.
-		 * Because, offsets translation table's snapshot
-		 * needs to contain information about free blocks.
-		 */
-		err = ssdfs_blk2off_table_bmap_set(&portion->table->lbmap,
-						SSDFS_LBMAP_MODIFICATION_INDEX,
-						cur_blk);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set modification bitmap: "
-				  "logical_blk %u, err %d\n",
-				  cur_blk, err);
-			goto finish_process_fragment;
-		}
-	}
-
-finish_process_fragment:
+	err = __ssdfs_process_free_translation_extent(portion,
+						      extent_index,
+						      extent);
 	up_read(&frag->lock);
 
-	return err;
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to process extent: "
+			  "sequence_id %u, err %d\n",
+			  *extent_index, err);
+		return err;
+	}
+
+	return 0;
 }
 
 /*
@@ -2854,7 +2908,17 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		}
 
 		if (state == SSDFS_LOGICAL_BLK_FREE) {
-			err = ssdfs_process_free_translation_extent(&portion,
+			err = ssdfs_check_translation_extent(&extent,
+							     portion.capacity,
+							     extent_index);
+			if (err) {
+				SSDFS_ERR("invalid translation extent: "
+					  "sequence_id %u, err %d\n",
+					  extent_index, err);
+				goto unlock_translation_table;
+			}
+
+			err = __ssdfs_process_free_translation_extent(&portion,
 								&extent_index,
 								&extent);
 			if (err) {
@@ -2863,6 +2927,14 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 					  extent_index, err);
 				goto unlock_translation_table;
 			}
+		} else {
+			err = -ERANGE;
+			SSDFS_ERR("unexpected extent state: "
+				  "logical_blk %u, len %u, "
+				  "state %#x, extent_index %d\n",
+				  logical_blk, len,
+				  state, extent_index);
+			goto unlock_translation_table;
 		}
 
 		++extent_index;
@@ -3322,7 +3394,9 @@ int ssdfs_calculate_start_sequence_id(u16 last_sequence_id,
 
 	upper_bound = last_sequence_id + 1;
 
-	if (upper_bound >= dirty_fragments)
+	if (dirty_fragments == 0)
+		*start_sequence_id = upper_bound;
+	else if (upper_bound >= dirty_fragments)
 		*start_sequence_id = upper_bound - dirty_fragments;
 	else {
 		*start_sequence_id = SSDFS_BLK2OFF_TBL_REVERT_THRESHOLD -
@@ -3336,6 +3410,196 @@ int ssdfs_calculate_start_sequence_id(u16 last_sequence_id,
 
 	return 0;
 }
+
+/*
+ * struct ssdfs_offset_id_search - offset ID search environment
+ * @snapshot: pointer on table's snapshot object
+ * @peb_id: PEB identification number
+ * @start_sequence_id: start ID of the first available fragment
+ */
+struct ssdfs_offset_id_search {
+	struct ssdfs_blk2off_table_snapshot *snapshot;
+	u64 peb_id;
+	unsigned long start_sequence_id;
+};
+
+/*
+ * ssdfs_find_start_offset_id() - find start offset ID
+ * @item: pointer on fragment
+ * @id: fragment ID
+ * @search_condition: offset ID search environment [in|out]
+ *
+ * This method is checking fragment with the goal
+ * to find the starting offset ID
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal logic error.
+ * %-ENODATA    - stop the search.
+ * %-EEXIST     - starting offset ID has been found.
+ * %-EFAULT     - delete fragment.
+ */
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+static inline
+int ssdfs_find_start_offset_id(void *item, unsigned long id,
+			       void *search_condition)
+{
+	struct ssdfs_phys_offset_table_fragment *fragment;
+	struct ssdfs_offset_id_search *condition;
+	u64 fragment_peb_id;
+	u16 start_offset_id;
+	int state;
+	bool is_identical;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!item || !search_condition);
+
+	SSDFS_DBG("item %p, id %lu, search_condition %p\n",
+		  item, id, search_condition);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fragment = (struct ssdfs_phys_offset_table_fragment *)item;
+	condition = (struct ssdfs_offset_id_search *)search_condition;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!condition->snapshot);
+	BUG_ON(condition->snapshot->new_sequence_id == SSDFS_INVALID_FRAG_ID);
+	BUG_ON(condition->peb_id >= U64_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (id >= condition->snapshot->new_sequence_id) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("stop search: "
+			  "id %lu, new_sequence_id %u\n",
+			  id,
+			  condition->snapshot->new_sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		if (condition->start_sequence_id == ULONG_MAX) {
+			condition->start_sequence_id = id;
+		}
+		return -ENODATA;
+	}
+
+	state = atomic_read(&fragment->state);
+	if (state == SSDFS_BLK2OFF_PLEASE_DELETE_FRAGMENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("pre-deleted fragment: "
+			  "id %lu\n",
+			  id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EFAULT;
+	}
+
+	down_read(&fragment->lock);
+	fragment_peb_id = fragment->peb_id;
+	if (fragment_peb_id >= U64_MAX)
+		err = -ERANGE;
+	else
+		is_identical = condition->peb_id == fragment_peb_id;
+	start_offset_id = fragment->start_id;
+	up_read(&fragment->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("id %lu, fragment_peb_id %llu, "
+		  "peb_id %llu\n",
+		  id, fragment_peb_id,
+		  condition->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(err)) {
+		SSDFS_ERR("invalid fragment PEB ID: "
+			  "id %ld\n", id);
+		goto finish_fragment_check;
+	}
+
+	if (is_identical) {
+		err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("found start_offset_id: "
+			  "id %lu, peb_id %llu, "
+			  "start_offset_id %u\n",
+			  id, condition->peb_id,
+			  start_offset_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		condition->snapshot->start_offset_id = start_offset_id;
+
+		if (condition->start_sequence_id == ULONG_MAX)
+			condition->start_sequence_id = id;
+	}
+
+finish_fragment_check:
+	return err;
+}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
+
+/*
+ * ssdfs_blk2off_table_pre_delete_fragment() - mark fragment as pre-deleted
+ * @item: pointer on fragment
+ * @peb_id: PEB ID
+ *
+ * This method tries to mark fragment as pre-deleted
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal logic error.
+ * %-ENODATA    - stop the pre-delete operation.
+ */
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+int ssdfs_blk2off_table_pre_delete_fragment(void *item, u64 peb_id)
+{
+	struct ssdfs_phys_offset_table_fragment *fragment;
+	u64 fragment_peb_id;
+	int state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!item);
+
+	SSDFS_DBG("item %p, peb_id %llu\n",
+		  item, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fragment = (struct ssdfs_phys_offset_table_fragment *)item;
+
+	down_read(&fragment->lock);
+	fragment_peb_id = fragment->peb_id;
+	up_read(&fragment->lock);
+
+	if (fragment_peb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("stop pre-delete: found new fragment\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	} else if (peb_id == fragment_peb_id) {
+		down_write(&fragment->lock);
+		state = atomic_xchg(&fragment->state,
+				    SSDFS_BLK2OFF_PLEASE_DELETE_FRAGMENT);
+		up_write(&fragment->lock);
+
+		switch (state) {
+		case SSDFS_BLK2OFF_FRAG_CREATED:
+		case SSDFS_BLK2OFF_FRAG_INITIALIZED:
+		case SSDFS_BLK2OFF_FRAG_COMMITED:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected fragment state: "
+				   "sequence_id %u, state %#x\n",
+				   fragment->sequence_id,
+				   state);
+			return -ERANGE;
+		}
+
+	}
+
+	return 0;
+}
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
 /*
  * ssdfs_blk2off_table_snapshot() - get table's snapshot
@@ -3387,15 +3651,6 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 	snapshot->tbl_copy = NULL;
 
 	down_write(&table->translation_lock);
-
-	if (!ssdfs_blk2off_table_dirtied(table, peb_index)) {
-		err = -ENODATA;
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("table isn't dirty for peb_index %u\n",
-			  peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_snapshoting;
-	}
 
 	pot_table = &table->peb[peb_index];
 
@@ -3474,8 +3729,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 
 	sequence = table->peb[peb_index].sequence;
 
-	last_sequence_id =
-		ssdfs_sequence_array_last_id(table->peb[peb_index].sequence);
+	last_sequence_id = ssdfs_sequence_array_last_id(sequence);
 
 	err = ssdfs_sequence_array_change_all_states(sequence,
 					SSDFS_SEQUENCE_ITEM_DIRTY_TAG,
@@ -3506,7 +3760,19 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 
 	start_sequence_id = snapshot->new_sequence_id;
 
-	if (snapshot->new_sequence_id > 0) {
+	if (!ssdfs_blk2off_table_dirtied(table, peb_index)) {
+		start_sequence_id = last_sequence_id;
+
+		if (start_sequence_id >= snapshot->new_sequence_id) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid start_sequence_id: "
+				  "start_sequence_id %d, "
+				  "snapshot->new_sequence_id %u\n",
+				  start_sequence_id,
+				  snapshot->new_sequence_id);
+			goto finish_snapshoting;
+		}
+
 		ptr = ssdfs_sequence_array_get_item(sequence,
 						    start_sequence_id);
 		if (IS_ERR_OR_NULL(ptr)) {
@@ -3518,66 +3784,36 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 		}
 		fragment = (struct ssdfs_phys_offset_table_fragment *)ptr;
 
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("start_sequence_id %u, new_sequence_id %u\n",
-			  start_sequence_id, snapshot->new_sequence_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		down_read(&fragment->lock);
 		snapshot->start_offset_id = fragment->start_id;
 		up_read(&fragment->lock);
+	} else if (snapshot->new_sequence_id > 0) {
+		struct ssdfs_offset_id_search id_search;
 
-		for (; start_sequence_id > 0; start_sequence_id--) {
-			int cur_id = start_sequence_id - 1;
-			u64 fragment_peb_id;
-			u16 start_offset_id;
-			bool is_identical;
+		id_search.snapshot = snapshot;
+		id_search.peb_id = peb_id;
+		id_search.start_sequence_id = ULONG_MAX;
 
-			ptr = ssdfs_sequence_array_get_item(sequence, cur_id);
-			if (IS_ERR_OR_NULL(ptr)) {
-				/* continue search */
-				continue;
-			}
-			fragment = (struct ssdfs_phys_offset_table_fragment *)ptr;
-
-			down_read(&fragment->lock);
-			fragment_peb_id = fragment->peb_id;
-			if (fragment_peb_id >= U64_MAX)
-				err = -ERANGE;
-			else
-				is_identical = peb_id == fragment_peb_id;
-			start_offset_id = fragment->start_id;
-			up_read(&fragment->lock);
-
+		err = ssdfs_sequence_array_search(sequence,
+						  ssdfs_find_start_offset_id,
+						  ssdfs_blk2off_frag_free,
+						  &id_search);
+		if (err == -ENOENT) {
+			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("cur_id %u, fragment_peb_id %llu, "
-				  "peb_id %llu\n",
-				  cur_id, fragment_peb_id,
-				  peb_id);
+			SSDFS_DBG("process only dirty fragments: "
+				  "start_sequence_id %lu, "
+				  "new_sequence_id %u\n",
+				  id_search.start_sequence_id,
+				  snapshot->new_sequence_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-			if (unlikely(err)) {
-				SSDFS_ERR("invalid fragment PEB ID: "
-					  "cur_id %d, start_sequence_id %d\n",
-					  cur_id,
-					  start_sequence_id);
-				goto finish_snapshoting;
-			}
-
-			if (!is_identical) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("found different PEB ID: "
-					  "cur_id %d, start_sequence_id %d, "
-					  "peb_id1 %llu, peb_id2 %llu\n",
-					  cur_id,
-					  start_sequence_id,
-					  peb_id,
-					  fragment_peb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				break;
-			} else
-				snapshot->start_offset_id = start_offset_id;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find start offset ID: "
+				  "err %d\n", err);
+			goto finish_snapshoting;
 		}
+
+		start_sequence_id = id_search.start_sequence_id;
 	} else {
 		ptr = ssdfs_sequence_array_get_item(sequence,
 						    start_sequence_id);
@@ -3687,11 +3923,11 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 					SSDFS_BLK2OFF_TABLE_DIRTY,
 					SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
 		if (state != SSDFS_BLK2OFF_TABLE_DIRTY) {
-			err = -ERANGE;
-			SSDFS_ERR("table isn't dirty: "
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("table isn't dirty: "
 				  "state %#x\n",
 				  state);
-			goto finish_snapshoting;
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 
@@ -6534,6 +6770,7 @@ u16 ssdfs_next_sequence_id(u16 sequence_id)
 /*
  * should_fragment_been_commited() - check that fragment needs to commit
  * @table: pointer on table object
+ * @sp: pointer on snapshot
  * @extents_array: array of extracted extents
  * @peb_index: PEB's index
  * @peb_id: PEB identification number
@@ -6543,6 +6780,7 @@ u16 ssdfs_next_sequence_id(u16 sequence_id)
  */
 static
 bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
+				   struct ssdfs_blk2off_table_snapshot *sp,
 				   struct ssdfs_dynamic_array *extents_array,
 				   u16 peb_index, u64 peb_id, u16 sequence_id,
 				   u16 *extent_index, u16 extent_count)
@@ -6560,7 +6798,7 @@ bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!table || !extents_array || !extent_index);
+	BUG_ON(!table || !sp || !extents_array || !extent_index);
 
 	SSDFS_DBG("peb_index %u, peb_id %llu, sequence_id %u, "
 		  "extent_index %u, extent_count %u\n",
@@ -6619,6 +6857,7 @@ bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
 		struct ssdfs_translation_extent *extent;
 		int start_offset_id;
 		int end_offset_id;
+		bool is_free_extent = false;
 
 		kaddr = ssdfs_dynamic_array_get_locked(extents_array,
 							*extent_index);
@@ -6633,9 +6872,14 @@ bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
 
 		start_offset_id = le16_to_cpu(extent->offset_id);
 
-		if (start_offset_id == SSDFS_BLK2OFF_TABLE_INVALID_ID)
-			end_offset_id = SSDFS_BLK2OFF_TABLE_INVALID_ID;
-		else {
+		if (start_offset_id == SSDFS_BLK2OFF_TABLE_INVALID_ID) {
+			/*
+			 * It needs to store only latest fragment.
+			 */
+			start_offset_id = sp->end_offset_id;
+			end_offset_id = sp->end_offset_id;
+			is_free_extent = true;
+		} else {
 			end_offset_id = start_offset_id +
 						le16_to_cpu(extent->len) - 1;
 		}
@@ -6656,13 +6900,6 @@ bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
 				  "index %u, err %d\n",
 				  *extent_index, err);
 			goto finish_check_fragment;
-		}
-
-		if (start_offset_id == SSDFS_BLK2OFF_TABLE_INVALID_ID) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("ignore extent: invalidated logical blocks\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			continue;
 		}
 
 		if (end_offset_id < start_offset_id) {
@@ -6710,7 +6947,12 @@ bool should_fragment_been_commited(struct ssdfs_blk2off_table *table,
 				  start_offset_id, end_offset_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 			has_offset_id_found = false;
-			goto finish_check_fragment;
+
+			if (is_free_extent) {
+				/* need to check the next extent */
+				continue;
+			} else
+				goto finish_check_fragment;
 		} else if (end_offset_id < frag_start_id) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("ignore extent: "
@@ -6938,10 +7180,11 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 
 	extent_index = 0;
 	sequence_id = snapshot.start_sequence_id;
-	for (i = 0; i < fragments_count; i++) {
+	for (i = sequence_id; i < fragments_count; i++) {
 		bool need_commit;
 
 		need_commit = should_fragment_been_commited(table,
+							    &snapshot,
 							    &extents,
 							    peb_index,
 							    peb_id,
@@ -6950,9 +7193,38 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 							    extent_count);
 
 		if (!need_commit) {
+#ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+			struct ssdfs_sequence_array *sequence;
+
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("skip fragment %d from commit\n", i);
+			SSDFS_DBG("delete fragment %d\n",
+				  sequence_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+			sequence = table->peb[peb_index].sequence;
+			err = ssdfs_sequence_array_delete_item(sequence,
+							sequence_id,
+							ssdfs_blk2off_frag_free);
+			if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("fragment is absent: "
+					  "sequence_id %u\n",
+					  sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto get_next_sequence_id;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to delete fragment: "
+					  "sequence %d, err %d\n",
+					  sequence_id, err);
+				goto fail_store_off_table;
+			} else
+				goto get_next_sequence_id;
+#else /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("skip fragment %d from commit\n",
+				  sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 			goto get_next_sequence_id;
 		}
 
@@ -8738,7 +9010,7 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 		u16 capacity = table->lblk2off_capacity;
 		bool is_vacant;
 
-		start_blk = table->last_allocated_blk;
+		start_blk = table->last_allocated_blk + 1;
 		is_vacant = ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
 							SSDFS_LBMAP_INIT_INDEX,
 							capacity,
@@ -8762,7 +9034,7 @@ int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
 			goto finish_allocation;
 		}
 	} else
-		start_blk = table->last_allocated_blk;
+		start_blk = table->last_allocated_blk + 1;
 
 	err = ssdfs_blk2off_table_bmap_allocate(&table->lbmap,
 						SSDFS_LBMAP_STATE_INDEX,

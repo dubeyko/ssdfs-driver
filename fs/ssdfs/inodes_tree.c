@@ -3204,6 +3204,7 @@ int ssdfs_inodes_btree_delete_node(struct ssdfs_btree_node *node)
 {
 	struct ssdfs_btree_node *parent;
 	u16 items_count;
+	u16 index_count;
 	u64 old_hash;
 	int err;
 
@@ -3228,12 +3229,36 @@ int ssdfs_inodes_btree_delete_node(struct ssdfs_btree_node *node)
 
 		switch (atomic_read(&parent->type)) {
 		case SSDFS_BTREE_HYBRID_NODE:
+			if (is_ssdfs_btree_node_pre_deleted(parent)) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("do nothing: "
+					  "node %u is pre-deleted\n",
+					  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_delete_node;
+			}
+
 			down_read(&parent->header_lock);
 			items_count = parent->items_area.items_count;
+			index_count = parent->index_area.index_count;
 			old_hash = parent->items_area.start_hash;
 			up_read(&parent->header_lock);
 
 			if (items_count == 0) {
+				if (index_count == 0) {
+					SSDFS_ERR("hybrid node hasn't self index: "
+						  "node_id %u\n",
+						  parent->node_id);
+					return -ERANGE;
+				} else if (index_count == 1) {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("hybrid node has self index only: "
+						  "node_id %u\n",
+						  parent->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+					goto finish_delete_node;
+				}
+
 				err = ssdfs_btree_node_delete_index(parent,
 								    old_hash);
 				if (unlikely(err)) {
@@ -3263,6 +3288,7 @@ int ssdfs_inodes_btree_delete_node(struct ssdfs_btree_node *node)
 		break;
 	}
 
+finish_delete_node:
 	return 0;
 }
 
@@ -5097,7 +5123,7 @@ finish_change_item:
 }
 
 /*
- * ssdfs_correct_hybrid_node_items_area_hashes() - correct items area hashes
+ * ssdfs_correct_hybrid_node_hashes() - correct items area hashes
  * @node: pointer on node object
  */
 static

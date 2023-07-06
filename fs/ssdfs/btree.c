@@ -3907,6 +3907,15 @@ int ssdfs_btree_delete_index_in_parent_node(struct ssdfs_btree *tree,
 
 		set_ssdfs_btree_node_pre_deleted(node);
 
+		if (tree->btree_ops && tree->btree_ops->delete_node) {
+			err = tree->btree_ops->delete_node(node);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to delete node: "
+					  "err %d\n", err);
+				goto finish_delete_index;
+			}
+		}
+
 		err = ssdfs_segment_invalidate_node(node);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate node: id %u, err %d\n",
@@ -4067,8 +4076,6 @@ int ssdfs_btree_delete_node(struct ssdfs_btree *tree,
 
 	down_write(&tree->lock);
 	err = ssdfs_btree_delete_index_in_parent_node(tree, search);
-	if (!err && tree->btree_ops && tree->btree_ops->delete_node)
-		err = tree->btree_ops->delete_node(node);
 	up_write(&tree->lock);
 
 	if (unlikely(err)) {
@@ -5968,6 +5975,254 @@ finish_change_item:
 }
 
 /*
+ * need_migrate_items_to_parent_node() - check necessity to migrate items in parent node
+ * @search: search object
+ */
+static inline
+bool need_migrate_items_to_parent_node(struct ssdfs_btree_search *search)
+{
+	struct ssdfs_btree_node *child;
+	struct ssdfs_btree_node *parent;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	child = search->node.child;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!child);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	parent = search->node.parent;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!parent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __need_migrate_items_to_parent_node(parent, child);
+}
+
+/*
+ * ssdfs_btree_merge_parent_and_child_nodes() - merge parent and child nodes
+ * @tree: btree object
+ * @search: search object [in|out]
+ * @ptr: hierarchy object
+ *
+ * This method tries to merge parent and child nodes.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_btree_merge_parent_and_child_nodes(struct ssdfs_btree *tree,
+					     struct ssdfs_btree_search *search,
+					     struct ssdfs_btree_hierarchy *ptr)
+{
+	struct ssdfs_btree_level *level;
+	struct ssdfs_btree_node *node;
+	int cur_height, tree_height;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !ptr);
+
+	SSDFS_DBG("tree %p, hierarchy %p\n",
+		  tree, ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree_height = atomic_read(&tree->height);
+	if (tree_height <= 0) {
+		SSDFS_ERR("invalid tree_height %u\n",
+			  tree_height);
+		return -ERANGE;
+	}
+
+	down_write(&tree->lock);
+
+	for (cur_height = 0; cur_height < tree_height; cur_height++) {
+		err = ssdfs_btree_process_level_for_node_merge(ptr,
+							       cur_height,
+							       search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to process the tree's level: "
+				  "cur_height %u, err %d\n",
+				  cur_height, err);
+			goto finish_merge_nodes;
+		}
+	}
+
+	for (cur_height = 0; cur_height < (tree_height - 1); cur_height++) {
+		level = ptr->array_ptr[cur_height];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("cur_height %d, tree_height %d\n",
+			  cur_height, tree_height);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!need_delete_node(level))
+			continue;
+
+		node = level->nodes.old_node.ptr;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!node);
+		SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		set_ssdfs_btree_node_pre_deleted(node);
+
+		if (tree->btree_ops && tree->btree_ops->delete_node) {
+			err = tree->btree_ops->delete_node(node);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to delete node: "
+					  "err %d\n", err);
+				goto finish_merge_nodes;
+			}
+		}
+
+		err = ssdfs_segment_invalidate_node(node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to invalidate node: id %u, err %d\n",
+				  node->node_id, err);
+		}
+	}
+
+	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
+
+finish_merge_nodes:
+	up_write(&tree->lock);
+
+	return err;
+}
+
+/*
+ * need_merge_sibling_nodes() - check necessity to merge sibling nodes
+ * @search: search object
+ */
+static inline
+bool need_merge_sibling_nodes(struct ssdfs_btree_search *search)
+{
+	struct ssdfs_btree_node *child;
+	struct ssdfs_btree_node *parent;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	child = search->node.child;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!child);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	parent = search->node.parent;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!parent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __need_merge_sibling_nodes(parent, child);
+}
+
+/*
+ * ssdfs_btree_merge_sibling_nodes() - merge sibling nodes
+ * @tree: btree object
+ * @search: search object [in|out]
+ * @ptr: hierarchy object
+ *
+ * This method tries to merge siblings nodes.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_btree_merge_sibling_nodes(struct ssdfs_btree *tree,
+				    struct ssdfs_btree_search *search,
+				    struct ssdfs_btree_hierarchy *ptr)
+{
+	struct ssdfs_btree_level *level;
+	struct ssdfs_btree_node *node;
+	int cur_height, tree_height;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !ptr);
+
+	SSDFS_DBG("tree %p, hierarchy %p\n",
+		  tree, ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	tree_height = atomic_read(&tree->height);
+	if (tree_height <= 0) {
+		SSDFS_ERR("invalid tree_height %u\n",
+			  tree_height);
+		return -ERANGE;
+	}
+
+	down_write(&tree->lock);
+
+	for (cur_height = 0; cur_height < tree_height; cur_height++) {
+		err = ssdfs_btree_process_level_for_node_merge(ptr,
+								cur_height,
+								search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to process the tree's level: "
+				  "cur_height %u, err %d\n",
+				  cur_height, err);
+			goto finish_merge_nodes;
+		}
+	}
+
+	for (cur_height = 0; cur_height < (tree_height - 1); cur_height++) {
+		level = ptr->array_ptr[cur_height];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("cur_height %d, tree_height %d\n",
+			  cur_height, tree_height);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!need_delete_node(level))
+			continue;
+
+		node = level->nodes.old_node.ptr;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!node);
+		SSDFS_DBG("node_id %u\n", node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		set_ssdfs_btree_node_pre_deleted(node);
+
+		if (tree->btree_ops && tree->btree_ops->delete_node) {
+			err = tree->btree_ops->delete_node(node);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to delete node: "
+					  "err %d\n", err);
+				goto finish_merge_nodes;
+			}
+		}
+
+		err = ssdfs_segment_invalidate_node(node);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to invalidate node: id %u, err %d\n",
+				  node->node_id, err);
+		}
+	}
+
+	atomic_set(&tree->state, SSDFS_BTREE_DIRTY);
+
+finish_merge_nodes:
+	up_write(&tree->lock);
+
+	return err;
+}
+
+/*
  * ssdfs_btree_delete_item() - delete an existing item in the btree
  * @tree: btree object
  * @search: search object [in|out]
@@ -6094,6 +6349,80 @@ try_delete_item:
 				  (u64)search->node.id, err);
 			goto finish_delete_item;
 		}
+	} else if (need_merge_sibling_nodes(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto finish_delete_item;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_siblings_merge(tree,
+								     search,
+								     hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_merge_sibling_nodes;
+		}
+
+		up_read(&tree->lock);
+		err = ssdfs_btree_merge_sibling_nodes(tree, search,
+							hierarchy);
+		down_read(&tree->lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to merge btree nodes: "
+				  "node_id %llu, err %d\n",
+				  (u64)search->node.id, err);
+			goto finish_merge_sibling_nodes;
+		}
+
+finish_merge_sibling_nodes:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto finish_delete_item;
+	} else if (need_migrate_items_to_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto finish_delete_item;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_parent_child_merge(tree,
+								    search,
+								    hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_merge_nodes;
+		}
+
+		up_read(&tree->lock);
+		err = ssdfs_btree_merge_parent_and_child_nodes(tree, search,
+							       hierarchy);
+		down_read(&tree->lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to merge btree nodes: "
+				  "node_id %llu, err %d\n",
+				  (u64)search->node.id, err);
+			goto finish_merge_nodes;
+		}
+
+finish_merge_nodes:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto finish_delete_item;
 	} else if (need_update_parent_node(search)) {
 		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
 		if (!hierarchy) {
@@ -6285,6 +6614,80 @@ finish_delete_range:
 				  (u64)search->node.id, err);
 			goto fail_delete_range;
 		}
+	} else if (need_merge_sibling_nodes(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto fail_delete_range;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_siblings_merge(tree,
+								     search,
+								     hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_merge_sibling_nodes;
+		}
+
+		up_read(&tree->lock);
+		err = ssdfs_btree_merge_sibling_nodes(tree, search,
+							hierarchy);
+		down_read(&tree->lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to merge btree nodes: "
+				  "node_id %llu, err %d\n",
+				  (u64)search->node.id, err);
+			goto finish_merge_sibling_nodes;
+		}
+
+finish_merge_sibling_nodes:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto fail_delete_range;
+	}  else if (need_migrate_items_to_parent_node(search)) {
+		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
+		if (!hierarchy) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate tree levels' array\n");
+			goto fail_delete_range;
+		}
+
+		err = ssdfs_btree_check_hierarchy_for_parent_child_merge(tree,
+								    search,
+								    hierarchy);
+		if (unlikely(err)) {
+			atomic_set(&search->node.child->state,
+				    SSDFS_BTREE_NODE_CORRUPTED);
+			SSDFS_ERR("fail to prepare hierarchy information : "
+				  "err %d\n",
+				  err);
+			goto finish_merge_nodes;
+		}
+
+		up_read(&tree->lock);
+		err = ssdfs_btree_merge_parent_and_child_nodes(tree, search,
+							       hierarchy);
+		down_read(&tree->lock);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to merge btree nodes: "
+				  "node_id %llu, err %d\n",
+				  (u64)search->node.id, err);
+			goto finish_merge_nodes;
+		}
+
+finish_merge_nodes:
+		ssdfs_btree_hierarchy_free(hierarchy);
+
+		if (unlikely(err))
+			goto fail_delete_range;
 	} else if (need_update_parent_node(search)) {
 		hierarchy = ssdfs_btree_hierarchy_allocate(tree);
 		if (!hierarchy) {
@@ -6789,6 +7192,7 @@ bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
 	struct ssdfs_btree_index_key key1, key2;
 	int tree_state;
 	u32 node_id1, node_id2;
+	u16 index_count;
 	u16 items_count;
 	bool need_migrate = false;
 	int err = 0;
@@ -6909,18 +7313,32 @@ bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
 			goto finish_check_tree;
 		} else {
 			/* empty node */
+			/* time to migrate */
+			need_migrate = true;
 			goto finish_check_tree;
 		}
 		break;
 
 	case SSDFS_BTREE_HYBRID_NODE:
-		if (is_ssdfs_btree_node_index_area_empty(node) &&
-		    !is_ssdfs_btree_node_items_area_empty(node)) {
+		if (!is_ssdfs_btree_node_items_area_empty(node)) {
 			down_read(&node->header_lock);
+			index_count = node->index_area.index_count;
 			items_count = node->items_area.items_count;
 			up_read(&node->header_lock);
 
-			if (items_count <= items_threshold) {
+			if (index_count == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("corrupted node %u: "
+					  "index_count %u, "
+					  "items_count %u\n",
+					  node_id1,
+					  index_count,
+					  items_count);
+				goto finish_check_tree;
+			} else if (index_count > 1) {
+				err = -EEXIST;
+				goto finish_check_tree;
+			} else if (items_count <= items_threshold) {
 				/* time to migrate */
 				need_migrate = true;
 			}
@@ -6931,6 +7349,8 @@ bool need_migrate_generic2inline_btree(struct ssdfs_btree *tree,
 			goto finish_check_tree;
 		} else {
 			/* empty node */
+			/* time to migrate */
+			need_migrate = true;
 			goto finish_check_tree;
 		}
 		break;

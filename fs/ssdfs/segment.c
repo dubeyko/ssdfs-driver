@@ -4259,7 +4259,8 @@ add_new_current_segment:
 				err = SSDFS_WAIT_COMPLETION(end);
 				if (unlikely(err)) {
 					SSDFS_ERR("blk2off init failed: "
-						  "err %d\n", err);
+						  "seg_id %llu, err %d\n",
+						  *seg_id, err);
 					goto finish_add_extent;
 				}
 
@@ -4269,12 +4270,15 @@ add_new_current_segment:
 			}
 
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to allocate logical extent\n");
+				SSDFS_ERR("fail to allocate logical extent: "
+					  "seg_id %llu\n", *seg_id);
 				goto finish_add_extent;
 			} else if (extent->len != reserved_blks) {
 				SSDFS_DBG("unable to allocate: "
+					  "seg_id %llu, "
 					  "extent (start_lblk %u, len %u), "
 					  "reserved_blks %u\n",
+					  *seg_id,
 					  extent->start_lblk,
 					  extent->len,
 					  reserved_blks);

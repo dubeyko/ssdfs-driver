@@ -128,7 +128,7 @@ enum {
 
 #define SSDFS_BTREE_DELETE_NODE_MASK \
 	(SSDFS_BTREE_LEVEL_UPDATE_INDEX | SSDFS_BTREE_LEVEL_DELETE_NODE | \
-	 SSDFS_BTREE_LEVEL_DELETE_INDEX)
+	 SSDFS_BTREE_LEVEL_DELETE_INDEX | SSDFS_BTREE_ITEMS_AREA_NEED_MOVE)
 
 /*
  * struct ssdfs_btree_level_node - node descriptor
@@ -267,6 +267,19 @@ int ssdfs_btree_check_hierarchy_for_update(struct ssdfs_btree *tree,
 int ssdfs_btree_process_level_for_update(struct ssdfs_btree_hierarchy *ptr,
 					 int cur_height,
 					 struct ssdfs_btree_search *search);
+bool __need_migrate_items_to_parent_node(struct ssdfs_btree_node *parent,
+					 struct ssdfs_btree_node *child);
+int ssdfs_btree_check_hierarchy_for_parent_child_merge(struct ssdfs_btree *tree,
+					struct ssdfs_btree_search *search,
+					struct ssdfs_btree_hierarchy *hierarchy);
+int ssdfs_btree_process_level_for_node_merge(struct ssdfs_btree_hierarchy *ptr,
+					     int cur_height,
+					     struct ssdfs_btree_search *search);
+bool __need_merge_sibling_nodes(struct ssdfs_btree_node *parent,
+				struct ssdfs_btree_node *child);
+int ssdfs_btree_check_hierarchy_for_siblings_merge(struct ssdfs_btree *tree,
+					struct ssdfs_btree_search *search,
+					struct ssdfs_btree_hierarchy *hierarchy);
 
 /* Btree hierarchy internal API*/
 void ssdfs_btree_prepare_add_node(struct ssdfs_btree *tree,

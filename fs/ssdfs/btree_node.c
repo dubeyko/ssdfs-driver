@@ -7027,6 +7027,15 @@ int ssdfs_btree_root_node_add_index(struct ssdfs_btree_node *node,
 	found = &node->raw.root_node.indexes[node->index_area.index_count - 1];
 	node->index_area.end_hash = le64_to_cpu(found->hash);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("index 0: node_id %u; index 1: node_id %u\n",
+		  cpu_to_le32(node->raw.root_node.header.node_ids[0]),
+		  cpu_to_le32(node->raw.root_node.header.node_ids[1]));
+	SSDFS_DBG("start_hash %#llx, end_hash %#llx\n",
+		  node->index_area.start_hash,
+		  node->index_area.end_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -15759,7 +15768,7 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, items_capacity %u, items_count %u\n",
-		  search->node.id,
+		  node->node_id,
 		  items_area.items_capacity,
 		  items_area.items_count);
 #endif /* CONFIG_SSDFS_DEBUG */

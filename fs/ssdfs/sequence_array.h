@@ -52,6 +52,11 @@ typedef int (*ssdfs_apply_action)(void *item);
 typedef int (*ssdfs_change_item_state)(void *item,
 					int old_state,
 					int new_state);
+typedef int (*ssdfs_search_action)(void *item,
+				   unsigned long id,
+				   void *search_condition);
+typedef int (*ssdfs_pre_delete_action)(void *item,
+					u64 peb_id);
 
 /*
  * Inline functions
@@ -72,10 +77,6 @@ static inline
 unsigned long ssdfs_sequence_array_last_id(struct ssdfs_sequence_array *array)
 {
 	unsigned long last_id = ULONG_MAX;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("last_allocated_id is invalid!!!\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&array->lock);
 	last_id = array->last_allocated_id;
@@ -108,8 +109,15 @@ int ssdfs_sequence_array_init_item(struct ssdfs_sequence_array *array,
 				   unsigned long id, void *item);
 int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
 				  void *item, unsigned long *id);
+int ssdfs_sequence_array_delete_item(struct ssdfs_sequence_array *array,
+					unsigned long id,
+					ssdfs_free_item free_item);
 void *ssdfs_sequence_array_get_item(struct ssdfs_sequence_array *array,
 				    unsigned long id);
+int ssdfs_sequence_array_search(struct ssdfs_sequence_array *array,
+				ssdfs_search_action search_action,
+				ssdfs_free_item free_item,
+				void *search_condition);
 int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
 					ssdfs_apply_action apply_action);
 int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
@@ -122,6 +130,9 @@ int ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
 					   ssdfs_change_item_state change_state,
 					   int old_state, int new_state,
 					   unsigned long *found_items);
+int ssdfs_sequence_array_pre_delete_all(struct ssdfs_sequence_array *array,
+					ssdfs_pre_delete_action pre_delete,
+					u64 peb_id);
 bool has_ssdfs_sequence_array_state(struct ssdfs_sequence_array *array,
 				    int tag);
 

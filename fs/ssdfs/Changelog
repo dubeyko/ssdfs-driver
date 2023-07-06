@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.65 [July 06, 2023]
+    (*) Fix bugs in b-tree delete logic.
+    (*) Fix bugs in logic of storing offset translation table.
+
 v.4.64 [July 01, 2023]
     (*) Implement read thread's logic optimization.
 

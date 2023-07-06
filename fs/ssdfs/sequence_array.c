@@ -366,11 +366,253 @@ void *ssdfs_sequence_array_get_item(struct ssdfs_sequence_array *array,
 }
 
 /*
+ * ssdfs_sequence_array_delete_item() - delete item
+ * @array: pointer on sequence array object
+ * @id: ID value
+ * @free_item: pointer on function that can free item
+ *
+ * This method tries to delete item and free item.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOENT  - item is absent.
+ */
+int ssdfs_sequence_array_delete_item(struct ssdfs_sequence_array *array,
+					unsigned long id,
+					ssdfs_free_item free_item)
+{
+	void *item_ptr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array || !free_item);
+
+	SSDFS_DBG("array %p, id %lu\n",
+		  array, id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	rcu_read_lock();
+	spin_lock(&array->lock);
+	item_ptr = radix_tree_delete(&array->map, id);
+	spin_unlock(&array->lock);
+	rcu_read_unlock();
+
+	if (!item_ptr) {
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("empty pointer: "
+			  "index %llu\n",
+			  (u64)id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else {
+		free_item(item_ptr);
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_sequence_array_search() - apply search action for sequence
+ * @array: pointer on sequence array object
+ * @search_action: pointer on method that needs to be applied
+ * @free_item: pointer on function that can free item
+ * @search_condition: condition for checking in search
+ *
+ * This method tries to apply search action on the sequence.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE  - internal error.
+ * %-ENOENT  - nothing has been found.
+ */
+int ssdfs_sequence_array_search(struct ssdfs_sequence_array *array,
+				ssdfs_search_action search_action,
+				ssdfs_free_item free_item,
+				void *search_condition)
+{
+	struct radix_tree_iter iter;
+	void **slot;
+	void *item_ptr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array || !search_action || !search_condition);
+
+	SSDFS_DBG("array %p\n", array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	rcu_read_lock();
+
+	spin_lock(&array->lock);
+	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
+		item_ptr = radix_tree_deref_slot(slot);
+		if (unlikely(!item_ptr)) {
+			SSDFS_WARN("empty item ptr: id %llu\n",
+				   (u64)iter.index);
+			continue;
+		}
+		spin_unlock(&array->lock);
+
+		rcu_read_unlock();
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("id %llu, item_ptr %p\n",
+			  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = search_action(item_ptr, iter.index, search_condition);
+		if (err == -EFAULT) {
+			err = ssdfs_sequence_array_delete_item(array,
+								iter.index,
+								free_item);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to free item: "
+					  "id %llu, err %d\n",
+					  (u64)iter.index,
+					  err);
+				goto finish_search;
+			}
+		} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("found: id %llu, item_ptr %p\n",
+				  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		} else if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stop search: id %llu, item_ptr %p\n",
+				  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to apply action: "
+				  "id %llu, err %d\n",
+				  (u64)iter.index,  err);
+			goto finish_search;
+		}
+
+		rcu_read_lock();
+
+		spin_lock(&array->lock);
+	}
+	spin_unlock(&array->lock);
+
+	rcu_read_unlock();
+
+finish_search:
+	if (err == -EEXIST)
+		err = 0;
+	else if (err == -ENODATA) {
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("nothing has been found\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to apply action for all items: "
+			  "err %d\n", err);
+		return err;
+	} else {
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("nothing has been found\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_sequence_array_pre_delete_all() - apply pre-delete action for sequence
+ * @array: pointer on sequence array object
+ * @pre_delete: pointer on method that needs to be applied
+ * @peb_id: PEB ID for pre-deletion action
+ *
+ * This method tries to apply pre-delete action on the sequence.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE  - internal error.
+ */
+int ssdfs_sequence_array_pre_delete_all(struct ssdfs_sequence_array *array,
+					ssdfs_pre_delete_action pre_delete,
+					u64 peb_id)
+{
+	struct radix_tree_iter iter;
+	void **slot;
+	void *item_ptr;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array || !pre_delete);
+
+	SSDFS_DBG("array %p, peb_id %llu\n",
+		  array, peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	rcu_read_lock();
+
+	spin_lock(&array->lock);
+	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
+		item_ptr = radix_tree_deref_slot(slot);
+		if (unlikely(!item_ptr)) {
+			SSDFS_WARN("empty item ptr: id %llu\n",
+				   (u64)iter.index);
+			continue;
+		}
+		spin_unlock(&array->lock);
+
+		rcu_read_unlock();
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("id %llu, item_ptr %p\n",
+			  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = pre_delete(item_ptr, peb_id);
+		if (err == -ENODATA) {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stop pre_delete: id %llu, item_ptr %p\n",
+				  (u64)iter.index, item_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_pre_delete;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to apply action: "
+				  "id %llu, err %d\n",
+				  (u64)iter.index,  err);
+			goto finish_pre_delete;
+		}
+
+		rcu_read_lock();
+
+		spin_lock(&array->lock);
+	}
+	spin_unlock(&array->lock);
+
+	rcu_read_unlock();
+
+finish_pre_delete:
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to apply action for all items: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	return err;
+}
+
+/*
  * ssdfs_sequence_array_apply_for_all() - apply action for all items
  * @array: pointer on sequence array object
  * @apply_action: pointer on method that needs to be applied
  *
- * This method tries to apply some action on all items..
+ * This method tries to apply some action on all items.
  *
  * RETURN:
  * [success]
