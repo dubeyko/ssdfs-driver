@@ -871,12 +871,13 @@ ssdfs_sequence_array_change_all_tagged_states(struct ssdfs_sequence_array *ptr,
 
 		rcu_read_lock();
 
+		spin_lock(&ptr->lock);
+
 		if (err == -ENOENT) {
 			err = 0;
 			continue;
 		}
 
-		spin_lock(&ptr->lock);
 		if (new_tag >= SSDFS_SEQUENCE_MAX_TAGS)
 			radix_tree_tag_clear(&ptr->map, iter.index, tag);
 		else
