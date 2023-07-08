@@ -4048,6 +4048,7 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 	u32 partial_log_pages;
 	u32 log_pages;
 	u32 log_bytes;
+	u64 byte_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4061,6 +4062,64 @@ int ssdfs_peb_check_full_log_end(struct ssdfs_fs_info *fsi,
 		  pebi->pebc->peb_index,
 		  footer_page);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!fsi->devops->can_write_page) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("can_write_page is not supported\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EOPNOTSUPP;
+	}
+
+	byte_offset = pebi->peb_id * fsi->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (byte_offset > div_u64(ULLONG_MAX, fsi->pagesize)) {
+		SSDFS_ERR("byte_offset value %llu is too big\n",
+			  byte_offset);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	byte_offset *= fsi->pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if ((u64)footer_page > div_u64(ULLONG_MAX, fsi->pagesize)) {
+		SSDFS_ERR("footer_page value %d is too big\n",
+			  footer_page);
+		return -ERANGE;
+	}
+
+	if (byte_offset > (ULLONG_MAX - ((u64)footer_page * fsi->pagesize))) {
+		SSDFS_ERR("byte_offset value %llu is too big\n",
+			  byte_offset);
+		return -ERANGE;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	byte_offset += (u64)footer_page * fsi->pagesize;
+
+	err = fsi->devops->can_write_page(fsi->sb, byte_offset, true);
+	if (err) {
+		err = 0;
+		/* continue logic */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("page %d can't be written: err %d\n",
+			  footer_page, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("page %d is empty\n",
+			  footer_page);
+		SSDFS_DBG("unable to read footer: "
+			  "seg %llu, peb %llu, footer_page %u, "
+			  "err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  footer_page,
+			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
 
 	err = __ssdfs_peb_read_log_footer(fsi, pebi, footer_page, &log_bytes);
 	if (err == -ENODATA) {
@@ -4347,23 +4406,38 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	BUG_ON(cur_page >= U32_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_peb_read_log_header(fsi, pebi, cur_page,
-					&log_pages, &log_bytes);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read log header: "
-			  "seg %llu, peb %llu, cur_page %llu, "
-			  "err %d\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id,
-			  cur_page,
-			  err);
-		return err;
-	}
+	if (cur_page > full_log_pages) {
+		cur_page /= full_log_pages;
+		cur_page *= full_log_pages;
+
+		err = ssdfs_peb_read_log_header(fsi, pebi, cur_page,
+						&log_pages, &log_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read log header: "
+				  "seg %llu, peb %llu, cur_page %llu, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  cur_page,
+				  err);
+			return err;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(log_pages == 0);
-	BUG_ON(log_pages >= U32_MAX);
+		BUG_ON(log_pages == 0);
+		BUG_ON(log_pages >= U32_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
+	} else
+		cur_page = 0;
+
+	if (log_bytes == 0 || log_bytes >= U32_MAX) {
+		SSDFS_ERR("invalid log_bytes: "
+			  "seg %llu, peb_index %u, log_bytes %u\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->pebc->peb_index,
+			  log_bytes);
+		return -ERANGE;
+	}
 
 	if (full_log_pages <= (log_bytes >> fsi->log_pagesize)) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4403,6 +4477,8 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 		return 0;
 	}
+
+	high_page = (zone_wp - offset) >> PAGE_SHIFT;
 
 	err = ssdfs_peb_find_last_partial_log(fsi, pebi, high_page);
 	if (err == -EOPNOTSUPP) {
@@ -5158,6 +5234,7 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 	size_t hdr_buf_size = sizeof(struct ssdfs_segment_header);
 	u32 byte_offset, page_offset;
 	unsigned long last_page_idx;
+	u32 calculated_bytes;
 	int i;
 	int err = 0;
 
@@ -5347,6 +5424,16 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 				SSDFS_DBG("log_bytes %u\n", env->log_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+				calculated_bytes =
+					env->log_bytes + fsi->pagesize - 1;
+
+				i = *new_log_start_page;
+				i -= calculated_bytes / fsi->pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG_ON(i < 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 				continue;
 			} else if (flags & SSDFS_LOG_HAS_FOOTER) {
 				/* last partial log */
@@ -5466,6 +5553,15 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log_bytes %u\n", env->log_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			calculated_bytes = env->log_bytes + fsi->pagesize - 1;
+
+			i = *new_log_start_page;
+			i -= calculated_bytes / fsi->pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(i < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			continue;

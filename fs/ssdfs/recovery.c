@@ -1556,38 +1556,81 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		return 0;
 	}
 
-	cur_off = high_off - 1;
+	if (fsi->is_zns_device) {
+		loff_t offset;
+		u64 zone_wp;
 
-	do {
-		u32 diff_pages;
+		offset = (loff_t)peb * fsi->zone_size;
 
-		checking_page.leb_id = leb;
-		checking_page.peb_id = peb;
-		checking_page.page_offset = cur_off;
-		checking_page.pages_count = 1;
+		zone_wp = ssdfs_zns_zone_write_pointer(fsi->sb, offset);
 
-		err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
-		if (err == -EIO) {
-			/* correct low bound */
-			err = 0;
-			low_off = cur_off;
-		} else if (err) {
-			SSDFS_ERR("fail to check for write PEB %llu\n",
-				  peb);
-			return err;
+		if (zone_wp >= U64_MAX) {
+			cur_off = fsi->zone_capacity;
 		} else {
-			/* correct upper bound */
-			high_off = cur_off;
+			cur_off = (zone_wp - offset) >> PAGE_SHIFT;
 		}
 
-		diff_pages = (high_off - low_off) / 2;
-		cur_off = low_off + diff_pages;
-	} while (cur_off > low_off && cur_off < high_off);
+		low_off = cur_off - log_pages;
+
+		for (cur_off--; cur_off >= low_off; cur_off--) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("peb %llu, pages_per_peb %llu, "
+				  "offset %llu, zone_wp %llu, "
+				  "log_pages %u, cur_off %u\n",
+				  peb, pages_per_peb,
+				  offset, zone_wp,
+				  log_pages, cur_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			checking_page.leb_id = leb;
+			checking_page.peb_id = peb;
+			checking_page.page_offset = cur_off;
+			checking_page.pages_count = 1;
+
+			err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+			if (err == -EIO) {
+				/* log footer has been found */
+				break;
+			} else if (err) {
+				SSDFS_ERR("fail to check for write PEB %llu\n",
+					  peb);
+				return err;
+			}
+		}
+	} else {
+		cur_off = high_off - 1;
+
+		do {
+			u32 diff_pages;
+
+			checking_page.leb_id = leb;
+			checking_page.peb_id = peb;
+			checking_page.page_offset = cur_off;
+			checking_page.pages_count = 1;
+
+			err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+			if (err == -EIO) {
+				/* correct low bound */
+				err = 0;
+				low_off = cur_off;
+			} else if (err) {
+				SSDFS_ERR("fail to check for write PEB %llu\n",
+					  peb);
+				return err;
+			} else {
+				/* correct upper bound */
+				high_off = cur_off;
+			}
+
+			diff_pages = (high_off - low_off) / 2;
+			cur_off = low_off + diff_pages;
+		} while (cur_off > low_off && cur_off < high_off);
+	}
 
 	peb_pages_off = cur_off % (u32)pages_per_peb;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(peb_pages_off > U16_MAX);
+	BUG_ON(peb_pages_off >= U32_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	found_log_off = cur_off;
