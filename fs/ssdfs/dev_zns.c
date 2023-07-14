@@ -135,6 +135,19 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 		  atomic_read(&fsi->open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
+				zone_sector, zone_size, GFP_NOFS);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to open zone: "
+			  "zone_sector %llu, zone_size %llu, "
+			  "open_zones %u, max_open_zones %u, "
+			  "err %d\n",
+			  zone_sector, zone_size,
+			  open_zones, fsi->max_open_zones,
+			  err);
+		return err;
+	}
+
 	open_zones = atomic_inc_return(&fsi->open_zones);
 	if (open_zones > fsi->max_open_zones) {
 		atomic_dec(&fsi->open_zones);
@@ -148,19 +161,6 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 	SSDFS_DBG("AFTER: open_zones %d\n",
 		   atomic_read(&fsi->open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
-				zone_sector, zone_size, GFP_NOFS);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to open zone: "
-			  "zone_sector %llu, zone_size %llu, "
-			  "open_zones %u, max_open_zones %u, "
-			  "err %d\n",
-			  zone_sector, zone_size,
-			  open_zones, fsi->max_open_zones,
-			  err);
-		return err;
-	}
 
 	return 0;
 }

@@ -1365,6 +1365,7 @@ static int ssdfs_move_on_first_peb_next_sb_seg(struct super_block *sb,
 	u64 seg_id;
 	struct ssdfs_maptbl_peb_relation pebr;
 	u8 peb_type = SSDFS_MAPTBL_SBSEG_PEB_TYPE;
+	loff_t offset;
 	struct completion *end = NULL;
 	int err = 0;
 
@@ -1515,6 +1516,19 @@ static int ssdfs_move_on_first_peb_next_sb_seg(struct super_block *sb,
 		  (*sb_lebs)[SSDFS_PREV_SB_SEG][sb_seg_type],
 		  (*sb_pebs)[SSDFS_PREV_SB_SEG][sb_seg_type]);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->is_zns_device) {
+		cur_peb = (*sb_pebs)[SSDFS_CUR_SB_SEG][sb_seg_type];
+		offset = cur_peb * fsi->erasesize;
+
+		err = fsi->devops->open_zone(fsi->sb, offset);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to open zone: "
+				  "offset %llu, err %d\n",
+				  offset, err);
+			return err;
+		}
+	}
 
 finish_move_sb_seg:
 	return err;

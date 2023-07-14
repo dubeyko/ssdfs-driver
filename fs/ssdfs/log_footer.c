@@ -786,6 +786,12 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 
 	spin_unlock(&fsi->volume_state_lock);
 
+	if (atomic_read(&fsi->open_zones) < 0) {
+		SSDFS_ERR("invalid open_zones %d\n",
+			  atomic_read(&fsi->open_zones));
+		return -ERANGE;
+	}
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("open_zones %d\n",
 		  atomic_read(&fsi->open_zones));
