@@ -3680,7 +3680,19 @@ int ssdfs_shextree_node_find_range(struct ssdfs_btree_node *node,
 						start_hash,
 						end_hash,
 						search);
-	if (err)
+	if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to extract range: "
+			  "node (start_hash %llx, end_hash %llx), "
+			  "request (start_hash %llx, end_hash %llx), "
+			  "err %d\n",
+			  start_hash, end_hash,
+			  search->request.start.hash,
+			  search->request.end.hash,
+			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err)
 		return err;
 
 	err = ssdfs_shextree_node_find_lookup_index(node, search,

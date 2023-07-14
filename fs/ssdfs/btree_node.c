@@ -10284,6 +10284,48 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 		  search->node.child);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (items_count == 0) {
+		search->result.state =
+			SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
+
+		search->result.err = -ENODATA;
+		search->result.start_index = 0;
+		search->result.count = search->request.count;
+		search->result.search_cno =
+			ssdfs_current_cno(node->tree->fsi->sb);
+
+		switch (search->request.type) {
+		case SSDFS_BTREE_SEARCH_ADD_ITEM:
+		case SSDFS_BTREE_SEARCH_ADD_RANGE:
+		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
+			/* do nothing */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(search->result.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			search->result.buf_state =
+				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+			search->result.buf = NULL;
+			search->result.buf_size = 0;
+			search->result.items_in_buffer = 0;
+			break;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("search->result.start_index %u, "
+			  "search->result.state %#x, "
+			  "search->result.err %d\n",
+			  search->result.start_index,
+			  search->result.state,
+			  search->result.err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		return -ENODATA;
+	}
+
 	vacant_items = items_capacity - items_count;
 	have_enough_space = search->request.count <= vacant_items;
 
@@ -10409,48 +10451,6 @@ int ssdfs_btree_node_check_hash_range(struct ssdfs_btree_node *node,
 			  search->request.end.hash,
 			  start_hash, end_hash);
 		return -ERANGE;
-	}
-
-	if (items_count == 0) {
-		search->result.state =
-			SSDFS_BTREE_SEARCH_OUT_OF_RANGE;
-
-		search->result.err = -ENODATA;
-		search->result.start_index = 0;
-		search->result.count = search->request.count;
-		search->result.search_cno =
-			ssdfs_current_cno(node->tree->fsi->sb);
-
-		switch (search->request.type) {
-		case SSDFS_BTREE_SEARCH_ADD_ITEM:
-		case SSDFS_BTREE_SEARCH_ADD_RANGE:
-		case SSDFS_BTREE_SEARCH_CHANGE_ITEM:
-			/* do nothing */
-			break;
-
-		default:
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			search->result.buf_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-			search->result.buf = NULL;
-			search->result.buf_size = 0;
-			search->result.items_in_buffer = 0;
-			break;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("search->result.start_index %u, "
-			  "search->result.state %#x, "
-			  "search->result.err %d\n",
-			  search->result.start_index,
-			  search->result.state,
-			  search->result.err);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		return -ENODATA;
 	}
 
 	return 0;

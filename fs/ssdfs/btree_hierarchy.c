@@ -2768,7 +2768,7 @@ bool need_update_parent_index_area(u64 start_hash,
 		break;
 
 	default:
-		if (start_hash < child_start_hash)
+		if (start_hash <= child_start_hash)
 			need_update = true;
 		else
 			need_update = false;

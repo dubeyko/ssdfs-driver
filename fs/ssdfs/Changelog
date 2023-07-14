@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.68 [July 14, 2023]
+    (*) Fix bugs in logic of adding new items in b-tree.
+
 v.4.67 [July 14, 2023]
     (*) Fix issue with open zones number accounting.
 
