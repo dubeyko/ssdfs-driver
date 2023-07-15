@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.70 [July 14, 2023]
+    (*) Fix bugs in logic of finding last partial log.
+
 v.4.69 [July 14, 2023]
     (*) Introduce smart folio concept.
 
