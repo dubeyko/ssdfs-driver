@@ -64,12 +64,15 @@
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_allocated_pages;
+atomic64_t ssdfs_allocated_folios;
 atomic64_t ssdfs_memory_leaks;
 atomic64_t ssdfs_super_page_leaks;
+atomic64_t ssdfs_super_folio_leaks;
 atomic64_t ssdfs_super_memory_leaks;
 atomic64_t ssdfs_super_cache_leaks;
 
 atomic64_t ssdfs_locked_pages;
+atomic64_t ssdfs_locked_folios;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 /*
@@ -94,6 +97,7 @@ void ssdfs_super_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_super_page_leaks, 0);
+	atomic64_set(&ssdfs_super_folio_leaks, 0);
 	atomic64_set(&ssdfs_super_memory_leaks, 0);
 	atomic64_set(&ssdfs_super_cache_leaks, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -106,6 +110,12 @@ void ssdfs_super_check_memory_leaks(void)
 		SSDFS_ERR("SUPER: "
 			  "memory leaks include %lld pages\n",
 			  atomic64_read(&ssdfs_super_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_super_folio_leaks) != 0) {
+		SSDFS_ERR("SUPER: "
+			  "memory leaks include %lld folios\n",
+			  atomic64_read(&ssdfs_super_folio_leaks));
 	}
 
 	if (atomic64_read(&ssdfs_super_memory_leaks) != 0) {
@@ -2760,10 +2770,28 @@ static void ssdfs_check_memory_page_locks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+static void ssdfs_memory_folio_locks_checker_init(void)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&ssdfs_locked_folios, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static void ssdfs_check_memory_folio_locks(void)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&ssdfs_locked_folios) != 0) {
+		SSDFS_WARN("Lock keeps %lld memory folios\n",
+			   atomic64_read(&ssdfs_locked_folios));
+	}
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
 static void ssdfs_memory_leaks_checker_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_allocated_pages, 0);
+	atomic64_set(&ssdfs_allocated_folios, 0);
 	atomic64_set(&ssdfs_memory_leaks, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
@@ -2929,6 +2957,11 @@ static void ssdfs_check_memory_leaks(void)
 			  atomic64_read(&ssdfs_allocated_pages));
 	}
 
+	if (atomic64_read(&ssdfs_allocated_folios) != 0) {
+		SSDFS_ERR("Memory leaks include %lld folios\n",
+			  atomic64_read(&ssdfs_allocated_folios));
+	}
+
 	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
 		SSDFS_ERR("Memory allocator suffers from %lld leaks\n",
 			  atomic64_read(&ssdfs_memory_leaks));
@@ -2936,6 +2969,11 @@ static void ssdfs_check_memory_leaks(void)
 #else
 	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
 		SSDFS_WARN("Memory leaks include %lld pages\n",
+			   atomic64_read(&ssdfs_allocated_pages));
+	}
+
+	if (atomic64_read(&ssdfs_allocated_folios) != 0) {
+		SSDFS_WARN("Memory leaks include %lld folios\n",
 			   atomic64_read(&ssdfs_allocated_pages));
 	}
 
@@ -2973,6 +3011,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memory_page_locks_checker_init();
+	ssdfs_memory_folio_locks_checker_init();
 	ssdfs_memory_leaks_checker_init();
 
 	fs_info = ssdfs_super_kzalloc(sizeof(*fs_info), GFP_KERNEL);
@@ -3456,6 +3495,7 @@ free_erase_page:
 	rcu_barrier();
 
 	ssdfs_check_memory_page_locks();
+	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();
 	return err;
 }
@@ -3837,6 +3877,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	rcu_barrier();
 
 	ssdfs_check_memory_page_locks();
+	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL

@@ -55,6 +55,7 @@
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 atomic64_t ssdfs_read_page_leaks;
+atomic64_t ssdfs_read_folio_leaks;
 atomic64_t ssdfs_read_memory_leaks;
 atomic64_t ssdfs_read_cache_leaks;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -81,6 +82,7 @@ void ssdfs_read_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ssdfs_read_page_leaks, 0);
+	atomic64_set(&ssdfs_read_folio_leaks, 0);
 	atomic64_set(&ssdfs_read_memory_leaks, 0);
 	atomic64_set(&ssdfs_read_cache_leaks, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -93,6 +95,12 @@ void ssdfs_read_check_memory_leaks(void)
 		SSDFS_ERR("READ THREAD: "
 			  "memory leaks include %lld pages\n",
 			  atomic64_read(&ssdfs_read_page_leaks));
+	}
+
+	if (atomic64_read(&ssdfs_read_folio_leaks) != 0) {
+		SSDFS_ERR("READ THREAD: "
+			  "memory leaks include %lld folios\n",
+			  atomic64_read(&ssdfs_read_folio_leaks));
 	}
 
 	if (atomic64_read(&ssdfs_read_memory_leaks) != 0) {
