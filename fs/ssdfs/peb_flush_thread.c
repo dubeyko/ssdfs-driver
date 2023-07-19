@@ -9492,17 +9492,6 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 		goto fail_store_bmap_fragment;
 	}
 
-	if ((desc->invalid_blks + desc->metadata_blks) > pages_per_peb) {
-		SSDFS_ERR("invalid descriptor state: "
-			  "invalid_blks %u, metadata_blks %u, "
-			  "pages_per_peb %u\n",
-			  desc->invalid_blks,
-			  desc->metadata_blks,
-			  pages_per_peb);
-		err = -ERANGE;
-		goto fail_store_bmap_fragment;
-	}
-
 	frag_hdr->last_free_blk = cpu_to_le32(desc->last_free_blk);
 	frag_hdr->metadata_blks = cpu_to_le32(desc->metadata_blks);
 	frag_hdr->invalid_blks = cpu_to_le32(desc->invalid_blks);
@@ -13749,11 +13738,24 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	data_pages = used_pages + invalid_pages;
 
 	if (data_pages == 0) {
-		SSDFS_ERR("invalid data pages count: "
-			  "used_pages %d, invalid_pages %d, "
-			  "data_pages %u\n",
-			  used_pages, invalid_pages, data_pages);
-		return -ERANGE;
+		bool has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
+
+		if (!has_dirty_pages) {
+			data_pages = pages_per_peb;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("correct data pages count: "
+				  "used_pages %d, invalid_pages %d, "
+				  "data_pages %u, has_dirty_pages %#x\n",
+				  used_pages, invalid_pages,
+				  data_pages, has_dirty_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else {
+			SSDFS_ERR("invalid data pages count: "
+				  "used_pages %d, invalid_pages %d, "
+				  "data_pages %u\n",
+				  used_pages, invalid_pages, data_pages);
+			return -ERANGE;
+		}
 	}
 
 	reserved_pages = ssdfs_peb_calculate_reserved_metapages(page_size,

@@ -1176,12 +1176,6 @@ static
 int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 				     int selected_peb)
 {
-	struct ssdfs_segment_info *si;
-	struct ssdfs_blk2off_table *blk2off_table;
-	struct ssdfs_segment_request *req;
-	int command;
-	int err;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
@@ -1194,76 +1188,7 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
 		  selected_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	si = pebc->parent_si;
-	blk2off_table = si->blk2off_table;
-
-	command = SSDFS_READ_SRC_LAST_LOG_FOOTER;
-
-	req = ssdfs_request_alloc();
-	if (IS_ERR_OR_NULL(req)) {
-		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
-		req = NULL;
-		SSDFS_ERR("fail to allocate segment request: err %d\n",
-			  err);
-		goto fail_create_dirty_peb_obj;
-	}
-
-	ssdfs_request_init(req);
-	/* read thread puts request */
-	ssdfs_get_request(req);
-	/* it needs to be sure that request will be not freed */
-	ssdfs_get_request(req);
-	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
-					    command,
-					    SSDFS_REQ_ASYNC,
-					    req);
-	ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
-	ssdfs_peb_read_request_cno(pebc);
-	ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
-
-	err = ssdfs_peb_start_thread(pebc, SSDFS_PEB_READ_THREAD);
-	if (unlikely(err)) {
-		if (err == -EINTR) {
-			/*
-			 * Ignore this error.
-			 */
-		} else {
-			SSDFS_ERR("fail to start read thread: "
-				  "peb_index %u, err %d\n",
-				  pebc->peb_index, err);
-		}
-
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
-		goto fail_create_dirty_peb_obj;
-	}
-
-	err = SSDFS_WAIT_COMPLETION(&req->result.wait);
-	if (unlikely(err)) {
-		SSDFS_ERR("read thread fails: err %d\n",
-			  err);
-		goto stop_read_thread;
-	}
-
-	ssdfs_put_request(req);
-
-	/*
-	 * Wake up read request if it waits zeroing
-	 * of reference counter.
-	 */
-	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
-
-	atomic_set(&blk2off_table->peb[pebc->peb_index].state,
-		   SSDFS_BLK2OFF_TABLE_COMPLETE_INIT);
-
-	return 0;
-
-stop_read_thread:
-	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
-	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
-	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
-
-fail_create_dirty_peb_obj:
-	return err;
+	return ssdfs_create_used_peb_container(pebc, selected_peb);
 }
 
 /*

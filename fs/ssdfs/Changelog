@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.71 [July 19, 2023]
+    (*) Introduce block bitmap's logic optimization for
+        invalidation use-case.
+
 v.4.70 [July 14, 2023]
     (*) Fix bugs in logic of finding last partial log.
 

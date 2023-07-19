@@ -464,7 +464,10 @@ void ssdfs_destroy_migrating_blocks_array(struct ssdfs_blk2off_table *table)
 	BUG_ON(!table);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	items_count = table->last_allocated_blk + 1;
+	if (table->last_allocated_blk >= U16_MAX)
+		items_count = 0;
+	else
+		items_count = table->last_allocated_blk + 1;
 
 	for (i = 0; i < items_count; i++) {
 		kaddr = ssdfs_dynamic_array_get_locked(&table->migrating_blks,
