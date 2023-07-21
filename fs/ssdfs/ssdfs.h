@@ -280,6 +280,9 @@ void ssdfs_shrink_seg_obj_cache(void);
 void ssdfs_destroy_seg_obj_cache(void);
 int ssdfs_segment_get_used_data_pages(struct ssdfs_segment_info *si);
 
+/* super.c */
+void ssdfs_destroy_btree_of_inode(struct inode *inode);
+
 /* sysfs.c */
 int ssdfs_sysfs_init(void);
 void ssdfs_sysfs_exit(void);

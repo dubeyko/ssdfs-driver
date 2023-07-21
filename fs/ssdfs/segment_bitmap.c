@@ -921,8 +921,8 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 		truncate_inode_pages(&fsi->segbmap->pages, 0);
 
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
-
 	ssdfs_seg_bmap_kfree(fsi->segbmap->desc_array);
+	ssdfs_destroy_btree_of_inode(fsi->segbmap_inode);
 
 	up_write(&fsi->segbmap->resize_lock);
 	up_write(&fsi->segbmap->search_lock);

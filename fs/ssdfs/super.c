@@ -191,6 +191,40 @@ struct inode *ssdfs_alloc_inode(struct super_block *sb)
 	return &ii->vfs_inode;
 }
 
+void ssdfs_destroy_btree_of_inode(struct inode *inode)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu\n", inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (ii->extents_tree) {
+		ssdfs_extents_tree_destroy(ii);
+		ii->extents_tree = NULL;
+	}
+
+	if (ii->dentries_tree) {
+		ssdfs_dentries_tree_destroy(ii);
+		ii->dentries_tree = NULL;
+	}
+
+	if (ii->xattrs_tree) {
+		ssdfs_xattrs_tree_destroy(ii);
+		ii->xattrs_tree = NULL;
+	}
+
+	if (ii->inline_file) {
+		ssdfs_destroy_inline_file_buffer(inode);
+		ii->inline_file = NULL;
+	}
+
+	if (inode->i_ino == SSDFS_SEG_BMAP_INO ||
+	    inode->i_ino == SSDFS_SEG_TREE_INO) {
+		ssdfs_super_cache_leaks_decrement(ii);
+	}
+}
+
 static void ssdfs_i_callback(struct rcu_head *head)
 {
 	struct inode *inode = container_of(head, struct inode, i_rcu);
@@ -200,19 +234,18 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	SSDFS_DBG("ino %lu\n", inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (ii->extents_tree)
-		ssdfs_extents_tree_destroy(ii);
+	ssdfs_destroy_btree_of_inode(inode);
 
-	if (ii->dentries_tree)
-		ssdfs_dentries_tree_destroy(ii);
+	if (inode->i_ino == SSDFS_SEG_BMAP_INO ||
+	    inode->i_ino == SSDFS_SEG_TREE_INO) {
+		/*
+		 * Do nothing.
+		 * The ssdfs_destroy_btree_of_inode() did it already.
+		 */
+	} else {
+		ssdfs_super_cache_leaks_decrement(ii);
+	}
 
-	if (ii->xattrs_tree)
-		ssdfs_xattrs_tree_destroy(ii);
-
-	if (ii->inline_file)
-		ssdfs_destroy_inline_file_buffer(inode);
-
-	ssdfs_super_cache_leaks_decrement(ii);
 	kmem_cache_free(ssdfs_inode_cachep, ii);
 }
 
@@ -3839,33 +3872,40 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("SSDFS_UNKNOWN_GLOBAL_FS_STATE\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
+	fsi->devops->sync(sb);
+
+	/*
+	 * Make sure all delayed rcu free inodes are flushed.
+	 */
+	rcu_barrier();
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("All delayed rcu free inodes has been flushed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("Starting destroy the metadata structures...\n");
 #else
 	SSDFS_DBG("Starting destroy the metadata structures...\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_super_pagevec_release(&payload.maptbl_cache.pvec);
-	fsi->devops->sync(sb);
 	ssdfs_snapshot_subsystem_destroy(fsi);
 	ssdfs_invextree_destroy(fsi);
 	ssdfs_shextree_destroy(fsi);
 	ssdfs_inodes_btree_destroy(fsi);
 	ssdfs_shared_dict_btree_destroy(fsi);
 	ssdfs_segbmap_destroy(fsi);
+	ssdfs_maptbl_destroy(fsi);
+	ssdfs_maptbl_cache_destroy(&fsi->maptbl_cache);
 	ssdfs_destroy_all_curent_segments(fsi);
 	ssdfs_segment_tree_destroy(fsi);
 	ssdfs_current_segment_array_destroy(fsi);
-	ssdfs_maptbl_destroy(fsi);
 	ssdfs_sysfs_delete_device_group(fsi);
-
-	SSDFS_INFO("%s has been unmounted from device %s\n",
-		   SSDFS_VERSION, fsi->devops->device_name(sb));
 
 	if (fsi->erase_page)
 		ssdfs_super_free_page(fsi->erase_page);
 
-	ssdfs_maptbl_cache_destroy(&fsi->maptbl_cache);
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
 
@@ -3874,7 +3914,8 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_super_kfree(fsi);
 	sb->s_fs_info = NULL;
 
-	rcu_barrier();
+	SSDFS_INFO("%s has been unmounted from device %s\n",
+		   SSDFS_VERSION, fsi->devops->device_name(sb));
 
 	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_folio_locks();

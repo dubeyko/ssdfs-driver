@@ -477,6 +477,8 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 
 	inode_lock(fsi->segs_tree_inode);
 
+	ssdfs_destroy_btree_of_inode(fsi->segs_tree_inode);
+
 	ssdfs_segment_tree_destroy_segment_objects(fsi);
 
 	if (fsi->segs_tree->pages.nrpages != 0)
