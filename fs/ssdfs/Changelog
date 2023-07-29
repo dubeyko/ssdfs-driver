@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.73 [July 28, 2023]
+    (*) Rework dynamic array on using memory folio.
+
 v.4.72 [July 21, 2023]
     (*) Fix use-after-free issue during unmount operation.
 

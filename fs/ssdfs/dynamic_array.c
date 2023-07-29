@@ -21,7 +21,7 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
+#include "folio_vector.h"
 #include "ssdfs.h"
 #include "dynamic_array.h"
 
@@ -100,9 +100,9 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 				u32 capacity, size_t item_size,
 				u8 alloc_pattern)
 {
-	struct page *page;
-	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
-	u32 pages_count;
+	struct folio *folio;
+	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
+	u32 folios_count;
 	u64 bytes_count;
 	int err;
 
@@ -131,15 +131,21 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 	array->capacity = capacity;
 	array->items_count = 0;
 	array->item_size = item_size;
-	array->items_per_mem_page = PAGE_SIZE / item_size;
+	array->items_per_folio = PAGE_SIZE / item_size;
 
-	pages_count = capacity + array->items_per_mem_page - 1;
-	pages_count /= array->items_per_mem_page;
+	folios_count = capacity + array->items_per_folio - 1;
+	folios_count /= array->items_per_folio;
 
-	if (pages_count == 0)
-		pages_count = 1;
+	if (folios_count == 0)
+		folios_count = 1;
 
-	bytes_count = (u64)capacity * item_size;
+	if (folios_count > 1) {
+		bytes_count = (u64)folios_count * PAGE_SIZE;
+	} else {
+		bytes_count = min_t(u64,
+				    (u64)capacity * item_size,
+				    (u64)array->items_per_folio * item_size);
+	}
 
 	if (bytes_count > max_threshold) {
 		SSDFS_ERR("invalid request: "
@@ -152,47 +158,49 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 
 	if (bytes_count > PAGE_SIZE) {
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(pages_count >= ssdfs_page_vector_max_threshold());
+		BUG_ON(folios_count >= ssdfs_page_vector_max_threshold());
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_page_vector_create(&array->pvec, pages_count);
+		err = ssdfs_folio_vector_create(&array->batch,
+						get_order(PAGE_SIZE),
+						folios_count);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to create page vector: "
-				  "bytes_count %llu, pages_count %u, "
+			SSDFS_ERR("fail to create folio vector: "
+				  "bytes_count %llu, folios_count %u, "
 				  "err %d\n",
-				  bytes_count, pages_count, err);
+				  bytes_count, folios_count, err);
 			return err;
 		}
 
-		err = ssdfs_page_vector_init(&array->pvec);
+		err = ssdfs_folio_vector_init(&array->batch);
 		if (unlikely(err)) {
-			ssdfs_page_vector_destroy(&array->pvec);
-			SSDFS_ERR("fail to init page vector: "
-				  "bytes_count %llu, pages_count %u, "
+			ssdfs_folio_vector_destroy(&array->batch);
+			SSDFS_ERR("fail to init folio vector: "
+				  "bytes_count %llu, folios_count %u, "
 				  "err %d\n",
-				  bytes_count, pages_count, err);
+				  bytes_count, folios_count, err);
 			return err;
 		}
 
-		page = ssdfs_page_vector_allocate(&array->pvec);
-		if (IS_ERR_OR_NULL(page)) {
-			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-			SSDFS_ERR("unable to allocate page\n");
+		folio = ssdfs_folio_vector_allocate(&array->batch);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate folio\n");
 			return err;
 		}
 
-		ssdfs_lock_page(page);
-		ssdfs_memset_page(page, 0, PAGE_SIZE,
-				  array->alloc_pattern, PAGE_SIZE);
-		ssdfs_unlock_page(page);
+		ssdfs_folio_lock(folio);
+		__ssdfs_memset_folio(folio, 0, PAGE_SIZE,
+				     array->alloc_pattern, PAGE_SIZE);
+		ssdfs_folio_unlock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		array->bytes_count = PAGE_SIZE;
-		array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC;
+		array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC;
 	} else {
 		array->buf = ssdfs_dynamic_array_kzalloc(bytes_count,
 							 GFP_KERNEL);
@@ -228,9 +236,9 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		ssdfs_page_vector_release(&array->pvec);
-		ssdfs_page_vector_destroy(&array->pvec);
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
+		ssdfs_folio_vector_release(&array->batch);
+		ssdfs_folio_vector_destroy(&array->batch);
 		break;
 
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
@@ -246,9 +254,46 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
 	array->capacity = 0;
 	array->items_count = 0;
 	array->item_size = 0;
-	array->items_per_mem_page = 0;
+	array->items_per_folio = 0;
 	array->bytes_count = 0;
 	array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT;
+}
+
+/*
+ * SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET() - calculate item offset
+ * @array: pointer on dynamic array object
+ * @index: item index
+ */
+static inline
+u32 SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(struct ssdfs_dynamic_array *array,
+				    u32 index)
+{
+	u64 item_offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+
+	SSDFS_DBG("array %p, index %u, capacity %u, "
+		  "item_size %zu, bytes_count %u\n",
+		  array, index, array->capacity,
+		  array->item_size, array->bytes_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	item_offset = index / array->items_per_folio;
+
+	if (item_offset > 0)
+		item_offset <<= PAGE_SHIFT;
+
+	item_offset += (u64)array->item_size * (index % array->items_per_folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(item_offset >= U32_MAX);
+
+	SSDFS_DBG("index %u, item_offset %llu\n",
+		  index, item_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)item_offset;
 }
 
 /*
@@ -259,7 +304,7 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
  * This method tries to get pointer on item. If short buffer
  * (< 4K) represents dynamic array, then the logic is pretty
  * straitforward. Otherwise, memory page is locked. The release
- * method should be called to unlock memory page.
+ * method should be called to unlock memory folio.
  *
  * RETURN:
  * [success] - pointer on requested item.
@@ -272,12 +317,10 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
 void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 				     u32 index)
 {
-	struct page *page;
+	struct ssdfs_smart_folio folio;
 	void *ptr = NULL;
-	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
-	u64 item_offset = 0;
-	u64 page_index;
-	u32 page_off;
+	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
+	u32 item_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -290,7 +333,7 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
 		/* continue logic */
 		break;
@@ -324,12 +367,12 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 		return ERR_PTR(-ERANGE);
 	}
 
-	item_offset = (u64)array->item_size * index;
+	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
 
 	if (item_offset >= max_threshold) {
 		SSDFS_ERR("invalid item_offset: "
 			  "index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u, "
+			  "item_offset %u, bytes_count %u, "
 			  "max_threshold %llu\n",
 			  index, array->item_size,
 			  item_offset, array->bytes_count,
@@ -338,58 +381,98 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 	}
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		page_index = index / array->items_per_mem_page;
-		page_off = index % array->items_per_mem_page;
-		page_off *= array->item_size;
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
+		err = SSDFS_OFF2FOLIO(PAGE_SIZE, item_offset, &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare folio descriptor: "
+				  "err %d\n", err);
+			return ERR_PTR(err);
+		}
 
-		if (page_index >= ssdfs_page_vector_capacity(&array->pvec)) {
-			SSDFS_ERR("invalid page index: "
-				  "page_index %llu, item_offset %llu\n",
-				  page_index, item_offset);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (folio.desc.folio_index >=
+				ssdfs_folio_vector_capacity(&array->batch)) {
+			SSDFS_ERR("invalid folio index: "
+				  "folio_index %u, item_offset %u\n",
+				  folio.desc.folio_index, item_offset);
 			return ERR_PTR(-E2BIG);
 		}
 
-		while (page_index >= ssdfs_page_vector_count(&array->pvec)) {
-			page = ssdfs_page_vector_allocate(&array->pvec);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate page\n");
+		while (folio.desc.folio_index >=
+				ssdfs_folio_vector_count(&array->batch)) {
+			struct folio *temp;
+
+			temp = ssdfs_folio_vector_allocate(&array->batch);
+			if (IS_ERR_OR_NULL(temp)) {
+				err = (temp == NULL ?
+						-ENOMEM : PTR_ERR(temp));
+				SSDFS_ERR("unable to allocate folio\n");
 				return ERR_PTR(err);
 			}
 
-			ssdfs_lock_page(page);
-			ssdfs_memset_page(page, 0, PAGE_SIZE,
-					  array->alloc_pattern, PAGE_SIZE);
-			ssdfs_unlock_page(page);
+			ssdfs_folio_lock(temp);
+			__ssdfs_memset_folio(temp, 0, PAGE_SIZE,
+					   array->alloc_pattern, PAGE_SIZE);
+			ssdfs_folio_unlock(temp);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  temp, folio_ref_count(temp));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			array->bytes_count += PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("array %p, index %u, capacity %u, "
-					  "item_size %zu, bytes_count %u, "
-					  "index %u, item_offset %llu, "
-					  "page_index %llu, page_count %u\n",
-					  array, index, array->capacity,
-					  array->item_size, array->bytes_count,
-					  index, item_offset, page_index,
-					  ssdfs_page_vector_count(&array->pvec));
+				  "item_size %zu, bytes_count %u, "
+				  "index %u, item_offset %u, "
+				  "folio_index %u, folio_count %u\n",
+				  array, index, array->capacity,
+				  array->item_size, array->bytes_count,
+				  index, item_offset,
+				  folio.desc.folio_index,
+				  ssdfs_folio_vector_count(&array->batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		page = array->pvec.pages[page_index];
+		folio.ptr = array->batch.folios[folio.desc.folio_index];
 
-		ssdfs_lock_page(page);
-		ptr = kmap_local_page(page);
-		ptr = (u8 *)ptr + page_off;
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio.ptr);
+
+		SSDFS_DBG("index %u, block_size %u, offset %llu, "
+			  "folio_index %u, folio_offset %llu, "
+			  "page_in_folio %u, page_offset %u, "
+			  "offset_inside_page %u\n",
+			  index,
+			  folio.desc.block_size,
+			  folio.desc.offset,
+			  folio.desc.folio_index,
+			  folio.desc.folio_offset,
+			  folio.desc.page_in_folio,
+			  folio.desc.page_offset,
+			  folio.desc.offset_inside_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio.ptr);
+		ptr = kmap_local_folio(folio.ptr, 0);
+		ptr = (u8 *)ptr + folio.desc.offset_inside_page;
 		break;
 
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		if ((item_offset + array->item_size) > array->bytes_count) {
+			SSDFS_ERR("invalid item offset: "
+				  "item_offset %u, item_size %zu, "
+				  "bytes_count %u\n",
+				  item_offset,
+				  array->item_size,
+				  array->bytes_count);
+			return ERR_PTR(-ERANGE);
+		}
+
 		ptr = (u8 *)array->buf + item_offset;
 		break;
 
@@ -426,13 +509,13 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 					     u32 index, u32 *items_count)
 {
-	struct page *page;
+	struct ssdfs_smart_folio folio;
 	void *ptr = NULL;
-	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
-	u64 item_offset = 0;
-	u64 page_index;
-	u32 page_off;
-	u32 first_index_in_page;
+	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
+	u32 item_offset;
+	u32 first_index_in_folio;
+	u32 offset_inside_folio;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
@@ -446,7 +529,7 @@ void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 	*items_count = 0;
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
 		/* continue logic */
 		break;
@@ -488,12 +571,12 @@ void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 		return ERR_PTR(-ERANGE);
 	}
 
-	item_offset = (u64)array->item_size * index;
+	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
 
 	if (item_offset >= max_threshold) {
 		SSDFS_ERR("invalid item_offset: "
 			  "index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u, "
+			  "item_offset %u, bytes_count %u, "
 			  "max_threshold %llu\n",
 			  index, array->item_size,
 			  item_offset, array->bytes_count,
@@ -502,32 +585,56 @@ void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 	}
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		page_index = index / array->items_per_mem_page;
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
+		err = SSDFS_OFF2FOLIO(PAGE_SIZE, item_offset, &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare folio descriptor: "
+				  "err %d\n", err);
+			return ERR_PTR(err);
+		}
 
-		if (page_index >= ssdfs_page_vector_count(&array->pvec)) {
-			SSDFS_ERR("invalid page index: "
-				  "page_index %llu, item_offset %llu\n",
-				  page_index, item_offset);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (folio.desc.folio_index >=
+				ssdfs_folio_vector_count(&array->batch)) {
+			SSDFS_ERR("invalid folio index: "
+				  "folio_index %u, item_offset %u\n",
+				  folio.desc.folio_index, item_offset);
 			return ERR_PTR(-E2BIG);
 		}
 
-		page = array->pvec.pages[page_index];
+		folio.ptr = array->batch.folios[folio.desc.folio_index];
 
-		first_index_in_page = index % array->items_per_mem_page;
-		page_off = first_index_in_page * array->item_size;
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_lock_page(page);
-		ptr = kmap_local_page(page);
-		ptr = (u8 *)ptr + page_off;
+		first_index_in_folio = index % array->items_per_folio;
+		offset_inside_folio = first_index_in_folio * array->item_size;
+
+		ssdfs_folio_lock(folio.ptr);
+		ptr = kmap_local_folio(folio.ptr, 0);
+		ptr = (u8 *)ptr + offset_inside_folio;
 
 		*items_count = array->items_count - index;
 		*items_count = min_t(u32, *items_count,
-					array->items_per_mem_page -
-						first_index_in_page);
+					array->items_per_folio -
+						first_index_in_folio);
 		break;
 
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		if ((item_offset + array->item_size) > array->bytes_count) {
+			SSDFS_ERR("invalid item offset: "
+				  "item_offset %u, item_size %zu, "
+				  "bytes_count %u\n",
+				  item_offset,
+				  array->item_size,
+				  array->bytes_count);
+			return ERR_PTR(-ERANGE);
+		}
+
 		ptr = (u8 *)array->buf + item_offset;
 		*items_count = array->items_count - index;
 		break;
@@ -563,9 +670,9 @@ void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 				u32 index, void *ptr)
 {
-	struct page *page;
-	u64 item_offset = 0;
-	u64 page_index;
+	struct folio *folio;
+	u32 item_offset;
+	u64 folio_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array || !ptr);
@@ -577,7 +684,7 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 		/* continue logic */
 		break;
 
@@ -614,30 +721,34 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 		return -ERANGE;
 	}
 
-	item_offset = (u64)array->item_size * index;
+	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
 
 	if (item_offset >= array->bytes_count) {
 		SSDFS_ERR("invalid item_offset: "
 			  "index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u\n",
+			  "item_offset %u, bytes_count %u\n",
 			  index, array->item_size,
 			  item_offset, array->bytes_count);
 		return -E2BIG;
 	}
 
-	page_index = index / array->items_per_mem_page;
+	folio_index = index / array->items_per_folio;
 
-	if (page_index >= ssdfs_page_vector_count(&array->pvec)) {
-		SSDFS_ERR("invalid page index: "
-			  "page_index %llu, item_offset %llu\n",
-			  page_index, item_offset);
+	if (folio_index >= ssdfs_folio_vector_count(&array->batch)) {
+		SSDFS_ERR("invalid folio index: "
+			  "folio_index %llu, item_offset %u\n",
+			  folio_index, item_offset);
 		return -E2BIG;
 	}
 
-	page = array->pvec.pages[page_index];
+	folio = array->batch.folios[folio_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	kunmap_local(ptr);
-	ssdfs_unlock_page(page);
+	ssdfs_folio_unlock(folio);
 
 	return 0;
 }
@@ -661,12 +772,10 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 			    u32 index, void *item)
 {
-	struct page *page;
+	struct ssdfs_smart_folio folio;
 	void *kaddr = NULL;
-	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
-	u64 item_offset = 0;
-	u64 page_index;
-	u32 page_off;
+	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
+	u32 item_offset;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -679,7 +788,7 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
 		/* continue logic */
 		break;
@@ -713,12 +822,12 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 		return -ERANGE;
 	}
 
-	item_offset = (u64)array->item_size * index;
+	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
 
 	if (item_offset >= max_threshold) {
 		SSDFS_ERR("invalid item_offset: "
 			  "index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u, "
+			  "item_offset %u, bytes_count %u, "
 			  "max_threshold %llu\n",
 			  index, array->item_size,
 			  item_offset, array->bytes_count,
@@ -727,51 +836,92 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 	}
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		page_index = index / array->items_per_mem_page;
-		page_off = index % array->items_per_mem_page;;
-		page_off *= array->item_size;
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
+		err = SSDFS_OFF2FOLIO(PAGE_SIZE, item_offset, &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare folio descriptor: "
+				  "err %d\n", err);
+			return err;
+		}
 
-		if (page_index >= ssdfs_page_vector_capacity(&array->pvec)) {
-			SSDFS_ERR("invalid page index: "
-				  "page_index %llu, item_offset %llu\n",
-				  page_index, item_offset);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (folio.desc.folio_index >=
+				ssdfs_folio_vector_capacity(&array->batch)) {
+			SSDFS_ERR("invalid folio index: "
+				  "folio_index %u, item_offset %u\n",
+				  folio.desc.folio_index, item_offset);
 			return -E2BIG;
 		}
 
-		while (page_index >= ssdfs_page_vector_count(&array->pvec)) {
-			page = ssdfs_page_vector_allocate(&array->pvec);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate page\n");
+		while (folio.desc.folio_index >=
+				ssdfs_folio_vector_count(&array->batch)) {
+			struct folio *temp;
+
+			temp = ssdfs_folio_vector_allocate(&array->batch);
+			if (IS_ERR_OR_NULL(temp)) {
+				err = (temp == NULL ?
+						-ENOMEM : PTR_ERR(temp));
+				SSDFS_ERR("unable to allocate folio\n");
 				return err;
 			}
 
-			ssdfs_lock_page(page);
-			ssdfs_memset_page(page, 0, PAGE_SIZE,
-					  array->alloc_pattern, PAGE_SIZE);
-			ssdfs_unlock_page(page);
+			ssdfs_folio_lock(temp);
+			__ssdfs_memset_folio(temp, 0, PAGE_SIZE,
+					     array->alloc_pattern, PAGE_SIZE);
+			ssdfs_folio_unlock(temp);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  temp, folio_ref_count(temp));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			array->bytes_count += PAGE_SIZE;
 		}
 
-		page = array->pvec.pages[page_index];
+		folio.ptr = array->batch.folios[folio.desc.folio_index];
 
-		ssdfs_lock_page(page);
-		kaddr = kmap_local_page(page);
-		err = ssdfs_memcpy(kaddr, page_off, PAGE_SIZE,
-				   item, 0, array->item_size,
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio.ptr);
+
+		SSDFS_DBG("index %u, block_size %u, offset %llu, "
+			  "folio_index %u, folio_offset %llu, "
+			  "page_in_folio %u, page_offset %u, "
+			  "offset_inside_page %u\n",
+			  index,
+			  folio.desc.block_size,
+			  folio.desc.offset,
+			  folio.desc.folio_index,
+			  folio.desc.folio_offset,
+			  folio.desc.page_in_folio,
+			  folio.desc.page_offset,
+			  folio.desc.offset_inside_page);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio.ptr);
+		kaddr = kmap_local_folio(folio.ptr, 0);
+		err = ssdfs_memcpy(kaddr,
+				   folio.desc.offset_inside_page, PAGE_SIZE,
+				   item,
+				   0, array->item_size,
 				   array->item_size);
 		kunmap_local(kaddr);
-		ssdfs_unlock_page(page);
+		ssdfs_folio_unlock(folio.ptr);
 		break;
 
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
+		if ((item_offset + array->item_size) > array->bytes_count) {
+			SSDFS_ERR("invalid item offset: "
+				  "item_offset %u, item_size %zu, "
+				  "bytes_count %u\n",
+				  item_offset,
+				  array->item_size,
+				  array->bytes_count);
+			return -ERANGE;
+		}
+
 		err = ssdfs_memcpy(array->buf, item_offset, array->bytes_count,
 				   item, 0, array->item_size,
 				   array->item_size);
@@ -809,9 +959,9 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 				     void *copy_buf, size_t buf_size)
 {
-	struct page *page;
+	struct folio *folio;
 	u32 copied_bytes = 0;
-	u32 pages_count;
+	u32 folios_count;
 	size_t bytes_count;
 	u32 items_count;
 	int i;
@@ -829,7 +979,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
 		/* continue logic */
 		break;
@@ -846,41 +996,41 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 	}
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		pages_count = ssdfs_page_vector_count(&array->pvec);
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
+		folios_count = ssdfs_folio_vector_count(&array->batch);
 
-		for (i = 0; i < pages_count; i++) {
+		for (i = 0; i < folios_count; i++) {
 			if (copied_bytes >= buf_size) {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("stop copy: "
 					  "copied_bytes %u, "
 					  "buf_size %zu, "
 					  "array->bytes_count %u, "
-					  "pages_count %u\n",
+					  "folios_count %u\n",
 					  copied_bytes,
 					  buf_size,
 					  array->bytes_count,
-					  pages_count);
+					  folios_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 				break;
 			}
 
-			page = array->pvec.pages[i];
+			folio = array->batch.folios[i];
 
-			if (!page) {
+			if (!folio) {
 				err = -ERANGE;
 				SSDFS_ERR("fail to copy content: "
 					  "copied_bytes %u, "
 					  "array->bytes_count %u, "
-					  "page_index %d, "
-					  "pages_count %u\n",
+					  "folio_index %d, "
+					  "folios_count %u\n",
 					  copied_bytes,
 					  array->bytes_count,
-					  i, pages_count);
+					  i, folios_count);
 				goto finish_copy_content;
 			}
 
-			items_count = i * array->items_per_mem_page;
+			items_count = i * array->items_per_folio;
 
 			if (items_count >= array->items_count) {
 				SSDFS_DBG("stop copy: "
@@ -893,29 +1043,29 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 
 			items_count = min_t(u32,
 					    array->items_count - items_count,
-					    array->items_per_mem_page);
+					    array->items_per_folio);
 
 			bytes_count = array->item_size * items_count;
 			bytes_count = min_t(size_t, bytes_count,
 						buf_size - copied_bytes);
 
-			err = ssdfs_memcpy_from_page(copy_buf,
-						     copied_bytes,
-						     buf_size,
-						     page,
-						     0,
-						     PAGE_SIZE,
-						     bytes_count);
+			err = __ssdfs_memcpy_from_folio(copy_buf,
+							copied_bytes,
+							buf_size,
+							folio,
+							0,
+							PAGE_SIZE,
+							bytes_count);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to copy content: "
 					  "copied_bytes %u, "
 					  "array->bytes_count %u, "
-					  "page_index %d, "
-					  "pages_count %u, "
+					  "folio_index %d, "
+					  "folios_count %u, "
 					  "err %d\n",
 					  copied_bytes,
 					  array->bytes_count,
-					  i, pages_count,
+					  i, folios_count,
 					  err);
 				goto finish_copy_content;
 			}
@@ -925,11 +1075,11 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("array %p, capacity %u, "
 				  "item_size %zu, bytes_count %u, "
-				  "page_index %d, pages_count %u, "
+				  "folio_index %d, folios_count %u, "
 				  "bytes_count %zu, copied_bytes %u\n",
 				  array, array->capacity,
 				  array->item_size, array->bytes_count,
-				  i, pages_count, bytes_count, copied_bytes);
+				  i, folios_count, bytes_count, copied_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		break;
@@ -959,7 +1109,7 @@ finish_copy_content:
 }
 
 /*
- * ssdfs_shift_page_vector_content_right() - shift page vector content right
+ * ssdfs_shift_folio_vector_content_right() - shift folio vector content right
  * @array: pointer on dynamic array object
  * @start_index: starting item index
  * @shift: shift value
@@ -974,14 +1124,14 @@ finish_copy_content:
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
-					  u32 start_index, u32 shift)
+int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
+					   u32 start_index, u32 shift)
 {
-	int page_index1, page_index2;
-	int src_index, dst_index;
-	struct page *page1, *page2;
-	u32 item_offset1, item_offset2;
+	struct folio *folio1, *folio2;
 	void *kaddr;
+	int folio_index1, folio_index2;
+	int src_index, dst_index;
+	u32 item_offset1, item_offset2;
 	u32 vector_capacity;
 	u32 range_len;
 	u32 moved_items = 0;
@@ -997,7 +1147,7 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 		/* continue logic */
 		break;
 
@@ -1006,7 +1156,7 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 		return -ERANGE;
 	}
 
-	vector_capacity = ssdfs_page_vector_capacity(&array->pvec);
+	vector_capacity = ssdfs_folio_vector_capacity(&array->batch);
 
 	range_len = array->items_count - start_index;
 	src_index = start_index + range_len - 1;
@@ -1027,40 +1177,40 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 		int moving_items;
 		u32 moving_bytes;
 
-		page_index2 = dst_index / array->items_per_mem_page;
-		if (page_index2 >= vector_capacity) {
-			SSDFS_ERR("invalid page index: "
-				  "page_index %d, capacity %u\n",
-				  page_index2, vector_capacity);
+		folio_index2 = dst_index / array->items_per_folio;
+		if (folio_index2 >= vector_capacity) {
+			SSDFS_ERR("invalid folio index: "
+				  "folio_index %d, capacity %u\n",
+				  folio_index2, vector_capacity);
 			return -E2BIG;
 		}
 
-		while (page_index2 >= ssdfs_page_vector_count(&array->pvec)) {
-			struct page *page;
+		while (folio_index2 >= ssdfs_folio_vector_count(&array->batch)) {
+			struct folio *folio;
 
-			page = ssdfs_page_vector_allocate(&array->pvec);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate page\n");
+			folio = ssdfs_folio_vector_allocate(&array->batch);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate folio\n");
 				return err;
 			}
 
-			ssdfs_lock_page(page);
-			ssdfs_memset_page(page, 0, PAGE_SIZE,
-					  array->alloc_pattern, PAGE_SIZE);
-			ssdfs_unlock_page(page);
+			ssdfs_folio_lock(folio);
+			__ssdfs_memset_folio(folio, 0, PAGE_SIZE,
+					     array->alloc_pattern, PAGE_SIZE);
+			ssdfs_folio_unlock(folio);
 
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  folio, folio_ref_count(folio));
 
 			array->bytes_count += PAGE_SIZE;
 		}
 
-		item_offset2 = (u32)page_index2 * array->items_per_mem_page;
-		index_diff = dst_index % array->items_per_mem_page;
+		item_offset2 = (u32)folio_index2 * array->items_per_folio;
+		index_diff = dst_index % array->items_per_folio;
 		item_offset2 += index_diff * array->item_size;
 
-		offset_diff = item_offset2 - (page_index2 * PAGE_SIZE);
+		offset_diff = item_offset2 - (folio_index2 * PAGE_SIZE);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(offset_diff % array->item_size);
@@ -1141,14 +1291,14 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 		BUG_ON(start_index > src_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		page_index1 = src_index / array->items_per_mem_page;
-		item_offset1 = (u32)page_index1 * array->items_per_mem_page;
-		index_diff = src_index % array->items_per_mem_page;
+		folio_index1 = src_index / array->items_per_folio;
+		item_offset1 = (u32)folio_index1 * array->items_per_folio;
+		index_diff = src_index % array->items_per_folio;
 		item_offset1 += index_diff * array->item_size;
 
-		page_index2 = dst_index / array->items_per_mem_page;
-		item_offset2 = (u32)page_index2 * array->items_per_mem_page;
-		index_diff = dst_index % array->items_per_mem_page;
+		folio_index2 = dst_index / array->items_per_folio;
+		item_offset2 = (u32)folio_index2 * array->items_per_folio;
+		index_diff = dst_index % array->items_per_folio;
 		item_offset2 += index_diff * array->item_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1169,39 +1319,41 @@ int ssdfs_shift_page_vector_content_right(struct ssdfs_dynamic_array *array,
 			return -ERANGE;
 		}
 
-		SSDFS_DBG("page_index1 %d, item_offset1 %u, "
-			  "page_index2 %d, item_offset2 %u, "
+		SSDFS_DBG("folio_index1 %d, item_offset1 %u, "
+			  "folio_index2 %d, item_offset2 %u, "
 			  "moving_bytes %u\n",
-			  page_index1, item_offset1,
-			  page_index2, item_offset2,
+			  folio_index1, item_offset1,
+			  folio_index2, item_offset2,
 			  moving_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (page_index1 != page_index2) {
-			page1 = array->pvec.pages[page_index1];
-			page2 = array->pvec.pages[page_index2];
-			ssdfs_lock_page(page1);
-			ssdfs_lock_page(page2);
-			err = ssdfs_memmove_page(page2, item_offset2, PAGE_SIZE,
-						 page1, item_offset1, PAGE_SIZE,
-						 moving_bytes);
-			ssdfs_unlock_page(page1);
-			ssdfs_unlock_page(page2);
+		if (folio_index1 != folio_index2) {
+			folio1 = array->batch.folios[folio_index1];
+			folio2 = array->batch.folios[folio_index2];
+			ssdfs_folio_lock(folio1);
+			ssdfs_folio_lock(folio2);
+			err = __ssdfs_memmove_folio(folio2,
+						    item_offset2, PAGE_SIZE,
+						    folio1,
+						    item_offset1, PAGE_SIZE,
+						    moving_bytes);
+			ssdfs_folio_unlock(folio2);
+			ssdfs_folio_unlock(folio1);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
 				return err;
 			}
 		} else {
-			page1 = array->pvec.pages[page_index1];
-			ssdfs_lock_page(page1);
-			kaddr = kmap_local_page(page1);
+			folio1 = array->batch.folios[folio_index1];
+			ssdfs_folio_lock(folio1);
+			kaddr = kmap_local_folio(folio1, 0);
 			err = ssdfs_memmove(kaddr, item_offset2, PAGE_SIZE,
 					    kaddr, item_offset1, PAGE_SIZE,
 					    moving_bytes);
-			flush_dcache_page(page1);
+			flush_dcache_folio(folio1);
 			kunmap_local(kaddr);
-			ssdfs_unlock_page(page1);
+			ssdfs_folio_unlock(folio1);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to move: err %d\n", err);
@@ -1322,8 +1474,8 @@ int ssdfs_shift_buffer_content_right(struct ssdfs_dynamic_array *array,
 int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 					    u32 start_index, u32 shift)
 {
-	u64 max_threshold = (u64)ssdfs_page_vector_max_threshold() * PAGE_SIZE;
-	u64 item_offset = 0;
+	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
+	u32 item_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1336,7 +1488,7 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
 	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
 		/* continue logic */
 		break;
@@ -1379,12 +1531,12 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 		return -ERANGE;
 	}
 
-	item_offset = (u64)array->item_size * start_index;
+	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, start_index);
 
 	if (item_offset >= max_threshold) {
 		SSDFS_ERR("invalid item_offset: "
 			  "start_index %u, item_size %zu, "
-			  "item_offset %llu, bytes_count %u, "
+			  "item_offset %u, bytes_count %u, "
 			  "max_threshold %llu\n",
 			  start_index, array->item_size,
 			  item_offset, array->bytes_count,
@@ -1393,10 +1545,10 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 	}
 
 	switch (array->state) {
-	case SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC:
-		err = ssdfs_shift_page_vector_content_right(array,
-							    start_index,
-							    shift);
+	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
+		err = ssdfs_shift_folio_vector_content_right(array,
+							     start_index,
+							     shift);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move: "
 				  "start_index %u, shift %u, err %d\n",

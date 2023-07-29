@@ -18,36 +18,36 @@
 #ifndef _SSDFS_DYNAMIC_ARRAY_H
 #define _SSDFS_DYNAMIC_ARRAY_H
 
-#include "page_vector.h"
+#include "folio_vector.h"
 
 /*
  * struct ssdfs_dynamic_array - dynamic array
  * @state: array state
  * @item_size: size of item in bytes
- * @items_per_mem_page: number of items per memory page
+ * @items_per_folio: number of items per memory folio
  * @items_count: items count in array
  * @capacity: maximum available items count
  * @bytes_count: currently allocated bytes count
  * @alloc_pattern: pattern to init memory pages
- * @pvec: vector of pages
+ * @batch: vector of folios
  * @buf: pointer on memory buffer
  */
 struct ssdfs_dynamic_array {
 	int state;
 	size_t item_size;
-	u32 items_per_mem_page;
+	u32 items_per_folio;
 	u32 items_count;
 	u32 capacity;
 	u32 bytes_count;
 	u8 alloc_pattern;
-	struct ssdfs_page_vector pvec;
+	struct ssdfs_folio_vector batch;
 	void *buf;
 };
 
 /* Dynamic array's states */
 enum {
 	SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT,
-	SSDFS_DYNAMIC_ARRAY_STORAGE_PAGE_VEC,
+	SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC,
 	SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER,
 	SSDFS_DYNAMIC_ARRAY_STORAGE_STATE_MAX
 };

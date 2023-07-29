@@ -197,7 +197,10 @@ void ssdfs_folio_put(struct folio *folio)
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
 
-	if (folio_ref_count(folio) <= 0) {
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+
+	if (folio_ref_count(folio) < 1) {
 		SSDFS_WARN("folio %p, count %d\n",
 			   folio, folio_ref_count(folio));
 	}
@@ -534,14 +537,14 @@ void ssdfs_free_page(struct page *page)
 		  page, atomic64_read(&ssdfs_allocated_pages));
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
-	__free_pages(page, 0);
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page %p, count %d, "
 		  "flags %#lx, page_index %lu\n",
 		  page, page_ref_count(page),
 		  page->flags, page_index(page));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	__free_pages(page, 0);
 }
 
 static inline
@@ -550,24 +553,30 @@ void ssdfs_folio_free(struct folio *folio)
 	if (!folio)
 		return;
 
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+#ifdef CONFIG_SSDFS_DEBUG
 	if (folio_test_locked(folio)) {
 		SSDFS_WARN("folio %p is still locked\n",
 			   folio);
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	/* descrease reference counter */
+	ssdfs_folio_put(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d, "
 		  "flags %#lx, folio_index %lu\n",
 		  folio, folio_ref_count(folio),
 		  folio->flags, folio_index(folio));
 
 	if (folio_ref_count(folio) <= 0 ||
-	    folio_ref_count(folio) > 1) {
+	    folio_ref_count(folio) > 2) {
 		SSDFS_WARN("folio %p, count %d\n",
 			   folio, folio_ref_count(folio));
 	}
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+#endif /* CONFIG_SSDFS_DEBUG */
 
+	/* free folio */
 	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -803,7 +812,7 @@ void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
 	ssdfs_pagevec_release(pvec);					\
 }									\
 static inline								\
-struct folio *ssdfs_##name##_folio_alloc(gfp_t gfp_mask,		\
+struct folio *ssdfs_##name##_alloc_folio(gfp_t gfp_mask,		\
 					 unsigned int order)		\
 {									\
 	struct folio *folio;						\
@@ -817,7 +826,7 @@ struct folio *ssdfs_##name##_folio_alloc(gfp_t gfp_mask,		\
 	return folio;							\
 }									\
 static inline								\
-void ssdfs_##name##_folio_account(struct folio *folio)			\
+void ssdfs_##name##_account_folio(struct folio *folio)			\
 {									\
 	if (folio) {							\
 		atomic64_inc(&ssdfs_##name##_folio_leaks);		\
@@ -827,7 +836,7 @@ void ssdfs_##name##_folio_account(struct folio *folio)			\
 	}								\
 }									\
 static inline								\
-void ssdfs_##name##_folio_forget(struct folio *folio)			\
+void ssdfs_##name##_forget_folio(struct folio *folio)			\
 {									\
 	if (folio) {							\
 		atomic64_dec(&ssdfs_##name##_folio_leaks);		\
@@ -851,7 +860,7 @@ struct folio *ssdfs_##name##_add_batch_folio(struct folio_batch *batch,	\
 	return folio;							\
 }									\
 static inline								\
-void ssdfs_##name##_folio_free(struct folio *folio)			\
+void ssdfs_##name##_free_folio(struct folio *folio)			\
 {									\
 	if (folio) {							\
 		atomic64_dec(&ssdfs_##name##_folio_leaks);		\
@@ -951,18 +960,18 @@ void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
 	ssdfs_pagevec_release(pvec);					\
 }									\
 static inline								\
-struct folio *ssdfs_##name##_folio_alloc(gfp_t gfp_mask,		\
-					unsigned int order)		\
+struct folio *ssdfs_##name##_alloc_folio(gfp_t gfp_mask,		\
+					 unsigned int order)		\
 {									\
 	return ssdfs_folio_alloc(gfp_mask, order);			\
 }									\
 static inline								\
-void ssdfs_##name##_folio_account(struct folio *folio)			\
+void ssdfs_##name##_account_folio(struct folio *folio)			\
 {									\
 	ssdfs_folio_account(folio);					\
 }									\
 static inline								\
-void ssdfs_##name##_folio_forget(struct folio *folio)			\
+void ssdfs_##name##_forget_folio(struct folio *folio)			\
 {									\
 	ssdfs_folio_forget(folio);					\
 }									\
@@ -973,7 +982,7 @@ struct folio *ssdfs_##name##_add_batch_folio(struct folio_batch *batch,	\
 	return ssdfs_add_batch_folio(batch, order);			\
 }									\
 static inline								\
-void ssdfs_##name##_folio_free(struct folio *folio)			\
+void ssdfs_##name##_free_folio(struct folio *folio)			\
 {									\
 	ssdfs_folio_free(folio);					\
 }									\
@@ -1286,13 +1295,12 @@ bool IS_SSDFS_OFF2FOLIO_VALID(struct ssdfs_offset2folio *desc)
 
 /*
  * SSDFS_OFF2FOLIO() - convert offset to folio
- * @fsi: pointer on shared file system object
+ * @block_size: size of block in bytes
  * @offset: offset in bytes
  * @desc: offset to folio descriptor [out]
  */
 static inline
-int SSDFS_OFF2FOLIO(struct ssdfs_fs_info *fsi,
-		    u64 offset,
+int SSDFS_OFF2FOLIO(u32 block_size, u64 offset,
 		    struct ssdfs_offset2folio *desc)
 {
 	u64 index;
@@ -1301,7 +1309,7 @@ int SSDFS_OFF2FOLIO(struct ssdfs_fs_info *fsi,
 	BUG_ON(!desc);
 	BUG_ON(offset >= U64_MAX);
 
-	switch (fsi->pagesize) {
+	switch (block_size) {
 	case SSDFS_4KB:
 	case SSDFS_8KB:
 	case SSDFS_16KB:
@@ -1313,12 +1321,12 @@ int SSDFS_OFF2FOLIO(struct ssdfs_fs_info *fsi,
 
 	default:
 		SSDFS_ERR("unexpected logical block size %u\n",
-			  fsi->pagesize);
+			  block_size);
 		return -EINVAL;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	desc->block_size = fsi->pagesize;
+	desc->block_size = block_size;
 	desc->offset = offset;
 
 	desc->folio_index = div_u64(desc->offset, desc->block_size);
@@ -1715,6 +1723,88 @@ int ssdfs_iter_copy(void *dst_kaddr, u32 dst_offset,
 }
 
 static inline
+int ssdfs_iter_copy_from_folio(void *dst_kaddr, u32 dst_offset, u32 dst_size,
+				void *src_kaddr, u32 src_offset,
+				u32 copy_size, u32 *copied_bytes)
+{
+	u32 src_offset_in_page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!copied_bytes);
+	BUG_ON(copy_size == 0);
+
+	SSDFS_DBG("src_kaddr %p, src_offset %u, "
+		  "dst_kaddr %p, dst_offset %u, dst_size %u, "
+		  "copy_size %u\n",
+		  src_kaddr, src_offset,
+		  dst_kaddr, dst_offset, dst_size,
+		  copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	src_offset_in_page = src_offset % PAGE_SIZE;
+	*copied_bytes = PAGE_SIZE - src_offset_in_page;
+	*copied_bytes = min_t(u32, *copied_bytes, copy_size);
+
+	err = ssdfs_memcpy(dst_kaddr, dst_offset, dst_size,
+			   src_kaddr, src_offset_in_page, PAGE_SIZE,
+			   *copied_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: "
+			  "src_kaddr %p, src_offset_in_page %u, "
+			  "dst_kaddr %p, dst_offset %u, "
+			  "copied_bytes %u, err %d\n",
+			  src_kaddr, src_offset_in_page,
+			  dst_kaddr, dst_offset,
+			  *copied_bytes, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static inline
+int ssdfs_iter_copy_to_folio(void *dst_kaddr, u32 dst_offset,
+			     void *src_kaddr, u32 src_offset, u32 src_size,
+			     u32 copy_size, u32 *copied_bytes)
+{
+	u32 dst_offset_in_page;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!copied_bytes);
+	BUG_ON(copy_size == 0);
+
+	SSDFS_DBG("src_kaddr %p, src_offset %u, "
+		  "dst_kaddr %p, dst_offset %u, "
+		  "copy_size %u\n",
+		  src_kaddr, src_offset,
+		  dst_kaddr, dst_offset,
+		  copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dst_offset_in_page = dst_offset % PAGE_SIZE;
+	*copied_bytes = PAGE_SIZE - dst_offset_in_page;
+	*copied_bytes = min_t(u32, *copied_bytes, copy_size);
+
+	err = ssdfs_memcpy(dst_kaddr, dst_offset_in_page, PAGE_SIZE,
+			   src_kaddr, src_offset, src_size,
+			   *copied_bytes);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: "
+			  "src_kaddr %p, src_offset %u, src_size %u, "
+			  "dst_kaddr %p, dst_offset_in_page %u, "
+			  "copied_bytes %u, err %d\n",
+			  src_kaddr, src_offset, src_size,
+			  dst_kaddr, dst_offset_in_page,
+			  *copied_bytes, err);
+		return err;
+	}
+
+	return 0;
+}
+
+static inline
 int __ssdfs_memcpy_folio(struct folio *dst_folio, u32 dst_off, u32 dst_size,
 			 struct folio *src_folio, u32 src_off, u32 src_size,
 			 u32 copy_size)
@@ -1921,10 +2011,10 @@ int __ssdfs_memcpy_from_folio(void *dst, u32 dst_off, u32 dst_size,
 		dst_iter_offset = dst_off + copied_bytes;
 
 		src_kaddr = kmap_local_folio(folio, src_page);
-		err = ssdfs_iter_copy(dst, dst_iter_offset,
-				      src_kaddr, src_iter_offset,
-				      copy_size - copied_bytes,
-				      &iter_bytes);
+		err = ssdfs_iter_copy_from_folio(dst, dst_iter_offset, dst_size,
+						 src_kaddr, src_iter_offset,
+						 copy_size - copied_bytes,
+						 &iter_bytes);
 		kunmap_local(src_kaddr);
 
 		if (unlikely(err)) {
@@ -1971,7 +2061,7 @@ int ssdfs_memcpy_from_folio(void *dst, u32 dst_off, u32 dst_size,
 }
 
 static inline
-int ssdfs_memcpy_from_batch(struct ssdfs_fs_info *fsi,
+int ssdfs_memcpy_from_batch(u32 pagesize,
 			    void *dst, u32 dst_off, u32 dst_size,
 			    struct folio_batch *batch, u32 src_off,
 			    u32 copy_size)
@@ -1980,7 +2070,7 @@ int ssdfs_memcpy_from_batch(struct ssdfs_fs_info *fsi,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !dst || !batch);
+	BUG_ON(!dst || !batch);
 
 	SSDFS_DBG("dst_off %u, dst_size %u, "
 		  "src_off %u, copy_size %u\n",
@@ -1988,7 +2078,7 @@ int ssdfs_memcpy_from_batch(struct ssdfs_fs_info *fsi,
 		  src_off, copy_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = SSDFS_OFF2FOLIO(fsi, src_off, &folio.desc);
+	err = SSDFS_OFF2FOLIO(pagesize, src_off, &folio.desc);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to convert offset into folio: "
 			  "src_off %u, err %d\n",
@@ -2089,10 +2179,10 @@ int __ssdfs_memcpy_to_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 		dst_page = dst_iter_offset >> PAGE_SHIFT;
 
 		dst_kaddr = kmap_local_folio(folio, dst_page);
-		err = ssdfs_iter_copy(dst_kaddr, dst_iter_offset,
-				      src, src_iter_offset,
-				      copy_size - copied_bytes,
-				      &iter_bytes);
+		err = ssdfs_iter_copy_to_folio(dst_kaddr, dst_iter_offset,
+						src, src_iter_offset, src_size,
+						copy_size - copied_bytes,
+						&iter_bytes);
 		kunmap_local(dst_kaddr);
 
 		if (unlikely(err)) {
@@ -2141,7 +2231,7 @@ int ssdfs_memcpy_to_folio(struct ssdfs_smart_folio *dst_folio,
 }
 
 static inline
-int ssdfs_memcpy_to_batch(struct ssdfs_fs_info *fsi,
+int ssdfs_memcpy_to_batch(u32 pagesize,
 			  struct folio_batch *batch, u32 dst_off,
 			  void *src, u32 src_off, u32 src_size,
 			  u32 copy_size)
@@ -2150,14 +2240,14 @@ int ssdfs_memcpy_to_batch(struct ssdfs_fs_info *fsi,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !batch || !src);
+	BUG_ON(!batch || !src);
 
 	SSDFS_DBG("dst_off %u, src_off %u, "
 		  "src_size %u, copy_size %u\n",
 		  dst_off, src_off, src_size, copy_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = SSDFS_OFF2FOLIO(fsi, dst_off, &folio.desc);
+	err = SSDFS_OFF2FOLIO(pagesize, dst_off, &folio.desc);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to convert offset into folio: "
 			  "dst_off %u, err %d\n",
@@ -2345,9 +2435,9 @@ int __ssdfs_memset_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 	}
 
 	if ((dst_off + set_size) > dst_size) {
-		SSDFS_ERR("fail to memset: "
-			  "dst_off %u, set_size %u, dst_size %u\n",
-			  dst_off, set_size, dst_size);
+		SSDFS_WARN("fail to memset: "
+			   "dst_off %u, set_size %u, dst_size %u\n",
+			   dst_off, set_size, dst_size);
 		return -ERANGE;
 	}
 
