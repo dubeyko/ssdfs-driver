@@ -145,7 +145,9 @@ void ssdfs_fs_error(struct super_block *sb, const char *file,
 		    const char *function, unsigned int line,
 		    const char *fmt, ...);
 int ssdfs_set_page_dirty(struct page *page);
+int ssdfs_set_folio_dirty(struct folio *folio);
 int __ssdfs_clear_dirty_page(struct page *page);
+int __ssdfs_clear_dirty_folio(struct folio *folio);
 int ssdfs_clear_dirty_page(struct page *page);
 void ssdfs_clear_dirty_pages(struct address_space *mapping);
 

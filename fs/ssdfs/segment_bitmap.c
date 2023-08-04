@@ -735,7 +735,7 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 		goto free_desc_array;
 	}
 
-	ssdfs_segbmap_mapping_init(&ptr->pages, fsi->segbmap_inode);
+	ssdfs_segbmap_mapping_init(&ptr->folios, fsi->segbmap_inode);
 
 	count = ssdfs_segbmap_define_segments(fsi, SSDFS_MAIN_SEGBMAP_SEG,
 					      ptr);
@@ -887,38 +887,44 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 
 	ssdfs_segbmap_destroy_segments(fsi->segbmap);
 
-	if (mapping_tagged(&fsi->segbmap->pages, PAGECACHE_TAG_DIRTY)) {
+	if (mapping_tagged(&fsi->segbmap->folios, PAGECACHE_TAG_DIRTY)) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 				"segment bitmap is dirty on destruction\n");
 	}
 
 	for (i = 0; i < fsi->segbmap->fragments_count; i++) {
-		struct page *page;
+		struct folio *folio;
 
-		xa_lock_irq(&fsi->segbmap->pages.i_pages);
-		page = __xa_erase(&fsi->segbmap->pages.i_pages, i);
-		xa_unlock_irq(&fsi->segbmap->pages.i_pages);
+		xa_lock_irq(&fsi->segbmap->folios.i_pages);
+		folio = __xa_erase(&fsi->segbmap->folios.i_pages, i);
+		xa_unlock_irq(&fsi->segbmap->folios.i_pages);
 
-		if (!page) {
+		if (xa_is_value(folio)) {
+			folio = NULL;
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %d is NULL\n", i);
+			SSDFS_DBG("folio %d is NULL\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
+			continue;
+		} else if (!folio) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("folio %d is NULL\n", i);
 #endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
-		page->mapping = NULL;
+		folio->mapping = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_put_page(page);
-		ssdfs_seg_bmap_free_page(page);
+		ssdfs_folio_put(folio);
+		ssdfs_seg_bmap_free_folio(folio);
 	}
 
-	if (fsi->segbmap->pages.nrpages != 0)
-		truncate_inode_pages(&fsi->segbmap->pages, 0);
+	if (fsi->segbmap->folios.nrpages != 0)
+		truncate_inode_pages(&fsi->segbmap->folios, 0);
 
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
 	ssdfs_seg_bmap_kfree(fsi->segbmap->desc_array);
@@ -1199,6 +1205,8 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	struct ssdfs_segbmap_fragment_header *hdr;
 	struct ssdfs_segbmap_fragment_desc *desc;
 	unsigned long *fbmap;
+	struct folio *folio;		/* TODO: delete temporary code */
+	void *kaddr;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1225,40 +1233,59 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 	segbmap = pebc->parent_si->fsi->segbmap;
 
 	inode_lock_shared(pebc->parent_si->fsi->segbmap_inode);
+	down_write(&segbmap->search_lock);
 
-	ssdfs_get_page(page);
-	page->index = sequence_id;
+/* TODO: delete temporary code: START */
+
+	folio = ssdfs_seg_bmap_alloc_folio(GFP_KERNEL,
+					   get_order(PAGE_SIZE));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
+		goto unlock_search_lock;
+	}
+
+	ssdfs_folio_get(folio);
+
+	kaddr = kmap_local_page(page);
+	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
+				kaddr, 0, PAGE_SIZE,
+				PAGE_SIZE);
+	kunmap_local(kaddr);
+
+/* TODO: delete temporary code: END */
+
+//	ssdfs_get_page(page);
+	folio->index = sequence_id;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	down_write(&segbmap->search_lock);
 
 	desc = &segbmap->desc_array[sequence_id];
 
-	xa_lock_irq(&segbmap->pages.i_pages);
-	err = __xa_insert(&segbmap->pages.i_pages,
-			 sequence_id, page, GFP_NOFS);
+	xa_lock_irq(&segbmap->folios.i_pages);
+	err = __xa_insert(&segbmap->folios.i_pages,
+			 sequence_id, folio, GFP_NOFS);
 	if (unlikely(err < 0)) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fail to add page %u into address space: err %d\n",
+		SSDFS_DBG("fail to add folio %u into address space: err %d\n",
 			  sequence_id, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		page->mapping = NULL;
-		ssdfs_put_page(page);
+		folio->mapping = NULL;
+		ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
-		page->mapping = &segbmap->pages;
-		segbmap->pages.nrpages++;
+		folio->mapping = &segbmap->folios;
+		segbmap->folios.nrpages++;
 	}
-	xa_unlock_irq(&segbmap->pages.i_pages);
+	xa_unlock_irq(&segbmap->folios.i_pages);
 
 	if (unlikely(err))
 		goto unlock_search_lock;
@@ -1267,7 +1294,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		err = -ERANGE;
 		SSDFS_ERR("fail to initialize segbmap fragment\n");
 	} else {
-		hdr = SSDFS_SBMP_FRAG_HDR(kmap_local_page(page));
+		hdr = SSDFS_SBMP_FRAG_HDR(kmap_local_folio(folio, 0));
 		desc->total_segs = le16_to_cpu(hdr->total_segs);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1306,7 +1333,7 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 		kunmap_local(hdr);
 	}
 
-	ssdfs_seg_bmap_account_page(page);
+//	ssdfs_seg_bmap_account_page(page);
 
 unlock_search_lock:
 	complete_all(&desc->init_end);
@@ -1366,7 +1393,7 @@ void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
  * ssdfs_segbmap_copy_dirty_fragment() - copy dirty fragment into request
  * @segbmap: pointer on segment bitmap object
  * @fragment_index: index of fragment
- * @page_index: index of page in request
+ * @folio_index: index of folio in request
  * @req: segment request
  *
  * This method tries to copy dirty fragment into request.
@@ -1380,12 +1407,13 @@ void ssdfs_sb_segbmap_header_correct_state(struct ssdfs_segment_bmap *segbmap)
 static
 int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 				      u16 fragment_index,
-				      u16 page_index,
+				      u16 folio_index,
 				      struct ssdfs_segment_request *req)
 {
 	struct ssdfs_segbmap_fragment_desc *desc;
 	struct ssdfs_segbmap_fragment_header *hdr;
-	struct page *dpage, *spage;
+	struct page *dpage;
+	struct folio *sfolio;
 	void *kaddr;
 	u16 fragment_bytes;
 	__le32 old_csum, csum;
@@ -1398,11 +1426,11 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !req);
 	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-	BUG_ON(page_index >= PAGEVEC_SIZE);
+	BUG_ON(folio_index >= PAGEVEC_SIZE);
 
 	SSDFS_DBG("segbmap %p, fragment_index %u, "
-		  "page_index %u, req %p\n",
-		  segbmap, fragment_index, page_index, req);
+		  "folio_index %u, req %p\n",
+		  segbmap, fragment_index, folio_index, req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	desc = &segbmap->desc_array[fragment_index];
@@ -1413,16 +1441,16 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 		return -ERANGE;
 	}
 
-	spage = find_lock_page(&segbmap->pages, fragment_index);
-	if (!spage) {
-		SSDFS_ERR("fail to find page: fragment_index %u\n",
+	sfolio = filemap_lock_folio(&segbmap->folios, fragment_index);
+	if (!sfolio) {
+		SSDFS_ERR("fail to find folio: fragment_index %u\n",
 			  fragment_index);
 		return -ERANGE;
 	}
 
-	ssdfs_account_locked_page(spage);
+	ssdfs_account_locked_folio(sfolio);
 
-	kaddr = kmap_local_page(spage);
+	kaddr = kmap_local_folio(sfolio, 0);
 	hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 
 	if (le32_to_cpu(hdr->magic) != SSDFS_SEGBMAP_HDR_MAGIC) {
@@ -1491,12 +1519,12 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 		goto fail_copy_fragment;
 	}
 
-	dpage = req->result.pvec.pages[page_index];
+	dpage = req->result.pvec.pages[folio_index];
 
 	if (!dpage) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid page: page_index %u\n",
-			  page_index);
+		SSDFS_ERR("invalid page: folio_index %u\n",
+			  folio_index);
 		goto fail_copy_fragment;
 	}
 
@@ -1509,18 +1537,18 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 		ssdfs_set_page_dirty(dpage);
 	set_page_writeback(dpage);
 
-	__ssdfs_clear_dirty_page(spage);
+	__ssdfs_clear_dirty_folio(sfolio);
 
 	desc->state = SSDFS_SEGBMAP_FRAG_TOWRITE;
 
 fail_copy_fragment:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(spage);
-	ssdfs_put_page(spage);
+	ssdfs_folio_unlock(sfolio);
+	ssdfs_folio_put(sfolio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  spage, page_ref_count(spage));
+	SSDFS_DBG("folio %p, count %d\n",
+		  sfolio, folio_ref_count(sfolio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -2098,7 +2126,7 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 	struct ssdfs_segbmap_fragment_header *hdr;
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	struct ssdfs_segment_info *si;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	size_t extent_size = sizeof(struct ssdfs_volume_extent);
 	u64 ino = SSDFS_SEG_BMAP_INO;
@@ -2141,17 +2169,17 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			ssdfs_request_prepare_logical_extent(ino, offset,
 							     0, 0, 0, req1);
 
-			page = find_lock_page(&segbmap->pages, i);
-			if (!page) {
+			folio = filemap_lock_folio(&segbmap->folios, i);
+			if (!folio) {
 				err = -ERANGE;
-				SSDFS_ERR("fail to find page: "
+				SSDFS_ERR("fail to find folio: "
 					  "fragment_index %u\n",
 					  i);
 				goto fail_issue_commit_logs;
 			}
 
-			ssdfs_account_locked_page(page);
-			kaddr = kmap_local_page(page);
+			ssdfs_account_locked_folio(folio);
+			kaddr = kmap_local_folio(folio, 0);
 
 			hdr = SSDFS_SBMP_FRAG_HDR(kaddr);
 
@@ -2165,12 +2193,12 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			}
 
 			kunmap_local(kaddr);
-			ssdfs_unlock_page(page);
-			ssdfs_put_page(page);
+			ssdfs_folio_unlock(folio);
+			ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			if (unlikely(err))
@@ -2599,8 +2627,8 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 	u16 fragments_count;
 	u16 fragment_size;
 	pgoff_t fragment_index;
-	struct page *page;
-	u64 page_item;
+	struct folio *folio;
+	u64 folio_item;
 	u32 byte_offset;
 	void *kaddr;
 	u8 *byte_ptr;
@@ -2666,57 +2694,57 @@ int ssdfs_segbmap_get_state(struct ssdfs_segment_bmap *segbmap,
 		goto finish_get_state;
 	}
 
-	page = find_lock_page(&segbmap->pages, fragment_index);
-	if (!page) {
+	folio = filemap_lock_folio(&segbmap->folios, fragment_index);
+	if (!folio) {
 		err = -ERANGE;
-		SSDFS_ERR("fail to get fragment %lu page\n",
+		SSDFS_ERR("fail to get fragment %lu folio\n",
 			  fragment_index);
 		goto finish_get_state;
 	}
 
-	ssdfs_account_locked_page(page);
+	ssdfs_account_locked_folio(folio);
 
-	page_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
-							     fragment_size);
-	if (seg < page_item) {
+	folio_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
+							      fragment_size);
+	if (seg < folio_item) {
 		err = -ERANGE;
-		SSDFS_ERR("seg %llu < page_item %llu\n",
-			  seg, page_item);
-		goto free_page;
+		SSDFS_ERR("seg %llu < folio_item %llu\n",
+			  seg, folio_item);
+		goto free_folio;
 	}
 
-	page_item = seg - page_item;
+	folio_item = seg - folio_item;
 
-	if (page_item >= ssdfs_segbmap_items_per_fragment(fragment_size)) {
+	if (folio_item >= ssdfs_segbmap_items_per_fragment(fragment_size)) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid page_item %llu\n",
-			  page_item);
-		goto free_page;
+		SSDFS_ERR("invalid folio_item %llu\n",
+			  folio_item);
+		goto free_folio;
 	}
 
-	byte_offset = ssdfs_segbmap_get_item_byte_offset(page_item);
+	byte_offset = ssdfs_segbmap_get_item_byte_offset(folio_item);
 
 	if (byte_offset >= PAGE_SIZE) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid byte_offset %u\n",
 			  byte_offset);
-		goto free_page;
+		goto free_folio;
 	}
 
-	byte_item = page_item - ((byte_offset - hdr_size) * items_per_byte);
+	byte_item = folio_item - ((byte_offset - hdr_size) * items_per_byte);
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 	byte_ptr = (u8 *)kaddr + byte_offset;
 	state = ssdfs_segbmap_get_state_from_byte(byte_ptr, byte_item);
 	kunmap_local(kaddr);
 
-free_page:
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+free_folio:
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_get_state:
@@ -3157,8 +3185,8 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 				 u16 fragment_size)
 {
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS);
-	struct page *page;
-	u64 page_item;
+	struct folio *folio;
+	u64 folio_item;
 	u32 byte_offset;
 	u32 byte_item;
 	void *kaddr;
@@ -3189,46 +3217,46 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 		goto finish_set_state;
 	}
 
-	page = find_lock_page(&segbmap->pages, fragment_index);
-	if (!page) {
+	folio = filemap_lock_folio(&segbmap->folios, fragment_index);
+	if (!folio) {
 		err = -ERANGE;
-		SSDFS_ERR("fail to get fragment %lu page\n",
+		SSDFS_ERR("fail to get fragment %lu folio\n",
 			  fragment_index);
 		goto finish_set_state;
 	}
 
-	ssdfs_account_locked_page(page);
+	ssdfs_account_locked_folio(folio);
 
-	page_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
-							     fragment_size);
-	if (seg < page_item) {
+	folio_item = ssdfs_segbmap_define_first_fragment_item(fragment_index,
+							      fragment_size);
+	if (seg < folio_item) {
 		err = -ERANGE;
-		SSDFS_ERR("seg %llu < page_item %llu\n",
-			  seg, page_item);
-		goto free_page;
+		SSDFS_ERR("seg %llu < folio_item %llu\n",
+			  seg, folio_item);
+		goto free_folio;
 	}
 
-	page_item = seg - page_item;
+	folio_item = seg - folio_item;
 
-	if (page_item >= ssdfs_segbmap_items_per_fragment(fragment_size)) {
+	if (folio_item >= ssdfs_segbmap_items_per_fragment(fragment_size)) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid page_item %llu\n",
-			  page_item);
-		goto free_page;
+		SSDFS_ERR("invalid folio_item %llu\n",
+			  folio_item);
+		goto free_folio;
 	}
 
-	byte_offset = ssdfs_segbmap_get_item_byte_offset(page_item);
+	byte_offset = ssdfs_segbmap_get_item_byte_offset(folio_item);
 
 	if (byte_offset >= PAGE_SIZE) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid byte_offset %u\n",
 			  byte_offset);
-		goto free_page;
+		goto free_folio;
 	}
 
-	div_u64_rem(page_item, items_per_byte, &byte_item);
+	div_u64_rem(folio_item, items_per_byte, &byte_item);
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 	byte_ptr = (u8 *)kaddr + byte_offset;
 	err = ssdfs_segbmap_set_state_in_byte(byte_ptr, byte_item,
 					      &old_state, new_state);
@@ -3241,7 +3269,7 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 
 	if (err == -EEXIST) {
 		err = 0;
-		SetPageUptodate(page);
+		folio_mark_uptodate(folio);
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("old_state %#x == new_state %#x\n",
 			  old_state, new_state);
@@ -3250,20 +3278,20 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 		SSDFS_ERR("fail to set state: "
 			  "seg %llu, new_state %#x, err %d\n",
 			  seg, new_state, err);
-		goto free_page;
+		goto free_folio;
 	} else {
-		SetPageUptodate(page);
-		if (!PageDirty(page))
-			ssdfs_set_page_dirty(page);
+		folio_mark_uptodate(folio);
+		if (!folio_test_dirty(folio))
+			ssdfs_set_folio_dirty(folio);
 	}
 
-free_page:
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+free_folio:
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_set_state:
@@ -4080,7 +4108,7 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 {
 	struct ssdfs_segbmap_fragment_desc *fragment;
 	size_t hdr_size = sizeof(struct ssdfs_segbmap_fragment_header);
-	struct page *page;
+	struct folio *folio;
 	u64 first_item;
 	u32 items_per_fragment;
 	u16 items_count;
@@ -4164,15 +4192,15 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 		return -ERANGE;
 	}
 
-	page = find_lock_page(&segbmap->pages, fragment_index);
-	if (!page) {
+	folio = filemap_lock_folio(&segbmap->folios, fragment_index);
+	if (!folio) {
 		SSDFS_ERR("fragment %u hasn't memory page\n",
 			  fragment_index);
 		return -ERANGE;
 	}
 
-	ssdfs_account_locked_page(page);
-	kaddr = kmap_local_page(page);
+	ssdfs_account_locked_folio(folio);
+	kaddr = kmap_local_folio(folio, 0);
 	bmap = (unsigned long *)((u8 *)kaddr + hdr_size);
 
 	err = FIND_FIRST_ITEM_IN_FRAGMENT(SSDFS_SBMP_FRAG_HDR(kaddr),
@@ -4181,12 +4209,12 @@ int ssdfs_segbmap_find_in_fragment(struct ssdfs_segment_bmap *segbmap,
 					  found_state_for_mask);
 
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;

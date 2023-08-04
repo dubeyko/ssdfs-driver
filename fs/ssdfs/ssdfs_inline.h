@@ -1850,6 +1850,22 @@ int __ssdfs_memcpy_folio(struct folio *dst_folio, u32 dst_off, u32 dst_size,
 		return -EINVAL;
 	}
 
+	if (dst_size > folio_size(dst_folio) ||
+	    copy_size > folio_size(dst_folio)) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_size %u, copy_size %u, folio_size %zu\n",
+			  dst_size, copy_size, folio_size(dst_folio));
+		return -ERANGE;
+	}
+
+	if (src_size > folio_size(src_folio) ||
+	    copy_size > folio_size(src_folio)) {
+		SSDFS_ERR("fail to copy: "
+			  "src_size %u, copy_size %u, folio_size %zu\n",
+			  src_size, copy_size, folio_size(src_folio));
+		return -ERANGE;
+	}
+
 	if ((src_off + copy_size) > src_size) {
 		SSDFS_ERR("fail to copy: "
 			  "src_off %u, copy_size %u, src_size %u\n",
@@ -1971,6 +1987,14 @@ int __ssdfs_memcpy_from_folio(void *dst, u32 dst_off, u32 dst_size,
 		SSDFS_ERR("unexpected src_size %u\n",
 			  src_size);
 		return -EINVAL;
+	}
+
+	if (src_size > folio_size(folio) ||
+	    copy_size > folio_size(folio)) {
+		SSDFS_ERR("fail to copy: "
+			  "src_size %u, copy_size %u, folio_size %zu\n",
+			  src_size, copy_size, folio_size(folio));
+		return -ERANGE;
 	}
 
 	if ((src_off + copy_size) > src_size) {
@@ -2139,6 +2163,14 @@ int __ssdfs_memcpy_to_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 		SSDFS_ERR("unexpected dst_size %u\n",
 			  dst_size);
 		return -EINVAL;
+	}
+
+	if (dst_size > folio_size(folio) ||
+	    copy_size > folio_size(folio)) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_size %u, copy_size %u, folio_size %zu\n",
+			  dst_size, copy_size, folio_size(folio));
+		return -ERANGE;
 	}
 
 	if ((src_off + copy_size) > src_size) {
@@ -2432,6 +2464,14 @@ int __ssdfs_memset_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 		SSDFS_ERR("unexpected dst_size %u\n",
 			  dst_size);
 		return -EINVAL;
+	}
+
+	if (dst_size > folio_size(folio) ||
+	    set_size > folio_size(folio)) {
+		SSDFS_ERR("fail to copy: "
+			  "dst_size %u, set_size %u, folio_size %zu\n",
+			  dst_size, set_size, folio_size(folio));
+		return -ERANGE;
 	}
 
 	if ((dst_off + set_size) > dst_size) {

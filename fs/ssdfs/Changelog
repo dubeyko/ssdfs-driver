@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.74 [August 03, 2023]
+    (*) Rework segment bitmap on using memory folio.
+
 v.4.73 [July 28, 2023]
     (*) Rework dynamic array on using memory folio.
 

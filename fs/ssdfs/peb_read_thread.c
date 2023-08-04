@@ -11399,8 +11399,10 @@ int ssdfs_peb_read_segbmap_first_page(struct ssdfs_peb_container *pebc,
 			  "sequence_id %u, err %d\n",
 			  sequence_id, err);
 		goto fail_read_segbmap_page;
-	} else
-		ssdfs_request_unlock_and_remove_page(req, 0);
+	} else {
+/* TODO: uncomment after reworking for folio support */
+//		ssdfs_request_unlock_and_remove_page(req, 0);
+	}
 
 	extent->logical_offset += extent->fragment_size;
 	extent->data_size -= extent->fragment_size;
@@ -11555,8 +11557,10 @@ int ssdfs_peb_read_segbmap_pages(struct ssdfs_peb_container *pebc,
 				  "sequence_id %u, err %d\n",
 				  sequence_id, err);
 			goto fail_read_segbmap_pages;
-		} else
-			ssdfs_request_unlock_and_remove_page(req, i);
+		} else {
+/* TODO: uncomment after reworking for folio support */
+//			ssdfs_request_unlock_and_remove_page(req, i);
+		}
 
 		sequence_id++;
 	}

@@ -126,7 +126,7 @@ enum {
  * @search_lock: lock for search and change state operations
  * @fbmap: array of fragment bitmaps
  * @desc_array: array of fragments' descriptors
- * @pages: memory pages of the whole segment bitmap
+ * @pages: memory folios of the whole segment bitmap
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_segment_bmap {
@@ -147,7 +147,7 @@ struct ssdfs_segment_bmap {
 	struct rw_semaphore search_lock;
 	unsigned long *fbmap[SSDFS_SEGBMAP_FBMAP_TYPE_MAX];
 	struct ssdfs_segbmap_fragment_desc *desc_array;
-	struct address_space pages;
+	struct address_space folios;
 
 	struct ssdfs_fs_info *fsi;
 };
@@ -390,30 +390,30 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 	}
 
 	for (i = 0; i < bmap->fragments_count; i++) {
-		struct page *page;
+		struct folio *folio;
 		void *kaddr;
 
-		page = find_lock_page(&bmap->pages, i);
+		folio = filemap_lock_folio(&bmap->folios, i);
 
-		SSDFS_DBG("page[%d] %p\n", i, page);
-		if (!page)
+		SSDFS_DBG("folio[%d] %p\n", i, folio);
+		if (!folio)
 			continue;
 
-		ssdfs_account_locked_page(page);
+		ssdfs_account_locked_folio(folio);
 
-		SSDFS_DBG("page_index %llu, flags %#lx\n",
-			  (u64)page_index(page), page->flags);
+		SSDFS_DBG("folio_index %llu, flags %#lx\n",
+			  (u64)folio_index(folio), folio->flags);
 
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					kaddr, PAGE_SIZE);
 		kunmap_local(kaddr);
 
-		ssdfs_unlock_page(page);
-		ssdfs_put_page(page);
+		ssdfs_folio_unlock(folio);
+		ssdfs_folio_put(folio);
 
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 }
