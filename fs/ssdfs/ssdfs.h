@@ -107,6 +107,8 @@ struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
 void ssdfs_bdev_bio_put(struct bio *bio);
 int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
 			    unsigned int len, unsigned int offset);
+int ssdfs_bdev_bio_add_folio(struct bio *bio, struct folio *folio,
+			    unsigned int offset);
 int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
 			loff_t offset);
 int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
@@ -149,6 +151,7 @@ int ssdfs_set_folio_dirty(struct folio *folio);
 int __ssdfs_clear_dirty_page(struct page *page);
 int __ssdfs_clear_dirty_folio(struct folio *folio);
 int ssdfs_clear_dirty_page(struct page *page);
+int ssdfs_clear_dirty_folio(struct folio *folio);
 void ssdfs_clear_dirty_pages(struct address_space *mapping);
 
 /* inode.c */

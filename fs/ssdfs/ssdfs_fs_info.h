@@ -127,6 +127,7 @@ struct ssdfs_sb_info {
  * @readpages: read sequence of pages
  * @can_write_page: can we write into page?
  * @writepage: write page to device
+ * @write_folio: write folio to device
  * @writepages: write sequence of pages to device
  * @erase: erase block
  * @trim: support of background erase operation
@@ -149,6 +150,8 @@ struct ssdfs_device_ops {
 				bool need_check);
 	int (*writepage)(struct super_block *sb, loff_t to_off,
 			 struct page *page, u32 from_off, size_t len);
+	int (*write_folio)(struct super_block *sb, loff_t to_off,
+			   struct folio *folio);
 	int (*writepages)(struct super_block *sb, loff_t to_off,
 			  struct pagevec *pvec, u32 from_off, size_t len);
 	int (*erase)(struct super_block *sb, loff_t offset, size_t len);

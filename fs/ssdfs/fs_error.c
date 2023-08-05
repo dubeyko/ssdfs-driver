@@ -291,6 +291,41 @@ int ssdfs_clear_dirty_page(struct page *page)
 	return 0;
 }
 
+int ssdfs_clear_dirty_folio(struct folio *folio)
+{
+	struct address_space *mapping = folio->mapping;
+	unsigned long flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio_index: %llu, mapping %p\n",
+		  (u64)folio_index(folio), mapping);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!folio_test_locked(folio)) {
+		SSDFS_WARN("folio isn't locked: "
+			   "folio_index %llu, mapping %p\n",
+			   (u64)folio_index(folio), mapping);
+		return -ERANGE;
+	}
+
+	if (mapping) {
+		xa_lock_irqsave(&mapping->i_pages, flags);
+		if (test_bit(PG_dirty, &folio->flags)) {
+			__xa_clear_mark(&mapping->i_pages,
+					folio_index(folio),
+					PAGECACHE_TAG_DIRTY);
+			xa_unlock_irqrestore(&mapping->i_pages, flags);
+			return folio_clear_dirty_for_io(folio);
+		}
+		xa_unlock_irqrestore(&mapping->i_pages, flags);
+		return 0;
+	}
+
+	folio_test_clear_dirty(folio);
+
+	return 0;
+}
+
 /*
  * ssdfs_clear_dirty_pages - discard dirty pages in address space
  * @mapping: address space with dirty pages for discarding

@@ -198,6 +198,32 @@ int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
 }
 
 /*
+ * ssdfs_bdev_bio_add_folio() - add folio into bio
+ * @bio: pointer on bio object
+ * @folio: memory folio
+ * @offset: vec entry offset
+ */
+int ssdfs_bdev_bio_add_folio(struct bio *bio, struct folio *folio,
+			     unsigned int offset)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bio || !folio);
+
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!bio_add_folio(bio, folio, folio_size(folio), offset)) {
+		SSDFS_ERR("fail to add folio: "
+			  "offset %u, size %zu\n",
+			  offset, folio_size(folio));
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_bdev_sync_page_request() - submit page request
  * @sb: superblock object
  * @page: memory page
@@ -252,6 +278,66 @@ static int ssdfs_bdev_sync_page_request(struct super_block *sb,
 	}
 
 finish_sync_page_request:
+	ssdfs_bdev_bio_put(bio);
+
+	return err;
+}
+
+/*
+ * ssdfs_bdev_sync_folio_request() - submit folio request
+ * @sb: superblock object
+ * @folio: memory folio
+ * @offset: offset in bytes from partition's begin
+ * @op: direction of I/O
+ * @op_flags: request op flags
+ */
+static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
+					 struct folio *folio,
+					 loff_t offset,
+					 unsigned int op, int op_flags)
+{
+	struct bio *bio;
+	sector_t sector = (pgoff_t)(offset >> SECTOR_SHIFT);
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, 1, op, GFP_NOIO);
+	if (IS_ERR_OR_NULL(bio)) {
+		err = !bio ? -ERANGE : PTR_ERR(bio);
+		SSDFS_ERR("fail to allocate bio: err %d\n",
+			  err);
+		return err;
+	}
+
+	bio->bi_iter.bi_sector = sector;
+	bio_set_dev(bio, sb->s_bdev);
+	bio->bi_opf = op | op_flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_bdev_bio_add_folio(bio, folio, 0);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to add folio into bio: "
+			  "err %d\n",
+			  err);
+		goto finish_sync_folio_request;
+	}
+
+	err = submit_bio_wait(bio);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to process request: "
+			  "err %d\n",
+			  err);
+		goto finish_sync_folio_request;
+	}
+
+finish_sync_folio_request:
 	ssdfs_bdev_bio_put(bio);
 
 	return err;
@@ -754,6 +840,80 @@ int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
 }
 
 /*
+ * ssdfs_bdev_write_folio() - write memory folio on volume
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ * @folio: memory folio
+ *
+ * This function tries to write from @folio data
+ * on @offset from partition's begin.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EROFS       - file system in RO mode.
+ * %-EIO         - I/O error.
+ */
+int ssdfs_bdev_write_folio(struct super_block *sb, loff_t offset,
+			   struct folio *folio)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 remainder;
+#endif /* CONFIG_SSDFS_DEBUG */
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu, folio %p\n",
+		  sb, offset, folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (sb->s_flags & SB_RDONLY) {
+		SSDFS_WARN("unable to write on RO file system\n");
+		return -EROFS;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+	BUG_ON((offset >= ssdfs_bdev_device_size(sb)) ||
+		(folio_size(folio) > (ssdfs_bdev_device_size(sb) - offset)));
+	div_u64_rem((u64)offset, (u64)fsi->pagesize, &remainder);
+	BUG_ON(remainder);
+	BUG_ON(!folio_test_dirty(folio));
+	BUG_ON(folio_test_locked(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_folio_lock(folio);
+	atomic_inc(&fsi->pending_bios);
+
+	err = ssdfs_bdev_sync_folio_request(sb, folio, offset,
+					    REQ_OP_WRITE, REQ_SYNC);
+	if (err) {
+		folio_set_error(folio);
+		SSDFS_ERR("failed to write (err %d): offset %llu\n",
+			  err, (unsigned long long)offset);
+	} else {
+		ssdfs_clear_dirty_folio(folio);
+		folio_mark_uptodate(folio);
+		folio_clear_error(folio);
+	}
+
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic_dec_and_test(&fsi->pending_bios))
+		wake_up_all(&wq);
+
+	return err;
+}
+
+/*
  * ssdfs_bdev_writepages() - write pagevec on volume
  * @sb: superblock object
  * @to_off: offset in bytes from partition's begin
@@ -1018,6 +1178,7 @@ const struct ssdfs_device_ops ssdfs_bdev_devops = {
 	.readpages		= ssdfs_bdev_readpages,
 	.can_write_page		= ssdfs_bdev_can_write_page,
 	.writepage		= ssdfs_bdev_writepage,
+	.write_folio		= ssdfs_bdev_write_folio,
 	.writepages		= ssdfs_bdev_writepages,
 	.erase			= ssdfs_bdev_erase,
 	.trim			= ssdfs_bdev_trim,

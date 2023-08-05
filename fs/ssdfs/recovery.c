@@ -2070,9 +2070,9 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 	u32 read_off;
 	u32 read_bytes = 0;
 	u32 bytes_count;
-	u32 pages_count;
+	u32 folios_count;
 	u64 peb_id;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	u64 prev_end_leb;
 	u32 csum = ~0;
@@ -2105,40 +2105,41 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 
 	peb_id = fsi->sbi.last_log.peb_id;
 
-	pages_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	folios_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
-	for (i = 0; i < pages_count; i++) {
+	for (i = 0; i < folios_count; i++) {
 		struct ssdfs_maptbl_cache *cache = &fsi->maptbl_cache;
 		size_t size;
 
 		size = min_t(size_t, (size_t)PAGE_SIZE,
 				(size_t)(bytes_count - read_bytes));
 
-		page = ssdfs_maptbl_cache_add_pagevec_page(cache);
-		if (unlikely(IS_ERR_OR_NULL(page))) {
-			err = !page ? -ENOMEM : PTR_ERR(page);
-			SSDFS_ERR("fail to add pagevec page: err %d\n",
+		folio = ssdfs_maptbl_cache_add_batch_folio(cache);
+		if (unlikely(IS_ERR_OR_NULL(folio))) {
+			err = !folio ? -ENOMEM : PTR_ERR(folio);
+			SSDFS_ERR("fail to add folio into batch: err %d\n",
 				  err);
 			goto finish_read_maptbl_cache;
 		}
 
-		ssdfs_lock_page(page);
+		ssdfs_folio_lock(folio);
 
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		err = ssdfs_unaligned_read_buffer(fsi, peb_id,
 						  read_off, kaddr, size);
-		flush_dcache_page(page);
 		kunmap_local(kaddr);
 
 		if (unlikely(err)) {
-			ssdfs_unlock_page(page);
-			SSDFS_ERR("fail to read page: "
-				  "peb %llu, offset %u, size %zu, err %d\n",
+			ssdfs_folio_unlock(folio);
+			SSDFS_ERR("fail to read folio: "
+				  "peb %llu, offset %u, "
+				  "size %zu, err %d\n",
 				  peb_id, read_off, size, err);
 			goto finish_read_maptbl_cache;
 		}
 
-		ssdfs_unlock_page(page);
+		flush_dcache_folio(folio);
+		ssdfs_folio_unlock(folio);
 
 		read_off += size;
 		read_bytes += size;
@@ -2146,15 +2147,15 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 
 	prev_end_leb = U64_MAX;
 
-	for (i = 0; i < pages_count; i++) {
-		page = fsi->maptbl_cache.pvec.pages[i];
+	for (i = 0; i < folios_count; i++) {
+		folio = fsi->maptbl_cache.batch.folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(i >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_lock_page(page);
-		kaddr = kmap_local_page(page);
+		ssdfs_folio_lock(folio);
+		kaddr = kmap_local_folio(folio, 0);
 
 		maptbl_cache_hdr = SSDFS_MAPTBL_CACHE_HDR(kaddr);
 
@@ -2163,9 +2164,9 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 						      prev_end_leb);
 		if (unlikely(err)) {
 			SSDFS_ERR("invalid maptbl cache header: "
-				  "page_index %d, err %d\n",
+				  "folio_index %d, err %d\n",
 				  i, err);
-			goto unlock_cur_page;
+			goto unlock_cur_folio;
 		}
 
 		prev_end_leb = le64_to_cpu(maptbl_cache_hdr->end_leb);
@@ -2173,9 +2174,9 @@ static int ssdfs_read_maptbl_cache(struct ssdfs_fs_info *fsi)
 		csum = crc32(csum, kaddr,
 			     le16_to_cpu(maptbl_cache_hdr->bytes_count));
 
-unlock_cur_page:
+unlock_cur_folio:
 		kunmap_local(kaddr);
-		ssdfs_unlock_page(page);
+		ssdfs_folio_unlock(folio);
 
 		if (unlikely(err))
 			goto finish_read_maptbl_cache;

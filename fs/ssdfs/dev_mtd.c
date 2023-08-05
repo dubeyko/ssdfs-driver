@@ -413,6 +413,96 @@ static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
 }
 
 /*
+ * ssdfs_mtd_write_folio() - write memory folio on volume
+ * @sb: superblock object
+ * @offset: offset in bytes from partition's begin
+ * @folio: memory folio
+ *
+ * This function tries to write from @folio data
+ * on @offset from partition's begin.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EROFS       - file system in RO mode.
+ * %-EIO         - I/O error.
+ */
+static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
+				 struct folio *folio)
+{
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+	struct mtd_info *mtd = fsi->mtd;
+	size_t retlen;
+	unsigned char *kaddr;
+	int ret;
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 remainder;
+#endif /* CONFIG_SSDFS_DEBUG */
+	u32 written_bytes = 0;
+	int i = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb %p, offset %llu, folio %p\n",
+		  sb, offset, folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (sb->s_flags & SB_RDONLY) {
+		SSDFS_WARN("unable to write on RO file system\n");
+		return -EROFS;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+	BUG_ON((offset >= mtd->size) ||
+		(folio_size(folio) > (mtd->size - to_off)));
+	div_u64_rem((u64)offset, (u64)fsi->pagesize, &remainder);
+	BUG_ON(remainder);
+	BUG_ON(!folio_test_dirty(folio));
+	BUG_ON(folio_test_locked(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_folio_lock(folio);
+
+	while (written_bytes < folio_size(folio)) {
+		kaddr = kmap_local_folio(folio, i);
+		ret = mtd_write(mtd, offset + written_bytes, PAGE_SIZE,
+				&retlen, kaddr);
+		kunmap_local(kaddr);
+
+		if (ret || (retlen != PAGE_SIZE)) {
+			folio_set_error(folio);
+			SSDFS_ERR("failed to write (err %d): offset %llu, "
+				  "len %zu, retlen %zu\n",
+				  ret, (unsigned long long)offset,
+				  PAGE_SIZE, retlen);
+			err = -EIO;
+			break;
+		}
+
+		written_bytes += PAGE_SIZE;
+		i++;
+	}
+
+	if (!err) {
+		ssdfs_clear_dirty_folio(folio);
+		folio_mark_uptodate(folio);
+		folio_clear_error(folio);
+	}
+
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
  * ssdfs_mtd_writepages() - write memory pages on volume
  * @sb: superblock object
  * @to_off: offset in bytes from partition's begin
@@ -640,6 +730,7 @@ const struct ssdfs_device_ops ssdfs_mtd_devops = {
 	.readpages		= ssdfs_mtd_readpages,
 	.can_write_page		= ssdfs_mtd_can_write_page,
 	.writepage		= ssdfs_mtd_writepage,
+	.write_folio		= ssdfs_mtd_write_folio,
 	.writepages		= ssdfs_mtd_writepages,
 	.erase			= ssdfs_mtd_erase,
 	.trim			= ssdfs_mtd_trim,

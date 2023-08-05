@@ -27,13 +27,13 @@
 /*
  * struct ssdfs_maptbl_cache - maptbl cache
  * @lock: lock of maptbl cache
- * @pvec: memory pages of maptbl cache
+ * @batch: memory folios of maptbl cache
  * @bytes_count: count of bytes in maptbl cache
  * @pm_queue: PEB mappings queue
  */
 struct ssdfs_maptbl_cache {
 	struct rw_semaphore lock;
-	struct pagevec pvec;
+	struct folio_batch batch;
 	atomic_t bytes_count;
 
 	struct ssdfs_peb_mapping_queue pm_queue;
@@ -41,7 +41,7 @@ struct ssdfs_maptbl_cache {
 
 /*
  * struct ssdfs_maptbl_cache_item - cache item descriptor
- * @page_index: index of the found memory page
+ * @folio_index: index of the found memory folio
  * @item_index: item of found index
  * @found: found LEB2PEB pair
  */
@@ -52,7 +52,7 @@ struct ssdfs_maptbl_cache_item {
 #define SSDFS_MAPTBL_CACHE_SEARCH_ERROR		(3)
 #define SSDFS_MAPTBL_CACHE_SEARCH_MAX		(4)
 	int state;
-	unsigned page_index;
+	unsigned folio_index;
 	u16 item_index;
 	struct ssdfs_leb2peb_pair found;
 };
@@ -101,8 +101,8 @@ int ssdfs_maptbl_cache_exclude_migration_peb(struct ssdfs_maptbl_cache *cache,
 /*
  * PEB mapping table cache's internal API
  */
-struct page *
-ssdfs_maptbl_cache_add_pagevec_page(struct ssdfs_maptbl_cache *cache);
+struct folio *
+ssdfs_maptbl_cache_add_batch_folio(struct ssdfs_maptbl_cache *cache);
 int ssdfs_maptbl_cache_convert_leb2peb_nolock(struct ssdfs_maptbl_cache *cache,
 					 u64 leb_id,
 					 struct ssdfs_maptbl_peb_relation *pebr);
