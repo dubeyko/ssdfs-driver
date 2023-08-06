@@ -37,6 +37,7 @@
 #include "version.h"
 #include "segment_bitmap.h"
 #include "page_array.h"
+#include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "peb_container.h"
@@ -2859,6 +2860,8 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_ino_tree_memory_leaks_init();
 	ssdfs_invext_tree_memory_leaks_init();
 	ssdfs_blk2off_memory_leaks_init();
+	ssdfs_farray_memory_leaks_init();
+	ssdfs_folio_vector_memory_leaks_init();
 	ssdfs_parray_memory_leaks_init();
 	ssdfs_page_vector_memory_leaks_init();
 	ssdfs_flush_memory_leaks_init();
@@ -2938,6 +2941,8 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_ino_tree_check_memory_leaks();
 	ssdfs_invext_tree_check_memory_leaks();
 	ssdfs_blk2off_check_memory_leaks();
+	ssdfs_farray_check_memory_leaks();
+	ssdfs_folio_vector_check_memory_leaks();
 	ssdfs_parray_check_memory_leaks();
 	ssdfs_page_vector_check_memory_leaks();
 	ssdfs_flush_check_memory_leaks();

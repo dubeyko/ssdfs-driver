@@ -30,10 +30,11 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
+#include "folio_vector.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
 #include "page_array.h"
+#include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "peb_container.h"
@@ -391,7 +392,7 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 
 	init_rwsem(&ptr->lock);
 	ptr->fragment_id = index;
-	ptr->fragment_pages = fsi->maptbl->fragment_pages;
+	ptr->fragment_folios = fsi->maptbl->fragment_folios;
 	ptr->start_leb = U64_MAX;
 	ptr->lebs_count = U32_MAX;
 	ptr->lebs_per_page = U16_MAX;
@@ -404,11 +405,13 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	ptr->pre_erase_pebs = 0;
 	ptr->recovering_pebs = 0;
 
-	err = ssdfs_create_page_array(ptr->fragment_pages, &ptr->array);
+	err = ssdfs_create_folio_array(&ptr->array,
+					get_order(PAGE_SIZE),
+					ptr->fragment_folios);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to create page array: "
+		SSDFS_ERR("fail to create folio array: "
 			  "capacity %u, err %d\n",
-			  ptr->fragment_pages, err);
+			  ptr->fragment_folios, err);
 		return err;
 	}
 
@@ -418,12 +421,12 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	ptr->flush_req2 = NULL;
 	ptr->flush_req_count = 0;
 
-	ptr->flush_seq_size = min_t(u32, ptr->fragment_pages, PAGEVEC_SIZE);
+	ptr->flush_seq_size = min_t(u32, ptr->fragment_folios, PAGEVEC_SIZE);
 	ptr->flush_req1 = ssdfs_map_tbl_kcalloc(ptr->flush_seq_size,
 					sizeof(struct ssdfs_segment_request),
 					GFP_KERNEL);
 	if (!ptr->flush_req1) {
-		ssdfs_destroy_page_array(&ptr->array);
+		ssdfs_destroy_folio_array(&ptr->array);
 		SSDFS_ERR("fail to allocate flush requests array: "
 			  "array_size %u\n",
 			  ptr->flush_seq_size);
@@ -434,7 +437,7 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 					sizeof(struct ssdfs_segment_request),
 					GFP_KERNEL);
 	if (!ptr->flush_req2) {
-		ssdfs_destroy_page_array(&ptr->array);
+		ssdfs_destroy_folio_array(&ptr->array);
 		ssdfs_map_tbl_kfree(ptr->flush_req1);
 		ptr->flush_req1 = NULL;
 		SSDFS_ERR("fail to allocate flush requests array: "
@@ -772,7 +775,7 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		ptr->flush_req2 = NULL;
 	}
 
-	ssdfs_destroy_page_array(&ptr->array);
+	ssdfs_destroy_folio_array(&ptr->array);
 	complete_all(&ptr->init_end);
 }
 
@@ -963,7 +966,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	atomic_set(&ptr->flags, le16_to_cpu(fsi->vh->maptbl.flags));
 	ptr->fragments_count = le32_to_cpu(fsi->vh->maptbl.fragments_count);
 	ptr->fragment_bytes = le32_to_cpu(fsi->vh->maptbl.fragment_bytes);
-	ptr->fragment_pages = (ptr->fragment_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	ptr->fragment_folios = (ptr->fragment_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 	ptr->fragments_per_seg = le16_to_cpu(fsi->vh->maptbl.fragments_per_seg);
 	ptr->fragments_per_peb = le16_to_cpu(fsi->vh->maptbl.fragments_per_peb);
 	ptr->lebs_count = le64_to_cpu(fsi->vh->maptbl.lebs_count);
@@ -1226,15 +1229,15 @@ void ssdfs_maptbl_fragment_desc_init(struct ssdfs_peb_mapping_table *tbl,
 }
 
 /*
- * ssdfs_maptbl_check_lebtbl_page() - check LEB table's page
- * @page: memory page with LEB table's fragment
+ * ssdfs_maptbl_check_lebtbl_folio() - check LEB table's folio
+ * @folio: memory folio with LEB table's fragment
  * @portion_id: portion identification number
  * @fragment_id: portion's fragment identification number
  * @fdesc: mapping table's fragment descriptor
- * @page_index: index of page inside of LEB table
+ * @folio_index: index of folio inside of LEB table
  * @lebs_per_fragment: pointer on counter of LEBs in fragment [in|out]
  *
- * This method checks LEB table's page.
+ * This method checks LEB table's folio.
  *
  * RETURN:
  * [success]
@@ -1244,10 +1247,10 @@ void ssdfs_maptbl_fragment_desc_init(struct ssdfs_peb_mapping_table *tbl,
  * %-EIO        - fragment's LEB table is corrupted.
  */
 static
-int ssdfs_maptbl_check_lebtbl_page(struct page *page,
+int ssdfs_maptbl_check_lebtbl_folio(struct folio *folio,
 				   u16 portion_id, u16 fragment_id,
 				   struct ssdfs_maptbl_fragment_desc *fdesc,
-				   int page_index,
+				   int folio_index,
 				   u16 *lebs_per_fragment)
 {
 	void *kaddr;
@@ -1259,30 +1262,30 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page || !fdesc || !lebs_per_fragment);
+	BUG_ON(!folio || !fdesc || !lebs_per_fragment);
 	BUG_ON(*lebs_per_fragment == U16_MAX);
 
-	if (page_index >= fdesc->lebtbl_pages) {
-		SSDFS_ERR("page_index %d >= fdesc->lebtbl_pages %u\n",
-			  page_index, fdesc->lebtbl_pages);
+	if (folio_index >= fdesc->lebtbl_pages) {
+		SSDFS_ERR("folio_index %d >= fdesc->lebtbl_pages %u\n",
+			  folio_index, fdesc->lebtbl_pages);
 		return -EINVAL;
 	}
 
-	SSDFS_DBG("page %p, portion_id %u, fragment_id %u, "
-		  "fdesc %p, page_index %d, "
+	SSDFS_DBG("folio %p, portion_id %u, fragment_id %u, "
+		  "fdesc %p, folio_index %d, "
 		  "lebs_per_fragment %u\n",
-		  page, portion_id, fragment_id,
-		  fdesc, page_index,
+		  folio, portion_id, fragment_id,
+		  fdesc, folio_index,
 		  *lebs_per_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_lock_page(page);
-	kaddr = kmap_local_page(page);
+	ssdfs_folio_lock(folio);
+	kaddr = kmap_local_folio(folio, 0);
 	hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("PAGE DUMP: page_index %u\n",
-		  page_index);
+	SSDFS_DBG("PAGE DUMP: folio_index %u\n",
+		  folio_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
@@ -1292,8 +1295,8 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 	if (le16_to_cpu(hdr->magic) != SSDFS_LEB_TABLE_MAGIC) {
 		err = -EIO;
 		SSDFS_ERR("invalid LEB table's magic signature: "
-			  "page_index %d\n",
-			  page_index);
+			  "folio_index %d\n",
+			  folio_index);
 		goto finish_lebtbl_check;
 	}
 
@@ -1336,7 +1339,7 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 		goto finish_lebtbl_check;
 	}
 
-	start_leb = fdesc->start_leb + ((u64)fdesc->lebs_per_page * page_index);
+	start_leb = fdesc->start_leb + ((u64)fdesc->lebs_per_page * folio_index);
 	if (start_leb != le64_to_cpu(hdr->start_leb)) {
 		err = -EIO;
 		SSDFS_ERR("hdr->start_leb %llu != start_leb %llu\n",
@@ -1375,23 +1378,23 @@ int ssdfs_maptbl_check_lebtbl_page(struct page *page,
 
 finish_lebtbl_check:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
+	ssdfs_folio_unlock(folio);
 
 	return err;
 }
 
 /*
- * ssdfs_maptbl_check_pebtbl_page() - check page in stripe of PEB table
+ * ssdfs_maptbl_check_pebtbl_folio() - check folio in stripe of PEB table
  * @pebc: pointer on PEB container
- * @page: memory page with PEB table's fragment
+ * @folio: memory folio with PEB table's fragment
  * @portion_id: portion identification number
  * @fragment_id: portion's fragment identification number
  * @fdesc: mapping table's fragment descriptor
  * @stripe_id: PEB table's stripe identification number
- * @page_index: index of page inside of PEB table's stripe
+ * @folio_index: index of folio inside of PEB table's stripe
  * @pebs_per_fragment: pointer on counter of PEBs in fragment [in|out]
  *
- * This method checks PEB table's page.
+ * This method checks PEB table's folio.
  *
  * RETURN:
  * [success]
@@ -1401,12 +1404,12 @@ finish_lebtbl_check:
  * %-EIO        - fragment's PEB table is corrupted.
  */
 static
-int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
-				   struct page *page,
+int ssdfs_maptbl_check_pebtbl_folio(struct ssdfs_peb_container *pebc,
+				   struct folio *folio,
 				   u16 portion_id, u16 fragment_id,
 				   struct ssdfs_maptbl_fragment_desc *fdesc,
 				   int stripe_id,
-				   int page_index,
+				   int folio_index,
 				   u16 *pebs_per_fragment)
 {
 	struct ssdfs_fs_info *fsi;
@@ -1423,35 +1426,35 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebc || !page || !fdesc || !pebs_per_fragment);
+	BUG_ON(!pebc || !folio || !fdesc || !pebs_per_fragment);
 	BUG_ON(*pebs_per_fragment == U16_MAX);
 
-	if (page_index >= fdesc->stripe_pages) {
-		SSDFS_ERR("page_index %d >= fdesc->stripe_pages %u\n",
-			  page_index, fdesc->stripe_pages);
+	if (folio_index >= fdesc->stripe_pages) {
+		SSDFS_ERR("folio_index %d >= fdesc->stripe_pages %u\n",
+			  folio_index, fdesc->stripe_pages);
 		return -EINVAL;
 	}
 
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
-	SSDFS_DBG("page %p, portion_id %u, fragment_id %u, "
-		  "fdesc %p, stripe_id %d, page_index %d, "
+	SSDFS_DBG("folio %p, portion_id %u, fragment_id %u, "
+		  "fdesc %p, stripe_id %d, folio_index %d, "
 		  "pebs_per_fragment %u\n",
-		  page, portion_id, fragment_id,
-		  fdesc, stripe_id, page_index,
+		  folio, portion_id, fragment_id,
+		  fdesc, stripe_id, folio_index,
 		  *pebs_per_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
 
-	ssdfs_lock_page(page);
-	kaddr = kmap_local_page(page);
+	ssdfs_folio_lock(folio);
+	kaddr = kmap_local_folio(folio, 0);
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("PAGE DUMP: page_index %u\n",
-		  page_index);
+	SSDFS_DBG("PAGE DUMP: folio_index %u\n",
+		  folio_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
@@ -1461,8 +1464,8 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 	if (le16_to_cpu(hdr->magic) != SSDFS_PEB_TABLE_MAGIC) {
 		err = -EIO;
 		SSDFS_ERR("invalid PEB table's magic signature: "
-			  "stripe_id %d, page_index %d\n",
-			  stripe_id, page_index);
+			  "stripe_id %d, folio_index %d\n",
+			  stripe_id, folio_index);
 		goto finish_pebtbl_check;
 	}
 
@@ -1582,7 +1585,7 @@ int ssdfs_maptbl_check_pebtbl_page(struct ssdfs_peb_container *pebc,
 
 finish_pebtbl_check:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
+	ssdfs_folio_unlock(folio);
 
 	if (!err) {
 		u32 unused_lebs;
@@ -1625,16 +1628,21 @@ finish_pebtbl_check:
 }
 
 /*
- * ssdfs_maptbl_move_fragment_pages() - move fragment's pages
+ * ssdfs_maptbl_move_fragment_folios() - move fragment's folios
  * @req: segment request
- * @area: fragment's pages
- * @pages_count: pages count in area
+ * @area: fragment's folios
+ * @folios_count: folios count in area
  */
-void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
-				      struct ssdfs_maptbl_area *area,
-				      u16 pages_count)
+void ssdfs_maptbl_move_fragment_folios(struct ssdfs_segment_request *req,
+					struct ssdfs_maptbl_area *area,
+					u16 folios_count)
 {
+	struct folio *folio;
+/* TODO: delete temporary code --- START */
 	struct page *page;
+	void *kaddr;
+	int err;
+/* TODO: delete temporary code --- END */
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1644,15 +1652,41 @@ void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 		  req, area);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < pages_count; i++) {
+	for (i = 0; i < folios_count; i++) {
+/* TODO: delete temporary code --- START */
+		page = req->result.pvec.pages[i];
+
+		folio = ssdfs_map_tbl_alloc_folio(GFP_KERNEL,
+						  get_order(PAGE_SIZE));
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate memory folio\n");
+			return;
+		}
+
+		ssdfs_folio_get(folio);
+
+		kaddr = kmap_local_page(page);
+		__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
+					kaddr, 0, PAGE_SIZE,
+					PAGE_SIZE);
+		kunmap_local(kaddr);
+
+		area->folios[area->folios_count] = folio;
+		area->folios_count++;
+/* TODO: delete temporary code --- END */
+
+/*
 		page = req->result.pvec.pages[i];
 		area->pages[area->pages_count] = page;
 		area->pages_count++;
 		ssdfs_map_tbl_account_page(page);
 		ssdfs_request_unlock_and_remove_page(req, i);
+*/
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+/*
 	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
 		page = req->result.pvec.pages[i];
 
@@ -1661,9 +1695,10 @@ void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
 			BUG_ON(page);
 		}
 	}
+*/
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	pagevec_reinit(&req->result.pvec);
+//	pagevec_reinit(&req->result.pvec);
 }
 
 /*
@@ -1690,7 +1725,7 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 	int state;
 	u16 lebs_per_fragment = 0, pebs_per_fragment = 0;
 	u32 calculated;
-	int page_index;
+	int folio_index;
 	int fragment_id;
 	int i, j;
 	int err = 0;
@@ -1703,32 +1738,32 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("seg %llu, peb_index %u, portion_id %u, "
-		  "pages_count %zu, pages_capacity %zu\n",
+		  "folios_count %zu, folios_capacity %zu\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, area->portion_id,
-		  area->pages_count, area->pages_capacity);
+		  area->folios_count, area->folios_capacity);
 #else
 	SSDFS_DBG("seg %llu, peb_index %u, portion_id %u, "
-		  "pages_count %zu, pages_capacity %zu\n",
+		  "folios_count %zu, folios_capacity %zu\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index, area->portion_id,
-		  area->pages_count, area->pages_capacity);
+		  area->folios_count, area->folios_capacity);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	fsi = pebc->parent_si->fsi;
 	tbl = fsi->maptbl;
 
-	if (area->pages_count > area->pages_capacity) {
-		SSDFS_ERR("area->pages_count %zu > area->pages_capacity %zu\n",
-			  area->pages_count,
-			  area->pages_capacity);
+	if (area->folios_count > area->folios_capacity) {
+		SSDFS_ERR("area->folios_count %zu > area->folios_capacity %zu\n",
+			  area->folios_count,
+			  area->folios_capacity);
 		return -EINVAL;
 	}
 
-	if (area->pages_count > tbl->fragment_pages) {
-		SSDFS_ERR("area->pages_count %zu > tbl->fragment_pages %u\n",
-			  area->pages_count,
-			  tbl->fragment_pages);
+	if (area->folios_count > tbl->fragment_folios) {
+		SSDFS_ERR("area->folios_count %zu > tbl->fragment_folios %u\n",
+			  area->folios_count,
+			  tbl->fragment_folios);
 		return -EINVAL;
 	}
 
@@ -1754,44 +1789,44 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 
 	calculated = fdesc->lebtbl_pages;
 	calculated += fdesc->stripe_pages * tbl->stripes_per_fragment;
-	if (calculated != area->pages_count) {
+	if (calculated != area->folios_count) {
 		err = -EIO;
-		SSDFS_ERR("calculated %u != area->pages_count %zu\n",
-			  calculated, area->pages_count);
+		SSDFS_ERR("calculated %u != area->folios_count %zu\n",
+			  calculated, area->folios_count);
 		goto finish_fragment_init;
 	}
 
-	page_index = 0;
+	folio_index = 0;
 
 	for (i = 0; i < fdesc->lebtbl_pages; i++) {
-		struct page *page;
+		struct folio *folio;
 
-		if (page_index >= area->pages_count) {
+		if (folio_index >= area->folios_count) {
 			err = -ERANGE;
-			SSDFS_ERR("page_index %d >= pages_count %zu\n",
-				  page_index, area->pages_count);
+			SSDFS_ERR("folio_index %d >= folios_count %zu\n",
+				  folio_index, area->folios_count);
 			goto finish_fragment_init;
 		}
 
-		page = area->pages[page_index];
-		if (!page) {
+		folio = area->folios[folio_index];
+		if (!folio) {
 			err = -ERANGE;
-			SSDFS_ERR("page %d is absent\n", i);
+			SSDFS_ERR("folio %d is absent\n", i);
 			goto finish_fragment_init;
 		}
 
-		err = ssdfs_maptbl_check_lebtbl_page(page,
-						     area->portion_id, i,
-						     fdesc, i,
-						     &lebs_per_fragment);
+		err = ssdfs_maptbl_check_lebtbl_folio(folio,
+						      area->portion_id, i,
+						      fdesc, i,
+						      &lebs_per_fragment);
 		if (unlikely(err)) {
-			SSDFS_ERR("maptbl's page %d is corrupted: "
+			SSDFS_ERR("maptbl's folio %d is corrupted: "
 				  "err %d\n",
-				  page_index, err);
+				  folio_index, err);
 			goto finish_fragment_init;
 		}
 
-		page_index++;
+		folio_index++;
 	}
 
 	if (fdesc->lebs_count < (fdesc->mapped_lebs + fdesc->migrating_lebs)) {
@@ -1813,35 +1848,35 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 
 	for (i = 0, fragment_id = 0; i < tbl->stripes_per_fragment; i++) {
 		for (j = 0; j < fdesc->stripe_pages; j++) {
-			struct page *page;
+			struct folio *folio;
 
-			if (page_index >= area->pages_count) {
+			if (folio_index >= area->folios_count) {
 				err = -ERANGE;
-				SSDFS_ERR("page_index %d >= pages_count %zu\n",
-					  page_index, area->pages_count);
+				SSDFS_ERR("folio_index %d >= folios_count %zu\n",
+					  folio_index, area->folios_count);
 				goto finish_fragment_init;
 			}
 
-			page = area->pages[page_index];
-			if (!page) {
+			folio = area->folios[folio_index];
+			if (!folio) {
 				err = -ERANGE;
-				SSDFS_ERR("page %d is absent\n", i);
+				SSDFS_ERR("folio %d is absent\n", i);
 				goto finish_fragment_init;
 			}
 
-			err = ssdfs_maptbl_check_pebtbl_page(pebc, page,
-							    area->portion_id,
-							    fragment_id,
-							    fdesc, i, j,
-							    &pebs_per_fragment);
+			err = ssdfs_maptbl_check_pebtbl_folio(pebc, folio,
+							      area->portion_id,
+							      fragment_id,
+							      fdesc, i, j,
+							      &pebs_per_fragment);
 			if (unlikely(err)) {
-				SSDFS_ERR("maptbl's page %d is corrupted: "
+				SSDFS_ERR("maptbl's folio %d is corrupted: "
 					  "err %d\n",
-					  page_index, err);
+					  folio_index, err);
 				goto finish_fragment_init;
 			}
 
-			page_index++;
+			folio_index++;
 			fragment_id++;
 		}
 	}
@@ -1880,43 +1915,43 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 		goto finish_fragment_init;
 	}
 
-	for (i = 0; i < area->pages_count; i++) {
-		struct page *page;
+	for (i = 0; i < area->folios_count; i++) {
+		struct folio *folio;
 
-		if (i >= area->pages_count) {
+		if (i >= area->folios_count) {
 			err = -ERANGE;
-			SSDFS_ERR("page_index %d >= pages_count %zu\n",
-				  i, area->pages_count);
+			SSDFS_ERR("folio_index %d >= folios_count %zu\n",
+				  i, area->folios_count);
 			goto finish_fragment_init;
 		}
 
-		page = area->pages[i];
-		if (!page) {
+		folio = area->folios[i];
+		if (!folio) {
 			err = -ERANGE;
-			SSDFS_ERR("page %d is absent\n", i);
+			SSDFS_ERR("folio %d is absent\n", i);
 			goto finish_fragment_init;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page_index %d, page %p\n",
-			  i, page);
+		SSDFS_DBG("folio_index %d, folio %p\n",
+			  i, folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_lock_page(page);
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_add_page(&fdesc->array,
-						page, i);
-		ssdfs_unlock_page(page);
+		ssdfs_folio_lock(folio);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_add_folio(&fdesc->array,
+						  folio, i);
+		ssdfs_folio_unlock(folio);
 
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to add page %d: err %d\n",
+			SSDFS_ERR("fail to add folio %d: err %d\n",
 				  i, err);
 			goto finish_fragment_init;
 		}
 
-		ssdfs_map_tbl_forget_page(page);
-		area->pages[i] = NULL;
+		ssdfs_map_tbl_forget_folio(folio);
+		area->folios[i] = NULL;
 	}
 
 finish_fragment_init:
@@ -2024,14 +2059,14 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 }
 
 /*
- * ssdfs_maptbl_copy_dirty_page() - copy dirty page into request
+ * ssdfs_maptbl_copy_dirty_folio() - copy dirty folio into request
  * @tbl: mapping table object
- * @pvec: pagevec with dirty pages
- * @spage_index: index of page in pagevec
- * @dpage_index: index of page in request
+ * @batch: folio batch with dirty folios
+ * @sfolio_index: index of folio in folio batch
+ * @dfolio_index: index of folio in request
  * @req: segment request
  *
- * This method tries to copy dirty page into request.
+ * This method tries to copy dirty folio into request.
  *
  * RETURN:
  * [success]
@@ -2040,12 +2075,13 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
-				 struct pagevec *pvec,
-				 int spage_index, int dpage_index,
-				 struct ssdfs_segment_request *req)
+int ssdfs_maptbl_copy_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
+				  struct folio_batch *batch,
+				  int sfolio_index, int dpage_index,
+				  struct ssdfs_segment_request *req)
 {
-	struct page *spage, *dpage;
+	struct folio *sfolio;
+	struct page *dpage;
 	void *kaddr1, *kaddr2;
 	struct ssdfs_leb_table_fragment_header *lhdr;
 	struct ssdfs_peb_table_fragment_header *phdr;
@@ -2055,18 +2091,18 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tbl || !pvec || !req);
-	BUG_ON(spage_index >= pagevec_count(pvec));
+	BUG_ON(!tbl || !batch || !req);
+	BUG_ON(sfolio_index >= folio_batch_count(batch));
 
-	SSDFS_DBG("maptbl %p, pvec %p, spage_index %d, "
+	SSDFS_DBG("maptbl %p, batch %p, sfolio_index %d, "
 		  "dpage_index %d, req %p\n",
-		  tbl, pvec, spage_index, dpage_index, req);
+		  tbl, batch, sfolio_index, dpage_index, req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	spage = pvec->pages[spage_index];
+	sfolio = batch->folios[sfolio_index];
 
-	ssdfs_lock_page(spage);
-	kaddr1 = kmap_local_page(spage);
+	ssdfs_folio_lock(sfolio);
+	kaddr1 = kmap_local_folio(sfolio, 0);
 
 	magic = (__le16 *)kaddr1;
 	if (*magic == cpu_to_le16(SSDFS_LEB_TABLE_MAGIC)) {
@@ -2081,7 +2117,7 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 				  le16_to_cpu(csum),
 				  le16_to_cpu(lhdr->checksum));
 			lhdr->checksum = csum;
-			goto end_copy_dirty_page;
+			goto end_copy_dirty_folio;
 		}
 	} else if (*magic == cpu_to_le16(SSDFS_PEB_TABLE_MAGIC)) {
 		phdr = (struct ssdfs_peb_table_fragment_header *)kaddr1;
@@ -2095,13 +2131,13 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 				  le16_to_cpu(csum),
 				  le16_to_cpu(phdr->checksum));
 			phdr->checksum = csum;
-			goto end_copy_dirty_page;
+			goto end_copy_dirty_folio;
 		}
 	} else {
 		err = -ERANGE;
-		SSDFS_ERR("corrupted maptbl's page: index %lu\n",
-			  spage->index);
-		goto end_copy_dirty_page;
+		SSDFS_ERR("corrupted maptbl's folio: index %lu\n",
+			  sfolio->index);
+		goto end_copy_dirty_folio;
 	}
 
 	dpage = req->result.pvec.pages[dpage_index];
@@ -2110,7 +2146,7 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 		err = -ERANGE;
 		SSDFS_ERR("invalid page: page_index %u\n",
 			  dpage_index);
-		goto end_copy_dirty_page;
+		goto end_copy_dirty_folio;
 	}
 
 	kaddr2 = kmap_local_page(dpage);
@@ -2125,10 +2161,10 @@ int ssdfs_maptbl_copy_dirty_page(struct ssdfs_peb_mapping_table *tbl,
 		SetPageDirty(dpage);
 	set_page_writeback(dpage);
 
-end_copy_dirty_page:
-	flush_dcache_page(spage);
+end_copy_dirty_folio:
+	flush_dcache_folio(sfolio);
 	kunmap_local(kaddr1);
-	ssdfs_unlock_page(spage);
+	ssdfs_folio_unlock(sfolio);
 
 	return err;
 }
@@ -2228,8 +2264,8 @@ int ssdfs_check_portion_id(struct pagevec *pvec)
  * @tbl: mapping table object
  * @req: segment request
  * @fragment: pointer on raw fragment
- * @area_start: index of memeory page inside of fragment
- * @pages_count: number of memory pages in the area
+ * @area_start: index of memory folio inside of fragment
+ * @folios_count: number of memory folios in the area
  * @seg_index: index of segment in maptbl's array [out]
  */
 static
@@ -2237,7 +2273,7 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 					struct ssdfs_segment_request *req,
 					void *fragment,
 					pgoff_t area_start,
-					u32 pages_count,
+					u32 folios_count,
 					u16 *seg_index)
 {
 	struct ssdfs_leb_table_fragment_header *lhdr;
@@ -2252,10 +2288,10 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(!tbl || !req || !fragment || !seg_index);
 
 	SSDFS_DBG("maptbl %p, req %p, fragment %p, "
-		  "area_start %lu, pages_count %u, "
+		  "area_start %lu, folios_count %u, "
 		  "seg_index %p\n",
 		  tbl, req, fragment, area_start,
-		  pages_count, seg_index);
+		  folios_count, seg_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	pagesize = tbl->fsi->pagesize;
@@ -2268,7 +2304,7 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 		phdr = (struct ssdfs_peb_table_fragment_header *)fragment;
 		portion_id = le32_to_cpu(phdr->portion_id);
 	} else {
-		SSDFS_ERR("corrupted maptbl's page\n");
+		SSDFS_ERR("corrupted maptbl's folio\n");
 		return -ERANGE;
 	}
 
@@ -2292,7 +2328,7 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 
 	if (tbl->fsi->pagesize < PAGE_SIZE) {
 		u32 pages_per_item;
-		u32 items_count = pages_count;
+		u32 items_count = folios_count;
 
 		pages_per_item = PAGE_SIZE + pagesize - 1;
 		pages_per_item /= pagesize;
@@ -2300,7 +2336,7 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 		req->place.len = items_count * pages_per_item;
 	} else if (tbl->fsi->pagesize > PAGE_SIZE) {
 		u32 items_per_page;
-		u32 items_count = pages_count;
+		u32 items_count = folios_count;
 
 		items_per_page = pagesize + PAGE_SIZE - 1;
 		items_per_page /= PAGE_SIZE;
@@ -2309,7 +2345,7 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 		req->place.len /= items_per_page;
 	} else {
 		req->place.start.blk_index = item_index;
-		req->place.len = pages_count;
+		req->place.len = folios_count;
 	}
 
 	return 0;
@@ -2317,7 +2353,7 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 
 /*
  * ssdfs_maptbl_set_fragment_checksum() - calculate checksum of dirty fragment
- * @pvec: pagevec with dirty pages
+ * @batch: batch with dirty folios
  *
  * This method tries to calculate checksum of dirty fragment.
  *
@@ -2328,11 +2364,11 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_maptbl_set_fragment_checksum(struct pagevec *pvec)
+int ssdfs_maptbl_set_fragment_checksum(struct folio_batch *batch)
 {
 	struct ssdfs_leb_table_fragment_header *lhdr;
 	struct ssdfs_peb_table_fragment_header *phdr;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	__le16 *magic;
 	u32 bytes_count;
@@ -2341,29 +2377,29 @@ int ssdfs_maptbl_set_fragment_checksum(struct pagevec *pvec)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec);
+	BUG_ON(!batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	count = pagevec_count(pvec);
+	count = folio_batch_count(batch);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec %p, pages_count %u\n",
-		  pvec, count);
+	SSDFS_DBG("batch %p, folios_count %u\n",
+		  batch, count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (count == 0) {
-		SSDFS_WARN("empty pagevec\n");
+		SSDFS_WARN("empty batch\n");
 		return -ERANGE;
 	}
 
 	for (i = 0; i < count; i++) {
-		page = pvec->pages[i];
+		folio = batch->folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		magic = (__le16 *)kaddr;
 		if (le16_to_cpu(*magic) == SSDFS_LEB_TABLE_MAGIC) {
 			lhdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
@@ -2380,7 +2416,7 @@ int ssdfs_maptbl_set_fragment_checksum(struct pagevec *pvec)
 			SSDFS_ERR("corrupted maptbl's page: index %d\n",
 				  i);
 		}
-		flush_dcache_page(page);
+		flush_dcache_folio(folio);
 		kunmap_local(kaddr);
 
 		if (unlikely(err))
@@ -2463,18 +2499,18 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	struct ssdfs_segment_info *si;
+	struct folio_batch batch;
+	void *kaddr;
 	int state;
-	struct pagevec pvec;
 	bool has_backup;
-	pgoff_t page_index, end, range_len;
-	int i, j;
+	pgoff_t folio_index, end, range_len;
 	pgoff_t area_start;
 	unsigned area_size;
 	u64 ino = SSDFS_MAPTBL_INO;
 	u64 offset;
 	u32 size;
 	u16 seg_index;
-	void *kaddr;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2496,55 +2532,55 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	page_index = 0;
+	folio_index = 0;
 	range_len = min_t(pgoff_t,
 			  (pgoff_t)PAGEVEC_SIZE,
-			  (pgoff_t)(tbl->fragment_pages - page_index));
-	end = page_index + range_len - 1;
+			  (pgoff_t)(tbl->fragment_folios - folio_index));
+	end = folio_index + range_len - 1;
 
 	down_write(&fdesc->lock);
 
 	fdesc->flush_req_count = 0;
 
-retrive_dirty_pages:
-	pagevec_init(&pvec);
+retrive_dirty_folios:
+	folio_batch_init(&batch);
 
-	err = ssdfs_page_array_lookup_range(&fdesc->array,
-					    &page_index, end,
-					    SSDFS_DIRTY_PAGE_TAG,
-					    tbl->fragment_pages,
-					    &pvec);
+	err = ssdfs_folio_array_lookup_range(&fdesc->array,
+					     &folio_index, end,
+					     SSDFS_DIRTY_PAGE_TAG,
+					     tbl->fragment_folios,
+					     &batch);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to find dirty pages: "
+		SSDFS_ERR("fail to find dirty folios: "
 			  "fragment_index %u, start %lu, "
 			  "end %lu, err %d\n",
-			  fragment_index, page_index, end, err);
+			  fragment_index, folio_index, end, err);
 		goto finish_fragment_update;
 	}
 
-	if (pagevec_count(&pvec) == 0) {
-		page_index += range_len;
+	if (folio_batch_count(&batch) == 0) {
+		folio_index += range_len;
 
-		if (page_index >= tbl->fragment_pages)
+		if (folio_index >= tbl->fragment_folios)
 			goto finish_fragment_update;
 
 		range_len = min_t(pgoff_t,
 			  (pgoff_t)PAGEVEC_SIZE,
-			  (pgoff_t)(tbl->fragment_pages - page_index));
-		end = page_index + range_len - 1;
-		goto retrive_dirty_pages;
+			  (pgoff_t)(tbl->fragment_folios - folio_index));
+		end = folio_index + range_len - 1;
+		goto retrive_dirty_folios;
 	}
 
-	err = ssdfs_page_array_clear_dirty_range(&fdesc->array,
-						 page_index, end);
+	err = ssdfs_folio_array_clear_dirty_range(&fdesc->array,
+						  folio_index, end);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to clear dirty range: "
 			  "start %lu, end %lu, err %d\n",
-			  page_index, end, err);
+			  folio_index, end, err);
 		goto finish_fragment_update;
 	}
 
-	err = ssdfs_maptbl_set_fragment_checksum(&pvec);
+	err = ssdfs_maptbl_set_fragment_checksum(&batch);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set fragment checksum: "
 			  "fragment_index %u, err %d\n",
@@ -2555,10 +2591,10 @@ retrive_dirty_pages:
 	i = 0;
 
 define_update_area:
-	area_start = pvec.pages[i]->index;
+	area_start = batch.folios[i]->index;
 	area_size = 0;
-	for (; i < pagevec_count(&pvec); i++) {
-		if ((area_start + area_size) != pvec.pages[i]->index)
+	for (; i < folio_batch_count(&batch); i++) {
+		if ((area_start + area_size) != batch.folios[i]->index)
 			break;
 		else
 			area_size++;
@@ -2597,12 +2633,12 @@ define_update_area:
 			goto fail_issue_fragment_updates;
 		}
 
-		err = ssdfs_maptbl_copy_dirty_page(tbl, &pvec,
-						   (i - area_size) + j,
-						   j, req1);
+		err = ssdfs_maptbl_copy_dirty_folio(tbl, &batch,
+						    (i - area_size) + j,
+						    j, req1);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy dirty page: "
-				  "spage_index %d, dpage_index %d, err %d\n",
+			SSDFS_ERR("fail to copy dirty folio: "
+				  "sfolio_index %d, dpage_index %d, err %d\n",
 				  (i - area_size) + j, j, err);
 			goto fail_issue_fragment_updates;
 		}
@@ -2623,7 +2659,7 @@ define_update_area:
 
 	err = ssdfs_check_portion_id(&req1->result.pvec);
 	if (unlikely(err)) {
-		SSDFS_ERR("corrupted maptbl's page was found: "
+		SSDFS_ERR("corrupted maptbl's folio was found: "
 			  "err %d\n", err);
 		goto fail_issue_fragment_updates;
 	}
@@ -2689,28 +2725,30 @@ fail_issue_fragment_updates:
 		goto finish_fragment_update;
 	}
 
-	if (i < pagevec_count(&pvec))
+	if (i < folio_batch_count(&batch))
 		goto define_update_area;
 
-	for (j = 0; j < pagevec_count(&pvec); j++) {
-		ssdfs_put_page(pvec.pages[j]);
+	for (j = 0; j < folio_batch_count(&batch); j++) {
+		ssdfs_folio_put(batch.folios[j]);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  pvec.pages[j],
-			  page_ref_count(pvec.pages[j]));
+		SSDFS_DBG("folio %p, count %d\n",
+			  batch.folios[j],
+			  folio_ref_count(batch.folios[j]));
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
-	page_index += range_len;
+	folio_index += range_len;
 
-	if (page_index < tbl->fragment_pages) {
+	if (folio_index < tbl->fragment_folios) {
 		range_len = min_t(pgoff_t,
 			  (pgoff_t)PAGEVEC_SIZE,
-			  (pgoff_t)(tbl->fragment_pages - page_index));
-		end = page_index + range_len - 1;
-		pagevec_reinit(&pvec);
-		goto retrive_dirty_pages;
+			  (pgoff_t)(tbl->fragment_folios - folio_index));
+		end = folio_index + range_len - 1;
+
+		folio_batch_init(&batch);
+//		folio_batch_reinit(&batch);
+		goto retrive_dirty_folios;
 	}
 
 finish_fragment_update:
@@ -2729,20 +2767,22 @@ finish_fragment_update:
 			  atomic_read(&fdesc->state));
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
-		for (j = 0; j < pagevec_count(&pvec); j++) {
-			ssdfs_put_page(pvec.pages[j]);
+		for (j = 0; j < folio_batch_count(&batch); j++) {
+			ssdfs_folio_put(batch.folios[j]);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  pvec.pages[j],
-				  page_ref_count(pvec.pages[j]));
+			SSDFS_DBG("folio %p, count %d\n",
+				  batch.folios[j],
+				  folio_ref_count(batch.folios[j]));
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
 
 	up_write(&fdesc->lock);
 
-	pagevec_reinit(&pvec);
+	folio_batch_init(&batch);
+//	folio_batch_reinit(&batch);
+
 	return err;
 }
 
@@ -3115,15 +3155,15 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 {
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	struct ssdfs_segment_info *si;
+	struct folio *folio;
+	void *kaddr;
 	u64 ino = SSDFS_MAPTBL_INO;
 	int state;
 	bool has_backup;
 	pgoff_t area_start;
-	pgoff_t area_size, processed_pages;
+	pgoff_t area_size, processed_folios;
 	u64 offset;
 	u16 seg_index;
-	struct page *page;
-	void *kaddr;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3147,8 +3187,8 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 	area_start = 0;
 	area_size = min_t(pgoff_t,
 			  (pgoff_t)PAGEVEC_SIZE,
-			  (pgoff_t)tbl->fragment_pages);
-	processed_pages = 0;
+			  (pgoff_t)tbl->fragment_folios);
+	processed_folios = 0;
 
 	fdesc->flush_req_count = 0;
 
@@ -3186,28 +3226,28 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 							     req2);
 		}
 
-		page = ssdfs_page_array_get_page_locked(&fdesc->array,
-							area_start);
-		if (IS_ERR_OR_NULL(page)) {
-			err = page == NULL ? -ERANGE : PTR_ERR(page);
-			SSDFS_ERR("fail to get page: "
+		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array,
+							   area_start);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+			SSDFS_ERR("fail to get folio: "
 				  "index %lu, err %d\n",
 				  area_start, err);
 			goto finish_issue_commit_request;
 		}
 
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
 							area_start, area_size,
 							&seg_index);
 		kunmap_local(kaddr);
 
-		ssdfs_unlock_page(page);
-		ssdfs_put_page(page);
+		ssdfs_folio_unlock(folio);
+		ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err)) {
@@ -3251,12 +3291,12 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		area_start += area_size;
-		processed_pages += area_size;
+		processed_folios += area_size;
 		area_size = min_t(pgoff_t,
 				  (pgoff_t)PAGEVEC_SIZE,
-				  (pgoff_t)(tbl->fragment_pages -
-					    processed_pages));
-	} while (processed_pages < tbl->fragment_pages);
+				  (pgoff_t)(tbl->fragment_folios -
+					    processed_folios));
+	} while (processed_folios < tbl->fragment_folios);
 
 finish_issue_commit_request:
 	if (err) {
@@ -3457,14 +3497,14 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 {
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	struct ssdfs_segment_info *si;
+	struct folio *folio;
+	void *kaddr;
 	u64 ino = SSDFS_MAPTBL_INO;
 	bool has_backup;
 	pgoff_t area_start;
-	pgoff_t area_size, processed_pages;
+	pgoff_t area_size, processed_folios;
 	u64 offset;
 	u16 seg_index;
-	struct page *page;
-	void *kaddr;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3481,8 +3521,8 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 	area_start = 0;
 	area_size = min_t(pgoff_t,
 			  (pgoff_t)PAGEVEC_SIZE,
-			  (pgoff_t)tbl->fragment_pages);
-	processed_pages = 0;
+			  (pgoff_t)tbl->fragment_folios);
+	processed_folios = 0;
 
 	fdesc->flush_req_count = 0;
 
@@ -3522,33 +3562,33 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("area_start %lu, area_size %lu, "
-			  "processed_pages %lu, tbl->fragment_pages %u\n",
-			  area_start, area_size, processed_pages,
-			  tbl->fragment_pages);
+			  "processed_folios %lu, tbl->fragment_folios %u\n",
+			  area_start, area_size, processed_folios,
+			  tbl->fragment_folios);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		page = ssdfs_page_array_get_page_locked(&fdesc->array,
-							area_start);
-		if (IS_ERR_OR_NULL(page)) {
-			err = page == NULL ? -ERANGE : PTR_ERR(page);
-			SSDFS_ERR("fail to get page: "
+		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array,
+							   area_start);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+			SSDFS_ERR("fail to get folio: "
 				  "index %lu, err %d\n",
 				  area_start, err);
 			goto finish_issue_prepare_migration_request;
 		}
 
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
 							area_start, area_size,
 							&seg_index);
 		kunmap_local(kaddr);
 
-		ssdfs_unlock_page(page);
-		ssdfs_put_page(page);
+		ssdfs_folio_unlock(folio);
+		ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (unlikely(err)) {
@@ -3596,12 +3636,12 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		area_start += area_size;
-		processed_pages += area_size;
+		processed_folios += area_size;
 		area_size = min_t(pgoff_t,
 				  (pgoff_t)PAGEVEC_SIZE,
-				  (pgoff_t)(tbl->fragment_pages -
-					    processed_pages));
-	} while (processed_pages < tbl->fragment_pages);
+				  (pgoff_t)(tbl->fragment_folios -
+					    processed_folios));
+	} while (processed_folios < tbl->fragment_folios);
 
 finish_issue_prepare_migration_request:
 	if (err) {
@@ -3975,10 +4015,10 @@ int ssdfs_maptbl_get_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 				    struct ssdfs_peb_descriptor *peb_desc)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3990,35 +4030,35 @@ int ssdfs_maptbl_get_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*peb_id = U64_MAX;
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	*peb_id = GET_PEB_ID(kaddr, item_index);
 	if (*peb_id == U64_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define peb_id: "
-			  "page_index %lu, item_index %u\n",
-			  page_index, item_index);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u\n",
+			  folio_index, item_index);
+		goto finish_folio_processing;
 	}
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	ssdfs_memcpy(peb_desc,
@@ -4027,14 +4067,14 @@ int ssdfs_maptbl_get_peb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		     0, sizeof(struct ssdfs_peb_descriptor),
 		     sizeof(struct ssdfs_peb_descriptor));
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -4101,20 +4141,20 @@ struct ssdfs_leb_descriptor *GET_LEB_DESCRIPTOR(void *kaddr, u64 leb_id)
 }
 
 /*
- * LEBTBL_PAGE_INDEX() - define LEB table's page index
+ * LEBTBL_FOLIO_INDEX() - define LEB table's folio index
  * @fdesc: fragment descriptor
  * @leb_id: LEB identification number
  *
  * RETURN:
- * [success] - page index.
+ * [success] - folio index.
  * [failure] - ULONG_MAX.
  */
 static inline
-pgoff_t LEBTBL_PAGE_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
-			  u64 leb_id)
+pgoff_t LEBTBL_FOLIO_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
+			   u64 leb_id)
 {
 	u64 leb_id_diff;
-	pgoff_t page_index;
+	pgoff_t folio_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
@@ -4132,15 +4172,15 @@ pgoff_t LEBTBL_PAGE_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 	leb_id_diff = leb_id - fdesc->start_leb;
-	page_index = (pgoff_t)(leb_id_diff / fdesc->lebs_per_page);
+	folio_index = (pgoff_t)(leb_id_diff / fdesc->lebs_per_page);
 
-	if (page_index >= fdesc->lebtbl_pages) {
-		SSDFS_ERR("page_index %lu >= fdesc->lebtbl_pages %u\n",
-			  page_index, fdesc->lebtbl_pages);
+	if (folio_index >= fdesc->lebtbl_pages) {
+		SSDFS_ERR("folio_index %lu >= fdesc->lebtbl_pages %u\n",
+			  folio_index, fdesc->lebtbl_pages);
 		return ULONG_MAX;
 	}
 
-	return page_index;
+	return folio_index;
 }
 
 /*
@@ -4164,8 +4204,8 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 				    struct ssdfs_leb_descriptor *leb_desc)
 {
 	struct ssdfs_leb_descriptor *ptr;
-	pgoff_t page_index;
-	struct page *page;
+	pgoff_t folio_index;
+	struct folio *folio;
 	void *kaddr;
 	int err = 0;
 
@@ -4177,23 +4217,23 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, leb_id, leb_desc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = LEBTBL_PAGE_INDEX(fdesc, leb_id);
-	if (page_index == ULONG_MAX) {
-		SSDFS_ERR("fail to define page_index: "
+	folio_index = LEBTBL_FOLIO_INDEX(fdesc, leb_id);
+	if (folio_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define folio_index: "
 			  "leb_id %llu\n",
 			  leb_id);
 		return -ERANGE;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_LEB_DESCRIPTOR(kaddr, leb_id);
 	if (IS_ERR_OR_NULL(ptr)) {
@@ -4201,7 +4241,7 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		SSDFS_ERR("fail to get leb_descriptor: "
 			  "leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	ssdfs_memcpy(leb_desc,
@@ -4210,14 +4250,14 @@ int ssdfs_maptbl_get_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		     0, sizeof(struct ssdfs_leb_descriptor),
 		     sizeof(struct ssdfs_leb_descriptor));
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -4404,25 +4444,25 @@ bool should_cache_peb_info(u8 peb_type)
 }
 
 /*
- * ssdfs_maptbl_define_pebtbl_page() - define PEB table's page index
+ * ssdfs_maptbl_define_pebtbl_folio() - define PEB table's folio index
  * @tbl: pointer on mapping table object
  * @desc: fragment descriptor
  * @leb_id: LEB ID number
  * @peb_desc_index: PEB descriptor index
  *
  * RETURN:
- * [success] - page index.
+ * [success] - folio index.
  * [failure] - ULONG_MAX.
  */
 static
-pgoff_t ssdfs_maptbl_define_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
-					struct ssdfs_maptbl_fragment_desc *desc,
-					u64 leb_id,
-					u16 peb_desc_index)
+pgoff_t ssdfs_maptbl_define_pebtbl_folio(struct ssdfs_peb_mapping_table *tbl,
+					 struct ssdfs_maptbl_fragment_desc *desc,
+					 u64 leb_id,
+					 u16 peb_desc_index)
 {
 	u64 leb_id_diff;
 	u64 stripe_index;
-	u64 page_index;
+	u64 folio_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tbl || !desc);
@@ -4449,20 +4489,20 @@ pgoff_t ssdfs_maptbl_define_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 	if (peb_desc_index >= U16_MAX) {
 		leb_id_diff = leb_id - desc->start_leb;
 		stripe_index = div_u64(leb_id_diff, tbl->pebs_per_stripe);
-		page_index = leb_id_diff -
+		folio_index = leb_id_diff -
 				(stripe_index * tbl->pebs_per_stripe);
-		page_index = div_u64(page_index, desc->pebs_per_page);
-		page_index += stripe_index * desc->stripe_pages;
-		page_index += desc->lebtbl_pages;
+		folio_index = div_u64(folio_index, desc->pebs_per_page);
+		folio_index += stripe_index * desc->stripe_pages;
+		folio_index += desc->lebtbl_pages;
 	} else {
-		page_index = PEBTBL_PAGE_INDEX(desc, peb_desc_index);
+		folio_index = PEBTBL_FOLIO_INDEX(desc, peb_desc_index);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(page_index > ULONG_MAX);
+	BUG_ON(folio_index > ULONG_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return (pgoff_t)page_index;
+	return (pgoff_t)folio_index;
 }
 
 /*
@@ -4512,13 +4552,13 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_peb_relation *pebr)
 {
 	struct ssdfs_leb_descriptor leb_desc;
-	pgoff_t page_index;
-	struct page *page;
-	void *kaddr;
 	struct ssdfs_peb_table_fragment_header *hdr;
-	u16 physical_index, relation_index;
 	struct ssdfs_peb_descriptor *peb_desc;
 	struct ssdfs_maptbl_peb_descriptor *cached;
+	struct folio *folio;
+	void *kaddr;
+	pgoff_t folio_index;
+	u16 physical_index, relation_index;
 	u16 item_index;
 	u64 peb_id;
 	int err = 0;
@@ -4547,29 +4587,29 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		return -ENODATA;
 	}
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
-						     leb_id, physical_index);
-	if (page_index == ULONG_MAX) {
-		SSDFS_ERR("fail to define PEB table's page_index: "
+	folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
+							leb_id, physical_index);
+	if (folio_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define PEB table's folio_index: "
 			  "leb_id %llu, physical_index %u\n",
 			  leb_id, physical_index);
 		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("leb_id %llu, physical_index %u, page_index %lu\n",
-		  leb_id, physical_index, page_index);
+	SSDFS_DBG("leb_id %llu, physical_index %u, folio_index %lu\n",
+		  leb_id, physical_index, folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -4591,8 +4631,8 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 	if (peb_id == U64_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define peb_id: "
-			  "page_index %lu, item_index %u\n",
-			  page_index, item_index);
+			  "folio_index %lu, item_index %u\n",
+			  folio_index, item_index);
 		goto finish_physical_index_processing;
 	}
 
@@ -4602,8 +4642,8 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 		  physical_index, item_index,
 		  fdesc->pebs_per_page, peb_id);
 
-	SSDFS_DBG("PAGE DUMP: page_index %lu\n",
-		  page_index);
+	SSDFS_DBG("PAGE DUMP: folio_index %lu\n",
+		  folio_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
@@ -4614,8 +4654,8 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 	if (IS_ERR_OR_NULL(peb_desc)) {
 		err = IS_ERR(peb_desc) ? PTR_ERR(peb_desc) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
 		goto finish_physical_index_processing;
 	}
 
@@ -4637,22 +4677,22 @@ finish_physical_index_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err)
@@ -4672,29 +4712,29 @@ finish_physical_index_processing:
 		return -ENODATA;
 	}
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
-						     leb_id, relation_index);
-	if (page_index == ULONG_MAX) {
-		SSDFS_ERR("fail to define PEB table's page_index: "
+	folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
+							leb_id, relation_index);
+	if (folio_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define PEB table's folio_index: "
 			  "leb_id %llu, relation_index %u\n",
 			  leb_id, relation_index);
 		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("leb_id %llu, relation_index %u, page_index %lu\n",
-		  leb_id, relation_index, page_index);
+	SSDFS_DBG("leb_id %llu, relation_index %u, folio_index %lu\n",
+		  leb_id, relation_index, folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -4716,8 +4756,8 @@ finish_physical_index_processing:
 	if (peb_id == U64_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define peb_id: "
-			  "page_index %lu, item_index %u\n",
-			  page_index, item_index);
+			  "folio_index %lu, item_index %u\n",
+			  folio_index, item_index);
 		goto finish_relation_index_processing;
 	}
 
@@ -4727,8 +4767,8 @@ finish_physical_index_processing:
 		  relation_index, item_index,
 		  fdesc->pebs_per_page, peb_id);
 
-	SSDFS_DBG("PAGE DUMP: page_index %lu\n",
-		  page_index);
+	SSDFS_DBG("PAGE DUMP: folio_index %lu\n",
+		  folio_index);
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 			     kaddr,
 			     PAGE_SIZE);
@@ -4739,8 +4779,8 @@ finish_physical_index_processing:
 	if (IS_ERR_OR_NULL(peb_desc)) {
 		err = IS_ERR(peb_desc) ? PTR_ERR(peb_desc) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
 		goto finish_relation_index_processing;
 	}
 
@@ -4760,22 +4800,22 @@ finish_relation_index_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -4833,10 +4873,10 @@ int ssdfs_maptbl_set_under_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 					u16 index)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4846,50 +4886,50 @@ int ssdfs_maptbl_set_under_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	ptr->state = SSDFS_MAPTBL_UNDER_ERASE_STATE;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -4912,11 +4952,11 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 {
 	struct ssdfs_peb_table_fragment_header *hdr;
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
-	void *kaddr;
 	unsigned long *bmap;
+	struct folio *folio;
+	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4926,26 +4966,26 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	ptr->state = SSDFS_MAPTBL_PRE_ERASE_STATE;
@@ -4954,26 +4994,26 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
 	bitmap_set(bmap, item_index, 1);
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -4996,11 +5036,11 @@ int ssdfs_maptbl_set_snapshot_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 {
 	struct ssdfs_peb_table_fragment_header *hdr;
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
-	void *kaddr;
 	unsigned long *bmap;
+	struct folio *folio;
+	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5010,26 +5050,26 @@ int ssdfs_maptbl_set_snapshot_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	ptr->state = SSDFS_MAPTBL_SNAPSHOT_STATE;
@@ -5038,26 +5078,26 @@ int ssdfs_maptbl_set_snapshot_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
 	bitmap_set(bmap, item_index, 1);
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -5080,10 +5120,10 @@ int ssdfs_maptbl_set_source_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 				  u16 index, u8 peb_state)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5093,26 +5133,26 @@ int ssdfs_maptbl_set_source_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_state == SSDFS_MAPTBL_UNKNOWN_PEB_STATE) {
@@ -5142,7 +5182,7 @@ int ssdfs_maptbl_set_source_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 			SSDFS_ERR("invalid PEB state: "
 				  "state %#x\n",
 				  ptr->state);
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		}
 	} else {
 		switch (ptr->state) {
@@ -5159,31 +5199,30 @@ int ssdfs_maptbl_set_source_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 			SSDFS_ERR("invalid PEB state: "
 				  "state %#x\n",
 				  ptr->state);
-			goto finish_page_processing;
-			break;
+			goto finish_folio_processing;
 		}
 	}
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -5206,9 +5245,9 @@ int __ssdfs_maptbl_exclude_migration_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 {
 	struct ssdfs_leb_table_fragment_header *hdr;
 	struct ssdfs_leb_descriptor *leb_desc;
-	pgoff_t page_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5218,23 +5257,23 @@ int __ssdfs_maptbl_exclude_migration_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 		  ptr, leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = LEBTBL_PAGE_INDEX(ptr, leb_id);
-	if (page_index == ULONG_MAX) {
-		SSDFS_ERR("fail to define page_index: "
+	folio_index = LEBTBL_FOLIO_INDEX(ptr, leb_id);
+	if (folio_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define folio_index: "
 			  "leb_id %llu\n",
 			  leb_id);
 		return -ERANGE;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&ptr->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&ptr->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	leb_desc = GET_LEB_DESCRIPTOR(kaddr, leb_id);
 	if (IS_ERR_OR_NULL(leb_desc)) {
@@ -5242,13 +5281,13 @@ int __ssdfs_maptbl_exclude_migration_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 		SSDFS_ERR("fail to get leb_descriptor: "
 			  "leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("INITIAL: page_index %lu, "
+	SSDFS_DBG("INITIAL: folio_index %lu, "
 		  "physical_index %u, relation_index %u\n",
-		  page_index,
+		  folio_index,
 		  le16_to_cpu(leb_desc->physical_index),
 		  le16_to_cpu(leb_desc->relation_index));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -5257,9 +5296,9 @@ int __ssdfs_maptbl_exclude_migration_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 	leb_desc->relation_index = cpu_to_le16(U16_MAX);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("MODIFIED: page_index %lu, "
+	SSDFS_DBG("MODIFIED: folio_index %lu, "
 		  "physical_index %u, relation_index %u\n",
-		  page_index,
+		  folio_index,
 		  le16_to_cpu(leb_desc->physical_index),
 		  le16_to_cpu(leb_desc->relation_index));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -5272,26 +5311,26 @@ int __ssdfs_maptbl_exclude_migration_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 
 	le16_add_cpu(&hdr->migrating_lebs, -1);
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&ptr->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&ptr->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -6934,7 +6973,7 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_maptbl_fragment_desc *fdesc,
  * @fdesc: fragment descriptor
  * @hdr: PEB table fragment's header
  * @leb_id: LEB ID number
- * @page_index: page index in the fragment
+ * @folio_index: folio index in the fragment
  * @peb_type: type of the PEB
  * @pebr: description of PEBs relation [out]
  *
@@ -6952,18 +6991,18 @@ static
 int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 				struct ssdfs_maptbl_fragment_desc *fdesc,
 				struct ssdfs_peb_table_fragment_header *hdr,
-				u64 leb_id, pgoff_t page_index, u8 peb_type,
+				u64 leb_id, pgoff_t folio_index, u8 peb_type,
 				struct ssdfs_maptbl_peb_relation *pebr)
 {
 	struct ssdfs_peb_descriptor *peb_desc;
 	struct ssdfs_leb_table_fragment_header *lebtbl_hdr;
 	struct ssdfs_leb_descriptor *leb_desc;
 	struct ssdfs_maptbl_peb_descriptor *ptr = NULL;
+	struct folio *folio;
+	void *kaddr;
 	u16 item_index;
 	u16 peb_index = 0;
-	pgoff_t lebtbl_page;
-	struct page *page;
-	void *kaddr;
+	pgoff_t lebtbl_folio;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7001,23 +7040,23 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	peb_desc->type = peb_type;
 	peb_desc->state = SSDFS_MAPTBL_CLEAN_PEB_STATE;
 
-	lebtbl_page = LEBTBL_PAGE_INDEX(fdesc, leb_id);
-	if (lebtbl_page == ULONG_MAX) {
-		SSDFS_ERR("fail to define page_index: "
+	lebtbl_folio = LEBTBL_FOLIO_INDEX(fdesc, leb_id);
+	if (lebtbl_folio == ULONG_MAX) {
+		SSDFS_ERR("fail to define folio_index: "
 			  "leb_id %llu\n",
 			  leb_id);
 		return -ERANGE;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, lebtbl_page);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  lebtbl_page);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, lebtbl_folio);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  lebtbl_folio);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	leb_desc = GET_LEB_DESCRIPTOR(kaddr, leb_id);
 	if (IS_ERR_OR_NULL(leb_desc)) {
@@ -7025,14 +7064,14 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		SSDFS_ERR("fail to get leb_descriptor: "
 			  "leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
-	peb_index = DEFINE_PEB_INDEX_IN_FRAGMENT(fdesc, page_index, item_index);
+	peb_index = DEFINE_PEB_INDEX_IN_FRAGMENT(fdesc, folio_index, item_index);
 	if (peb_index == U16_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define peb index\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	leb_desc->physical_index = cpu_to_le16(peb_index);
@@ -7049,7 +7088,7 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	ptr->state = peb_desc->state;
 	ptr->flags = peb_desc->flags;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
@@ -7061,22 +7100,22 @@ finish_page_processing:
 			  ptr->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      lebtbl_page);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							lebtbl_folio);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  lebtbl_page, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  lebtbl_folio, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -7239,9 +7278,9 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 				   struct ssdfs_maptbl_peb_relation *pebr)
 {
 	struct ssdfs_fs_info *fsi;
-	pgoff_t page_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
 	struct ssdfs_peb_table_fragment_header *hdr;
 	int err = 0;
 
@@ -7263,25 +7302,25 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 
 	fsi = tbl->fsi;
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
-						     start_peb_id,
-						     U16_MAX);
-	if (page_index == ULONG_MAX) {
+	folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
+							start_peb_id,
+							U16_MAX);
+	if (folio_index == ULONG_MAX) {
 		err = -ERANGE;
-		SSDFS_ERR("fail to define PEB table's page_index: "
+		SSDFS_ERR("fail to define PEB table's folio_index: "
 			  "start_peb_id %llu\n", start_peb_id);
 		goto finish_fragment_change;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		goto finish_fragment_change;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -7293,7 +7332,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 			  leb_id,
 			  le16_to_cpu(hdr->stripe_id));
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (!can_be_mapped_leb2peb(tbl, fdesc, leb_id)) {
@@ -7307,11 +7346,11 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 				  "value is out of threshold\n",
 				  leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to decrease reserved_pebs: err %d\n",
 				  err);
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		}
 	}
 
@@ -7323,18 +7362,18 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_DBG("unable to decrease reserved_pebs %u\n",
 				  le16_to_cpu(hdr->reserved_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to decrease reserved_pebs: err %d\n",
 				  err);
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		}
 	}
 
 	if (!has_fragment_unused_pebs(hdr)) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to map leb_id %llu\n", leb_id);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (need_try2reserve_peb(fsi)) {
@@ -7350,7 +7389,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to increase reserved PEBs: "
 				  "err %d\n", err);
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		}
 
 		if (can_peb_be_reserved(fsi, hdr)) {
@@ -7361,32 +7400,32 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 				SSDFS_DBG("unable to reserve PEB: "
 					  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_page_processing;
+				goto finish_folio_processing;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to reserve PEB: "
 					  "err %d\n", err);
-				goto finish_page_processing;
+				goto finish_folio_processing;
 			}
 		} else {
 			err = -ENOENT;
 			SSDFS_DBG("unable to reserve PEB\n");
-			goto finish_page_processing;
+			goto finish_folio_processing;
 		}
 	}
 
 	err = __ssdfs_maptbl_map_leb2peb(tbl, fdesc, hdr, leb_id,
-					 page_index, peb_type, pebr);
+					 folio_index, peb_type, pebr);
 	if (err == -ENOENT) {
 		if (need_try2reserve_peb(fsi)) {
 			ssdfs_maptbl_free_reserved_pages(fsi);
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to map: leb_id %llu, page_index %lu\n",
-			  leb_id, page_index);
+		SSDFS_DBG("unable to map: leb_id %llu, folio_index %lu\n",
+			  leb_id, folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	} else if (unlikely(err)) {
 		if (need_try2reserve_peb(fsi)) {
 			ssdfs_maptbl_free_reserved_pages(fsi);
@@ -7394,7 +7433,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 
 		SSDFS_ERR("fail to map leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	fdesc->mapped_lebs++;
@@ -7414,27 +7453,27 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  le16_to_cpu(hdr->reserved_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-finish_page_processing:
-	flush_dcache_page(page);
+finish_folio_processing:
+	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_change:
@@ -7749,22 +7788,22 @@ finish_mapping:
 }
 
 /*
- * ssdfs_maptbl_find_pebtbl_page() - find next page of PEB table
+ * ssdfs_maptbl_find_pebtbl_folio() - find next folio of PEB table
  * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
- * @cur_index: current page index
- * @start_index: page index in the start of searching
+ * @cur_index: current folio index
+ * @start_index: folio index in the start of searching
  *
- * This method tries to find a next page of PEB table.
+ * This method tries to find a next folio of PEB table.
  */
 static
-pgoff_t ssdfs_maptbl_find_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
-				      struct ssdfs_maptbl_fragment_desc *fdesc,
-				      pgoff_t cur_index,
-				      pgoff_t start_index)
+pgoff_t ssdfs_maptbl_find_pebtbl_folio(struct ssdfs_peb_mapping_table *tbl,
+					struct ssdfs_maptbl_fragment_desc *fdesc,
+					pgoff_t cur_index,
+					pgoff_t start_index)
 {
 	pgoff_t index;
-	u32 pebtbl_pages, fragment_pages;
+	u32 pebtbl_folios, fragment_folios;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("maptbl %p, fdesc %p, cur_index %lu, start_index %lu\n",
@@ -7777,26 +7816,26 @@ pgoff_t ssdfs_maptbl_find_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(start_index < fdesc->lebtbl_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	pebtbl_pages = tbl->stripes_per_fragment * fdesc->stripe_pages;
-	fragment_pages = (u32)fdesc->lebtbl_pages + pebtbl_pages;
+	pebtbl_folios = tbl->stripes_per_fragment * fdesc->stripe_pages;
+	fragment_folios = (u32)fdesc->lebtbl_pages + pebtbl_folios;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(cur_index >= fragment_pages);
-	BUG_ON(start_index >= fragment_pages);
+	BUG_ON(cur_index >= fragment_folios);
+	BUG_ON(start_index >= fragment_folios);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	index = cur_index + fdesc->stripe_pages;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pebtbl_pages %u, fragment_pages %u, "
+	SSDFS_DBG("pebtbl_folios %u, fragment_folios %u, "
 		  "fdesc->stripe_pages %u, cur_index %lu, "
 		  "index %lu\n",
-		  pebtbl_pages, fragment_pages,
+		  pebtbl_folios, fragment_folios,
 		  fdesc->stripe_pages, cur_index,
 		  index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (index >= fragment_pages)
+	if (index >= fragment_folios)
 		index = ULONG_MAX;
 
 	return index;
@@ -7822,11 +7861,11 @@ ssdfs_maptbl_try_decrease_reserved_pebs(struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_maptbl_fragment_desc *fdesc)
 {
 	struct ssdfs_fs_info *fsi;
-	pgoff_t start_page;
-	pgoff_t page_index;
-	struct page *page;
-	void *kaddr;
 	struct ssdfs_peb_table_fragment_header *hdr;
+	struct folio *folio;
+	void *kaddr;
+	pgoff_t start_folio;
+	pgoff_t folio_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7841,28 +7880,28 @@ ssdfs_maptbl_try_decrease_reserved_pebs(struct ssdfs_peb_mapping_table *tbl,
 
 	fsi = tbl->fsi;
 
-	start_page = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
-						     fdesc->start_leb,
-						     U16_MAX);
-	if (start_page == ULONG_MAX) {
+	start_folio = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
+							fdesc->start_leb,
+							U16_MAX);
+	if (start_folio == ULONG_MAX) {
 		err = -ERANGE;
-		SSDFS_ERR("fail to define PEB table's page_index: "
+		SSDFS_ERR("fail to define PEB table's folio_index: "
 			  "start_peb_id %llu\n", fdesc->start_leb);
 		goto finish_fragment_change;
 	}
 
-	page_index = start_page;
+	folio_index = start_folio;
 
-try_next_page:
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+try_next_folio:
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		goto finish_fragment_change;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -7873,7 +7912,7 @@ try_next_page:
 			  "stripe %u is under recovering\n",
 			  le16_to_cpu(hdr->stripe_id));
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	err = ssdfs_maptbl_decrease_reserved_pebs(fsi, fdesc, hdr);
@@ -7883,11 +7922,11 @@ try_next_page:
 		SSDFS_DBG("unable to decrease reserved_pebs %u\n",
 			  le16_to_cpu(hdr->reserved_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to decrease reserved_pebs: err %d\n",
 			  err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7899,21 +7938,21 @@ try_next_page:
 		  fdesc->recovering_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-finish_page_processing:
-	flush_dcache_page(page);
+finish_folio_processing:
+	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 	if (err == -EACCES || err == -ENOENT) {
-		page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
-							   page_index,
-							   start_page);
-		if (page_index == ULONG_MAX)
+		folio_index = ssdfs_maptbl_find_pebtbl_folio(tbl, fdesc,
+							     folio_index,
+							     start_folio);
+		if (folio_index == ULONG_MAX)
 			goto finish_fragment_change;
 		else
-			goto try_next_page;
+			goto try_next_folio;
 	}
 
 finish_fragment_change:
@@ -8103,9 +8142,9 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 {
 	struct ssdfs_peb_table_fragment_header *hdr;
 	struct ssdfs_peb_descriptor *peb_desc;
-	pgoff_t page_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
 	u16 item_index;
 	int err = 0;
 
@@ -8130,24 +8169,25 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 
 	*old_peb_state = SSDFS_MAPTBL_PEB_STATE_MAX;
 
-	page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
-						     leb_id, selected_index);
-	if (page_index == ULONG_MAX) {
+	folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
+							leb_id,
+							selected_index);
+	if (folio_index == ULONG_MAX) {
 		err = -ERANGE;
-		SSDFS_ERR("fail to define PEB table's page_index: "
+		SSDFS_ERR("fail to define PEB table's folio_index: "
 			  "leb_id %llu\n", leb_id);
 		goto finish_fragment_change;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		goto finish_fragment_change;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -8160,7 +8200,7 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 			  leb_id,
 			  le16_to_cpu(hdr->stripe_id));
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	item_index = selected_index % fdesc->pebs_per_page;
@@ -8169,9 +8209,9 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	if (IS_ERR_OR_NULL(peb_desc)) {
 		err = IS_ERR(peb_desc) ? PTR_ERR(peb_desc) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8189,31 +8229,31 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 			  peb_desc->state,
 			  (u8)new_peb_state);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	} else
 		peb_desc->state = (u8)new_peb_state;
 
-finish_page_processing:
-	flush_dcache_page(page);
+finish_folio_processing:
+	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_change:
@@ -8623,9 +8663,9 @@ int __ssdfs_maptbl_unmap_dirty_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 {
 	struct ssdfs_leb_table_fragment_header *hdr;
 	struct ssdfs_leb_descriptor *leb_desc;
-	pgoff_t page_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8635,23 +8675,23 @@ int __ssdfs_maptbl_unmap_dirty_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 		  ptr, leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = LEBTBL_PAGE_INDEX(ptr, leb_id);
-	if (page_index == ULONG_MAX) {
-		SSDFS_ERR("fail to define page_index: "
+	folio_index = LEBTBL_FOLIO_INDEX(ptr, leb_id);
+	if (folio_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define folio_index: "
 			  "leb_id %llu\n",
 			  leb_id);
 		return -ERANGE;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&ptr->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&ptr->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	leb_desc = GET_LEB_DESCRIPTOR(kaddr, leb_id);
 	if (IS_ERR_OR_NULL(leb_desc)) {
@@ -8659,7 +8699,7 @@ int __ssdfs_maptbl_unmap_dirty_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 		SSDFS_ERR("fail to get leb_descriptor: "
 			  "leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	leb_desc->physical_index = cpu_to_le16(U16_MAX);
@@ -8673,26 +8713,26 @@ int __ssdfs_maptbl_unmap_dirty_peb(struct ssdfs_maptbl_fragment_desc *ptr,
 
 	le16_add_cpu(&hdr->mapped_lebs, -1);
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
-		err = ssdfs_page_array_set_page_dirty(&ptr->array,
-						      page_index);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		err = ssdfs_folio_array_set_folio_dirty(&ptr->array,
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-				  page_index, err);
+			SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+				  folio_index, err);
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -9078,24 +9118,24 @@ bool has_fragment_reserved_pebs(struct ssdfs_peb_table_fragment_header *hdr)
 }
 
 /*
- * ssdfs_maptbl_select_pebtbl_page() - select page of PEB table
+ * ssdfs_maptbl_select_pebtbl_folio() - select folio of PEB table
  * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
  *
- * This method tries to select a page of PEB table.
+ * This method tries to select a folio of PEB table.
  */
 static
-int ssdfs_maptbl_select_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
-				    struct ssdfs_maptbl_fragment_desc *fdesc,
-				    u64 leb_id, pgoff_t *page_index)
+int ssdfs_maptbl_select_pebtbl_folio(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     u64 leb_id, pgoff_t *folio_index)
 {
-	pgoff_t start_page;
-	pgoff_t first_valid_page = ULONG_MAX;
-	struct page *page;
-	void *kaddr;
 	struct ssdfs_peb_table_fragment_header *hdr;
 	unsigned long *bmap;
+	struct folio *folio;
+	void *kaddr;
+	pgoff_t start_folio;
+	pgoff_t first_valid_folio = ULONG_MAX;
 	u16 pebs_count, used_pebs;
 	u16 unused_pebs, reserved_pebs;
 	bool is_recovering = false;
@@ -9106,30 +9146,30 @@ int ssdfs_maptbl_select_pebtbl_page(struct ssdfs_peb_mapping_table *tbl,
 	SSDFS_DBG("maptbl %p, fdesc %p, leb_id %llu\n",
 		  tbl, fdesc, leb_id);
 
-	BUG_ON(!tbl || !fdesc || !page_index);
+	BUG_ON(!tbl || !fdesc || !folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*page_index = ssdfs_maptbl_define_pebtbl_page(tbl, fdesc,
-						      leb_id, U16_MAX);
-	if (*page_index == ULONG_MAX) {
-		SSDFS_ERR("fail to define PEB table's page_index: "
+	*folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
+							leb_id, U16_MAX);
+	if (*folio_index == ULONG_MAX) {
+		SSDFS_ERR("fail to define PEB table's folio_index: "
 			  "leb_id %llu\n", leb_id);
 		return -ERANGE;
 	}
 
-	start_page = *page_index;
+	start_folio = *folio_index;
 
-try_next_page:
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, *page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: "
-			  "page_index %lu, err %d\n",
-			  *page_index, err);
+try_next_folio:
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, *folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: "
+			  "folio_index %lu, err %d\n",
+			  *folio_index, err);
 		return -ERANGE;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
@@ -9142,8 +9182,8 @@ try_next_page:
 	has_reserved_pebs = has_fragment_reserved_pebs(hdr);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d, page_index %lu\n",
-		  page, page_ref_count(page), *page_index);
+	SSDFS_DBG("folio %p, count %d, folio_index %lu\n",
+		  folio, folio_ref_count(folio), *folio_index);
 	SSDFS_DBG("pebs_count %u, used_pebs %u, unused_pebs %u, "
 		  "reserved_pebs %u, is_recovering %#x, "
 		  "has_reserved_pebs %#x\n",
@@ -9164,43 +9204,43 @@ try_next_page:
 	}
 
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find PEB table page: "
-			  "leb_id %llu, page_index %lu\n",
-			  leb_id, *page_index);
+		SSDFS_DBG("unable to find PEB table folio: "
+			  "leb_id %llu, folio_index %lu\n",
+			  leb_id, *folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		*page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
-							    *page_index,
-							    start_page);
-		if (*page_index == ULONG_MAX)
-			goto use_first_valid_page;
+		*folio_index = ssdfs_maptbl_find_pebtbl_folio(tbl, fdesc,
+							      *folio_index,
+							      start_folio);
+		if (*folio_index == ULONG_MAX)
+			goto use_first_valid_folio;
 		else {
 			err = 0;
-			goto try_next_page;
+			goto try_next_folio;
 		}
 	} else if (unlikely(err)) {
-		*page_index = ULONG_MAX;
+		*folio_index = ULONG_MAX;
 		SSDFS_ERR("fail to increase reserved pebs: "
 			  "err %d\n", err);
-		goto finish_select_pebtbl_page;
+		goto finish_select_pebtbl_folio;
 	}
 
 	if (is_recovering) {
-		*page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
-							    *page_index,
-							    start_page);
-		if (*page_index == ULONG_MAX)
-			goto use_first_valid_page;
+		*folio_index = ssdfs_maptbl_find_pebtbl_folio(tbl, fdesc,
+							      *folio_index,
+							      start_folio);
+		if (*folio_index == ULONG_MAX)
+			goto use_first_valid_folio;
 		else
-			goto try_next_page;
+			goto try_next_folio;
 	} else if (!has_reserved_pebs) {
 		if (unused_pebs > 0) {
-			first_valid_page = *page_index;
+			first_valid_folio = *folio_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("take from unused pool: "
@@ -9209,50 +9249,51 @@ try_next_page:
 				  leb_id, unused_pebs, reserved_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else {
-			*page_index = ULONG_MAX;
+			*folio_index = ULONG_MAX;
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find PEB table page: "
+			SSDFS_DBG("unable to find PEB table folio: "
 				  "leb_id %llu\n",
 				  leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		goto finish_select_pebtbl_page;
+		goto finish_select_pebtbl_folio;
 	} else if (unused_pebs > 0) {
-		first_valid_page = *page_index;
+		first_valid_folio = *folio_index;
 
 		if (unused_pebs < reserved_pebs) {
-			*page_index = ssdfs_maptbl_find_pebtbl_page(tbl, fdesc,
-								    *page_index,
-								    start_page);
-			if (*page_index == ULONG_MAX)
-				goto use_first_valid_page;
+			*folio_index = ssdfs_maptbl_find_pebtbl_folio(tbl,
+								fdesc,
+								*folio_index,
+								start_folio);
+			if (*folio_index == ULONG_MAX)
+				goto use_first_valid_folio;
 			else
-				goto try_next_page;
+				goto try_next_folio;
 		} else
-			goto finish_select_pebtbl_page;
+			goto finish_select_pebtbl_folio;
 	} else
-		goto finish_select_pebtbl_page;
+		goto finish_select_pebtbl_folio;
 
-use_first_valid_page:
-	if (first_valid_page >= ULONG_MAX) {
+use_first_valid_folio:
+	if (first_valid_folio >= ULONG_MAX) {
 		if (fdesc->pre_erase_pebs > 0)
 			err = -EBUSY;
 		else
 			err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find PEB table page: "
+		SSDFS_DBG("unable to find PEB table folio: "
 			  "leb_id %llu\n",
 			  leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
-	*page_index = first_valid_page;
+	*folio_index = first_valid_folio;
 
-finish_select_pebtbl_page:
+finish_select_pebtbl_folio:
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %lu\n", *page_index);
+	SSDFS_DBG("folio_index %lu\n", *folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
@@ -9260,10 +9301,10 @@ finish_select_pebtbl_page:
 /*
  * ssdfs_maptbl_set_peb_descriptor() - change PEB descriptor
  * @fdesc: fragment descriptor
- * @pebtbl_page: page index of PEB table
+ * @pebtbl_folio: folio index of PEB table
  * @peb_goal: PEB purpose
  * @peb_type: type of the PEB
- * @item_index: item index in the memory page [out]
+ * @item_index: item index in the memory folio [out]
  *
  * This method tries to change PEB descriptor in the PEB table.
  *
@@ -9276,37 +9317,37 @@ finish_select_pebtbl_page:
 static
 int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_maptbl_fragment_desc *fdesc,
-				    pgoff_t pebtbl_page,
+				    pgoff_t pebtbl_folio,
 				    int peb_goal,
 				    u8 peb_type,
 				    u16 *item_index)
 {
 	struct ssdfs_peb_table_fragment_header *hdr;
 	struct ssdfs_peb_descriptor *peb_desc;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc || !item_index);
 
-	SSDFS_DBG("fdesc %p, pebtbl_page %lu, "
+	SSDFS_DBG("fdesc %p, pebtbl_folio %lu, "
 		  "peb_goal %#x, peb_type %#x\n",
-		  fdesc, pebtbl_page, peb_goal, peb_type);
+		  fdesc, pebtbl_folio, peb_goal, peb_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*item_index = U16_MAX;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, pebtbl_page);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: "
-			  "page_index %lu, err %d\n",
-			  pebtbl_page, err);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, pebtbl_folio);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: "
+			  "folio_index %lu, err %d\n",
+			  pebtbl_folio, err);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
@@ -9331,24 +9372,24 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 	peb_desc->type = peb_type;
 	peb_desc->state = SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE;
 
-	ssdfs_set_page_private(page, 0);
-	SetPageUptodate(page);
-	err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-					      pebtbl_page);
+	ssdfs_set_folio_private(folio, 0);
+	folio_mark_uptodate(folio);
+	err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+						pebtbl_folio);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-			  pebtbl_page, err);
+		SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+			  pebtbl_folio, err);
 	}
 
 finish_set_peb_descriptor:
-	flush_dcache_page(page);
+	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -9358,8 +9399,8 @@ finish_set_peb_descriptor:
  * ssdfs_maptbl_set_leb_descriptor() - change LEB descriptor
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
- * @pebtbl_page: page index of PEB table
- * @item_index: item index in the memory page
+ * @pebtbl_folio: folio index of PEB table
+ * @item_index: item index in the memory folio
  *
  * This method tries to change LEB descriptor in the LEB table.
  *
@@ -9371,42 +9412,42 @@ finish_set_peb_descriptor:
  */
 static
 int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
-				    u64 leb_id, pgoff_t pebtbl_page,
+				    u64 leb_id, pgoff_t pebtbl_folio,
 				    u16 item_index)
 {
 	struct ssdfs_leb_descriptor *leb_desc;
 	struct ssdfs_leb_table_fragment_header *lebtbl_hdr;
-	pgoff_t lebtbl_page;
-	u16 peb_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t lebtbl_folio;
+	u16 peb_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
 
-	SSDFS_DBG("fdesc %p, leb_id %llu, pebtbl_page %lu, "
+	SSDFS_DBG("fdesc %p, leb_id %llu, pebtbl_folio %lu, "
 		  "item_index %u\n",
-		  fdesc, leb_id, pebtbl_page, item_index);
+		  fdesc, leb_id, pebtbl_folio, item_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	lebtbl_page = LEBTBL_PAGE_INDEX(fdesc, leb_id);
-	if (lebtbl_page == ULONG_MAX) {
-		SSDFS_ERR("fail to define page_index: "
+	lebtbl_folio = LEBTBL_FOLIO_INDEX(fdesc, leb_id);
+	if (lebtbl_folio == ULONG_MAX) {
+		SSDFS_ERR("fail to define folio_index: "
 			  "leb_id %llu\n",
 			  leb_id);
 		return -ERANGE;
 	}
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, lebtbl_page);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  lebtbl_page);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, lebtbl_folio);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  lebtbl_folio);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	leb_desc = GET_LEB_DESCRIPTOR(kaddr, leb_id);
 	if (IS_ERR_OR_NULL(leb_desc)) {
@@ -9414,16 +9455,16 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 		SSDFS_ERR("fail to get leb_descriptor: "
 			  "leb_id %llu, err %d\n",
 			  leb_id, err);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	peb_index = DEFINE_PEB_INDEX_IN_FRAGMENT(fdesc,
-						 pebtbl_page,
+						 pebtbl_folio,
 						 item_index);
 	if (peb_index == U16_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("fail to define peb index\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	leb_desc->relation_index = cpu_to_le16(peb_index);
@@ -9431,24 +9472,24 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 	lebtbl_hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 	le16_add_cpu(&lebtbl_hdr->migrating_lebs, 1);
 
-	ssdfs_set_page_private(page, 0);
-	SetPageUptodate(page);
-	err = ssdfs_page_array_set_page_dirty(&fdesc->array,
-					      lebtbl_page);
+	ssdfs_set_folio_private(folio, 0);
+	folio_mark_uptodate(folio);
+	err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
+						lebtbl_folio);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to set page %lu dirty: err %d\n",
-			  lebtbl_page, err);
+		SSDFS_ERR("fail to set folio %lu dirty: err %d\n",
+			  lebtbl_folio, err);
 	}
 
-finish_page_processing:
-	flush_dcache_page(page);
+finish_folio_processing:
+	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -9486,7 +9527,7 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	int state;
 	struct ssdfs_leb_descriptor leb_desc;
-	pgoff_t pebtbl_page = ULONG_MAX;
+	pgoff_t pebtbl_folio = ULONG_MAX;
 	u16 item_index;
 	int consistency;
 	int err = 0;
@@ -9609,32 +9650,33 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		goto finish_fragment_change;
 	}
 
-	err = ssdfs_maptbl_select_pebtbl_page(tbl, fdesc, leb_id, &pebtbl_page);
+	err = ssdfs_maptbl_select_pebtbl_folio(tbl, fdesc,
+						leb_id, &pebtbl_folio);
 	if (unlikely(err)) {
-		SSDFS_DBG("unable to find the peb table's page\n");
+		SSDFS_DBG("unable to find the peb table's folio\n");
 		goto finish_fragment_change;
 	}
 
-	err = ssdfs_maptbl_set_peb_descriptor(tbl, fdesc, pebtbl_page,
+	err = ssdfs_maptbl_set_peb_descriptor(tbl, fdesc, pebtbl_folio,
 						SSDFS_MAPTBL_MIGRATING_PEB,
 						peb_type, &item_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set PEB descriptor: "
-			  "pebtbl_page %lu, "
+			  "pebtbl_folio %lu, "
 			  "peb_type %#x, err %d\n",
-			  pebtbl_page,
+			  pebtbl_folio,
 			  peb_type, err);
 		goto finish_fragment_change;
 	}
 
 	err = ssdfs_maptbl_set_leb_descriptor(fdesc, leb_id,
-					      pebtbl_page,
+					      pebtbl_folio,
 					      item_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set LEB descriptor: "
-			  "leb_id %llu, pebtbl_page %lu, "
+			  "leb_id %llu, pebtbl_folio %lu, "
 			  "item_index %u, err %d\n",
-			  leb_id, pebtbl_page,
+			  leb_id, pebtbl_folio,
 			  item_index, err);
 		goto finish_fragment_change;
 	}
@@ -10534,10 +10576,10 @@ int ssdfs_maptbl_set_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 				   u16 index, u8 peb_type)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10547,33 +10589,33 @@ int ssdfs_maptbl_set_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_type != ptr->type) {
 		err = -ERANGE;
 		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
 			  peb_type, ptr->type);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	switch (ptr->state) {
@@ -10586,26 +10628,26 @@ int ssdfs_maptbl_set_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 		err = -ERANGE;
 		SSDFS_ERR("invalid PEB state %#x\n",
 			  ptr->state);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (ptr->flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR ||
 	    ptr->shared_peb_index != U16_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted PEB desriptor\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	ptr->flags |= SSDFS_MAPTBL_SHARED_DESTINATION_PEB;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -10745,10 +10787,10 @@ int ssdfs_maptbl_set_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 				      u16 dst_peb_index)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10758,39 +10800,39 @@ int ssdfs_maptbl_set_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_type != ptr->type) {
 		err = -ERANGE;
 		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
 			  peb_type, ptr->type);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted PEB desriptor\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	switch (ptr->state) {
@@ -10806,27 +10848,27 @@ int ssdfs_maptbl_set_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 		err = -ERANGE;
 		SSDFS_ERR("invalid PEB state %#x\n",
 			  ptr->state);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (dst_peb_index >= U8_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid dst_peb_index %u\n",
 			  dst_peb_index);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	ptr->shared_peb_index = (u8)dst_peb_index;
 	ptr->flags |= SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -11076,10 +11118,10 @@ ssdfs_maptbl_set_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 				      u16 index, u8 peb_type)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11089,39 +11131,39 @@ ssdfs_maptbl_set_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_type != ptr->type) {
 		err = -ERANGE;
 		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
 			  peb_type, ptr->type);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted PEB desriptor\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	switch (ptr->state) {
@@ -11137,20 +11179,20 @@ ssdfs_maptbl_set_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 		err = -ERANGE;
 		SSDFS_ERR("invalid PEB state %#x\n",
 			  ptr->state);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	ptr->shared_peb_index = U8_MAX;
 	ptr->flags |= SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -11376,10 +11418,10 @@ int ssdfs_maptbl_clear_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u16 index, u8 peb_type)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11389,33 +11431,33 @@ int ssdfs_maptbl_clear_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_type != ptr->type) {
 		err = -ERANGE;
 		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
 			  peb_type, ptr->type);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	switch (ptr->state) {
@@ -11430,14 +11472,14 @@ int ssdfs_maptbl_clear_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 		err = -ERANGE;
 		SSDFS_ERR("invalid PEB state %#x\n",
 			  ptr->state);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (ptr->flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR ||
 	    ptr->shared_peb_index != U16_MAX) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted PEB desriptor\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (!(ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB))
@@ -11445,14 +11487,14 @@ int ssdfs_maptbl_clear_peb_as_shared(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 	ptr->flags &= ~SSDFS_MAPTBL_SHARED_DESTINATION_PEB;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -11592,10 +11634,10 @@ ssdfs_maptbl_break_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 				    u8 *peb_state)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11607,39 +11649,39 @@ ssdfs_maptbl_break_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 	*peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_type != ptr->type) {
 		err = -ERANGE;
 		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
 			  peb_type, ptr->type);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted PEB desriptor\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (!(ptr->flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR))
@@ -11665,20 +11707,20 @@ ssdfs_maptbl_break_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 		err = -ERANGE;
 		SSDFS_ERR("invalid PEB state %#x\n",
 			  ptr->state);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	ptr->shared_peb_index = U8_MAX;
 	ptr->flags &= ~SSDFS_MAPTBL_SOURCE_PEB_HAS_EXT_PTR;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -11960,10 +12002,10 @@ ssdfs_maptbl_break_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc
 					u8 *peb_state)
 {
 	struct ssdfs_peb_descriptor *ptr;
-	pgoff_t page_index;
-	u16 item_index;
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
+	pgoff_t folio_index;
+	u16 item_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11975,39 +12017,39 @@ ssdfs_maptbl_break_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc
 
 	*peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 
-	page_index = PEBTBL_PAGE_INDEX(fdesc, index);
+	folio_index = PEBTBL_FOLIO_INDEX(fdesc, index);
 	item_index = index % fdesc->pebs_per_page;
 
-	page = ssdfs_page_array_get_page_locked(&fdesc->array, page_index);
-	if (IS_ERR_OR_NULL(page)) {
-		err = page == NULL ? -ERANGE : PTR_ERR(page);
-		SSDFS_ERR("fail to find page: page_index %lu\n",
-			  page_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: folio_index %lu\n",
+			  folio_index);
 		return err;
 	}
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ptr = GET_PEB_DESCRIPTOR(kaddr, item_index);
 	if (IS_ERR_OR_NULL(ptr)) {
 		err = IS_ERR(ptr) ? PTR_ERR(ptr) : -ERANGE;
 		SSDFS_ERR("fail to get peb_descriptor: "
-			  "page_index %lu, item_index %u, err %d\n",
-			  page_index, item_index, err);
-		goto finish_page_processing;
+			  "folio_index %lu, item_index %u, err %d\n",
+			  folio_index, item_index, err);
+		goto finish_folio_processing;
 	}
 
 	if (peb_type != ptr->type) {
 		err = -ERANGE;
 		SSDFS_ERR("peb_type %#x != ptr->type %#x\n",
 			  peb_type, ptr->type);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (ptr->flags & SSDFS_MAPTBL_SHARED_DESTINATION_PEB) {
 		err = -ERANGE;
 		SSDFS_ERR("corrupted PEB desriptor\n");
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	if (!(ptr->flags & SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR))
@@ -12033,20 +12075,20 @@ ssdfs_maptbl_break_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc
 		err = -ERANGE;
 		SSDFS_ERR("invalid PEB state %#x\n",
 			  ptr->state);
-		goto finish_page_processing;
+		goto finish_folio_processing;
 	}
 
 	ptr->shared_peb_index = U8_MAX;
 	ptr->flags &= ~SSDFS_MAPTBL_SOURCE_PEB_HAS_ZONE_PTR;
 
-finish_page_processing:
+finish_folio_processing:
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -12665,8 +12707,8 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 
 	for (i = 0; i < tbl->fragments_count; i++) {
 		struct ssdfs_maptbl_fragment_desc *desc;
-		struct page *page;
-		u32 pages_count;
+		struct folio *folio;
+		u32 folios_count;
 		int state;
 
 		desc = &tbl->desc_array[i];
@@ -12693,32 +12735,32 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 			continue;
 		}
 
-		pages_count = desc->lebtbl_pages +
+		folios_count = desc->lebtbl_pages +
 			(desc->stripe_pages * tbl->stripes_per_fragment);
 
-		for (j = 0; j < pages_count; j++) {
+		for (j = 0; j < folios_count; j++) {
 			void *kaddr;
 
-			page = ssdfs_page_array_get_page_locked(&desc->array,
-								j);
+			folio = ssdfs_folio_array_get_folio_locked(&desc->array,
+								   j);
 
-			SSDFS_DBG("page[%d] %p\n", j, page);
-			if (IS_ERR_OR_NULL(page))
+			SSDFS_DBG("folio[%d] %p\n", j, folio);
+			if (IS_ERR_OR_NULL(folio))
 				continue;
 
-			SSDFS_DBG("page_index %llu, flags %#lx\n",
-				  (u64)page_index(page), page->flags);
+			SSDFS_DBG("folio_index %llu, flags %#lx\n",
+				  (u64)folio_index(folio), folio->flags);
 
-			kaddr = kmap_local_page(page);
+			kaddr = kmap_local_folio(folio, 0);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 						kaddr, PAGE_SIZE);
 			kunmap_local(kaddr);
 
-			ssdfs_unlock_page(page);
-			ssdfs_put_page(page);
+			ssdfs_folio_unlock(folio);
+			ssdfs_folio_put(folio);
 
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  folio, folio_ref_count(folio));
 		}
 	}
 #endif /* CONFIG_SSDFS_DEBUG */

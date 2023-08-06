@@ -28,6 +28,7 @@
 #include "page_vector.h"
 #include "ssdfs.h"
 #include "page_array.h"
+#include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "segment_bitmap.h"

@@ -36,6 +36,7 @@
 #include "peb_block_bitmap.h"
 #include "segment_block_bitmap.h"
 #include "page_array.h"
+#include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "peb_container.h"
@@ -11732,20 +11733,20 @@ int ssdfs_peb_init_segbmap_object(struct ssdfs_peb_container *pebc,
 }
 
 /*
- * ssdfs_maptbl_fragment_pages_count() - calculate count of pages in fragment
+ * ssdfs_maptbl_fragment_folios_count() - calculate count of folios in fragment
  * @fsi: file system info object
  *
- * This method calculates count of pages in the mapping table's
+ * This method calculates count of folios in the mapping table's
  * fragment.
  *
  * RETURN:
- * [success] - count of pages in fragment
+ * [success] - count of folios in fragment
  * [failure] - U16_MAX
  */
 static inline
-u16 ssdfs_maptbl_fragment_pages_count(struct ssdfs_fs_info *fsi)
+u16 ssdfs_maptbl_fragment_folios_count(struct ssdfs_fs_info *fsi)
 {
-	u32 fragment_pages;
+	u32 fragment_folios;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (fsi->maptbl->fragment_bytes % PAGE_SIZE) {
@@ -11755,13 +11756,13 @@ u16 ssdfs_maptbl_fragment_pages_count(struct ssdfs_fs_info *fsi)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	fragment_pages = fsi->maptbl->fragment_bytes / PAGE_SIZE;
+	fragment_folios = fsi->maptbl->fragment_bytes / PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(fragment_pages >= U16_MAX);
+	BUG_ON(fragment_folios >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return fragment_pages;
+	return fragment_folios;
 }
 
 /*
@@ -11916,7 +11917,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 			}
 		}
 
-		ssdfs_maptbl_move_fragment_pages(req, area, pages_count);
+		ssdfs_maptbl_move_fragment_folios(req, area, pages_count);
 		ssdfs_request_unlock_and_remove_pages(req);
 		ssdfs_put_request(req);
 		ssdfs_request_free(req);
@@ -11994,24 +11995,24 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 
 	down_read(&fsi->maptbl->tbl_lock);
 	fragment_bytes = fsi->maptbl->fragment_bytes;
-	area.pages_count = 0;
-	area.pages_capacity = ssdfs_maptbl_fragment_pages_count(fsi);
+	area.folios_count = 0;
+	area.folios_capacity = ssdfs_maptbl_fragment_folios_count(fsi);
 	up_read(&fsi->maptbl->tbl_lock);
 
-	if (unlikely(area.pages_capacity >= U16_MAX)) {
+	if (unlikely(area.folios_capacity >= U16_MAX)) {
 		err = -ERANGE;
-		SSDFS_ERR("invalid fragment pages_capacity\n");
+		SSDFS_ERR("invalid fragment's folios_capacity\n");
 		goto end_init;
 	}
 
-	area.pages = ssdfs_read_kcalloc(area.pages_capacity,
-				   sizeof(struct page *),
-				   GFP_KERNEL);
-	if (!area.pages) {
+	area.folios = ssdfs_read_kcalloc(area.folios_capacity,
+					 sizeof(struct page *),
+					 GFP_KERNEL);
+	if (!area.folios) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to allocate memory: "
-			  "area.pages_capacity %zu\n",
-			  area.pages_capacity);
+			  "area.folios_capacity %zu\n",
+			  area.folios_capacity);
 		goto end_init;
 	}
 
@@ -12071,14 +12072,14 @@ int ssdfs_peb_init_maptbl_object(struct ssdfs_peb_container *pebc,
 	}
 
 end_init:
-	for (i = 0; i < area.pages_capacity; i++) {
-		if (area.pages[i]) {
-			ssdfs_read_free_page(area.pages[i]);
-			area.pages[i] = NULL;
+	for (i = 0; i < area.folios_capacity; i++) {
+		if (area.folios[i]) {
+			ssdfs_read_free_folio(area.folios[i]);
+			area.folios[i] = NULL;
 		}
 	}
 
-	ssdfs_read_kfree(area.pages);
+	ssdfs_read_kfree(area.folios);
 
 	{
 		int err1 = ssdfs_peb_release_pages(pebc);

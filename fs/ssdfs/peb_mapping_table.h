@@ -34,19 +34,19 @@
  * @lock: fragment lock
  * @state: fragment state
  * @fragment_id: fragment's ID in the whole sequence
- * @fragment_pages: count of memory pages in fragment
+ * @fragment_folios: count of memory folios in fragment
  * @start_leb: start LEB of fragment
  * @lebs_count: count of LEB descriptors in the whole fragment
- * @lebs_per_page: count of LEB descriptors in memory page
- * @lebtbl_pages: count of memory pages are used for LEBs description
- * @pebs_per_page: count of PEB descriptors in memory page
- * @stripe_pages: count of memory pages in one stripe
+ * @lebs_per_page: count of LEB descriptors in memory folio
+ * @lebtbl_pages: count of memory folios are used for LEBs description
+ * @pebs_per_page: count of PEB descriptors in memory folio
+ * @stripe_pages: count of memory folios in one stripe
  * @mapped_lebs: mapped LEBs count in the fragment
  * @migrating_lebs: migrating LEBs count in the fragment
  * @reserved_pebs: count of reserved PEBs in fragment
  * @pre_erase_pebs: count of PEBs in pre-erase state per fragment
  * @recovering_pebs: count of recovering PEBs per fragment
- * @array: fragment's memory pages
+ * @array: fragment's memory folios
  * @init_end: wait of init ending
  * @flush_req1: main flush requests array
  * @flush_req2: backup flush requests array
@@ -58,7 +58,7 @@ struct ssdfs_maptbl_fragment_desc {
 	atomic_t state;
 
 	u32 fragment_id;
-	u32 fragment_pages;
+	u32 fragment_folios;
 
 	u64 start_leb;
 	u32 lebs_count;
@@ -75,7 +75,7 @@ struct ssdfs_maptbl_fragment_desc {
 	u32 pre_erase_pebs;
 	u32 recovering_pebs;
 
-	struct ssdfs_page_array array;
+	struct ssdfs_folio_array array;
 	struct completion init_end;
 
 	struct ssdfs_segment_request *flush_req1;
@@ -97,15 +97,15 @@ enum {
 /*
  * struct ssdfs_maptbl_area - mapping table area
  * @portion_id: sequential ID of mapping table fragment
- * @pages: array of memory page pointers
- * @pages_capacity: capacity of array
- * @pages_count: count of pages in array
+ * @folios: array of memory folio pointers
+ * @folios_capacity: capacity of array
+ * @folios_count: count of folios in array
  */
 struct ssdfs_maptbl_area {
 	u16 portion_id;
-	struct page **pages;
-	size_t pages_capacity;
-	size_t pages_count;
+	struct folio **folios;
+	size_t folios_capacity;
+	size_t folios_count;
 };
 
 /*
@@ -115,7 +115,7 @@ struct ssdfs_maptbl_area {
  * @fragments_per_seg: count of fragments in segment
  * @fragments_per_peb: count of fragments in PEB
  * @fragment_bytes: count of bytes in one fragment
- * @fragment_pages: count of memory pages in one fragment
+ * @fragment_folios: count of memory folios in one fragment
  * @flags: mapping table flags
  * @lebs_count: count of LEBs are described by mapping table
  * @pebs_count: count of PEBs are described by mapping table
@@ -144,7 +144,7 @@ struct ssdfs_peb_mapping_table {
 	u16 fragments_per_seg;
 	u16 fragments_per_peb;
 	u32 fragment_bytes;
-	u32 fragment_pages;
+	u32 fragment_folios;
 	atomic_t flags;
 	u64 lebs_count;
 	u64 pebs_count;
@@ -291,37 +291,37 @@ void SSDFS_ERASE_RESULT_INIT(u32 fragment_index, u16 peb_index,
 /*
  * DEFINE_PEB_INDEX_IN_FRAGMENT() - define PEB index in the whole fragment
  * @fdesc: fragment descriptor
- * @page_index: page index in the fragment
- * @item_index: item index in the memory page
+ * @folio_index: folio index in the fragment
+ * @item_index: item index in the memory folio
  */
 static inline
 u16 DEFINE_PEB_INDEX_IN_FRAGMENT(struct ssdfs_maptbl_fragment_desc *fdesc,
-				 pgoff_t page_index,
+				 pgoff_t folio_index,
 				 u16 item_index)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
-	BUG_ON(page_index < fdesc->lebtbl_pages);
+	BUG_ON(folio_index < fdesc->lebtbl_pages);
 
-	SSDFS_DBG("fdesc %p, page_index %lu, item_index %u\n",
-		  fdesc, page_index, item_index);
+	SSDFS_DBG("fdesc %p, folio_index %lu, item_index %u\n",
+		  fdesc, folio_index, item_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index -= fdesc->lebtbl_pages;
-	page_index *= fdesc->pebs_per_page;
-	page_index += item_index;
+	folio_index -= fdesc->lebtbl_pages;
+	folio_index *= fdesc->pebs_per_page;
+	folio_index += item_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(page_index >= U16_MAX);
+	BUG_ON(folio_index >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return (u16)page_index;
+	return (u16)folio_index;
 }
 
 /*
  * GET_PEB_ID() - define PEB ID for the index
- * @kaddr: pointer on memory page's content
- * @item_index: item index inside of the page
+ * @kaddr: pointer on memory folio's content
+ * @item_index: item index inside of the folio
  *
  * This method tries to convert @item_index into
  * PEB ID value.
@@ -347,7 +347,7 @@ u64 GET_PEB_ID(void *kaddr, u16 item_index)
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
 	if (le16_to_cpu(hdr->magic) != SSDFS_PEB_TABLE_MAGIC) {
-		SSDFS_ERR("corrupted page\n");
+		SSDFS_ERR("corrupted folio\n");
 		return U64_MAX;
 	}
 
@@ -364,15 +364,15 @@ u64 GET_PEB_ID(void *kaddr, u16 item_index)
 }
 
 /*
- * PEBTBL_PAGE_INDEX() - define PEB table page index
+ * PEBTBL_FOLIO_INDEX() - define PEB table folio index
  * @fdesc: fragment descriptor
  * @peb_index: index of PEB in the fragment
  */
 static inline
-pgoff_t PEBTBL_PAGE_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
-			  u16 peb_index)
+pgoff_t PEBTBL_FOLIO_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
+			   u16 peb_index)
 {
-	pgoff_t page_index;
+	pgoff_t folio_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
@@ -381,15 +381,15 @@ pgoff_t PEBTBL_PAGE_INDEX(struct ssdfs_maptbl_fragment_desc *fdesc,
 		  fdesc, peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = fdesc->lebtbl_pages;
-	page_index += peb_index / fdesc->pebs_per_page;
-	return page_index;
+	folio_index = fdesc->lebtbl_pages;
+	folio_index += peb_index / fdesc->pebs_per_page;
+	return folio_index;
 }
 
 /*
  * GET_PEB_DESCRIPTOR() - retrieve PEB descriptor
- * @kaddr: pointer on memory page's content
- * @item_index: item index inside of the page
+ * @kaddr: pointer on memory folio's content
+ * @item_index: item index inside of the folio
  *
  * This method tries to return the pointer on
  * PEB descriptor for @item_index.
@@ -417,7 +417,7 @@ struct ssdfs_peb_descriptor *GET_PEB_DESCRIPTOR(void *kaddr, u16 item_index)
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
 	if (le16_to_cpu(hdr->magic) != SSDFS_PEB_TABLE_MAGIC) {
-		SSDFS_ERR("corrupted page\n");
+		SSDFS_ERR("corrupted folio\n");
 		return ERR_PTR(-ERANGE);
 	}
 
@@ -671,9 +671,9 @@ int ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id,
 				     struct ssdfs_maptbl_peb_relation *pebr);
-void ssdfs_maptbl_move_fragment_pages(struct ssdfs_segment_request *req,
-				      struct ssdfs_maptbl_area *area,
-				      u16 pages_count);
+void ssdfs_maptbl_move_fragment_folios(struct ssdfs_segment_request *req,
+					struct ssdfs_maptbl_area *area,
+					u16 folios_count);
 int ssdfs_maptbl_erase_peb(struct ssdfs_fs_info *fsi,
 			   struct ssdfs_erase_result *result);
 int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,

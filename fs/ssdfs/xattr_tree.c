@@ -32,6 +32,7 @@
 #include "request_queue.h"
 #include "segment_bitmap.h"
 #include "page_array.h"
+#include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "peb_container.h"
