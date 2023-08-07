@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.77 [August 06, 2023]
+    (*) Rework block bitmap on using memory folio.
+
 v.4.76 [August 05, 2023]
     (*) Rework mapping table on using memory folio.
 

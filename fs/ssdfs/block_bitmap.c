@@ -29,6 +29,7 @@
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "page_vector.h"
+#include "folio_vector.h"
 #include "ssdfs.h"
 #include "block_bitmap.h"
 
@@ -203,9 +204,9 @@ void ssdfs_block_bmap_storage_destroy(struct ssdfs_block_bmap_storage *storage)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (storage->state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-		ssdfs_page_vector_release(&storage->array);
-		ssdfs_page_vector_destroy(&storage->array);
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
+		ssdfs_folio_vector_release(&storage->array);
+		ssdfs_folio_vector_destroy(&storage->array);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -225,7 +226,7 @@ void ssdfs_block_bmap_storage_destroy(struct ssdfs_block_bmap_storage *storage)
  * ssdfs_block_bmap_destroy() - destroy PEB's block bitmap
  * @blk_bmap: pointer on block bitmap
  *
- * This function releases memory pages of pagevec and
+ * This function releases memory folios of batch and
  * to free memory of ssdfs_block_bmap structure.
  */
 void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
@@ -278,24 +279,26 @@ int ssdfs_block_bmap_create_empty_storage(struct ssdfs_block_bmap_storage *ptr,
 		BUG_ON(capacity >= U8_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_page_vector_create(&ptr->array, (u8)capacity);
+		err = ssdfs_folio_vector_create(&ptr->array,
+						get_order(PAGE_SIZE),
+						(u8)capacity);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to create page vector: "
+			SSDFS_ERR("fail to create folio vector: "
 				  "bmap_bytes %zu, capacity %zu, err %d\n",
 				  bmap_bytes, capacity, err);
 			return err;
 		}
 
-		err = ssdfs_page_vector_init(&ptr->array);
+		err = ssdfs_folio_vector_init(&ptr->array);
 		if (unlikely(err)) {
-			ssdfs_page_vector_destroy(&ptr->array);
-			SSDFS_ERR("fail to init page vector: "
+			ssdfs_folio_vector_destroy(&ptr->array);
+			SSDFS_ERR("fail to init folio vector: "
 				  "bmap_bytes %zu, capacity %zu, err %d\n",
 				  bmap_bytes, capacity, err);
 			return err;
 		}
 
-		ptr->state = SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC;
+		ptr->state = SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC;
 	} else {
 		ptr->buf = ssdfs_block_bmap_kmalloc(bmap_bytes, GFP_KERNEL);
 		if (!ptr->buf) {
@@ -314,7 +317,7 @@ int ssdfs_block_bmap_create_empty_storage(struct ssdfs_block_bmap_storage *ptr,
 /*
  * ssdfs_block_bmap_init_clean_storage() - init clean block bitmap
  * @ptr: pointer on block bitmap object
- * @bmap_pages: memory pages count in block bitmap
+ * @bmap_folios: memory folios count in block bitmap
  *
  * This function initializes storage space of the clean
  * block bitmap.
@@ -328,10 +331,10 @@ int ssdfs_block_bmap_create_empty_storage(struct ssdfs_block_bmap_storage *ptr,
  */
 static
 int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
-					size_t bmap_pages)
+					size_t bmap_folios)
 {
-	struct ssdfs_page_vector *array;
-	struct page *page;
+	struct ssdfs_folio_vector *array;
+	struct folio *folio;
 	int i;
 	int err;
 
@@ -339,35 +342,35 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 	BUG_ON(!ptr);
 
 	SSDFS_DBG("bmap %p, storage_state %#x, "
-		  "bmap_bytes %zu, bmap_pages %zu\n",
+		  "bmap_bytes %zu, bmap_folios %zu\n",
 		  ptr, ptr->storage.state,
-		  ptr->bytes_count, bmap_pages);
+		  ptr->bytes_count, bmap_folios);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (ptr->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &ptr->storage.array;
 
-		if (ssdfs_page_vector_space(array) < bmap_pages) {
-			SSDFS_ERR("page vector capacity is not enough: "
+		if (ssdfs_folio_vector_space(array) < bmap_folios) {
+			SSDFS_ERR("folio vector capacity is not enough: "
 				  "capacity %u, free_space %u, "
-				  "bmap_pages %zu\n",
-				  ssdfs_page_vector_capacity(array),
-				  ssdfs_page_vector_space(array),
-				  bmap_pages);
+				  "bmap_folios %zu\n",
+				  ssdfs_folio_vector_capacity(array),
+				  ssdfs_folio_vector_space(array),
+				  bmap_folios);
 			return -ENOMEM;
 		}
 
-		page = ssdfs_page_vector_allocate(array);
-		if (IS_ERR_OR_NULL(page)) {
-			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-			SSDFS_ERR("unable to allocate #%d page\n", i);
+		folio = ssdfs_folio_vector_allocate(array);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate #%d folio\n", i);
 			return err;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
@@ -391,14 +394,14 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
  * @flag: define necessity to allocate memory
  * @init_state: block state is used during initialization
  *
- * This function prepares page vector and
+ * This function prepares folio vector and
  * makes initialization of ssdfs_block_bmap structure.
  *
  * RETURN:
  * [success]
  * [failure] - error code:
  *
- * %-EOPNOTSUPP - pagevec is too small for block bitmap
+ * %-EOPNOTSUPP - folio batch is too small for block bitmap
  *                representation.
  * %-ENOMEM     - unable to allocate memory.
  */
@@ -409,7 +412,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 {
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	size_t bmap_bytes = 0;
-	size_t bmap_pages = 0;
+	size_t bmap_folios = 0;
 	int i;
 	int err;
 
@@ -428,11 +431,11 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	bmap_bytes = BLK_BMAP_BYTES(items_count);
-	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	bmap_folios = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
-	if (bmap_pages > max_capacity) {
-		SSDFS_WARN("unable to allocate bmap with %zu pages\n",
-			    bmap_pages);
+	if (bmap_folios > max_capacity) {
+		SSDFS_WARN("unable to allocate bmap with %zu folios\n",
+			    bmap_folios);
 		return -EOPNOTSUPP;
 	}
 
@@ -453,19 +456,19 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 	}
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		ptr->last_search[i].page_index = max_capacity;
+		ptr->last_search[i].folio_index = max_capacity;
 		ptr->last_search[i].offset = U16_MAX;
 	}
 
 	if (flag == SSDFS_BLK_BMAP_INIT)
 		goto alloc_end;
 
-	err = ssdfs_block_bmap_init_clean_storage(ptr, bmap_pages);
+	err = ssdfs_block_bmap_init_clean_storage(ptr, bmap_folios);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init clean bmap's storage: "
-			  "bmap_bytes %zu, bmap_pages %zu, err %d\n",
-			  bmap_bytes, bmap_pages, err);
-		goto destroy_pagevec;
+			  "bmap_bytes %zu, bmap_folios %zu, err %d\n",
+			  bmap_bytes, bmap_folios, err);
+		goto destroy_block_bmap;
 	}
 
 	if (init_state != SSDFS_BLK_FREE) {
@@ -477,7 +480,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 				  "range (start %u, len %u), "
 				  "init_state %#x, err %d\n",
 				  range.start, range.len, init_state, err);
-			goto destroy_pagevec;
+			goto destroy_block_bmap;
 		}
 	}
 
@@ -485,7 +488,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to cache last free page: err %d\n",
 			  err);
-		goto destroy_pagevec;
+		goto destroy_block_bmap;
 	}
 
 	set_block_bmap_initialized(ptr);
@@ -493,7 +496,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 alloc_end:
 	return 0;
 
-destroy_pagevec:
+destroy_block_bmap:
 	ssdfs_block_bmap_destroy(ptr);
 	return err;
 }
@@ -518,10 +521,12 @@ static
 int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 				  struct ssdfs_page_vector *source)
 {
-	struct ssdfs_page_vector *array;
+	struct ssdfs_folio_vector *array;
+	struct folio *folio;
 	struct page *page;
-#ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
+#ifdef CONFIG_SSDFS_DEBUG
+//	void *kaddr;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int i;
 	int err;
@@ -542,8 +547,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 
 	if (blk_bmap->storage.state != SSDFS_BLOCK_BMAP_STORAGE_ABSENT) {
 		switch (blk_bmap->storage.state) {
-		case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-			ssdfs_page_vector_release(array);
+		case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
+			ssdfs_folio_vector_release(array);
 			break;
 
 		case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -564,8 +569,18 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	switch (blk_bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		for (i = 0; i < ssdfs_page_vector_count(source); i++) {
+			folio = ssdfs_block_bmap_alloc_folio(GFP_KERNEL,
+							get_order(PAGE_SIZE));
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate memory folio\n");
+				return err;
+			}
+
+			ssdfs_folio_get(folio);
+
 			page = ssdfs_page_vector_remove(source, i);
 			if (IS_ERR_OR_NULL(page)) {
 				SSDFS_WARN("page %d is NULL\n", i);
@@ -573,32 +588,27 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			}
 
 			ssdfs_lock_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
 			kaddr = kmap_local_page(page);
-			SSDFS_DBG("BMAP INIT\n");
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr, 32);
+			__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
+						kaddr, 0, PAGE_SIZE,
+						PAGE_SIZE);
 			kunmap_local(kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			err = ssdfs_page_vector_add(array, page);
 			ssdfs_unlock_page(page);
 
+			err = ssdfs_folio_vector_add(array, folio);
+
+			ssdfs_block_bmap_account_page(page);
+			ssdfs_block_bmap_free_page(page);
+
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to add page: "
-					  "page_index %d, err %d\n",
+				SSDFS_ERR("fail to add folio: "
+					  "folio_index %d, err %d\n",
 					  i, err);
 				return err;
 			}
 		}
 
-		err = ssdfs_page_vector_reinit(source);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to reinit page vector: "
-				  "err %d\n", err);
-			return err;
-		}
+		ssdfs_page_vector_release(source);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -723,7 +733,7 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		}
 
 		for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-			blk_bmap->last_search[i].page_index = max_capacity;
+			blk_bmap->last_search[i].folio_index = max_capacity;
 			blk_bmap->last_search[i].offset = U16_MAX;
 		}
 
@@ -971,10 +981,11 @@ static
 int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 					struct ssdfs_page_vector *snapshot)
 {
-	struct ssdfs_page_vector *array;
+	struct ssdfs_folio_vector *array;
 	struct page *page;
-#ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
+#ifdef CONFIG_SSDFS_DEBUG
+//	void *kaddr;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int i;
 	int err;
@@ -993,10 +1004,10 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (blk_bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &blk_bmap->storage.array;
 
-		for (i = 0; i < ssdfs_page_vector_count(array); i++) {
+		for (i = 0; i < ssdfs_folio_vector_count(array); i++) {
 			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
 			if (IS_ERR_OR_NULL(page)) {
 				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
@@ -1004,17 +1015,11 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 				return err;
 			}
 
-			ssdfs_memcpy_page(page, 0, PAGE_SIZE,
-					  array->pages[i], 0, PAGE_SIZE,
-					  PAGE_SIZE);
-
-#ifdef CONFIG_SSDFS_DEBUG
 			kaddr = kmap_local_page(page);
-			SSDFS_DBG("BMAP SNAPSHOT\n");
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr, 32);
+			__ssdfs_memcpy_from_folio(kaddr, 0, PAGE_SIZE,
+						  array->folios[i], 0, PAGE_SIZE,
+						  PAGE_SIZE);
 			kunmap_local(kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_block_bmap_forget_page(page);
 			err = ssdfs_page_vector_add(snapshot, page);
@@ -1026,7 +1031,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 			}
 		}
 
-		for (; i < ssdfs_page_vector_capacity(array); i++) {
+		for (; i < ssdfs_folio_vector_capacity(array); i++) {
 			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
 			if (IS_ERR_OR_NULL(page)) {
 				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
@@ -1275,7 +1280,7 @@ static
 int ssdfs_get_cache_type(struct ssdfs_block_bmap *blk_bmap,
 			 u32 blk)
 {
-	int page_index;
+	int folio_index;
 	u16 offset;
 	int i;
 
@@ -1285,7 +1290,7 @@ int ssdfs_get_cache_type(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = SSDFS_BLK2PAGE(blk, SSDFS_BLK_STATE_BITS, &offset);
+	folio_index = SSDFS_BLK2FOLIO(blk, SSDFS_BLK_STATE_BITS, &offset);
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
 		struct ssdfs_last_bmap_search *last;
@@ -1293,14 +1298,14 @@ int ssdfs_get_cache_type(struct ssdfs_block_bmap *blk_bmap,
 		last = &blk_bmap->last_search[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("last->page_index %d, page_index %d, "
+		SSDFS_DBG("last->folio_index %d, folio_index %d, "
 			  "last->offset %u, offset %u, "
 			  "search_type %#x\n",
-			  last->page_index, page_index,
+			  last->folio_index, folio_index,
 			  last->offset, offset, i);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (last->page_index == page_index &&
+		if (last->folio_index == folio_index &&
 		    last->offset == offset)
 			return i;
 	}
@@ -1391,12 +1396,12 @@ int ssdfs_determine_cache_type(unsigned long cache)
 }
 
 /*
- * ssdfs_cache_block_state() - cache block state from pagevec
+ * ssdfs_cache_block_state() - cache block state from folio vector
  * @blk_bmap: pointer on block bitmap
  * @blk: segment's block
  * @blk_state: state as hint for cache type determination
  *
- * This function retrieves state of @blk from pagevec
+ * This function retrieves state of @blk from folio vector
  * and  save retrieved value for requested type of cache.
  * If @blk_state has SSDFS_BLK_STATE_MAX value then function
  * defines block state and to cache value in proper place.
@@ -1406,14 +1411,14 @@ int ssdfs_determine_cache_type(unsigned long cache)
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input value.
- * %-EOPNOTSUPP - invalid page index.
+ * %-EOPNOTSUPP - invalid folio index.
  */
 static
 int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 			    u32 blk, int blk_state)
 {
-	struct ssdfs_page_vector *array;
-	int page_index;
+	struct ssdfs_folio_vector *array;
+	int folio_index;
 	u16 offset;
 	void *kaddr;
 	unsigned long cache;
@@ -1439,29 +1444,33 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 		return 0;
 	}
 
-	page_index = SSDFS_BLK2PAGE(blk, SSDFS_BLK_STATE_BITS, &offset);
+	folio_index = SSDFS_BLK2FOLIO(blk, SSDFS_BLK_STATE_BITS, &offset);
 
 	switch (blk_bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &blk_bmap->storage.array;
 
-		if (page_index >= ssdfs_page_vector_capacity(array)) {
-			SSDFS_ERR("invalid page index %d\n", page_index);
+		if (folio_index >= ssdfs_folio_vector_capacity(array)) {
+			SSDFS_ERR("invalid folio index %d\n", folio_index);
 			return -EOPNOTSUPP;
 		}
 
-		if (page_index >= ssdfs_page_vector_count(array)) {
+		if (folio_index >= ssdfs_folio_vector_count(array)) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("absent page index %d\n", page_index);
+			SSDFS_DBG("absent folio index %d\n", folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOENT;
 		}
 
-		err = ssdfs_memcpy_from_page(&cache,
-					     0, sizeof(unsigned long),
-					     array->pages[page_index],
-					     offset, PAGE_SIZE,
-					     sizeof(unsigned long));
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!array->folios[folio_index]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = __ssdfs_memcpy_from_folio(&cache,
+						0, sizeof(unsigned long),
+						array->folios[folio_index],
+						offset, PAGE_SIZE,
+						sizeof(unsigned long));
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			return err;
@@ -1469,8 +1478,8 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		if (page_index > 0) {
-			SSDFS_ERR("invalid page_index %d\n", page_index);
+		if (folio_index > 0) {
+			SSDFS_ERR("invalid folio_index %d\n", folio_index);
 			return -ERANGE;
 		}
 
@@ -1492,15 +1501,15 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 	cache_type = ssdfs_determine_cache_type(cache);
 	BUG_ON(cache_type >= SSDFS_SEARCH_TYPE_MAX);
 
-	blk_bmap->last_search[cache_type].page_index = page_index;
+	blk_bmap->last_search[cache_type].folio_index = folio_index;
 	blk_bmap->last_search[cache_type].offset = offset;
 	blk_bmap->last_search[cache_type].cache = cache;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_search.cache %lx, cache_type %#x, "
-		  "page_index %d, offset %u\n",
+		  "folio_index %d, offset %u\n",
 		  cache, cache_type,
-		  page_index, offset);
+		  folio_index, offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -1725,7 +1734,7 @@ int ssdfs_set_block_state_in_cache(struct ssdfs_block_bmap *blk_bmap,
 static
 int ssdfs_save_cache_in_storage(struct ssdfs_block_bmap *blk_bmap)
 {
-	struct ssdfs_page_vector *array;
+	struct ssdfs_folio_vector *array;
 	void *kaddr;
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	int i;
@@ -1738,52 +1747,52 @@ int ssdfs_save_cache_in_storage(struct ssdfs_block_bmap *blk_bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		int page_index = blk_bmap->last_search[i].page_index;
+		int folio_index = blk_bmap->last_search[i].folio_index;
 		u16 offset = blk_bmap->last_search[i].offset;
 		unsigned long cache = blk_bmap->last_search[i].cache;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("search_type %d, page_index %d, offset %u\n",
-			  i, page_index, offset);
+		SSDFS_DBG("search_type %d, folio_index %d, offset %u\n",
+			  i, folio_index, offset);
 		SSDFS_DBG("last_search.cache %lx\n", cache);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (page_index == max_capacity || offset == U16_MAX)
+		if (folio_index == max_capacity || offset == U16_MAX)
 			continue;
 
 		switch (blk_bmap->storage.state) {
-		case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+		case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 			array = &blk_bmap->storage.array;
 
-			if (page_index >= ssdfs_page_vector_capacity(array)) {
+			if (folio_index >= ssdfs_folio_vector_capacity(array)) {
 				SSDFS_ERR("block bmap's cache is corrupted: "
-					  "page_index %d, offset %u\n",
-					  page_index, (u32)offset);
+					  "folio_index %d, offset %u\n",
+					  folio_index, (u32)offset);
 				return -EINVAL;
 			}
 
-			while (page_index >= ssdfs_page_vector_count(array)) {
-				struct page *page;
+			while (folio_index >= ssdfs_folio_vector_count(array)) {
+				struct folio *folio;
 
-				page = ssdfs_page_vector_allocate(array);
-				if (IS_ERR_OR_NULL(page)) {
-					err = (page == NULL ? -ENOMEM :
-								PTR_ERR(page));
-					SSDFS_ERR("unable to allocate page\n");
+				folio = ssdfs_folio_vector_allocate(array);
+				if (IS_ERR_OR_NULL(folio)) {
+					err = (folio == NULL ? -ENOMEM :
+								PTR_ERR(folio));
+					SSDFS_ERR("unable to allocate folio\n");
 					return err;
 				}
 
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("page %p, count %d\n",
-					  page, page_ref_count(page));
+				SSDFS_DBG("folio %p, count %d\n",
+					  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 			}
 
-			err = ssdfs_memcpy_to_page(array->pages[page_index],
-						   offset, PAGE_SIZE,
-						   &cache,
-						   0, sizeof(unsigned long),
-						   sizeof(unsigned long));
+			err = __ssdfs_memcpy_to_folio(array->folios[folio_index],
+						      offset, PAGE_SIZE,
+						      &cache,
+						      0, sizeof(unsigned long),
+						      sizeof(unsigned long));
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to copy: err %d\n", err);
 				return err;
@@ -1791,8 +1800,8 @@ int ssdfs_save_cache_in_storage(struct ssdfs_block_bmap *blk_bmap)
 			break;
 
 		case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-			if (page_index > 0) {
-				SSDFS_ERR("invalid page_index %d\n", page_index);
+			if (folio_index > 0) {
+				SSDFS_ERR("invalid folio_index %d\n", folio_index);
 				return -ERANGE;
 			}
 
@@ -1844,7 +1853,7 @@ bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state)
 	SSDFS_DBG("last_search.cache %lx\n", last_search->cache);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (last_search->page_index >= max_capacity ||
+	if (last_search->folio_index >= max_capacity ||
 	    last_search->offset == U16_MAX)
 		return true;
 
@@ -2003,7 +2012,7 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 }
 
 static inline
-int ssdfs_block_bmap_define_start_item(int page_index,
+int ssdfs_block_bmap_define_start_item(int folio_index,
 					u32 start,
 					u32 aligned_start,
 					u32 aligned_end,
@@ -2016,7 +2025,7 @@ int ssdfs_block_bmap_define_start_item(int page_index,
 	u32 items;
 	u32 offset;
 
-	if ((page_index * items_per_page) <= aligned_start)
+	if ((folio_index * items_per_page) <= aligned_start)
 		offset = aligned_start % items_per_page;
 	else
 		offset = aligned_start;
@@ -2026,10 +2035,10 @@ int ssdfs_block_bmap_define_start_item(int page_index,
 	items = items_per_page - offset;
 
 	if (aligned_end <= start) {
-		SSDFS_ERR("page_index %d, start %u, "
+		SSDFS_ERR("folio_index %d, start %u, "
 			  "aligned_start %u, aligned_end %u, "
 			  "start_byte %u, rest_bytes %u, item_offset %u\n",
-			  page_index, start,
+			  folio_index, start,
 			  aligned_start, aligned_end,
 			  *start_byte, *rest_bytes, *item_offset);
 		SSDFS_WARN("aligned_end %u <= start %u\n",
@@ -2044,10 +2053,10 @@ int ssdfs_block_bmap_define_start_item(int page_index,
 	*item_offset = (u8)(start - aligned_start);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %d, start %u, "
+	SSDFS_DBG("folio_index %d, start %u, "
 		  "aligned_start %u, aligned_end %u, "
 		  "start_byte %u, rest_bytes %u, item_offset %u\n",
-		  page_index, start,
+		  folio_index, start,
 		  aligned_start, aligned_end,
 		  *start_byte, *rest_bytes, *item_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2155,12 +2164,12 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 					  u32 start, u32 max_blk,
 					  int blk_state, u32 *found_blk)
 {
+	void *kaddr;
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	u32 aligned_start, aligned_end;
 	u32 byte_index, search_bytes = U32_MAX;
 	u32 rest_bytes = U32_MAX;
 	u8 start_off = U8_MAX;
-	void *kaddr;
 	u8 found_off = U8_MAX;
 	int err = 0;
 
@@ -2250,7 +2259,7 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 }
 
 /*
- * ssdfs_block_bmap_find_block_in_pagevec() - find block in pagevec with state
+ * ssdfs_block_bmap_find_block_in_folio_vector() - find block in vector with state
  * @blk_bmap: pointer on block bitmap
  * @start: start position for search
  * @max_blk: upper bound for search
@@ -2258,7 +2267,7 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
  * @found_blk: pointer on found block number [out]
  *
  * This function searches a block with requested @blk_state
- * from @start till @max_blk (not inclusive) into pagevec.
+ * from @start till @max_blk (not inclusive) into folio vector.
  * The found block's number is returned via @found_blk.
  *
  * RETURN:
@@ -2268,18 +2277,18 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
  * %-EINVAL     - invalid input value.
  * %-ENODATA    - block with requested state is not found.
  */
-static
-int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
-					   u32 start, u32 max_blk,
-					   int blk_state, u32 *found_blk)
+static int
+ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
+					    u32 start, u32 max_blk,
+					    int blk_state, u32 *found_blk)
 {
-	struct ssdfs_page_vector *array;
+	struct ssdfs_folio_vector *array;
+	struct folio *folio;
+	void *kaddr;
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	size_t items_per_page = PAGE_SIZE * items_per_byte;
 	u32 aligned_start, aligned_end;
-	struct page *page;
-	void *kaddr;
-	int page_index;
+	int folio_index;
 	u8 found_off = U8_MAX;
 	int err = 0;
 
@@ -2320,36 +2329,36 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		  aligned_start, aligned_end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = aligned_start / items_per_page;
+	folio_index = aligned_start / items_per_page;
 
-	if (page_index >= ssdfs_page_vector_capacity(array)) {
+	if (folio_index >= ssdfs_folio_vector_capacity(array)) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page_index %d >= capacity %u\n",
-			  page_index,
-			  ssdfs_page_vector_capacity(array));
+		SSDFS_DBG("folio_index %d >= capacity %u\n",
+			  folio_index,
+			  ssdfs_folio_vector_capacity(array));
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -ENODATA;
 	}
 
-	if (page_index >= ssdfs_page_vector_count(array)) {
+	if (folio_index >= ssdfs_folio_vector_count(array)) {
 		if (blk_state != SSDFS_BLK_FREE)
 			return -ENODATA;
 
-		while (page_index >= ssdfs_page_vector_count(array)) {
-			page = ssdfs_page_vector_allocate(array);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate page\n");
+		while (folio_index >= ssdfs_folio_vector_count(array)) {
+			folio = ssdfs_folio_vector_allocate(array);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate folio\n");
 				return err;
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		*found_blk = page_index * items_per_page;
+		*found_blk = folio_index * items_per_page;
 
 		if (*found_blk >= max_blk)
 			err = -ENODATA;
@@ -2363,28 +2372,28 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
-	for (; page_index < ssdfs_page_vector_capacity(array); page_index++) {
+	for (; folio_index < ssdfs_folio_vector_capacity(array); folio_index++) {
 		u32 byte_index, search_bytes = U32_MAX;
 		u32 rest_bytes = U32_MAX;
 		u8 start_off = U8_MAX;
 
-		if (page_index == ssdfs_page_vector_count(array)) {
+		if (folio_index == ssdfs_folio_vector_count(array)) {
 			if (blk_state != SSDFS_BLK_FREE)
 				return -ENODATA;
 
-			page = ssdfs_page_vector_allocate(array);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate page\n");
+			folio = ssdfs_folio_vector_allocate(array);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate folio\n");
 				return err;
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			*found_blk = page_index * items_per_page;
+			*found_blk = folio_index * items_per_page;
 
 			if (*found_blk >= max_blk)
 				err = -ENODATA;
@@ -2398,7 +2407,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 			return err;
 		}
 
-		err = ssdfs_block_bmap_define_start_item(page_index, start,
+		err = ssdfs_block_bmap_define_start_item(folio_index, start,
 							 aligned_start,
 							 aligned_end,
 							 &byte_index,
@@ -2415,7 +2424,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 
 		search_bytes = byte_index + rest_bytes;
 
-		kaddr = kmap_local_page(array->pages[page_index]);
+		kaddr = kmap_local_folio(array->folios[folio_index], 0);
 		err = ssdfs_block_bmap_find_block_in_memory_range(kaddr,
 								  blk_state,
 								  &byte_index,
@@ -2427,12 +2436,12 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("no item has been found: "
-				  "page_index %d, "
-				  "page_vector_count %u, "
-				  "page_vector_capacity %u\n",
-				  page_index,
-				  ssdfs_page_vector_count(array),
-				  ssdfs_page_vector_capacity(array));
+				  "folio_index %d, "
+				  "folio_vector_count %u, "
+				  "folio_vector_capacity %u\n",
+				  folio_index,
+				  ssdfs_folio_vector_count(array),
+				  ssdfs_folio_vector_capacity(array));
 #endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		} else if (unlikely(err)) {
@@ -2443,7 +2452,7 @@ int ssdfs_block_bmap_find_block_in_pagevec(struct ssdfs_block_bmap *blk_bmap,
 			return err;
 		}
 
-		*found_blk = page_index * items_per_page;
+		*found_blk = folio_index * items_per_page;
 		*found_blk += byte_index * items_per_byte;
 		*found_blk += found_off;
 
@@ -2512,12 +2521,12 @@ int ssdfs_block_bmap_find_block_in_storage(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (blk_bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-		err = ssdfs_block_bmap_find_block_in_pagevec(blk_bmap,
-							     start,
-							     max_blk,
-							     blk_state,
-							     found_blk);
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
+		err = ssdfs_block_bmap_find_block_in_folio_vector(blk_bmap,
+								  start,
+								  max_blk,
+								  blk_state,
+								  found_blk);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -2610,13 +2619,13 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 							     found_blk);
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find block in pagevec: "
+			SSDFS_DBG("unable to find block in folio vector: "
 				  "start %u, max_blk %u, state %#x\n",
 				  0, max_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return err;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find block in pagevec: "
+			SSDFS_ERR("fail to find block in folio vector: "
 				  "start %u, max_blk %u, state %#x, err %d\n",
 				  0, max_blk, blk_state, err);
 			goto fail_find;
@@ -2646,7 +2655,7 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 				  start, max_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 			/*
-			 * Continue to search in pagevec
+			 * Continue to search in folio vector
 			 */
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find block in cache: "
@@ -2661,13 +2670,13 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 						     blk_state, found_blk);
 	if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find block in pagevec: "
+		SSDFS_DBG("unable to find block in folio vector: "
 			  "start %u, max_blk %u, state %#x\n",
 			  start, max_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find block in pagevec: "
+		SSDFS_ERR("fail to find block in folio vector: "
 			  "start %u, max_blk %u, state %#x, err %d\n",
 			  start, max_blk, blk_state, err);
 		goto fail_find;
@@ -2907,12 +2916,12 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 						u32 start, u32 max_blk,
 						int blk_state, u32 *found_end)
 {
+	void *kaddr;
 	u32 aligned_start, aligned_end;
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	u32 byte_index, search_bytes = U32_MAX;
 	u32 rest_bytes = U32_MAX;
 	u8 start_off = U8_MAX;
-	void *kaddr;
 	u8 found_off = U8_MAX;
 	int err = 0;
 
@@ -3008,7 +3017,7 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 }
 
 /*
- * ssdfs_block_bmap_find_state_area_end_in_pagevec() - find state area end
+ * ssdfs_block_bmap_find_state_area_end_in_folio_vector() - find state area end
  * @bmap: pointer on block bitmap
  * @start: start position for search
  * @max_blk: upper bound for search
@@ -3025,16 +3034,16 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
  * %-EINVAL     - invalid input value.
  */
 static int
-ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
+ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 						u32 start, u32 max_blk,
 						int blk_state, u32 *found_end)
 {
-	struct ssdfs_page_vector *array;
+	struct ssdfs_folio_vector *array;
+	void *kaddr;
 	u32 aligned_start, aligned_end;
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	size_t items_per_page = PAGE_SIZE * items_per_byte;
-	void *kaddr;
-	int page_index;
+	int folio_index;
 	u8 found_off = U8_MAX;
 	int err = 0;
 
@@ -3062,13 +3071,13 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
-	page_index = aligned_start / items_per_page;
+	folio_index = aligned_start / items_per_page;
 
-	if (page_index >= ssdfs_page_vector_count(array)) {
+	if (folio_index >= ssdfs_folio_vector_count(array)) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page_index %d >= count %u\n",
-			  page_index,
-			  ssdfs_page_vector_count(array));
+		SSDFS_DBG("folio_index %d >= count %u\n",
+			  folio_index,
+			  ssdfs_folio_vector_count(array));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		*found_end = max_blk;
@@ -3081,12 +3090,12 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 		return 0;
 	}
 
-	for (; page_index < ssdfs_page_vector_count(array); page_index++) {
+	for (; folio_index < ssdfs_folio_vector_count(array); folio_index++) {
 		u32 byte_index, search_bytes = U32_MAX;
 		u32 rest_bytes = U32_MAX;
 		u8 start_off = U8_MAX;
 
-		err = ssdfs_block_bmap_define_start_item(page_index, start,
+		err = ssdfs_block_bmap_define_start_item(folio_index, start,
 							 aligned_start,
 							 aligned_end,
 							 &byte_index,
@@ -3103,7 +3112,7 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 
 		search_bytes = byte_index + rest_bytes;
 
-		kaddr = kmap_local_page(array->pages[page_index]);
+		kaddr = kmap_local_folio(array->folios[folio_index], 0);
 		err = ssdfs_block_bmap_find_state_area_end_in_memory(kaddr,
 								blk_state,
 								&byte_index,
@@ -3123,19 +3132,19 @@ ssdfs_block_bmap_find_state_area_end_in_pagevec(struct ssdfs_block_bmap *bmap,
 			return err;
 		}
 
-		*found_end = page_index * items_per_page;
+		*found_end = folio_index * items_per_page;
 		*found_end += byte_index * items_per_byte;
 		*found_end += found_off;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start %u, aligned_start %u, "
 			  "aligned_end %u, "
-			  "page_index %d, items_per_page %zu, "
+			  "folio_index %d, items_per_page %zu, "
 			  "byte_index %u, "
 			  "items_per_byte %u, start_off %u, "
 			  "found_off %u\n",
 			  start, aligned_start, aligned_end,
-			  page_index, items_per_page, byte_index,
+			  folio_index, items_per_page, byte_index,
 			  items_per_byte, start_off, found_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3207,12 +3216,11 @@ int ssdfs_block_bmap_find_state_area_end(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	switch (blk_bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
-		err = ssdfs_block_bmap_find_state_area_end_in_pagevec(blk_bmap,
-								     start,
-								     max_blk,
-								     blk_state,
-								     found_end);
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
+		err = ssdfs_block_bmap_find_state_area_end_in_foliovec(blk_bmap,
+								start, max_blk,
+								blk_state,
+								found_end);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
@@ -3367,7 +3375,7 @@ int ssdfs_set_range_in_cache(struct ssdfs_block_bmap *blk_bmap,
  * @blk_state: state for set
  *
  * This function caches @range, to set @range in cache by @blk_state
- * and to save the cache in pagevec.
+ * and to save the cache in folio vector.
  *
  * RETURN:
  * [success]
@@ -3423,7 +3431,7 @@ int ssdfs_set_uncached_tiny_range(struct ssdfs_block_bmap *blk_bmap,
 
 	err = ssdfs_save_cache_in_storage(blk_bmap);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to save cache in pagevec: err %d\n",
+		SSDFS_ERR("fail to save cache in folio vector: err %d\n",
 			  err);
 		return err;
 	}
@@ -3434,7 +3442,7 @@ int ssdfs_set_uncached_tiny_range(struct ssdfs_block_bmap *blk_bmap,
 /*
  * __ssdfs_set_range_in_memory() - set range of bits in memory
  * @blk_bmap: pointer on block bitmap
- * @page_index: index of memory page
+ * @folio_index: index of folio
  * @byte_offset: offset in bytes from the page's beginning
  * @byte_value: byte value for setting
  * @init_size: size in bytes for setting
@@ -3450,10 +3458,10 @@ int ssdfs_set_uncached_tiny_range(struct ssdfs_block_bmap *blk_bmap,
  */
 static
 int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
-				int page_index, u32 byte_offset,
+				int folio_index, u32 byte_offset,
 				int byte_value, size_t init_size)
 {
-	struct ssdfs_page_vector *array;
+	struct ssdfs_folio_vector *array;
 	void *kaddr;
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	int i;
@@ -3462,43 +3470,44 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
-	SSDFS_DBG("blk_bmap %p, page_index %d, byte_offset %u, "
+	SSDFS_DBG("blk_bmap %p, folio_index %d, byte_offset %u, "
 		  "byte_value %#x, init_size %zu\n",
-		  blk_bmap, page_index, byte_offset,
+		  blk_bmap, folio_index, byte_offset,
 		  byte_value, init_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (blk_bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &blk_bmap->storage.array;
 
-		if (page_index >= ssdfs_page_vector_count(array)) {
-			SSDFS_ERR("invalid page index %d, pagevec size %d\n",
-				  page_index,
-				  ssdfs_page_vector_count(array));
+		if (folio_index >= ssdfs_folio_vector_count(array)) {
+			SSDFS_ERR("invalid folio index %d, folio vec size %d\n",
+				  folio_index,
+				  ssdfs_folio_vector_count(array));
 			return -EINVAL;
 		}
 
-		if (page_index >= ssdfs_page_vector_capacity(array)) {
-			SSDFS_ERR("invalid page index %d, pagevec capacity %d\n",
-				  page_index,
-				  ssdfs_page_vector_capacity(array));
+		if (folio_index >= ssdfs_folio_vector_capacity(array)) {
+			SSDFS_ERR("invalid folio index %d, "
+				  "folio vec capacity %d\n",
+				  folio_index,
+				  ssdfs_folio_vector_capacity(array));
 			return -EINVAL;
 		}
 
-		while (page_index >= ssdfs_page_vector_count(array)) {
-			struct page *page;
+		while (folio_index >= ssdfs_folio_vector_count(array)) {
+			struct folio *folio;
 
-			page = ssdfs_page_vector_allocate(array);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
+			folio = ssdfs_folio_vector_allocate(array);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
 				SSDFS_ERR("unable to allocate page\n");
 				return err;
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
+			SSDFS_DBG("folio %p, count %d\n",
+				  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
@@ -3511,15 +3520,15 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_memset_page(array->pages[page_index],
-				  byte_offset, PAGE_SIZE,
-				  byte_value, init_size);
+		__ssdfs_memset_folio(array->folios[folio_index],
+				     byte_offset, PAGE_SIZE,
+				     byte_value, init_size);
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		if (page_index != 0) {
-			SSDFS_ERR("invalid page index %d\n",
-				  page_index);
+		if (folio_index != 0) {
+			SSDFS_ERR("invalid folio index %d\n",
+				  folio_index);
 			return -EINVAL;
 		}
 
@@ -3543,7 +3552,7 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		blk_bmap->last_search[i].page_index = max_capacity;
+		blk_bmap->last_search[i].folio_index = max_capacity;
 		blk_bmap->last_search[i].offset = U16_MAX;
 		blk_bmap->last_search[i].cache = 0;
 	}
@@ -3575,7 +3584,7 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 	int byte_value;
 	size_t rest_items, items_per_page;
 	u32 blk;
-	int page_index;
+	int folio_index;
 	u32 item_offset, byte_offset;
 	int err;
 
@@ -3629,7 +3638,7 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 	byte_value = SSDFS_BLK_BMAP_BYTE(blk_state);
 	items_per_page = PAGE_SIZE * items_per_byte;
 	rest_items = aligned_end - aligned_start;
-	page_index = aligned_start / items_per_page;
+	folio_index = aligned_start / items_per_page;
 	item_offset = aligned_start % items_per_page;
 	byte_offset = item_offset / items_per_byte;
 
@@ -3665,15 +3674,15 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 			  init_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = __ssdfs_set_range_in_memory(blk_bmap, page_index,
+		err = __ssdfs_set_range_in_memory(blk_bmap, folio_index,
 						  byte_offset, byte_value,
 						  init_size);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to set range in memory: "
-				  "page_index %d, byte_offset %u, "
+				  "folio_index %d, byte_offset %u, "
 				  "byte_value %#x, init_size %zu, "
 				  "err %d\n",
-				  page_index, byte_offset,
+				  folio_index, byte_offset,
 				  byte_value, init_size,
 				  err);
 			return err;
@@ -3681,7 +3690,7 @@ int ssdfs_set_range_in_storage(struct ssdfs_block_bmap *blk_bmap,
 
 		item_offset = 0;
 		byte_offset = 0;
-		page_index++;
+		folio_index++;
 		blk += iter_items;
 		rest_items -= iter_items;
 	};
@@ -5271,7 +5280,7 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 	blk_bmap->invalid_blks = 0;
 
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
-		blk_bmap->last_search[i].page_index = max_capacity;
+		blk_bmap->last_search[i].folio_index = max_capacity;
 		blk_bmap->last_search[i].offset = U16_MAX;
 		blk_bmap->last_search[i].cache = 0;
 	}
@@ -5302,8 +5311,8 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 static
 void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap)
 {
-	struct ssdfs_page_vector *array;
-	struct page *page;
+	struct ssdfs_folio_vector *array;
+	struct folio *folio;
 	void *kaddr;
 	int i;
 
@@ -5323,24 +5332,24 @@ void ssdfs_debug_block_bitmap(struct ssdfs_block_bmap *bmap)
 	for (i = 0; i < SSDFS_SEARCH_TYPE_MAX; i++) {
 		SSDFS_DBG("TYPE %d: page_index %d, offset %u, cache %lx\n",
 			  i,
-			  bmap->last_search[i].page_index,
+			  bmap->last_search[i].folio_index,
 			  bmap->last_search[i].offset,
 			  bmap->last_search[i].cache);
 	}
 
 	switch (bmap->storage.state) {
-	case SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC:
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &bmap->storage.array;
 
-		for (i = 0; i < ssdfs_page_vector_count(array); i++) {
-			page = array->pages[i];
+		for (i = 0; i < ssdfs_folio_vector_count(array); i++) {
+			folio = array->folios[i];
 
-			if (!page) {
-				SSDFS_WARN("page %d is NULL\n", i);
+			if (!folio) {
+				SSDFS_WARN("folio %d is NULL\n", i);
 				continue;
 			}
 
-			kaddr = kmap_local_page(page);
+			kaddr = kmap_local_folio(folio, 0);
 			SSDFS_DBG("BMAP CONTENT: page %d\n", i);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr, PAGE_SIZE);

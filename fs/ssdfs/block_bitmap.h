@@ -66,15 +66,15 @@ enum {
 	 SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS))
 
 static inline
-int SSDFS_BLK2PAGE(u32 blk, u8 item_bits, u16 *offset)
+int SSDFS_BLK2FOLIO(u32 blk, u8 item_bits, u16 *offset)
 {
 	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(item_bits);
 	u32 blks_per_long = SSDFS_ITEMS_PER_LONG(item_bits);
-	u32 blks_per_page = PAGE_SIZE * blks_per_byte;
+	u32 blks_per_folio = PAGE_SIZE * blks_per_byte;
 	u32 off;
 
 	if (offset) {
-		off = (blk % blks_per_page) / blks_per_long;
+		off = (blk % blks_per_folio) / blks_per_long;
 		off *= sizeof(unsigned long);
 		BUG_ON(off >= U16_MAX);
 		*offset = off;
@@ -82,24 +82,24 @@ int SSDFS_BLK2PAGE(u32 blk, u8 item_bits, u16 *offset)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("blk %u, item_bits %u, blks_per_byte %u, "
-		  "blks_per_long %u, blks_per_page %u, "
-		  "page_index %u\n",
+		  "blks_per_long %u, blks_per_folio %u, "
+		  "folio_index %u\n",
 		  blk, item_bits, blks_per_byte,
-		  blks_per_long, blks_per_page,
-		  blk / blks_per_page);
+		  blks_per_long, blks_per_folio,
+		  blk / blks_per_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return blk / blks_per_page;
+	return blk / blks_per_folio;
 }
 
 /*
  * struct ssdfs_last_bmap_search - last search in bitmap
- * @page_index: index of page in pagevec
+ * @folio_index: index of folio in folio vector
  * @offset: offset of cache from page's begining
  * @cache: cached bmap's part
  */
 struct ssdfs_last_bmap_search {
-	int page_index;
+	int folio_index;
 	u16 offset;
 	unsigned long cache;
 };
@@ -108,17 +108,17 @@ static inline
 u32 SSDFS_FIRST_CACHED_BLOCK(struct ssdfs_last_bmap_search *search)
 {
 	u32 blks_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
-	u32 blks_per_page = PAGE_SIZE * blks_per_byte;
+	u32 blks_per_folio = PAGE_SIZE * blks_per_byte;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %d, offset %u, "
-		  "blks_per_byte %u, blks_per_page %u\n",
-		  search->page_index,
+	SSDFS_DBG("folio_index %d, offset %u, "
+		  "blks_per_byte %u, blks_per_folio %u\n",
+		  search->folio_index,
 		  search->offset,
-		  blks_per_byte, blks_per_page);
+		  blks_per_byte, blks_per_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return (search->page_index * blks_per_page) +
+	return (search->folio_index * blks_per_folio) +
 		(search->offset * blks_per_byte);
 }
 
@@ -153,19 +153,19 @@ int SSDFS_GET_CACHE_TYPE(int blk_state)
 /*
  * struct ssdfs_block_bmap_storage - block bitmap's storage
  * @state: storage state
- * @array: vector of pages
+ * @array: vector of folios
  * @buf: pointer on memory buffer
  */
 struct ssdfs_block_bmap_storage {
 	int state;
-	struct ssdfs_page_vector array;
+	struct ssdfs_folio_vector array;
 	void *buf;
 };
 
 /* Block bitmap's storage's states */
 enum {
 	SSDFS_BLOCK_BMAP_STORAGE_ABSENT,
-	SSDFS_BLOCK_BMAP_STORAGE_PAGE_VEC,
+	SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC,
 	SSDFS_BLOCK_BMAP_STORAGE_BUFFER,
 	SSDFS_BLOCK_BMAP_STORAGE_STATE_MAX
 };
