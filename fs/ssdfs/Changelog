@@ -3,7 +3,7 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
-v.4.77 [August 13, 2023]
+v.4.78 [August 13, 2023]
     (*) Rework btree logic on using memory folio.
 
 v.4.77 [August 06, 2023]
