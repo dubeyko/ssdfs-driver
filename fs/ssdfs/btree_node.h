@@ -190,10 +190,10 @@ struct ssdfs_state_bitmap_array {
 
 /*
  * struct ssdfs_btree_node_content - btree node's content
- * @pvec: page vector
+ * @batch: folio batch
  */
 struct ssdfs_btree_node_content {
-	struct pagevec pvec;
+	struct folio_batch batch;
 };
 
 union ssdfs_aggregated_btree_node_header {
@@ -207,7 +207,7 @@ union ssdfs_aggregated_btree_node_header {
  * struct ssdfs_btree_node - btree node
  * @height: node's height
  * @node_size: node size in bytes
- * @pages_per_node: count of memory pages per node
+ * @pages_per_node: count of logical blocks per node
  * @create_cno: create checkpoint
  * @node_id: node identification number
  * @tree: pointer on node's parent tree
@@ -325,13 +325,13 @@ enum {
 };
 
 /*
- * TODO: it is possible to use knowledge about partial
- *       updates and to send only changed pieces of
- *       data for the case of Diff-On-Write approach.
- *       Metadata is good case for determination of
- *       partial updates and to send changed part(s)
- *       only. For example, bitmap could show dirty
- *       items in the node.
+ * It is possible to use knowledge about partial
+ * updates and to send only changed pieces of
+ * data for the case of Diff-On-Write approach.
+ * Metadata is good case for determination of
+ * partial updates and to send changed part(s)
+ * only. For example, bitmap could show dirty
+ * items in the node.
  */
 
 /*
@@ -378,10 +378,10 @@ u8 NODE2SEG_TYPE(u8 node_type)
 static inline
 int RANGE_WITHOUT_INTERSECTION(u64 start1, u64 end1, u64 start2, u64 end2)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start1 %llx, end1 %llx, start2 %llx, end2 %llx\n",
 		  start1, end1, start2, end2);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(start1 >= U64_MAX || end1 >= U64_MAX ||
 		start2 >= U64_MAX || end2 >= U64_MAX);
 	BUG_ON(start1 > end1);
@@ -408,10 +408,10 @@ static inline
 bool RANGE_HAS_PARTIAL_INTERSECTION(u64 start1, u64 end1,
 				    u64 start2, u64 end2)
 {
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("start1 %llx, end1 %llx, start2 %llx, end2 %llx\n",
 		  start1, end1, start2, end2);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(start1 >= U64_MAX || end1 >= U64_MAX ||
 		start2 >= U64_MAX || end2 >= U64_MAX);
 	BUG_ON(start1 > end1);
@@ -465,12 +465,12 @@ u16 __ssdfs_convert_lookup2item_index(u16 lookup_index,
 	u32 items_per_lookup_index;
 	u32 item_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lookup_index %u, node_size %u, "
 		  "item_size %zu, table_capacity %d\n",
 		  lookup_index, node_size,
 		  item_size, lookup_table_capacity);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(lookup_index >= lookup_table_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -480,10 +480,10 @@ u16 __ssdfs_convert_lookup2item_index(u16 lookup_index,
 
 	item_index = (u32)lookup_index * items_per_lookup_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lookup_index %u, item_index %u\n",
 		  lookup_index, item_index);
 
-#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(item_index >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -507,10 +507,12 @@ u16 __ssdfs_convert_item2lookup_index(u16 item_index,
 	u32 items_per_lookup_index;
 	u16 lookup_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("item_index %u, node_size %u, "
 		  "item_size %zu, table_capacity %d\n",
 		  item_index, node_size,
 		  item_size, lookup_table_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	items_per_node = node_size / item_size;
 	items_per_lookup_index = __ssdfs_items_per_lookup_index(items_per_node,
@@ -646,7 +648,12 @@ int ssdfs_btree_node_find_index_position(struct ssdfs_btree_node *node,
 					 u16 *found_position);
 int ssdfs_btree_node_extract_range(u16 start_index, u16 count,
 				   struct ssdfs_btree_search *search);
-int ssdfs_btree_node_get_index(struct pagevec *pvec,
+int __ssdfs_btree_node_get_index(struct pagevec *pvec,
+				u32 area_offset, u32 area_size,
+				u32 node_size, u16 position,
+				struct ssdfs_btree_index_key *ptr);
+int ssdfs_btree_node_get_index(struct ssdfs_fs_info *fsi,
+				struct folio_batch *batch,
 				u32 area_offset, u32 area_size,
 				u32 node_size, u16 position,
 				struct ssdfs_btree_index_key *ptr);
@@ -746,6 +753,11 @@ int __ssdfs_define_memory_page(u32 area_offset, u32 area_size,
 				u32 node_size, size_t item_size,
 				u16 position,
 				u32 *page_index, u32 *page_off);
+int __ssdfs_define_memory_folio(struct ssdfs_fs_info *fsi,
+				u32 area_offset, u32 area_size,
+				u32 node_size, size_t item_size,
+				u16 position,
+				struct ssdfs_offset2folio *desc);
 int ssdfs_btree_node_get_hash_range(struct ssdfs_btree_search *search,
 				    u64 *start_hash, u64 *end_hash,
 				    u16 *items_count);
@@ -769,7 +781,7 @@ int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 				   u16 start_index,
 				   unsigned int range_len);
 int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
-					struct page *page,
+					struct folio *folio,
 					u32 *write_offset);
 
 void ssdfs_btree_node_forget_pagevec(struct pagevec *pvec);

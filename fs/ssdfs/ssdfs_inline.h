@@ -1351,6 +1351,15 @@ int SSDFS_OFF2FOLIO(u32 block_size, u64 offset,
 	desc->offset_inside_page = offset % PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("block_size %u, offset %llu, "
+		  "folio_index %u, folio_offset %llu, "
+		  "page_in_folio %u, page_offset %u, "
+		  "offset_inside_page %u\n",
+		  desc->block_size, desc->offset,
+		  desc->folio_index, desc->folio_offset,
+		  desc->page_in_folio, desc->page_offset,
+		  desc->offset_inside_page);
+
 	if (!IS_SSDFS_OFF2FOLIO_VALID(desc)) {
 		SSDFS_ERR("invalid descriptor\n");
 		return -ERANGE;
@@ -2128,8 +2137,11 @@ int ssdfs_memcpy_from_batch(u32 pagesize,
 	BUG_ON(!folio.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	ssdfs_folio_lock(folio.ptr);
 	err = ssdfs_memcpy_from_folio(dst, dst_off, dst_size,
 				      &folio, copy_size);
+	ssdfs_folio_unlock(folio.ptr);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -2305,9 +2317,12 @@ int ssdfs_memcpy_to_batch(u32 pagesize,
 	BUG_ON(!folio.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	ssdfs_folio_lock(folio.ptr);
 	err = ssdfs_memcpy_to_folio(&folio,
 				    src, src_off, src_size,
 				    copy_size);
+	ssdfs_folio_unlock(folio.ptr);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -2424,21 +2439,87 @@ int ssdfs_memzero_page(struct page *page, u32 dst_off, u32 dst_size,
 }
 
 static inline
-int __ssdfs_memmove_folio(struct folio *dst_folio, u32 dst_off, u32 dst_size,
-			  struct folio *src_folio, u32 src_off, u32 src_size,
-			  u32 move_size)
-{
-	return __ssdfs_memcpy_folio(dst_folio, dst_off, dst_size,
-				    src_folio, src_off, src_size,
-				    move_size);
-}
-
-static inline
 int ssdfs_memmove_folio(struct ssdfs_smart_folio *dst_folio,
 			struct ssdfs_smart_folio *src_folio,
 			u32 move_size)
 {
-	return ssdfs_memcpy_folio(dst_folio, src_folio, move_size);
+	void *kaddr;
+	u64 src_offset, dst_offset;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dst_folio || !src_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (src_folio->desc.folio_index == dst_folio->desc.folio_index &&
+	    src_folio->desc.page_in_folio == dst_folio->desc.page_in_folio) {
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!src_folio->ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		src_offset = src_folio->desc.offset_inside_page;
+		dst_offset = dst_folio->desc.offset_inside_page;
+
+		kaddr = kmap_local_folio(src_folio->ptr,
+					 src_folio->desc.page_in_folio);
+		err = ssdfs_memmove(kaddr, dst_offset, PAGE_SIZE,
+				    kaddr, src_offset, PAGE_SIZE,
+				    move_size);
+		flush_dcache_folio(src_folio->ptr);
+		kunmap_local(kaddr);
+	} else {
+		err = ssdfs_memcpy_folio(dst_folio, src_folio, move_size);
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to move: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static inline
+int __ssdfs_memmove_folio(struct folio *dst_ptr, u32 dst_off, u32 dst_size,
+			  struct folio *src_ptr, u32 src_off, u32 src_size,
+			  u32 move_size)
+{
+	struct ssdfs_smart_folio src_folio, dst_folio;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dst_ptr || !src_ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = SSDFS_OFF2FOLIO(folio_size(src_ptr), src_off, &src_folio.desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert offset into folio: "
+			  "offset %u, err %d\n",
+			  src_off, err);
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&src_folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	src_folio.ptr = src_ptr;
+
+	err = SSDFS_OFF2FOLIO(folio_size(dst_ptr), dst_off, &dst_folio.desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert offset into folio: "
+			  "offset %u, err %d\n",
+			  dst_off, err);
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&dst_folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dst_folio.ptr = dst_ptr;
+
+	return ssdfs_memcpy_folio(&dst_folio, &src_folio, move_size);
 }
 
 static inline

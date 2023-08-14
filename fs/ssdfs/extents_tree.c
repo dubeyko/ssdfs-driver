@@ -7838,7 +7838,7 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 	size_t hdr_size = sizeof(struct ssdfs_extents_btree_node_header);
 	size_t fork_size = sizeof(struct ssdfs_raw_fork);
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	u64 start_hash, end_hash;
 	u32 node_size;
@@ -7890,20 +7890,20 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_write(&node->full_lock);
 
-	if (pagevec_count(&node->content.pvec) == 0) {
+	if (folio_batch_count(&node->content.batch) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  node->node_id);
 		goto finish_init_node;
 	}
 
-	page = node->content.pvec.pages[0];
+	folio = node->content.batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_extents_btree_node_header *)kaddr;
 
@@ -8361,7 +8361,7 @@ int ssdfs_extents_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct ssdfs_btree *tree;
 	struct ssdfs_extents_btree_info *tree_info = NULL;
 	struct ssdfs_state_bitmap *bmap;
-	struct page *page;
+	struct folio *folio;
 	u16 items_count;
 	u32 forks_count;
 	u32 allocated_extents;
@@ -8571,16 +8571,16 @@ finish_extents_header_preparation:
 	if (unlikely(err))
 		goto finish_node_pre_flush;
 
-	if (pagevec_count(&node->content.pvec) < 1) {
+	if (folio_batch_count(&node->content.batch) < 1) {
 		err = -ERANGE;
-		SSDFS_ERR("pagevec is empty\n");
+		SSDFS_ERR("folio batch is empty\n");
 		goto finish_node_pre_flush;
 	}
 
-	page = node->content.pvec.pages[0];
-	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
-			     &extents_header, 0, hdr_size,
-			     hdr_size);
+	folio = node->content.batch.folios[0];
+	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
+				&extents_header, 0, hdr_size,
+				hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -9568,6 +9568,76 @@ int __ssdfs_extents_btree_node_get_fork(struct pagevec *pvec,
 	return 0;
 }
 
+int __ssdfs_extents_btree_node_get_fork2(struct ssdfs_fs_info *fsi,
+					struct folio_batch *batch,
+					u32 area_offset,
+					u32 area_size,
+					u32 node_size,
+					u16 item_index,
+					struct ssdfs_raw_fork *fork)
+{
+	struct ssdfs_smart_folio folio;
+	size_t item_size = sizeof(struct ssdfs_raw_fork);
+	u32 item_offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !batch || !fork);
+
+	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
+		  area_offset, area_size, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	item_offset = (u32)item_index * item_size;
+	if (item_offset >= area_size) {
+		SSDFS_ERR("item_offset %u >= area_size %u\n",
+			  item_offset, area_size);
+		return -ERANGE;
+	}
+
+	item_offset += area_offset;
+	if (item_offset >= node_size) {
+		SSDFS_ERR("item_offset %u >= node_size %u\n",
+			  item_offset, node_size);
+		return -ERANGE;
+	}
+
+	err = SSDFS_OFF2FOLIO(fsi->pagesize, item_offset, &folio.desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert offset into folio: "
+			  "item_offset %u, err %d\n",
+			  item_offset, err);
+		return err;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (folio.desc.folio_index >= folio_batch_count(batch)) {
+		SSDFS_ERR("invalid folio_index: "
+			  "index %d, batch_size %u\n",
+			  folio.desc.folio_index,
+			  folio_batch_count(batch));
+		return -ERANGE;
+	}
+
+	folio.ptr = batch->folios[folio.desc.folio_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_memcpy_from_folio(fork, 0, item_size,
+				      &folio, item_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
 /*
  * ssdfs_extents_btree_node_get_fork() - extract fork from the node
  * @node: pointer on node object
@@ -9589,6 +9659,8 @@ int ssdfs_extents_btree_node_get_fork(struct ssdfs_btree_node *node,
 				  u16 item_index,
 				  struct ssdfs_raw_fork *fork)
 {
+	struct ssdfs_fs_info *fsi;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node || !area || !fork);
 	BUG_ON(!rwsem_is_locked(&node->full_lock));
@@ -9597,7 +9669,10 @@ int ssdfs_extents_btree_node_get_fork(struct ssdfs_btree_node *node,
 		  node->node_id, item_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return __ssdfs_extents_btree_node_get_fork(&node->content.pvec,
+	fsi = node->tree->fsi;
+
+	return __ssdfs_extents_btree_node_get_fork2(fsi,
+						   &node->content.batch,
 						   area->offset,
 						   area->area_size,
 						   node->node_size,
@@ -11659,7 +11734,8 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 								    (u16)i,
 								    &index);
 		} else {
-			err = ssdfs_btree_node_get_index(&node->content.pvec,
+			err = ssdfs_btree_node_get_index(fsi,
+							 &node->content.batch,
 							 index_area.offset,
 							 index_area.area_size,
 							 node->node_size,
@@ -11696,7 +11772,8 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 								    (u16)i,
 								    &index);
 		} else {
-			err = ssdfs_btree_node_get_index(&node->content.pvec,
+			err = ssdfs_btree_node_get_index(fsi,
+							 &node->content.batch,
 							 index_area.offset,
 							 index_area.area_size,
 							 node->node_size,

@@ -561,12 +561,12 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 	}
 
 	for (i = 0; i < index_count; i++) {
-		err = ssdfs_btree_node_get_index(pvec,
-						 area_offset,
-						 area_size,
-						 node_size,
-						 i,
-						 &cur_index);
+		err = __ssdfs_btree_node_get_index(pvec,
+						   area_offset,
+						   area_size,
+						   node_size,
+						   i,
+						   &cur_index);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get index: "
 				  "position %u, err %d\n",

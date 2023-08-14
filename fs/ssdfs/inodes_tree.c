@@ -2013,6 +2013,7 @@ static
 int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 					struct ssdfs_free_inode_range_queue *q)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree_node_index_area index_area;
 	struct ssdfs_btree_index_key index;
 	size_t hdr_size = sizeof(struct ssdfs_inodes_btree_node_header);
@@ -2028,6 +2029,8 @@ int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = node->tree->fsi;
 
 	down_read(&node->header_lock);
 	ssdfs_memcpy(&index_area,
@@ -2077,7 +2080,8 @@ int ssdfs_inodes_btree_detect_deleted_nodes(struct ssdfs_btree_node *node,
 	prev_hash = index_area.start_hash;
 
 	for (i = 0; i < index_area.index_count; i++) {
-		err = ssdfs_btree_node_get_index(&node->content.pvec,
+		err = ssdfs_btree_node_get_index(fsi,
+						 &node->content.batch,
 						 index_area.offset,
 						 index_area.area_size,
 						 node->node_size,
@@ -2166,7 +2170,7 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 	struct ssdfs_free_inode_range_queue q;
 	struct ssdfs_inodes_btree_range *range;
 	void *addr[SSDFS_BTREE_NODE_BMAP_COUNT];
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	u32 node_size;
 	u16 flags;
@@ -2209,20 +2213,20 @@ int ssdfs_inodes_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_read(&node->full_lock);
 
-	if (pagevec_count(&node->content.pvec) == 0) {
+	if (folio_batch_count(&node->content.batch) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  node->node_id);
 		goto finish_init_node;
 	}
 
-	page = node->content.pvec.pages[0];
+	folio = node->content.batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("PAGE DUMP\n");
@@ -3316,11 +3320,12 @@ finish_delete_node:
 static
 int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_inodes_btree_node_header inodes_header;
 	struct ssdfs_state_bitmap *bmap;
+	struct folio *folio;
 	size_t hdr_size = sizeof(struct ssdfs_inodes_btree_node_header);
 	u32 bmap_bytes;
-	struct page *page;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3329,6 +3334,8 @@ int ssdfs_inodes_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	SSDFS_DBG("node_id %u, state %#x\n",
 		  node->node_id, atomic_read(&node->state));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = node->tree->fsi;
 
 	ssdfs_debug_btree_node_object(node);
 
@@ -3444,16 +3451,16 @@ finish_inodes_header_preparation:
 	if (unlikely(err))
 		goto finish_node_pre_flush;
 
-	if (pagevec_count(&node->content.pvec) < 1) {
+	if (folio_batch_count(&node->content.batch) < 1) {
 		err = -ERANGE;
-		SSDFS_ERR("pagevec is empty\n");
+		SSDFS_ERR("folio batch is empty\n");
 		goto finish_node_pre_flush;
 	}
 
-	page = node->content.pvec.pages[0];
-	ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
-			     &inodes_header, 0, hdr_size,
-			     hdr_size);
+	folio = node->content.batch.folios[0];
+	__ssdfs_memcpy_to_folio(folio, 0, fsi->pagesize,
+				&inodes_header, 0, hdr_size,
+				hdr_size);
 
 finish_node_pre_flush:
 	up_write(&node->full_lock);
@@ -3929,13 +3936,13 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 					struct ssdfs_btree_search *search,
 					u16 item_index, u16 buf_index)
 {
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_smart_folio folio;
 	size_t item_size = sizeof(struct ssdfs_inode);
 	u32 area_offset;
 	u32 area_size;
 	u32 item_offset;
 	u32 buf_offset;
-	int page_index;
-	struct page *page;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3945,6 +3952,8 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 	SSDFS_DBG("node_id %u, item_index %u, buf_index %u\n",
 		  node->node_id, item_index, buf_index);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = node->tree->fsi;
 
 	down_read(&node->header_lock);
 	area_offset = node->items_area.offset;
@@ -3965,20 +3974,27 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	page_index = item_offset >> PAGE_SHIFT;
+	err = SSDFS_OFF2FOLIO(fsi->pagesize, item_offset, &folio.desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert offset into folio: "
+			  "item_offset %u, err %d\n",
+			  item_offset, err);
+		return err;
+	}
 
-	if (page_index > 0)
-		item_offset %= page_index * PAGE_SIZE;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	if (page_index >= pagevec_count(&node->content.pvec)) {
+	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
 		SSDFS_ERR("invalid page_index: "
-			  "index %d, pvec_size %u\n",
-			  page_index,
-			  pagevec_count(&node->content.pvec));
+			  "index %d, batch_size %u\n",
+			  folio.desc.folio_index,
+			  folio_batch_count(&node->content.batch));
 		return -ERANGE;
 	}
 
-	page = node->content.pvec.pages[page_index];
+	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
 
 	if (!search->result.buf) {
 		SSDFS_ERR("buffer is not created\n");
@@ -3993,11 +4009,10 @@ int ssdfs_copy_item_into_node_unlocked(struct ssdfs_btree_node *node,
 
 	buf_offset = buf_index * item_size;
 
-	err = ssdfs_memcpy_to_page(page,
-				   item_offset, PAGE_SIZE,
-				   search->result.buf,
-				   buf_offset, search->result.buf_size,
-				   item_size);
+	err = ssdfs_memcpy_to_folio(&folio,
+				    search->result.buf,
+				    buf_offset, search->result.buf_size,
+				    item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy item: "
 			  "buf_offset %u, item_offset %u, "
@@ -5161,6 +5176,7 @@ finish_change_item:
 static
 int ssdfs_correct_hybrid_node_hashes(struct ssdfs_btree_node *node)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree_index_key key;
 	size_t hdr_size = sizeof(struct ssdfs_inodes_btree_node_header);
 	u64 start_hash;
@@ -5175,6 +5191,8 @@ int ssdfs_correct_hybrid_node_hashes(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!node);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = node->tree->fsi;
 
 	switch (atomic_read(&node->type)) {
 	case SSDFS_BTREE_HYBRID_NODE:
@@ -5208,7 +5226,8 @@ int ssdfs_correct_hybrid_node_hashes(struct ssdfs_btree_node *node)
 	}
 
 	index_id = index_count - 1;
-	err = ssdfs_btree_node_get_index(&node->content.pvec,
+	err = ssdfs_btree_node_get_index(fsi,
+					 &node->content.batch,
 					 node->index_area.offset,
 					 node->index_area.area_size,
 					 node->node_size,
