@@ -35,23 +35,30 @@
 
 /*
  * struct ssdfs_blk_bmap_init_env - block bitmap init environment
- * @bmap_hdr: pointer on block bitmap header
- * @bmap_hdr_buf: block bitmap header buffer
- * @frag_hdr: block bitmap fragment header
- * @frag_hdr_buf: block bitmap fragment header buffer
- * @fragment_index: index of bmap fragment
- * @array: page vector that stores block bitmap content
+ * @raw.content: page vector that stores block bitmap content
+ * @raw.metadata: block bitmap fragment's metadata buffer
+ * @header.ptr: pointer on block bitmap header
+ * @fragment.index: index of block bitmap's fragment
+ * @fragment.header: block bitmap fragment's header
  * @read_bytes: counter of all read bytes
  */
 struct ssdfs_blk_bmap_init_env {
-	struct ssdfs_block_bitmap_header *bmap_hdr;
-	struct ssdfs_block_bitmap_fragment *frag_hdr;
-	u8 bmap_hdr_buf[SSDFS_BLKBMAP_HDR_CAPACITY];
-	int fragment_index;
-	struct ssdfs_page_vector array;
+	struct {
+		struct ssdfs_page_vector content;
+		u8 metadata[SSDFS_BLKBMAP_HDR_CAPACITY];
+	} raw;
+
+	struct {
+		struct ssdfs_block_bitmap_header *ptr;
+	} header;
+
+	struct {
+		int index;
+		struct ssdfs_block_bitmap_fragment *header;
+	} fragment;
+
 	u32 read_bytes;
 };
-
 
 /*
  * struct ssdfs_content_stream - content stream
@@ -67,67 +74,93 @@ struct ssdfs_content_stream {
 
 /*
  * struct ssdfs_blk2off_table_init_env - blk2off table init environment
- * @hdr: blk2off table header
- * @extents: translation extents sequence
- * @extents_count: count of extents in sequence
- * @descriptors: phys offset descriptors sequence
- * @area_offset: offset to the blk2off area
- * @read_off: current read offset
+ * @extents.stream: translation extents sequence
+ * @extents.count: count of extents in sequence
+ * @portion.header: blk2off table header
+ * @portion.fragments.stream: phys offset descriptors sequence
+ * @portion.area_offset: offset to the blk2off area
+ * @portion.read_off: current read offset
  */
 struct ssdfs_blk2off_table_init_env {
-	struct ssdfs_blk2off_table_header hdr;
-	struct ssdfs_content_stream extents;
-	u32 extents_count;
-	struct ssdfs_content_stream descriptors;
-	u32 area_offset;
-	u32 read_off;
+	struct {
+		struct ssdfs_content_stream stream;
+		u32 count;
+	} extents;
+
+	struct {
+		struct ssdfs_blk2off_table_header header;
+
+		struct {
+			struct ssdfs_content_stream stream;
+		} fragments;
+
+		u32 area_offset;
+		u32 read_off;
+	} portion;
 };
 
 /*
  * struct ssdfs_blk_desc_table_init_env - blk desc table init environment
- * @hdr: blk desc table header
- * @array pagevec with blk desc table fragment
- * @area_offset: offset to the blk2off area
- * @read_off: current read offset
- * @write_off: current write offset
+ * @portion.header: blk desc table header
+ * @portion.raw.content: pagevec with blk desc table fragment
+ * @portion.area_offset: offset to the blk2off area
+ * @portion.read_off: current read offset
+ * @portion.write_off: current write offset
  */
 struct ssdfs_blk_desc_table_init_env {
-	struct ssdfs_area_block_table hdr;
-	struct ssdfs_page_vector array;
-	u32 area_offset;
-	u32 read_off;
-	u32 write_off;
+	struct {
+		struct ssdfs_area_block_table header;
+
+		struct {
+			struct ssdfs_page_vector content;
+		} raw;
+
+		u32 area_offset;
+		u32 read_off;
+		u32 write_off;
+	} portion;
 };
 
 /*
  * struct ssdfs_read_init_env - read operation init environment
- * @log_hdr: log header
- * @has_seg_hdr: does log have segment header?
- * @footer: log footer
- * @has_footer: does log have footer?
- * @cur_migration_id: current PEB's migration ID
- * @prev_migration_id: previous PEB's migration ID
- * @log_offset: offset in pages of the requested log
- * @log_pages: pages count in every log of segment
- * @log_bytes: number of bytes in the requested log
- * @b_init: block bitmap init environment
- * @t_init: blk2off table init environment
- * @bdt_init: blk desc table init environment
+ * @peb.cur_migration_id: current PEB's migration ID
+ * @peb.prev_migration_id: previous PEB's migration ID
+ * @log.offset: offset in pages of the requested log
+ * @log.pages: pages count in every log of segment
+ * @log.bytes: number of bytes in the requested log
+ * @log.header.ptr: log header
+ * @log.header.of_full_log: is it full log header (segment header)?
+ * @log.footer.ptr: log footer
+ * @log.footer.is_present: does log have footer?
+ * @log.bmap: block bitmap init environment
+ * @log.off_tbl: blk2off table init environment
+ * @log.desc_tbl: blk desc table init environment
  */
 struct ssdfs_read_init_env {
-	void *log_hdr;
-	bool has_seg_hdr;
-	struct ssdfs_log_footer *footer;
-	bool has_footer;
-	int cur_migration_id;
-	int prev_migration_id;
-	u32 log_offset;
-	u32 log_pages;
-	u32 log_bytes;
+	struct {
+		int cur_migration_id;
+		int prev_migration_id;
+	} peb;
 
-	struct ssdfs_blk_bmap_init_env b_init;
-	struct ssdfs_blk2off_table_init_env t_init;
-	struct ssdfs_blk_desc_table_init_env bdt_init;
+	struct {
+		u32 offset;
+		u32 pages;
+		u32 bytes;
+
+		struct {
+			void *ptr;
+			bool of_full_log;
+		} header;
+
+		struct {
+			struct ssdfs_log_footer *ptr;
+			bool is_present;
+		} footer;
+
+		struct ssdfs_blk_bmap_init_env blk_bmap;
+		struct ssdfs_blk2off_table_init_env blk2off_tbl;
+		struct ssdfs_blk_desc_table_init_env blk_desc_tbl;
+	} log;
 };
 
 /*
@@ -458,6 +491,39 @@ enum {
 /*
  * Inline functions
  */
+
+static inline
+void ssdfs_create_content_stream(struct ssdfs_content_stream *stream,
+				 u32 capacity)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!stream);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_page_vector_create(&stream->pvec, capacity);
+}
+
+static inline
+void ssdfs_reinit_content_stream(struct ssdfs_content_stream *stream)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!stream);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_page_vector_release(&stream->pvec);
+	ssdfs_page_vector_reinit(&stream->pvec);
+}
+
+static inline
+void ssdfs_destroy_content_stream(struct ssdfs_content_stream *stream)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!stream);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_page_vector_release(&stream->pvec);
+	ssdfs_page_vector_destroy(&stream->pvec);
+}
 
 /*
  * SSDFS_LOG_OFFSET_INIT() - init log offset

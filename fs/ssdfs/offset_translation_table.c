@@ -1248,8 +1248,8 @@ int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 	BUG_ON(!portion);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	env = &portion->env->t_init;
-	page_count = ssdfs_page_vector_count(&env->extents.pvec);
+	env = &portion->env->log.blk2off_tbl;
+	page_count = ssdfs_page_vector_count(&env->extents.stream.pvec);
 
 	if (page_count == 0 || page_count >= U32_MAX) {
 		SSDFS_ERR("extents array is empty\n");
@@ -1259,12 +1259,12 @@ int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 	extents_per_page = PAGE_SIZE / extent_desc_size;
 	extents_capacity = page_count * extents_per_page;
 
-	extents_count = env->extents.bytes_count / extent_desc_size;
+	extents_count = env->extents.stream.bytes_count / extent_desc_size;
 
 	if (extents_count == 0) {
 		SSDFS_ERR("extents array is empty: "
 			  "bytes_count %u, extent_desc_size %zu\n",
-			  env->extents.bytes_count,
+			  env->extents.stream.bytes_count,
 			  extent_desc_size);
 		return -ERANGE;
 	}
@@ -1276,13 +1276,13 @@ int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 		return -ERANGE;
 	}
 
-	env->extents_count = extents_count;
+	env->extents.count = extents_count;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("page_count %u, bytes_count %u, "
 		  "extent_desc_size %zu, extents_count %u\n",
 		  page_count,
-		  env->extents.bytes_count,
+		  env->extents.stream.bytes_count,
 		  extent_desc_size, extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1317,8 +1317,8 @@ int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
 	SSDFS_DBG("extent_index %d\n", extent_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	env = &portion->env->t_init;
-	page_count = ssdfs_page_vector_count(&env->extents.pvec);
+	env = &portion->env->log.blk2off_tbl;
+	page_count = ssdfs_page_vector_count(&env->extents.stream.pvec);
 
 	if (page_count == 0 || page_count >= U32_MAX) {
 		SSDFS_ERR("extents array is empty\n");
@@ -1328,12 +1328,12 @@ int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
 	extents_per_page = PAGE_SIZE / extent_desc_size;
 	extents_capacity = page_count * extents_per_page;
 
-	extents_count = env->extents.bytes_count / extent_desc_size;
+	extents_count = env->extents.stream.bytes_count / extent_desc_size;
 
 	if (extents_count == 0) {
 		SSDFS_ERR("extents array is empty: "
 			  "bytes_count %u, extent_desc_size %zu\n",
-			  env->extents.bytes_count,
+			  env->extents.stream.bytes_count,
 			  extent_desc_size);
 		return -ERANGE;
 	}
@@ -1360,7 +1360,7 @@ int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
 	offset = page_index * PAGE_SIZE;
 	offset += page_off;
 
-	err = ssdfs_unaligned_read_page_vector(&env->extents.pvec,
+	err = ssdfs_unaligned_read_page_vector(&env->extents.stream.pvec,
 						offset,
 						extent_desc_size,
 						extent);
@@ -1380,6 +1380,7 @@ static
 int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
 {
 	struct ssdfs_blk2off_table_init_env *env;
+	struct ssdfs_content_stream *stream;
 	size_t hdr_size = sizeof(struct ssdfs_phys_offset_table_header);
 	int err;
 
@@ -1390,8 +1391,10 @@ int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
 		  portion->env, portion->pot_hdr_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	env = &portion->env->t_init;
-	err = ssdfs_unaligned_read_page_vector(&env->descriptors.pvec,
+	env = &portion->env->log.blk2off_tbl;
+	stream = &env->portion.fragments.stream;
+
+	err = ssdfs_unaligned_read_page_vector(&stream->pvec,
 						portion->pot_hdr_off,
 						hdr_size,
 						&portion->pot_hdr);
@@ -1525,8 +1528,8 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 		struct ssdfs_content_stream *stream;
 		u32 size;
 
-		env = &portion->env->t_init;
-		stream = &env->descriptors;
+		env = &portion->env->log.blk2off_tbl;
+		stream = &env->portion.fragments.stream;
 		size = min_t(u32, PAGE_SIZE - page_off, fragment_size);
 
 		if (page_index >= ssdfs_page_vector_count(&stream->pvec)) {
@@ -1719,7 +1722,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
 	struct ssdfs_phys_offset_descriptor *phys_off = NULL;
 	struct ssdfs_dynamic_array *lblk2off;
-	struct ssdfs_blk_desc_table_init_env *bdt_init;
+	struct ssdfs_blk_desc_table_init_env *blk_desc_tbl;
+	struct ssdfs_page_vector *content;
 	struct ssdfs_blk_state_offset *state_off;
 	void *ptr;
 	u16 peb_index;
@@ -1741,11 +1745,12 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	BUG_ON(!portion || !extent_index || !extent);
 	BUG_ON(!portion->bmap);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
-	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
+	BUG_ON(*extent_index >= portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	lblk2off = &portion->table->lblk2off;
-	bdt_init = &portion->env->bdt_init;
+	blk_desc_tbl = &portion->env->log.blk_desc_tbl;
+	content = &blk_desc_tbl->portion.raw.content;
 
 	peb_index = portion->peb_index;
 	sequence_id = le16_to_cpu(portion->pot_hdr.sequence_id);
@@ -1866,9 +1871,9 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	down_read(&frag->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (j = 0; j < ssdfs_page_vector_count(&bdt_init->array); j++) {
+	for (j = 0; j < ssdfs_page_vector_count(content); j++) {
 		void *kaddr;
-		struct page *page = bdt_init->array.pages[j];
+		struct page *page = content->pages[j];
 
 		kaddr = kmap_local_page(page);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
@@ -1987,7 +1992,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 				  cur_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else {
-			err = ssdfs_unaligned_read_page_vector(&bdt_init->array,
+			err = ssdfs_unaligned_read_page_vector(content,
 							    byte_offset,
 							    desc_size,
 							    &pos->blk_desc.buf);
@@ -2179,7 +2184,7 @@ int __ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !extent_index || !extent);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
-	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
+	BUG_ON(*extent_index >= portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	lblk2off = &portion->table->lblk2off;
@@ -2329,7 +2334,7 @@ int ssdfs_process_free_translation_extent(struct ssdfs_blk2off_init *portion,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!portion || !extent_index || !extent);
 	BUG_ON(portion->cno == SSDFS_INVALID_CNO);
-	BUG_ON(*extent_index >= portion->env->t_init.extents_count);
+	BUG_ON(*extent_index >= portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	peb_index = portion->peb_index;
@@ -2417,7 +2422,7 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 
 	SSDFS_DBG("peb_index %u, extent_index %u, extents_count %u\n",
 		  portion->peb_index, *extent_index,
-		  portion->env->t_init.extents_count);
+		  portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_get_fragment_header(portion);
@@ -2453,14 +2458,15 @@ int ssdfs_blk2off_fragment_init(struct ssdfs_blk2off_init *portion,
 		  start_id, id_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (*extent_index >= portion->env->t_init.extents_count) {
+	if (*extent_index >= portion->env->log.blk2off_tbl.extents.count) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("extent_index %u >= extents_count %u\n",
-			  *extent_index, portion->env->t_init.extents_count);
+			  *extent_index,
+			  portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
-	while (*extent_index < portion->env->t_init.extents_count) {
+	while (*extent_index < portion->env->log.blk2off_tbl.extents.count) {
 		err = ssdfs_blk2off_get_extent(portion,
 						*extent_index,
 						&extent);
@@ -2784,6 +2790,7 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 				     u16 peb_index, u64 peb_id, u64 cno)
 {
 	struct ssdfs_blk2off_init portion;
+	struct ssdfs_content_stream *stream;
 	int extent_index = 0;
 	int i;
 	int err = 0;
@@ -2836,8 +2843,9 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 		goto unlock_translation_table;
 	}
 
-	portion.fragments_count =
-		ssdfs_page_vector_count(&env->t_init.descriptors.pvec);
+	stream = &env->log.blk2off_tbl.portion.fragments.stream;
+
+	portion.fragments_count = ssdfs_page_vector_count(&stream->pvec);
 	if (portion.fragments_count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("fragments array is empty\n");
@@ -2887,7 +2895,7 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	}
 
 	/* process rest free extents */
-	while (extent_index < portion.env->t_init.extents_count) {
+	while (extent_index < portion.env->log.blk2off_tbl.extents.count) {
 		struct ssdfs_translation_extent extent;
 		u16 logical_blk;
 		u16 len;

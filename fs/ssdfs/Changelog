@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.79 [August 14, 2023]
+    (*) Refactoring read thread logic.
+
 v.4.78 [August 13, 2023]
     (*) Rework btree logic on using memory folio.
 
