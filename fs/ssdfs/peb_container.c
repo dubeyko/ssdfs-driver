@@ -126,6 +126,10 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 				SSDFS_WARN("failed to mark block uptodate: "
 					   "page %d is not locked\n",
 					   i);
+				SSDFS_ERR("REQUEST: class %#x, cmd %#x, "
+					  "type %#x\n",
+					  req->private.class, req->private.cmd,
+					  req->private.type);
 			} else {
 				if (!PageError(page)) {
 					ClearPageDirty(page);

@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.80 [August 18, 2023]
+    (*) Fix bugs in offset translation table parsing logic
+        for the case of compressed table with multiple portions.
+
 v.4.79 [August 14, 2023]
     (*) Refactoring read thread logic.
 

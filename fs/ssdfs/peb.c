@@ -428,6 +428,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 			area->has_metadata = true;
 			area->write_offset = blk_table_size;
 			area->compressed_offset = blk_table_size;
+			area->frag_offset = blk_table_size;
 			area->metadata.reserved_offset = blk_table_size;
 
 			if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
@@ -456,6 +457,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 			area->has_metadata = false;
 			area->write_offset = 0;
 			area->compressed_offset = 0;
+			area->frag_offset = 0;
 			area->metadata.reserved_offset = 0;
 			break;
 
@@ -666,14 +668,16 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 			goto fail_conctruct_peb_obj;
 		}
 
-		pebi->read_buffer.blk_desc.offset = U32_MAX;
-		pebi->read_buffer.blk_desc.fragment_size = 0;
 		pebi->read_buffer.blk_desc.buf_size = buf_size;
+
+		memset(&pebi->read_buffer.blk_desc.frag_desc,
+			0xFF, sizeof(struct ssdfs_compressed_fragment));
 	} else {
 		pebi->read_buffer.blk_desc.ptr = NULL;
-		pebi->read_buffer.blk_desc.offset = U32_MAX;
-		pebi->read_buffer.blk_desc.fragment_size = 0;
 		pebi->read_buffer.blk_desc.buf_size = 0;
+
+		memset(&pebi->read_buffer.blk_desc.frag_desc,
+			0xFF, sizeof(struct ssdfs_compressed_fragment));
 	}
 
 	pebi->pebc = pebc;
@@ -834,9 +838,11 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	if (pebi->read_buffer.blk_desc.ptr) {
 		ssdfs_peb_kfree(pebi->read_buffer.blk_desc.ptr);
 		pebi->read_buffer.blk_desc.ptr = NULL;
-		pebi->read_buffer.blk_desc.offset = U32_MAX;
-		pebi->read_buffer.blk_desc.fragment_size = 0;
 		pebi->read_buffer.blk_desc.buf_size = 0;
+
+		memset(&pebi->read_buffer.blk_desc.frag_desc,
+			0xFF, sizeof(struct ssdfs_compressed_fragment));
+
 	}
 	up_write(&pebi->read_buffer.lock);
 

@@ -1893,6 +1893,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		u16 id = offset_id + i;
 		u16 cur_blk;
 		u32 byte_offset;
+		u32 phys_tbl_portion_size;
+		u32 phys_tbl_hdr_count;
 		bool is_invalid = false;
 
 		phys_off = &frag->phys_offs[phys_off_index + i];
@@ -1908,10 +1910,20 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 			goto finish_process_fragment;
 		}
 
-		byte_offset -= area_tbl_size;
+		phys_tbl_portion_size = SSDFS_FRAGMENTS_CHAIN_MAX * PAGE_SIZE;
+
+		phys_tbl_hdr_count = (byte_offset + phys_tbl_portion_size - 1);
+		phys_tbl_hdr_count /= phys_tbl_portion_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("cur_blk %u, byte_offset %u\n",
+		SSDFS_DBG("INITIAL: cur_blk %u, byte_offset %u\n",
+			  cur_blk, byte_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		byte_offset -= area_tbl_size * phys_tbl_hdr_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("CORRECTED: cur_blk %u, byte_offset %u\n",
 			  cur_blk, byte_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -7191,7 +7203,7 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 	fragments_count = snapshot.fragments_count;
 #else
-	fragments_count = snapshot.dirty_fragments;
+	fragments_count = snapshot.start_sequence_id + snapshot.dirty_fragments;
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
 #ifdef CONFIG_SSDFS_DEBUG

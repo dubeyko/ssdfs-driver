@@ -2742,6 +2742,7 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 			    ssdfs_peb_correct_area_write_offset(write_offset,
 								blk_table_size);
 			area->compressed_offset = new_offset;
+			area->write_offset += new_offset - write_offset;
 		} else {
 			write_offset = area->write_offset;
 			new_offset =
@@ -2927,9 +2928,10 @@ int ssdfs_peb_allocate_area_block_table(struct ssdfs_peb_info *pebi,
 
 	area->metadata.reserved_offset = write_offset;
 
-	if (is_compressed)
+	if (is_compressed) {
 		area->compressed_offset += blk_table_size;
-	else
+		area->write_offset += blk_table_size;
+	} else
 		area->write_offset += blk_table_size;
 
 	return 0;

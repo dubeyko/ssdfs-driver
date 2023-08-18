@@ -24,6 +24,104 @@
 
 #include "request_queue.h"
 
+/*
+ * struct ssdfs_contigous_bytes - contigous sequence of bytes
+ * @offset: offset of sequence in bytes
+ * @size: length of sequence in bytes
+ */
+struct ssdfs_contigous_bytes {
+	u32 offset;
+	u32 size;
+};
+
+/*
+ * struct ssdfs_compressed_area - compressed area descriptor
+ * @compressed: descriptor of compressed byte stream
+ * @meta_desc: copy of metadata area's descriptor
+ */
+struct ssdfs_compressed_area {
+	struct ssdfs_contigous_bytes compressed;
+	struct ssdfs_metadata_descriptor meta_desc;
+
+};
+
+/*
+ * struct ssdfs_compressed_portion - compressed portion descriptor
+ * @area: descriptor of area that contains portion
+ * @header_size: size of th eportion header
+ * @compressed: descriptor of compressed state of portion
+ * @uncompressed: descriptor of decompressed state of portion
+ */
+struct ssdfs_compressed_portion {
+	struct ssdfs_compressed_area area;
+
+	size_t header_size;
+
+	struct ssdfs_contigous_bytes compressed;
+	struct ssdfs_contigous_bytes uncompressed;
+};
+
+/*
+ * struct ssdfs_compressed_fragment - compressed fragment descriptor
+ * @portion: portion descriptor that contains fragment
+ * @compressed: descriptor of compressed state of fragment
+ * @uncompressed: descriptor of decompressed state of fragment
+ * @frag_desc: fragment descriptor
+ */
+struct ssdfs_compressed_fragment {
+	struct ssdfs_compressed_portion portion;
+
+	struct ssdfs_contigous_bytes compressed;
+	struct ssdfs_contigous_bytes uncompressed;
+
+	struct ssdfs_fragment_desc frag_desc;
+};
+
+/*
+ * struct ssdfs_fragment_raw_iterator - raw fragment iterator
+ * @frag_desc: fragment descriptor
+ * @offset: current offset
+ * @bytes_count: total number of bytes
+ * @processed_bytes: number of processed bytes
+ * @fragments_count: total number of fragments
+ * @processed_fragments: number of preocessed fragments
+ */
+struct ssdfs_fragment_raw_iterator {
+	struct ssdfs_compressed_fragment fragment_desc;
+
+	u32 offset;
+	u32 bytes_count;
+	u32 processed_bytes;
+
+	u32 fragments_count;
+	u32 processed_fragments;
+};
+
+/*
+ * struct ssdfs_raw_iterator - raw stream iterator
+ * @start_offset: start offset in stream
+ * @current_offset: current offset in stream
+ * @bytes_count: total size of content in bytes
+ */
+struct ssdfs_raw_iterator {
+	u32 start_offset;
+	u32 current_offset;
+	u32 bytes_count;
+};
+
+/*
+ * struct ssdfs_content_stream - content stream
+ * @pvec: page vector with content's byte stream
+ * @write_iter: write iterator
+ */
+struct ssdfs_content_stream {
+	struct ssdfs_page_vector pvec;
+//	struct ssdfs_raw_iterator write_iter;
+
+	u32 write_off;
+	u32 bytes_count;
+};
+
 #define SSDFS_BLKBMAP_FRAG_HDR_CAPACITY \
 	(sizeof(struct ssdfs_block_bitmap_fragment) + \
 	 (sizeof(struct ssdfs_fragment_desc) * \
@@ -61,23 +159,12 @@ struct ssdfs_blk_bmap_init_env {
 };
 
 /*
- * struct ssdfs_content_stream - content stream
- * @pvec: page vector
- * @write_off: current write offset
- * @bytes_count: total size of content in bytes
- */
-struct ssdfs_content_stream {
-	struct ssdfs_page_vector pvec;
-	u32 write_off;
-	u32 bytes_count;
-};
-
-/*
  * struct ssdfs_blk2off_table_init_env - blk2off table init environment
  * @extents.stream: translation extents sequence
  * @extents.count: count of extents in sequence
  * @portion.header: blk2off table header
  * @portion.fragments.stream: phys offset descriptors sequence
+ * @portion.read_iter: read iterator in portion
  * @portion.area_offset: offset to the blk2off area
  * @portion.read_off: current read offset
  */
@@ -94,6 +181,7 @@ struct ssdfs_blk2off_table_init_env {
 			struct ssdfs_content_stream stream;
 		} fragments;
 
+//		struct ssdfs_fragment_raw_iterator read_iter;
 		u32 area_offset;
 		u32 read_off;
 	} portion;
@@ -103,6 +191,7 @@ struct ssdfs_blk2off_table_init_env {
  * struct ssdfs_blk_desc_table_init_env - blk desc table init environment
  * @portion.header: blk desc table header
  * @portion.raw.content: pagevec with blk desc table fragment
+ * @portion.read_iter: read iterator in portion
  * @portion.area_offset: offset to the blk2off area
  * @portion.read_off: current read offset
  * @portion.write_off: current write offset
@@ -115,6 +204,7 @@ struct ssdfs_blk_desc_table_init_env {
 			struct ssdfs_page_vector content;
 		} raw;
 
+//		struct ssdfs_fragment_raw_iterator read_iter;
 		u32 area_offset;
 		u32 read_off;
 		u32 write_off;
@@ -200,15 +290,14 @@ struct ssdfs_peb_journal_area_metadata {
 /*
  * struct ssdfs_peb_read_buffer - read buffer
  * @ptr: pointer on buffer
- * @offset: logical offset in metadata structure
- * @fragment_size: size of fragment in bytes
  * @buf_size: buffer size in bytes
+ * @frag_desc: fragment descriptor
  */
 struct ssdfs_peb_read_buffer {
 	void *ptr;
-	u32 offset;
-	size_t fragment_size;
 	size_t buf_size;
+
+	struct ssdfs_compressed_fragment frag_desc;
 };
 
 /*
@@ -279,6 +368,7 @@ struct ssdfs_peb_area_metadata {
  * @metadata: descriptor of area's items chain
  * @write_offset: current write offset
  * @compressed_offset: current write offset for compressed data
+ * @frag_offset: offset of current fragment
  * @array: area's memory pages
  */
 struct ssdfs_peb_area {
@@ -287,6 +377,7 @@ struct ssdfs_peb_area {
 
 	u32 write_offset;
 	u32 compressed_offset;
+	u32 frag_offset;
 	struct ssdfs_page_array array;
 };
 
@@ -492,6 +583,9 @@ enum {
  * Inline functions
  */
 
+/*
+ * ssdfs_create_content_stream() - create content stream
+ */
 static inline
 void ssdfs_create_content_stream(struct ssdfs_content_stream *stream,
 				 u32 capacity)
@@ -501,8 +595,14 @@ void ssdfs_create_content_stream(struct ssdfs_content_stream *stream,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_page_vector_create(&stream->pvec, capacity);
+
+	stream->write_off = 0;
+	stream->bytes_count = 0;
 }
 
+/*
+ * ssdfs_reinit_content_stream() - reinit content stream
+ */
 static inline
 void ssdfs_reinit_content_stream(struct ssdfs_content_stream *stream)
 {
@@ -512,8 +612,14 @@ void ssdfs_reinit_content_stream(struct ssdfs_content_stream *stream)
 
 	ssdfs_page_vector_release(&stream->pvec);
 	ssdfs_page_vector_reinit(&stream->pvec);
+
+	stream->write_off = 0;
+	stream->bytes_count = 0;
 }
 
+/*
+ * ssdfs_destroy_content_stream() - destroy content stream
+ */
 static inline
 void ssdfs_destroy_content_stream(struct ssdfs_content_stream *stream)
 {
@@ -523,6 +629,911 @@ void ssdfs_destroy_content_stream(struct ssdfs_content_stream *stream)
 
 	ssdfs_page_vector_release(&stream->pvec);
 	ssdfs_page_vector_destroy(&stream->pvec);
+
+	stream->write_off = 0;
+	stream->bytes_count = 0;
+}
+
+/*
+ * IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID() - check validity of descriptor
+ */
+static inline
+bool IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(struct ssdfs_contigous_bytes *desc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (desc->offset >= U32_MAX)
+		return true;
+	else if (desc->size == 0 || desc->size >= U32_MAX)
+		return true;
+	else
+		return false;
+}
+
+/*
+ * SSDFS_INIT_CONTIGOUS_BYTES_DESC() - init descriptor
+ */
+static inline
+void SSDFS_INIT_CONTIGOUS_BYTES_DESC(struct ssdfs_contigous_bytes *desc,
+				     u32 offset, u32 size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	desc->offset = offset;
+	desc->size = size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("offset %u, size %u\n",
+		  desc->offset, desc->size);
+
+	BUG_ON(IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
+ * SSDFS_AREA_COMPRESSED_OFFSET() - get area compressed offset
+ */
+static inline
+u32 SSDFS_AREA_COMPRESSED_OFFSET(struct ssdfs_compressed_area *area)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!area);
+
+	SSDFS_DBG("AREA: compressed (offset %u, size %u)\n",
+		  area->compressed.offset,
+		  area->compressed.size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return area->compressed.offset;
+}
+
+/*
+ * SSDFS_AREA_COMPRESSED_SIZE() - get area compressed size
+ */
+static inline
+u32 SSDFS_AREA_COMPRESSED_SIZE(struct ssdfs_compressed_area *area)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!area);
+
+	SSDFS_DBG("AREA: compressed (offset %u, size %u)\n",
+		  area->compressed.offset,
+		  area->compressed.size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return area->compressed.size;
+}
+
+/*
+ * IS_SSDFS_COMPRESSED_AREA_DESC_INVALID() - check validity of descriptor
+ */
+static inline
+bool IS_SSDFS_COMPRESSED_AREA_DESC_INVALID(struct ssdfs_compressed_area *desc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(&desc->compressed);
+}
+
+/*
+ * SSDFS_INIT_COMPRESSED_AREA_DESC() - init compressed area descriptor
+ */
+static inline
+void SSDFS_INIT_COMPRESSED_AREA_DESC(struct ssdfs_compressed_area *desc,
+				     struct ssdfs_metadata_descriptor *meta_desc)
+{
+	size_t meta_desc_size = sizeof(struct ssdfs_metadata_descriptor);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc || !meta_desc);
+
+	SSDFS_DBG("offset %u, size %u\n",
+		  le32_to_cpu(meta_desc->offset),
+		  le32_to_cpu(meta_desc->size));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_INIT_CONTIGOUS_BYTES_DESC(&desc->compressed,
+					le32_to_cpu(meta_desc->offset),
+					le32_to_cpu(meta_desc->size));
+
+	ssdfs_memcpy(&desc->meta_desc, 0, meta_desc_size,
+		     meta_desc, 0, meta_desc_size,
+		     meta_desc_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(IS_SSDFS_COMPRESSED_AREA_DESC_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
+ * SSDFS_COMPRESSED_AREA_UPPER_BOUND() - get compressed area's upper bound
+ */
+static inline
+u64 SSDFS_COMPRESSED_AREA_UPPER_BOUND(struct ssdfs_compressed_area *desc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("offset %u, size %u\n",
+		  desc->compressed.offset,
+		  desc->compressed.size);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_AREA_DESC_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u64)desc->compressed.offset + desc->compressed.size;
+}
+
+/*
+ * IS_SSDFS_COMPRESSED_PORTION_INVALID() - check validity of descriptor
+ */
+static inline
+bool IS_SSDFS_COMPRESSED_PORTION_INVALID(struct ssdfs_compressed_portion *desc)
+{
+	bool is_invalid;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	is_invalid = IS_SSDFS_COMPRESSED_AREA_DESC_INVALID(&desc->area) ||
+		     IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(&desc->compressed) ||
+		     IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(&desc->uncompressed);
+
+	return is_invalid;
+}
+
+/*
+ * SSDFS_PORTION_COMPRESSED_OFFSET() - get portion's compressed offset
+ */
+static inline
+u32 SSDFS_PORTION_COMPRESSED_OFFSET(struct ssdfs_compressed_portion *portion)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!portion);
+
+	SSDFS_DBG("PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  portion->compressed.offset,
+		  portion->compressed.size,
+		  portion->uncompressed.offset,
+		  portion->uncompressed.size);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(portion));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = SSDFS_AREA_COMPRESSED_OFFSET(&portion->area);
+	offset += portion->compressed.offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+
+	SSDFS_DBG("compressed offset %llu\n", offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)offset;
+}
+
+/*
+ * SSDFS_PORTION_UNCOMPRESSED_OFFSET() - get portion's uncompressed offset
+ */
+static inline
+u32 SSDFS_PORTION_UNCOMPRESSED_OFFSET(struct ssdfs_compressed_portion *portion)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!portion);
+
+	SSDFS_DBG("PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  portion->compressed.offset,
+		  portion->compressed.size,
+		  portion->uncompressed.offset,
+		  portion->uncompressed.size);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(portion));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = SSDFS_AREA_COMPRESSED_OFFSET(&portion->area);
+	offset += portion->uncompressed.offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+
+	SSDFS_DBG("uncompressed offset %llu\n", offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)offset;
+}
+
+/*
+ * IS_SSDFS_COMPRESSED_PORTION_IN_AREA() - check that portion insdie of area
+ */
+static inline
+bool IS_SSDFS_COMPRESSED_PORTION_IN_AREA(struct ssdfs_compressed_portion *desc)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = desc->compressed.offset + desc->compressed.size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (offset > SSDFS_AREA_COMPRESSED_SIZE(&desc->area))
+		return false;
+	else
+		return true;
+}
+
+/*
+ * SSDFS_INIT_COMPRESSED_PORTION_DESC() - init portion's descriptor
+ */
+static inline
+void SSDFS_INIT_COMPRESSED_PORTION_DESC(struct ssdfs_compressed_portion *desc,
+					struct ssdfs_metadata_descriptor *meta,
+					struct ssdfs_fragments_chain_header *hdr,
+					size_t header_size)
+{
+	size_t compr_size;
+	size_t uncompr_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc || !meta || !hdr);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compr_bytes %u, uncompr_bytes %u\n",
+		  le32_to_cpu(meta->offset),
+		  le32_to_cpu(meta->size),
+		  le32_to_cpu(hdr->compr_bytes),
+		  le32_to_cpu(hdr->uncompr_bytes));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	SSDFS_INIT_COMPRESSED_AREA_DESC(&desc->area, meta);
+
+	desc->header_size = header_size;
+
+	compr_size = header_size + le32_to_cpu(hdr->compr_bytes);
+	SSDFS_INIT_CONTIGOUS_BYTES_DESC(&desc->compressed,
+					0, compr_size);
+
+	uncompr_size = header_size + le32_to_cpu(hdr->uncompr_bytes);
+	SSDFS_INIT_CONTIGOUS_BYTES_DESC(&desc->uncompressed,
+					0, uncompr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(desc));
+	BUG_ON(!IS_SSDFS_COMPRESSED_PORTION_IN_AREA(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
+ * SSDFS_ADD_COMPRESSED_PORTION() - calculate portion's position in stream
+ */
+static inline
+int SSDFS_ADD_COMPRESSED_PORTION(struct ssdfs_compressed_portion *desc,
+				 struct ssdfs_fragments_chain_header *hdr)
+{
+	size_t compr_size;
+	size_t uncompr_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc || !hdr);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "OLD PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "NEW PORTION: compr_bytes %u, uncompr_bytes %u\n",
+		  desc->area.compressed.offset,
+		  desc->area.compressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size,
+		  le32_to_cpu(hdr->compr_bytes),
+		  le32_to_cpu(hdr->uncompr_bytes));
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	desc->compressed.offset += desc->compressed.size;
+	compr_size = desc->header_size + le32_to_cpu(hdr->compr_bytes);
+	desc->compressed.size = compr_size;
+
+	desc->uncompressed.offset += desc->uncompressed.size;
+	uncompr_size = desc->header_size + le32_to_cpu(hdr->uncompr_bytes);
+	desc->uncompressed.size = uncompr_size;
+
+	if (IS_SSDFS_COMPRESSED_PORTION_INVALID(desc)) {
+		SSDFS_ERR("invalid portion descriptor\n");
+		return -ERANGE;
+	}
+
+	if (!IS_SSDFS_COMPRESSED_PORTION_IN_AREA(desc)) {
+		SSDFS_ERR("invalid portion descriptor\n");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * IS_OFFSET_INSIDE_UNCOMPRESSED_PORTION() - check that offset inside of portion
+ */
+static inline
+bool IS_OFFSET_INSIDE_UNCOMPRESSED_PORTION(struct ssdfs_compressed_portion *desc,
+					   u32 offset)
+{
+	u64 lower_bound;
+	u64 upper_bound;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "OFFSET: offset %u\n",
+		  desc->area.compressed.offset,
+		  desc->area.compressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size,
+		  offset);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	lower_bound = SSDFS_PORTION_UNCOMPRESSED_OFFSET(desc);
+	upper_bound = lower_bound + desc->uncompressed.size;
+
+	return lower_bound <= offset && offset < upper_bound;
+}
+
+/*
+ * SSDFS_COMPRESSED_PORTION_UPPER_BOUND() -  calculate portion's upper bound
+ */
+static inline
+u64 SSDFS_COMPRESSED_PORTION_UPPER_BOUND(struct ssdfs_compressed_portion *desc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  desc->area.compressed.offset,
+		  desc->area.compressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u64)SSDFS_PORTION_COMPRESSED_OFFSET(desc) +
+						desc->compressed.size;
+}
+
+/*
+ * SSDFS_UNCOMPRESSED_PORTION_UPPER_BOUND() -  calculate portion's upper bound
+ */
+static inline
+u64 SSDFS_UNCOMPRESSED_PORTION_UPPER_BOUND(struct ssdfs_compressed_portion *desc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  desc->area.compressed.offset,
+		  desc->area.compressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u64)SSDFS_PORTION_UNCOMPRESSED_OFFSET(desc) +
+						desc->compressed.size;
+}
+
+/*
+ * IS_SSDFS_COMPRESSED_FRAGMENT_INVALID() - check validity of descriptor
+ */
+static inline
+bool IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(struct ssdfs_compressed_fragment *desc)
+{
+	bool is_invalid;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	is_invalid = IS_SSDFS_COMPRESSED_PORTION_INVALID(&desc->portion) ||
+		     IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(&desc->compressed) ||
+		     IS_SSDFS_CONTIGOUS_BYTES_DESC_INVALID(&desc->uncompressed);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "FRAGMENT: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "is_invalid %#x\n",
+		  desc->portion.area.compressed.offset,
+		  desc->portion.area.compressed.size,
+		  desc->portion.compressed.offset,
+		  desc->portion.compressed.size,
+		  desc->portion.uncompressed.offset,
+		  desc->portion.uncompressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size,
+		  is_invalid);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return is_invalid;
+}
+
+/*
+ * IS_SSDFS_COMPRESSED_FRAGMENT_IN_PORTION() - check that fragment in portion
+ */
+static inline
+bool
+IS_SSDFS_COMPRESSED_FRAGMENT_IN_PORTION(struct ssdfs_compressed_fragment *desc)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = desc->compressed.offset + desc->compressed.size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (offset > SSDFS_COMPRESSED_PORTION_UPPER_BOUND(&desc->portion))
+		return false;
+	else
+		return true;
+
+	offset = desc->uncompressed.offset + desc->uncompressed.size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (offset > SSDFS_UNCOMPRESSED_PORTION_UPPER_BOUND(&desc->portion))
+		return false;
+	else
+		return true;
+}
+
+/*
+ * SSDFS_INIT_COMPRESSED_FRAGMENT_DESC() - init fragment descriptor
+ */
+static inline
+int SSDFS_INIT_COMPRESSED_FRAGMENT_DESC(struct ssdfs_compressed_fragment *desc,
+					 struct ssdfs_fragment_desc *frag)
+{
+	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
+	u32 frag_offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc || !frag);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "FRAGMENT: offset %u, compr_size %u, uncompr_size %u\n",
+		  desc->portion.area.compressed.offset,
+		  desc->portion.area.compressed.size,
+		  desc->portion.compressed.offset,
+		  desc->portion.compressed.size,
+		  desc->portion.uncompressed.offset,
+		  desc->portion.uncompressed.size,
+		  le32_to_cpu(frag->offset),
+		  le16_to_cpu(frag->compr_size),
+		  le16_to_cpu(frag->uncompr_size));
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(&desc->portion));
+	BUG_ON(!IS_SSDFS_COMPRESSED_PORTION_IN_AREA(&desc->portion));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_memcpy(&desc->frag_desc, 0, frag_desc_size,
+		     frag, 0, frag_desc_size,
+		     frag_desc_size);
+
+	SSDFS_INIT_CONTIGOUS_BYTES_DESC(&desc->compressed,
+					le32_to_cpu(frag->offset),
+					le16_to_cpu(frag->compr_size));
+
+	frag_offset = desc->portion.uncompressed.offset;
+	frag_offset += desc->portion.header_size;
+
+	SSDFS_INIT_CONTIGOUS_BYTES_DESC(&desc->uncompressed,
+					frag_offset,
+					le16_to_cpu(frag->uncompr_size));
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(desc));
+	BUG_ON(!IS_SSDFS_COMPRESSED_FRAGMENT_IN_PORTION(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * SSDFS_ADD_COMPRESSED_FRAGMENT() - calculate fragment's position in stream
+ */
+static inline
+int SSDFS_ADD_COMPRESSED_FRAGMENT(struct ssdfs_compressed_fragment *desc,
+				  struct ssdfs_fragment_desc *frag)
+{
+	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc || !frag);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "FRAGMENT: offset %u, compr_size %u, uncompr_size %u\n",
+		  desc->portion.area.compressed.offset,
+		  desc->portion.area.compressed.size,
+		  desc->portion.compressed.offset,
+		  desc->portion.compressed.size,
+		  desc->portion.uncompressed.offset,
+		  desc->portion.uncompressed.size,
+		  le32_to_cpu(frag->offset),
+		  le16_to_cpu(frag->compr_size),
+		  le16_to_cpu(frag->uncompr_size));
+
+	BUG_ON(IS_SSDFS_COMPRESSED_PORTION_INVALID(&desc->portion));
+	BUG_ON(!IS_SSDFS_COMPRESSED_PORTION_IN_AREA(&desc->portion));
+	BUG_ON(IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(desc));
+	BUG_ON(!IS_SSDFS_COMPRESSED_FRAGMENT_IN_PORTION(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_memcpy(&desc->frag_desc, 0, frag_desc_size,
+		     frag, 0, frag_desc_size,
+		     frag_desc_size);
+
+	SSDFS_INIT_CONTIGOUS_BYTES_DESC(&desc->compressed,
+					le32_to_cpu(frag->offset),
+					le16_to_cpu(frag->compr_size));
+
+	desc->uncompressed.offset += desc->uncompressed.size;
+	desc->uncompressed.size = le16_to_cpu(frag->uncompr_size);
+
+	if (IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(desc)) {
+		SSDFS_ERR("invalid fragment descriptor\n");
+		return -ERANGE;
+	}
+
+	if (!IS_SSDFS_COMPRESSED_FRAGMENT_IN_PORTION(desc)) {
+		SSDFS_ERR("invalid fragment descriptor\n");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * SSDFS_FRAGMENT_COMPRESSED_OFFSET() - get fragment's compressed offset
+ */
+static inline
+u32 SSDFS_FRAGMENT_COMPRESSED_OFFSET(struct ssdfs_compressed_fragment *desc)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "FRAGMENT: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  desc->portion.area.compressed.offset,
+		  desc->portion.area.compressed.size,
+		  desc->portion.compressed.offset,
+		  desc->portion.compressed.size,
+		  desc->portion.uncompressed.offset,
+		  desc->portion.uncompressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = SSDFS_AREA_COMPRESSED_OFFSET(&desc->portion.area);
+	offset += desc->compressed.offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+
+	SSDFS_DBG("compressed offset %llu\n", offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)offset;
+}
+
+/*
+ * SSDFS_FRAGMENT_UNCOMPRESSED_OFFSET() - get fragment's uncompressed offset
+ */
+static inline
+u32 SSDFS_FRAGMENT_UNCOMPRESSED_OFFSET(struct ssdfs_compressed_fragment *desc)
+{
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "FRAGMENT: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  desc->portion.area.compressed.offset,
+		  desc->portion.area.compressed.size,
+		  desc->portion.compressed.offset,
+		  desc->portion.compressed.size,
+		  desc->portion.uncompressed.offset,
+		  desc->portion.uncompressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = SSDFS_AREA_COMPRESSED_OFFSET(&desc->portion.area);
+	offset += desc->uncompressed.offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+
+	SSDFS_DBG("uncompressed offset %llu\n", offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)offset;
+}
+
+/*
+ * IS_OFFSET_INSIDE_UNCOMPRESSED_FRAGMENT() - check that offset inside fragment
+ */
+static inline
+bool
+IS_OFFSET_INSIDE_UNCOMPRESSED_FRAGMENT(struct ssdfs_compressed_fragment *desc,
+					u32 offset)
+{
+	u64 lower_bound;
+	u64 upper_bound;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!desc);
+
+	SSDFS_DBG("REQUESTED: offset %u, "
+		  "AREA: offset %u, size %u, "
+		  "PORTION: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u), "
+		  "FRAGMENT: compressed (offset %u, size %u), "
+		  "uncompressed (offset %u, size %u)\n",
+		  offset,
+		  desc->portion.area.compressed.offset,
+		  desc->portion.area.compressed.size,
+		  desc->portion.compressed.offset,
+		  desc->portion.compressed.size,
+		  desc->portion.uncompressed.offset,
+		  desc->portion.uncompressed.size,
+		  desc->compressed.offset,
+		  desc->compressed.size,
+		  desc->uncompressed.offset,
+		  desc->uncompressed.size);
+
+	BUG_ON(IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	lower_bound = SSDFS_FRAGMENT_UNCOMPRESSED_OFFSET(desc);
+	upper_bound = lower_bound + desc->uncompressed.size;
+
+	return lower_bound <= offset && offset < upper_bound;
+}
+
+/*
+ * IS_SSDFS_FRAG_RAW_ITER_INVALID() - check that raw iterator is invalid
+ */
+static inline
+bool IS_SSDFS_FRAG_RAW_ITER_INVALID(struct ssdfs_fragment_raw_iterator *iter)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!iter);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(&iter->fragment_desc) ||
+		iter->offset >= U32_MAX || iter->bytes_count >= U32_MAX ||
+		iter->processed_bytes >= U32_MAX ||
+		iter->fragments_count >= U32_MAX ||
+		iter->processed_fragments >= U32_MAX;
+}
+
+/*
+ * SSDFS_FRAG_RAW_ITER_CREATE() - create raw iterator
+ */
+static inline
+void SSDFS_FRAG_RAW_ITER_CREATE(struct ssdfs_fragment_raw_iterator *iter)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!iter);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memset(iter, 0xFF, sizeof(struct ssdfs_fragment_raw_iterator));
+}
+
+/*
+ * SSDFS_FRAG_RAW_ITER_INIT() - init raw iterator
+ */
+static inline
+void SSDFS_FRAG_RAW_ITER_INIT(struct ssdfs_fragment_raw_iterator *iter,
+			      u32 offset, u32 bytes_count, u32 fragments_count)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!iter);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	iter->offset = offset;
+	iter->bytes_count = bytes_count;
+	iter->processed_bytes = 0;
+	iter->fragments_count = fragments_count;
+	iter->processed_fragments = 0;
+}
+
+/*
+ * SSDFS_FRAG_RAW_ITER_ADD_FRAGMENT() - add fragment
+ */
+static inline
+int SSDFS_FRAG_RAW_ITER_ADD_FRAGMENT(struct ssdfs_fragment_raw_iterator *iter,
+				     struct ssdfs_fragment_desc *frag)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!iter);
+	BUG_ON(IS_SSDFS_FRAG_RAW_ITER_INVALID(iter));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (IS_SSDFS_COMPRESSED_FRAGMENT_INVALID(&iter->fragment_desc)) {
+		err = SSDFS_INIT_COMPRESSED_FRAGMENT_DESC(&iter->fragment_desc,
+							  frag);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to init fragment: "
+				  "processed_bytes %u, bytes_count %u, "
+				  "processed_fragments %u, "
+				  "fragments_count %u, err %d\n",
+				  iter->processed_bytes,
+				  iter->bytes_count,
+				  iter->processed_fragments,
+				  iter->fragments_count,
+				  err);
+			return err;
+		}
+	} else {
+		err = SSDFS_ADD_COMPRESSED_FRAGMENT(&iter->fragment_desc,
+						    frag);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add fragment: "
+				  "processed_bytes %u, bytes_count %u, "
+				  "processed_fragments %u, "
+				  "fragments_count %u, err %d\n",
+				  iter->processed_bytes,
+				  iter->bytes_count,
+				  iter->processed_fragments,
+				  iter->fragments_count,
+				  err);
+			return err;
+		}
+	}
+
+	iter->processed_bytes += le16_to_cpu(frag->compr_size);
+
+	if (iter->processed_bytes > iter->bytes_count) {
+		SSDFS_ERR("invalid state: "
+			  "processed_bytes %u > bytes_count %u\n",
+			  iter->processed_bytes, iter->bytes_count);
+		return -ERANGE;
+	}
+
+	iter->processed_fragments++;
+
+	if (iter->processed_fragments > iter->fragments_count) {
+		SSDFS_ERR("invalid state: "
+			  "processed_fragments %u > fragments_count %u\n",
+			  iter->processed_fragments,
+			  iter->fragments_count);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * SSDFS_FRAG_RAW_ITER_SHIFT_OFFSET() - shift raw iterator's offset
+ */
+static inline
+int SSDFS_FRAG_RAW_ITER_SHIFT_OFFSET(struct ssdfs_fragment_raw_iterator *iter,
+				     u32 shift)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!iter);
+	BUG_ON(IS_SSDFS_FRAG_RAW_ITER_INVALID(iter));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	iter->offset += shift;
+	iter->processed_bytes += shift;
+
+	if (iter->processed_bytes > iter->bytes_count) {
+		SSDFS_ERR("invalid state: "
+			  "processed_bytes %u > bytes_count %u\n",
+			  iter->processed_bytes, iter->bytes_count);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
+ * IS_SSDFS_FRAG_RAW_ITER_ENDED() - check that raw iterator is ended
+ */
+static inline
+bool IS_SSDFS_FRAG_RAW_ITER_ENDED(struct ssdfs_fragment_raw_iterator *iter)
+{
+	bool is_ended;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!iter);
+	BUG_ON(IS_SSDFS_FRAG_RAW_ITER_INVALID(iter));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	is_ended = iter->processed_bytes >= iter->bytes_count &&
+			iter->processed_fragments >= iter->fragments_count;
+
+	if (!is_ended) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("iterator is not ended: "
+			  "processed_bytes %u, bytes_count %u, "
+			  "processed_fragments %u, "
+			  "fragments_count %u\n",
+			  iter->processed_bytes,
+			  iter->bytes_count,
+			  iter->processed_fragments,
+			  iter->fragments_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	return is_ended;
 }
 
 /*
