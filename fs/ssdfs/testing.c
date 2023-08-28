@@ -157,6 +157,273 @@ int ssdfs_testing_get_inode(struct ssdfs_fs_info *fsi)
 }
 
 static
+int ssdfs_do_folio_vector_testing(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env)
+{
+	struct ssdfs_folio_vector fvec;
+	struct folio *folio;
+	void *kaddr1 = NULL;
+	void *kaddr2 = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	u32 iterations_number = env->memory_primitives.iterations_number;
+	u32 calculated;
+	u32 free_space;
+	int i, j;
+	int err = 0;
+
+	BUG_ON(capacity >= U32_MAX);
+	BUG_ON(count >= U32_MAX);
+
+	kaddr1 = ssdfs_kmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
+	if (!kaddr1) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate temporary buffer\n");
+		goto finish_folio_vector_testing;
+	}
+
+	err = ssdfs_folio_vector_create(&fvec, get_order(item_size), capacity);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create folio vector: "
+			  "item_size %u, capacity %llu\n",
+			  item_size, capacity);
+		goto free_allocated_memory;
+	}
+
+	err = ssdfs_folio_vector_init(&fvec);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to init folio vector: "
+			  "item_size %u, capacity %llu\n",
+			  item_size, capacity);
+		goto destroy_folio_vector;
+	}
+
+	for (i = 0; i < iterations_number; i++) {
+		SSDFS_ERR("ITERATION %d\n", i);
+
+		for (j = 0; j < count/2; j++) {
+			folio = ssdfs_folio_vector_allocate(&fvec);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate folio\n");
+				goto destroy_folio_vector;
+			}
+
+			ssdfs_folio_lock(folio);
+			err = __ssdfs_memset_folio(folio, 0, item_size,
+						   j, item_size);
+			ssdfs_folio_unlock(folio);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to set folio: "
+					  "item_size %u, index %d, err %d\n",
+					  item_size, j, err);
+				goto destroy_folio_vector;
+			}
+		}
+
+		calculated = ssdfs_folio_vector_count(&fvec);
+
+		if (j != calculated) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid items count: "
+				  "count1 %d, count2 %u\n",
+				  j, calculated);
+			goto destroy_folio_vector;
+		}
+
+		free_space = ssdfs_folio_vector_space(&fvec);
+
+		if ((calculated + free_space) !=
+					ssdfs_folio_vector_capacity(&fvec)) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid items count: "
+				  "index %d, count %u, "
+				  "free_space %u, capacity %u\n",
+				  j, calculated, free_space,
+				  ssdfs_folio_vector_capacity(&fvec));
+			goto destroy_folio_vector;
+		}
+
+		for (; j < count; j++) {
+			folio = ssdfs_folio_alloc(GFP_KERNEL | __GFP_ZERO,
+						  get_order(item_size));
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate folio\n");
+				goto destroy_folio_vector;
+			}
+
+			ssdfs_folio_get(folio);
+
+			ssdfs_folio_lock(folio);
+			err = __ssdfs_memset_folio(folio, 0, item_size,
+						   j, item_size);
+			ssdfs_folio_unlock(folio);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to set folio: "
+					  "item_size %u, index %d, err %d\n",
+					  item_size, j, err);
+				goto destroy_folio_vector;
+			}
+
+			err = ssdfs_folio_vector_add(&fvec, folio);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to add folio: "
+					  "item_size %u, index %d, err %d\n",
+					  item_size, j, err);
+				goto destroy_folio_vector;
+			}
+		}
+
+		calculated = ssdfs_folio_vector_count(&fvec);
+
+		if (j != calculated) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid items count: "
+				  "count1 %d, count2 %u\n",
+				  j, calculated);
+			goto destroy_folio_vector;
+		}
+
+		free_space = ssdfs_folio_vector_space(&fvec);
+
+		if ((calculated + free_space) !=
+					ssdfs_folio_vector_capacity(&fvec)) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid items count: "
+				  "index %d, count %u, "
+				  "free_space %u, capacity %u\n",
+				  j, calculated, free_space,
+				  ssdfs_folio_vector_capacity(&fvec));
+			goto destroy_folio_vector;
+		}
+
+		for (j = 0; j < count; j++) {
+			memset(kaddr1, j, PAGE_SIZE);
+
+			folio = fvec.folios[j];
+
+			if (!folio) {
+				SSDFS_ERR("empty folio: index %d\n", j);
+				continue;
+			}
+
+			ssdfs_folio_lock(folio);
+			kaddr2 = kmap_local_folio(folio, 0);
+			if (memcmp(kaddr1, kaddr2, PAGE_SIZE) != 0) {
+				SSDFS_ERR("invalid memory state: "
+					  "index %d\n", j);
+			}
+			kunmap_local(kaddr2);
+			ssdfs_folio_unlock(folio);
+		}
+
+		for (j = 0; j < count/2; j++) {
+			folio = ssdfs_folio_vector_remove(&fvec, j);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to remove folio: "
+					  "index %d\n", j);
+				continue;
+			}
+
+			ssdfs_folio_put(folio);
+			ssdfs_folio_free(folio);
+		}
+
+		ssdfs_folio_vector_release(&fvec);
+
+		err = ssdfs_folio_vector_reinit(&fvec);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to re-init folio vector: "
+				  "iteration %d, "
+				  "item_size %u, capacity %llu\n",
+				  i, item_size, capacity);
+			goto destroy_folio_vector;
+		}
+	}
+
+destroy_folio_vector:
+	ssdfs_folio_vector_destroy(&fvec);
+
+free_allocated_memory:
+	if (kaddr1)
+		ssdfs_kfree(kaddr1);
+
+finish_folio_vector_testing:
+	return err;
+}
+
+static
+int ssdfs_do_folio_array_testing(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_testing_environment *env)
+{
+	SSDFS_ERR("TODO: implement folio array testing logic\n");
+	return 0;
+}
+
+static
+int ssdfs_do_dynamic_array_testing(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_testing_environment *env)
+{
+	SSDFS_ERR("TODO: implement dynamic array testing logic\n");
+	return 0;
+}
+
+static
+int ssdfs_do_memory_primitives_testing(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env)
+{
+	u32 test_types;
+	int err = 0;
+
+	SSDFS_ERR("STARTING MEMORY PRIMITIVES TESTING...\n");
+
+	test_types = env->memory_primitives.test_types;
+
+	if (test_types & SSDFS_ENABLE_FOLIO_VECTOR_TESTING) {
+		SSDFS_ERR("START FOLIO VECTOR TESTING...\n");
+
+		err = ssdfs_do_folio_vector_testing(fsi, env);
+		if (err)
+			goto finish_testing;
+
+		SSDFS_ERR("FOLIO VECTOR TESTING FINISHED\n");
+	}
+
+	if (test_types & SSDFS_ENABLE_FOLIO_ARRAY_TESTING) {
+		SSDFS_ERR("START FOLIO ARRAY TESTING...\n");
+
+		err = ssdfs_do_folio_array_testing(fsi, env);
+		if (err)
+			goto finish_testing;
+
+		SSDFS_ERR("FOLIO ARRAY TESTING FINISHED\n");
+	}
+
+	if (test_types & SSDFS_ENABLE_DYNAMIC_ARRAY_TESTING) {
+		SSDFS_ERR("START DYNAMIC ARRAY TESTING...\n");
+
+		err = ssdfs_do_dynamic_array_testing(fsi, env);
+		if (err)
+			goto finish_testing;
+
+		SSDFS_ERR("DYNAMIC ARRAY TESTING FINISHED\n");
+	}
+
+finish_testing:
+	if (err)
+		SSDFS_ERR("TESTING FAILED\n");
+	else
+		SSDFS_ERR("TESTING FINISHED\n");
+
+	return err;
+}
+
+static
 int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 					 u64 logical_offset,
 					 u64 seg_id,
@@ -2528,11 +2795,25 @@ static
 int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 				       struct ssdfs_testing_environment *env)
 {
-	unsigned char table[SSDFS_MAX_NAME_LEN];
-	unsigned char name[SSDFS_MAX_NAME_LEN];
+	unsigned char *table = NULL;
+	unsigned char *name = NULL;
 	u64 name_hash;
 	u32 i;
 	int err = 0;
+
+	table = ssdfs_kzalloc(SSDFS_MAX_NAME_LEN, GFP_KERNEL | __GFP_ZERO);
+	if (!table) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate table buffer\n");
+		goto free_allocated_memory;
+	}
+
+	name = ssdfs_kzalloc(SSDFS_MAX_NAME_LEN, GFP_KERNEL | __GFP_ZERO);
+	if (!name) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate name buffer\n");
+		goto free_allocated_memory;
+	}
 
 	memset(table, 'a', SSDFS_MAX_NAME_LEN);
 
@@ -2547,8 +2828,9 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 					env->shared_dictionary.name_len,
 					SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
 		if (name_hash == U64_MAX) {
+			err = -ERANGE;
 			SSDFS_ERR("fail to generate name hash\n");
-			return -ERANGE;
+			goto free_allocated_memory;
 		}
 
 		err = ssdfs_shared_dict_save_name(fsi->shdictree,
@@ -2558,7 +2840,7 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("fail to store name: "
 				  "hash %llx, err %d\n",
 				  name_hash, err);
-			return err;
+			goto free_allocated_memory;
 		}
 	}
 
@@ -2575,8 +2857,9 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 					env->shared_dictionary.name_len,
 					SSDFS_DENTRY_INLINE_NAME_MAX_LEN);
 		if (name_hash == U64_MAX) {
+			err = -ERANGE;
 			SSDFS_ERR("fail to generate name hash\n");
-			return -ERANGE;
+			goto free_allocated_memory;
 		}
 
 		err = ssdfs_shared_dict_get_name(fsi->shdictree,
@@ -2586,11 +2869,18 @@ int ssdfs_do_shared_dictionary_testing(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("fail to get name: "
 				  "hash %llx, err %d\n",
 				  name_hash, err);
-			return err;
+			goto free_allocated_memory;
 		}
 	}
 
-	return 0;
+free_allocated_memory:
+	if (table)
+		ssdfs_kfree(table);
+
+	if (name)
+		ssdfs_kfree(name);
+
+	return err;
 }
 
 static
@@ -4157,6 +4447,16 @@ int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 	ssdfs_testing_mapping_init(&fsi->testing_pages,
 				   fsi->testing_inode);
 
+	if (env->subsystems & SSDFS_ENABLE_MEMORY_PRIMITIVES_TESTING) {
+		SSDFS_ERR("START MEMORY PRIMITIVES TESTING...\n");
+
+		err = ssdfs_do_memory_primitives_testing(fsi, env);
+		if (err)
+			goto free_inode;
+
+		SSDFS_ERR("MEMORY PRIMITIVES TESTING FINISHED\n");
+	}
+
 	if (env->subsystems & SSDFS_ENABLE_EXTENTS_TREE_TESTING) {
 		SSDFS_ERR("START EXTENTS TREE TESTING...\n");
 
@@ -4258,6 +4558,7 @@ int ssdfs_do_testing(struct ssdfs_fs_info *fsi,
 	}
 
 free_inode:
+	ssdfs_destroy_and_decrement_btree_of_inode(fsi->testing_inode);
 	iput(fsi->testing_inode);
 
 finish_testing:

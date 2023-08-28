@@ -220,11 +220,24 @@ void ssdfs_destroy_btree_of_inode(struct inode *inode)
 		ssdfs_destroy_inline_file_buffer(inode);
 		ii->inline_file = NULL;
 	}
+}
+
+void ssdfs_destroy_and_decrement_btree_of_inode(struct inode *inode)
+{
+	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu\n", inode->i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_destroy_btree_of_inode(inode);
 
 	if (inode->i_ino == SSDFS_SEG_BMAP_INO ||
-	    inode->i_ino == SSDFS_SEG_TREE_INO) {
+	    inode->i_ino == SSDFS_SEG_TREE_INO ||
+	    inode->i_ino == SSDFS_TESTING_INO) {
 		ssdfs_super_cache_leaks_decrement(ii);
-	}
+	} else
+		BUG();
 }
 
 static void ssdfs_i_callback(struct rcu_head *head)
@@ -239,10 +252,11 @@ static void ssdfs_i_callback(struct rcu_head *head)
 	ssdfs_destroy_btree_of_inode(inode);
 
 	if (inode->i_ino == SSDFS_SEG_BMAP_INO ||
-	    inode->i_ino == SSDFS_SEG_TREE_INO) {
+	    inode->i_ino == SSDFS_SEG_TREE_INO ||
+	    inode->i_ino == SSDFS_TESTING_INO) {
 		/*
 		 * Do nothing.
-		 * The ssdfs_destroy_btree_of_inode() did it already.
+		 * The ssdfs_destroy_and_decrement_btree_of_inode did it already.
 		 */
 	} else {
 		ssdfs_super_cache_leaks_decrement(ii);

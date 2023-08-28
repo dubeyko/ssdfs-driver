@@ -325,6 +325,8 @@ struct folio *ssdfs_folio_vector_allocate(struct ssdfs_folio_vector *array)
 		return ERR_PTR(err);
 	}
 
+	ssdfs_folio_get(folio);
+
 	/*
 	 * ssdfs_folio_vector_add() accounts folio
 	 */
@@ -425,6 +427,8 @@ void ssdfs_folio_vector_release(struct ssdfs_folio_vector *array)
 
 		if (!folio)
 			continue;
+
+		ssdfs_folio_put(folio);
 
 		ssdfs_folio_vector_free_folio(folio);
 		array->folios[i] = NULL;
