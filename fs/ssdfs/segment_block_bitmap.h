@@ -99,11 +99,9 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 					  u32 count, u32 *reserved_blks);
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 					struct ssdfs_peb_container *pebc,
-					u32 *len,
 					struct ssdfs_block_bmap_range *range);
 int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 				    struct ssdfs_peb_container *pebc,
-				    u32 *len,
 				    struct ssdfs_block_bmap_range *range);
 int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *ptr,
 				    struct ssdfs_peb_container *pebc,

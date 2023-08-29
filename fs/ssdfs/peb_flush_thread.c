@@ -5804,15 +5804,16 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 
 	len = (written_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
 
+	range.start = logical_block;
+	range.len = len;
+
 	if (!is_ssdfs_block_full(fsi->pagesize, written_bytes)) {
 		err = ssdfs_segment_blk_bmap_pre_allocate(&si->blk_bmap,
 							  pebi->pebc,
-							  &len,
 							  &range);
 	} else {
 		err = ssdfs_segment_blk_bmap_allocate(&si->blk_bmap,
 							pebi->pebc,
-							&len,
 							&range);
 	}
 
@@ -6115,9 +6116,11 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 	len -= req->result.processed_blks * si->fsi->pagesize;
 	len >>= fsi->log_pagesize;
 
+	range.start = logical_block;
+	range.len = len;
+
 	err = ssdfs_segment_blk_bmap_pre_allocate(&si->blk_bmap,
 						  pebi->pebc,
-						  &len,
 						  &range);
 	if (err == -ENOSPC) {
 		SSDFS_DBG("block bitmap hasn't free space\n");
@@ -9383,7 +9386,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	size_t allocation_size = 0;
 	u32 frag_hdr_off;
 	struct ssdfs_pagevec_descriptor pvec_desc;
-	u32 pages_per_peb;
+	u32 pages_per_seg;
 	struct page *page;
 	pgoff_t index;
 	u32 page_off;
@@ -9487,11 +9490,11 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	frag_hdr->flags = desc->flags;
 	frag_hdr->type = desc->type;
 
-	pages_per_peb = fsi->pages_per_peb;
+	pages_per_seg = fsi->pages_per_seg;
 
-	if (desc->last_free_blk >= pages_per_peb) {
-		SSDFS_ERR("last_free_page %u >= pages_per_peb %u\n",
-			  desc->last_free_blk, pages_per_peb);
+	if (desc->last_free_blk >= pages_per_seg) {
+		SSDFS_ERR("last_free_page %u >= pages_per_seg %u\n",
+			  desc->last_free_blk, pages_per_seg);
 		err = -ERANGE;
 		goto fail_store_bmap_fragment;
 	}
@@ -12160,6 +12163,7 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_metadata_descriptor *cur_hdr_desc;
+	struct ssdfs_blk2off_table *table;
 	int area_type;
 	int err = 0;
 
@@ -12204,6 +12208,25 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 	cur_hdr_desc = &hdr_desc[SSDFS_OFF_TABLE_INDEX];
 	err = ssdfs_peb_store_offsets_table(pebi, cur_hdr_desc,
 					    log_offset);
+	if (err == -EAGAIN) {
+		struct completion *end;
+
+		table = pebi->pebc->parent_si->blk2off_table;
+		end = &table->full_init_end;
+
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
+			SSDFS_ERR("blk2off init failed: "
+				  "seg_id %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
+			goto finish_commit_payload;
+		}
+
+		err = ssdfs_peb_store_offsets_table(pebi, cur_hdr_desc,
+						    log_offset);
+	}
+
 	if (unlikely(err)) {
 		SSDFS_CRIT("fail to store offsets table: "
 			   "seg %llu, peb %llu, cur_page %lu, write_offset %u, "
@@ -13950,7 +13973,10 @@ int ssdfs_peb_remain_log_creation_thread(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (peb_free_pages == 0) {
-		SSDFS_DBG("PEB hasn't free space\n");
+		SSDFS_DBG("PEB hasn't free space: "
+			  "seg %llu, peb_index %d\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
 		return -ENOSPC;
 	}
 
@@ -14010,7 +14036,10 @@ int ssdfs_peb_delegate_log_creation_role(struct ssdfs_peb_container *pebc,
 	if (found_peb_index == pebc->peb_index) {
 		err = ssdfs_peb_remain_log_creation_thread(pebc);
 		if (err == -ENOSPC) {
-			SSDFS_WARN("PEB hasn't free space\n");
+			SSDFS_DBG("PEB hasn't free space: "
+				  "seg %llu, peb_index %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remain log creation thread: "
@@ -14087,7 +14116,7 @@ int ssdfs_peb_find_next_log_creation_thread(struct ssdfs_peb_container *pebc)
 	struct ssdfs_segment_info *si;
 	int start_pos;
 	int i;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
@@ -14112,8 +14141,11 @@ int ssdfs_peb_find_next_log_creation_thread(struct ssdfs_peb_container *pebc)
 	if (start_pos == pebc->peb_index) {
 		err = ssdfs_peb_remain_log_creation_thread(pebc);
 		if (err == -ENOSPC) {
-			SSDFS_DBG("PEB hasn't free space\n");
-			return 0;
+			SSDFS_DBG("PEB hasn't free space: "
+				  "seg %llu, peb_index %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
+			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to remain log creation thread: "
 				  "seg %llu, peb_index %d, "
@@ -14132,7 +14164,10 @@ int ssdfs_peb_find_next_log_creation_thread(struct ssdfs_peb_container *pebc)
 		if (err == -EAGAIN)
 			continue;
 		else if (err == -ENOSPC) {
-			SSDFS_WARN("PEB hasn't free space\n");
+			SSDFS_DBG("PEB hasn't free space: "
+				  "seg %llu, peb_index %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to delegate log creation role: "
@@ -14152,8 +14187,11 @@ search_from_begin:
 		err = ssdfs_peb_delegate_log_creation_role(pebc, i);
 		if (err == -EAGAIN)
 			continue;
-		if (err == -ENOSPC) {
-			SSDFS_WARN("PEB hasn't free space\n");
+		else if (err == -ENOSPC) {
+			SSDFS_DBG("PEB hasn't free space: "
+				  "seg %llu, peb_index %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index);
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to delegate log creation role: "
@@ -14166,10 +14204,19 @@ search_from_begin:
 			return 0;
 	}
 
-	SSDFS_ERR("fail to delegate log creation role: "
-		  "seg %llu, peb_index %d\n",
-		  si->seg_id, pebc->peb_index);
-	return -ERANGE;
+	if (err == -EAGAIN) {
+		err = -ENOSPC;
+		SSDFS_DBG("unable to delegate log creation role: "
+			  "seg %llu, peb_index %d\n",
+			  si->seg_id, pebc->peb_index);
+	} else {
+		err = -ERANGE;
+		SSDFS_ERR("fail to delegate log creation role: "
+			  "seg %llu, peb_index %d\n",
+			  si->seg_id, pebc->peb_index);
+	}
+
+	return err;
 }
 
 /*
@@ -16199,6 +16246,7 @@ int ssdfs_process_get_create_request_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!have_flush_requests(pebc)) {
+		SSDFS_DBG("empty create queue\n");
 		thread_state->state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 		return -ENOENT;
 	}
@@ -18254,7 +18302,15 @@ int ssdfs_process_delegate_create_role_state(struct ssdfs_peb_container *pebc)
 	}
 
 	err = ssdfs_peb_find_next_log_creation_thread(pebc);
-	if (unlikely(err)) {
+	if (err == -ENOSPC) {
+		err = 0;
+		SSDFS_DBG("unable to delegate log creation role: "
+			   "seg %llu, peb_index %u, err %d\n",
+			   pebc->parent_si->seg_id,
+			   pebc->peb_index, err);
+		thread_state->state =
+			SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+	} else if (unlikely(err)) {
 		SSDFS_WARN("fail to delegate log creation role: "
 			   "seg %llu, peb_index %u, err %d\n",
 			   pebc->parent_si->seg_id,

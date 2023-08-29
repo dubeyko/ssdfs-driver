@@ -130,11 +130,9 @@ int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 				      u32 count);
 int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				    int bmap_index,
-				    u32 *len,
 				    struct ssdfs_block_bmap_range *range);
 int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				int bmap_index,
-				u32 *len,
 				struct ssdfs_block_bmap_range *range);
 int ssdfs_peb_blk_bmap_invalidate(struct ssdfs_peb_blk_bmap *bmap,
 				  int bmap_index,

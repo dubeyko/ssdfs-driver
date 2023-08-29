@@ -116,20 +116,20 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 	bmap = &parent->peb[peb_index];
 	atomic_set(&bmap->state, SSDFS_PEB_BLK_BMAP_STATE_UNKNOWN);
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("seg_id %llu, peb_index %u\n",
-		  si->seg_id, bmap->peb_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (items_count > parent->pages_per_peb) {
-		SSDFS_ERR("items_count %u > pages_per_peb %u\n",
-			  items_count, parent->pages_per_peb);
+	if (items_count > parent->pages_per_seg) {
+		SSDFS_ERR("items_count %u > pages_per_seg %u\n",
+			  items_count, parent->pages_per_seg);
 		return -ERANGE;
 	}
 
 	bmap->parent = parent;
 	bmap->peb_index = peb_index;
 	bmap->pages_per_peb = parent->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, peb_index %u\n",
+		  si->seg_id, bmap->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	init_rwsem(&bmap->modification_lock);
 	atomic_set(&bmap->peb_valid_blks, 0);
@@ -142,7 +142,8 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 
 	err = ssdfs_block_bmap_create(fsi,
 				      &bmap->buffer[SSDFS_PEB_BLK_BMAP1],
-				      items_count, init_flag, init_state);
+				      items_count, bmap->pages_per_peb,
+				      init_flag, init_state);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create source block bitmap: "
 			  "peb_index %u, items_count %u, "
@@ -154,7 +155,7 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 
 	err = ssdfs_block_bmap_create(fsi,
 				      &bmap->buffer[SSDFS_PEB_BLK_BMAP2],
-				      items_count,
+				      items_count, bmap->pages_per_peb,
 				      SSDFS_BLK_BMAP_CREATE,
 				      SSDFS_BLK_FREE);
 	if (unlikely(err)) {
@@ -165,8 +166,8 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 	}
 
 	if (init_flag == SSDFS_BLK_BMAP_CREATE) {
-		atomic_set(&bmap->peb_free_blks, items_count);
-		atomic_add(items_count, &parent->seg_free_blks);
+		atomic_set(&bmap->peb_free_blks, fsi->pages_per_peb);
+		atomic_add(fsi->pages_per_peb, &parent->seg_free_blks);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -970,20 +971,24 @@ init_failed:
 				  bmap->parent->parent_si->seg_id,
 				  bmap->peb_index, err);
 			SSDFS_ERR("seg_id %llu, free_logical_blks %u, "
-					  "valid_logical_blks %u, "
-					  "invalid_logical_blks %u, pages_per_peb %u\n",
-					  bmap->parent->parent_si->seg_id,
-					  atomic_read(&bmap->peb_free_blks),
-					  atomic_read(&bmap->peb_valid_blks),
-					  atomic_read(&bmap->peb_invalid_blks),
-					  bmap->pages_per_peb);
+				  "valid_logical_blks %u, "
+				  "invalid_logical_blks %u, "
+				  "pages_per_peb %u\n",
+				  bmap->parent->parent_si->seg_id,
+				  atomic_read(&bmap->peb_free_blks),
+				  atomic_read(&bmap->peb_valid_blks),
+				  atomic_read(&bmap->peb_invalid_blks),
+				  bmap->pages_per_peb);
 
 			if (bmap->src) {
-				SSDFS_ERR("SRC BLOCK BITMAP: bytes_count %zu, items_count %zu, "
-					  "metadata_items %u, used_blks %u, invalid_blks %u, "
-					  "flags %#x\n",
+				SSDFS_ERR("SRC BLOCK BITMAP: bytes_count %zu, "
+					  "items_capacity %zu, "
+					  "allocation_pool %zu,"
+					  "metadata_items %u, used_blks %u, "
+					  "invalid_blks %u, flags %#x\n",
 					  bmap->src->bytes_count,
-					  bmap->src->items_count,
+					  bmap->src->items_capacity,
+					  bmap->src->allocation_pool,
 					  bmap->src->metadata_items,
 					  bmap->src->used_blks,
 					  bmap->src->invalid_blks,
@@ -991,11 +996,14 @@ init_failed:
 			}
 
 			if (bmap->dst) {
-				SSDFS_ERR("DST BLOCK BITMAP: bytes_count %zu, items_count %zu, "
-					  "metadata_items %u, used_blks %u, invalid_blks %u, "
-					  "flags %#x\n",
+				SSDFS_ERR("DST BLOCK BITMAP: bytes_count %zu, "
+					  "items_capacity %zu, "
+					  "allocation_pool %zu, "
+					  "metadata_items %u, used_blks %u, "
+					  "invalid_blks %u, flags %#x\n",
 					  bmap->dst->bytes_count,
-					  bmap->dst->items_count,
+					  bmap->dst->items_capacity,
+					  bmap->dst->allocation_pool,
 					  bmap->dst->metadata_items,
 					  bmap->dst->used_blks,
 					  bmap->dst->invalid_blks,
@@ -2002,7 +2010,6 @@ finish_free_metapages:
  * ssdfs_peb_blk_bmap_pre_allocate() - pre-allocate a range of blocks
  * @bmap: PEB's block bitmap object
  * @bmap_index: source or destination block bitmap?
- * @len: pointer on variable with requested length of range
  * @range: pointer on blocks' range [in | out]
  *
  * This function tries to find contiguous range of free blocks and
@@ -2016,22 +2023,20 @@ finish_free_metapages:
  */
 int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				    int bmap_index,
-				    u32 *len,
 				    struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_block_bmap *cur_bmap = NULL;
 	bool is_migrating = false;
-	int src_used_blks = 0;
-	int src_invalid_blks = 0;
+	int range_state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !range || !bmap->src);
 
-	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
-		  bmap, bmap_index, len);
+	SSDFS_DBG("bmap %p, bmap_index %u\n",
+		  bmap, bmap_index);
 	SSDFS_DBG("seg %llu, free_logical_blks %u, valid_logical_blks %u, "
 		  "invalid_logical_blks %u, pages_per_peb %u\n",
 		  bmap->parent->parent_si->seg_id,
@@ -2109,35 +2114,6 @@ init_failed:
 			goto finish_pre_allocate;
 		}
 
-		err = ssdfs_block_bmap_lock(cur_bmap);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to lock block bitmap: err %d\n",
-				  err);
-			goto finish_pre_allocate;
-		}
-
-		src_used_blks = ssdfs_block_bmap_get_used_pages(cur_bmap);
-		if (src_used_blks < 0) {
-			err = src_used_blks;
-			SSDFS_ERR("fail to get SRC used blocks: err %d\n",
-				  err);
-			goto finish_check_src_bmap;
-		}
-
-		src_invalid_blks = ssdfs_block_bmap_get_invalid_pages(cur_bmap);
-		if (src_invalid_blks < 0) {
-			err = src_invalid_blks;
-			SSDFS_ERR("fail to get SRC invalid blocks: err %d\n",
-				  err);
-			goto finish_check_src_bmap;
-		}
-
-finish_check_src_bmap:
-		ssdfs_block_bmap_unlock(cur_bmap);
-
-		if (unlikely(err))
-			goto finish_pre_allocate;
-
 		cur_bmap = bmap->dst;
 	} else
 		cur_bmap = NULL;
@@ -2154,53 +2130,48 @@ finish_check_src_bmap:
 		goto finish_pre_allocate;
 	}
 
-	if (is_migrating) {
-		int start_blk = src_used_blks + src_invalid_blks;
+	range_state = ssdfs_get_range_state(cur_bmap, range);
 
-		start_blk = max_t(int, start_blk,
-				  atomic_read(&bmap->peb_valid_blks));
+	if (range_state < 0) {
+		err = range_state;
+		SSDFS_ERR("fail to get range "
+			  "(start %u, len %u) state: err %d\n",
+			  range->start, range->len, range_state);
+		goto finish_pre_allocate;
+	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("src_used_blks %d, src_invalid_blks %d, "
-			  "valid_blks %d, start_blk %d\n",
-			  src_used_blks, src_invalid_blks,
-			  atomic_read(&bmap->peb_valid_blks),
-			  start_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_block_bmap_pre_allocate(cur_bmap, start_blk,
-						    len, range);
-	} else
-		err = ssdfs_block_bmap_pre_allocate(cur_bmap, 0, len, range);
-
+	err = ssdfs_block_bmap_pre_allocate(cur_bmap, range->start,
+					    NULL, range);
 	ssdfs_block_bmap_unlock(cur_bmap);
 
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to pre-allocate blocks: "
-			  "len %u, err %d\n",
-			  *len, err);
+			  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_pre_allocate;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to pre-allocate blocks: "
-			  "len %u, err %d\n",
-			  *len, err);
+			  "err %d\n", err);
 		goto finish_pre_allocate;
 	}
 
 	if (!is_migrating) {
-		if (range->len > atomic_read(&bmap->peb_free_blks)) {
-			err = -ERANGE;
-			SSDFS_ERR("range %u > free_logical_blks %d\n",
-				  range->len,
-				  atomic_read(&bmap->peb_free_blks));
-			goto finish_pre_allocate;
-		}
+		if (range_state == SSDFS_BLK_INVALID ||
+		    range_state == SSDFS_BLK_FREE) {
+			if (range->len > atomic_read(&bmap->peb_free_blks)) {
+				err = -ERANGE;
+				SSDFS_ERR("range %u > free_logical_blks %d\n",
+					  range->len,
+					  atomic_read(&bmap->peb_free_blks));
+				goto finish_pre_allocate;
+			}
 
-		atomic_sub(range->len, &bmap->peb_free_blks);
-		atomic_add(range->len, &bmap->peb_valid_blks);
-		atomic_add(range->len, &bmap->parent->seg_valid_blks);
+			atomic_sub(range->len, &bmap->peb_free_blks);
+			atomic_add(range->len, &bmap->peb_valid_blks);
+			atomic_add(range->len, &bmap->parent->seg_valid_blks);
+		} else
+			BUG();
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2303,7 +2274,6 @@ finish_pre_allocate:
  * ssdfs_peb_blk_bmap_allocate() - allocate a range of blocks
  * @bmap: PEB's block bitmap object
  * @bmap_index: source or destination block bitmap?
- * @len: pointer on variable with requested length of range
  * @range: pointer on blocks' range [in | out]
  *
  * This function tries to find contiguous range of free blocks and
@@ -2317,22 +2287,20 @@ finish_pre_allocate:
  */
 int ssdfs_peb_blk_bmap_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				int bmap_index,
-				u32 *len,
 				struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_segment_info *si;
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_block_bmap *cur_bmap = NULL;
 	bool is_migrating = false;
-	int src_used_blks = 0;
-	int src_invalid_blks = 0;
+	int range_state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !range || !bmap->src);
 
-	SSDFS_DBG("bmap %p, bmap_index %u, len %p\n",
-		  bmap, bmap_index, len);
+	SSDFS_DBG("bmap %p, bmap_index %u\n",
+		  bmap, bmap_index);
 	SSDFS_DBG("seg %llu, free_logical_blks %u, valid_logical_blks %u, "
 		  "invalid_logical_blks %u, pages_per_peb %u\n",
 		  bmap->parent->parent_si->seg_id,
@@ -2410,35 +2378,6 @@ init_failed:
 			goto finish_allocate;
 		}
 
-		err = ssdfs_block_bmap_lock(cur_bmap);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to lock block bitmap: err %d\n",
-				  err);
-			goto finish_allocate;
-		}
-
-		src_used_blks = ssdfs_block_bmap_get_used_pages(cur_bmap);
-		if (src_used_blks < 0) {
-			err = src_used_blks;
-			SSDFS_ERR("fail to get SRC used blocks: err %d\n",
-				  err);
-			goto finish_check_src_bmap;
-		}
-
-		src_invalid_blks = ssdfs_block_bmap_get_invalid_pages(cur_bmap);
-		if (src_invalid_blks < 0) {
-			err = src_invalid_blks;
-			SSDFS_ERR("fail to get SRC invalid blocks: err %d\n",
-				  err);
-			goto finish_check_src_bmap;
-		}
-
-finish_check_src_bmap:
-		ssdfs_block_bmap_unlock(cur_bmap);
-
-		if (unlikely(err))
-			goto finish_allocate;
-
 		cur_bmap = bmap->dst;
 	} else
 		cur_bmap = NULL;
@@ -2455,53 +2394,53 @@ finish_check_src_bmap:
 		goto finish_allocate;
 	}
 
-	if (is_migrating) {
-		int start_blk = src_used_blks + src_invalid_blks;
+	range_state = ssdfs_get_range_state(cur_bmap, range);
 
-		start_blk = max_t(int, start_blk,
-				  atomic_read(&bmap->peb_valid_blks));
+	if (range_state < 0) {
+		err = range_state;
+		SSDFS_ERR("fail to get range "
+			  "(start %u, len %u) state: err %d\n",
+			  range->start, range->len, range_state);
+		goto finish_allocate;
+	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("src_used_blks %d, src_invalid_blks %d, "
-			  "valid_blks %d, start_blk %d\n",
-			  src_used_blks, src_invalid_blks,
-			  atomic_read(&bmap->peb_valid_blks),
-			  start_blk);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_block_bmap_allocate(cur_bmap, start_blk,
-						len, range);
-	} else
-		err = ssdfs_block_bmap_allocate(cur_bmap, 0, len, range);
-
+	err = ssdfs_block_bmap_allocate(cur_bmap, range->start,
+					NULL, range);
 	ssdfs_block_bmap_unlock(cur_bmap);
 
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to allocate blocks: "
-			  "len %u, err %d\n",
-			  *len, err);
+			  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_allocate;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate blocks: "
-			  "len %u, err %d\n",
-			  *len, err);
+			  "err %d\n", err);
 		goto finish_allocate;
 	}
 
 	if (!is_migrating) {
-		if (range->len > atomic_read(&bmap->peb_free_blks)) {
-			err = -ERANGE;
-			SSDFS_ERR("range %u > free_logical_blks %d\n",
-				  range->len,
-				  atomic_read(&bmap->peb_free_blks));
-			goto finish_allocate;
-		}
+		if (range_state == SSDFS_BLK_INVALID ||
+		    range_state == SSDFS_BLK_FREE) {
+			if (range->len > atomic_read(&bmap->peb_free_blks)) {
+				err = -ERANGE;
+				SSDFS_ERR("range %u > free_logical_blks %d\n",
+					  range->len,
+					  atomic_read(&bmap->peb_free_blks));
+				goto finish_allocate;
+			}
 
-		atomic_sub(range->len, &bmap->peb_free_blks);
-		atomic_add(range->len, &bmap->peb_valid_blks);
-		atomic_add(range->len, &bmap->parent->seg_valid_blks);
+			atomic_sub(range->len, &bmap->peb_free_blks);
+			atomic_add(range->len, &bmap->peb_valid_blks);
+			atomic_add(range->len, &bmap->parent->seg_valid_blks);
+		} else if (range_state == SSDFS_BLK_PRE_ALLOCATED) {
+			/*
+			 * Do nothing. Pre-allocated blocks were
+			 * already accounted as valid blocks.
+			 */
+		} else
+			BUG();
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG

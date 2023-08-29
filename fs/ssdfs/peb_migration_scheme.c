@@ -826,7 +826,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range = {0, 0};
-	u32 pages_per_peb;
+	u32 pages_per_seg;
 	int used_pages;
 	int err = 0;
 
@@ -877,7 +877,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	si = pebc->parent_si;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
-	pages_per_peb = si->fsi->pages_per_peb;
+	pages_per_seg = si->fsi->pages_per_seg;
 
 	switch (atomic_read(&pebc->migration_state)) {
 	case SSDFS_PEB_UNDER_MIGRATION:
@@ -927,7 +927,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 	if (used_pages > 0) {
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							 0, pages_per_peb,
+							 0, pages_per_seg,
 							 blk_type,
 							 &range);
 
@@ -1025,7 +1025,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int used_pages;
-	u32 pages_per_peb;
+	u32 pages_per_seg;
 	int old_migration_state;
 	bool is_peb_exhausted = false;
 	int err = 0;
@@ -1052,9 +1052,9 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 
 	si = pebc->parent_si;
 	fsi = pebc->parent_si->fsi;
-	pages_per_peb = fsi->pages_per_peb;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+	pages_per_seg = fsi->pages_per_seg;
 
 	mutex_lock(&pebc->migration_lock);
 
@@ -1160,7 +1160,7 @@ try_finish_migration_now:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							 0, pages_per_peb,
+							 0, pages_per_seg,
 							 SSDFS_BLK_VALID,
 							 &range1);
 
@@ -1180,7 +1180,7 @@ try_finish_migration_now:
 		}
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							0, pages_per_peb,
+							0, pages_per_seg,
 							SSDFS_BLK_PRE_ALLOCATED,
 							&range2);
 

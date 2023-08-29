@@ -8842,11 +8842,12 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 	last_free_blk = le16_to_cpu(frag_hdr->last_free_blk);
 
-	if (last_free_blk >= fsi->pages_per_peb) {
+	if (last_free_blk >= fsi->pages_per_seg) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 				"block bitmap is corrupted: "
-				"last_free_blk %u is invalid\n",
-				last_free_blk);
+				"last_free_blk %u, pages_per_seg %u\n",
+				last_free_blk,
+				fsi->pages_per_seg);
 		err = -EIO;
 		goto fail_read_blk_bmap;
 	}

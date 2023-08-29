@@ -2364,7 +2364,7 @@ int ssdfs_segment_allocate_data_extent(struct ssdfs_current_segment *cur_seg,
 							  extent);
 		if (err == -EAGAIN) {
 			struct completion *end;
-			end = &table->partial_init_end;
+			end = &table->full_init_end;
 
 			err = SSDFS_WAIT_COMPLETION(end);
 			if (unlikely(err)) {
@@ -2431,7 +2431,7 @@ int ssdfs_segment_allocate_data_extent(struct ssdfs_current_segment *cur_seg,
 							  extent);
 		if (err == -EAGAIN) {
 			struct completion *end;
-			end = &table->partial_init_end;
+			end = &table->full_init_end;
 
 			err = SSDFS_WAIT_COMPLETION(end);
 			if (unlikely(err)) {
@@ -3043,7 +3043,7 @@ add_new_current_segment:
 			err = ssdfs_blk2off_table_allocate_block(table, &blk);
 			if (err == -EAGAIN) {
 				struct completion *end;
-				end = &table->partial_init_end;
+				end = &table->full_init_end;
 
 				err = SSDFS_WAIT_COMPLETION(end);
 				if (unlikely(err)) {
@@ -4264,7 +4264,7 @@ add_new_current_segment:
 								  extent);
 			if (err == -EAGAIN) {
 				struct completion *end;
-				end = &table->partial_init_end;
+				end = &table->full_init_end;
 
 				err = SSDFS_WAIT_COMPLETION(end);
 				if (unlikely(err)) {

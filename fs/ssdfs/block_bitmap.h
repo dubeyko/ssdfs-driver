@@ -62,8 +62,8 @@ enum {
 })
 
 #define BLK_BMAP_BYTES(items_count) \
-	((items_count + SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS) - 1)  / \
-	 SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS))
+	(((items_count + SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS) - 1)  / \
+	 SSDFS_ITEMS_PER_LONG(SSDFS_BLK_STATE_BITS)) * sizeof(unsigned long))
 
 static inline
 int SSDFS_BLK2FOLIO(u32 blk, u8 item_bits, u16 *offset)
@@ -176,7 +176,8 @@ enum {
  * @flags: block bitmap state flags
  * @storage: block bitmap's storage
  * @bytes_count: block bitmap size in bytes
- * @items_count: items count in bitmap
+ * @items_capacity: total available items in bitmap
+ * @allocation_pool: number of items available for allocation
  * @metadata_items: count of metadata items
  * @used_blks: count of valid blocks
  * @invalid_blks: count of invalid blocks
@@ -187,7 +188,8 @@ struct ssdfs_block_bmap {
 	atomic_t flags;
 	struct ssdfs_block_bmap_storage storage;
 	size_t bytes_count;
-	size_t items_count;
+	size_t items_capacity;
+	size_t allocation_pool;
 	u32 metadata_items;
 	u32 used_blks;
 	u32 invalid_blks;
@@ -274,7 +276,8 @@ enum {
 /* Function prototypes */
 int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_block_bmap *bmap,
-			    u32 items_count,
+			    u32 items_capacity,
+			    u32 allocation_pool,
 			    int flag, int init_state);
 void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,

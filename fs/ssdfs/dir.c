@@ -1786,6 +1786,8 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		}
 
 		if (!dir_emit_dot(file, ctx)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to emit dentry\n");
 			goto out;
 		}
 
@@ -1800,6 +1802,8 @@ static int ssdfs_readdir(struct file *file, struct dir_context *ctx)
 		}
 
 		if (!dir_emit_dotdot(file, ctx)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to emit dentry\n");
 			goto out;
 		}
 

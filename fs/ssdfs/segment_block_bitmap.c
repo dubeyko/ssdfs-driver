@@ -186,7 +186,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 	}
 
 	for (i = 0; i < bmap->pebs_count; i++) {
-		err = ssdfs_peb_blk_bmap_create(bmap, i, fsi->pages_per_peb,
+		err = ssdfs_peb_blk_bmap_create(bmap, i, fsi->pages_per_seg,
 						init_flag, init_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create PEB's block bitmap: "
@@ -914,7 +914,6 @@ int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
  * ssdfs_segment_blk_bmap_pre_allocate() - pre-allocate range of blocks
  * @ptr: segment block bitmap object
  * @pebc: pointer on PEB container
- * @len: pointer on variable with requested length of range
  * @range: pointer on blocks' range [in | out]
  *
  * This function tries to find contiguous range of free blocks and
@@ -928,7 +927,6 @@ int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
  */
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 					struct ssdfs_peb_container *pebc,
-					u32 *len,
 					struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -974,15 +972,13 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 
 	peb_blkbmap = &ptr->peb[peb_index];
 
-	return ssdfs_peb_blk_bmap_pre_allocate(peb_blkbmap, bmap_index,
-						len, range);
+	return ssdfs_peb_blk_bmap_pre_allocate(peb_blkbmap, bmap_index, range);
 }
 
 /*
  * ssdfs_segment_blk_bmap_allocate() - allocate range of blocks
  * @ptr: segment block bitmap object
  * @pebc: pointer on PEB container
- * @len: pointer on variable with requested length of range
  * @range: pointer on blocks' range [in | out]
  *
  * This function tries to find contiguous range of free blocks and
@@ -996,7 +992,6 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
  */
 int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 				    struct ssdfs_peb_container *pebc,
-				    u32 *len,
 				    struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -1042,8 +1037,7 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 
 	peb_blkbmap = &ptr->peb[peb_index];
 
-	return ssdfs_peb_blk_bmap_allocate(peb_blkbmap, bmap_index,
-					   len, range);
+	return ssdfs_peb_blk_bmap_allocate(peb_blkbmap, bmap_index, range);
 }
 
 /*
@@ -1449,12 +1443,10 @@ finish_define_bmap_index:
 		if (range_state == SSDFS_BLK_PRE_ALLOCATED) {
 			err = ssdfs_peb_blk_bmap_pre_allocate(dst_blkbmap,
 							      bmap_index,
-							      NULL,
 							      range);
 		} else {
 			err = ssdfs_peb_blk_bmap_allocate(dst_blkbmap,
 							  bmap_index,
-							  NULL,
 							  range);
 		}
 

@@ -1446,6 +1446,7 @@ int ssdfs_do_block_bitmap_testing(struct ssdfs_fs_info *fsi,
 
 	err = ssdfs_block_bmap_create(fsi, &bmap,
 				      env->block_bitmap.capacity,
+				      env->block_bitmap.capacity,
 				      SSDFS_BLK_BMAP_CREATE,
 				      SSDFS_BLK_FREE);
 	if (err) {
