@@ -2302,6 +2302,15 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 		ssdfs_set_block_bmap_initialized(peb_blkbmap->src);
 		atomic_set(&peb_blkbmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
 
+		err = ssdfs_blk2off_table_partial_clean_init(si->blk2off_table,
+							     peb_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to initialize blk2off table: "
+				  "seg %llu, peb_index %u, err %d\n",
+				  si->seg_id, peb_index, err);
+			goto fail_init_peb_container;
+		}
+
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("can't map LEB to PEB: "
 			  "seg %llu, peb_index %u, "

@@ -2880,7 +2880,7 @@ int ssdfs_define_peb_table_state(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	processed_blks = bitmap_weight(portion->processed_blks_bmap,
-					portion->total_blks_in_extents);
+					portion->capacity);
 
 	if (processed_blks != portion->initialized_blks) {
 		SSDFS_ERR("invalid state: peb_index %u, "
