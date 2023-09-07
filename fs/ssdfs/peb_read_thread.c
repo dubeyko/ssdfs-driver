@@ -4948,6 +4948,10 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 		  fsi->pagesize, offset, zone_wp);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	/*
+	 * Read the very first header with the goal
+	 * to extract full log pages count.
+	 */
 	err = ssdfs_peb_read_log_header(fsi, pebi, (u32)cur_page,
 					&log_pages, &log_bytes);
 	if (err == -ENODATA)
@@ -4978,19 +4982,39 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 	BUG_ON(cur_page >= U32_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	/*
+	 * Try to read header of last full log.
+	 */
 	if (cur_page > full_log_pages) {
 		cur_page /= full_log_pages;
 		cur_page *= full_log_pages;
 
 		err = ssdfs_peb_read_log_header(fsi, pebi, cur_page,
 						&log_pages, &log_bytes);
+		if (err == -ENODATA) {
+			SSDFS_DBG("try previous full log's header: "
+				  "valid header is not detected: "
+				  "cur_page %llu\n",
+				  cur_page);
+
+			if (cur_page > full_log_pages) {
+				cur_page -= full_log_pages;
+
+				err = ssdfs_peb_read_log_header(fsi, pebi,
+								cur_page,
+								&log_pages,
+								&log_bytes);
+			}
+		}
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read log header: "
 				  "seg %llu, peb %llu, cur_page %llu, "
-				  "err %d\n",
+				  "full_log_pages %u, err %d\n",
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id,
 				  cur_page,
+				  full_log_pages,
 				  err);
 			return err;
 		}
@@ -5009,17 +5033,6 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 			  pebi->pebc->peb_index,
 			  log_bytes);
 		return -ERANGE;
-	}
-
-	if (full_log_pages <= (log_bytes >> fsi->log_pagesize)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("log is full: "
-			  "log_bytes %u, full_log_pages %u, "
-			  "pagesize %u\n",
-			  log_bytes, full_log_pages,
-			  fsi->pagesize);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
 	}
 
 	low_page = cur_page;
@@ -9294,6 +9307,7 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 	u16 fragments_count;
 	u32 bytes_count;
 	u16 new_log_start_page;
+	u32 default_threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
 	u64 cno;
 	int sequence_id = 0;
 	int i;
@@ -9445,7 +9459,8 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 		if (free_pages == pebi->log_pages) {
 			/* start new full log */
 			sequence_id = 0;
-		} else if (free_pages < min_log_pages) {
+		} else if (free_pages < min_log_pages &&
+			   free_pages < default_threshold) {
 			SSDFS_WARN("POTENTIAL HOLE: "
 				   "seg %llu, peb %llu, "
 				   "peb_index %u, start_page %u, "

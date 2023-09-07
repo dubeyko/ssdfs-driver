@@ -422,7 +422,7 @@ int ssdfs_readpage_nolock(struct file *file, struct page *page,
 		return 0;
 	}
 
-	if (is_ssdfs_file_inline(ii)) {
+	if (can_file_be_inline(inode, i_size_read(inode))) {
 		size_t inline_capacity =
 				ssdfs_inode_inline_file_capacity(inode);
 

@@ -634,6 +634,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 					  i, err);
 				return err;
 			}
+
+			ssdfs_block_bmap_forget_folio(folio);
 		}
 
 		ssdfs_page_vector_release(source);
