@@ -703,6 +703,12 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
 		  ptr->parent_si->seg_id,
 		  pebc->peb_index, count);
+	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
+		  ptr->pages_per_seg);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {

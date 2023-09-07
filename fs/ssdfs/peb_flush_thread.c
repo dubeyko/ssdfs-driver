@@ -1422,6 +1422,11 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		metadata_pages = phys_pages;
 
 	if (metadata_pages > 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("metadata_pages %u\n",
+			  metadata_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_segment_blk_bmap_reserve_metapages(&si->blk_bmap,
 								pebi->pebc,
 								metadata_pages);

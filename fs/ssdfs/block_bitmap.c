@@ -4895,13 +4895,16 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (state == SSDFS_BLK_INVALID) {
-		if (range->len > blk_bmap->invalid_blks) {
-			SSDFS_ERR("range->len %u > invalid_blks %u\n",
-				  range->len, blk_bmap->invalid_blks);
+		if (blk_bmap->invalid_blks == 0) {
+			SSDFS_ERR("invalid request: invalid_blks %u\n",
+				  blk_bmap->invalid_blks);
 			return -ERANGE;
 		}
 
-		blk_bmap->invalid_blks -= range->len;
+		if (range->len > blk_bmap->invalid_blks)
+			blk_bmap->invalid_blks = 0;
+		else
+			blk_bmap->invalid_blks -= range->len;
 	}
 
 	err = ssdfs_block_bmap_set_range(blk_bmap, range,
@@ -5080,6 +5083,12 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 			SSDFS_ERR("range (start %u, len %u), state %#x, "
 				  "can't be allocated\n",
 				  range->start, range->len, state);
+			SSDFS_ERR("allocation_pool %zu, used_blks %u, "
+				  "metadata_items %u, invalid_blks %u\n",
+				  blk_bmap->allocation_pool,
+				  blk_bmap->used_blks,
+				  blk_bmap->metadata_items,
+				  blk_bmap->invalid_blks);
 			return -EINVAL;
 		}
 	}
@@ -5108,13 +5117,16 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (state == SSDFS_BLK_INVALID) {
-		if (range->len > blk_bmap->invalid_blks) {
-			SSDFS_ERR("range->len %u > invalid_blks %u\n",
-				  range->len, blk_bmap->invalid_blks);
+		if (blk_bmap->invalid_blks == 0) {
+			SSDFS_ERR("invalid request: invalid_blks %u\n",
+				  blk_bmap->invalid_blks);
 			return -ERANGE;
 		}
 
-		blk_bmap->invalid_blks -= range->len;
+		if (range->len > blk_bmap->invalid_blks)
+			blk_bmap->invalid_blks = 0;
+		else
+			blk_bmap->invalid_blks -= range->len;
 	}
 
 	set_block_bmap_dirty(blk_bmap);
