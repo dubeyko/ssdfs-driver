@@ -1172,7 +1172,6 @@ int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
 	}
 
 	do {
-		u32 offset_diff;
 		u32 index_diff;
 		int moving_items;
 		u32 moving_bytes;
@@ -1206,54 +1205,46 @@ int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
 			array->bytes_count += PAGE_SIZE;
 		}
 
-		item_offset2 = (u32)folio_index2 * array->items_per_folio;
-		index_diff = dst_index % array->items_per_folio;
-		item_offset2 += index_diff * array->item_size;
+		folio_index1 = src_index / array->items_per_folio;
+		if (folio_index1 >= vector_capacity) {
+			SSDFS_ERR("invalid folio index: "
+				  "folio_index %d, capacity %u\n",
+				  folio_index1, vector_capacity);
+			return -E2BIG;
+		}
 
-		offset_diff = item_offset2 - (folio_index2 * PAGE_SIZE);
+		if (folio_index1 != folio_index2) {
+			u32 index_diff1, index_diff2;
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(offset_diff % array->item_size);
-#endif /* CONFIG_SSDFS_DEBUG */
+			index_diff1 = (dst_index + 1) % array->items_per_folio;
+			if (index_diff1 == 0)
+				index_diff1 = 1;
 
-		index_diff = offset_diff / array->item_size;
-		index_diff++;
+			index_diff2 = (src_index + 1) % array->items_per_folio;
+			if (index_diff2 == 0)
+				index_diff2 = 1;
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(index_diff >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (index_diff < shift) {
-			/*
-			 * The shift moves data out of the page.
-			 * This is the reason that index_diff is
-			 * lesser than shift. Keep the index_diff
-			 * the same.
-			 */
-			SSDFS_DBG("index_diff %u, shift %u\n",
-				  index_diff, shift);
-		} else if (index_diff == shift) {
-			/*
-			 * It's the case when destination page
-			 * has no items at all. Otherwise,
-			 * it is the case of presence of free
-			 * space in the begin of the page is equal
-			 * to the @shift. This space was prepared
-			 * by previous move operation. Simply,
-			 * keep the index_diff the same.
-			 */
-			SSDFS_DBG("index_diff %u, shift %u\n",
-				  index_diff, shift);
+			index_diff = min_t(u32, index_diff1, index_diff2);
 		} else {
-			/*
-			 * It needs to know the number of items
-			 * from the page's beginning.
-			 * So, excluding the shift from the account.
-			 */
-			index_diff -= shift;
+			index_diff = (src_index + 1) % array->items_per_folio;
+
+			if (index_diff == 0)
+				index_diff = 1;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("src_index %d, dst_index %d, "
+			  "array->items_count %u, range_len %u, "
+			  "array->items_per_folio %u, index_diff %u, "
+			  "folio_index2 %d, folio_index1 %d, "
+			  "array->item_size %zu\n",
+			  src_index, dst_index,
+			  array->items_count, range_len,
+			  array->items_per_folio, index_diff,
+			  folio_index2, folio_index1,
+			  array->item_size);
+
+		BUG_ON(index_diff >= U16_MAX);
 		BUG_ON(moved_items > range_len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1292,14 +1283,12 @@ int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		folio_index1 = src_index / array->items_per_folio;
-		item_offset1 = (u32)folio_index1 * array->items_per_folio;
 		index_diff = src_index % array->items_per_folio;
-		item_offset1 += index_diff * array->item_size;
+		item_offset1 = index_diff * array->item_size;
 
 		folio_index2 = dst_index / array->items_per_folio;
-		item_offset2 = (u32)folio_index2 * array->items_per_folio;
 		index_diff = dst_index % array->items_per_folio;
-		item_offset2 += index_diff * array->item_size;
+		item_offset2 = index_diff * array->item_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("items_offset1 %u, item_offset2 %u\n",
@@ -1524,6 +1513,13 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 		return -ERANGE;
 	}
 
+	if ((array->items_count + shift) > array->capacity) {
+		SSDFS_ERR("invalid shift: items_count %u, "
+			  "shift %u, capacity %u\n",
+			  array->items_count, shift, array->capacity);
+		return -ERANGE;
+	}
+
 	if ((start_index + shift) >= array->capacity) {
 		SSDFS_ERR("invalid index: start_index %u, "
 			  "shift %u, capacity %u\n",
@@ -1573,6 +1569,8 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 		BUG();
 		break;
 	}
+
+	array->items_count += shift;
 
 	return 0;
 }

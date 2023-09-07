@@ -38,10 +38,12 @@ modprobe loop || exit 1
 losetup $loop_device $image || exit 1
 modprobe ssdfs || exit 1
 
+# FOLIO VECTOR TESTING
+
 i=0
 iterations=10
-capacity=1000
-count=1000
+capacity=100
+count=100
 
 while [ $i -lt $iterations ]
 do
@@ -155,6 +157,56 @@ sudo umount $mount_point
 echo "Unmounted $mount_point"
 
 i=$[$i+1]
+
+done
+
+# DYNAMIC ARRAY TESTING
+
+iterations=1
+capacity=1000
+item_size=1
+upper_bound=4096
+
+while [ $item_size -lt $upper_bound ]
+do
+
+i=0
+
+while [ $i -lt $iterations ]
+do
+
+count=1
+
+while [ $count -lt $capacity ]
+do
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "ITEM_SIZE $item_size COUNT $count ITERATION $i"
+
+sudo test.ssdfs -s memory_primitives -M iterations=$iterations,capacity=$capacity,count=$count,item_size=$item_size,test_dynamic_array $mount_point/$test_file
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+#cat /proc/meminfo
+
+count=$[$count+1]
+
+done
+
+i=$[$i+1]
+
+done
+
+item_size=$[$item_size*2]
 
 done
 

@@ -156,6 +156,10 @@ int ssdfs_testing_get_inode(struct ssdfs_fs_info *fsi)
 	return 0;
 }
 
+/******************************************************************************
+ *                            FOLIO VECTOR TESTING                            *
+ ******************************************************************************/
+
 static
 int ssdfs_do_folio_vector_testing(struct ssdfs_fs_info *fsi,
 				  struct ssdfs_testing_environment *env)
@@ -357,6 +361,10 @@ finish_folio_vector_testing:
 	return err;
 }
 
+/******************************************************************************
+ *                            FOLIO ARRAY TESTING                             *
+ ******************************************************************************/
+
 static
 int ssdfs_do_folio_array_testing(struct ssdfs_fs_info *fsi,
 				 struct ssdfs_testing_environment *env)
@@ -365,11 +373,531 @@ int ssdfs_do_folio_array_testing(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
+/******************************************************************************
+ *                            DYNAMIC ARRAY TESTING                           *
+ ******************************************************************************/
+
+static inline
+void ssdfs_show_dynamic_array_items(u32 item_size,
+				    u32 check_index,
+				    u32 item_index,
+				    void *item1,
+				    void *item2)
+{
+	switch (item_size) {
+	case 0:
+		BUG();
+
+	case 1:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("CHECK%u: compare items: "
+		  "index %u, item1 %u, item2 %u\n",
+		  check_index, item_index,
+		  *((u8 *)item1), *((u8 *)item2));
+#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+
+	case 2:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("CHECK%u: compare items: "
+		  "index %u, item1 %u, item2 %u\n",
+		  check_index, item_index,
+		  *((u16 *)item1), *((u16 *)item2));
+#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+
+	case 3:
+		BUG();
+
+	case 4:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("CHECK%u: compare items: "
+		  "index %u, item1 %u, item2 %u\n",
+		  check_index, item_index,
+		  *((u32 *)item1), *((u32 *)item2));
+#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+
+	case 5:
+	case 6:
+	case 7:
+		BUG();
+
+	default:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("CHECK%u: compare items: "
+		  "index %u, item1 %llu, item2 %llu\n",
+		  check_index, item_index,
+		  *((u64 *)item1), *((u64 *)item2));
+#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+	};
+}
+
+static
+int ssdfs_dynamic_array_set_items(struct ssdfs_fs_info *fsi,
+				  struct ssdfs_testing_environment *env,
+				  struct ssdfs_dynamic_array *array)
+{
+	void *item = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	u64 lower_bound1, lower_bound2;
+	u64 upper_bound1, upper_bound2;
+	u64 rest_items;
+	u32 shifted_items;
+	u32 item_index = 0;
+	u32 i;
+	int err = 0;
+
+	SSDFS_ERR("count %llu, capacity %llu, item_size %u\n",
+		  count, capacity, item_size);
+
+	if (capacity == 0 || count == 0) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid input: "
+			  "count %llu, capacity %llu\n",
+			  count, capacity);
+		goto finish_dynamic_array_testing;
+	}
+
+	item = ssdfs_kmalloc(item_size, GFP_KERNEL | __GFP_ZERO);
+	if (!item) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate temporary buffer\n");
+		goto finish_dynamic_array_testing;
+	}
+
+	lower_bound1 = 0;
+	upper_bound1 = count / 4;
+	if (upper_bound1 == 0)
+		upper_bound1 = 1;
+
+	for (i = lower_bound1; i < upper_bound1; i++) {
+		memset(item, i, item_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("set item: i %u, item_index %u\n",
+			  i, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_dynamic_array_set(array, item_index, item);
+		if (err) {
+			SSDFS_ERR("fail to set item: index %u\n",
+				  item_index);
+			goto free_temporary_buffer;
+		}
+
+		item_index++;
+	}
+
+	if (item_index >= count)
+		goto free_temporary_buffer;
+
+	upper_bound2 = count;
+
+	lower_bound2 = count / 4;
+	if (lower_bound2 == 0)
+		lower_bound2 = 1;
+	lower_bound2 = count - lower_bound2;
+
+	for (i = lower_bound2; i < upper_bound2; i++) {
+		memset(item, i, item_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("set item: i %u, item_index %u\n",
+			  i, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_dynamic_array_set(array, item_index, item);
+		if (err) {
+			SSDFS_ERR("fail to set item: index %u\n",
+				  item_index);
+			goto free_temporary_buffer;
+		}
+
+		item_index++;
+	}
+
+	if (item_index >= count)
+		goto free_temporary_buffer;
+
+	item_index = upper_bound1;
+	shifted_items = 0;
+
+	for (i = upper_bound1; i < lower_bound2; i++) {
+		rest_items = lower_bound2 - i;
+
+		if (shifted_items == 0) {
+			shifted_items = rest_items / 2;
+			if (shifted_items == 0)
+				shifted_items = 1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("SHIFT ITEMS: i %u, items_index %u, "
+				  "shifted_items %u\n",
+				  i, item_index, shifted_items);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_dynamic_array_shift_content_right(array,
+								item_index,
+								shifted_items);
+			if (err) {
+				SSDFS_ERR("fail ot shift items: "
+					  "item_index %u, "
+					  "shifted_items %u, "
+					  "err %d\n",
+					  item_index,
+					  shifted_items,
+					  err);
+				goto free_temporary_buffer;
+			}
+
+			shifted_items--;
+		} else {
+			shifted_items--;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("i %u, upper_bound1 %llu, "
+			  "lower_bound2 %llu, rest_items %llu, "
+			  "shifted_items %u, item_index %u\n",
+			  i, upper_bound1,
+			  lower_bound2, rest_items,
+			  shifted_items, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		memset(item, i, item_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("set item: i %u, item_index %u\n",
+			  i, item_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_dynamic_array_set(array, item_index, item);
+		if (err) {
+			SSDFS_ERR("fail to set item: index %u\n",
+				  item_index);
+			goto free_temporary_buffer;
+		}
+
+		item_index++;
+	}
+
+free_temporary_buffer:
+	if (item)
+		ssdfs_kfree(item);
+
+finish_dynamic_array_testing:
+	return err;
+}
+
+static
+int ssdfs_dynamic_array_items_check1(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					struct ssdfs_dynamic_array *array)
+{
+	void *item = NULL;
+	void *item_ptr = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	u32 i;
+	int err = 0;
+
+	SSDFS_ERR("CHECK1: count %llu, capacity %llu, item_size %u\n",
+		  count, capacity, item_size);
+
+	item = ssdfs_kmalloc(item_size, GFP_KERNEL | __GFP_ZERO);
+	if (!item) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate temporary buffer\n");
+		goto finish_dynamic_array_check;
+	}
+
+	for (i = 0; i < count; i++) {
+		memset(item, i, item_size);
+
+		item_ptr = ssdfs_dynamic_array_get_locked(array, i);
+		if (IS_ERR_OR_NULL(item_ptr)) {
+			err = (item_ptr == NULL ? -ERANGE : PTR_ERR(item_ptr));
+			SSDFS_ERR("fail to get item: "
+				  "index %u, err %d\n",
+				  i, err);
+			goto free_temporary_buffer;
+		}
+
+		ssdfs_show_dynamic_array_items(item_size, 1, i, item, item_ptr);
+
+		if (memcmp(item, item_ptr, item_size) != 0) {
+			err = -ERANGE;
+			ssdfs_dynamic_array_release(array, i, item_ptr);
+			SSDFS_ERR("invalid item state: "
+				  "index %d\n", i);
+			goto free_temporary_buffer;
+		}
+
+		err = ssdfs_dynamic_array_release(array, i, item_ptr);
+		if (err) {
+			SSDFS_ERR("fail to release item: "
+				  "index %u, err %d\n",
+				  i, err);
+			goto free_temporary_buffer;
+		}
+	}
+
+free_temporary_buffer:
+	if (item)
+		ssdfs_kfree(item);
+
+finish_dynamic_array_check:
+	return err;
+}
+
+static
+int ssdfs_dynamic_array_items_check2(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					struct ssdfs_dynamic_array *array)
+{
+	void *item = NULL;
+	void *item_ptr = NULL;
+	void *item_array = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	u32 items_count;
+	u32 offset;
+	u32 i, j;
+	int err = 0;
+
+	SSDFS_ERR("CHECK2: count %llu, capacity %llu, item_size %u\n",
+		  count, capacity, item_size);
+
+	item = ssdfs_kmalloc(item_size, GFP_KERNEL | __GFP_ZERO);
+	if (!item) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate temporary buffer\n");
+		goto finish_dynamic_array_check;
+	}
+
+	for (i = 0; i < count; i++) {
+		item_array = ssdfs_dynamic_array_get_content_locked(array, i,
+								&items_count);
+		if (IS_ERR_OR_NULL(item_array)) {
+			err = (item_array == NULL ? -ERANGE : PTR_ERR(item_array));
+			SSDFS_ERR("fail to get array: "
+				  "index %u, err %d\n",
+				  i, err);
+			goto free_temporary_buffer;
+		} else if (items_count == 0) {
+			err = -ERANGE;
+			SSDFS_ERR("array is empty\n");
+			goto free_temporary_buffer;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("CHECK2: i %u, items_count %u\n",
+			  i, items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		for (j = 0; j < items_count; j++) {
+			memset(item, i + j, item_size);
+
+			offset = j * item_size;
+			item_ptr = (u8 *)item_array + offset;
+
+			ssdfs_show_dynamic_array_items(item_size, 2, i + j,
+							item, item_ptr);
+
+			if (memcmp(item, item_ptr, item_size) != 0) {
+				err = -ERANGE;
+				ssdfs_dynamic_array_release(array, i, item_array);
+				SSDFS_ERR("invalid item state: "
+					  "index %d\n", i + j);
+				goto free_temporary_buffer;
+			}
+		}
+
+		err = ssdfs_dynamic_array_release(array, i, item_array);
+		if (err) {
+			SSDFS_ERR("fail to release item: "
+				  "index %u, err %d\n",
+				  i, err);
+			goto free_temporary_buffer;
+		}
+	}
+
+free_temporary_buffer:
+	if (item)
+		ssdfs_kfree(item);
+
+finish_dynamic_array_check:
+	return err;
+}
+
+static
+int ssdfs_dynamic_array_items_check3(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					struct ssdfs_dynamic_array *array)
+{
+	void *item = NULL;
+	void *item_ptr = NULL;
+	void *item_array = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	u64 bytes_count;
+	u32 offset;
+	u32 i;
+	int err = 0;
+
+	SSDFS_ERR("CHECK3: count %llu, capacity %llu, item_size %u\n",
+		  count, capacity, item_size);
+
+	item = ssdfs_kmalloc(item_size, GFP_KERNEL | __GFP_ZERO);
+	if (!item) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate temporary buffer\n");
+		goto finish_dynamic_array_check;
+	}
+
+	bytes_count = capacity * item_size;
+
+	item_array = ssdfs_kvzalloc(bytes_count, GFP_KERNEL | __GFP_ZERO);
+	if (!item_array) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate memory: "
+			  "bytes_count %llu\n",
+			  bytes_count);
+		goto free_temporary_buffer;
+	}
+
+	err = ssdfs_dynamic_array_copy_content(array, item_array, bytes_count);
+	if (err) {
+		SSDFS_ERR("fail to copy content: "
+			  "bytes_count %llu, err %d\n",
+			  bytes_count, err);
+		goto free_item_array;
+	}
+
+	for (i = 0; i < count; i++) {
+		memset(item, i, item_size);
+
+		offset = i * item_size;
+		item_ptr = (u8 *)item_array + offset;
+
+		ssdfs_show_dynamic_array_items(item_size, 3, i,
+						item, item_ptr);
+
+		if (memcmp(item, item_ptr, item_size) != 0) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid item state: "
+				  "index %d\n", i);
+			goto free_item_array;
+		}
+	}
+
+free_item_array:
+	if (item_array)
+		ssdfs_kvfree(item_array);
+
+free_temporary_buffer:
+	if (item)
+		ssdfs_kfree(item);
+
+finish_dynamic_array_check:
+	return err;
+}
+
+static
+int ssdfs_do_dynamic_array_iteration_testing(struct ssdfs_fs_info *fsi,
+					struct ssdfs_testing_environment *env,
+					struct ssdfs_dynamic_array *array)
+{
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	int err = 0;
+
+	BUG_ON(capacity >= U32_MAX);
+	BUG_ON(count >= U32_MAX);
+	BUG_ON(item_size > PAGE_SIZE);
+
+	SSDFS_ERR("count %llu, capacity %llu, item_size %u\n",
+		  count, capacity, item_size);
+
+	if (capacity == 0 || count == 0) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid input: "
+			  "count %llu, capacity %llu\n",
+			  count, capacity);
+		goto finish_dynamic_array_testing;
+	}
+
+	err = ssdfs_dynamic_array_create(array, capacity, item_size, 0xFF);
+	if (err) {
+		SSDFS_ERR("fail to create dynamic array: "
+			  "capacity %llu, item_size %u, err %d\n",
+			  capacity, item_size, err);
+		goto finish_dynamic_array_testing;
+	}
+
+	err = ssdfs_dynamic_array_set_items(fsi, env, array);
+	if (err) {
+		SSDFS_ERR("fail to set items of dynamic array: "
+			  "err %d\n", err);
+		goto destroy_dynamic_array;
+	}
+
+	err = ssdfs_dynamic_array_items_check1(fsi, env, array);
+	if (err) {
+		SSDFS_ERR("fail to execute CHECK1 of dynamic array: "
+			  "err %d\n", err);
+		goto destroy_dynamic_array;
+	}
+
+	err = ssdfs_dynamic_array_items_check2(fsi, env, array);
+	if (err) {
+		SSDFS_ERR("fail to execute CHECK2 of dynamic array: "
+			  "err %d\n", err);
+		goto destroy_dynamic_array;
+	}
+
+	err = ssdfs_dynamic_array_items_check3(fsi, env, array);
+	if (err) {
+		SSDFS_ERR("fail to execute CHECK3 of dynamic array: "
+			  "err %d\n", err);
+		goto destroy_dynamic_array;
+	}
+
+destroy_dynamic_array:
+	ssdfs_dynamic_array_destroy(array);
+
+finish_dynamic_array_testing:
+	return err;
+}
+
 static
 int ssdfs_do_dynamic_array_testing(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_testing_environment *env)
 {
-	SSDFS_ERR("TODO: implement dynamic array testing logic\n");
+	struct ssdfs_dynamic_array array;
+	u32 iterations_number = env->memory_primitives.iterations_number;
+	u32 i;
+	int err = 0;
+
+	for (i = 0; i < iterations_number; i++) {
+		SSDFS_ERR("ITERATION %u\n", i);
+
+		err = ssdfs_do_dynamic_array_iteration_testing(fsi, env, &array);
+		if (err) {
+			SSDFS_ERR("iteration %u failed: err %d\n",
+				  i, err);
+			return err;
+		}
+	}
+
 	return 0;
 }
 
@@ -422,6 +950,10 @@ finish_testing:
 
 	return err;
 }
+
+/******************************************************************************
+ *                            EXTENTS TREE TESTING                            *
+ ******************************************************************************/
 
 static
 int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
@@ -633,6 +1165,10 @@ finish_testing:
 	fsi->do_fork_invalidation = true;
 	return err;
 }
+
+/******************************************************************************
+ *                            DENTRIES TREE TESTING                           *
+ ******************************************************************************/
 
 static inline
 int ssdfs_testing_prepare_file_name(u64 file_index,
@@ -997,6 +1533,10 @@ put_root_inode:
 finish_testing:
 	return err;
 }
+
+/******************************************************************************
+ *                            BLOCK BITMAP TESTING                            *
+ ******************************************************************************/
 
 static
 int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
@@ -1518,6 +2058,10 @@ finish_block_bitmap_testing:
 	return err;
 }
 
+/******************************************************************************
+ *                      OFFSET TRANSLATION TABLE TESTING                      *
+ ******************************************************************************/
+
 static
 int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_testing_environment *env)
@@ -1788,6 +2332,10 @@ finish_set_clean:
 finish_blk2off_table_testing:
 	return err;
 }
+
+/******************************************************************************
+ *                            MAPPING TABLE TESTING                           *
+ ******************************************************************************/
 
 static inline
 bool is_found_requested_peb_type(struct ssdfs_maptbl_peb_relation *pebr,
@@ -2332,6 +2880,10 @@ int ssdfs_do_peb_mapping_table_testing(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
+/******************************************************************************
+ *                        SEGMENT BITMAP TESTING                              *
+ ******************************************************************************/
+
 static
 int ssdfs_do_segment_using_testing(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_testing_environment *env,
@@ -2751,6 +3303,10 @@ int ssdfs_do_segment_bitmap_testing(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
+/******************************************************************************
+ *                            DICTIONARY TREE TESTING                         *
+ ******************************************************************************/
+
 static
 unsigned char ssdfs_generate_next_symbol(unsigned char symbol,
 					 u32 step)
@@ -2772,7 +3328,7 @@ unsigned char ssdfs_generate_next_symbol(unsigned char symbol,
 }
 
 static
-unsigned char * ssdfs_generate_long_name(struct ssdfs_testing_environment *env,
+unsigned char *ssdfs_generate_long_name(struct ssdfs_testing_environment *env,
 					 unsigned char *table,
 					 unsigned char *name_buf,
 					 u32 name_len,
@@ -2883,6 +3439,10 @@ free_allocated_memory:
 
 	return err;
 }
+
+/******************************************************************************
+ *                           XATTR TREE TESTING                               *
+ ******************************************************************************/
 
 static
 void ssdfs_testing_generate_blob(void *blob, u32 len, u64 pattern)
@@ -3382,6 +3942,10 @@ finish_testing:
 	return err;
 }
 
+/******************************************************************************
+ *                        SHARED EXTENTS TREE TESTING                         *
+ ******************************************************************************/
+
 static
 int ssdfs_testing_shextree_add(struct ssdfs_fs_info *fsi,
 			       struct ssdfs_testing_environment *env,
@@ -3851,6 +4415,10 @@ int ssdfs_do_shextree_testing(struct ssdfs_fs_info *fsi,
 
 	return 0;
 }
+
+/******************************************************************************
+ *                            SNAPSHOT TREE TESTING                           *
+ ******************************************************************************/
 
 static
 int ssdfs_testing_snapshots_tree_add(struct ssdfs_fs_info *fsi,
