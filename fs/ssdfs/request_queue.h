@@ -212,18 +212,28 @@ struct ssdfs_segment_request {
 
 /*
  * struct ssdfs_peb_phys_offset - PEB's physical offset
+ * @state: physical offset state
  * @peb_index: PEB's index
- * @peb_migration_id: identification number of PEB in migration sequence
  * @peb_page: PEB's page index
+ * @peb_migration_id: identification number of PEB in migration sequence
  * @log_area: identification number of log area
  * @byte_offset: offset in bytes from area's beginning
  */
 struct ssdfs_peb_phys_offset {
+	int state;
 	u16 peb_index;
-	u8 peb_migration_id;
 	u16 peb_page;
+	u8 peb_migration_id;
 	u8 log_area;
 	u32 byte_offset;
+};
+
+/* Physical offset states */
+enum {
+	SSDFS_PHYS_OFFSET_UNKNOWN_STATE,
+	SSDFS_PHYS_OFFSET_REGULAR_OFFSET,
+	SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET,
+	SSDFS_PHYS_OFFSET_STATE_MAX
 };
 
 struct ssdfs_segment_info;

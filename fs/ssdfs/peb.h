@@ -23,6 +23,7 @@
 #define _SSDFS_PEB_H
 
 #include "request_queue.h"
+#include "fingerprint_array.h"
 
 /*
  * struct ssdfs_contigous_bytes - contigous sequence of bytes
@@ -453,6 +454,16 @@ struct ssdfs_peb_log_offset {
 };
 
 /*
+ * struct ssdfs_peb_deduplication - PEB deduplication environment
+ * @shash_tfm: message digest handle
+ * @fingerprints: fingeprints array
+ */
+struct ssdfs_peb_deduplication {
+	struct crypto_shash *shash_tfm;
+	struct ssdfs_fingerprint_array fingerprints;
+};
+
+/*
  * struct ssdfs_peb_info - Physical Erase Block (PEB) description
  * @peb_id: PEB number
  * @peb_index: PEB index
@@ -465,6 +476,7 @@ struct ssdfs_peb_log_offset {
  * @reserved_bytes.blk2off_tbl: reserved bytes for blk2off table
  * @reserved_bytes.blk_desc_tbl: reserved bytes for block descriptor table
  * @current_log: PEB's current log
+ * @dedup: PEB's deduplication environment
  * @read_buffer: temporary read buffers (compression case)
  * @env: init environment
  * @cache: PEB's memory pages
@@ -515,6 +527,11 @@ struct ssdfs_peb_info {
 
 	/* Current log */
 	struct ssdfs_peb_log current_log;
+
+	/* Fingerprints array */
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	struct ssdfs_peb_deduplication dedup;
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 
 	/* Read buffer */
 	struct ssdfs_peb_temp_read_buffers read_buffer;
@@ -2304,6 +2321,52 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 			    u8 peb_migration_id);
 int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi);
 
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+bool is_ssdfs_block_duplicated(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_fingerprint_pair *pair);
+int ssdfs_peb_deduplicate_logical_block(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req,
+					struct ssdfs_fingerprint_pair *pair,
+					struct ssdfs_block_descriptor *blk_desc);
+bool should_ssdfs_save_fingerprint(struct ssdfs_peb_info *pebi,
+				   struct ssdfs_segment_request *req);
+int ssdfs_peb_save_fingerprint(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_block_descriptor *blk_desc,
+				struct ssdfs_fingerprint_pair *pair);
+#else
+static inline
+bool is_ssdfs_block_duplicated(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_fingerprint_pair *pair)
+{
+	return false;
+}
+static inline
+int ssdfs_peb_deduplicate_logical_block(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req,
+					struct ssdfs_fingerprint_pair *pair,
+					struct ssdfs_block_descriptor *blk_desc)
+{
+	return -EOPNOTSUPP;
+}
+static inline
+bool should_ssdfs_save_fingerprint(struct ssdfs_peb_info *pebi,
+				   struct ssdfs_segment_request *req)
+{
+	return false;
+}
+static inline
+int ssdfs_peb_save_fingerprint(struct ssdfs_peb_info *pebi,
+				struct ssdfs_segment_request *req,
+				struct ssdfs_block_descriptor *blk_desc,
+				struct ssdfs_fingerprint_pair *pair)
+{
+	return -EOPNOTSUPP;
+}
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+
 /*
  * PEB internal functions declaration
  */
@@ -2317,6 +2380,8 @@ int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 				      struct ssdfs_metadata_descriptor *array,
 				      size_t array_size);
 u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi);
+u32 ssdfs_request_rest_bytes(struct ssdfs_peb_info *pebi,
+			     struct ssdfs_segment_request *req);
 bool is_ssdfs_peb_exhausted(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_peb_info *pebi);
 bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,

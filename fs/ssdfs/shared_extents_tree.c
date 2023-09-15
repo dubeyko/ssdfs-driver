@@ -408,7 +408,7 @@ int ssdfs_shextree_find(struct ssdfs_shared_extents_tree *tree,
  * %-ERANGE     - internal error.
  */
 int ssdfs_shextree_find_range(struct ssdfs_shared_extents_tree *tree,
-			      struct ssdfs_fingeprint_range *range,
+			      struct ssdfs_fingerprint_range *range,
 			      struct ssdfs_btree_search *search)
 {
 #ifdef CONFIG_SSDFS_DEBUG

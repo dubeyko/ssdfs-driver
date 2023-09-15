@@ -49,3 +49,5 @@ ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE)		+= diff_on_write.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_METADATA)	+= diff_on_write_metadata.o
 ssdfs-$(CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA)	+= diff_on_write_user_data.o
 ssdfs-$(CONFIG_SSDFS_ONLINE_FSCK)		+= peb_fsck_thread.o
+ssdfs-$(CONFIG_SSDFS_PEB_DEDUPLICATION)		+= fingerprint_array.o \
+							peb_deduplication.o

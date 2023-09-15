@@ -2973,7 +2973,6 @@ u32 ssdfs_peb_estimate_data_fragment_size(u32 uncompr_bytes)
  * @pebi: pointer on PEB object
  * @req: I/O request
  */
-static inline
 u32 ssdfs_request_rest_bytes(struct ssdfs_peb_info *pebi,
 			     struct ssdfs_segment_request *req)
 {
@@ -4062,7 +4061,76 @@ int ssdfs_peb_init_block_descriptor_state(struct ssdfs_peb_info *pebi,
 }
 
 /*
- * ssdfs_peb_prepare_block_descriptor() - prepare new state of block descriptor
+ * ssdfs_prepare_deduplicated_block_descriptor() - prepare deduplicated block descriptor
+ * @pebi: pointer on PEB object
+ * @req: I/O request
+ * @data: data offset inside PEB
+ * @desc: block descriptor [out]
+ *
+ * This function prepares deduplicated block descriptor.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EIO        - corrupted block descriptor.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_prepare_deduplicated_block_descriptor(struct ssdfs_peb_info *pebi,
+					    struct ssdfs_segment_request *req,
+					    struct ssdfs_peb_phys_offset *data,
+					    struct ssdfs_block_descriptor *desc)
+{
+	u64 logical_offset;
+	u32 pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req || !desc || !data);
+	BUG_ON(!pebi || !pebi->pebc);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(data->state != SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, processed_blks %d\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	pagesize = pebi->pebc->parent_si->fsi->pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(req->result.processed_blks > req->place.len);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	logical_offset = req->extent.logical_offset +
+			 (req->result.processed_blks * pagesize);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(logical_offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	logical_offset /= pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	DEBUG_BLOCK_DESCRIPTOR(pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	desc->ino = cpu_to_le64(req->extent.ino);
+	desc->logical_offset = cpu_to_le32((u32)logical_offset);
+	desc->peb_index = cpu_to_le16(data->peb_index);
+	desc->peb_page = cpu_to_le16(data->peb_page);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	DEBUG_BLOCK_DESCRIPTOR(pebi->pebc->parent_si->seg_id,
+				pebi->peb_id, desc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * ssdfs_prepare_regular_block_descriptor() - prepare new state of block descriptor
  * @pebi: pointer on PEB object
  * @req: I/O request
  * @data: data offset inside PEB
@@ -4078,10 +4146,10 @@ int ssdfs_peb_init_block_descriptor_state(struct ssdfs_peb_info *pebi,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
-				struct ssdfs_segment_request *req,
-				struct ssdfs_peb_phys_offset *data,
-				struct ssdfs_block_descriptor *desc)
+int ssdfs_prepare_regular_block_descriptor(struct ssdfs_peb_info *pebi,
+					   struct ssdfs_segment_request *req,
+					   struct ssdfs_peb_phys_offset *data,
+					   struct ssdfs_block_descriptor *desc)
 {
 	u64 logical_offset;
 	u32 pagesize;
@@ -4092,6 +4160,7 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 	BUG_ON(!req || !desc || !data);
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+	BUG_ON(data->state != SSDFS_PHYS_OFFSET_REGULAR_OFFSET);
 
 	SSDFS_DBG("ino %llu, logical_offset %llu, processed_blks %d\n",
 		  req->extent.ino, req->extent.logical_offset,
@@ -4196,6 +4265,63 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 	DEBUG_BLOCK_DESCRIPTOR(pebi->pebc->parent_si->seg_id,
 				pebi->peb_id, desc);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * ssdfs_peb_prepare_block_descriptor() - prepare new state of block descriptor
+ * @pebi: pointer on PEB object
+ * @req: I/O request
+ * @data: data offset inside PEB
+ * @desc: block descriptor [out]
+ *
+ * This function prepares new state of block descriptor.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EIO        - corrupted block descriptor.
+ * %-ERANGE     - internal error.
+ */
+static
+int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
+					struct ssdfs_segment_request *req,
+					struct ssdfs_peb_phys_offset *data,
+					struct ssdfs_block_descriptor *desc)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req || !desc || !data);
+	BUG_ON(!pebi || !pebi->pebc);
+	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, processed_blks %d\n",
+		  req->extent.ino, req->extent.logical_offset,
+		  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (data->state) {
+	case SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET:
+		err = ssdfs_prepare_deduplicated_block_descriptor(pebi, req,
+								  data, desc);
+		break;
+
+	case SSDFS_PHYS_OFFSET_REGULAR_OFFSET:
+		err = ssdfs_prepare_regular_block_descriptor(pebi, req,
+							     data, desc);
+		break;
+
+	default:
+		BUG();
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare block descriptor: err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -5340,10 +5466,10 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
  */
 static
 int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
-				struct ssdfs_segment_request *req,
-				struct ssdfs_block_descriptor *blk_desc,
-				struct ssdfs_peb_phys_offset *data_off,
-				struct ssdfs_peb_phys_offset *desc_off)
+					struct ssdfs_segment_request *req,
+					struct ssdfs_block_descriptor *blk_desc,
+					struct ssdfs_peb_phys_offset *data_off,
+					struct ssdfs_peb_phys_offset *desc_off)
 {
 	int area_type = SSDFS_LOG_BLK_DESC_AREA;
 	struct ssdfs_peb_area *area;
@@ -5722,8 +5848,13 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	int processed_blks;
 	u64 logical_offset;
 	struct ssdfs_block_bmap_range range;
-	u32 rest_bytes, written_bytes;
+	u32 rest_bytes;
+	u32 written_bytes = 0;
 	u32 len;
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	struct ssdfs_fingerprint_pair pair;
+	bool is_block_duplicated = false;
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5787,10 +5918,30 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	is_block_duplicated = is_ssdfs_block_duplicated(pebi, req, &pair);
+	if (!is_block_duplicated) {
+		data_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
+		desc_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
+		err = ssdfs_peb_add_block_into_data_area(pebi, req,
+							 blk_desc_off, &pos,
+							 &data_off,
+							 &written_bytes);
+	} else {
+		data_off.state = SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET;
+		data_off.peb_index = pebi->peb_index;
+		desc_off.state = SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET;
+		written_bytes += fsi->pagesize;
+	}
+#else  /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+	data_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
+	desc_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
 	err = ssdfs_peb_add_block_into_data_area(pebi, req,
 						 blk_desc_off, &pos,
 						 &data_off,
 						 &written_bytes);
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+
 	if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
@@ -5847,7 +5998,24 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 		  logical_block, range.start);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	if (is_block_duplicated) {
+		err = ssdfs_peb_deduplicate_logical_block(pebi, req, &pair,
+							  &blk_desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to deduplicate logical block: "
+				  "seg %llu, logical_block %u, "
+				  "peb %llu, err %d\n",
+				  req->place.start.seg_id, logical_block,
+				  pebi->peb_id, err);
+			return err;
+		}
+	} else {
+		SSDFS_BLK_DESC_INIT(&blk_desc);
+	}
+#else  /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 	SSDFS_BLK_DESC_INIT(&blk_desc);
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 
 	err = ssdfs_peb_store_block_descriptor(pebi, req,
 						&blk_desc, &data_off,
@@ -5869,6 +6037,20 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 			  err);
 		return err;
 	}
+
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	if (!is_block_duplicated && should_ssdfs_save_fingerprint(pebi, req)) {
+		err = ssdfs_peb_save_fingerprint(pebi, req, &blk_desc, &pair);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to save fingeprint: "
+				  "seg %llu, logical_block %u, "
+				  "peb %llu, err %d\n",
+				  req->place.start.seg_id, logical_block,
+				  pebi->peb_id, err);
+			return err;
+		}
+	}
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 
 	req->result.processed_blks += range.len;
 	return 0;
@@ -6154,6 +6336,7 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < range.len; i++) {
+		desc_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
 		desc_off.peb_index = pebi->peb_index;
 		desc_off.peb_migration_id = id;
 		desc_off.peb_page = (u16)(range.start + i);
@@ -6773,12 +6956,16 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	u64 logical_offset;
 	struct ssdfs_block_bmap_range range;
 	int range_state;
-	u32 written_bytes;
+	u32 written_bytes = 0;
 	u16 peb_index;
 	int migration_state = SSDFS_LBLOCK_UNKNOWN_STATE;
 	struct ssdfs_offset_position pos = {0};
 	u8 migration_id1;
 	int migration_id2;
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	struct ssdfs_fingerprint_pair pair;
+	bool is_block_duplicated = false;
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 #ifdef CONFIG_SSDFS_DEBUG
 	int i;
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -7011,10 +7198,30 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	is_block_duplicated = is_ssdfs_block_duplicated(pebi, req, &pair);
+	if (!is_block_duplicated) {
+		data_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
+		desc_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
+		err = ssdfs_peb_add_block_into_data_area(pebi, req,
+							 blk_desc_off, &pos,
+							 &data_off,
+							 &written_bytes);
+	} else {
+		data_off.state = SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET;
+		data_off.peb_index = pebi->peb_index;
+		desc_off.state = SSDFS_PHYS_OFFSET_DEDUPLICATED_OFFSET;
+		written_bytes += fsi->pagesize;
+	}
+#else  /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+	data_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
+	desc_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
 	err = ssdfs_peb_add_block_into_data_area(pebi, req,
 						 blk_desc_off, &pos,
 						 &data_off,
 						 &written_bytes);
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+
 	if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("try again to add block: "
@@ -7066,7 +7273,25 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 
 	if (req->private.class != SSDFS_PEB_DIFF_ON_WRITE_REQ &&
 	    !does_user_data_block_contain_diff(pebi, req))
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+		if (is_block_duplicated) {
+			err = ssdfs_peb_deduplicate_logical_block(pebi, req,
+							    &pair,
+							    &pos.blk_desc.buf);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to deduplicate logical block: "
+					  "seg %llu, logical_block %u, "
+					  "peb %llu, err %d\n",
+					  req->place.start.seg_id,
+					  blk, pebi->peb_id, err);
+				return err;
+			}
+		} else {
+			SSDFS_BLK_DESC_INIT(&pos.blk_desc.buf);
+		}
+#else  /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 		SSDFS_BLK_DESC_INIT(&pos.blk_desc.buf);
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 	else {
 #ifdef CONFIG_SSDFS_DEBUG
 		migration_id1 =
@@ -7162,6 +7387,22 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			return err;
 		}
 	}
+
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	if (!is_block_duplicated && should_ssdfs_save_fingerprint(pebi, req)) {
+		err = ssdfs_peb_save_fingerprint(pebi, req,
+						 &pos.blk_desc.buf,
+						 &pair);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to save fingeprint: "
+				  "seg %llu, logical_block %u, "
+				  "peb %llu, err %d\n",
+				  req->place.start.seg_id, blk,
+				  pebi->peb_id, err);
+			return err;
+		}
+	}
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 
 	req->result.processed_blks += range.len;
 
@@ -8638,6 +8879,7 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(id > U8_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	desc_off.state = SSDFS_PHYS_OFFSET_REGULAR_OFFSET;
 	desc_off.peb_index = pebi->peb_index;
 	desc_off.peb_migration_id = id;
 	desc_off.peb_page = (u16)range.start;

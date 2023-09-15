@@ -36,6 +36,7 @@
 #include "ssdfs_fs_info.h"
 #include "ssdfs_inline.h"
 #include "page_vector.h"
+#include "fingerprint_array.h"
 
 /*
  * struct ssdfs_value_pair - value/position pair
@@ -380,6 +381,10 @@ void ssdfs_farray_memory_leaks_init(void);
 void ssdfs_farray_check_memory_leaks(void);
 void ssdfs_folio_vector_memory_leaks_init(void);
 void ssdfs_folio_vector_check_memory_leaks(void);
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+void ssdfs_fingerprint_array_memory_leaks_init(void);
+void ssdfs_fingerprint_array_check_memory_leaks(void);
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 void ssdfs_file_memory_leaks_init(void);
 void ssdfs_file_check_memory_leaks(void);
 void ssdfs_fs_error_memory_leaks_init(void);

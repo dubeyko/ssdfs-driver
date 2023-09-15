@@ -23,6 +23,7 @@
 #include <linux/slab.h>
 #include <linux/kthread.h>
 #include <linux/pagevec.h>
+#include <crypto/hash.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -658,6 +659,27 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		  pebi->peb_create_time);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	pebi->dedup.shash_tfm =
+		crypto_alloc_shash(SSDFS_DEFAULT_FINGERPRINT_NAME(), 0, 0);
+	if (IS_ERR(pebi->dedup.shash_tfm)) {
+		err = PTR_ERR(pebi->dedup.shash_tfm);
+		pebi->dedup.shash_tfm = NULL;
+		SSDFS_ERR("fail to allocate message digest handle: "
+			  "err %d\n", err);
+		goto fail_conctruct_peb_obj;
+	}
+
+	err = ssdfs_fingerprint_array_create(&pebi->dedup.fingerprints,
+					     fsi->pages_per_seg);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create fingeprints array: "
+			  "capacity %u, err %d\n",
+			  fsi->pages_per_seg, err);
+		goto fail_conctruct_peb_obj;
+	}
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+
 	init_rwsem(&pebi->read_buffer.lock);
 	if (flags & SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION) {
 		pebi->read_buffer.blk_desc.ptr = ssdfs_peb_kzalloc(buf_size,
@@ -856,6 +878,13 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	}
 
 	ssdfs_destroy_page_array(&pebi->cache);
+
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	if (pebi->dedup.shash_tfm)
+		crypto_free_shash(pebi->dedup.shash_tfm);
+
+	ssdfs_fingerprint_array_destroy(&pebi->dedup.fingerprints);
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);

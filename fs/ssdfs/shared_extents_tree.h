@@ -22,6 +22,8 @@
 #ifndef _SSDFS_SHARED_EXTENTS_TREE_H
 #define _SSDFS_SHARED_EXTENTS_TREE_H
 
+#include "fingerprint.h"
+
 /*
  * struct ssdfs_invalidation_queue - invalidation queue object
  * @queue: extents/index queue object
@@ -37,28 +39,6 @@ enum {
 	SSDFS_EXTENT_INVALIDATION_QUEUE,
 	SSDFS_INDEX_INVALIDATION_QUEUE,
 	SSDFS_INVALIDATION_QUEUE_NUMBER
-};
-
-/*
- * struct ssdfs_fingerprint - fingerprint object
- * @buf: fingerprint buffer
- * @len: fingerprint length
- * @type: fingerprint type
- */
-struct ssdfs_fingerprint {
-	u8 buf[SSDFS_FINGERPRINT_LENGTH_MAX];
-	u8 len;
-	u8 type;
-};
-
-/*
- * struct ssdfs_fingeprint_range - range of fingerprints
- * @start: starting fingeprint
- * @end: ending fingeprint
- */
-struct ssdfs_fingeprint_range {
-	struct ssdfs_fingerprint start;
-	struct ssdfs_fingerprint end;
 };
 
 /*
@@ -105,7 +85,7 @@ int ssdfs_shextree_find(struct ssdfs_shared_extents_tree *tree,
 			struct ssdfs_fingerprint *fingerprint,
 			struct ssdfs_btree_search *search);
 int ssdfs_shextree_find_range(struct ssdfs_shared_extents_tree *tree,
-			      struct ssdfs_fingeprint_range *range,
+			      struct ssdfs_fingerprint_range *range,
 			      struct ssdfs_btree_search *search);
 int ssdfs_shextree_find_leaf_node(struct ssdfs_shared_extents_tree *tree,
 				  struct ssdfs_fingerprint *fingerprint,

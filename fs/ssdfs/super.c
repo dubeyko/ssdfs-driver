@@ -2864,6 +2864,11 @@ static void ssdfs_memory_leaks_checker_init(void)
 
 	ssdfs_ext_queue_memory_leaks_init();
 	ssdfs_ext_tree_memory_leaks_init();
+
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	ssdfs_fingerprint_array_memory_leaks_init();
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+
 	ssdfs_file_memory_leaks_init();
 	ssdfs_fs_error_memory_leaks_init();
 
@@ -2945,6 +2950,11 @@ static void ssdfs_check_memory_leaks(void)
 
 	ssdfs_ext_queue_check_memory_leaks();
 	ssdfs_ext_tree_check_memory_leaks();
+
+#ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
+	ssdfs_fingerprint_array_check_memory_leaks();
+#endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
+
 	ssdfs_file_check_memory_leaks();
 	ssdfs_fs_error_check_memory_leaks();
 

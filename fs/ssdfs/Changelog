@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.84 [September 14, 2023]
+    (*) Introduce PEB-based deduplication model.
+
 v.4.83 [September 07, 2023]
     (*) Fix bugs in allocation logic of block bitmap.
     (*) Fix bugs in ZNS SSD support logic.

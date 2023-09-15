@@ -139,6 +139,59 @@ config SSDFS_DIFF_ON_WRITE_USER_DATA_THRESHOLD
 	  Select logical block modification percentage threshold as
 	  upper bound of modified bits in the logical block.
 
+config SSDFS_PEB_DEDUPLICATION
+	bool "SSDFS PEB-based deduplication support"
+	depends on SSDFS
+	help
+	  This option enables support of deduplication on erase block
+	  level. It means that flush thread logic check the capability
+	  to deduplicate logical blocks inside of a particular erase
+	  block. Potentuially, deduplication could be compute-intensive
+	  task. If data pattern hasn't frequent cases of logical block
+	  duplication, then this feature could be not very effecient.
+
+	  If unsure, say N.
+
+choice
+	prompt "SSDFS default fingerprint type" if SSDFS_PEB_DEDUPLICATION
+	default SSDFS_SHA1_FINGEPRINT_TYPE
+	depends on SSDFS
+	help
+	  You can set here the default fingerprint type of SSDFS from
+	  the available figerprint types. Don't touch if unsure.
+
+config SSDFS_MD5_FINGEPRINT_TYPE
+	bool "MD5 fingerprint type"
+	help
+	  Uses MD5 fingerprint type for deduplication algorithm.
+
+config SSDFS_SHA1_FINGEPRINT_TYPE
+	bool "SHA1 fingerprint type"
+	help
+	  Uses SHA1 fingerprint type for deduplication algorithm.
+
+config SSDFS_SHA224_FINGEPRINT_TYPE
+	bool "SHA224 fingerprint type"
+	help
+	  Uses SHA224 fingerprint type for deduplication algorithm.
+
+config SSDFS_SHA256_FINGEPRINT_TYPE
+	bool "SHA256 fingerprint type"
+	help
+	  Uses SHA256 fingerprint type for deduplication algorithm.
+
+config SSDFS_GHASH_FINGEPRINT_TYPE
+	bool "Ghash fingerprint type"
+	help
+	  Uses Ghash fingerprint type for deduplication algorithm.
+
+config SSDFS_POLYVAL_FINGEPRINT_TYPE
+	bool "Polyval fingerprint type"
+	help
+	  Uses Polyval fingerprint type for deduplication algorithm.
+
+endchoice
+
 endmenu
 
 menu "Performance"
