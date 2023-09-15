@@ -117,11 +117,13 @@ int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!array);
-	BUG_ON(atomic_read(&array->state) != SSDFS_FOLIO_ARRAY_UNKNOWN_STATE);
 
 	SSDFS_DBG("capacity %d, array %p\n",
 		  capacity, array);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	memset(array, 0, sizeof(struct ssdfs_folio_array));
+	atomic_set(&array->state, SSDFS_FOLIO_ARRAY_UNKNOWN_STATE);
 
 	if (capacity == 0) {
 		SSDFS_ERR("invalid capacity %d\n",

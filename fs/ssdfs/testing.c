@@ -366,11 +366,640 @@ finish_folio_vector_testing:
  ******************************************************************************/
 
 static
+int ssdfs_folio_array_add_folios(struct ssdfs_testing_environment *env,
+				 struct ssdfs_folio_array *farray)
+{
+	struct folio *folio;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 lower_bound1, lower_bound2;
+	u64 upper_bound1, upper_bound2;
+	unsigned long last_index;
+	int folios_count = 0;
+	int i;
+	int err = 0;
+
+	SSDFS_ERR("ADD FOLIOS: item_size %u, count %llu\n",
+		  item_size, count);
+
+	lower_bound1 = 0;
+	upper_bound1 = count / 4;
+	if (upper_bound1 == 0)
+		upper_bound1 = 1;
+
+	for (i = lower_bound1; i < upper_bound1; i++) {
+		folio = ssdfs_folio_array_allocate_folio_locked(farray, i);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate folio\n");
+			return err;
+		}
+
+		last_index = ssdfs_folio_array_get_last_folio_index(farray);
+
+		if (i != last_index) {
+			err = -ERANGE;
+			SSDFS_ERR("cur_index %d != last_folio_index %lu\n",
+				  i, last_index);
+			goto unlock_folio_first_step;
+		}
+
+		err = __ssdfs_memset_folio(folio, 0, item_size,
+					   i, item_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set folio: "
+				  "item_size %u, index %d, err %d\n",
+				  item_size, i, err);
+			goto unlock_folio_first_step;
+		}
+
+unlock_folio_first_step:
+		ssdfs_folio_unlock(folio);
+
+		if (err)
+			return err;
+
+		folios_count++;
+	}
+
+	if (folios_count >= count)
+		return 0;
+
+	lower_bound2 = count / 4;
+	if (lower_bound2 == 0)
+		lower_bound2 = 1;
+	lower_bound2 = count - lower_bound2;
+
+	upper_bound2 = count;
+
+	for (i = lower_bound2; i < upper_bound2; i++) {
+		folio = ssdfs_folio_alloc(GFP_KERNEL | __GFP_ZERO,
+					  get_order(item_size));
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate folio\n");
+			return err;
+		}
+
+		ssdfs_folio_lock(folio);
+		err = __ssdfs_memset_folio(folio, 0, item_size,
+					   i, item_size);
+		ssdfs_folio_unlock(folio);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set folio: "
+				  "item_size %u, index %d, err %d\n",
+				  item_size, i, err);
+			return err;
+		}
+
+		err = ssdfs_folio_array_add_folio(farray, folio, i);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add folio: "
+				  "item_size %u, index %d, err %d\n",
+				  item_size, i, err);
+			return err;
+		}
+
+		last_index = ssdfs_folio_array_get_last_folio_index(farray);
+
+		if (last_index < i) {
+			err = -ERANGE;
+			SSDFS_ERR("last_folio_index %lu < cur_index %d\n",
+				  last_index, i);
+			return err;
+		}
+
+		folios_count++;
+	}
+
+	if (folios_count >= count)
+		return 0;
+
+	for (i = upper_bound1; i < lower_bound2; i++) {
+		folio = ssdfs_folio_array_grab_folio(farray, i);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate folio\n");
+			return err;
+		}
+
+		err = __ssdfs_memset_folio(folio, 0, item_size,
+					   i, item_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set folio: "
+				  "item_size %u, index %d, err %d\n",
+				  item_size, i, err);
+			goto unlock_folio_third_step;
+		}
+
+unlock_folio_third_step:
+		ssdfs_folio_put(folio);
+		ssdfs_folio_unlock(folio);
+
+		if (err)
+			return err;
+
+		last_index = ssdfs_folio_array_get_last_folio_index(farray);
+
+		if (last_index < i) {
+			err = -ERANGE;
+			SSDFS_ERR("last_folio_index %lu < cur_index %d\n",
+				  last_index, i);
+			return err;
+		}
+
+		folios_count++;
+	}
+
+	return err;
+}
+
+static
+int ssdfs_check_dirty_folio_presence(struct ssdfs_testing_environment *env,
+				     struct ssdfs_folio_array *farray,
+				     void *kaddr1, int dirty_folios)
+{
+	struct folio_batch batch;
+	struct folio *folio;
+	void *kaddr2 = NULL;
+	u64 count = env->memory_primitives.count;
+	unsigned long folio_index, end;
+	int processed_folios;
+	int i;
+	int err = 0;
+
+	processed_folios = 0;
+	folio_index = 0;
+	end = count - 1;
+
+	do {
+		u32 batch_size;
+
+		folio_batch_init(&batch);
+
+		err = ssdfs_folio_array_lookup_range(farray,
+						     &folio_index, end,
+						     SSDFS_DIRTY_PAGE_TAG,
+						     count,
+						     &batch);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find dirty folios: "
+				  "start %lu, end %lu, err %d\n",
+				  folio_index, end, err);
+			return err;
+		}
+
+		batch_size = folio_batch_count(&batch);
+
+		if (batch_size == 0)
+			break;
+
+		for (i = 0; i < batch_size; i++) {
+			folio = batch.folios[i];
+
+			if (!folio) {
+				err = -ERANGE;
+				SSDFS_ERR("empty folio: index %d\n", i);
+				return err;
+			}
+
+			memset(kaddr1, folio->index, PAGE_SIZE);
+
+			kaddr2 = kmap_local_folio(folio, 0);
+			if (memcmp(kaddr1, kaddr2, PAGE_SIZE) != 0) {
+				err = -ERANGE;
+				SSDFS_ERR("invalid memory state: "
+					  "index %d\n", i);
+			}
+			kunmap_local(kaddr2);
+
+			ssdfs_folio_put(folio);
+
+			if (err)
+				return err;
+
+			processed_folios++;
+		}
+
+		folio_index = batch.folios[batch_size - 1]->index + 1;
+	} while (folio_index < count);
+
+	if (dirty_folios != processed_folios) {
+		err = -ERANGE;
+		SSDFS_ERR("dirty_folios %d != processed_folios %d\n",
+			  dirty_folios, processed_folios);
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_check_dirty_folio_absence(struct ssdfs_testing_environment *env,
+				    struct ssdfs_folio_array *farray)
+{
+	struct folio_batch batch;
+	u64 count = env->memory_primitives.count;
+	unsigned long folio_index, end;
+	int err = 0;
+
+	folio_index = 0;
+	end = count - 1;
+
+	folio_batch_init(&batch);
+
+	err = ssdfs_folio_array_lookup_range(farray,
+					     &folio_index, end,
+					     SSDFS_DIRTY_PAGE_TAG,
+					     count,
+					     &batch);
+	if (err == -ENOENT) {
+		/*
+		 * Nothing was found.
+		 * Expected result.
+		 */
+		err = 0;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find dirty folios: "
+			  "start %lu, end %lu, err %d\n",
+			  folio_index, end, err);
+		return err;
+	}
+
+	if (folio_batch_count(&batch) != 0) {
+		err = -ERANGE;
+		SSDFS_ERR("batch with dirty folios should be empty\n");
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_folio_array_execute_first_check(struct ssdfs_testing_environment *env,
+					  struct ssdfs_folio_array *farray,
+					  void *kaddr1)
+{
+	struct folio *folio;
+	void *kaddr2 = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	int i;
+	int err = 0;
+
+	SSDFS_ERR("CHECK 1: item_size %u, count %llu\n",
+		  item_size, count);
+
+	for (i = 0; i < count; i++) {
+		folio = ssdfs_folio_array_get_folio_locked(farray, i);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to get folio: "
+				  "index %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		memset(kaddr1, i, PAGE_SIZE);
+
+		kaddr2 = kmap_local_folio(folio, 0);
+		if (memcmp(kaddr1, kaddr2, PAGE_SIZE) != 0) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid memory state: "
+				  "index %d\n", i);
+		}
+		kunmap_local(kaddr2);
+		ssdfs_folio_unlock(folio);
+
+		ssdfs_folio_put(folio);
+
+		if (err)
+			return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_folio_array_execute_second_check(struct ssdfs_testing_environment *env,
+					   struct ssdfs_folio_array *farray,
+					   void *kaddr1)
+{
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	int dirty_folios;
+	int step;
+	int i;
+	int err = 0;
+
+	SSDFS_ERR("CHECK 2: item_size %u, count %llu\n",
+		  item_size, count);
+
+	dirty_folios = 0;
+	step = 1;
+	for (i = 0; i < count; i += step, step++) {
+		err = ssdfs_folio_array_set_folio_dirty(farray, i);
+		if (err) {
+			SSDFS_ERR("fail to set dirty: "
+				  "index %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		dirty_folios++;
+	}
+
+	err = ssdfs_check_dirty_folio_presence(env, farray, kaddr1,
+						dirty_folios);
+	if (err) {
+		SSDFS_ERR("fail to check dirty folios: "
+			  "dirty_folios %d, err %d\n",
+			  dirty_folios, err);
+		return err;
+	}
+
+	step = 1;
+	for (i = 0; i < count; i += step, step++) {
+		err = ssdfs_folio_array_clear_dirty_folio(farray, i);
+		if (err) {
+			SSDFS_ERR("fail to clear dirty: "
+				  "index %d, err %d\n",
+				  i, err);
+			return err;
+		}
+	}
+
+	err = ssdfs_check_dirty_folio_absence(env, farray);
+	if (err) {
+		SSDFS_ERR("there are dirty folios in array\n");
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_folio_array_execute_third_check(struct ssdfs_testing_environment *env,
+					  struct ssdfs_folio_array *farray,
+					  void *kaddr1)
+{
+	struct folio *folio;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	unsigned long folio_index, end;
+	int dirty_folios;
+	int i;
+	int err = 0;
+
+	SSDFS_ERR("CHECK 3: item_size %u, count %llu\n",
+		  item_size, count);
+
+	for (i = 1; i < count; i += 2) {
+		folio = ssdfs_folio_array_delete_folio(farray, i);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("fail to delete folio: "
+				  "index %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		ssdfs_folio_lock(folio);
+		folio_clear_uptodate(folio);
+		ssdfs_clear_folio_private(folio, 0);
+		ssdfs_folio_unlock(folio);
+
+		ssdfs_folio_free(folio);
+	}
+
+	dirty_folios = 0;
+	for (i = 0; i < count; i += 2) {
+		err = ssdfs_folio_array_set_folio_dirty(farray, i);
+		if (err) {
+			SSDFS_ERR("fail to set dirty: "
+				  "index %d, err %d\n",
+				  i, err);
+			return err;
+		}
+
+		dirty_folios++;
+	}
+
+	err = ssdfs_check_dirty_folio_presence(env, farray, kaddr1,
+						dirty_folios);
+	if (err) {
+		SSDFS_ERR("fail to check dirty folios: "
+			  "dirty_folios %d, err %d\n",
+			  dirty_folios, err);
+		return err;
+	}
+
+	folio_index = 0;
+	end = count / 2;
+
+	err = ssdfs_folio_array_clear_dirty_range(farray,
+						  folio_index, end);
+	if (err) {
+		SSDFS_ERR("fail to clear dirty range: "
+			  "start %lu, end %lu, err %d\n",
+			  folio_index, end, err);
+		return err;
+	}
+
+	err = ssdfs_folio_array_clear_all_dirty_folios(farray);
+	if (err) {
+		SSDFS_ERR("fail to clear all dirty folios: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	err = ssdfs_check_dirty_folio_absence(env, farray);
+	if (err) {
+		SSDFS_ERR("there are dirty folios in array\n");
+		return err;
+	}
+
+	return 0;
+}
+
+static
+int ssdfs_folio_array_execute_fourth_check(struct ssdfs_testing_environment *env,
+					   struct ssdfs_folio_array *farray)
+{
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	unsigned long lower_bound1, lower_bound2;
+	unsigned long upper_bound1, upper_bound2;
+	unsigned long end;
+	int err = 0;
+
+	SSDFS_ERR("CHECK 4: item_size %u, count %llu\n",
+		  item_size, count);
+
+	lower_bound1 = 0;
+	upper_bound1 = count / 4;
+	if (upper_bound1 == 0)
+		upper_bound1 = 1;
+	end = upper_bound1 - 1;
+
+	err = ssdfs_folio_array_release_folios(farray,
+						&lower_bound1,
+						end);
+	if (err) {
+		SSDFS_ERR("fail to release folio range: "
+			  "start %lu, end %lu, err %d\n",
+			  lower_bound1, end, err);
+		return err;
+	}
+
+	lower_bound2 = count / 4;
+	if (lower_bound2 == 0)
+		lower_bound2 = 1;
+	lower_bound2 = count - lower_bound2;
+
+	upper_bound2 = count;
+	end = upper_bound2 - 1;
+
+	err = ssdfs_folio_array_release_folios(farray,
+						&lower_bound2,
+						end);
+	if (err) {
+		SSDFS_ERR("fail to release folio range: "
+			  "start %lu, end %lu, err %d\n",
+			  lower_bound2, end, err);
+		return err;
+	}
+
+	err = ssdfs_folio_array_release_all_folios(farray);
+	if (err) {
+		SSDFS_ERR("fail to release all folios: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	if (!is_ssdfs_folio_array_empty(farray)) {
+		err = -ERANGE;
+		SSDFS_ERR("folio array is not empty!!!\n");
+		return err;
+	}
+
+	return 0;
+}
+
+static
 int ssdfs_do_folio_array_testing(struct ssdfs_fs_info *fsi,
 				 struct ssdfs_testing_environment *env)
 {
-	SSDFS_ERR("TODO: implement folio array testing logic\n");
-	return 0;
+	struct ssdfs_folio_array farray;
+	void *kaddr1 = NULL;
+	u32 item_size = env->memory_primitives.item_size;
+	u64 count = env->memory_primitives.count;
+	u64 capacity = env->memory_primitives.capacity;
+	u64 new_capacity = capacity;
+	u32 iterations_number = env->memory_primitives.iterations_number;
+	int i;
+	int err = 0;
+
+	BUG_ON(capacity >= U32_MAX);
+	BUG_ON(count >= U32_MAX);
+
+	if (capacity == 0 || count == 0) {
+		err = -EINVAL;
+		SSDFS_ERR("invalid input: "
+			  "count %llu, capacity %llu\n",
+			  count, capacity);
+		goto finish_folio_array_testing;
+	}
+
+	kaddr1 = ssdfs_kmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
+	if (!kaddr1) {
+		err = -ENOMEM;
+		SSDFS_ERR("fail to allocate temporary buffer\n");
+		goto finish_folio_array_testing;
+	}
+
+	err = ssdfs_create_folio_array(&farray, get_order(item_size), capacity);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create folio array: "
+			  "item_size %u, capacity %llu\n",
+			  item_size, capacity);
+		goto free_allocated_memory;
+	}
+
+	for (i = 0; i < iterations_number; i++) {
+		SSDFS_ERR("ITERATION %d: item_size %u, count %llu\n",
+			  i, item_size, count);
+
+		if (!is_ssdfs_folio_array_empty(&farray)) {
+			err = -ERANGE;
+			SSDFS_ERR("folio array is not empty!!!\n");
+			goto destroy_folio_array;
+		}
+
+		err = ssdfs_folio_array_add_folios(env, &farray);
+		if (err) {
+			SSDFS_ERR("fail to add folios into array: "
+				  "err %d\n", err);
+			goto destroy_folio_array;
+		}
+
+		/* FIRST CHECK */
+		err = ssdfs_folio_array_execute_first_check(env, &farray,
+							    kaddr1);
+		if (err) {
+			SSDFS_ERR("first check is failed: "
+				  "err %d\n", err);
+			goto destroy_folio_array;
+		}
+
+		/* SECOND CHECK */
+		err = ssdfs_folio_array_execute_second_check(env, &farray,
+							     kaddr1);
+		if (err) {
+			SSDFS_ERR("second check is failed: "
+				  "err %d\n", err);
+			goto destroy_folio_array;
+		}
+
+		/* THIRD CHECK */
+		err = ssdfs_folio_array_execute_third_check(env, &farray,
+							    kaddr1);
+		if (err) {
+			SSDFS_ERR("third check is failed: "
+				  "err %d\n", err);
+			goto destroy_folio_array;
+		}
+
+		/* FOURTH CHECK */
+		err = ssdfs_folio_array_execute_fourth_check(env, &farray);
+		if (err) {
+			SSDFS_ERR("fourth check is failed: "
+				  "err %d\n", err);
+			goto destroy_folio_array;
+		}
+
+		new_capacity += 16;
+
+		err = ssdfs_reinit_folio_array(new_capacity, &farray);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to re-init folio array: "
+				  "iteration %d, "
+				  "item_size %u, capacity %llu\n",
+				  i, item_size, new_capacity);
+			goto destroy_folio_array;
+		}
+	}
+
+destroy_folio_array:
+	ssdfs_destroy_folio_array(&farray);
+
+free_allocated_memory:
+	if (kaddr1)
+		ssdfs_kfree(kaddr1);
+
+finish_folio_array_testing:
+	return err;
 }
 
 /******************************************************************************

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.85 [September 15, 2023]
+    (*) Introduce unit-test for folio array primitive.
+
 v.4.84 [September 14, 2023]
     (*) Introduce PEB-based deduplication model.
 
