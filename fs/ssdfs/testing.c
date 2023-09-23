@@ -1603,10 +1603,10 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 		goto finish_add_block;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
-	(req)->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
+	(req)->private.flags |= SSDFS_REQ_DONT_FREE_FOLIOS;
 
 	ino = fsi->testing_inode->i_ino;
 

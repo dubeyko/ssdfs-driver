@@ -112,11 +112,11 @@ struct ssdfs_raw_iterator {
 
 /*
  * struct ssdfs_content_stream - content stream
- * @pvec: page vector with content's byte stream
+ * @batch: folio vector with content's byte stream
  * @write_iter: write iterator
  */
 struct ssdfs_content_stream {
-	struct ssdfs_page_vector pvec;
+	struct ssdfs_folio_vector batch;
 //	struct ssdfs_raw_iterator write_iter;
 
 	u32 write_off;
@@ -134,7 +134,7 @@ struct ssdfs_content_stream {
 
 /*
  * struct ssdfs_blk_bmap_init_env - block bitmap init environment
- * @raw.content: page vector that stores block bitmap content
+ * @raw.content: folio vector that stores block bitmap content
  * @raw.metadata: block bitmap fragment's metadata buffer
  * @header.ptr: pointer on block bitmap header
  * @fragment.index: index of block bitmap's fragment
@@ -143,7 +143,7 @@ struct ssdfs_content_stream {
  */
 struct ssdfs_blk_bmap_init_env {
 	struct {
-		struct ssdfs_page_vector content;
+		struct ssdfs_folio_vector content;
 		u8 metadata[SSDFS_BLKBMAP_HDR_CAPACITY];
 	} raw;
 
@@ -202,7 +202,7 @@ struct ssdfs_blk_desc_table_init_env {
 		struct ssdfs_area_block_table header;
 
 		struct {
-			struct ssdfs_page_vector content;
+			struct ssdfs_folio_vector content;
 		} raw;
 
 //		struct ssdfs_fragment_raw_iterator read_iter;
@@ -434,7 +434,7 @@ struct ssdfs_peb_log {
 	u32 prev_log_bmap_bytes;
 	u64 last_log_time;
 	u64 last_log_cno;
-	struct ssdfs_page_vector bmap_snapshot;
+	struct ssdfs_folio_vector bmap_snapshot;
 	struct ssdfs_blk2off_table_area blk2off_tbl;
 	struct ssdfs_peb_area area[SSDFS_LOG_AREA_MAX];
 };
@@ -611,7 +611,8 @@ void ssdfs_create_content_stream(struct ssdfs_content_stream *stream,
 	BUG_ON(!stream);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_page_vector_create(&stream->pvec, capacity);
+	ssdfs_folio_vector_create(&stream->batch,
+				  get_order(PAGE_SIZE), capacity);
 
 	stream->write_off = 0;
 	stream->bytes_count = 0;
@@ -627,8 +628,8 @@ void ssdfs_reinit_content_stream(struct ssdfs_content_stream *stream)
 	BUG_ON(!stream);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_page_vector_release(&stream->pvec);
-	ssdfs_page_vector_reinit(&stream->pvec);
+	ssdfs_folio_vector_release(&stream->batch);
+	ssdfs_folio_vector_reinit(&stream->batch);
 
 	stream->write_off = 0;
 	stream->bytes_count = 0;
@@ -644,8 +645,8 @@ void ssdfs_destroy_content_stream(struct ssdfs_content_stream *stream)
 	BUG_ON(!stream);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_page_vector_release(&stream->pvec);
-	ssdfs_page_vector_destroy(&stream->pvec);
+	ssdfs_folio_vector_release(&stream->batch);
+	ssdfs_folio_vector_destroy(&stream->batch);
 
 	stream->write_off = 0;
 	stream->bytes_count = 0;

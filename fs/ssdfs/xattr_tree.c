@@ -1641,8 +1641,8 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 			     struct ssdfs_blob_extent *desc)
 {
 	struct ssdfs_segment_request *req;
-	struct page *page;
-	int pages_count;
+	struct folio *folio;
+	int folios_count;
 	size_t copied_data = 0;
 	size_t cur_len;
 	u64 seg_id;
@@ -1681,36 +1681,36 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		goto free_reserved_page;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
 	ssdfs_request_prepare_logical_extent(ii->vfs_inode.i_ino,
 					     0, size, 0, 0, req);
 
-	pages_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-	for (i = 0; i < pages_count; i++) {
-		page = ssdfs_request_allocate_and_add_page(req);
-		if (IS_ERR_OR_NULL(page)) {
-			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-			SSDFS_ERR("fail to allocate page: err %d\n",
+	folios_count = (size + fsi->pagesize - 1) / fsi->pagesize;
+	for (i = 0; i < folios_count; i++) {
+		folio = ssdfs_request_allocate_and_add_folio(req);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("fail to allocate folio: err %d\n",
 				  err);
 			goto finish_save_external_blob;
 		}
 
-		ssdfs_get_page(page);
-		ssdfs_lock_page(page);
+		ssdfs_folio_get(folio);
+		ssdfs_folio_lock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		cur_len = min_t(size_t, PAGE_SIZE,
+		cur_len = min_t(size_t, fsi->pagesize,
 				size - copied_data);
 
-		err = ssdfs_memcpy_to_page(page, 0, PAGE_SIZE,
-					   value, copied_data, size,
-					   cur_len);
+		err = __ssdfs_memcpy_to_folio(folio, 0, fsi->pagesize,
+					      (u8 *)value, copied_data, size,
+					      cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			goto finish_copy;
@@ -1719,17 +1719,17 @@ int ssdfs_save_external_blob(struct ssdfs_fs_info *fsi,
 		copied_data += cur_len;
 
 finish_copy:
-		ssdfs_put_page(page);
+		ssdfs_folio_put(folio);
 
 		if (unlikely(err))
 			goto finish_save_external_blob;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		set_page_writeback(page);
+		folio_start_writeback(folio);
 	}
 
 	err = ssdfs_segment_add_xattr_blob_async(fsi, req, &seg_id, &extent);
@@ -1752,18 +1752,18 @@ finish_copy:
 	return 0;
 
 finish_save_external_blob:
-	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
-		page = req->result.pvec.pages[i];
+	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
+		folio = req->result.batch.folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		end_page_writeback(page);
-		ssdfs_unlock_page(page);
+		folio_end_writeback(folio);
+		ssdfs_folio_unlock(folio);
 	}
 
-	ssdfs_xattr_pagevec_release(&req->result.pvec);
+	ssdfs_xattr_folio_batch_release(&req->result.batch);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 
@@ -7014,6 +7014,7 @@ int ssdfs_xattrs_btree_node_allocate_range(struct ssdfs_btree_node *node,
 
 /*
  * __ssdfs_xattrs_btree_node_get_xattr() - extract the xattr from folio batch
+ * @fsi: pointer on shared file system object
  * @batch: pointer on folio batch
  * @area_offset: area offset from the node's beginning
  * @area_size: area size
@@ -7029,67 +7030,7 @@ int ssdfs_xattrs_btree_node_allocate_range(struct ssdfs_btree_node *node,
  *
  * %-ERANGE     - internal error.
  */
-int __ssdfs_xattrs_btree_node_get_xattr(struct pagevec *pvec,
-					u32 area_offset,
-					u32 area_size,
-					u32 node_size,
-					u16 item_index,
-					struct ssdfs_xattr_entry *xattr)
-{
-	size_t item_size = sizeof(struct ssdfs_xattr_entry);
-	u32 item_offset;
-	int page_index;
-	struct page *page;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !xattr);
-
-	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
-		  area_offset, area_size, item_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	item_offset = (u32)item_index * item_size;
-	if (item_offset >= area_size) {
-		SSDFS_ERR("item_offset %u >= area_size %u\n",
-			  item_offset, area_size);
-		return -ERANGE;
-	}
-
-	item_offset += area_offset;
-	if (item_offset >= node_size) {
-		SSDFS_ERR("item_offset %u >= node_size %u\n",
-			  item_offset, node_size);
-		return -ERANGE;
-	}
-
-	page_index = item_offset >> PAGE_SHIFT;
-
-	if (page_index > 0)
-		item_offset %= page_index * PAGE_SIZE;
-
-	if (page_index >= pagevec_count(pvec)) {
-		SSDFS_ERR("invalid page_index: "
-			  "index %d, pvec_size %u\n",
-			  page_index,
-			  pagevec_count(pvec));
-		return -ERANGE;
-	}
-
-	page = pvec->pages[page_index];
-
-	err = ssdfs_memcpy_from_page(xattr, 0, item_size,
-				     page, item_offset, PAGE_SIZE,
-				     item_size);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d, err\n", err);
-		return err;
-	}
-
-	return 0;
-}
-
-int __ssdfs_xattrs_btree_node_get_xattr2(struct ssdfs_fs_info *fsi,
+int __ssdfs_xattrs_btree_node_get_xattr(struct ssdfs_fs_info *fsi,
 					struct folio_batch *batch,
 					u32 area_offset,
 					u32 area_size,
@@ -7192,7 +7133,7 @@ int ssdfs_xattrs_btree_node_get_xattr(struct ssdfs_btree_node *node,
 
 	fsi = node->tree->fsi;
 
-	return __ssdfs_xattrs_btree_node_get_xattr2(fsi,
+	return __ssdfs_xattrs_btree_node_get_xattr(fsi,
 						   &node->content.batch,
 						   area->offset,
 						   area->area_size,

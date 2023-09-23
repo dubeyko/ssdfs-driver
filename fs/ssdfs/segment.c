@@ -2058,18 +2058,17 @@ int ssdfs_remove_current_segment(struct ssdfs_current_segment *cur_seg)
 static
 int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
 	struct ssdfs_requests_queue *create_rq;
 	struct ssdfs_segment_request *req;
 	struct inode *inode;
-	struct page *page;
+	struct folio *folio;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_extents_btree_info *etree;
 	u32 not_proccessed;
-	u32 mem_pages_count;
 	u32 data_bytes;
 	int i;
 	int err = 0;
@@ -2102,51 +2101,35 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 		return -ENOSPC;
 	}
 
-	if (batch->processed_pages >= pagevec_count(&batch->pvec)) {
-		SSDFS_ERR("all pages have been processed: "
-			  "dirty_pages %u, processed_pages %u\n",
-			  pagevec_count(&batch->pvec),
-			  batch->processed_pages);
+	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+		SSDFS_ERR("all folios have been processed: "
+			  "dirty_folios %u, processed_blks %u\n",
+			  folio_batch_count(&batch->fvec),
+			  batch->processed_blks);
 		return -ENODATA;
 	}
 
-	not_proccessed = pagevec_count(&batch->pvec) - batch->processed_pages;
+	not_proccessed = folio_batch_count(&batch->fvec) - batch->processed_blks;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(batch->allocated_extent.start_lblk >= U16_MAX);
 	BUG_ON(batch->allocated_extent.len == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	mem_pages_count = ssdfs_phys_page_to_mem_page_count(fsi,
-						batch->allocated_extent.len);
-	if (mem_pages_count > not_proccessed) {
-		SSDFS_ERR("mem_pages_count %u > not_proccessed %u\n",
-			  mem_pages_count, not_proccessed);
+	if (batch->allocated_extent.len > not_proccessed) {
+		SSDFS_ERR("allocated_extent.len %u > not_proccessed %u\n",
+			  batch->allocated_extent.len, not_proccessed);
 		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec_size %u, batch->processed_pages %u, "
-		  "not_proccessed %u, batch->allocated_extent.len %u, "
-		  "mem_pages_count %u\n",
-		  pagevec_count(&batch->pvec),
-		  batch->processed_pages,
+	SSDFS_DBG("batch_size %u, batch->processed_blks %u, "
+		  "not_proccessed %u, batch->allocated_extent.len %u\n",
+		  folio_batch_count(&batch->fvec),
+		  batch->processed_blks,
 		  not_proccessed,
-		  batch->allocated_extent.len,
-		  mem_pages_count);
+		  batch->allocated_extent.len);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (mem_pages_count == 0) {
-		SSDFS_ERR("pvec_size %u, batch->processed_pages %u, "
-			  "not_proccessed %u, batch->allocated_extent.len %u, "
-			  "mem_pages_count %u\n",
-			  pagevec_count(&batch->pvec),
-			  batch->processed_pages,
-			  not_proccessed,
-			  batch->allocated_extent.len,
-			  mem_pages_count);
-		return -ERANGE;
-	}
 
 	req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(req)) {
@@ -2156,7 +2139,7 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 		return err;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
 	ssdfs_request_prepare_internal_data(pool->req_class,
@@ -2167,7 +2150,7 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 
 	switch (si->seg_type) {
 	case SSDFS_USER_DATA_SEG_TYPE:
-		req->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
+		req->private.flags |= SSDFS_REQ_DONT_FREE_FOLIOS;
 		break;
 
 	default:
@@ -2190,20 +2173,20 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 					   req);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON((batch->processed_pages + mem_pages_count) >
-					pagevec_count(&batch->pvec));
+	BUG_ON((batch->processed_blks + batch->allocated_extent.len) >
+					folio_batch_count(&batch->fvec));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < mem_pages_count; i++) {
-		u32 page_index = batch->processed_pages + i;
+	for (i = 0; i < batch->allocated_extent.len; i++) {
+		u32 folio_index = batch->processed_blks + i;
 
-		err = ssdfs_request_add_page(batch->pvec.pages[page_index],
-					     req);
+		err = ssdfs_request_add_folio(batch->fvec.folios[folio_index],
+					      req);
 		if (err) {
-			SSDFS_ERR("fail to add page into request: "
-				  "ino %llu, page_index %d, err %d\n",
+			SSDFS_ERR("fail to add folio into request: "
+				  "ino %llu, folio_index %d, err %d\n",
 				  batch->requested_extent.ino,
-				  page_index, err);
+				  folio_index, err);
 			goto fail_add_request_into_create_queue;
 		}
 	}
@@ -2219,19 +2202,19 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 	ssdfs_account_user_data_flush_request(si);
 	ssdfs_segment_create_request_cno(si);
 
-	page = batch->pvec.pages[batch->processed_pages];
+	folio = batch->fvec.folios[batch->processed_blks];
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
-	inode = page->mapping->host;
+	inode = folio->mapping->host;
 
 	err = ssdfs_extents_tree_add_extent(inode, req);
 	if (err) {
 		SSDFS_ERR("fail to add extent: "
-			  "ino %llu, page_index %llu, "
+			  "ino %llu, folio_index %llu, "
 			  "err %d\n",
 			  batch->requested_extent.ino,
-			  (u64)page_index(page), err);
+			  (u64)folio_index(folio), err);
 		goto fail_add_request_into_create_queue;
 	}
 
@@ -2255,7 +2238,7 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 		goto fail_add_request_into_create_queue;
 	}
 
-	batch->processed_pages += mem_pages_count;
+	batch->processed_blks += batch->allocated_extent.len;
 
 	if (batch->requested_extent.data_bytes > data_bytes) {
 		batch->requested_extent.logical_offset += data_bytes;
@@ -2306,7 +2289,7 @@ fail_add_request_into_create_queue:
 static
 int ssdfs_segment_allocate_data_extent(struct ssdfs_current_segment *cur_seg,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
@@ -2495,7 +2478,7 @@ finish_allocate_extent:
 static
 int __ssdfs_segment_add_data_block(struct ssdfs_current_segment *cur_seg,
 				   struct ssdfs_segment_request_pool *pool,
-				   struct ssdfs_dirty_pages_batch *batch)
+				   struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
@@ -2698,7 +2681,7 @@ int __ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
 					int req_class,
 					int req_type,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -2752,7 +2735,7 @@ int __ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
 					 int req_class,
 					 int req_type,
 					 struct ssdfs_segment_request_pool *pool,
-					 struct ssdfs_dirty_pages_batch *batch)
+					 struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -2813,7 +2796,7 @@ int __ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	return __ssdfs_segment_add_data_block_sync(fsi,
 					      SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
@@ -2839,7 +2822,7 @@ int ssdfs_segment_pre_alloc_data_block_sync(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	return __ssdfs_segment_add_data_block_async(fsi,
 					       SSDFS_PEB_PRE_ALLOCATE_DATA_REQ,
@@ -2865,7 +2848,7 @@ int ssdfs_segment_pre_alloc_data_block_async(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	return __ssdfs_segment_add_data_block_sync(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
@@ -2891,7 +2874,7 @@ int ssdfs_segment_add_data_block_sync(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_add_data_block_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	return __ssdfs_segment_add_data_block_async(fsi,
 						SSDFS_PEB_CREATE_DATA_REQ,
@@ -3717,7 +3700,7 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
 static
 int __ssdfs_segment_add_data_extent(struct ssdfs_current_segment *cur_seg,
 				    struct ssdfs_segment_request_pool *pool,
-				    struct ssdfs_dirty_pages_batch *batch)
+				    struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
@@ -3916,7 +3899,7 @@ finish_add_extent:
 static
 int __ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -3965,7 +3948,7 @@ int __ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
 static
 int __ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_current_segment *cur_seg;
 	int err;
@@ -4013,7 +3996,7 @@ int __ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pool || !batch);
@@ -4041,7 +4024,7 @@ int ssdfs_segment_pre_alloc_data_extent_sync(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pool || !batch);
@@ -4069,7 +4052,7 @@ int ssdfs_segment_pre_alloc_data_extent_async(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pool || !batch);
@@ -4097,7 +4080,7 @@ int ssdfs_segment_add_data_extent_sync(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_segment_add_data_extent_async(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pool || !batch);
@@ -5039,7 +5022,7 @@ int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
 static
 int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
@@ -5053,7 +5036,6 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 	u16 logical_blk;
 	u16 len;
 	u32 not_proccessed;
-	u32 mem_pages_count;
 	u32 data_bytes;
 	int i;
 	int err = 0;
@@ -5081,15 +5063,15 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 		return -ENOSPC;
 	}
 
-	if (batch->processed_pages >= pagevec_count(&batch->pvec)) {
-		SSDFS_ERR("all pages have been processed: "
-			  "dirty_pages %u, processed_pages %u\n",
-			  pagevec_count(&batch->pvec),
-			  batch->processed_pages);
+	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+		SSDFS_ERR("all blocks have been processed: "
+			  "dirty_folios %u, processed_blks %u\n",
+			  folio_batch_count(&batch->fvec),
+			  batch->processed_blks);
 		return -ENODATA;
 	}
 
-	not_proccessed = pagevec_count(&batch->pvec) - batch->processed_pages;
+	not_proccessed = folio_batch_count(&batch->fvec) - batch->processed_blks;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(batch->place.start.seg_id >= U64_MAX);
@@ -5097,36 +5079,20 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 	BUG_ON(batch->place.len == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	mem_pages_count = ssdfs_phys_page_to_mem_page_count(fsi,
-							batch->place.len);
-	if (mem_pages_count > not_proccessed) {
-		SSDFS_ERR("mem_pages_count %u > not_proccessed %u\n",
-			  mem_pages_count, not_proccessed);
+	if (batch->place.len > not_proccessed) {
+		SSDFS_ERR("place.len %u > not_proccessed %u\n",
+			  batch->place.len, not_proccessed);
 		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec_size %u, batch->processed_pages %u, "
-		  "not_proccessed %u, batch->place.len %u, "
-		  "mem_pages_count %u\n",
-		  pagevec_count(&batch->pvec),
-		  batch->processed_pages,
+	SSDFS_DBG("batch_size %u, batch->processed_blks %u, "
+		  "not_proccessed %u, batch->place.len %u\n",
+		  folio_batch_count(&batch->fvec),
+		  batch->processed_blks,
 		  not_proccessed,
-		  batch->place.len,
-		  mem_pages_count);
+		  batch->place.len);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (mem_pages_count == 0) {
-		SSDFS_ERR("pvec_size %u, batch->processed_pages %u, "
-			  "not_proccessed %u, batch->place.len %u, "
-			  "mem_pages_count %u\n",
-			  pagevec_count(&batch->pvec),
-			  batch->processed_pages,
-			  not_proccessed,
-			  batch->place.len,
-			  mem_pages_count);
-		return -ERANGE;
-	}
 
 	req = ssdfs_request_alloc();
 	if (IS_ERR_OR_NULL(req)) {
@@ -5136,7 +5102,7 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 		return err;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
 	ssdfs_request_prepare_internal_data(pool->req_class,
@@ -5157,7 +5123,7 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 
 	switch (si->seg_type) {
 	case SSDFS_USER_DATA_SEG_TYPE:
-		req->private.flags |= SSDFS_REQ_DONT_FREE_PAGES;
+		req->private.flags |= SSDFS_REQ_DONT_FREE_FOLIOS;
 		break;
 
 	default:
@@ -5179,25 +5145,25 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 					   req);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON((batch->processed_pages + mem_pages_count) >
-					pagevec_count(&batch->pvec));
+	BUG_ON((batch->processed_blks + batch->place.len) >
+					folio_batch_count(&batch->fvec));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < mem_pages_count; i++) {
-		u32 page_index = batch->processed_pages + i;
+	for (i = 0; i < batch->place.len; i++) {
+		u32 folio_index = batch->processed_blks + i;
 
-		err = ssdfs_request_add_page(batch->pvec.pages[page_index],
-					     req);
+		err = ssdfs_request_add_folio(batch->fvec.folios[folio_index],
+					      req);
 		if (err) {
-			SSDFS_ERR("fail to add page into request: "
-				  "ino %llu, page_index %d, err %d\n",
+			SSDFS_ERR("fail to add folio into request: "
+				  "ino %llu, folio_index %d, err %d\n",
 				  batch->requested_extent.ino,
-				  page_index, err);
+				  folio_index, err);
 			goto fail_add_request_into_update_queue;
 		}
 	}
 
-	batch->processed_pages += mem_pages_count;
+	batch->processed_blks += batch->place.len;
 
 	if (batch->requested_extent.data_bytes > data_bytes) {
 		batch->requested_extent.logical_offset += data_bytes;
@@ -5320,7 +5286,7 @@ fail_add_request_into_update_queue:
  */
 int ssdfs_segment_update_data_block_sync(struct ssdfs_segment_info *si,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pool || !batch);
@@ -5354,7 +5320,7 @@ int ssdfs_segment_update_data_block_sync(struct ssdfs_segment_info *si,
 int ssdfs_segment_update_data_block_async(struct ssdfs_segment_info *si,
 					int req_type,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pool || !batch);
@@ -5616,7 +5582,7 @@ int ssdfs_segment_update_block_async(struct ssdfs_segment_info *si,
  */
 int ssdfs_segment_update_data_extent_sync(struct ssdfs_segment_info *si,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pool || !batch);
@@ -5650,7 +5616,7 @@ int ssdfs_segment_update_data_extent_sync(struct ssdfs_segment_info *si,
 int ssdfs_segment_update_data_extent_async(struct ssdfs_segment_info *si,
 					int req_type,
 					struct ssdfs_segment_request_pool *pool,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si || !pool || !batch);
@@ -6759,7 +6725,7 @@ int ssdfs_segment_invalidate_logical_extent(struct ssdfs_segment_info *si,
 			goto finish_invalidate_block;
 		}
 
-		ssdfs_request_init(req);
+		ssdfs_request_init(req, si->fsi->pagesize);
 		ssdfs_get_request(req);
 
 		ssdfs_request_prepare_internal_data(SSDFS_PEB_UPDATE_REQ,

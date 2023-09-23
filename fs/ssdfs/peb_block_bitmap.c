@@ -263,7 +263,7 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 /*
  * ssdfs_peb_blk_bmap_init() - init PEB's block bitmap
  * @bmap: pointer on PEB's block bitmap object
- * @source: pointer on pagevec with bitmap state
+ * @source: pointer on folio vector with bitmap state
  * @hdr: header of block bitmap fragment
  * @cno: log's checkpoint
  *
@@ -277,7 +277,7 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
  * %-ERANGE     - invalid internal calculations.
  */
 int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
-			    struct ssdfs_page_vector *source,
+			    struct ssdfs_folio_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno)
 {
@@ -304,7 +304,7 @@ int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 	BUG_ON(!bmap || !bmap->parent || !bmap->parent->parent_si);
 	BUG_ON(!bmap->parent->parent_si->peb_array);
 	BUG_ON(!source || !hdr);
-	BUG_ON(ssdfs_page_vector_count(source) == 0);
+	BUG_ON(ssdfs_folio_vector_count(source) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = bmap->parent->parent_si->fsi;

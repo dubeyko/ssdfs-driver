@@ -1017,7 +1017,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	u64 seg_id;
 	u32 logical_blk;
 	u32 len;
-	u32 pvec_size;
+	u32 batch_size;
 	u64 logical_offset;
 	u32 data_bytes;
 	u32 copied_bytes = 0;
@@ -1065,16 +1065,16 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		goto fail_get_segment;
 	}
 
-	pvec_size = blob_size >> PAGE_SHIFT;
+	batch_size = blob_size >> fsi->log_pagesize;
 
-	if (pvec_size == 0)
-		pvec_size = 1;
+	if (batch_size == 0)
+		batch_size = 1;
 
-	if (pvec_size > PAGEVEC_SIZE) {
+	if (batch_size > PAGEVEC_SIZE) {
 		err = -ERANGE;
 		SSDFS_WARN("invalid memory pages count: "
-			   "blob_size %u, pvec_size %u\n",
-			   blob_size, pvec_size);
+			   "blob_size %u, batch_size %u\n",
+			   blob_size, batch_size);
 		goto finish_prepare_request;
 	}
 
@@ -1086,7 +1086,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		goto finish_prepare_request;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
 	logical_offset = 0;
@@ -1096,10 +1096,10 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 					     (u32)data_bytes,
 					     0, 0, req);
 
-	for (i = 0; i < pvec_size; i++) {
-		err = ssdfs_request_add_allocated_page_locked(req);
+	for (i = 0; i < batch_size; i++) {
+		err = ssdfs_request_add_allocated_folio_locked(req);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to add page into request: "
+			SSDFS_ERR("fail to add folio into request: "
 				  "err %d\n",
 				  err);
 			goto fail_read_blob;
@@ -1170,37 +1170,45 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
+	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
 		void *kaddr;
-		struct page *page = req->result.pvec.pages[i];
+		struct folio *folio = req->result.batch.folios[i];
+		u32 processed_bytes = 0;
+		u32 page_index = 0;
 
-		kaddr = kmap_local_page(page);
-		SSDFS_DBG("PAGE DUMP: index %d\n",
-			  i);
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr,
-				     PAGE_SIZE);
-		SSDFS_DBG("\n");
-		kunmap_local(kaddr);
+		do {
+			kaddr = kmap_local_folio(folio, page_index);
+			SSDFS_DBG("PAGE DUMP: folio_index %d, "
+				  "page_index %u\n",
+				  i, page_index);
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr,
+					     PAGE_SIZE);
+			SSDFS_DBG("\n");
+			kunmap_local(kaddr);
 
-		WARN_ON(!PageLocked(page));
+			processed_bytes += PAGE_SIZE;
+			page_index++;
+		} while (processed_bytes < folio_size(folio));
+
+		WARN_ON(!folio_test_locked(folio));
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
+	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
 		u32 cur_len;
 
 		if (copied_bytes >= blob_size)
 			break;
 
-		cur_len = min_t(u32, (u32)PAGE_SIZE,
+		cur_len = min_t(u32, (u32)fsi->pagesize,
 				blob_size - copied_bytes);
 
-		err = ssdfs_memcpy_from_page(value,
-					     copied_bytes, size,
-					     req->result.pvec.pages[i],
-					     0, PAGE_SIZE,
-					     cur_len);
+		err = __ssdfs_memcpy_from_folio(value,
+						copied_bytes, size,
+						req->result.batch.folios[i],
+						0, fsi->pagesize,
+						cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
 				  "copied_bytes %u, cur_len %u\n",
@@ -1211,7 +1219,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		copied_bytes += cur_len;
 	}
 
-	ssdfs_request_unlock_and_remove_pages(req);
+	ssdfs_request_unlock_and_remove_folios(req);
 
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
@@ -1221,7 +1229,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	return 0;
 
 fail_read_blob:
-	ssdfs_request_unlock_and_remove_pages(req);
+	ssdfs_request_unlock_and_remove_folios(req);
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 

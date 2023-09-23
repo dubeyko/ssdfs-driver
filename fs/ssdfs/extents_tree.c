@@ -408,7 +408,7 @@ __ssdfs_commit_queue_issue_requests_async(struct ssdfs_fs_info *fsi,
 			goto finish_issue_requests_async;
 		}
 
-		ssdfs_request_init(req);
+		ssdfs_request_init(req, fsi->pagesize);
 		ssdfs_get_request(req);
 
 		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
@@ -560,7 +560,7 @@ __ssdfs_commit_queue_issue_requests_sync(struct ssdfs_fs_info *fsi,
 			goto finish_issue_requests_sync;
 		}
 
-		ssdfs_request_init(cur_pair->req);
+		ssdfs_request_init(cur_pair->req, fsi->pagesize);
 		ssdfs_get_request(cur_pair->req);
 
 		err = ssdfs_segment_commit_log_async2(si,
@@ -2065,7 +2065,7 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 		  req->extent.parent_snapshot);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode = req->result.pvec.pages[0]->mapping->host;
+	inode = req->result.batch.folios[0]->mapping->host;
 
 	return __ssdfs_prepare_volume_extent(fsi, inode,
 					     &req->extent, &req->place);
@@ -2122,7 +2122,7 @@ int ssdfs_recommend_migration_extent(struct ssdfs_fs_info *fsi,
 
 	memset(fragment, 0xFF, sizeof(struct ssdfs_zone_fragment));
 
-	ii = SSDFS_I(req->result.pvec.pages[0]->mapping->host);
+	ii = SSDFS_I(req->result.batch.folios[0]->mapping->host);
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
@@ -9493,8 +9493,9 @@ int ssdfs_extents_btree_node_allocate_range(struct ssdfs_btree_node *node,
 }
 
 /*
- * __ssdfs_extents_btree_node_get_fork() - extract the fork from pagevec
- * @pvec: pointer on pagevec
+ * __ssdfs_extents_btree_node_get_fork() - extract the fork from folio batch
+ * @fsi: pointer on shared file system object
+ * @batch: pointer on folio batch
  * @area_offset: area offset from the node's beginning
  * @area_size: area size
  * @node_size: size of the node
@@ -9509,66 +9510,7 @@ int ssdfs_extents_btree_node_allocate_range(struct ssdfs_btree_node *node,
  *
  * %-ERANGE     - internal error.
  */
-int __ssdfs_extents_btree_node_get_fork(struct pagevec *pvec,
-					u32 area_offset,
-					u32 area_size,
-					u32 node_size,
-					u16 item_index,
-					struct ssdfs_raw_fork *fork)
-{
-	size_t item_size = sizeof(struct ssdfs_raw_fork);
-	u32 item_offset;
-	int page_index;
-	struct page *page;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !fork);
-
-	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
-		  area_offset, area_size, item_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	item_offset = (u32)item_index * item_size;
-	if (item_offset >= area_size) {
-		SSDFS_ERR("item_offset %u >= area_size %u\n",
-			  item_offset, area_size);
-		return -ERANGE;
-	}
-
-	item_offset += area_offset;
-	if (item_offset >= node_size) {
-		SSDFS_ERR("item_offset %u >= node_size %u\n",
-			  item_offset, node_size);
-		return -ERANGE;
-	}
-
-	page_index = item_offset >> PAGE_SHIFT;
-
-	if (page_index > 0)
-		item_offset %= page_index * PAGE_SIZE;
-
-	if (page_index >= pagevec_count(pvec)) {
-		SSDFS_ERR("invalid page_index: "
-			  "index %d, pvec_size %u\n",
-			  page_index,
-			  pagevec_count(pvec));
-		return -ERANGE;
-	}
-
-	page = pvec->pages[page_index];
-	err = ssdfs_memcpy_from_page(fork, 0, item_size,
-				     page, item_offset, PAGE_SIZE,
-				     item_size);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		return err;
-	}
-
-	return 0;
-}
-
-int __ssdfs_extents_btree_node_get_fork2(struct ssdfs_fs_info *fsi,
+int __ssdfs_extents_btree_node_get_fork(struct ssdfs_fs_info *fsi,
 					struct folio_batch *batch,
 					u32 area_offset,
 					u32 area_size,
@@ -9671,7 +9613,7 @@ int ssdfs_extents_btree_node_get_fork(struct ssdfs_btree_node *node,
 
 	fsi = node->tree->fsi;
 
-	return __ssdfs_extents_btree_node_get_fork2(fsi,
+	return __ssdfs_extents_btree_node_get_fork(fsi,
 						   &node->content.batch,
 						   area->offset,
 						   area->area_size,

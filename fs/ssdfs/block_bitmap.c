@@ -523,10 +523,10 @@ destroy_block_bmap:
 /*
  * ssdfs_block_bmap_init_storage() - initialize block bitmap storage
  * @blk_bmap: pointer on block bitmap
- * @source: prepared pagevec after reading from volume
+ * @source: prepared folio vector after reading from volume
  *
  * This function initializes block bitmap's storage on
- * the basis of pages @source are read from volume.
+ * the basis of folios @source are read from volume.
  *
  * RETURN:
  * [success]
@@ -538,16 +538,14 @@ destroy_block_bmap:
  */
 static
 int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
-				  struct ssdfs_page_vector *source)
+				  struct ssdfs_folio_vector *source)
 {
 	struct ssdfs_folio_vector *array;
 	struct folio *folio;
-	struct page *page;
-	void *kaddr;
-#ifdef CONFIG_SSDFS_DEBUG
-//	void *kaddr;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -589,44 +587,25 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 
 	switch (blk_bmap->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
-		for (i = 0; i < ssdfs_page_vector_count(source); i++) {
-			folio = ssdfs_block_bmap_alloc_folio(GFP_KERNEL,
-							get_order(PAGE_SIZE));
+		for (i = 0; i < ssdfs_folio_vector_count(source); i++) {
+			folio = ssdfs_folio_vector_remove(source, i);
 			if (IS_ERR_OR_NULL(folio)) {
-				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-				SSDFS_ERR("unable to allocate memory folio\n");
-				return err;
-			}
-
-			ssdfs_folio_get(folio);
-
-			page = ssdfs_page_vector_remove(source, i);
-			if (IS_ERR_OR_NULL(page)) {
-				SSDFS_WARN("page %d is NULL\n", i);
+				SSDFS_WARN("folio %d is NULL\n", i);
 				return -ERANGE;
 			}
 
-			ssdfs_lock_page(page);
+			ssdfs_folio_lock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			kaddr = kmap_local_page(page);
+			kaddr = kmap_local_folio(folio, 0);
 			SSDFS_DBG("BMAP INIT\n");
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr, PAGE_SIZE);
 			kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			kaddr = kmap_local_page(page);
-			__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
-						kaddr, 0, PAGE_SIZE,
-						PAGE_SIZE);
-			kunmap_local(kaddr);
-			ssdfs_unlock_page(page);
-
 			err = ssdfs_folio_vector_add(array, folio);
-
-			ssdfs_block_bmap_account_page(page);
-			ssdfs_block_bmap_free_page(page);
+			ssdfs_folio_unlock(folio);
 
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to add folio: "
@@ -634,48 +613,56 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 					  i, err);
 				return err;
 			}
-
-			ssdfs_block_bmap_forget_folio(folio);
 		}
 
-		ssdfs_page_vector_release(source);
+		err = ssdfs_folio_vector_reinit(source);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to reinit folio vector: "
+				  "err %d\n", err);
+			return err;
+		}
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		if (ssdfs_page_vector_count(source)  > 1) {
-			SSDFS_ERR("invalid source pvec size %u\n",
-				  ssdfs_page_vector_count(source));
+		if (ssdfs_folio_vector_count(source)  > 1) {
+			SSDFS_ERR("invalid source batch size %u\n",
+				  ssdfs_folio_vector_count(source));
 			return -ERANGE;
 		}
 
-		page = ssdfs_page_vector_remove(source, 0);
+		folio = ssdfs_folio_vector_remove(source, 0);
 
-		if (!page) {
-			SSDFS_WARN("page %d is NULL\n", 0);
+		if (!folio) {
+			SSDFS_WARN("folio %d is NULL\n", 0);
 			return -ERANGE;
 		}
 
-		ssdfs_lock_page(page);
-
-		ssdfs_memcpy_from_page(blk_bmap->storage.buf,
-				       0, blk_bmap->bytes_count,
-				       page, 0, PAGE_SIZE,
-				       blk_bmap->bytes_count);
+		ssdfs_folio_lock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		SSDFS_DBG("BMAP INIT\n");
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr, blk_bmap->bytes_count);
 		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_unlock_page(page);
+		err = __ssdfs_memcpy_from_folio(blk_bmap->storage.buf,
+						0, blk_bmap->bytes_count,
+						folio, 0, PAGE_SIZE,
+						blk_bmap->bytes_count);
+		ssdfs_folio_unlock(folio);
 
-		ssdfs_block_bmap_account_page(page);
-		ssdfs_block_bmap_free_page(page);
+		ssdfs_block_bmap_account_folio(folio);
+		ssdfs_block_bmap_free_folio(folio);
 
-		ssdfs_page_vector_release(source);
+		ssdfs_folio_vector_release(source);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to init storage buffer: "
+				  "err %d\n", err);
+			return err;
+		}
 		break;
 
 	default:
@@ -685,8 +672,8 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec %p, pagevec count %u\n",
-		  source, ssdfs_page_vector_count(source));
+	SSDFS_DBG("batch %p, batch_count %u\n",
+		  source, ssdfs_folio_vector_count(source));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -701,7 +688,7 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 /*
  * ssdfs_block_bmap_init() - initialize block bitmap pagevec
  * @blk_bmap: pointer on block bitmap
- * @source: prepared pagevec after reading from volume
+ * @source: prepared folio vector after reading from volume
  * @last_free_blk: saved on volume last free page
  * @metadata_blks: saved on volume reserved metadata blocks count
  * @invalid_blks: saved on volume count of invalid blocks
@@ -716,7 +703,7 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
  * %-EINVAL     - invalid input.
  */
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
-			  struct ssdfs_page_vector *source,
+			  struct ssdfs_folio_vector *source,
 			  u32 last_free_blk,
 			  u32 metadata_blks,
 			  u32 invalid_blks)
@@ -772,8 +759,8 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		clear_block_bmap_initialized(blk_bmap);
 	}
 
-	if (ssdfs_page_vector_count(source) == 0) {
-		SSDFS_ERR("fail to init because of empty pagevec\n");
+	if (ssdfs_folio_vector_count(source) == 0) {
+		SSDFS_ERR("fail to init because of empty folio vector\n");
 		return -EINVAL;
 	}
 
@@ -996,10 +983,10 @@ finish_define_last_free_page:
 /*
  * ssdfs_block_bmap_snapshot_storage() - make snapshot of bmap's storage
  * @blk_bmap: pointer on block bitmap
- * @snapshot: pagevec with snapshot of block bitmap state [out]
+ * @snapshot: folio vector with snapshot of block bitmap state [out]
  *
  * This function copies pages of block bitmap's styorage into
- * @snapshot pagevec.
+ * @snapshot folio vector.
  *
  * RETURN:
  * [success] - @snapshot contains copy of block bitmap's state
@@ -1010,20 +997,19 @@ finish_define_last_free_page:
  */
 static
 int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
-					struct ssdfs_page_vector *snapshot)
+					struct ssdfs_folio_vector *snapshot)
 {
 	struct ssdfs_folio_vector *array;
-	struct page *page;
-	void *kaddr;
+	struct folio *folio;
 #ifdef CONFIG_SSDFS_DEBUG
-//	void *kaddr;
+	void *kaddr;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap || !snapshot);
-	BUG_ON(ssdfs_page_vector_count(snapshot) != 0);
+	BUG_ON(ssdfs_folio_vector_count(snapshot) != 0);
 
 	if (!mutex_is_locked(&blk_bmap->lock)) {
 		SSDFS_WARN("block bitmap's mutex should be locked\n");
@@ -1039,31 +1025,31 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 		array = &blk_bmap->storage.array;
 
 		for (i = 0; i < ssdfs_folio_vector_count(array); i++) {
-			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate #%d page\n", i);
+			folio = ssdfs_block_bmap_alloc_folio(GFP_KERNEL, 0);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate #%d folio\n", i);
 				return err;
 			}
 
+			ssdfs_folio_get(folio);
+
+			__ssdfs_memcpy_folio(folio, 0, PAGE_SIZE,
+					     array->folios[i], 0, PAGE_SIZE,
+					     PAGE_SIZE);
+
 #ifdef CONFIG_SSDFS_DEBUG
-			kaddr = kmap_local_page(page);
+			kaddr = kmap_local_folio(folio, 0);
 			SSDFS_DBG("BMAP SNAPSHOT\n");
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr, PAGE_SIZE);
 			kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			kaddr = kmap_local_page(page);
-			__ssdfs_memcpy_from_folio(kaddr, 0, PAGE_SIZE,
-						  array->folios[i], 0, PAGE_SIZE,
-						  PAGE_SIZE);
-			kunmap_local(kaddr);
-
-			ssdfs_block_bmap_forget_page(page);
-			err = ssdfs_page_vector_add(snapshot, page);
+			ssdfs_block_bmap_forget_folio(folio);
+			err = ssdfs_folio_vector_add(snapshot, folio);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to add page: "
+				SSDFS_ERR("fail to add folio: "
 					  "index %d, err %d\n",
 					  i, err);
 				return err;
@@ -1071,19 +1057,21 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 		}
 
 		for (; i < ssdfs_folio_vector_capacity(array); i++) {
-			page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
-			if (IS_ERR_OR_NULL(page)) {
-				err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-				SSDFS_ERR("unable to allocate #%d page\n", i);
+			folio = ssdfs_block_bmap_alloc_folio(GFP_KERNEL, 0);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate #%d folio\n", i);
 				return err;
 			}
 
-			ssdfs_memzero_page(page, 0, PAGE_SIZE, PAGE_SIZE);
+			ssdfs_folio_get(folio);
 
-			ssdfs_block_bmap_forget_page(page);
-			err = ssdfs_page_vector_add(snapshot, page);
+			__ssdfs_memzero_folio(folio, 0, PAGE_SIZE, PAGE_SIZE);
+
+			ssdfs_block_bmap_forget_folio(folio);
+			err = ssdfs_folio_vector_add(snapshot, folio);
 			if (unlikely(err)) {
-				SSDFS_ERR("fail to add page: "
+				SSDFS_ERR("fail to add folio: "
 					  "index %d, err %d\n",
 					  i, err);
 				return err;
@@ -1092,31 +1080,33 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		page = ssdfs_block_bmap_alloc_page(GFP_KERNEL);
-		if (IS_ERR_OR_NULL(page)) {
-			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-			SSDFS_ERR("unable to allocate memory page\n");
+		folio = ssdfs_block_bmap_alloc_folio(GFP_KERNEL, 0);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate memory folio\n");
 			return err;
 		}
 
-		ssdfs_memcpy_to_page(page,
-				     0, PAGE_SIZE,
-				     blk_bmap->storage.buf,
-				     0, blk_bmap->bytes_count,
-				     blk_bmap->bytes_count);
+		ssdfs_folio_get(folio);
+
+		__ssdfs_memcpy_to_folio(folio,
+					0, PAGE_SIZE,
+					blk_bmap->storage.buf,
+					0, blk_bmap->bytes_count,
+					blk_bmap->bytes_count);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		SSDFS_DBG("BMAP SNAPSHOT\n");
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr, blk_bmap->bytes_count);
+				     kaddr, PAGE_SIZE);
 		kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_block_bmap_forget_page(page);
-		err = ssdfs_page_vector_add(snapshot, page);
+		ssdfs_block_bmap_forget_folio(folio);
+		err = ssdfs_folio_vector_add(snapshot, folio);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to add page: "
+			SSDFS_ERR("fail to add folio: "
 				  "err %d\n", err);
 			return err;
 		}
@@ -1134,7 +1124,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 /*
  * ssdfs_block_bmap_snapshot() - make snapshot of block bitmap's pagevec
  * @blk_bmap: pointer on block bitmap
- * @snapshot: pagevec with snapshot of block bitmap state [out]
+ * @snapshot: folio vector with snapshot of block bitmap state [out]
  * @last_free_blk: pointer on last free page value [out]
  * @metadata_blks: pointer on reserved metadata pages count [out]
  * @invalid_blks: pointer on invalid blocks count [out]
@@ -1151,7 +1141,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
  * %-ENOMEM     - unable to allocate memory.
  */
 int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
-				struct ssdfs_page_vector *snapshot,
+				struct ssdfs_folio_vector *snapshot,
 				u32 *last_free_page,
 				u32 *metadata_blks,
 				u32 *invalid_blks,
@@ -1163,7 +1153,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap || !snapshot);
 	BUG_ON(!last_free_page || !metadata_blks || !bytes_count);
-	BUG_ON(ssdfs_page_vector_count(snapshot) != 0);
+	BUG_ON(ssdfs_folio_vector_count(snapshot) != 0);
 
 	if (!mutex_is_locked(&blk_bmap->lock)) {
 		SSDFS_WARN("block bitmap's mutex should be locked\n");
@@ -1184,13 +1174,13 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 	err = ssdfs_block_bmap_snapshot_storage(blk_bmap, snapshot);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to snapshot bmap's storage: err %d\n", err);
-		goto cleanup_snapshot_pagevec;
+		goto cleanup_snapshot_folio_vector;
 	}
 
 	err = ssdfs_define_last_free_page(blk_bmap, last_free_page);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define last free page: err %d\n", err);
-		goto cleanup_snapshot_pagevec;
+		goto cleanup_snapshot_folio_vector;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1212,7 +1202,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->bytes_count, blk_bmap->items_capacity,
 			  blk_bmap->metadata_items, blk_bmap->used_blks,
 			  blk_bmap->invalid_blks, *last_free_page);
-		goto cleanup_snapshot_pagevec;
+		goto cleanup_snapshot_folio_vector;
 	}
 
 	*metadata_blks = blk_bmap->metadata_items;
@@ -1234,7 +1224,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->bytes_count, blk_bmap->allocation_pool,
 			  blk_bmap->metadata_items, blk_bmap->used_blks,
 			  blk_bmap->invalid_blks, *last_free_page);
-		goto cleanup_snapshot_pagevec;
+		goto cleanup_snapshot_folio_vector;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1251,17 +1241,17 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 
-cleanup_snapshot_pagevec:
-	ssdfs_page_vector_release(snapshot);
+cleanup_snapshot_folio_vector:
+	ssdfs_folio_vector_release(snapshot);
 	return err;
 }
 
-void ssdfs_block_bmap_forget_snapshot(struct ssdfs_page_vector *snapshot)
+void ssdfs_block_bmap_forget_snapshot(struct ssdfs_folio_vector *snapshot)
 {
 	if (!snapshot)
 		return;
 
-	ssdfs_page_vector_release(snapshot);
+	ssdfs_folio_vector_release(snapshot);
 }
 
 /*

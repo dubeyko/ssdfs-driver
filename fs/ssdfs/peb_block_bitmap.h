@@ -105,7 +105,7 @@ int ssdfs_peb_blk_bmap_create(struct ssdfs_segment_blk_bmap *parent,
 			      int init_flag, int init_state);
 void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
-			    struct ssdfs_page_vector *source,
+			    struct ssdfs_folio_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
 			    u64 cno);
 int ssdfs_peb_blk_bmap_clean_init(struct ssdfs_peb_blk_bmap *bmap);

@@ -366,7 +366,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	size_t buf_size;
 	u16 flags;
 	size_t bmap_bytes;
-	size_t bmap_pages;
+	size_t bmap_folios;
 	int i;
 	int err = 0;
 
@@ -396,14 +396,15 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	bmap_bytes = BLK_BMAP_BYTES(fsi->pages_per_peb);
-	bmap_pages = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	bmap_folios = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
-	err = ssdfs_page_vector_create(&pebi->current_log.bmap_snapshot,
-					bmap_pages);
+	err = ssdfs_folio_vector_create(&pebi->current_log.bmap_snapshot,
+					get_order(PAGE_SIZE),
+					bmap_folios);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to create page vector: "
-			  "bmap_pages %zu, err %d\n",
-			  bmap_pages, err);
+		SSDFS_ERR("fail to create folio vector: "
+			  "bmap_folios %zu, err %d\n",
+			  bmap_folios, err);
 		return err;
 	}
 
@@ -498,7 +499,7 @@ fail_init_current_log:
 		ssdfs_destroy_page_array(&area->array);
 	}
 
-	ssdfs_page_vector_destroy(&pebi->current_log.bmap_snapshot);
+	ssdfs_folio_vector_destroy(&pebi->current_log.bmap_snapshot);
 
 	return err;
 }
@@ -556,8 +557,8 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 		ssdfs_destroy_page_array(area_pages);
 	}
 
-	ssdfs_page_vector_release(&pebi->current_log.bmap_snapshot);
-	ssdfs_page_vector_destroy(&pebi->current_log.bmap_snapshot);
+	ssdfs_folio_vector_release(&pebi->current_log.bmap_snapshot);
+	ssdfs_folio_vector_destroy(&pebi->current_log.bmap_snapshot);
 
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_UNKNOWN);
 	ssdfs_peb_current_log_unlock(pebi);

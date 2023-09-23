@@ -27,6 +27,7 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
+#include "folio_vector.h"
 #include "ssdfs.h"
 #include "btree_search.h"
 #include "btree_node.h"

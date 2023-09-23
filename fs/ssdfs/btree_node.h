@@ -624,7 +624,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 					u32 node_size,
 					u64 owner_id,
 					struct ssdfs_segment_info **si,
-					struct pagevec *pvec);
+					struct folio_batch *batch);
 int ssdfs_btree_create_root_node(struct ssdfs_btree_node *node,
 				struct ssdfs_btree_inline_root_node *root_node);
 int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
@@ -648,10 +648,6 @@ int ssdfs_btree_node_find_index_position(struct ssdfs_btree_node *node,
 					 u16 *found_position);
 int ssdfs_btree_node_extract_range(u16 start_index, u16 count,
 				   struct ssdfs_btree_search *search);
-int __ssdfs_btree_node_get_index(struct pagevec *pvec,
-				u32 area_offset, u32 area_size,
-				u32 node_size, u16 position,
-				struct ssdfs_btree_index_key *ptr);
 int ssdfs_btree_node_get_index(struct ssdfs_fs_info *fsi,
 				struct folio_batch *batch,
 				u32 area_offset, u32 area_size,
@@ -749,10 +745,6 @@ int __ssdfs_btree_node_resize_items_area(struct ssdfs_btree_node *node,
 					 size_t item_size,
 					 size_t index_size,
 					 u32 new_size);
-int __ssdfs_define_memory_page(u32 area_offset, u32 area_size,
-				u32 node_size, size_t item_size,
-				u16 position,
-				u32 *page_index, u32 *page_off);
 int __ssdfs_define_memory_folio(struct ssdfs_fs_info *fsi,
 				u32 area_offset, u32 area_size,
 				u32 node_size, size_t item_size,
@@ -784,7 +776,7 @@ int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
 					struct folio *folio,
 					u32 *write_offset);
 
-void ssdfs_btree_node_forget_pagevec(struct pagevec *pvec);
+void ssdfs_btree_node_forget_folio_batch(struct folio_batch *batch);
 void ssdfs_show_btree_node_info(struct ssdfs_btree_node *node);
 void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node);
 

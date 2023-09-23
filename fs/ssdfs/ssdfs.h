@@ -264,9 +264,17 @@ int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
 int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 				  u32 offset, u32 size,
 				  void *buf);
+int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
+				      struct folio_batch *batch,
+				      u32 offset, u32 size,
+				      void *buf);
 int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
 				     u32 offset, u32 size,
 				     void *buf);
+int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
+				      struct ssdfs_folio_vector *vec,
+				      u32 offset, u32 size,
+				      void *buf);
 int ssdfs_unaligned_write_page_vector(struct ssdfs_page_vector *pvec,
 					u32 offset, u32 size,
 					void *buf);

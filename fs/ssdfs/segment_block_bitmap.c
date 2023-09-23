@@ -262,13 +262,13 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
  * ssdfs_segment_blk_bmap_partial_init() - partial init of segment bitmap
  * @bmap: pointer on segment block bitmap
  * @peb_index: PEB's index
- * @source: pointer on pagevec with bitmap state
+ * @source: pointer on folio vector with bitmap state
  * @hdr: header of block bitmap fragment
  * @cno: log's checkpoint
  */
 int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 					u16 peb_index,
-					struct ssdfs_page_vector *source,
+					struct ssdfs_folio_vector *source,
 					struct ssdfs_block_bitmap_fragment *hdr,
 					u64 cno)
 {
@@ -277,7 +277,7 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
 	BUG_ON(!source || !hdr);
-	BUG_ON(ssdfs_page_vector_count(source) == 0);
+	BUG_ON(ssdfs_folio_vector_count(source) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL

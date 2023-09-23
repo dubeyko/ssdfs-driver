@@ -106,13 +106,13 @@ void ssdfs_ext_queue_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
-void ssdfs_ext_queue_account_pagevec(struct pagevec *pvec)
+void ssdfs_ext_queue_account_folio_batch(struct folio_batch *batch)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	int i;
 
-	for (i = 0; i < pagevec_count(pvec); i++) {
-		ssdfs_ext_queue_account_page(pvec->pages[i]);
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		ssdfs_ext_queue_account_folio(batch->folios[i]);
 	}
 
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -485,10 +485,11 @@ int ssdfs_revert_invalidation_to_regular_activity(struct ssdfs_segment_info *si)
 
 /*
  * ssdfs_invalidate_index_area() - invalidate index area
+ * @fsi: pointer on shared file system object
  * @shextree: shared dictionary tree
  * @owner_ino: inode ID of btree's owner
  * @node_size: node size in bytes
- * @pvec: pagevec of the node's content
+ * @batch: folio batch of the node's content
  *
  * This method tries to invalidate the index area.
  *
@@ -500,11 +501,12 @@ int ssdfs_revert_invalidation_to_regular_activity(struct ssdfs_segment_info *si)
  * %-EIO        - node is corrupted.
  */
 static
-int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
+int ssdfs_invalidate_index_area(struct ssdfs_fs_info *fsi,
+				struct ssdfs_shared_extents_tree *shextree,
 				u64 owner_ino,
 				struct ssdfs_btree_node_header *hdr,
 				u32 node_size,
-				struct pagevec *pvec)
+				struct folio_batch *batch)
 {
 	struct ssdfs_btree_index_key cur_index;
 	u8 index_size;
@@ -517,7 +519,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!shextree || !hdr || !pvec);
+	BUG_ON(!shextree || !hdr || !batch);
 
 	SSDFS_DBG("owner_id %llu, node_size %u\n",
 		  owner_ino, node_size);
@@ -561,12 +563,13 @@ int ssdfs_invalidate_index_area(struct ssdfs_shared_extents_tree *shextree,
 	}
 
 	for (i = 0; i < index_count; i++) {
-		err = __ssdfs_btree_node_get_index(pvec,
-						   area_offset,
-						   area_size,
-						   node_size,
-						   i,
-						   &cur_index);
+		err = ssdfs_btree_node_get_index(fsi,
+						 batch,
+						 area_offset,
+						 area_size,
+						 node_size,
+						 i,
+						 &cur_index);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to get index: "
 				  "position %u, err %d\n",
@@ -684,8 +687,8 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	struct ssdfs_shared_extents_tree *shextree = NULL;
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_btree_node_header *hdr_ptr;
-	struct pagevec pvec;
-	struct page *page;
+	struct folio_batch batch;
+	struct folio *folio;
 	u32 node_id1, node_id2;
 	int node_type1, node_type2;
 	u8 height1, height2;
@@ -718,10 +721,10 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	hdr_ptr = (struct ssdfs_btree_node_header *)hdr;
-	pagevec_init(&pvec);
+	folio_batch_init(&batch);
 
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
-						 owner_ino, &si, &pvec);
+						 owner_ino, &si, &batch);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to prepare node's content: "
 			  "node_id %u, node_type %#x, "
@@ -740,25 +743,25 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 		goto fail_invalidate_index;
 	}
 
-	if (pagevec_count(&pvec) == 0) {
+	if (folio_batch_count(&batch) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
 
-	ssdfs_btree_node_forget_pagevec(&pvec);
-	ssdfs_ext_queue_account_pagevec(&pvec);
+	ssdfs_btree_node_forget_folio_batch(&batch);
+	ssdfs_ext_queue_account_folio_batch(&batch);
 
-	page = pvec.pages[0];
+	folio = batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_memcpy_from_page(hdr, 0, hdr_size,
-				page, 0, PAGE_SIZE,
-				hdr_size);
+	__ssdfs_memcpy_from_folio(hdr, 0, hdr_size,
+				  folio, 0, PAGE_SIZE,
+				  hdr_size);
 
 	if (!is_csum_valid(&hdr_ptr->check, hdr_ptr, hdr_size)) {
 		err = -EIO;
@@ -826,9 +829,9 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	if (has_index_area) {
-		err = ssdfs_invalidate_index_area(shextree, owner_ino,
+		err = ssdfs_invalidate_index_area(fsi, shextree, owner_ino,
 						  hdr_ptr,
-						  node_size, &pvec);
+						  node_size, &batch);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate index area: "
 				  "err %d\n", err);
@@ -869,7 +872,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 			goto revert_invalidation_state;
 		}
 
-		ssdfs_request_init(req);
+		ssdfs_request_init(req, fsi->pagesize);
 		ssdfs_get_request(req);
 
 		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
@@ -895,7 +898,7 @@ finish_invalidate_index:
 	ssdfs_segment_put_object(si);
 
 fail_invalidate_index:
-	ssdfs_ext_queue_pagevec_release(&pvec);
+	ssdfs_ext_queue_folio_batch_release(&batch);
 	return err;
 }
 
@@ -1006,9 +1009,11 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_extents_btree_descriptor *extents_btree;
 	u32 node_size;
-	struct pagevec pvec;
+	struct folio_batch batch;
 	struct ssdfs_btree_node_header hdr;
 	struct ssdfs_extents_btree_node_header *hdr_ptr;
+	struct folio *folio;
+	void *kaddr;
 	size_t hdr_size = sizeof(struct ssdfs_extents_btree_node_header);
 	u64 parent_ino;
 	u64 blks_count, calculated_blks = 0;
@@ -1016,8 +1021,6 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	u32 allocated_extents;
 	u32 valid_extents;
 	u32 max_extent_blks;
-	struct page *page;
-	void *kaddr;
 	u32 node_id1, node_id2;
 	int node_type1, node_type2;
 	u8 height1, height2;
@@ -1049,10 +1052,10 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 
 	extents_btree = &fsi->vh->extents_btree;
 	node_size = 1 << extents_btree->desc.log_node_size;
-	pagevec_init(&pvec);
+	folio_batch_init(&batch);
 
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
-						 owner_ino, &si, &pvec);
+						 owner_ino, &si, &batch);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to prepare node's content: "
 			  "node_id %u, node_type %#x, "
@@ -1071,23 +1074,23 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		goto fail_invalidate_extents_btree_index;
 	}
 
-	if (pagevec_count(&pvec) == 0) {
+	if (folio_batch_count(&batch) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
 
-	ssdfs_btree_node_forget_pagevec(&pvec);
-	ssdfs_ext_queue_account_pagevec(&pvec);
+	ssdfs_btree_node_forget_folio_batch(&batch);
+	ssdfs_ext_queue_account_folio_batch(&batch);
 
-	page = pvec.pages[0];
+	folio = batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ssdfs_memcpy(&hdr, 0, sizeof(struct ssdfs_btree_node_header),
 		     kaddr, 0, PAGE_SIZE,
@@ -1170,8 +1173,9 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	if (has_index_area) {
-		err = ssdfs_invalidate_index_area(shextree, owner_ino, &hdr,
-						  node_size, &pvec);
+		err = ssdfs_invalidate_index_area(fsi, shextree,
+						  owner_ino, &hdr,
+						  node_size, &batch);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate index area: "
 				  "err %d\n", err);
@@ -1211,7 +1215,8 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		for (i = 0; i < forks_count; i++) {
 			u64 start_offset, fork_blks;
 
-			err = __ssdfs_extents_btree_node_get_fork(&pvec,
+			err = __ssdfs_extents_btree_node_get_fork(fsi,
+								  &batch,
 								  area_offset,
 								  area_size,
 								  node_size,
@@ -1313,7 +1318,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 			goto revert_invalidation_state;
 		}
 
-		ssdfs_request_init(req);
+		ssdfs_request_init(req, fsi->pagesize);
 		ssdfs_get_request(req);
 
 		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
@@ -1339,7 +1344,7 @@ finish_invalidate_index:
 	ssdfs_segment_put_object(si);
 
 fail_invalidate_extents_btree_index:
-	ssdfs_ext_queue_pagevec_release(&pvec);
+	ssdfs_ext_queue_folio_batch_release(&batch);
 	return err;
 }
 
@@ -1366,14 +1371,14 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_xattr_btree_descriptor *xattrs_btree;
 	u32 node_size;
-	struct pagevec pvec;
+	struct folio_batch batch;
 	struct ssdfs_btree_node_header hdr;
 	struct ssdfs_xattrs_btree_node_header *hdr_ptr;
+	struct folio *folio;
+	void *kaddr;
 	size_t hdr_size = sizeof(struct ssdfs_xattrs_btree_node_header);
 	u64 parent_ino;
 	u32 xattrs_count;
-	struct page *page;
-	void *kaddr;
 	u32 node_id1, node_id2;
 	int node_type1, node_type2;
 	u8 height1, height2;
@@ -1405,10 +1410,10 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 
 	xattrs_btree = &fsi->vh->xattr_btree;
 	node_size = 1 << xattrs_btree->desc.log_node_size;
-	pagevec_init(&pvec);
+	folio_batch_init(&batch);
 
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
-						 owner_ino, &si, &pvec);
+						 owner_ino, &si, &batch);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare node's content: "
 			  "node_id %u, node_type %#x, "
@@ -1419,23 +1424,23 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 		goto finish_invalidate_index;
 	}
 
-	if (pagevec_count(&pvec) == 0) {
+	if (folio_batch_count(&batch) == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
 
-	ssdfs_btree_node_forget_pagevec(&pvec);
-	ssdfs_ext_queue_account_pagevec(&pvec);
+	ssdfs_btree_node_forget_folio_batch(&batch);
+	ssdfs_ext_queue_account_folio_batch(&batch);
 
-	page = pvec.pages[0];
+	folio = batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 
 	ssdfs_memcpy(&hdr, 0, sizeof(struct ssdfs_btree_node_header),
 		     kaddr, 0, PAGE_SIZE,
@@ -1514,8 +1519,9 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	if (has_index_area) {
-		err = ssdfs_invalidate_index_area(shextree, owner_ino, &hdr,
-						  node_size, &pvec);
+		err = ssdfs_invalidate_index_area(fsi, shextree,
+						  owner_ino, &hdr,
+						  node_size, &batch);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate index area: "
 				  "err %d\n", err);
@@ -1558,7 +1564,8 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 			struct ssdfs_raw_extent *extent;
 			bool is_flag_invalid;
 
-			err = __ssdfs_xattrs_btree_node_get_xattr(&pvec,
+			err = __ssdfs_xattrs_btree_node_get_xattr(fsi,
+								  &batch,
 								  area_offset,
 								  area_size,
 								  node_size,
@@ -1660,7 +1667,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 			goto revert_invalidation_state;
 		}
 
-		ssdfs_request_init(req);
+		ssdfs_request_init(req, fsi->pagesize);
 		ssdfs_get_request(req);
 
 		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,
@@ -1683,7 +1690,7 @@ revert_invalidation_state:
 	}
 
 finish_invalidate_index:
-	ssdfs_ext_queue_pagevec_release(&pvec);
+	ssdfs_ext_queue_folio_batch_release(&batch);
 	ssdfs_segment_put_object(si);
 	return err;
 }
@@ -1771,7 +1778,7 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 			goto revert_invalidation_state;
 		}
 
-		ssdfs_request_init(req);
+		ssdfs_request_init(req, fsi->pagesize);
 		ssdfs_get_request(req);
 
 		err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC,

@@ -1361,7 +1361,7 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 		return err;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
 	ino = node->tree->owner_ino;

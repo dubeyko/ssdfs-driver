@@ -425,6 +425,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 
 	list_for_each_safe(this, next, &tmp_list) {
 		struct ssdfs_segment_request *req;
+		unsigned int batch_count;
 		unsigned int i;
 
 		req = list_entry(this, struct ssdfs_segment_request, list);
@@ -459,24 +460,26 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 			complete(&req->result.wait);
 			wake_up_all(&req->private.wait_queue);
 
-			for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
-				struct page *page = req->result.pvec.pages[i];
+			batch_count = folio_batch_count(&req->result.batch);
+			for (i = 0; i < batch_count; i++) {
+				struct folio *folio =
+						req->result.batch.folios[i];
 
-				if (!page) {
-					SSDFS_WARN("empty page ptr: index %u\n", i);
+				if (!folio) {
+					SSDFS_WARN("empty folio ptr: index %u\n", i);
 					continue;
 				}
 
 #ifdef CONFIG_SSDFS_DEBUG
-				WARN_ON(!PageLocked(page));
+				WARN_ON(!folio_test_locked(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-				ClearPageUptodate(page);
-				ssdfs_clear_page_private(page, 0);
-				ClearPageMappedToDisk(page);
-				ssdfs_clear_dirty_page(page);
-				ssdfs_unlock_page(page);
-				end_page_writeback(page);
+				folio_clear_uptodate(folio);
+				ssdfs_clear_folio_private(folio, 0);
+				folio_clear_mappedtodisk(folio);
+				ssdfs_clear_dirty_folio(folio);
+				ssdfs_folio_unlock(folio);
+				folio_end_writeback(folio);
 			}
 
 			ssdfs_put_request(req);
@@ -487,24 +490,26 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 			complete(&req->result.wait);
 			wake_up_all(&req->private.wait_queue);
 
-			for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
-				struct page *page = req->result.pvec.pages[i];
+			batch_count = folio_batch_count(&req->result.batch);
+			for (i = 0; i < batch_count; i++) {
+				struct folio *folio = req->result.batch.folios[i];
 
-				if (!page) {
-					SSDFS_WARN("empty page ptr: index %u\n", i);
+				if (!folio) {
+					SSDFS_WARN("empty folio ptr: index %u\n",
+						   i);
 					continue;
 				}
 
 #ifdef CONFIG_SSDFS_DEBUG
-				WARN_ON(!PageLocked(page));
+				WARN_ON(!folio_test_locked(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-				ClearPageUptodate(page);
-				ssdfs_clear_page_private(page, 0);
-				ClearPageMappedToDisk(page);
-				ssdfs_clear_dirty_page(page);
-				ssdfs_unlock_page(page);
-				end_page_writeback(page);
+				folio_clear_uptodate(folio);
+				ssdfs_clear_folio_private(folio, 0);
+				folio_clear_mappedtodisk(folio);
+				ssdfs_clear_dirty_folio(folio);
+				ssdfs_folio_unlock(folio);
+				folio_end_writeback(folio);
 			}
 
 			ssdfs_put_request(req);
@@ -550,6 +555,7 @@ void ssdfs_request_free(struct ssdfs_segment_request *req)
 	if (!req)
 		return;
 
+	req->private.block_size = U32_MAX;
 	ssdfs_req_queue_cache_leaks_decrement(req);
 	kmem_cache_free(ssdfs_seg_req_obj_cachep, req);
 }
@@ -558,7 +564,8 @@ void ssdfs_request_free(struct ssdfs_segment_request *req)
  * ssdfs_request_init() - common request initialization
  * @req: request [out]
  */
-void ssdfs_request_init(struct ssdfs_segment_request *req)
+void ssdfs_request_init(struct ssdfs_segment_request *req,
+			u32 block_size)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
@@ -569,11 +576,12 @@ void ssdfs_request_init(struct ssdfs_segment_request *req)
 	INIT_LIST_HEAD(&req->list);
 	atomic_set(&req->private.refs_count, 0);
 	init_waitqueue_head(&req->private.wait_queue);
-	pagevec_init(&req->result.pvec);
-	pagevec_init(&req->result.diffs);
+	folio_batch_init(&req->result.batch);
+	folio_batch_init(&req->result.diffs);
 	atomic_set(&req->result.state, SSDFS_REQ_CREATED);
 	init_completion(&req->result.wait);
 	req->result.err = 0;
+	req->private.block_size = block_size;
 }
 
 /*
@@ -608,19 +616,19 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 }
 
 /*
- * ssdfs_dirty_pages_batch_add_page() - add memory page into batch
- * @page: memory page
- * @batch: dirty pages batch [out]
+ * ssdfs_dirty_folios_batch_add_folio() - add memory folio into batch
+ * @folio: memory folio
+ * @batch: dirty folios batch [out]
  */
-int ssdfs_dirty_pages_batch_add_page(struct page *page,
-				     struct ssdfs_dirty_pages_batch *batch)
+int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
+				     struct ssdfs_dirty_folios_batch *batch)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page || !batch);
+	BUG_ON(!folio || !batch);
 
 	switch (batch->state) {
 	case SSDFS_DIRTY_BATCH_CREATED:
-	case SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES:
+	case SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_BLOCKS:
 		/* expected state */
 		break;
 
@@ -631,353 +639,403 @@ int ssdfs_dirty_pages_batch_add_page(struct page *page,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&batch->pvec) == 0) {
-		SSDFS_WARN("batch's pagevec is full\n");
+	if (fbatch_space(&batch->fvec) == 0) {
+		SSDFS_WARN("batch's folio vector is full\n");
 		return -E2BIG;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %llu\n",
-		  (u64)page_index(page));
+	SSDFS_DBG("folio_index %llu\n",
+		  (u64)folio_index(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	pagevec_add(&batch->pvec, page);
-	batch->state = SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES;
+	folio_batch_add(&batch->fvec, folio);
+	batch->state = SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_BLOCKS;
 	return 0;
 
 }
 
 /*
- * ssdfs_request_add_page() - add memory page into segment request
+ * ssdfs_request_add_folio() - add memory folio into segment request
  * @page: memory page
  * @req: segment request [out]
  */
-int ssdfs_request_add_page(struct page *page,
-			   struct ssdfs_segment_request *req)
+int ssdfs_request_add_folio(struct folio *folio,
+			    struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page || !req);
+	BUG_ON(!folio || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.pvec) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.batch) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return -E2BIG;
 	}
 
-	pagevec_add(&req->result.pvec, page);
+	folio_batch_add(&req->result.batch, folio);
 	return 0;
 }
 
 /*
- * ssdfs_request_add_diff_page() - add diff page into segment request
- * @page: memory page
+ * ssdfs_request_add_diff_folio() - add diff folio into segment request
+ * @folio: memory folio
  * @req: segment request [out]
  */
-int ssdfs_request_add_diff_page(struct page *page,
-				struct ssdfs_segment_request *req)
+int ssdfs_request_add_diff_folio(struct folio *folio,
+				 struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page || !req);
+	BUG_ON(!folio || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.diffs) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.diffs) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return -E2BIG;
 	}
 
-	pagevec_add(&req->result.diffs, page);
+	folio_batch_add(&req->result.diffs, folio);
 	return 0;
 }
 
 /*
- * ssdfs_request_allocate_and_add_page() - allocate and add page into request
+ * ssdfs_request_allocate_and_add_folio() - allocate and add folio into request
  * @req: segment request [out]
  */
-struct page *
-ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req)
+struct folio *
+ssdfs_request_allocate_and_add_folio(struct ssdfs_segment_request *req)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 
-	SSDFS_DBG("pagevec count %d\n",
-		  pagevec_count(&req->result.pvec));
+	SSDFS_DBG("folio batch count %d\n",
+		  folio_batch_count(&req->result.batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.pvec) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.batch) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
 
-	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("unable to allocate memory page\n");
+#ifdef CONFIG_SSDFS_DEBUG
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
+					    get_order(req->private.block_size));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
 		return ERR_PTR(err);
 	}
 
-	pagevec_add(&req->result.pvec, page);
-	return page;
+	folio_batch_add(&req->result.batch, folio);
+	return folio;
 }
 
 /*
- * ssdfs_request_allocate_and_add_diff_page() - allocate and add diff page
+ * ssdfs_request_allocate_and_add_diff_folio() - allocate and add diff folio
  * @req: segment request [out]
  */
-struct page *
-ssdfs_request_allocate_and_add_diff_page(struct ssdfs_segment_request *req)
+struct folio *
+ssdfs_request_allocate_and_add_diff_folio(struct ssdfs_segment_request *req)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 
-	SSDFS_DBG("pagevec count %d\n",
-		  pagevec_count(&req->result.diffs));
+	SSDFS_DBG("folio batch count %d\n",
+		  folio_batch_count(&req->result.diffs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.diffs) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.diffs) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
 
-	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("unable to allocate memory page\n");
+#ifdef CONFIG_SSDFS_DEBUG
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
+					    get_order(req->private.block_size));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
 		return ERR_PTR(err);
 	}
 
-	pagevec_add(&req->result.diffs, page);
-	return page;
+	folio_batch_add(&req->result.diffs, folio);
+	return folio;
 }
 
 /*
- * ssdfs_request_allocate_and_add_old_state_page() - allocate+add old state page
+ * ssdfs_request_allocate_and_add_old_state_folio() - allocate+add old state folio
  * @req: segment request [out]
  */
-struct page *
-ssdfs_request_allocate_and_add_old_state_page(struct ssdfs_segment_request *req)
+struct folio *
+ssdfs_request_allocate_and_add_old_state_folio(struct ssdfs_segment_request *req)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 
-	SSDFS_DBG("pagevec count %d\n",
-		  pagevec_count(&req->result.old_state));
+	SSDFS_DBG("folio batch count %d\n",
+		  folio_batch_count(&req->result.old_state));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.old_state) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.old_state) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
 
-	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("unable to allocate memory page\n");
+#ifdef CONFIG_SSDFS_DEBUG
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
+					    get_order(req->private.block_size));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
 		return ERR_PTR(err);
 	}
 
-	pagevec_add(&req->result.old_state, page);
-	return page;
+	folio_batch_add(&req->result.old_state, folio);
+	return folio;
 }
 
 /*
- * ssdfs_request_allocate_locked_page() - allocate and add locked page
+ * ssdfs_request_allocate_locked_folio() - allocate and add locked folio
  * @req: segment request [out]
- * @page_index: index of the page
+ * @folio_index: index of the folio
  */
-struct page *
-ssdfs_request_allocate_locked_page(struct ssdfs_segment_request *req,
-				   int page_index)
+struct folio *
+ssdfs_request_allocate_locked_folio(struct ssdfs_segment_request *req,
+				    int folio_index)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 
-	SSDFS_DBG("pagevec count %d\n",
-		  pagevec_count(&req->result.pvec));
+	SSDFS_DBG("folio batch count %d\n",
+		  folio_batch_count(&req->result.batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.pvec) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.batch) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
 
-	if (page_index >= PAGEVEC_SIZE) {
-		SSDFS_ERR("invalid page index %d\n",
-			  page_index);
+	if (folio_index >= PAGEVEC_SIZE) {
+		SSDFS_ERR("invalid folio index %d\n",
+			  folio_index);
 		return ERR_PTR(-EINVAL);
 	}
 
-	page = req->result.pvec.pages[page_index];
+	folio = req->result.batch.folios[folio_index];
 
-	if (page) {
-		SSDFS_ERR("page already exists: index %d\n",
-			  page_index);
+	if (folio) {
+		SSDFS_ERR("folio already exists: index %d\n",
+			  folio_index);
 		return ERR_PTR(-EINVAL);
 	}
 
-	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("unable to allocate memory page\n");
+#ifdef CONFIG_SSDFS_DEBUG
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
+					    get_order(req->private.block_size));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
 		return ERR_PTR(err);
 	}
 
-	req->result.pvec.pages[page_index] = page;
+	req->result.batch.folios[folio_index] = folio;
 
-	if ((page_index + 1) > req->result.pvec.nr)
-		req->result.pvec.nr = page_index + 1;
+	if ((folio_index + 1) > req->result.batch.nr)
+		req->result.batch.nr = folio_index + 1;
 
-	ssdfs_lock_page(page);
+	ssdfs_folio_lock(folio);
 
-	return page;
+	return folio;
 }
 
 /*
- * ssdfs_request_allocate_locked_diff_page() - allocate locked diff page
+ * ssdfs_request_allocate_locked_diff_folio() - allocate locked diff folio
  * @req: segment request [out]
- * @page_index: index of the page
+ * @folio_index: index of the folio
  */
-struct page *
-ssdfs_request_allocate_locked_diff_page(struct ssdfs_segment_request *req,
-					int page_index)
+struct folio *
+ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
+					 int folio_index)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 
-	SSDFS_DBG("pagevec count %d\n",
-		  pagevec_count(&req->result.diffs));
+	SSDFS_DBG("folio batch count %d\n",
+		  folio_batch_count(&req->result.diffs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_space(&req->result.diffs) == 0) {
-		SSDFS_WARN("request's pagevec is full\n");
+	if (fbatch_space(&req->result.diffs) == 0) {
+		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
 
-	if (page_index >= PAGEVEC_SIZE) {
-		SSDFS_ERR("invalid page index %d\n",
-			  page_index);
+	if (folio_index >= PAGEVEC_SIZE) {
+		SSDFS_ERR("invalid folio index %d\n",
+			  folio_index);
 		return ERR_PTR(-EINVAL);
 	}
 
-	page = req->result.diffs.pages[page_index];
+	folio = req->result.diffs.folios[folio_index];
 
-	if (page) {
-		SSDFS_ERR("page already exists: index %d\n",
-			  page_index);
+	if (folio) {
+		SSDFS_ERR("folio already exists: index %d\n",
+			  folio_index);
 		return ERR_PTR(-EINVAL);
 	}
 
-	page = ssdfs_req_queue_alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("unable to allocate memory page\n");
+#ifdef CONFIG_SSDFS_DEBUG
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
+					    get_order(req->private.block_size));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
 		return ERR_PTR(err);
 	}
 
-	req->result.diffs.pages[page_index] = page;
+	req->result.diffs.folios[folio_index] = folio;
 
-	if ((page_index + 1) > req->result.diffs.nr)
-		req->result.diffs.nr = page_index + 1;
+	if ((folio_index + 1) > req->result.diffs.nr)
+		req->result.diffs.nr = folio_index + 1;
 
-	ssdfs_lock_page(page);
+	ssdfs_folio_lock(folio);
 
-	return page;
+	return folio;
 }
 
 /*
- * ssdfs_request_add_allocated_page_locked() - allocate, add and lock page
+ * ssdfs_request_add_allocated_folio_locked() - allocate, add and lock folio
  * @req: segment request [out]
  */
-int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req)
+int ssdfs_request_add_allocated_folio_locked(struct ssdfs_segment_request *req)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_request_allocate_and_add_page(req);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("fail to allocate page: err %d\n",
+	folio = ssdfs_request_allocate_and_add_folio(req);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("fail to allocate folio: err %d\n",
 			  err);
 		return err;
 	}
 
-	ssdfs_lock_page(page);
+	ssdfs_folio_lock(folio);
 	return 0;
 }
 
 /*
- * ssdfs_request_add_allocated_diff_locked() - allocate, add and lock page
+ * ssdfs_request_add_allocated_diff_locked() - allocate, add and lock folio
  * @req: segment request [out]
  */
 int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_request_allocate_and_add_diff_page(req);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("fail to allocate page: err %d\n",
+	folio = ssdfs_request_allocate_and_add_diff_folio(req);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("fail to allocate folio: err %d\n",
 			  err);
 		return err;
 	}
 
-	ssdfs_lock_page(page);
+	ssdfs_folio_lock(folio);
 	return 0;
 }
 
 /*
- * ssdfs_request_add_old_state_page_locked() - allocate, add and lock page
+ * ssdfs_request_add_old_state_folio_locked() - allocate, add and lock folio
  * @req: segment request [out]
  */
-int ssdfs_request_add_old_state_page_locked(struct ssdfs_segment_request *req)
+int ssdfs_request_add_old_state_folio_locked(struct ssdfs_segment_request *req)
 {
-	struct page *page;
+	struct folio *folio;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_request_allocate_and_add_old_state_page(req);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("fail to allocate page: err %d\n",
+	folio = ssdfs_request_allocate_and_add_old_state_folio(req);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("fail to allocate folio: err %d\n",
 			  err);
 		return err;
 	}
 
-	ssdfs_lock_page(page);
+	ssdfs_folio_lock(folio);
 	return 0;
 }
 
 /*
- * ssdfs_request_unlock_and_remove_pages() - unlock and remove pages
+ * ssdfs_request_unlock_and_remove_folios() - unlock and remove folios
  * @req: segment request [out]
  */
-void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req)
+void ssdfs_request_unlock_and_remove_folios(struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
@@ -1001,27 +1059,27 @@ void ssdfs_request_unlock_and_remove_update(struct ssdfs_segment_request *req)
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	count = pagevec_count(&req->result.pvec);
+	count = folio_batch_count(&req->result.batch);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("result: pages count %u\n",
+	SSDFS_DBG("result: folios count %u\n",
 		  count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < count; i++) {
-		struct page *page = req->result.pvec.pages[i];
+		struct folio *folio = req->result.batch.folios[i];
 
-		if (!page) {
+		if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %d is NULL\n", i);
+			SSDFS_DBG("folio %d is NULL\n", i);
 #endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
-		ssdfs_unlock_page(page);
+		ssdfs_folio_unlock(folio);
 	}
 
-	ssdfs_req_queue_pagevec_release(&req->result.pvec);
+	ssdfs_req_queue_folio_batch_release(&req->result.batch);
 }
 
 /*
@@ -1037,27 +1095,27 @@ void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req)
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	count = pagevec_count(&req->result.diffs);
+	count = folio_batch_count(&req->result.diffs);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("diff: pages count %u\n",
+	SSDFS_DBG("diff: folios count %u\n",
 		  count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < count; i++) {
-		struct page *page = req->result.diffs.pages[i];
+		struct folio *folio = req->result.diffs.folios[i];
 
-		if (!page) {
+		if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %d is NULL\n", i);
+			SSDFS_DBG("folio %d is NULL\n", i);
 #endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
-		ssdfs_unlock_page(page);
+		ssdfs_folio_unlock(folio);
 	}
 
-	ssdfs_req_queue_pagevec_release(&req->result.diffs);
+	ssdfs_req_queue_folio_batch_release(&req->result.diffs);
 }
 
 /*
@@ -1073,138 +1131,127 @@ void ssdfs_request_unlock_and_remove_old_state(struct ssdfs_segment_request *req
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	count = pagevec_count(&req->result.old_state);
+	count = folio_batch_count(&req->result.old_state);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("old_state: pages count %u\n",
+	SSDFS_DBG("old_state: folios count %u\n",
 		  count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < count; i++) {
-		struct page *page = req->result.old_state.pages[i];
+		struct folio *folio = req->result.old_state.folios[i];
 
-		if (!page) {
+		if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %d is NULL\n", i);
+			SSDFS_DBG("folio %d is NULL\n", i);
 #endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
-		ssdfs_unlock_page(page);
+		ssdfs_folio_unlock(folio);
 	}
 
-	ssdfs_req_queue_pagevec_release(&req->result.old_state);
+	ssdfs_req_queue_folio_batch_release(&req->result.old_state);
 }
 
 /*
- * ssdfs_request_switch_update_on_diff() - switch block update on diff page
+ * ssdfs_request_switch_update_on_diff() - switch block update on diff folio
  * @fsi: shared file system info object
- * @diff_page: page with prepared delta
+ * @diff_folio: folio with prepared delta
  * @req: segment request [out]
  */
 int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
-					struct page *diff_page,
+					struct folio *diff_folio,
 					struct ssdfs_segment_request *req)
 {
-	struct page *page;
-	u32 mem_pages_per_block;
-	int page_index;
-	int i;
+	struct folio *folio;
+	u32 folio_index;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(mem_pages_per_block == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	ssdfs_request_unlock_and_remove_old_state(req);
 
-	page_index = req->result.processed_blks * mem_pages_per_block;
+	folio_index = req->result.processed_blks;
 
-	for (i = 0; i < mem_pages_per_block; i++) {
-		page_index += i;
-
-		if (page_index >= pagevec_count(&req->result.pvec)) {
-			SSDFS_ERR("page_index %d >= pvec_size %u\n",
-				  page_index,
-				  pagevec_count(&req->result.pvec));
-			return -ERANGE;
-		}
-
-		page = req->result.pvec.pages[page_index];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		clear_page_new(page);
-		SetPageUptodate(page);
-		ssdfs_clear_dirty_page(page);
-
-		ssdfs_unlock_page(page);
-		end_page_writeback(page);
-
-		if (!(req->private.flags & SSDFS_REQ_DONT_FREE_PAGES))
-			ssdfs_req_queue_forget_page(page);
-
-		req->result.pvec.pages[page_index] = NULL;
+	if (folio_index >= folio_batch_count(&req->result.batch)) {
+		SSDFS_ERR("folio_index %d >= batch_size %u\n",
+			  folio_index,
+			  folio_batch_count(&req->result.batch));
+		return -ERANGE;
 	}
 
-	page_index = req->result.processed_blks * mem_pages_per_block;
-	set_page_new(diff_page);
-	req->result.pvec.pages[page_index] = diff_page;
-	req->result.diffs.pages[0] = NULL;
+	folio = req->result.batch.folios[folio_index];
 
-	if (pagevec_count(&req->result.diffs) > 1) {
-		SSDFS_WARN("diff pagevec contains several pages %u\n",
-			   pagevec_count(&req->result.diffs));
-		ssdfs_req_queue_pagevec_release(&req->result.diffs);
-	} else
-		pagevec_reinit(&req->result.diffs);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	clear_folio_new(folio);
+	folio_mark_uptodate(folio);
+	ssdfs_clear_dirty_folio(folio);
+
+	ssdfs_folio_unlock(folio);
+	folio_end_writeback(folio);
+
+	if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
+		ssdfs_req_queue_forget_folio(folio);
+
+	req->result.batch.folios[folio_index] = NULL;
+
+	set_folio_new(diff_folio);
+	req->result.batch.folios[folio_index] = diff_folio;
+	req->result.diffs.folios[0] = NULL;
+
+	if (folio_batch_count(&req->result.diffs) > 1) {
+		SSDFS_WARN("diff folio batch contains several folios %u\n",
+			   folio_batch_count(&req->result.diffs));
+		ssdfs_req_queue_folio_batch_release(&req->result.diffs);
+	} else {
+		folio_batch_init(&req->result.diffs);
+//		folio_batch_reinit(&req->result.diffs);
+	}
 
 	return 0;
 }
 
 /*
- * ssdfs_request_unlock_and_remove_page() - unlock and remove page
+ * ssdfs_request_unlock_and_remove_folio() - unlock and remove folio
  * @req: segment request [in|out]
- * @page_index: page index
+ * @folio_index: folio index
  */
-void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
-					  int page_index)
+void ssdfs_request_unlock_and_remove_folio(struct ssdfs_segment_request *req,
+					   int folio_index)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (page_index >= pagevec_count(&req->result.pvec)) {
-		SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-			  page_index,
-			  pagevec_count(&req->result.pvec));
+	if (folio_index >= folio_batch_count(&req->result.batch)) {
+		SSDFS_ERR("folio_index %d >= folio_batch_count %u\n",
+			  folio_index,
+			  folio_batch_count(&req->result.batch));
 		return;
 	}
 
-	if (!req->result.pvec.pages[page_index]) {
+	if (!req->result.batch.folios[folio_index]) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %d is NULL\n", page_index);
+		SSDFS_DBG("folio %d is NULL\n", folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return;
 	}
 
-	ssdfs_unlock_page(req->result.pvec.pages[page_index]);
-	ssdfs_req_queue_forget_page(req->result.pvec.pages[page_index]);
-	req->result.pvec.pages[page_index] = NULL;
+	ssdfs_folio_unlock(req->result.batch.folios[folio_index]);
+	ssdfs_req_queue_forget_folio(req->result.batch.folios[folio_index]);
+	req->result.batch.folios[folio_index] = NULL;
 }
 
 /*
- * ssdfs_free_flush_request_pages() - unlock and remove flush request's pages
+ * ssdfs_free_flush_request_folios() - unlock and remove flush request's folios
  * @req: segment request [out]
  */
-void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
+void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
 {
 	int i;
 
@@ -1212,85 +1259,74 @@ void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req)
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < pagevec_count(&req->result.pvec); i++) {
-		struct page *page = req->result.pvec.pages[i];
-		bool need_free_page = false;
+	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
+		struct folio *folio = req->result.batch.folios[i];
+		bool need_free_folio = false;
 
-		if (!page) {
+		if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %d is NULL\n", i);
+			SSDFS_DBG("folio %d is NULL\n", i);
 #endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 		}
 
-		if (need_add_block(page)) {
-			clear_page_new(page);
+		if (need_add_block2(folio)) {
+			clear_folio_new(folio);
 
 			if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
-				need_free_page = true;
+				need_free_folio = true;
 		}
 
-		if (PageWriteback(page))
-			end_page_writeback(page);
+		if (folio_test_writeback(folio))
+			folio_end_writeback(folio);
 		else {
-			SSDFS_WARN("page %d is not under writeback: "
+			SSDFS_WARN("folio %d is not under writeback: "
 				   "cmd %#x, type %#x\n",
 				   i, req->private.cmd,
 				   req->private.type);
 		}
 
-		if (PageLocked(page))
-			ssdfs_unlock_page(page);
+		if (folio_test_locked(folio))
+			ssdfs_folio_unlock(folio);
 		else {
-			SSDFS_WARN("page %d is not locked: "
+			SSDFS_WARN("folio %d is not locked: "
 				   "cmd %#x, type %#x\n",
 				   i, req->private.cmd,
 				   req->private.type);
 		}
 
-		req->result.pvec.pages[i] = NULL;
+		req->result.batch.folios[i] = NULL;
 
-		if (need_free_page)
-			ssdfs_req_queue_free_page(page);
-		else if (!(req->private.flags & SSDFS_REQ_DONT_FREE_PAGES))
-			ssdfs_req_queue_free_page(page);
+		if (need_free_folio)
+			ssdfs_req_queue_free_folio(folio);
+		else if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
+			ssdfs_req_queue_free_folio(folio);
 	}
 
-	if (req->private.flags & SSDFS_REQ_DONT_FREE_PAGES) {
+	if (req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS) {
 		/*
 		 * Do nothing
 		 */
-	} else
-		pagevec_reinit(&req->result.pvec);
+	} else {
+		folio_batch_init(&req->result.batch);
+//		folio_batch_reinit(&req->result.batch);
+	}
 }
 
 /*
- * ssdfs_peb_extent_length() - determine extent length in pagevec
+ * ssdfs_peb_extent_length() - determine extent length
  * @si: segment object
- * @pvec: page vector
+ * @batch: folio batch
+ *
+ * The folio represents one logical block. As a result,
+ * extent length is a number of folios in the batch.
  */
-u8 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
-			   struct pagevec *pvec)
+u32 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
+			    struct folio_batch *batch)
 {
-	u32 len;
-
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!si || !si->fsi || !pvec);
+	BUG_ON(!si || !si->fsi || !batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (si->fsi->pagesize < PAGE_SIZE) {
-		BUG_ON(PAGE_SIZE % si->fsi->pagesize);
-		len = PAGE_SIZE / si->fsi->pagesize;
-		len *= pagevec_count(pvec);
-		BUG_ON(len == 0);
-	} else {
-		len = pagevec_count(pvec) * PAGE_SIZE;
-		BUG_ON(len == 0);
-		BUG_ON(len % si->fsi->pagesize);
-		len = si->fsi->pagesize / len;
-		BUG_ON(len == 0);
-	}
-
-	BUG_ON(len >= U8_MAX);
-	return (u8)len;
+	return folio_batch_count(batch);
 }

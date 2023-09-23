@@ -143,12 +143,12 @@ struct ssdfs_offset_position {
  * struct ssdfs_migrating_block - migrating block state
  * @state: logical block's state
  * @peb_index: PEB's index
- * @pvec: copy of logical block's content (under migration only)
+ * @batch: copy of logical block's content (under migration only)
  */
 struct ssdfs_migrating_block {
 	int state;
 	u16 peb_index;
-	struct pagevec pvec;
+	struct folio_batch batch;
 };
 
 /*

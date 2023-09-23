@@ -805,7 +805,7 @@ void ssdfs_blk2off_table_destroy(struct ssdfs_blk2off_table *table)
 		case SSDFS_LBLOCK_UNDER_MIGRATION:
 		case SSDFS_LBLOCK_UNDER_COMMIT:
 			SSDFS_ERR("logical blk %d is under migration\n", i);
-			ssdfs_blk2off_pagevec_release(&blk->pvec);
+			ssdfs_blk2off_folio_batch_release(&blk->batch);
 			break;
 		}
 	}
@@ -1268,6 +1268,150 @@ void ssdfs_blk2off_destroy_temp_bmap(struct ssdfs_blk2off_init *portion)
 }
 
 /*
+ * ssdfs_extents_capacity_in_stream() - calculate extents capacity in the stream
+ */
+static inline
+u32 ssdfs_extents_capacity_in_stream(struct ssdfs_content_stream *content)
+{
+	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
+	u32 folio_count;
+	u32 extents_per_folio;
+	u32 extents_capacity;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio_count = ssdfs_folio_vector_count(&content->batch);
+	if (folio_count == 0 || folio_count >= U32_MAX)
+		return 0;
+
+	extents_per_folio = PAGE_SIZE / extent_desc_size;
+	extents_capacity = folio_count * extents_per_folio;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio_count %u, extents_per_folio %u, "
+		  "extents_capacity %u\n",
+		  folio_count, extents_per_folio,
+		  extents_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return extents_capacity;
+}
+
+/*
+ * ssdfs_extents_count_in_stream() - calculate extents count in the stream
+ */
+static inline
+u32 ssdfs_extents_count_in_stream(struct ssdfs_content_stream *content)
+{
+	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
+	u32 folio_count;
+	u32 extents_per_folio;
+	u32 content_bytes_per_folio;
+	u32 bytes_count;
+	u32 rest_bytes;
+	u32 extents_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	bytes_count = content->bytes_count;
+
+	if (bytes_count == 0)
+		return 0;
+
+	extents_per_folio = PAGE_SIZE / extent_desc_size;
+	content_bytes_per_folio = extents_per_folio * extent_desc_size;
+
+	folio_count = bytes_count / content_bytes_per_folio;
+	rest_bytes = bytes_count % content_bytes_per_folio;
+
+	extents_count = folio_count * extents_per_folio;
+	extents_count += rest_bytes / extent_desc_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("bytes_count %u, extents_per_folio %u, "
+		  "extents_count %u\n",
+		  bytes_count, extents_per_folio,
+		  extents_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return extents_count;
+}
+
+/*
+ * ssdfs_extent_offset_in_stream() - calculate extent offset in stream
+ */
+static inline
+u32 ssdfs_extent_offset_in_stream(struct ssdfs_content_stream *content,
+				  int extent_index)
+{
+	struct ssdfs_blk2off_table_init_env *env;
+	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
+	u32 extents_capacity;
+	u32 extents_count;
+	u32 extents_per_folio;
+	u32 folio_index;
+	u32 rest_extents;
+	u64 offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	extents_capacity = ssdfs_extents_capacity_in_stream(content);
+	if (extents_capacity == 0) {
+		SSDFS_ERR("extents array is empty\n");
+		return U32_MAX;
+	}
+
+	extents_count = ssdfs_extents_count_in_stream(content);
+	if (extents_count == 0) {
+		SSDFS_ERR("extents array is empty: "
+			  "bytes_count %u, extent_desc_size %zu\n",
+			  env->extents.stream.bytes_count,
+			  extent_desc_size);
+		return U32_MAX;
+	}
+
+	if (extents_count > extents_capacity) {
+		SSDFS_ERR("corrupted extents array: "
+			  "extents_count %u > extents_capacity %u\n",
+			  extents_count, extents_capacity);
+		return U32_MAX;
+	}
+
+	if (extent_index > extents_count) {
+		SSDFS_ERR("invalid request: "
+			  "extent_index %d > extents_count %u\n",
+			  extent_index, extents_count);
+		return U32_MAX;
+	}
+
+	extents_per_folio = PAGE_SIZE / extent_desc_size;
+	folio_index = extent_index / extents_per_folio;
+	rest_extents = extent_index % extents_per_folio;
+
+	offset = (u64)folio_index * PAGE_SIZE;
+	offset += (u64)rest_extents * extent_desc_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(offset >= U32_MAX);
+
+	SSDFS_DBG("extent_index %d, extents_per_folio %u, "
+		  "folio_index %u, rest_extents %u, "
+		  "offset %llu\n",
+		  extent_index, extents_per_folio,
+		  folio_index, rest_extents,
+		  offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)offset;
+}
+
+/*
  * ssdfs_blk2off_detect_extents_count() - calculate available extents number
  * @portion: initialization environment [in | out]
  */
@@ -1275,8 +1419,6 @@ static inline
 int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 {
 	struct ssdfs_blk2off_table_init_env *env;
-	u32 page_count;
-	u32 extents_per_page;
 	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
 	u32 extents_capacity;
 	u32 extents_count;
@@ -1286,18 +1428,14 @@ int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	env = &portion->env->log.blk2off_tbl;
-	page_count = ssdfs_page_vector_count(&env->extents.stream.pvec);
 
-	if (page_count == 0 || page_count >= U32_MAX) {
+	extents_capacity = ssdfs_extents_capacity_in_stream(&env->extents.stream);
+	if (extents_capacity == 0) {
 		SSDFS_ERR("extents array is empty\n");
 		return -ENODATA;
 	}
 
-	extents_per_page = PAGE_SIZE / extent_desc_size;
-	extents_capacity = page_count * extents_per_page;
-
-	extents_count = env->extents.stream.bytes_count / extent_desc_size;
-
+	extents_count = ssdfs_extents_count_in_stream(&env->extents.stream);
 	if (extents_count == 0) {
 		SSDFS_ERR("extents array is empty: "
 			  "bytes_count %u, extent_desc_size %zu\n",
@@ -1316,9 +1454,9 @@ int ssdfs_blk2off_detect_extents_count(struct ssdfs_blk2off_init *portion)
 	env->extents.count = extents_count;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_count %u, bytes_count %u, "
+	SSDFS_DBG("folio_count %u, bytes_count %u, "
 		  "extent_desc_size %zu, extents_count %u\n",
-		  page_count,
+		  ssdfs_folio_vector_count(&env->extents.stream.batch),
 		  env->extents.stream.bytes_count,
 		  extent_desc_size, extents_count);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1338,13 +1476,9 @@ int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
 			     struct ssdfs_translation_extent *extent)
 {
 	struct ssdfs_blk2off_table_init_env *env;
-	u32 page_count;
-	u32 extents_per_page;
 	size_t extent_desc_size = sizeof(struct ssdfs_translation_extent);
 	u32 extents_capacity;
 	u32 extents_count;
-	u32 page_index;
-	u32 page_off;
 	u32 offset;
 	int err;
 
@@ -1355,18 +1489,14 @@ int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	env = &portion->env->log.blk2off_tbl;
-	page_count = ssdfs_page_vector_count(&env->extents.stream.pvec);
 
-	if (page_count == 0 || page_count >= U32_MAX) {
+	extents_capacity = ssdfs_extents_capacity_in_stream(&env->extents.stream);
+	if (extents_capacity == 0) {
 		SSDFS_ERR("extents array is empty\n");
 		return -ENODATA;
 	}
 
-	extents_per_page = PAGE_SIZE / extent_desc_size;
-	extents_capacity = page_count * extents_per_page;
-
-	extents_count = env->extents.stream.bytes_count / extent_desc_size;
-
+	extents_count = ssdfs_extents_count_in_stream(&env->extents.stream);
 	if (extents_count == 0) {
 		SSDFS_ERR("extents array is empty: "
 			  "bytes_count %u, extent_desc_size %zu\n",
@@ -1375,29 +1505,25 @@ int ssdfs_blk2off_get_extent(struct ssdfs_blk2off_init *portion,
 		return -ERANGE;
 	}
 
-	if (extent_index > extents_count) {
-		SSDFS_ERR("invalid request: "
-			  "extent_index %d > extents_count %u\n",
-			  extent_index, extents_count);
-		return -EINVAL;
-	}
-
-	page_index = extent_index / extents_per_page;
-
-	if (page_index > page_count) {
-		SSDFS_ERR("invalid request: "
-			  "page_index %u > page_count %u\n",
-			  page_index, page_count);
+	if (extents_count > extents_capacity) {
+		SSDFS_ERR("corrupted extents array: "
+			  "extents_count %u > extents_capacity %u\n",
+			  extents_count, extents_capacity);
 		return -ERANGE;
 	}
 
-	page_off = extent_index % extents_per_page;
-	page_off *= extent_desc_size;
+	offset = ssdfs_extent_offset_in_stream(&env->extents.stream,
+						extent_index);
+	if (offset >= U32_MAX) {
+		SSDFS_ERR("fail to calculate extent offset: "
+			  "extent_index %d, extents_count %u, "
+			  "extents_capacity %u\n",
+			  extent_index, extents_count, extents_capacity);
+		return -ERANGE;
+	}
 
-	offset = page_index * PAGE_SIZE;
-	offset += page_off;
-
-	err = ssdfs_unaligned_read_page_vector(&env->extents.stream.pvec,
+	err = ssdfs_unaligned_read_folio_vector(portion->table->fsi,
+						&env->extents.stream.batch,
 						offset,
 						extent_desc_size,
 						extent);
@@ -1431,7 +1557,8 @@ int ssdfs_get_fragment_header(struct ssdfs_blk2off_init *portion)
 	env = &portion->env->log.blk2off_tbl;
 	stream = &env->portion.fragments.stream;
 
-	err = ssdfs_unaligned_read_page_vector(&stream->pvec,
+	err = ssdfs_unaligned_read_folio_vector(portion->table->fsi,
+						&stream->batch,
 						portion->pot_hdr_off,
 						hdr_size,
 						&portion->pot_hdr);
@@ -1462,10 +1589,8 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 {
 	struct ssdfs_phys_offset_table_array *phys_off_table;
 	struct ssdfs_phys_offset_table_fragment *fragment;
-	struct page *page;
+	struct ssdfs_smart_folio folio;
 	void *kaddr;
-	int page_index;
-	u32 page_off;
 	size_t fragment_size;
 	u16 start_id;
 	u16 sequence_id;
@@ -1551,12 +1676,6 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 		return err;
 	}
 
-	page_index = portion->pot_hdr_off >> PAGE_SHIFT;
-	if (portion->pot_hdr_off >= PAGE_SIZE)
-		page_off = portion->pot_hdr_off % PAGE_SIZE;
-	else
-		page_off = portion->pot_hdr_off;
-
 	down_write(&fragment->lock);
 
 	read_bytes = 0;
@@ -1565,33 +1684,48 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 		struct ssdfs_content_stream *stream;
 		u32 size;
 
-		env = &portion->env->log.blk2off_tbl;
-		stream = &env->portion.fragments.stream;
-		size = min_t(u32, PAGE_SIZE - page_off, fragment_size);
-
-		if (page_index >= ssdfs_page_vector_count(&stream->pvec)) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid request: "
-				  "page_index %d, pvec_size %u\n",
-				  page_index,
-				  ssdfs_page_vector_count(&stream->pvec));
+		err = SSDFS_OFF2FOLIO(PAGE_SIZE, portion->pot_hdr_off,
+				      &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare folio descriptor: "
+				  "err %d\n", err);
 			goto finish_fragment_read;
 		}
 
-		page = stream->pvec.pages[page_index];
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		env = &portion->env->log.blk2off_tbl;
+		stream = &env->portion.fragments.stream;
+		size = min_t(u32,
+			     PAGE_SIZE - folio.desc.offset_inside_page,
+			     fragment_size);
+
+		if (folio.desc.folio_index >=
+				ssdfs_folio_vector_count(&stream->batch)) {
+			err = -ERANGE;
+			SSDFS_ERR("invalid folio index: "
+				  "folio_index %u, batch_size %u\n",
+				  folio.desc.folio_index,
+				  ssdfs_folio_vector_count(&stream->batch));
+			goto finish_fragment_read;
+		}
+
+		folio.ptr = stream->batch.folios[folio.desc.folio_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("read_bytes %u, fragment->buf_size %zu, "
-			  "page_off %u, size %u\n",
-			  read_bytes, fragment->buf_size, page_off, page_off);
+			  "offset_inside_page %u, size %u\n",
+			  read_bytes, fragment->buf_size,
+			  folio.desc.offset_inside_page, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_lock_page(page);
-		err = ssdfs_memcpy_from_page(fragment->buf,
-					     read_bytes, fragment->buf_size,
-					     page, page_off, PAGE_SIZE,
-					     size);
-		ssdfs_unlock_page(page);
+		ssdfs_folio_lock(folio.ptr);
+		err = ssdfs_memcpy_from_folio(fragment->buf,
+					      read_bytes, fragment->buf_size,
+					      &folio, size);
+		ssdfs_folio_unlock(folio.ptr);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
@@ -1608,12 +1742,6 @@ int ssdfs_get_checked_fragment(struct ssdfs_blk2off_init *portion)
 			  read_bytes, fragment_size,
 			  portion->pot_hdr_off);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		page_index = portion->pot_hdr_off >> PAGE_SHIFT;
-		if (portion->pot_hdr_off >= PAGE_SIZE)
-			page_off = portion->pot_hdr_off % PAGE_SIZE;
-		else
-			page_off = portion->pot_hdr_off;
 	};
 
 	err = ssdfs_check_fragment(portion->table, portion->peb_index,
@@ -1894,12 +2022,13 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 					int *extent_index,
 					struct ssdfs_translation_extent *extent)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_sequence_array *sequence = NULL;
 	struct ssdfs_phys_offset_table_fragment *frag = NULL;
 	struct ssdfs_phys_offset_descriptor *phys_off = NULL;
 	struct ssdfs_dynamic_array *lblk2off;
 	struct ssdfs_blk_desc_table_init_env *blk_desc_tbl;
-	struct ssdfs_page_vector *content;
+	struct ssdfs_folio_vector *content;
 	struct ssdfs_blk_state_offset *state_off;
 	void *ptr;
 	u16 peb_index;
@@ -1924,6 +2053,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	BUG_ON(*extent_index >= portion->env->log.blk2off_tbl.extents.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = portion->table->fsi;
 	lblk2off = &portion->table->lblk2off;
 	blk_desc_tbl = &portion->env->log.blk_desc_tbl;
 	content = &blk_desc_tbl->portion.raw.content;
@@ -2052,11 +2182,11 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 	down_read(&frag->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (j = 0; j < ssdfs_page_vector_count(content); j++) {
+	for (j = 0; j < ssdfs_folio_vector_count(content); j++) {
 		void *kaddr;
-		struct page *page = content->pages[j];
+		struct folio *folio = content->folios[j];
 
-		kaddr = kmap_local_page(page);
+		kaddr = kmap_local_folio(folio, 0);
 		SSDFS_DBG("PAGE DUMP: index %d\n",
 			  j);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
@@ -2195,7 +2325,8 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 				  cur_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else {
-			err = ssdfs_unaligned_read_page_vector(content,
+			err = ssdfs_unaligned_read_folio_vector(fsi,
+							    content,
 							    byte_offset,
 							    desc_size,
 							    &pos->blk_desc.buf);
@@ -3179,7 +3310,7 @@ int ssdfs_blk2off_table_partial_init(struct ssdfs_blk2off_table *table,
 	stream = &env->log.blk2off_tbl.portion.fragments.stream;
 	extent_index = 0;
 
-	portion.fragments_count = ssdfs_page_vector_count(&stream->pvec);
+	portion.fragments_count = ssdfs_folio_vector_count(&stream->batch);
 	if (portion.fragments_count == 0) {
 		SSDFS_DBG("fragments array is empty\n");
 		goto process_free_extents;
@@ -9892,10 +10023,9 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_migrating_block *blk = NULL;
-	u32 pages_per_lblk;
-	u32 start_page;
+	struct folio *folio;
+	u32 logical_blk_diff;
 	u32 count;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -9906,7 +10036,6 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = table->fsi;
-	pages_per_lblk = fsi->pagesize >> PAGE_SHIFT;
 
 	if (peb_index >= table->pebs_count) {
 		SSDFS_ERR("fail to set block migration: "
@@ -9926,12 +10055,9 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		return -EINVAL;
 	}
 
-	count = pagevec_count(&req->result.pvec);
-	if (count % pages_per_lblk) {
-		SSDFS_ERR("inconsistent request: "
-			  "pagevec count %u, "
-			  "pages_per_lblk %u, req->place.len %u\n",
-			  count, pages_per_lblk, req->place.len);
+	count = folio_batch_count(&req->result.batch);
+	if (count == 0) {
+		SSDFS_ERR("empty batch\n");
 		return -EINVAL;
 	}
 
@@ -9991,54 +10117,40 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		goto finish_set_block_migration;
 	}
 
-	pagevec_init(&blk->pvec);
+	folio_batch_init(&blk->batch);
 
-	start_page = logical_blk - req->place.start.blk_index;
-	for (i = start_page; i < (start_page + pages_per_lblk); i++) {
-		struct page *page;
-#ifdef CONFIG_SSDFS_DEBUG
-		void *kaddr;
+	logical_blk_diff = logical_blk - req->place.start.blk_index;
 
-		SSDFS_DBG("start_page %u, logical_blk %u, "
-			  "blk_index %u, i %d, "
-			  "pagevec_count %u\n",
-			  start_page, logical_blk,
-			  req->place.start.blk_index,
-			  i,
-			  pagevec_count(&req->result.pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		page = ssdfs_blk2off_alloc_page(GFP_KERNEL);
-		if (IS_ERR_OR_NULL(page)) {
-			err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-			SSDFS_ERR("unable to allocate #%d memory page\n", i);
-			ssdfs_blk2off_pagevec_release(&blk->pvec);
-			goto finish_set_block_migration;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
-
-		BUG_ON(i >= pagevec_count(&req->result.pvec));
-		BUG_ON(!req->result.pvec.pages[i]);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		ssdfs_memcpy_page(page, 0, PAGE_SIZE,
-				  req->result.pvec.pages[i], 0, PAGE_SIZE,
-				  PAGE_SIZE);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap_local_page(req->result.pvec.pages[i]);
-		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr, PAGE_SIZE);
-		SSDFS_DBG("\n");
-		kunmap_local(kaddr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		pagevec_add(&blk->pvec, page);
+	folio = ssdfs_blk2off_alloc_folio(GFP_KERNEL,
+					  get_order(fsi->pagesize));
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
+		ssdfs_blk2off_folio_batch_release(&blk->batch);
+		goto finish_set_block_migration;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+
+	BUG_ON(logical_blk_diff >= folio_batch_count(&req->result.batch));
+	BUG_ON(!req->result.batch.folios[logical_blk_diff]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = __ssdfs_memcpy_folio(folio,
+				   0, fsi->pagesize,
+				   req->result.batch.folios[logical_blk_diff],
+				   0, fsi->pagesize,
+				   fsi->pagesize);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: "
+			  "logical block %u, err %d\n",
+			  logical_blk, err);
+		goto finish_set_block_migration;
+	}
+
+	folio_batch_add(&blk->batch, folio);
 
 	blk->state = SSDFS_LBLOCK_UNDER_MIGRATION;
 	blk->peb_index = peb_index;
@@ -10115,13 +10227,10 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 					struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
-	u16 logical_blk;
 	struct ssdfs_migrating_block *blk = NULL;
-	u32 read_bytes;
-	int start_page;
-	u32 data_bytes = 0;
+	struct folio *folio;
+	u16 logical_blk;
 	int processed_blks;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10132,18 +10241,16 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = table->fsi;
-	read_bytes = req->result.processed_blks * fsi->pagesize;
-	start_page = (int)(read_bytes >> PAGE_SHIFT);
-	BUG_ON(start_page >= U16_MAX);
+	processed_blks = req->result.processed_blks;
 
-	if (pagevec_count(&req->result.pvec) <= start_page) {
-		SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-			  start_page,
-			  pagevec_count(&req->result.pvec));
+	if (folio_batch_count(&req->result.batch) <= processed_blks) {
+		SSDFS_ERR("folio_index %d >= batch_count %u\n",
+			  processed_blks,
+			  folio_batch_count(&req->result.batch));
 		return -ERANGE;
 	}
 
-	logical_blk = req->place.start.blk_index + req->result.processed_blks;
+	logical_blk = req->place.start.blk_index + processed_blks;
 
 	down_read(&table->translation_lock);
 
@@ -10184,64 +10291,42 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		  logical_blk, blk->state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_count(&blk->pvec) == (fsi->pagesize >> PAGE_SHIFT)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("logical_blk %u, blk pagevec count %u\n",
-			  logical_blk, pagevec_count(&blk->pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
-	} else {
+	if (folio_batch_count(&blk->batch) == 0 ||
+	    folio_batch_count(&blk->batch) > 1) {
+		err = -ERANGE;
 		SSDFS_WARN("logical_blk %u, blk pagevec count %u\n",
-			  logical_blk, pagevec_count(&blk->pvec));
+			  logical_blk, folio_batch_count(&blk->batch));
+		goto finish_get_block_state;
 	}
 
-	for (i = 0; i < pagevec_count(&blk->pvec); i++) {
-		int page_index = start_page + i;
-		struct page *page;
-#ifdef CONFIG_SSDFS_DEBUG
-		void *kaddr;
-
-		SSDFS_DBG("index %d, read_bytes %u, "
-			  "start_page %u, page_index %d\n",
-			  i, read_bytes, start_page, page_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (page_index >= pagevec_count(&req->result.pvec)) {
-			err = -ERANGE;
-			SSDFS_ERR("page_index %d >= count %d\n",
-				  page_index,
-				  pagevec_count(&req->result.pvec));
-			goto finish_get_block_state;
-		}
-
-		page = req->result.pvec.pages[page_index];
-		ssdfs_lock_page(blk->pvec.pages[i]);
-
-		ssdfs_memcpy_page(page, 0, PAGE_SIZE,
-				  blk->pvec.pages[i], 0, PAGE_SIZE,
-				  PAGE_SIZE);
+	folio = req->result.batch.folios[processed_blks];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap_local_page(blk->pvec.pages[i]);
-		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr, PAGE_SIZE);
-		SSDFS_DBG("\n");
-		kunmap_local(kaddr);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_unlock_page(blk->pvec.pages[i]);
-		SetPageUptodate(page);
+	ssdfs_folio_lock(blk->batch.folios[0]);
+	err = __ssdfs_memcpy_folio(folio,
+				   0, folio_size(folio),
+				   blk->batch.folios[0],
+				   0, folio_size(blk->batch.folios[0]),
+				   fsi->pagesize);
+	ssdfs_folio_unlock(blk->batch.folios[0]);
 
-		data_bytes += PAGE_SIZE;
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy block's state: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto finish_get_block_state;
 	}
+
+	folio_mark_uptodate(folio);
 
 finish_get_block_state:
 	up_read(&table->translation_lock);
 
 	if (!err) {
-		processed_blks =
-			(data_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
-		req->result.processed_blks += processed_blks;
+		req->result.processed_blks++;
 	}
 
 	return err;
@@ -10267,13 +10352,10 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 					   struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
-	u16 logical_blk;
 	struct ssdfs_migrating_block *blk = NULL;
-	u32 read_bytes;
-	int start_page;
-	u32 data_bytes = 0;
+	struct folio *folio;
+	u16 logical_blk;
 	int processed_blks;
-	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10285,18 +10367,16 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = table->fsi;
-	read_bytes = req->result.processed_blks * fsi->pagesize;
-	start_page = (int)(read_bytes >> PAGE_SHIFT);
-	BUG_ON(start_page >= U16_MAX);
+	processed_blks = req->result.processed_blks;
 
-	if (pagevec_count(&req->result.pvec) <= start_page) {
-		SSDFS_ERR("page_index %d >= pagevec_count %u\n",
-			  start_page,
-			  pagevec_count(&req->result.pvec));
+	if (folio_batch_count(&req->result.batch) <= processed_blks) {
+		SSDFS_ERR("folio_index %d >= batch_count %u\n",
+			  processed_blks,
+			  folio_batch_count(&req->result.batch));
 		return -ERANGE;
 	}
 
-	logical_blk = req->place.start.blk_index + req->result.processed_blks;
+	logical_blk = req->place.start.blk_index + processed_blks;
 
 	if (logical_blk > table->last_allocated_blk) {
 		err = -EINVAL;
@@ -10330,61 +10410,39 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 		  logical_blk, blk->state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_count(&blk->pvec) == (fsi->pagesize >> PAGE_SHIFT)) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("logical_blk %u, blk pagevec count %u\n",
-			  logical_blk, pagevec_count(&blk->pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
-	} else {
-		SSDFS_WARN("logical_blk %u, blk pagevec count %u\n",
-			  logical_blk, pagevec_count(&blk->pvec));
+	if (folio_batch_count(&blk->batch) == 0 ||
+	    folio_batch_count(&blk->batch) > 1) {
+		err = -ERANGE;
+		SSDFS_WARN("logical_blk %u, batch_count %u\n",
+			  logical_blk,
+			  folio_batch_count(&blk->batch));
+		goto finish_update_block_state;
 	}
 
-	for (i = 0; i < pagevec_count(&blk->pvec); i++) {
-		int page_index = start_page + i;
-		struct page *page;
-#ifdef CONFIG_SSDFS_DEBUG
-		void *kaddr;
-
-		SSDFS_DBG("index %d, read_bytes %u, "
-			  "start_page %u, page_index %d\n",
-			  i, read_bytes, start_page, page_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (page_index >= pagevec_count(&req->result.pvec)) {
-			err = -ERANGE;
-			SSDFS_ERR("page_index %d >= count %d\n",
-				  page_index,
-				  pagevec_count(&req->result.pvec));
-			goto finish_update_block_state;
-		}
-
-		page = req->result.pvec.pages[page_index];
-		ssdfs_lock_page(blk->pvec.pages[i]);
-
-		ssdfs_memcpy_page(blk->pvec.pages[i], 0, PAGE_SIZE,
-				  page, 0, PAGE_SIZE,
-				  PAGE_SIZE);
+	folio = req->result.batch.folios[processed_blks];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		kaddr = kmap_local_page(blk->pvec.pages[i]);
-		SSDFS_DBG("BLOCK STATE DUMP: page_index %d\n", i);
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr, PAGE_SIZE);
-		SSDFS_DBG("\n");
-		kunmap_local(kaddr);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_unlock_page(blk->pvec.pages[i]);
+	ssdfs_folio_lock(blk->batch.folios[0]);
+	err = __ssdfs_memcpy_folio(blk->batch.folios[0],
+				   0, folio_size(blk->batch.folios[0]),
+				   folio,
+				   0, folio_size(folio),
+				   fsi->pagesize);
+	ssdfs_folio_unlock(blk->batch.folios[0]);
 
-		data_bytes += PAGE_SIZE;
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy block's state: "
+			  "logical_blk %u, err %d\n",
+			  logical_blk, err);
+		goto finish_update_block_state;
 	}
 
 finish_update_block_state:
 	if (!err) {
-		processed_blks =
-			(data_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
-		req->result.processed_blks += processed_blks;
+		req->result.processed_blks++;
 	}
 
 	return err;
@@ -10543,7 +10601,7 @@ int ssdfs_blk2off_table_revert_migration_state(struct ssdfs_blk2off_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			blk->state = SSDFS_LBLOCK_UNKNOWN_STATE;
-			ssdfs_blk2off_pagevec_release(&blk->pvec);
+			ssdfs_blk2off_folio_batch_release(&blk->batch);
 
 			ssdfs_blk2off_kfree(blk);
 			blk = NULL;

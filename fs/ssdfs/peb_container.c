@@ -72,18 +72,14 @@ struct ssdfs_thread_descriptor thread_desc[SSDFS_PEB_THREAD_TYPE_MAX] = {
  * @req: request
  * @blk_index: index of block in request's sequence
  *
- * This function mark memory pages of request as uptodate and
- * not dirty. Page should be locked.
+ * This function mark memory folio of request as uptodate and
+ * not dirty. The folio should be locked.
  */
 void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 					   struct ssdfs_segment_request *req,
 					   int blk_index)
 {
-	u32 pagesize;
-	u32 mem_pages;
-	pgoff_t page_index;
-	u32 page_off;
-	u32 i;
+	struct folio *folio;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
@@ -93,58 +89,35 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 		  blk_index, req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_count(&req->result.pvec) == 0) {
-		SSDFS_DBG("pagevec is empty\n");
+	if (folio_batch_count(&req->result.batch) == 0) {
+		SSDFS_DBG("folio batch is empty\n");
 		return;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(blk_index >= req->result.processed_blks);
-
-	pagesize = pebc->parent_si->fsi->pagesize;
-	mem_pages = (pagesize + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	page_index = ssdfs_phys_page_to_mem_page(pebc->parent_si->fsi,
-						 blk_index);
-	page_off = (page_index * pagesize) % PAGE_SIZE;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(mem_pages > 1 && page_off != 0);
+	BUG_ON(blk_index >= folio_batch_count(&req->result.batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < mem_pages; i++) {
-		if ((page_off + pagesize) != PAGE_SIZE)
-			return;
-		else {
-			struct page *page;
+	folio = req->result.batch.folios[blk_index];
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(i >= pagevec_count(&req->result.pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			page = req->result.pvec.pages[i];
-
-			if (!PageLocked(page)) {
-				SSDFS_WARN("failed to mark block uptodate: "
-					   "page %d is not locked\n",
-					   i);
-				SSDFS_ERR("REQUEST: class %#x, cmd %#x, "
-					  "type %#x\n",
-					  req->private.class, req->private.cmd,
-					  req->private.type);
-			} else {
-				if (!PageError(page)) {
-					ClearPageDirty(page);
-					SetPageUptodate(page);
-				}
-			}
-
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("page %p, count %d\n",
-				  page, page_ref_count(page));
-			SSDFS_DBG("page_index %ld, flags %#lx\n",
-				  page->index, page->flags);
-#endif /* CONFIG_SSDFS_DEBUG */
+	if (!folio_test_locked(folio)) {
+		SSDFS_WARN("failed to mark block uptodate: "
+			   "folio %d is not locked\n",
+			   blk_index);
+	} else {
+		if (!folio_test_error(folio)) {
+			folio_clear_dirty(folio);
+			folio_mark_uptodate(folio);
 		}
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+	SSDFS_DBG("folio_index %ld, flags %#lx\n",
+		  folio->index, folio->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -524,7 +497,7 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_clean_peb_obj;
 	}
 
-	ssdfs_request_init(req);
+	ssdfs_request_init(req, pebc->parent_si->fsi->pagesize);
 	/* read thread puts request */
 	ssdfs_get_request(req);
 	/* it needs to be sure that request will be not freed */
@@ -690,7 +663,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_using_peb_obj;
 	}
 
-	ssdfs_request_init(req1);
+	ssdfs_request_init(req1, pebc->parent_si->fsi->pagesize);
 	/* read thread puts request */
 	ssdfs_get_request(req1);
 	/* it needs to be sure that request will be not freed */
@@ -722,7 +695,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_using_peb_obj;
 	}
 
-	ssdfs_request_init(req2);
+	ssdfs_request_init(req2, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req2);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -746,7 +719,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 			goto fail_create_using_peb_obj;
 		}
 
-		ssdfs_request_init(req3);
+		ssdfs_request_init(req3, pebc->parent_si->fsi->pagesize);
 		ssdfs_get_request(req3);
 		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 						    command,
@@ -769,7 +742,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 			goto fail_create_using_peb_obj;
 		}
 
-		ssdfs_request_init(req4);
+		ssdfs_request_init(req4, pebc->parent_si->fsi->pagesize);
 		ssdfs_get_request(req4);
 		ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 						    command,
@@ -799,7 +772,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_using_peb_obj;
 	}
 
-	ssdfs_request_init(req5);
+	ssdfs_request_init(req5, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req5);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -962,7 +935,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_used_peb_obj;
 	}
 
-	ssdfs_request_init(req1);
+	ssdfs_request_init(req1, pebc->parent_si->fsi->pagesize);
 	/* read thread puts request */
 	ssdfs_get_request(req1);
 	/* it needs to be sure that request will be not freed */
@@ -992,7 +965,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_used_peb_obj;
 	}
 
-	ssdfs_request_init(req2);
+	ssdfs_request_init(req2, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req2);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1019,7 +992,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_used_peb_obj;
 	}
 
-	ssdfs_request_init(req3);
+	ssdfs_request_init(req3, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req3);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1247,7 +1220,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_using_peb_obj;
 	}
 
-	ssdfs_request_init(req1);
+	ssdfs_request_init(req1, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req1);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1271,7 +1244,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_using_peb_obj;
 	}
 
-	ssdfs_request_init(req2);
+	ssdfs_request_init(req2, pebc->parent_si->fsi->pagesize);
 	/* read thread puts request */
 	ssdfs_get_request(req2);
 	/* it needs to be sure that request will be not freed */
@@ -1299,7 +1272,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_using_peb_obj;
 	}
 
-	ssdfs_request_init(req3);
+	ssdfs_request_init(req3, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req3);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1324,7 +1297,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_using_peb_obj;
 	}
 
-	ssdfs_request_init(req4);
+	ssdfs_request_init(req4, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req4);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1485,7 +1458,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_used_peb_obj;
 	}
 
-	ssdfs_request_init(req1);
+	ssdfs_request_init(req1, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req1);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1509,7 +1482,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_used_peb_obj;
 	}
 
-	ssdfs_request_init(req2);
+	ssdfs_request_init(req2, pebc->parent_si->fsi->pagesize);
 	/* read thread puts request */
 	ssdfs_get_request(req2);
 	/* it needs to be sure that request will be not freed */
@@ -1537,7 +1510,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_used_peb_obj;
 	}
 
-	ssdfs_request_init(req3);
+	ssdfs_request_init(req3, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req3);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,
@@ -1562,7 +1535,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		goto fail_create_dirty_used_peb_obj;
 	}
 
-	ssdfs_request_init(req4);
+	ssdfs_request_init(req4, pebc->parent_si->fsi->pagesize);
 	ssdfs_get_request(req4);
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
 					    command,

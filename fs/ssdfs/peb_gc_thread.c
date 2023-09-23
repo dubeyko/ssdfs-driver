@@ -249,7 +249,7 @@ finish_define_extent:
 }
 
 /*
- * __ssdfs_peb_copy_page() - copy page from PEB into buffer
+ * __ssdfs_peb_copy_block() - copy block from PEB into buffer
  * @pebc: pointer on PEB container
  * @desc_off: physical offset descriptor
  * @pos: position offset
@@ -265,10 +265,10 @@ finish_define_extent:
  * %-EAGAIN     - unable to extract the whole range.
  */
 static
-int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
-			  struct ssdfs_phys_offset_descriptor *desc_off,
-			  struct ssdfs_offset_position *pos,
-			  struct ssdfs_segment_request *req)
+int __ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
+			   struct ssdfs_phys_offset_descriptor *desc_off,
+			   struct ssdfs_offset_position *pos,
+			   struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi = NULL;
@@ -296,33 +296,33 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		SSDFS_ERR("invalid source peb: "
 			  "src_peb %p, dst_peb %p\n",
 			  pebc->src_peb, pebc->dst_peb);
-		goto finish_copy_page;
+		goto finish_copy_block;
 	}
 
-	if (pagevec_space(&req->result.pvec) == 0) {
+	if (fbatch_space(&req->result.batch) == 0) {
 		err = -EAGAIN;
-		SSDFS_DBG("request's pagevec is full\n");
-		goto finish_copy_page;
+		SSDFS_DBG("request's folio batch is full\n");
+		goto finish_copy_block;
 	}
 
 	err = __ssdfs_peb_define_extent(fsi, pebi, desc_off,
 					desc_array, pos, req);
 	if (err == -EAGAIN) {
 		SSDFS_DBG("unable to add block of another inode\n");
-		goto finish_copy_page;
+		goto finish_copy_block;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define extent: "
 			  "seg %llu, peb_index %u, peb %llu, err %d\n",
 			  pebc->parent_si->seg_id, pebc->peb_index,
 			  pebi->peb_id, err);
-		goto finish_copy_page;
+		goto finish_copy_block;
 	}
 
-	err = ssdfs_request_add_allocated_page_locked(req);
+	err = ssdfs_request_add_allocated_folio_locked(req);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to allocate memory page: "
+		SSDFS_ERR("fail to allocate memory folio: "
 			  "err %d\n", err);
-		goto finish_copy_page;
+		goto finish_copy_block;
 	}
 
 	err = ssdfs_peb_read_block_state(pebc, req, desc_off, pos,
@@ -331,10 +331,10 @@ int __ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read block state: err %d\n",
 			  err);
-		goto finish_copy_page;
+		goto finish_copy_block;
 	}
 
-finish_copy_page:
+finish_copy_block:
 	up_read(&pebc->lock);
 
 	return err;
@@ -412,12 +412,12 @@ finish_define_extent:
 #endif /* CONFIG_SSDFS_UNDER_DEVELOPMENT_FUNC */
 
 /*
- * ssdfs_peb_copy_pre_alloc_page() - copy pre-alloc page into buffer
+ * ssdfs_peb_copy_pre_alloc_block() - copy pre-alloc block into buffer
  * @pebc: pointer on PEB container
  * @logical_blk: logical block
  * @req: request
  *
- * This function tries to copy PEB's page into the buffer.
+ * This function tries to copy PEB's block into the buffer.
  *
  * RETURN:
  * [success]
@@ -427,9 +427,9 @@ finish_define_extent:
  * %-ENODATA     - pre-allocated block hasn't content.
  * %-EAGAIN     - unable to extract the whole range.
  */
-int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
-				  u32 logical_blk,
-				  struct ssdfs_segment_request *req)
+int ssdfs_peb_copy_pre_alloc_block(struct ssdfs_peb_container *pebc,
+				   u32 logical_blk,
+				   struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
@@ -493,15 +493,15 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 	if (has_data) {
 		ssdfs_peb_read_request_cno(pebc);
 
-		err = __ssdfs_peb_copy_page(pebc, desc_off, &pos, req);
+		err = __ssdfs_peb_copy_block(pebc, desc_off, &pos, req);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("unable to add block of another inode\n");
-			goto finish_copy_page;
+			goto finish_copy_block;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to copy page: "
+			SSDFS_ERR("fail to copy block: "
 				  "logical_blk %u, err %d\n",
 				  logical_blk, err);
-			goto finish_copy_page;
+			goto finish_copy_block;
 		}
 
 		err = ssdfs_blk2off_table_set_block_migration(table,
@@ -512,10 +512,10 @@ int ssdfs_peb_copy_pre_alloc_page(struct ssdfs_peb_container *pebc,
 			SSDFS_ERR("fail to set migration state: "
 				  "logical_blk %u, peb_index %u, err %d\n",
 				  logical_blk, peb_index, err);
-			goto finish_copy_page;
+			goto finish_copy_block;
 		}
 
-finish_copy_page:
+finish_copy_block:
 		ssdfs_peb_finish_read_request_cno(pebc);
 	} else {
 		if (req->extent.logical_offset >= U64_MAX)
@@ -532,12 +532,12 @@ finish_copy_page:
 }
 
 /*
- * ssdfs_peb_copy_page() - copy valid page from PEB into buffer
+ * ssdfs_peb_copy_block() - copy valid block from PEB into buffer
  * @pebc: pointer on PEB container
  * @logical_blk: logical block
  * @req: request
  *
- * This function tries to copy PEB's page into the buffer.
+ * This function tries to copy PEB's logical block into the buffer.
  *
  * RETURN:
  * [success]
@@ -546,9 +546,9 @@ finish_copy_page:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to extract the whole range.
  */
-int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
-			u32 logical_blk,
-			struct ssdfs_segment_request *req)
+int ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
+			 u32 logical_blk,
+			 struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_blk2off_table *table;
@@ -607,19 +607,19 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 
 	ssdfs_peb_read_request_cno(pebc);
 
-	err = __ssdfs_peb_copy_page(pebc, desc_off, &pos, req);
+	err = __ssdfs_peb_copy_block(pebc, desc_off, &pos, req);
 	if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to copy the whole range: "
 			  "logical_blk %u, peb_index %u\n",
 			  logical_blk, peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_copy_page;
+		goto finish_copy_block;
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to copy page: "
+		SSDFS_ERR("fail to copy block: "
 			  "logical_blk %u, peb_index %u, err %d\n",
 			  logical_blk, peb_index, err);
-		goto finish_copy_page;
+		goto finish_copy_block;
 	}
 
 	err = ssdfs_blk2off_table_set_block_migration(table,
@@ -630,22 +630,22 @@ int ssdfs_peb_copy_page(struct ssdfs_peb_container *pebc,
 		SSDFS_ERR("fail to set migration state: "
 			  "logical_blk %u, peb_index %u, err %d\n",
 			  logical_blk, peb_index, err);
-		goto finish_copy_page;
+		goto finish_copy_block;
 	}
 
-finish_copy_page:
+finish_copy_block:
 	ssdfs_peb_finish_read_request_cno(pebc);
 
 	return err;
 }
 
 /*
- * ssdfs_peb_copy_pages_range() - copy pages' range into buffer
+ * ssdfs_peb_copy_blocks_range() - copy blocks' range into buffer
  * @pebc: pointer on PEB container
  * @range: range of logical blocks
  * @req: request
  *
- * This function tries to copy PEB's page into the buffer.
+ * This function tries to copy PEB's logical blocks into the buffer.
  *
  * RETURN:
  * [success]
@@ -654,7 +654,7 @@ finish_copy_page:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to extract the whole range.
  */
-int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
+int ssdfs_peb_copy_blocks_range(struct ssdfs_peb_container *pebc,
 				struct ssdfs_block_bmap_range *range,
 				struct ssdfs_segment_request *req)
 {
@@ -675,7 +675,7 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range->len == 0) {
-		SSDFS_WARN("empty pages range request\n");
+		SSDFS_WARN("empty blocks range request\n");
 		return 0;
 	}
 
@@ -693,7 +693,7 @@ int ssdfs_peb_copy_pages_range(struct ssdfs_peb_container *pebc,
 		logical_blk = range->start + i;
 		req->place.len++;
 
-		err = ssdfs_peb_copy_page(pebc, logical_blk, req);
+		err = ssdfs_peb_copy_block(pebc, logical_blk, req);
 		if (err == -EAGAIN) {
 			req->place.len = req->result.processed_blks;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1501,7 +1501,7 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 		return err;
 	}
 
-	ssdfs_request_init(pair->req);
+	ssdfs_request_init(pair->req, si->fsi->pagesize);
 	ssdfs_get_request(pair->req);
 
 	err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC_NO_FREE,
@@ -1625,7 +1625,7 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 		return err;
 	}
 
-	ssdfs_request_init(pair->req);
+	ssdfs_request_init(pair->req, si->fsi->pagesize);
 	ssdfs_get_request(pair->req);
 
 	err = ssdfs_segment_commit_log_async2(si, SSDFS_REQ_ASYNC_NO_FREE,

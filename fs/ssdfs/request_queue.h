@@ -123,7 +123,7 @@ enum {
 /*
  * Request flags
  */
-#define SSDFS_REQ_DONT_FREE_PAGES			(1 << 0)
+#define SSDFS_REQ_DONT_FREE_FOLIOS			(1 << 0)
 #define SSDFS_REQ_READ_ONLY_CACHE			(1 << 1)
 #define SSDFS_REQ_PREPARE_DIFF				(1 << 2)
 #define SSDFS_REQ_FLAGS_MASK				0x7
@@ -163,6 +163,7 @@ struct ssdfs_logical_extent {
  * @type: request type
  * @refs_count: reference counter
  * @flags: request flags
+ * @block_size: block size in bytes
  * @wait_queue: queue for result waiting
  */
 struct ssdfs_request_internal_data {
@@ -171,23 +172,24 @@ struct ssdfs_request_internal_data {
 	int type;
 	atomic_t refs_count;
 	u32 flags;
+	u32 block_size;
 	wait_queue_head_t wait_queue;
 };
 
 /*
  * struct ssdfs_request_result - requst result
- * @pvec: array of memory pages
- * @old_state: array of memory pages with initial state
+ * @batch: array of memory folios
+ * @old_state: array of memory folios with initial state
  * @diffs: array of diffs
- * @processed_blks: count of processed physical pages
+ * @processed_blks: count of processed blocks
  * @state: result's state
  * @wait: wait-for-completion of operation
  * @err: code of error
  */
 struct ssdfs_request_result {
-	struct pagevec pvec;
-	struct pagevec old_state;
-	struct pagevec diffs;
+	struct folio_batch batch;
+	struct folio_batch old_state;
+	struct folio_batch diffs;
 	int processed_blks;
 	atomic_t state;
 	struct completion wait;
@@ -214,16 +216,16 @@ struct ssdfs_segment_request {
  * struct ssdfs_peb_phys_offset - PEB's physical offset
  * @state: physical offset state
  * @peb_index: PEB's index
- * @peb_page: PEB's page index
  * @peb_migration_id: identification number of PEB in migration sequence
+ * @peb_page: PEB's page index
  * @log_area: identification number of log area
  * @byte_offset: offset in bytes from area's beginning
  */
 struct ssdfs_peb_phys_offset {
 	int state;
 	u16 peb_index;
-	u16 peb_page;
 	u8 peb_migration_id;
+	u16 peb_page;
 	u8 log_area;
 	u32 byte_offset;
 };
@@ -267,19 +269,19 @@ struct ssdfs_segment_request_pool {
 };
 
 /*
- * struct ssdfs_dirty_pages_batch - dirty pages batch
+ * struct ssdfs_dirty_folios_batch - dirty folios batch
  * @state: batch state
- * @pvec: page vector with dirty pages
- * @processed_pages: number processed pages
+ * @fvec: folio vector with dirty folios
+ * @processed_blks: number processed blocks
  * @requested_extent: requested to store extent
  * @allocated_extent: really allocated extent of logical blocks
  * @place: logical blocks placement in segment
  */
-struct ssdfs_dirty_pages_batch {
+struct ssdfs_dirty_folios_batch {
 	int state;
 
-	struct pagevec pvec;
-	u8 processed_pages;
+	struct folio_batch fvec;
+	u8 processed_blks;
 
 	struct ssdfs_logical_extent requested_extent;
 	struct ssdfs_blk2off_range allocated_extent;
@@ -292,7 +294,7 @@ struct ssdfs_dirty_pages_batch {
 enum {
 	SSDFS_DIRTY_BATCH_UNKNOWN_STATE,
 	SSDFS_DIRTY_BATCH_CREATED,
-	SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES,
+	SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_BLOCKS,
 	SSDFS_DIRTY_BATCH_STATE_MAX
 };
 
@@ -322,11 +324,11 @@ void ssdfs_segment_request_pool_init(struct ssdfs_segment_request_pool *pool)
 }
 
 /*
- * ssdfs_dirty_pages_batch_init() - initialize dirty pages batch
- * @batch: dirty pages batch
+ * ssdfs_dirty_folios_batch_init() - initialize dirty folios batch
+ * @batch: dirty folios batch
  */
 static inline
-void ssdfs_dirty_pages_batch_init(struct ssdfs_dirty_pages_batch *batch)
+void ssdfs_dirty_folios_batch_init(struct ssdfs_dirty_folios_batch *batch)
 {
 	size_t extent_desc_size = sizeof(struct ssdfs_logical_extent);
 	size_t range_desc_size = sizeof(struct ssdfs_blk2off_range);
@@ -338,8 +340,8 @@ void ssdfs_dirty_pages_batch_init(struct ssdfs_dirty_pages_batch *batch)
 
 	batch->state = SSDFS_DIRTY_BATCH_CREATED;
 
-	pagevec_init(&batch->pvec);
-	batch->processed_pages = 0;
+	folio_batch_init(&batch->fvec);
+	batch->processed_blks = 0;
 
 	memset(&batch->requested_extent, 0xFF, extent_desc_size);
 	memset(&batch->allocated_extent, 0xFF, range_desc_size);
@@ -348,12 +350,12 @@ void ssdfs_dirty_pages_batch_init(struct ssdfs_dirty_pages_batch *batch)
 
 /*
  * is_ssdfs_dirty_batch_not_processed() - check that dirty batch is not processed
- * @batch: dirty pages batch
+ * @batch: dirty folios batch
  */
 static inline
-bool is_ssdfs_dirty_batch_not_processed(struct ssdfs_dirty_pages_batch *batch)
+bool is_ssdfs_dirty_batch_not_processed(struct ssdfs_dirty_folios_batch *batch)
 {
-	return batch->state == SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_PAGES;
+	return batch->state == SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_BLOCKS;
 }
 
 /*
@@ -370,7 +372,7 @@ bool is_ssdfs_logical_extent_invalid(struct ssdfs_logical_extent *extent)
 }
 
 /*
- * ssdfs_dirty_pages_batch_prepare_logical_extent() - prepare logical extent
+ * ssdfs_dirty_folios_batch_prepare_logical_extent() - prepare logical extent
  * @ino: inode id
  * @logical_offset: logical offset in bytes from file's beginning
  * @data_bytes: extent length in bytes
@@ -378,13 +380,13 @@ bool is_ssdfs_logical_extent_invalid(struct ssdfs_logical_extent *extent)
  * @parent_snapshot: parent snapshot number
  * @req: segment request [out]
  */
-static inline
-void ssdfs_dirty_pages_batch_prepare_logical_extent(u64 ino,
+static inline void
+ssdfs_dirty_folios_batch_prepare_logical_extent(u64 ino,
 					u64 logical_offset,
 					u32 data_bytes,
 					u64 cno,
 					u64 parent_snapshot,
-					struct ssdfs_dirty_pages_batch *batch)
+					struct ssdfs_dirty_folios_batch *batch)
 {
 	batch->requested_extent.ino = ino;
 	batch->requested_extent.logical_offset = logical_offset;
@@ -536,44 +538,44 @@ int ssdfs_init_seg_req_obj_cache(void);
 void ssdfs_shrink_seg_req_obj_cache(void);
 void ssdfs_destroy_seg_req_obj_cache(void);
 
-int ssdfs_dirty_pages_batch_add_page(struct page *page,
-				     struct ssdfs_dirty_pages_batch *batch);
+int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
+					struct ssdfs_dirty_folios_batch *batch);
 
 struct ssdfs_segment_request *ssdfs_request_alloc(void);
 void ssdfs_request_free(struct ssdfs_segment_request *req);
-void ssdfs_request_init(struct ssdfs_segment_request *req);
+void ssdfs_request_init(struct ssdfs_segment_request *req, u32 block_size);
 void ssdfs_get_request(struct ssdfs_segment_request *req);
 void ssdfs_put_request(struct ssdfs_segment_request *req);
-int ssdfs_request_add_page(struct page *page,
-			   struct ssdfs_segment_request *req);
-int ssdfs_request_add_diff_page(struct page *page,
-				struct ssdfs_segment_request *req);
-struct page *
-ssdfs_request_allocate_and_add_page(struct ssdfs_segment_request *req);
-struct page *
-ssdfs_request_allocate_and_add_diff_page(struct ssdfs_segment_request *req);
-struct page *
-ssdfs_request_allocate_and_add_old_state_page(struct ssdfs_segment_request *req);
+int ssdfs_request_add_folio(struct folio *folio,
+			    struct ssdfs_segment_request *req);
+int ssdfs_request_add_diff_folio(struct folio *folio,
+				 struct ssdfs_segment_request *req);
+struct folio *
+ssdfs_request_allocate_and_add_folio(struct ssdfs_segment_request *req);
+struct folio *
+ssdfs_request_allocate_and_add_diff_folio(struct ssdfs_segment_request *req);
+struct folio *
+ssdfs_request_allocate_and_add_old_state_folio(struct ssdfs_segment_request *req);
 struct page *
 ssdfs_request_allocate_locked_page(struct ssdfs_segment_request *req,
 				   int page_index);
-struct page *
-ssdfs_request_allocate_locked_diff_page(struct ssdfs_segment_request *req,
-					int page_index);
-int ssdfs_request_add_allocated_page_locked(struct ssdfs_segment_request *req);
+struct folio *
+ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
+					 int folio_index);
+int ssdfs_request_add_allocated_folio_locked(struct ssdfs_segment_request *req);
 int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req);
-int ssdfs_request_add_old_state_page_locked(struct ssdfs_segment_request *req);
-void ssdfs_request_unlock_and_remove_page(struct ssdfs_segment_request *req,
-					  int page_index);
-void ssdfs_request_unlock_and_remove_pages(struct ssdfs_segment_request *req);
+int ssdfs_request_add_old_state_folio_locked(struct ssdfs_segment_request *req);
+void ssdfs_request_unlock_and_remove_folio(struct ssdfs_segment_request *req,
+					   int folio_index);
+void ssdfs_request_unlock_and_remove_folios(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_update(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_old_state(struct ssdfs_segment_request *req);
 int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
-					struct page *diff_page,
+					struct folio *diff_folio,
 					struct ssdfs_segment_request *req);
-void ssdfs_free_flush_request_pages(struct ssdfs_segment_request *req);
-u8 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
-			   struct pagevec *pvec);
+void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req);
+u32 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
+			    struct folio_batch *batch);
 
 #endif /* _SSDFS_REQUEST_QUEUE_H */

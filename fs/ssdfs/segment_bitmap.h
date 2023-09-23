@@ -257,18 +257,18 @@ int ssdfs_segbmap_seg_id_2_seg_index(struct ssdfs_segment_bmap *segbmap,
 }
 
 static inline
-bool ssdfs_segbmap_fragment_has_content(struct page *page)
+bool ssdfs_segbmap_fragment_has_content(struct folio *folio)
 {
 	bool has_content = false;
 	void *kaddr;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 
-	SSDFS_DBG("page %p\n", page);
+	SSDFS_DBG("folio %p\n", folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, 0);
 	if (memchr_inv(kaddr, 0xff, PAGE_SIZE) != NULL)
 		has_content = true;
 	kunmap_local(kaddr);
@@ -426,10 +426,10 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi);
 int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 					u16 seg_index,
 					u16 sequence_id,
-					struct page *page);
+					struct folio *folio);
 int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 				u16 sequence_id,
-				struct page *page,
+				struct folio *folio,
 				int state);
 int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap);
 int ssdfs_segbmap_resize(struct ssdfs_segment_bmap *segbmap,

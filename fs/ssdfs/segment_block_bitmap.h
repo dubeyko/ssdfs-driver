@@ -71,7 +71,7 @@ int ssdfs_segment_blk_bmap_create(struct ssdfs_segment_info *si,
 void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr);
 int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 				    u16 peb_index,
-				    struct ssdfs_page_vector *source,
+				    struct ssdfs_folio_vector *source,
 				    struct ssdfs_block_bitmap_fragment *hdr,
 				    u64 cno);
 int

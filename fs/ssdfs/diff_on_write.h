@@ -86,7 +86,7 @@ static inline
 int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 				 struct ssdfs_segment_request *req)
 {
-	if (pagevec_count(&req->result.diffs) > 0) {
+	if (folio_batch_count(&req->result.diffs) > 0) {
 		ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 			__FILE__, __func__, __LINE__,
 			"Diff-On-Write (metadata case) is not supported. "
@@ -119,7 +119,7 @@ static inline
 int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 				struct ssdfs_segment_request *req)
 {
-	if (pagevec_count(&req->result.diffs) > 0) {
+	if (folio_batch_count(&req->result.diffs) > 0) {
 		ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 			__FILE__, __func__, __LINE__,
 			"Diff-On-Write (user data case) is not supported. "

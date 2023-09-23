@@ -281,17 +281,17 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 			    int flag, int init_state);
 void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
-			  struct ssdfs_page_vector *source,
+			  struct ssdfs_folio_vector *source,
 			  u32 last_free_blk,
 			  u32 metadata_blks,
 			  u32 invalid_blks);
 int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
-				struct ssdfs_page_vector *snapshot,
+				struct ssdfs_folio_vector *snapshot,
 				u32 *last_free_page,
 				u32 *metadata_blks,
 				u32 *invalid_blks,
 				size_t *bytes_count);
-void ssdfs_block_bmap_forget_snapshot(struct ssdfs_page_vector *snapshot);
+void ssdfs_block_bmap_forget_snapshot(struct ssdfs_folio_vector *snapshot);
 
 int ssdfs_block_bmap_lock(struct ssdfs_block_bmap *blk_bmap);
 bool ssdfs_block_bmap_is_locked(struct ssdfs_block_bmap *blk_bmap);

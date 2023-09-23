@@ -360,9 +360,20 @@ struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 {
 	struct folio *folio;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("mask %#x, order %u\n",
+		  gfp_mask, order);
+
+	if (order > get_order(SSDFS_128KB)) {
+		SSDFS_WARN("invalid order %u\n",
+			   order);
+		return ERR_PTR(-ERANGE);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	folio = folio_alloc(gfp_mask, order);
 	if (unlikely(!folio)) {
-		SSDFS_ERR("unable to allocate folio\n");
+		SSDFS_WARN("unable to allocate folio\n");
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -1492,18 +1503,20 @@ inline void ssdfs_clear_page_private(struct page *page,
 }
 
 static inline
-bool can_be_merged_into_extent(struct page *page1, struct page *page2)
+bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 {
-	ino_t ino1 = page1->mapping->host->i_ino;
-	ino_t ino2 = page2->mapping->host->i_ino;
-	pgoff_t index1 = page_index(page1);
-	pgoff_t index2 = page_index(page2);
+	ino_t ino1 = folio1->mapping->host->i_ino;
+	ino_t ino2 = folio2->mapping->host->i_ino;
+	pgoff_t index1 = folio_index(folio1);
+	pgoff_t index2 = folio_index(folio2);
 	pgoff_t diff_index;
 	bool has_identical_type;
 	bool has_identical_ino;
 
-	has_identical_type = (PageChecked(page1) && PageChecked(page2)) ||
-				(!PageChecked(page1) && !PageChecked(page2));
+	has_identical_type = (folio_test_checked(folio1) &&
+					folio_test_checked(folio2)) ||
+				(!folio_test_checked(folio1) &&
+					!folio_test_checked(folio2));
 	has_identical_ino = ino1 == ino2;
 
 	if (index1 >= index2)
@@ -1514,13 +1527,11 @@ bool can_be_merged_into_extent(struct page *page1, struct page *page2)
 	return has_identical_type && has_identical_ino && (diff_index == 1);
 }
 
-/*
 static inline
-bool need_add_block(struct folio *folio)
+bool need_add_block2(struct folio *folio)
 {
 	return folio_test_checked(folio);
 }
-*/
 
 static inline
 bool is_diff_folio(struct folio *folio)

@@ -652,6 +652,93 @@ int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
 	return 0;
 }
 
+int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
+				      struct ssdfs_folio_vector *batch,
+				      u32 offset, u32 size,
+				      void *buf)
+{
+	struct ssdfs_smart_folio folio;
+	u32 bytes_off;
+	size_t read_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch || !buf);
+
+	SSDFS_DBG("batch %p, offset %u, size %u, buf %p\n",
+		  batch, offset, size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		size_t iter_read_bytes;
+
+		bytes_off = offset + read_bytes;
+
+		err = SSDFS_OFF2FOLIO(fsi->pagesize, bytes_off, &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert offset into folio: "
+				  "bytes_off %u, err %d\n",
+				  bytes_off, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		iter_read_bytes = min_t(size_t,
+					(size_t)(size - read_bytes),
+					(size_t)(PAGE_SIZE -
+						 folio.desc.offset_inside_page));
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("bytes_off %u, read_bytes %zu, "
+			  "iter_read_bytes %zu\n",
+			  bytes_off, read_bytes,
+			  iter_read_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (folio.desc.folio_index >= ssdfs_folio_vector_count(batch)) {
+			SSDFS_ERR("invalid folio_index: "
+				  "index %d, batch_size %u\n",
+				  folio.desc.folio_index,
+				  ssdfs_folio_vector_count(batch));
+			return -E2BIG;
+		}
+
+		folio.ptr = batch->folios[folio.desc.folio_index];
+
+		ssdfs_folio_lock(folio.ptr);
+		err = ssdfs_memcpy_from_folio(buf, read_bytes, size,
+					      &folio, iter_read_bytes);
+		ssdfs_folio_unlock(folio.ptr);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("bytes_off %u, read_bytes %zu, "
+				  "iter_read_bytes %zu, err %d\n",
+				  bytes_off, read_bytes,
+				  iter_read_bytes, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio.ptr, folio_ref_count(folio.ptr));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		read_bytes += iter_read_bytes;
+	} while (read_bytes < size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("BUF DUMP\n");
+	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+			     buf, size);
+	SSDFS_DBG("\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
 int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 				  u32 offset, u32 size,
 				  void *buf)
@@ -719,6 +806,90 @@ int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("page %p, count %d\n",
 			  page, page_ref_count(page));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		written_bytes += iter_write_bytes;
+	} while (written_bytes < size);
+
+	return 0;
+}
+
+int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
+				      struct folio_batch *batch,
+				      u32 offset, u32 size,
+				      void *buf)
+{
+	struct ssdfs_smart_folio folio;
+	u32 bytes_off;
+	size_t written_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !batch || !buf);
+
+	SSDFS_DBG("batch %p, offset %u, size %u, buf %p\n",
+		  batch, offset, size, buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		size_t iter_write_bytes;
+
+		bytes_off = offset + written_bytes;
+
+		err = SSDFS_OFF2FOLIO(fsi->pagesize, bytes_off, &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert offset into folio: "
+				  "bytes_off %u, err %d\n",
+				  bytes_off, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		iter_write_bytes = min_t(size_t,
+					 (size_t)(size - written_bytes),
+					 (size_t)(PAGE_SIZE -
+					    folio.desc.offset_inside_page));
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("bytes_off %u, written_bytes %zu, "
+			  "iter_write_bytes %zu\n",
+			  bytes_off, written_bytes,
+			  iter_write_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (folio.desc.folio_index >= folio_batch_count(batch)) {
+			SSDFS_ERR("invalid folio_index: "
+				  "index %d, batch_size %u\n",
+				  folio.desc.folio_index,
+				  folio_batch_count(batch));
+			return -E2BIG;
+		}
+
+		folio.ptr = batch->folios[folio.desc.folio_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio.ptr);
+		WARN_ON(!folio_test_locked(folio.ptr));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_memcpy_to_folio(&folio,
+					    buf, written_bytes, size,
+					    iter_write_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "written_bytes %zu, offset %u, "
+				  "iter_write_bytes %zu, err %d\n",
+				  written_bytes, bytes_off,
+				  iter_write_bytes, err);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio.ptr, folio_ref_count(folio.ptr));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		written_bytes += iter_write_bytes;
