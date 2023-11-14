@@ -25,20 +25,19 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 
 #include <trace/events/ssdfs.h>
 
 /*
- * ssdfs_read_page_from_volume() - read page from volume
+ * ssdfs_read_folio_from_volume() - read logical block from volume
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
- * @bytes_off: offset from PEB's begining in bytes
- * @page: memory page
+ * @bytes_offset: offset from PEB's begining in bytes
+ * @folio: memory folio
  *
- * This function tries to read page from the volume.
+ * This function tries to read logical block from the volume.
  *
  * RETURN:
  * [success]
@@ -47,30 +46,31 @@
  * %-EINVAL     - invalid input.
  * %-EIO        - I/O error.
  */
-int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
-				u64 peb_id, u32 bytes_off,
-				struct page *page)
+int ssdfs_read_folio_from_volume(struct ssdfs_fs_info *fsi,
+				 u64 peb_id, u32 bytes_offset,
+				 struct folio *folio)
 {
 	struct super_block *sb;
 	loff_t offset;
 	u32 peb_size;
 	u32 pagesize;
 	u32 pages_per_peb;
-	u32 pages_off;
+	u32 folio_index;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !page);
-	BUG_ON(!fsi->devops->readpage);
+	BUG_ON(!fsi || !folio);
+	BUG_ON(!fsi->devops->read_block);
 
-	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, page %p\n",
-		  fsi, peb_id, bytes_off, page);
+	SSDFS_DBG("fsi %p, peb_id %llu, "
+		  "bytes_offset %u, folio %p\n",
+		  fsi, peb_id, bytes_offset, folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	sb = fsi->sb;
 	pagesize = fsi->pagesize;
 	pages_per_peb = fsi->pages_per_peb;
-	pages_off = bytes_off / pagesize;
+	folio_index = bytes_offset / pagesize;
 
 	if (pages_per_peb >= (U32_MAX / pagesize)) {
 		SSDFS_ERR("pages_per_peb %u >= U32_MAX / pagesize %u\n",
@@ -88,19 +88,19 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 
 	offset = peb_id * peb_size;
 
-	if (pages_off >= pages_per_peb) {
-		SSDFS_ERR("pages_off %u >= pages_per_peb %u\n",
-			  pages_off, pages_per_peb);
+	if (folio_index >= pages_per_peb) {
+		SSDFS_ERR("folio_index %u >= pages_per_peb %u\n",
+			  folio_index, pages_per_peb);
 		return -EINVAL;
 	}
 
-	if (pages_off >= (U32_MAX / pagesize)) {
-		SSDFS_ERR("pages_off %u >= U32_MAX / pagesize %u\n",
-			  pages_off, fsi->pagesize);
+	if (folio_index >= (U32_MAX / pagesize)) {
+		SSDFS_ERR("folio_index %u >= U32_MAX / pagesize %u\n",
+			  folio_index, fsi->pagesize);
 		return -EINVAL;
 	}
 
-	offset += bytes_off;
+	offset += bytes_offset;
 
 	if (fsi->devops->peb_isbad) {
 		err = fsi->devops->peb_isbad(sb, offset);
@@ -113,10 +113,10 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	err = fsi->devops->readpage(sb, page, offset);
+	err = fsi->devops->read_block(sb, folio, offset);
 	if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fail to read page: offset %llu, err %d\n",
+		SSDFS_DBG("fail to read block: offset %llu, err %d\n",
 			  (unsigned long long)offset, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
@@ -126,13 +126,13 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_read_pagevec_from_volume() - read pagevec from volume
+ * ssdfs_read_folio_batch_from_volume() - read folio batch from volume
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
- * @bytes_off: offset from PEB's begining in bytes
- * @pvec: pagevec [in|out]
+ * @bytes_offset: offset from PEB's begining in bytes
+ * @batch: folio batch [in|out]
  *
- * This function tries to read pages from the volume.
+ * This function tries to read logical blocks from the volume.
  *
  * RETURN:
  * [success]
@@ -141,30 +141,31 @@ int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
  * %-EINVAL     - invalid input.
  * %-EIO        - I/O error.
  */
-int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
-				   u64 peb_id, u32 bytes_off,
-				   struct pagevec *pvec)
+int ssdfs_read_folio_batch_from_volume(struct ssdfs_fs_info *fsi,
+					u64 peb_id, u32 bytes_offset,
+					struct folio_batch *batch)
 {
 	struct super_block *sb;
 	loff_t offset;
 	u32 peb_size;
 	u32 pagesize;
 	u32 pages_per_peb;
-	u32 pages_off;
+	u32 folio_index;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !pvec);
-	BUG_ON(!fsi->devops->readpages);
+	BUG_ON(!fsi || !batch);
+	BUG_ON(!fsi->devops->read_blocks);
 
-	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, pvec %p\n",
-		  fsi, peb_id, bytes_off, pvec);
+	SSDFS_DBG("fsi %p, peb_id %llu, "
+		  "bytes_offset %u, batch %p\n",
+		  fsi, peb_id, bytes_offset, batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	sb = fsi->sb;
 	pagesize = fsi->pagesize;
 	pages_per_peb = fsi->pages_per_peb;
-	pages_off = bytes_off / pagesize;
+	folio_index = bytes_offset / pagesize;
 
 	if (pages_per_peb >= (U32_MAX / pagesize)) {
 		SSDFS_ERR("pages_per_peb %u >= U32_MAX / pagesize %u\n",
@@ -182,19 +183,19 @@ int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
 
 	offset = peb_id * peb_size;
 
-	if (pages_off >= pages_per_peb) {
-		SSDFS_ERR("pages_off %u >= pages_per_peb %u\n",
-			  pages_off, pages_per_peb);
+	if (folio_index >= pages_per_peb) {
+		SSDFS_ERR("folio_index %u >= pages_per_peb %u\n",
+			  folio_index, pages_per_peb);
 		return -EINVAL;
 	}
 
-	if (pages_off >= (U32_MAX / pagesize)) {
-		SSDFS_ERR("pages_off %u >= U32_MAX / pagesize %u\n",
-			  pages_off, fsi->pagesize);
+	if (folio_index >= (U32_MAX / pagesize)) {
+		SSDFS_ERR("folio_index %u >= U32_MAX / pagesize %u\n",
+			  folio_index, fsi->pagesize);
 		return -EINVAL;
 	}
 
-	offset += bytes_off;
+	offset += bytes_offset;
 
 	if (fsi->devops->peb_isbad) {
 		err = fsi->devops->peb_isbad(sb, offset);
@@ -207,10 +208,10 @@ int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	err = fsi->devops->readpages(sb, pvec, offset);
+	err = fsi->devops->read_blocks(sb, batch, offset);
 	if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fail to read pvec: offset %llu, err %d\n",
+		SSDFS_DBG("fail to read batch: offset %llu, err %d\n",
 			  (unsigned long long)offset, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return -EIO;
@@ -419,7 +420,7 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 
 	fsi = SSDFS_FS_I(sb);
 
-	if (!fsi->devops->can_write_page)
+	if (!fsi->devops->can_write_block)
 		return 0;
 
 	cur_peb = sb_log->peb_id;
@@ -482,7 +483,7 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = fsi->devops->can_write_page(sb, byte_off, true);
+		err = fsi->devops->can_write_block(sb, byte_off, true);
 		if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page can't be written: err %d\n", err);
@@ -496,147 +497,104 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 	return 0;
 }
 
-int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
-				 u32 offset, u32 size,
-				 void *buf)
-{
-	struct page *page;
-	u32 page_off;
-	u32 bytes_off;
-	size_t read_bytes = 0;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !buf);
-
-	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
-		  pvec, offset, size, buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	do {
-		size_t iter_read_bytes;
-		size_t cur_off;
-
-		bytes_off = offset + read_bytes;
-		page_off = bytes_off / PAGE_SIZE;
-		cur_off = bytes_off % PAGE_SIZE;
-
-		iter_read_bytes = min_t(size_t,
-					(size_t)(size - read_bytes),
-					(size_t)(PAGE_SIZE - cur_off));
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page_off %u, cur_off %zu, "
-			  "iter_read_bytes %zu\n",
-			  page_off, cur_off,
-			  iter_read_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (page_off >= pagevec_count(pvec)) {
-			SSDFS_DBG("page out of range: index %u: "
-				  "offset %zu, pagevec_count %u\n",
-				  page_off, cur_off,
-				  pagevec_count(pvec));
-			return -E2BIG;
-		}
-
-		page = pvec->pages[page_off];
-
-		ssdfs_lock_page(page);
-		err = ssdfs_memcpy_from_page(buf, read_bytes, size,
-					     page, cur_off, PAGE_SIZE,
-					     iter_read_bytes);
-		ssdfs_unlock_page(page);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: "
-				  "read_bytes %zu, offset %zu, "
-				  "iter_read_bytes %zu, err %d\n",
-				  read_bytes, cur_off,
-				  iter_read_bytes, err);
-			return err;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		read_bytes += iter_read_bytes;
-	} while (read_bytes < size);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("BUF DUMP\n");
-	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-			     buf, size);
-	SSDFS_DBG("\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return 0;
-}
-
-int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
+/*
+ * ssdfs_unaligned_read_folio_batch() - unaligned read from batch into buffer
+ * @batch: folio batch with data
+ * @offset: offset in bytes into folio batch
+ * @size: buffer size in bytes
+ * @buf: buffer for extracting data
+ *
+ * This function tries to read a portion of data from
+ * folio batch into buffer.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-E2BIG      - request is out of folio batch's content.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_unaligned_read_folio_batch(struct folio_batch *batch,
 				     u32 offset, u32 size,
 				     void *buf)
 {
-	struct page *page;
-	u32 page_off;
-	u32 bytes_off;
+	struct folio *folio;
+	u32 block_size;
+	u32 folio_index;
+	u32 bytes_offset;
 	size_t read_bytes = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !buf);
+	BUG_ON(!batch || !buf);
 
-	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
-		  pvec, offset, size, buf);
+	SSDFS_DBG("batch %p, offset %u, size %u, buf %p\n",
+		  batch, offset, size, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (folio_batch_count(batch) == 0) {
+		SSDFS_ERR("empty batch\n");
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch->folios[0]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block_size = folio_size(batch->folios[0]);
 
 	do {
 		size_t iter_read_bytes;
-		size_t cur_off;
+		size_t cur_offset;
 
-		bytes_off = offset + read_bytes;
-		page_off = bytes_off / PAGE_SIZE;
-		cur_off = bytes_off % PAGE_SIZE;
+		bytes_offset = offset + read_bytes;
+		folio_index = bytes_offset / block_size;
+		cur_offset = bytes_offset % block_size;
 
 		iter_read_bytes = min_t(size_t,
 					(size_t)(size - read_bytes),
-					(size_t)(PAGE_SIZE - cur_off));
+					(size_t)(block_size - cur_offset));
 
-		SSDFS_DBG("page_off %u, cur_off %zu, "
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio_index %u, cur_offset %zu, "
 			  "iter_read_bytes %zu\n",
-			  page_off, cur_off,
+			  folio_index, cur_offset,
 			  iter_read_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-		if (page_off >= ssdfs_page_vector_count(pvec)) {
-			SSDFS_DBG("page out of range: index %u: "
-				  "offset %zu, pagevec_count %u\n",
-				  page_off, cur_off,
-				  ssdfs_page_vector_count(pvec));
+		if (folio_index >= folio_batch_count(batch)) {
+			SSDFS_DBG("folio is out of range: index %u: "
+				  "offset %zu, batch_count %u\n",
+				  folio_index, cur_offset,
+				  folio_batch_count(batch));
 			return -E2BIG;
 		}
 
-		page = pvec->pages[page_off];
+		folio = batch->folios[folio_index];
 
-		ssdfs_lock_page(page);
-		err = ssdfs_memcpy_from_page(buf, read_bytes, size,
-					     page, cur_off, PAGE_SIZE,
-					     iter_read_bytes);
-		ssdfs_unlock_page(page);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio);
+		err = __ssdfs_memcpy_from_folio(buf, read_bytes, size,
+						folio, cur_offset, block_size,
+						iter_read_bytes);
+		ssdfs_folio_unlock(folio);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
 				  "read_bytes %zu, offset %zu, "
 				  "iter_read_bytes %zu, err %d\n",
-				  read_bytes, cur_off,
+				  read_bytes, cur_offset,
 				  iter_read_bytes, err);
 			return err;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		read_bytes += iter_read_bytes;
@@ -652,6 +610,25 @@ int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
 	return 0;
 }
 
+/*
+ * ssdfs_unaligned_read_folio_vector() - unaligned read from folio vector
+ * @fsi: pointer on shared file system object
+ * @batch: folio vector with data
+ * @offset: offset in bytes into folio batch
+ * @size: buffer size in bytes
+ * @buf: buffer for extracting data
+ *
+ * This function tries to read a portion of data from
+ * folio vector into buffer.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-E2BIG      - request is out of folio vector's content.
+ * %-ERANGE     - internal error.
+ */
 int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 				      struct ssdfs_folio_vector *batch,
 				      u32 offset, u32 size,
@@ -739,81 +716,25 @@ int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
-int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
-				  u32 offset, u32 size,
-				  void *buf)
-{
-	struct page *page;
-	u32 page_off;
-	u32 bytes_off;
-	size_t written_bytes = 0;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !buf);
-
-	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
-		  pvec, offset, size, buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	do {
-		size_t iter_write_bytes;
-		size_t cur_off;
-
-		bytes_off = offset + written_bytes;
-		page_off = bytes_off / PAGE_SIZE;
-		cur_off = bytes_off % PAGE_SIZE;
-
-		iter_write_bytes = min_t(size_t,
-					(size_t)(size - written_bytes),
-					(size_t)(PAGE_SIZE - cur_off));
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("bytes_off %u, page_off %u, "
-			  "cur_off %zu, written_bytes %zu, "
-			  "iter_write_bytes %zu\n",
-			  bytes_off, page_off, cur_off,
-			  written_bytes, iter_write_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (page_off >= pagevec_count(pvec)) {
-			SSDFS_ERR("invalid page index %u: "
-				  "offset %zu, pagevec_count %u\n",
-				  page_off, cur_off,
-				  pagevec_count(pvec));
-			return -EINVAL;
-		}
-
-		page = pvec->pages[page_off];
-
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
-		WARN_ON(!PageLocked(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
-					   buf, written_bytes, size,
-					   iter_write_bytes);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: "
-				  "written_bytes %zu, offset %zu, "
-				  "iter_write_bytes %zu, err %d\n",
-				  written_bytes, cur_off,
-				  iter_write_bytes, err);
-			return err;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		written_bytes += iter_write_bytes;
-	} while (written_bytes < size);
-
-	return 0;
-}
-
+/*
+ * ssdfs_unaligned_write_folio_batch() - unaligned write into folio batch
+ * @fsi: pointer on shared file system object
+ * @batch: folio batch
+ * @offset: offset in bytes into folio batch
+ * @size: size of data in bytes
+ * @buf: buffer with data
+ *
+ * This function tries to write a portion of data from buffer
+ * into folio batch.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-E2BIG      - request is out of folio batch's content.
+ * %-ERANGE     - internal error.
+ */
 int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
 				      struct folio_batch *batch,
 				      u32 offset, u32 size,
@@ -898,71 +819,101 @@ int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
 	return 0;
 }
 
-int ssdfs_unaligned_write_page_vector(struct ssdfs_page_vector *pvec,
+/*
+ * ssdfs_unaligned_write_folio_vector() - unaligned write into folio vector
+ * @fsi: pointer on shared file system object
+ * @batch: folio vector
+ * @offset: offset in bytes into folio batch
+ * @size: size of data in bytes
+ * @buf: buffer with data
+ *
+ * This function tries to write a portion of data from buffer
+ * into folio vector.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-E2BIG      - request is out of folio vector's content.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_unaligned_write_folio_vector(struct ssdfs_fs_info *fsi,
+					struct ssdfs_folio_vector *batch,
 					u32 offset, u32 size,
 					void *buf)
 {
-	struct page *page;
-	u32 page_off;
+	struct ssdfs_smart_folio folio;
 	u32 bytes_off;
 	size_t written_bytes = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec || !buf);
+	BUG_ON(!batch || !buf);
 
-	SSDFS_DBG("pvec %p, offset %u, size %u, buf %p\n",
-		  pvec, offset, size, buf);
+	SSDFS_DBG("batch %p, offset %u, size %u, buf %p\n",
+		  batch, offset, size, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	do {
 		size_t iter_write_bytes;
-		size_t cur_off;
 
 		bytes_off = offset + written_bytes;
-		page_off = bytes_off / PAGE_SIZE;
-		cur_off = bytes_off % PAGE_SIZE;
 
-		iter_write_bytes = min_t(size_t,
-					(size_t)(size - written_bytes),
-					(size_t)(PAGE_SIZE - cur_off));
-
-		SSDFS_DBG("bytes_off %u, page_off %u, "
-			  "cur_off %zu, written_bytes %zu, "
-			  "iter_write_bytes %zu\n",
-			  bytes_off, page_off, cur_off,
-			  written_bytes, iter_write_bytes);
-
-		if (page_off >= ssdfs_page_vector_count(pvec)) {
-			SSDFS_ERR("invalid page index %u: "
-				  "offset %zu, pagevec_count %u\n",
-				  page_off, cur_off,
-				  ssdfs_page_vector_count(pvec));
-			return -EINVAL;
+		err = SSDFS_OFF2FOLIO(fsi->pagesize, bytes_off, &folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert offset into folio: "
+				  "bytes_off %u, err %d\n",
+				  bytes_off, err);
+			return err;
 		}
 
-		page = pvec->pages[page_off];
-
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
-		WARN_ON(!PageLocked(page));
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_memcpy_to_page(page, cur_off, PAGE_SIZE,
-					   buf, written_bytes, size,
-					   iter_write_bytes);
+		iter_write_bytes = min_t(size_t,
+					 (size_t)(size - written_bytes),
+					 (size_t)(PAGE_SIZE -
+					    folio.desc.offset_inside_page));
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("bytes_off %u, written_bytes %zu, "
+			  "iter_write_bytes %zu\n",
+			  bytes_off, written_bytes,
+			  iter_write_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (folio.desc.folio_index >= ssdfs_folio_vector_count(batch)) {
+			SSDFS_ERR("invalid folio_index: "
+				  "index %d, batch_size %u\n",
+				  folio.desc.folio_index,
+				  ssdfs_folio_vector_count(batch));
+			return -E2BIG;
+		}
+
+		folio.ptr = batch->folios[folio.desc.folio_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio.ptr);
+		WARN_ON(!folio_test_locked(folio.ptr));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_memcpy_to_folio(&folio,
+					    buf, written_bytes, size,
+					    iter_write_bytes);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
-				  "written_bytes %zu, offset %zu, "
+				  "written_bytes %zu, offset %u, "
 				  "iter_write_bytes %zu, err %d\n",
-				  written_bytes, cur_off,
+				  written_bytes, bytes_off,
 				  iter_write_bytes, err);
 			return err;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("page %p, count %d\n",
-			  page, page_ref_count(page));
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio.ptr, folio_ref_count(folio.ptr));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		written_bytes += iter_write_bytes;

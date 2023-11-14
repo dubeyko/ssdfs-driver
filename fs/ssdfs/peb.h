@@ -217,7 +217,7 @@ struct ssdfs_blk_desc_table_init_env {
  * @peb.cur_migration_id: current PEB's migration ID
  * @peb.prev_migration_id: previous PEB's migration ID
  * @log.offset: offset in pages of the requested log
- * @log.pages: pages count in every log of segment
+ * @log.blocks: blocks count in every log of segment
  * @log.bytes: number of bytes in the requested log
  * @log.header.ptr: log header
  * @log.header.of_full_log: is it full log header (segment header)?
@@ -235,7 +235,7 @@ struct ssdfs_read_init_env {
 
 	struct {
 		u32 offset;
-		u32 pages;
+		u32 blocks;
 		u32 bytes;
 
 		struct {
@@ -370,7 +370,7 @@ struct ssdfs_peb_area_metadata {
  * @write_offset: current write offset
  * @compressed_offset: current write offset for compressed data
  * @frag_offset: offset of current fragment
- * @array: area's memory pages
+ * @array: area's memory folios
  */
 struct ssdfs_peb_area {
 	bool has_metadata;
@@ -379,7 +379,7 @@ struct ssdfs_peb_area {
 	u32 write_offset;
 	u32 compressed_offset;
 	u32 frag_offset;
-	struct ssdfs_page_array array;
+	struct ssdfs_folio_array array;
 };
 
 /*
@@ -412,9 +412,9 @@ enum {
  * @lock: exclusive lock of current log
  * @state: current log's state
  * @sequence_id: index of partial log in the sequence
- * @start_page: current log's start page index
- * @pages_capacity: rest free pages in log
- * @write_offset: current offset in bytes for adding data in log
+ * @start_block: current log's start block index
+ * @reserved_blocks: metadata blocks in the log
+ * @free_data_blocks: free data blocks capacity
  * @seg_flags: segment header's flags for the log
  * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
  * @last_log_time: creation timestamp of last log
@@ -427,9 +427,9 @@ struct ssdfs_peb_log {
 	struct mutex lock;
 	atomic_t state;
 	atomic_t sequence_id;
-	u32 start_page;
-	u32 reserved_pages; /* metadata pages in the log */
-	u32 free_data_pages; /* free data pages capacity */
+	u32 start_block;
+	u32 reserved_blocks; /* metadata blocks in the log */
+	u32 free_data_blocks; /* free data blocks capacity */
 	u32 seg_flags;
 	u32 prev_log_bmap_bytes;
 	u64 last_log_time;
@@ -441,16 +441,18 @@ struct ssdfs_peb_log {
 
 /*
  * struct ssdfs_peb_log_offset - current log offset
- * @log_pages: count of pages in full partial log
- * @start_page: current log's start page index
- * @cur_page: current page in the log
- * @offset_into_page: current offset into page
+ * @blocksize_shift: log2(block size)
+ * @log_blocks: count of blocks in full partial log
+ * @start_block: current log's start block index
+ * @cur_block: current block in the log
+ * @offset_into_block: current offset into block
  */
 struct ssdfs_peb_log_offset {
-	u32 log_pages;
-	pgoff_t start_page;
-	pgoff_t cur_page;
-	u32 offset_into_page;
+	u32 blocksize_shift;
+	u32 log_blocks;
+	pgoff_t start_block;
+	pgoff_t cur_block;
+	u32 offset_into_block;
 };
 
 /*
@@ -467,7 +469,7 @@ struct ssdfs_peb_deduplication {
  * struct ssdfs_peb_info - Physical Erase Block (PEB) description
  * @peb_id: PEB number
  * @peb_index: PEB index
- * @log_pages: count of pages in full partial log
+ * @log_blocks: count of blocks in full partial log
  * @peb_create_time: PEB creation timestamp
  * @peb_migration_id: identification number of PEB in migration sequence
  * @state: PEB object state
@@ -479,14 +481,14 @@ struct ssdfs_peb_deduplication {
  * @dedup: PEB's deduplication environment
  * @read_buffer: temporary read buffers (compression case)
  * @env: init environment
- * @cache: PEB's memory pages
+ * @cache: PEB's memory folios
  * @pebc: pointer on parent container
  */
 struct ssdfs_peb_info {
 	/* Static data */
 	u64 peb_id;
 	u16 peb_index;
-	u32 log_pages;
+	u32 log_blocks;
 
 	u64 peb_create_time;
 
@@ -539,8 +541,8 @@ struct ssdfs_peb_info {
 	/* Init environment */
 	struct ssdfs_read_init_env env;
 
-	/* PEB's memory pages */
-	struct ssdfs_page_array cache;
+	/* PEB's memory folios */
+	struct ssdfs_folio_array cache;
 
 	/* Parent container */
 	struct ssdfs_peb_container *pebc;
@@ -1559,20 +1561,22 @@ bool IS_SSDFS_FRAG_RAW_ITER_ENDED(struct ssdfs_fragment_raw_iterator *iter)
  */
 static inline
 void SSDFS_LOG_OFFSET_INIT(struct ssdfs_peb_log_offset *log,
-			   u32 log_pages,
-			   pgoff_t start_page)
+			   u32 block_size,
+			   u32 log_blocks,
+			   pgoff_t start_block)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!log);
 
-	SSDFS_DBG("log_pages %u, start_page %lu\n",
-		  log_pages, start_page);
+	SSDFS_DBG("block_size %u, log_blocks %u, start_block %lu\n",
+		  block_size, log_blocks, start_block);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	log->log_pages = log_pages;
-	log->start_page = start_page;
-	log->cur_page = start_page;
-	log->offset_into_page = 0;
+	log->blocksize_shift = ilog2(block_size);
+	log->log_blocks = log_blocks;
+	log->start_block = start_block;
+	log->cur_block = start_block;
+	log->offset_into_block = 0;
 }
 
 /*
@@ -1585,26 +1589,42 @@ bool IS_SSDFS_LOG_OFFSET_VALID(struct ssdfs_peb_log_offset *log)
 	BUG_ON(!log);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (log->start_page > log->cur_page) {
-		SSDFS_ERR("inconsistent log offset: "
-			  "start_page %lu > cur_page %lu\n",
-			  log->start_page, log->cur_page);
+	switch (1 << log->blocksize_shift) {
+	case SSDFS_4KB:
+	case SSDFS_8KB:
+	case SSDFS_16KB:
+	case SSDFS_32KB:
+	case SSDFS_64KB:
+	case SSDFS_128KB:
+		/* expected block size */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected logical block size %u\n",
+			  1 << log->blocksize_shift);
 		return false;
 	}
 
-	if ((log->cur_page - log->start_page) >= log->log_pages) {
+	if (log->start_block > log->cur_block) {
 		SSDFS_ERR("inconsistent log offset: "
-			  "start_page %lu, cur_page %lu, "
+			  "start_block %lu > cur_block %lu\n",
+			  log->start_block, log->cur_block);
+		return false;
+	}
+
+	if ((log->cur_block - log->start_block) >= log->log_blocks) {
+		SSDFS_ERR("inconsistent log offset: "
+			  "start_block %lu, cur_block %lu, "
 			  "log_pages %u\n",
-			  log->start_page, log->cur_page,
-			  log->log_pages);
+			  log->start_block, log->cur_block,
+			  log->log_blocks);
 		return false;
 	}
 
-	if (log->offset_into_page >= PAGE_SIZE) {
+	if (log->offset_into_block >= (1 << log->blocksize_shift)) {
 		SSDFS_ERR("inconsistent log offset: "
-			  "offset_into_page %u\n",
-			  log->offset_into_page);
+			  "offset_into_block %u\n",
+			  log->offset_into_block);
 		return false;
 	}
 
@@ -1624,15 +1644,15 @@ u64 SSDFS_ABSOLUTE_LOG_OFFSET(struct ssdfs_peb_log_offset *log)
 	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset = (u64)log->cur_page << PAGE_SHIFT;
-	offset += log->offset_into_page;
+	offset = (u64)log->cur_block << log->blocksize_shift;
+	offset += log->offset_into_block;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(offset >= U64_MAX);
 
-	SSDFS_DBG("cur_page %lu, offset_into_page %u, "
+	SSDFS_DBG("cur_block %lu, offset_into_block %u, "
 		  "offset %llu\n",
-		  log->cur_page, log->offset_into_page,
+		  log->cur_block, log->offset_into_block,
 		  offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1652,16 +1672,16 @@ u32 SSDFS_LOCAL_LOG_OFFSET(struct ssdfs_peb_log_offset *log)
 	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset = (log->cur_page - log->start_page) << PAGE_SHIFT;
-	offset += log->offset_into_page;
+	offset = (log->cur_block - log->start_block) << log->blocksize_shift;
+	offset += log->offset_into_block;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(offset >= U32_MAX);
 
-	SSDFS_DBG("start_page %lu, cur_page %lu, "
-		  "offset_into_page %u, offset %u\n",
-		  log->start_page, log->cur_page,
-		  log->offset_into_page, offset);
+	SSDFS_DBG("start_block %lu, cur_block %lu, "
+		  "offset_into_block %u, offset %u\n",
+		  log->start_block, log->cur_block,
+		  log->offset_into_block, offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return offset;
@@ -1674,7 +1694,8 @@ static inline
 int SSDFS_SHIFT_LOG_OFFSET(struct ssdfs_peb_log_offset *log,
 			   u32 shift)
 {
-	u32 offset_into_page;
+	u32 offset_into_block;
+	u32 block_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!log);
@@ -1682,41 +1703,43 @@ int SSDFS_SHIFT_LOG_OFFSET(struct ssdfs_peb_log_offset *log,
 
 	if (!IS_SSDFS_LOG_OFFSET_VALID(log)) {
 		SSDFS_ERR("inconsistent log offset: "
-			  "start_page %lu, cur_page %lu, "
-			  "offset_into_page %u\n",
-			  log->start_page, log->cur_page,
-			  log->offset_into_page);
+			  "start_block %lu, cur_block %lu, "
+			  "offset_into_block %u\n",
+			  log->start_block, log->cur_block,
+			  log->offset_into_block);
 		return -ERANGE;
 	}
 
 	SSDFS_DBG("shift %u\n", shift);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset_into_page = log->offset_into_page;
-	offset_into_page += shift;
+	block_size = 1 << log->blocksize_shift;
 
-	if (offset_into_page < PAGE_SIZE) {
-		log->offset_into_page = offset_into_page;
-	} else if (offset_into_page == PAGE_SIZE) {
-		log->cur_page++;
-		log->offset_into_page = 0;
+	offset_into_block = log->offset_into_block;
+	offset_into_block += shift;
+
+	if (offset_into_block < block_size) {
+		log->offset_into_block = offset_into_block;
+	} else if (offset_into_block == block_size) {
+		log->cur_block++;
+		log->offset_into_block = 0;
 	} else {
-		log->cur_page += offset_into_page >> PAGE_SHIFT;
-		log->offset_into_page = offset_into_page % PAGE_SIZE;
+		log->cur_block += offset_into_block >> log->blocksize_shift;
+		log->offset_into_block = offset_into_block % block_size;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("start_page %lu, cur_page %lu, "
-		  "offset_into_page %u\n",
-		  log->start_page, log->cur_page,
-		  log->offset_into_page);
+	SSDFS_DBG("start_block %lu, cur_block %lu, "
+		  "offset_into_block %u\n",
+		  log->start_block, log->cur_block,
+		  log->offset_into_block);
 
 	if (!IS_SSDFS_LOG_OFFSET_VALID(log)) {
 		SSDFS_ERR("inconsistent log offset: "
-			  "start_page %lu, cur_page %lu, "
-			  "offset_into_page %u\n",
-			  log->start_page, log->cur_page,
-			  log->offset_into_page);
+			  "start_block %lu, cur_block %lu, "
+			  "offset_into_block %u\n",
+			  log->start_block, log->cur_block,
+			  log->offset_into_block);
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -1730,7 +1753,7 @@ int SSDFS_SHIFT_LOG_OFFSET(struct ssdfs_peb_log_offset *log,
 static inline
 bool IS_SSDFS_LOG_OFFSET_UNALIGNED(struct ssdfs_peb_log_offset *log)
 {
-	return SSDFS_LOCAL_LOG_OFFSET(log) % PAGE_SIZE;
+	return SSDFS_LOCAL_LOG_OFFSET(log) % (1 << log->blocksize_shift);
 }
 
 /*
@@ -1744,8 +1767,8 @@ void SSDFS_ALIGN_LOG_OFFSET(struct ssdfs_peb_log_offset *log)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (IS_SSDFS_LOG_OFFSET_UNALIGNED(log)) {
-		log->cur_page++;
-		log->offset_into_page = 0;
+		log->cur_block++;
+		log->offset_into_block = 0;
 	}
 }
 
@@ -1897,15 +1920,15 @@ void ssdfs_peb_set_current_log_state(struct ssdfs_peb_info *pebi,
 /*
  * ssdfs_peb_current_log_init() - initialize current log object
  * @pebi: pointer on PEB object
- * @free_pages: free pages in the current log
- * @start_page: start page of the current log
+ * @free_blocks: free blocks in the current log
+ * @start_block: start block of the current log
  * @sequence_id: index of partial log in the sequence
  * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
  */
 static inline
 void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
-				u32 free_pages,
-				u32 start_page,
+				u32 free_blocks,
+				u32 start_block,
 				int sequence_id,
 				u32 prev_log_bmap_bytes)
 {
@@ -1913,16 +1936,16 @@ void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi);
 
 	SSDFS_DBG("peb_id %llu, "
-		  "pebi->current_log.start_page %u, "
-		  "free_pages %u, sequence_id %d, "
+		  "pebi->current_log.start_block %u, "
+		  "free_blocks %u, sequence_id %d, "
 		  "prev_log_bmap_bytes %u\n",
-		  pebi->peb_id, start_page, free_pages,
+		  pebi->peb_id, start_block, free_blocks,
 		  sequence_id, prev_log_bmap_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_lock(pebi);
-	pebi->current_log.start_page = start_page;
-	pebi->current_log.free_data_pages = free_pages;
+	pebi->current_log.start_block = start_block;
+	pebi->current_log.free_data_blocks = free_blocks;
 	pebi->current_log.prev_log_bmap_bytes = prev_log_bmap_bytes;
 	atomic_set(&pebi->current_log.sequence_id, sequence_id);
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_INITIALIZED);
@@ -2210,7 +2233,7 @@ bool IS_SSDFS_BLK_STATE_OFFSET_INVALID(struct ssdfs_blk_state_offset *desc)
 	    desc->peb_migration_id == U8_MAX &&
 	    le32_to_cpu(desc->byte_offset) == U32_MAX) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("log_start_page %u, log_area %u, "
+		SSDFS_DBG("log_start_block %u, log_area %u, "
 			  "peb_migration_id %u, byte_offset %u\n",
 			  le16_to_cpu(desc->log_start_page),
 			  desc->log_area,
@@ -2222,7 +2245,7 @@ bool IS_SSDFS_BLK_STATE_OFFSET_INVALID(struct ssdfs_blk_state_offset *desc)
 
 	if (desc->peb_migration_id == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("log_start_page %u, log_area %u, "
+		SSDFS_DBG("log_start_block %u, log_area %u, "
 			  "peb_migration_id %u, byte_offset %u\n",
 			  le16_to_cpu(desc->log_start_page),
 			  desc->log_area,
@@ -2377,7 +2400,7 @@ int ssdfs_unaligned_read_cache(struct ssdfs_peb_info *pebi,
 				void *buf);
 int ssdfs_peb_read_log_hdr_desc_array(struct ssdfs_peb_info *pebi,
 				      struct ssdfs_segment_request *req,
-				      u16 log_start_page,
+				      u16 log_start_block,
 				      struct ssdfs_metadata_descriptor *array,
 				      size_t array_size);
 u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi);

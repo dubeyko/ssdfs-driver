@@ -53,11 +53,9 @@
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-extern atomic64_t ssdfs_allocated_pages;
 extern atomic64_t ssdfs_allocated_folios;
 extern atomic64_t ssdfs_memory_leaks;
 
-extern atomic64_t ssdfs_locked_pages;
 extern atomic64_t ssdfs_locked_folios;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
@@ -148,17 +146,6 @@ void ssdfs_kvfree(void *kaddr)
 }
 
 static inline
-void ssdfs_get_page(struct page *page)
-{
-	get_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d, flags %#lx\n",
-		  page, page_ref_count(page), page->flags);
-#endif /* CONFIG_SSDFS_DEBUG */
-}
-
-static inline
 void ssdfs_folio_get(struct folio *folio)
 {
 	folio_get(folio);
@@ -167,27 +154,6 @@ void ssdfs_folio_get(struct folio *folio)
 	SSDFS_DBG("folio %p, count %d, flags %#lx\n",
 		  folio, folio_ref_count(folio), folio->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
-}
-
-static inline
-void ssdfs_put_page(struct page *page)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	put_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (page_ref_count(page) < 1) {
-		SSDFS_WARN("page %p, count %d\n",
-			  page, page_ref_count(page));
-	}
 }
 
 static inline
@@ -210,21 +176,6 @@ void ssdfs_folio_put(struct folio *folio)
 }
 
 static inline
-void ssdfs_lock_page(struct page *page)
-{
-	lock_page(page);
-
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_locked_pages) < 0) {
-		SSDFS_WARN("ssdfs_locked_pages %lld\n",
-			   atomic64_read(&ssdfs_locked_pages));
-	}
-
-	atomic64_inc(&ssdfs_locked_pages);
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-}
-
-static inline
 void ssdfs_folio_lock(struct folio *folio)
 {
 	folio_lock(folio);
@@ -236,27 +187,6 @@ void ssdfs_folio_lock(struct folio *folio)
 	}
 
 	atomic64_inc(&ssdfs_locked_folios);
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-}
-
-static inline
-void ssdfs_account_locked_page(struct page *page)
-{
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (!page)
-		return;
-
-	if (!PageLocked(page)) {
-		SSDFS_WARN("page %p, page_index %llu\n",
-			   page, (u64)page_index(page));
-	}
-
-	if (atomic64_read(&ssdfs_locked_pages) < 0) {
-		SSDFS_WARN("ssdfs_locked_pages %lld\n",
-			   atomic64_read(&ssdfs_locked_pages));
-	}
-
-	atomic64_inc(&ssdfs_locked_pages);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
@@ -282,28 +212,6 @@ void ssdfs_account_locked_folio(struct folio *folio)
 }
 
 static inline
-void ssdfs_unlock_page(struct page *page)
-{
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (!PageLocked(page)) {
-		SSDFS_WARN("page %p, page_index %llu\n",
-			   page, (u64)page_index(page));
-	}
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-	unlock_page(page);
-
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_dec(&ssdfs_locked_pages);
-
-	if (atomic64_read(&ssdfs_locked_pages) < 0) {
-		SSDFS_WARN("ssdfs_locked_pages %lld\n",
-			   atomic64_read(&ssdfs_locked_pages));
-	}
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-}
-
-static inline
 void ssdfs_folio_unlock(struct folio *folio)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -323,36 +231,6 @@ void ssdfs_folio_unlock(struct folio *folio)
 			   atomic64_read(&ssdfs_locked_folios));
 	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-}
-
-static inline
-struct page *ssdfs_alloc_page(gfp_t gfp_mask)
-{
-	struct page *page;
-
-	page = alloc_page(gfp_mask);
-	if (unlikely(!page)) {
-		SSDFS_ERR("unable to allocate memory page\n");
-		return ERR_PTR(-ENOMEM);
-	}
-
-	ssdfs_get_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d, "
-		  "flags %#lx, page_index %lu\n",
-		  page, page_ref_count(page),
-		  page->flags, page_index(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_inc(&ssdfs_allocated_pages);
-
-	SSDFS_DBG("page %p, allocated_pages %lld\n",
-		  page, atomic64_read(&ssdfs_allocated_pages));
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-	return page;
 }
 
 static inline
@@ -397,19 +275,7 @@ struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 }
 
 static inline
-void ssdfs_account_page(struct page *page)
-{
-	return;
-}
-
-static inline
 void ssdfs_folio_account(struct folio *folio)
-{
-	return;
-}
-
-static inline
-void ssdfs_forget_page(struct page *page)
 {
 	return;
 }
@@ -418,53 +284,6 @@ static inline
 void ssdfs_folio_forget(struct folio *folio)
 {
 	return;
-}
-
-/*
- * ssdfs_add_pagevec_page() - add page into pagevec
- * @pvec: pagevec
- *
- * This function adds empty page into pagevec.
- *
- * RETURN:
- * [success] - pointer on added page.
- * [failure] - error code:
- *
- * %-ENOMEM     - fail to allocate memory.
- * %-E2BIG      - pagevec is full.
- */
-static inline
-struct page *ssdfs_add_pagevec_page(struct pagevec *pvec)
-{
-	struct page *page;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (pagevec_space(pvec) == 0) {
-		SSDFS_ERR("pagevec hasn't space\n");
-		return ERR_PTR(-E2BIG);
-	}
-
-	page = ssdfs_alloc_page(GFP_KERNEL | __GFP_ZERO);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOMEM : PTR_ERR(page));
-		SSDFS_ERR("unable to allocate memory page\n");
-		return ERR_PTR(err);
-	}
-
-	pagevec_add(pvec, page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec %p, pagevec count %u\n",
-		  pvec, pagevec_count(pvec));
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return page;
 }
 
 /*
@@ -491,7 +310,7 @@ struct folio *ssdfs_add_batch_folio(struct folio_batch *batch,
 	BUG_ON(!batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(batch) == 0) {
+	if (folio_batch_space(batch) == 0) {
 		SSDFS_ERR("batch hasn't space\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -513,49 +332,6 @@ struct folio *ssdfs_add_batch_folio(struct folio_batch *batch,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return folio;
-}
-
-static inline
-void ssdfs_free_page(struct page *page)
-{
-	if (!page)
-		return;
-
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (PageLocked(page)) {
-		SSDFS_WARN("page %p is still locked\n",
-			   page);
-	}
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-	ssdfs_put_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (page_ref_count(page) <= 0 ||
-	    page_ref_count(page) > 1) {
-		SSDFS_WARN("page %p, count %d\n",
-			  page, page_ref_count(page));
-	}
-
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_dec(&ssdfs_allocated_pages);
-
-	SSDFS_DBG("page %p, allocated_pages %lld\n",
-		  page, atomic64_read(&ssdfs_allocated_pages));
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d, "
-		  "flags %#lx, page_index %lu\n",
-		  page, page_ref_count(page),
-		  page->flags, page_index(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	__free_pages(page, 0);
 }
 
 static inline
@@ -599,36 +375,6 @@ void ssdfs_folio_free(struct folio *folio)
 }
 
 static inline
-void ssdfs_pagevec_release(struct pagevec *pvec)
-{
-	int i;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec %p\n", pvec);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (!pvec)
-		return;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("pvec count %u\n", pagevec_count(pvec));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	for (i = 0; i < pagevec_count(pvec); i++) {
-		struct page *page = pvec->pages[i];
-
-		if (!page)
-			continue;
-
-		ssdfs_free_page(page);
-
-		pvec->pages[i] = NULL;
-	}
-
-	pagevec_reinit(pvec);
-}
-
-static inline
 void ssdfs_folio_batch_release(struct folio_batch *batch)
 {
 	int i;
@@ -655,8 +401,7 @@ void ssdfs_folio_batch_release(struct folio_batch *batch)
 		batch->folios[i] = NULL;
 	}
 
-	folio_batch_init(batch);
-//	folio_batch_reinit(batch);
+	folio_batch_reinit(batch);
 }
 
 #define SSDFS_MEMORY_LEAKS_CHECKER_FNS(name)				\
@@ -747,80 +492,6 @@ void ssdfs_##name##_kvfree(void *kaddr)					\
 			  atomic64_read(&ssdfs_##name##_memory_leaks));	\
 	}								\
 	ssdfs_kvfree(kaddr);						\
-}									\
-static inline								\
-struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
-{									\
-	struct page *page;						\
-	page = ssdfs_alloc_page(gfp_mask);				\
-	if (!IS_ERR_OR_NULL(page)) {					\
-		atomic64_inc(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
-			  page,						\
-			  atomic64_read(&ssdfs_##name##_page_leaks));	\
-	}								\
-	return page;							\
-}									\
-static inline								\
-void ssdfs_##name##_account_page(struct page *page)			\
-{									\
-	if (page) {							\
-		atomic64_inc(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
-			  page,						\
-			  atomic64_read(&ssdfs_##name##_page_leaks));	\
-	}								\
-}									\
-static inline								\
-void ssdfs_##name##_forget_page(struct page *page)			\
-{									\
-	if (page) {							\
-		atomic64_dec(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
-			  page,						\
-			  atomic64_read(&ssdfs_##name##_page_leaks));	\
-	}								\
-}									\
-static inline								\
-struct page *ssdfs_##name##_add_pagevec_page(struct pagevec *pvec)	\
-{									\
-	struct page *page;						\
-	page = ssdfs_add_pagevec_page(pvec);				\
-	if (!IS_ERR_OR_NULL(page)) {					\
-		atomic64_inc(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
-			  page,						\
-			  atomic64_read(&ssdfs_##name##_page_leaks));	\
-	}								\
-	return page;							\
-}									\
-static inline								\
-void ssdfs_##name##_free_page(struct page *page)			\
-{									\
-	if (page) {							\
-		atomic64_dec(&ssdfs_##name##_page_leaks);		\
-		SSDFS_DBG("page %p, allocated_pages %lld\n",		\
-			  page,						\
-			  atomic64_read(&ssdfs_##name##_page_leaks));	\
-	}								\
-	ssdfs_free_page(page);						\
-}									\
-static inline								\
-void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
-{									\
-	int i;								\
-	if (pvec) {							\
-		for (i = 0; i < pagevec_count(pvec); i++) {		\
-			struct page *page = pvec->pages[i];		\
-			if (!page)					\
-				continue;				\
-			atomic64_dec(&ssdfs_##name##_page_leaks);	\
-			SSDFS_DBG("page %p, allocated_pages %lld\n",	\
-			    page,					\
-			    atomic64_read(&ssdfs_##name##_page_leaks));	\
-		}							\
-	}								\
-	ssdfs_pagevec_release(pvec);					\
 }									\
 static inline								\
 struct folio *ssdfs_##name##_alloc_folio(gfp_t gfp_mask,		\
@@ -941,36 +612,6 @@ void ssdfs_##name##_kvfree(void *kaddr)					\
 	ssdfs_kvfree(kaddr);						\
 }									\
 static inline								\
-struct page *ssdfs_##name##_alloc_page(gfp_t gfp_mask)			\
-{									\
-	return ssdfs_alloc_page(gfp_mask);				\
-}									\
-static inline								\
-void ssdfs_##name##_account_page(struct page *page)			\
-{									\
-	ssdfs_account_page(page);					\
-}									\
-static inline								\
-void ssdfs_##name##_forget_page(struct page *page)			\
-{									\
-	ssdfs_forget_page(page);					\
-}									\
-static inline								\
-struct page *ssdfs_##name##_add_pagevec_page(struct pagevec *pvec)	\
-{									\
-	return ssdfs_add_pagevec_page(pvec);				\
-}									\
-static inline								\
-void ssdfs_##name##_free_page(struct page *page)			\
-{									\
-	ssdfs_free_page(page);						\
-}									\
-static inline								\
-void ssdfs_##name##_pagevec_release(struct pagevec *pvec)		\
-{									\
-	ssdfs_pagevec_release(pvec);					\
-}									\
-static inline								\
 struct folio *ssdfs_##name##_alloc_folio(gfp_t gfp_mask,		\
 					 unsigned int order)		\
 {									\
@@ -1032,7 +673,12 @@ int ssdfs_calculate_csum(struct ssdfs_metadata_check *check,
 		check->csum = 0;
 		check->csum = ssdfs_crc32_le(buf, bytes);
 	} else {
-		SSDFS_ERR("unknown flags set %#x\n", flags);
+		SSDFS_WARN("unknown flags set %#x\n", flags);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		return -EINVAL;
 	}
 
@@ -1380,127 +1026,12 @@ int SSDFS_OFF2FOLIO(u32 block_size, u64 offset,
 	return 0;
 }
 
-static inline
-u32 ssdfs_phys_page_to_mem_page_count(struct ssdfs_fs_info *fsi,
-				      u32 phys_page_count)
-{
-	u64 bytes_count = (u64)fsi->pagesize * phys_page_count;
-	u64 mem_page_count = bytes_count >> PAGE_SHIFT;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(mem_page_count >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return (u32)mem_page_count;
-}
-
-static inline
-u32 ssdfs_mem_page_to_phys_page_count(struct ssdfs_fs_info *fsi,
-				      u32 mem_page_count)
-{
-	u64 bytes_count = (u64)PAGE_SIZE * mem_page_count;
-	u64 phys_page_count = bytes_count >> fsi->log_pagesize;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(phys_page_count >= U32_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return (u32)phys_page_count;
-}
-
-static inline
-pgoff_t ssdfs_phys_page_to_mem_page(struct ssdfs_fs_info *fsi,
-				    pgoff_t index)
-{
-	if (fsi->log_pagesize == PAGE_SHIFT)
-		return index;
-	else if (fsi->log_pagesize > PAGE_SHIFT)
-		return index << (fsi->log_pagesize - PAGE_SHIFT);
-	else
-		return index >> (PAGE_SHIFT - fsi->log_pagesize);
-}
-
-static inline
-pgoff_t ssdfs_mem_page_to_phys_page(struct ssdfs_fs_info *fsi,
-				    pgoff_t index)
-{
-	if (fsi->log_pagesize == PAGE_SHIFT)
-		return index;
-	else if (fsi->log_pagesize > PAGE_SHIFT)
-		return index >> (fsi->log_pagesize - PAGE_SHIFT);
-	else
-		return index << (PAGE_SHIFT - fsi->log_pagesize);
-}
-
-#define SSDFS_MEMPAGE2BYTES(index) \
-	((pgoff_t)index << PAGE_SHIFT)
-#define SSDFS_BYTES2MEMPAGE(offset) \
-	((pgoff_t)offset >> PAGE_SHIFT)
-
-/*
- * ssdfs_write_offset_to_mem_page_index() - convert write offset into mem page
- * @fsi: pointer on shared file system object
- * @start_page: index of log's start physical page
- * @write_offset: offset in bytes from log's beginning
- */
-static inline
-pgoff_t ssdfs_write_offset_to_mem_page_index(struct ssdfs_fs_info *fsi,
-					     u16 start_page,
-					     u32 write_offset)
-{
-	u32 page_off;
-
-	page_off = ssdfs_phys_page_to_mem_page(fsi, start_page);
-	page_off = SSDFS_MEMPAGE2BYTES(page_off) + write_offset;
-	return SSDFS_BYTES2MEMPAGE(page_off);
-}
-
 #define SSDFS_BLKBMP_HDR(ptr) \
 	((struct ssdfs_block_bitmap_header *)(ptr))
 #define SSDFS_SBMP_FRAG_HDR(ptr) \
 	((struct ssdfs_segbmap_fragment_header *)(ptr))
 #define SSDFS_BTN(ptr) \
 	((struct ssdfs_btree_node *)(ptr))
-
-static inline
-bool need_add_block(struct page *page)
-{
-	return PageChecked(page);
-}
-
-static inline
-bool is_diff_page(struct page *page)
-{
-	return PageChecked(page);
-}
-
-static inline
-void set_page_new(struct page *page)
-{
-	SetPageChecked(page);
-}
-
-static inline
-void clear_page_new(struct page *page)
-{
-	ClearPageChecked(page);
-}
-
-static
-inline void ssdfs_set_page_private(struct page *page,
-				   unsigned long private)
-{
-	set_page_private(page, private);
-	SetPagePrivate(page);
-}
-
-static
-inline void ssdfs_clear_page_private(struct page *page,
-				     unsigned long private)
-{
-	set_page_private(page, private);
-	ClearPagePrivate(page);
-}
 
 static inline
 bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
@@ -1528,7 +1059,7 @@ bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 }
 
 static inline
-bool need_add_block2(struct folio *folio)
+bool need_add_block(struct folio *folio)
 {
 	return folio_test_checked(folio);
 }
@@ -1596,102 +1127,6 @@ int ssdfs_memcpy(void *dst, u32 dst_off, u32 dst_size,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	memcpy((u8 *)dst + dst_off, (u8 *)src + src_off, copy_size);
-	return 0;
-}
-
-static inline
-int ssdfs_memcpy_page(struct page *dst_page, u32 dst_off, u32 dst_size,
-		      struct page *src_page, u32 src_off, u32 src_size,
-		      u32 copy_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	if ((src_off + copy_size) > src_size) {
-		SSDFS_ERR("fail to copy: "
-			  "src_off %u, copy_size %u, src_size %u\n",
-			  src_off, copy_size, src_size);
-		return -ERANGE;
-	}
-
-	if ((dst_off + copy_size) > dst_size) {
-		SSDFS_ERR("fail to copy: "
-			  "dst_off %u, copy_size %u, dst_size %u\n",
-			  dst_off, copy_size, dst_size);
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("dst_page %p, dst_off %u, dst_size %u, "
-		  "src_page %p, src_off %u, src_size %u, "
-		  "copy_size %u\n",
-		  dst_page, dst_off, dst_size,
-		  src_page, src_off, src_size,
-		  copy_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	memcpy_page(dst_page, dst_off, src_page, src_off, copy_size);
-	return 0;
-}
-
-static inline
-int ssdfs_memcpy_from_page(void *dst, u32 dst_off, u32 dst_size,
-			   struct page *page, u32 src_off, u32 src_size,
-			   u32 copy_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	if ((src_off + copy_size) > src_size) {
-		SSDFS_ERR("fail to copy: "
-			  "src_off %u, copy_size %u, src_size %u\n",
-			  src_off, copy_size, src_size);
-		return -ERANGE;
-	}
-
-	if ((dst_off + copy_size) > dst_size) {
-		SSDFS_ERR("fail to copy: "
-			  "dst_off %u, copy_size %u, dst_size %u\n",
-			  dst_off, copy_size, dst_size);
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("dst %p, dst_off %u, dst_size %u, "
-		  "page %p, src_off %u, src_size %u, "
-		  "copy_size %u\n",
-		  dst, dst_off, dst_size,
-		  page, src_off, src_size,
-		  copy_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	memcpy_from_page((u8 *)dst + dst_off, page, src_off, copy_size);
-	return 0;
-}
-
-static inline
-int ssdfs_memcpy_to_page(struct page *page, u32 dst_off, u32 dst_size,
-			 void *src, u32 src_off, u32 src_size,
-			 u32 copy_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	if ((src_off + copy_size) > src_size) {
-		SSDFS_ERR("fail to copy: "
-			  "src_off %u, copy_size %u, src_size %u\n",
-			  src_off, copy_size, src_size);
-		return -ERANGE;
-	}
-
-	if ((dst_off + copy_size) > dst_size) {
-		SSDFS_ERR("fail to copy: "
-			  "dst_off %u, copy_size %u, dst_size %u\n",
-			  dst_off, copy_size, dst_size);
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("page %p, dst_off %u, dst_size %u, "
-		  "src %p, src_off %u, src_size %u, "
-		  "copy_size %u\n",
-		  page, dst_off, dst_size,
-		  src, src_off, src_size,
-		  copy_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	memcpy_to_page(page, dst_off, (u8 *)src + src_off, copy_size);
 	return 0;
 }
 
@@ -2375,81 +1810,6 @@ int ssdfs_memmove(void *dst, u32 dst_off, u32 dst_size,
 }
 
 static inline
-int ssdfs_memmove_page(struct page *dst_page, u32 dst_off, u32 dst_size,
-			struct page *src_page, u32 src_off, u32 src_size,
-			u32 move_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	if ((src_off + move_size) > src_size) {
-		SSDFS_ERR("fail to move: "
-			  "src_off %u, move_size %u, src_size %u\n",
-			  src_off, move_size, src_size);
-		return -ERANGE;
-	}
-
-	if ((dst_off + move_size) > dst_size) {
-		SSDFS_ERR("fail to move: "
-			  "dst_off %u, move_size %u, dst_size %u\n",
-			  dst_off, move_size, dst_size);
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("dst_page %p, dst_off %u, dst_size %u, "
-		  "src_page %p, src_off %u, src_size %u, "
-		  "move_size %u\n",
-		  dst_page, dst_off, dst_size,
-		  src_page, src_off, src_size,
-		  move_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	memcpy_page(dst_page, dst_off, src_page, src_off, move_size);
-	return 0;
-}
-
-static inline
-int ssdfs_memset_page(struct page *page, u32 dst_off, u32 dst_size,
-		      int value, u32 set_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	if ((dst_off + set_size) > dst_size) {
-		SSDFS_ERR("fail to copy: "
-			  "dst_off %u, set_size %u, dst_size %u\n",
-			  dst_off, set_size, dst_size);
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("page %p, dst_off %u, dst_size %u, "
-		  "value %#x, set_size %u\n",
-		  page, dst_off, dst_size,
-		  value, set_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	memset_page(page, dst_off, value, set_size);
-	return 0;
-}
-
-static inline
-int ssdfs_memzero_page(struct page *page, u32 dst_off, u32 dst_size,
-		       u32 set_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	if ((dst_off + set_size) > dst_size) {
-		SSDFS_ERR("fail to copy: "
-			  "dst_off %u, set_size %u, dst_size %u\n",
-			  dst_off, set_size, dst_size);
-		return -ERANGE;
-	}
-
-	SSDFS_DBG("page %p, dst_off %u, dst_size %u, "
-		  "set_size %u\n",
-		  page, dst_off, dst_size, set_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	memzero_page(page, dst_off, set_size);
-	return 0;
-}
-
-static inline
 int ssdfs_memmove_folio(struct ssdfs_smart_folio *dst_folio,
 			struct ssdfs_smart_folio *src_folio,
 			u32 move_size)
@@ -2774,7 +2134,7 @@ void ssdfs_check_jiffies_left_till_timeout(unsigned long value)
 
 	msecs = jiffies_to_msecs(SSDFS_DEFAULT_TIMEOUT - value);
 	if (msecs >= SSDFS_WAITED_TOO_LONG_MSECS)
-		SSDFS_ERR("function waited %u msecs\n", msecs);
+		SSDFS_WARN("function waited %u msecs\n", msecs);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 

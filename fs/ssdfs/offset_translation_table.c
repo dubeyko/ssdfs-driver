@@ -28,10 +28,8 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -43,7 +41,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_blk2off_page_leaks;
 atomic64_t ssdfs_blk2off_folio_leaks;
 atomic64_t ssdfs_blk2off_memory_leaks;
 atomic64_t ssdfs_blk2off_cache_leaks;
@@ -58,10 +55,12 @@ atomic64_t ssdfs_blk2off_cache_leaks;
  * void *ssdfs_blk2off_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_blk2off_kfree(void *kaddr)
  * void ssdfs_blk2off_kvfree(void *kaddr)
- * struct page *ssdfs_blk2off_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_blk2off_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_blk2off_free_page(struct page *page)
- * void ssdfs_blk2off_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_blk2off_alloc_folio(gfp_t gfp_mask,
+ *                                         unsigned int order)
+ * struct folio *ssdfs_blk2off_add_batch_folio(struct folio_batch *batch,
+ *                                             unsigned int order)
+ * void ssdfs_blk2off_free_folio(struct folio *folio)
+ * void ssdfs_blk2off_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(blk2off)
@@ -72,7 +71,6 @@ atomic64_t ssdfs_blk2off_cache_leaks;
 void ssdfs_blk2off_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_blk2off_page_leaks, 0);
 	atomic64_set(&ssdfs_blk2off_folio_leaks, 0);
 	atomic64_set(&ssdfs_blk2off_memory_leaks, 0);
 	atomic64_set(&ssdfs_blk2off_cache_leaks, 0);
@@ -82,12 +80,6 @@ void ssdfs_blk2off_memory_leaks_init(void)
 void ssdfs_blk2off_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_blk2off_page_leaks) != 0) {
-		SSDFS_ERR("BLK2OFF TABLE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_blk2off_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_blk2off_folio_leaks) != 0) {
 		SSDFS_ERR("BLK2OFF TABLE: "
 			  "memory leaks include %lld folios\n",
@@ -5970,10 +5962,12 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 					size_t *compr_size,
 					struct ssdfs_peb_log_offset *log_offset)
 {
-	struct page *page;
+	struct folio *folio;
 	void *kaddr;
 	u8 compr_type;
-	u32 cur_off;
+	u32 block_size;
+	u32 page_in_folio;
+	u32 offset_into_page;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5981,57 +5975,60 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 	BUG_ON(!uncompr_size || !compr_size);
 	BUG_ON(!log_offset);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
 		  "uncompr_size %zu, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
+		  pebi->current_log.start_block,
 		  *uncompr_size,
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	compr_type = ssdfs_blk2off_table_compression_type(pebi, *uncompr_size);
 
-	page = ssdfs_page_array_grab_page(&pebi->cache, log_offset->cur_page);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOENT : PTR_ERR(page));
-		SSDFS_ERR("fail to get cache page: index %lu\n",
-			  log_offset->cur_page);
+	folio = ssdfs_folio_array_grab_folio(&pebi->cache, log_offset->cur_block);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOENT : PTR_ERR(folio));
+		SSDFS_ERR("fail to get cache folio: index %lu\n",
+			  log_offset->cur_block);
 		return err;
 	}
 
-	cur_off = log_offset->offset_into_page;
-	*compr_size = PAGE_SIZE - cur_off;
+	block_size = 1 << log_offset->blocksize_shift;
+	page_in_folio = log_offset->offset_into_block / block_size;
+	offset_into_page = log_offset->offset_into_block % block_size;
+	*compr_size = PAGE_SIZE - offset_into_page;
 
-	kaddr = kmap_local_page(page);
+	kaddr = kmap_local_folio(folio, page_in_folio);
 	err = ssdfs_compress(compr_type,
-			     uncompr_buf, (u8 *)kaddr + cur_off,
+			     uncompr_buf, (u8 *)kaddr + offset_into_page,
 			     uncompr_size, compr_size);
-	flush_dcache_page(page);
+	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
 
 	if (err == -E2BIG) {
 		*compr_size = *uncompr_size;
 		SSDFS_DBG("unable to compress fragment in place: "
-			  "cur_page %lu, cur_off %u, "
+			  "cur_block %lu, offset_into_page %u, "
 			  "uncompr_size %zu\n",
-			  log_offset->cur_page, cur_off, *uncompr_size);
+			  log_offset->cur_block, offset_into_page,
+			  *uncompr_size);
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to compress fragment in place: "
-			  "cur_page %lu, cur_off %u, "
+			  "cur_block %lu, offset_into_page %u, "
 			  "uncompr_size %zu, err %d\n",
-			  log_offset->cur_page, cur_off,
+			  log_offset->cur_block, offset_into_page,
 			  *uncompr_size, err);
 	} else {
-		ssdfs_set_page_private(page, 0);
-		SetPageUptodate(page);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
 
-		err = ssdfs_page_array_set_page_dirty(&pebi->cache,
-						      log_offset->cur_page);
+		err = ssdfs_folio_array_set_folio_dirty(&pebi->cache,
+							log_offset->cur_block);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-				  log_offset->cur_page, err);
+			SSDFS_ERR("fail to set block %lu as dirty: err %d\n",
+				  log_offset->cur_block, err);
 		}
 
 		err = SSDFS_SHIFT_LOG_OFFSET(log_offset, *compr_size);
@@ -6041,12 +6038,12 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 		}
 	}
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -6075,27 +6072,29 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 					  size_t *copied_len,
 					  struct ssdfs_peb_log_offset *log_offset)
 {
-	struct page *page;
+	struct folio *folio;
+	u32 block_size;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !blob || !copied_len || !log_offset);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
 		  "blob_size %zu, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
+		  pebi->current_log.start_block,
 		  blob_size,
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_page_array_grab_page(&pebi->cache, log_offset->cur_page);
-	if (IS_ERR_OR_NULL(page)) {
-		err = (page == NULL ? -ENOENT : PTR_ERR(page));
-		SSDFS_ERR("fail to get cache page: index %lu\n",
-			  log_offset->cur_page);
+	folio = ssdfs_folio_array_grab_folio(&pebi->cache,
+					     log_offset->cur_block);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ENOENT : PTR_ERR(folio));
+		SSDFS_ERR("fail to get cache folio: index %lu\n",
+			  log_offset->cur_block);
 		return err;
 	}
 
@@ -6103,35 +6102,36 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*copied_len = PAGE_SIZE - log_offset->offset_into_page;
+	block_size = 1 << log_offset->blocksize_shift;
+	*copied_len = block_size - log_offset->offset_into_block;
 	*copied_len = min_t(size_t, *copied_len, blob_size);
 
-	err = ssdfs_memcpy_to_page(page,
-				   log_offset->offset_into_page, PAGE_SIZE,
-				   blob, 0, blob_size,
-				   *copied_len);
+	err = __ssdfs_memcpy_to_folio(folio,
+				      log_offset->offset_into_block, block_size,
+				      blob, 0, blob_size,
+				      *copied_len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
-		goto unlock_grabbed_page;
+		goto unlock_grabbed_folio;
 	}
 
-	ssdfs_set_page_private(page, 0);
-	SetPageUptodate(page);
+	ssdfs_set_folio_private(folio, 0);
+	folio_mark_uptodate(folio);
 
-	err = ssdfs_page_array_set_page_dirty(&pebi->cache,
-					      log_offset->cur_page);
+	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache,
+						log_offset->cur_block);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to set page %lu dirty: "
+		SSDFS_ERR("fail to set folio %lu dirty: "
 			  "err %d\n",
-			  log_offset->cur_page, err);
-		goto unlock_grabbed_page;
+			  log_offset->cur_block, err);
+		goto unlock_grabbed_folio;
 	}
 
 	err = SSDFS_SHIFT_LOG_OFFSET(log_offset, *copied_len);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to shift log offset: "
 			  "err %d\n", err);
-		goto unlock_grabbed_page;
+		goto unlock_grabbed_folio;
 	}
 
 	if (*copied_len != blob_size) {
@@ -6143,13 +6143,13 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 		err = -EAGAIN;
 	}
 
-unlock_grabbed_page:
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+unlock_grabbed_folio:
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -6182,13 +6182,13 @@ int ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !blob || !log_offset);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
 		  "blob_size %zu, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
+		  pebi->current_log.start_block,
 		  blob_size,
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6258,13 +6258,13 @@ int ssdfs_peb_compress_fragment_in_buffer(struct ssdfs_peb_info *pebi,
 	BUG_ON(!uncompr_size || !compr_size);
 	BUG_ON(!log_offset);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
 		  "uncompr_size %zu, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
+		  pebi->current_log.start_block,
 		  *uncompr_size,
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6319,9 +6319,9 @@ int ssdfs_peb_compress_fragment_in_buffer(struct ssdfs_peb_info *pebi,
 		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to compress fragment in buffer: "
-			  "cur_page %lu, write_offset %u, "
+			  "cur_block %lu, write_offset %u, "
 			  "uncompr_size %zu, err %d\n",
-			  log_offset->cur_page,
+			  log_offset->cur_block,
 			  SSDFS_LOCAL_LOG_OFFSET(log_offset),
 			  *uncompr_size, err);
 		goto free_compr_buf;
@@ -6451,14 +6451,14 @@ static
 int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 {
 	struct ssdfs_fs_info *fsi;
+	struct folio *folio;
 	struct ssdfs_blk2off_table_area *blk2off_tbl;
 	size_t hdr_size = sizeof(struct ssdfs_blk2off_table_header);
 	u16 fragments;
 	u16 hdr_flags;
 	u32 reserved_offset;
-	struct page *page;
-	pgoff_t page_index;
-	u32 page_off;
+	pgoff_t folio_index;
+	u32 offset_inside_folio;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6516,53 +6516,54 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 	}
 
 	reserved_offset = blk2off_tbl->reserved_offset;
-	page_index = reserved_offset / PAGE_SIZE;
-	page_index += pebi->current_log.start_page;
+	folio_index = reserved_offset / fsi->pagesize;
+	folio_index += pebi->current_log.start_block;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("reserved_offset %u, page_index %lu\n",
-		  reserved_offset, page_index);
+	SSDFS_DBG("reserved_offset %u, folio_index %lu\n",
+		  reserved_offset, folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = ssdfs_page_array_grab_page(&pebi->cache, page_index);
-	if (IS_ERR_OR_NULL(page)) {
+	folio = ssdfs_folio_array_grab_folio(&pebi->cache, folio_index);
+	if (IS_ERR_OR_NULL(folio)) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to get cache page: index %lu\n",
-			  page_index);
+			  folio_index);
 		return err;
 	}
 
-	page_off = reserved_offset % PAGE_SIZE;
+	offset_inside_folio = reserved_offset % fsi->pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("reserved_offset %u, page_index %lu, page_off %u\n",
-		  reserved_offset, page_index, page_off);
+	SSDFS_DBG("reserved_offset %u, folio_index %lu, "
+		  "offset_inside_folio %u\n",
+		  reserved_offset, folio_index, offset_inside_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_to_page(page, page_off, PAGE_SIZE,
-				   &blk2off_tbl->hdr, 0, hdr_size,
-				   hdr_size);
+	err = __ssdfs_memcpy_to_folio(folio, offset_inside_folio, fsi->pagesize,
+				      &blk2off_tbl->hdr, 0, hdr_size,
+				      hdr_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		goto finish_copy;
 	}
 
-	ssdfs_set_page_private(page, 0);
-	SetPageUptodate(page);
+	ssdfs_set_folio_private(folio, 0);
+	folio_mark_uptodate(folio);
 
-	err = ssdfs_page_array_set_page_dirty(&pebi->cache, page_index);
+	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, folio_index);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to set page %lu as dirty: err %d\n",
-			  page_index, err);
+		SSDFS_ERR("fail to set folio %lu as dirty: err %d\n",
+			  folio_index, err);
 	}
 
 finish_copy:
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -6601,11 +6602,11 @@ int ssdfs_peb_finish_fragments_chain(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !blk2off_tbl || !chain_hdr);
 	BUG_ON(!meta_desc || !log_offset);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
-		  "cur_page %lu, write_offset %u\n",
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
-		  log_offset->cur_page,
+		  pebi->current_log.start_block,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6622,10 +6623,10 @@ int ssdfs_peb_finish_fragments_chain(struct ssdfs_peb_info *pebi,
 	blk2off_tbl->compressed_offset += diff;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("write_offset %u, cur_page %lu, "
+	SSDFS_DBG("write_offset %u, cur_block %lu, "
 		  "blk2off_tbl->compressed_offset %u\n",
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset),
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  blk2off_tbl->compressed_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6695,13 +6696,13 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 	BUG_ON(!array || !log_offset);
 	BUG_ON(extent_count == 0 || extent_count == U16_MAX);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
 		  "array %p, extent_count %u, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
+		  pebi->current_log.start_block,
 		  array, extent_count,
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6783,7 +6784,7 @@ ssdfs_peb_store_offsets_table_extents(struct ssdfs_peb_info *pebi,
 		BUG_ON(written_bytes > (extent_count * extent_size));
 
 		SSDFS_DBG("cur_off %u, written_bytes %u, bytes %u\n",
-			  log_offset->offset_into_page,
+			  log_offset->offset_into_block,
 			  written_bytes, bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6868,11 +6869,11 @@ unlock_uncompr_data:
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to compress fragment: "
 					  "uncompr_size %zu, "
-					  "cur_page %lu, "
+					  "cur_block %lu, "
 					  "write_offset %u, "
 					  "err %d\n",
 					  uncompr_size,
-					  log_offset->cur_page,
+					  log_offset->cur_block,
 					  SSDFS_LOCAL_LOG_OFFSET(log_offset),
 					  err);
 				goto finish_copy;
@@ -6978,13 +6979,13 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 	BUG_ON(!table || !log_offset);
 	BUG_ON(peb_index >= table->pebs_count);
 
-	SSDFS_DBG("peb %llu, current_log.start_page %u, "
+	SSDFS_DBG("peb %llu, current_log.start_block %u, "
 		  "peb_index %u, sequence_id %u, "
-		  "cur_page %lu, write_offset %u\n",
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->peb_id,
-		  pebi->current_log.start_page,
+		  pebi->current_log.start_block,
 		  peb_index, sequence_id,
-		  log_offset->cur_page,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -7125,11 +7126,11 @@ int ssdfs_peb_store_offsets_table_fragment(struct ssdfs_peb_info *pebi,
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to compress fragment: "
 				  "uncompr_size %zu, "
-				  "cur_page %lu, "
+				  "cur_block %lu, "
 				  "write_offset %u, "
 				  "err %d\n",
 				  uncompr_size,
-				  log_offset->cur_page,
+				  log_offset->cur_block,
 				  SSDFS_LOCAL_LOG_OFFSET(log_offset),
 				  err);
 			goto finish_fragment_copy;
@@ -7509,18 +7510,18 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("seg %llu, peb %llu, current_log.start_page %u, "
-		  "cur_page %lu, write_offset %u\n",
+	SSDFS_ERR("seg %llu, peb %llu, current_log.start_block %u, "
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  pebi->current_log.start_page,
-		  log_offset->cur_page,
+		  pebi->current_log.start_block,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #else
-	SSDFS_DBG("seg %llu, peb %llu, current_log.start_page %u, "
-		  "cur_page %lu, write_offset %u\n",
+	SSDFS_DBG("seg %llu, peb %llu, current_log.start_block %u, "
+		  "cur_block %lu, write_offset %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
-		  pebi->current_log.start_page,
-		  log_offset->cur_page,
+		  pebi->current_log.start_block,
+		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
@@ -7601,14 +7602,14 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 	table_start_offset = SSDFS_LOCAL_LOG_OFFSET(log_offset);
 
 	desc->offset = cpu_to_le32(SSDFS_LOCAL_LOG_OFFSET(log_offset) +
-				(pebi->current_log.start_page * fsi->pagesize));
+				(pebi->current_log.start_block * fsi->pagesize));
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("write_offset %u, desc->offset %u, "
-		  "current_log.start_page %u\n",
+		  "current_log.start_block %u\n",
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset),
 		  le32_to_cpu(desc->offset),
-		  pebi->current_log.start_page);
+		  pebi->current_log.start_block);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_prepare_blk2off_table_header(pebi, log_offset);
@@ -7618,8 +7619,8 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 						    log_offset);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to store offsets table's extents: "
-			  "cur_page %lu, write_offset %u, err %d\n",
-			  log_offset->cur_page,
+			  "cur_block %lu, write_offset %u, err %d\n",
+			  log_offset->cur_block,
 			  SSDFS_LOCAL_LOG_OFFSET(log_offset),
 			  err);
 		goto fail_store_off_table;
@@ -7707,10 +7708,10 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 							     log_offset);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to store offsets table's fragment: "
-				  "sequence_id %u, cur_page %lu, "
+				  "sequence_id %u, cur_block %lu, "
 				  "write_offset %u, err %d\n",
 				  sequence_id,
-				  log_offset->cur_page,
+				  log_offset->cur_block,
 				  SSDFS_LOCAL_LOG_OFFSET(log_offset),
 				  err);
 			goto fail_store_off_table;

@@ -27,14 +27,11 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "compression.h"
-#include "page_vector.h"
 #include "block_bitmap.h"
 #include "segment_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -58,10 +55,12 @@ atomic64_t ssdfs_peb_cache_leaks;
  * void *ssdfs_peb_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_peb_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_peb_kfree(void *kaddr)
- * struct page *ssdfs_peb_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_peb_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_peb_free_page(struct page *page)
- * void ssdfs_peb_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_peb_alloc_folio(gfp_t gfp_mask,
+ *                                     unsigned int order)
+ * struct folio *ssdfs_peb_add_batch_folio(struct folio_batch *batch,
+ *                                         unsigned int order)
+ * void ssdfs_peb_free_folio(struct folio *folio)
+ * void ssdfs_peb_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(peb)
@@ -72,7 +71,6 @@ atomic64_t ssdfs_peb_cache_leaks;
 void ssdfs_peb_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_peb_page_leaks, 0);
 	atomic64_set(&ssdfs_peb_folio_leaks, 0);
 	atomic64_set(&ssdfs_peb_memory_leaks, 0);
 	atomic64_set(&ssdfs_peb_cache_leaks, 0);
@@ -82,12 +80,6 @@ void ssdfs_peb_memory_leaks_init(void)
 void ssdfs_peb_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_peb_page_leaks) != 0) {
-		SSDFS_ERR("PEB: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_peb_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_peb_folio_leaks) != 0) {
 		SSDFS_ERR("PEB: "
 			  "memory leaks include %lld folios\n",
@@ -132,7 +124,7 @@ int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_current_log_init(pebi, pebi->log_pages, 0, 0, U32_MAX);
+	ssdfs_peb_current_log_init(pebi, pebi->log_blocks, 0, 0, U32_MAX);
 
 	return 0;
 }
@@ -382,17 +374,17 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	mutex_init(&pebi->current_log.lock);
 	atomic_set(&pebi->current_log.sequence_id, 0);
 
-	pebi->current_log.start_page = U32_MAX;
-	pebi->current_log.reserved_pages = 0;
-	pebi->current_log.free_data_pages = pebi->log_pages;
+	pebi->current_log.start_block = U32_MAX;
+	pebi->current_log.reserved_blocks = 0;
+	pebi->current_log.free_data_blocks = pebi->log_blocks;
 	pebi->current_log.seg_flags = 0;
 	pebi->current_log.prev_log_bmap_bytes = U32_MAX;
 	pebi->current_log.last_log_time = U64_MAX;
 	pebi->current_log.last_log_cno = U64_MAX;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("free_data_pages %u\n",
-		  pebi->current_log.free_data_pages);
+	SSDFS_DBG("free_data_blocks %u\n",
+		  pebi->current_log.free_data_blocks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	bmap_bytes = BLK_BMAP_BYTES(fsi->pages_per_peb);
@@ -467,8 +459,9 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 			BUG();
 		};
 
-		err = ssdfs_create_page_array(fsi->pages_per_peb,
-					      &area->array);
+		err = ssdfs_create_folio_array(&area->array,
+					       get_order(fsi->pagesize),
+					       fsi->pages_per_peb);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create page array: "
 				  "capacity %u, err %d\n",
@@ -496,7 +489,7 @@ fail_init_current_log:
 			}
 		}
 
-		ssdfs_destroy_page_array(&area->array);
+		ssdfs_destroy_folio_array(&area->array);
 	}
 
 	ssdfs_folio_vector_destroy(&pebi->current_log.bmap_snapshot);
@@ -525,11 +518,11 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 	ssdfs_peb_current_log_lock(pebi);
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
-		struct ssdfs_page_array *area_pages;
+		struct ssdfs_folio_array *area_folios;
 
-		area_pages = &pebi->current_log.area[i].array;
+		area_folios = &pebi->current_log.area[i].array;
 
-		if (atomic_read(&area_pages->state) == SSDFS_PAGE_ARRAY_DIRTY) {
+		if (atomic_read(&area_folios->state) == SSDFS_FOLIO_ARRAY_DIRTY) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 					__FILE__, __func__, __LINE__,
 					"PEB %llu is dirty on destruction\n",
@@ -554,7 +547,7 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 			}
 		}
 
-		ssdfs_destroy_page_array(area_pages);
+		ssdfs_destroy_folio_array(area_folios);
 	}
 
 	ssdfs_folio_vector_release(&pebi->current_log.bmap_snapshot);
@@ -644,7 +637,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 
 	pebi->peb_id = peb_id;
 	pebi->peb_index = pebc->peb_index;
-	pebi->log_pages = pebc->log_pages;
+	pebi->log_blocks = pebc->log_blocks;
 	pebi->peb_create_time = ssdfs_current_timestamp();
 	ssdfs_set_peb_migration_id(pebi, peb_migration_id);
 	init_completion(&pebi->init_end);
@@ -705,8 +698,9 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 
 	pebi->pebc = pebc;
 
-	err = ssdfs_create_page_array(fsi->pages_per_peb,
-				      &pebi->cache);
+	err = ssdfs_create_folio_array(&pebi->cache,
+				       get_order(fsi->pagesize),
+				       fsi->pages_per_peb);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create page array: "
 			  "capacity %u, err %d\n",
@@ -870,7 +864,7 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 	up_write(&pebi->read_buffer.lock);
 
 	state = atomic_read(&pebi->cache.state);
-	if (state == SSDFS_PAGE_ARRAY_DIRTY) {
+	if (state == SSDFS_FOLIO_ARRAY_DIRTY) {
 		ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
 				"PEB %llu is dirty on destruction\n",
@@ -878,7 +872,7 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 		err = -EIO;
 	}
 
-	ssdfs_destroy_page_array(&pebi->cache);
+	ssdfs_destroy_folio_array(&pebi->cache);
 
 #ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
 	if (pebi->dedup.shash_tfm)

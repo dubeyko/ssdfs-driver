@@ -25,10 +25,8 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -39,7 +37,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_recovery_page_leaks;
 atomic64_t ssdfs_recovery_folio_leaks;
 atomic64_t ssdfs_recovery_memory_leaks;
 atomic64_t ssdfs_recovery_cache_leaks;
@@ -52,10 +49,12 @@ atomic64_t ssdfs_recovery_cache_leaks;
  * void *ssdfs_recovery_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_recovery_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_recovery_kfree(void *kaddr)
- * struct page *ssdfs_recovery_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_recovery_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_recovery_free_page(struct page *page)
- * void ssdfs_recovery_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_recovery_alloc_folio(gfp_t gfp_mask,
+ *                                          unsigned int order)
+ * struct folio *ssdfs_recovery_add_batch_folio(struct folio_batch *batch,
+ *                                              unsigned int order)
+ * void ssdfs_recovery_free_folio(struct folio *folio)
+ * void ssdfs_recovery_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(recovery)
@@ -66,7 +65,6 @@ atomic64_t ssdfs_recovery_cache_leaks;
 void ssdfs_recovery_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_recovery_page_leaks, 0);
 	atomic64_set(&ssdfs_recovery_folio_leaks, 0);
 	atomic64_set(&ssdfs_recovery_memory_leaks, 0);
 	atomic64_set(&ssdfs_recovery_cache_leaks, 0);
@@ -76,12 +74,6 @@ void ssdfs_recovery_memory_leaks_init(void)
 void ssdfs_recovery_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_recovery_page_leaks) != 0) {
-		SSDFS_ERR("RECOVERY: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_recovery_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_recovery_folio_leaks) != 0) {
 		SSDFS_ERR("RECOVERY: "
 			  "memory leaks include %lld folios\n",
@@ -963,9 +955,9 @@ static inline bool is_sb_peb_exhausted2(struct ssdfs_fs_info *fsi,
 		  leb_id, peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!fsi->devops->can_write_page) {
+	if (!fsi->devops->can_write_block) {
 		SSDFS_CRIT("fail to find latest valid sb info: "
-			   "can_write_page is not supported\n");
+			   "can_write_block is not supported\n");
 		return true;
 	}
 
@@ -1508,9 +1500,9 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p\n", fsi, fsi->sbi.vh_buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!fsi->devops->can_write_page) {
+	if (!fsi->devops->can_write_block) {
 		SSDFS_CRIT("fail to find latest valid sb info: "
-			   "can_write_page is not supported\n");
+			   "can_write_block is not supported\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -2266,17 +2258,18 @@ static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
 	size_t sr_hdr_size = sizeof(struct ssdfs_snapshot_rules_header);
 	struct ssdfs_snapshot_rule_info info;
 	size_t rule_size = sizeof(struct ssdfs_snapshot_rule_info);
-	struct pagevec pvec;
+	struct folio_batch batch;
+	struct folio *folio;
+	void *kaddr;
 	u32 read_off;
 	u32 read_bytes = 0;
 	u32 bytes_count;
-	u32 pages_count;
+	u32 folios_count;
 	u64 peb_id;
-	struct page *page;
-	void *kaddr;
 	u32 csum = ~0;
 	u16 items_count;
-	int i;
+	u32 mem_pages_per_folio;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2304,56 +2297,65 @@ static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
 
 	peb_id = fsi->sbi.last_log.peb_id;
 
-	pages_count = (bytes_count + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	pagevec_init(&pvec);
+	mem_pages_per_folio = fsi->pagesize / PAGE_SIZE;
+	folios_count = (bytes_count + fsi->pagesize - 1) >> fsi->log_pagesize;
+	folio_batch_init(&batch);
 
-	for (i = 0; i < pages_count; i++) {
+	for (i = 0; i < folios_count; i++) {
 		size_t size;
 
-		size = min_t(size_t, (size_t)PAGE_SIZE,
-				(size_t)(bytes_count - read_bytes));
-
-		page = ssdfs_snapshot_rules_add_pagevec_page(&pvec);
-		if (unlikely(IS_ERR_OR_NULL(page))) {
-			err = !page ? -ENOMEM : PTR_ERR(page);
-			SSDFS_ERR("fail to add pagevec page: err %d\n",
+		folio = ssdfs_snapshot_rules_add_batch_folio(&batch,
+						get_order(fsi->pagesize));
+		if (unlikely(IS_ERR_OR_NULL(folio))) {
+			err = !folio ? -ENOMEM : PTR_ERR(folio);
+			SSDFS_ERR("fail to add folio to batch: err %d\n",
 				  err);
 			goto finish_read_snapshot_rules;
 		}
 
-		ssdfs_lock_page(page);
+		ssdfs_folio_lock(folio);
 
-		kaddr = kmap_local_page(page);
-		err = ssdfs_unaligned_read_buffer(fsi, peb_id,
-						  read_off, kaddr, size);
-		flush_dcache_page(page);
-		kunmap_local(kaddr);
+		for (j = 0; j < mem_pages_per_folio; j++) {
+			size = min_t(size_t, (size_t)PAGE_SIZE,
+					(size_t)(bytes_count - read_bytes));
 
-		if (unlikely(err)) {
-			ssdfs_unlock_page(page);
-			SSDFS_ERR("fail to read page: "
-				  "peb %llu, offset %u, size %zu, err %d\n",
-				  peb_id, read_off, size, err);
-			goto finish_read_snapshot_rules;
+			if (read_bytes >= bytes_count)
+				break;
+
+			kaddr = kmap_local_folio(folio, j);
+			err = ssdfs_unaligned_read_buffer(fsi, peb_id,
+							  read_off, kaddr,
+							  size);
+			kunmap_local(kaddr);
+
+			if (unlikely(err)) {
+				ssdfs_folio_unlock(folio);
+				SSDFS_ERR("fail to read folio: "
+					  "peb %llu, offset %u, "
+					  "size %zu, err %d\n",
+					  peb_id, read_off, size, err);
+				goto finish_read_snapshot_rules;
+			}
+
+			read_off += size;
+			read_bytes += size;
 		}
 
-		ssdfs_unlock_page(page);
-
-		read_off += size;
-		read_bytes += size;
+		flush_dcache_folio(folio);
+		ssdfs_folio_unlock(folio);
 	}
 
-	page = pvec.pages[0];
+	folio = batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
+	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_lock_page(page);
-	ssdfs_memcpy_from_page(&snap_rules_hdr, 0, sr_hdr_size,
-				page, 0, PAGE_SIZE,
-				sr_hdr_size);
-	ssdfs_unlock_page(page);
+	ssdfs_folio_lock(folio);
+	__ssdfs_memcpy_from_folio(&snap_rules_hdr, 0, sr_hdr_size,
+				  folio, 0, PAGE_SIZE,
+				  sr_hdr_size);
+	ssdfs_folio_unlock(folio);
 
 	err = ssdfs_check_snapshot_rules_header(&snap_rules_hdr);
 	if (unlikely(err)) {
@@ -2362,19 +2364,24 @@ static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
 		goto finish_read_snapshot_rules;
 	}
 
-	for (i = 0; i < pages_count; i++) {
-		page = pvec.pages[i];
+	for (i = 0; i < folios_count; i++) {
+		folio = batch.folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(i >= U16_MAX);
-		BUG_ON(!page);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_lock_page(page);
-		kaddr = kmap_local_page(page);
-		csum = crc32(csum, kaddr, le16_to_cpu(meta_desc->check.bytes));
-		kunmap_local(kaddr);
-		ssdfs_unlock_page(page);
+		ssdfs_folio_lock(folio);
+
+		for (j = 0; j < mem_pages_per_folio; j++) {
+			kaddr = kmap_local_folio(folio, j);
+			csum = crc32(csum, kaddr,
+					le16_to_cpu(meta_desc->check.bytes));
+			kunmap_local(kaddr);
+		}
+
+		ssdfs_folio_unlock(folio);
 	}
 
 	if (csum != le32_to_cpu(meta_desc->check.csum)) {
@@ -2389,8 +2396,8 @@ static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
 	for (i = 0; i < items_count; i++) {
 		struct ssdfs_snapshot_rule_item *ptr;
 
-		err = ssdfs_unaligned_read_pagevec(&pvec, read_off,
-						   rule_size, &info);
+		err = ssdfs_unaligned_read_folio_batch(&batch, read_off,
+							rule_size, &info);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read a snapshot rule: "
 				  "read_off %u, index %d, err %d\n",
@@ -2415,7 +2422,7 @@ static inline int ssdfs_read_snapshot_rules(struct ssdfs_fs_info *fsi)
 	}
 
 finish_read_snapshot_rules:
-	ssdfs_snapshot_rules_pagevec_release(&pvec);
+	ssdfs_snapshot_rules_folio_batch_release(&batch);
 	return err;
 }
 

@@ -43,6 +43,7 @@ static int ssdfs_ioctl_getflags(struct file *file, void __user *arg)
 
 static int ssdfs_ioctl_setflags(struct file *file, void __user *arg)
 {
+	struct mnt_idmap *idmap = file_mnt_idmap(file);
 	struct inode *inode = file_inode(file);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	unsigned int flags, oldflags;
@@ -52,7 +53,7 @@ static int ssdfs_ioctl_setflags(struct file *file, void __user *arg)
 	if (err)
 		return err;
 
-	if (!inode_owner_or_capable(&init_user_ns, inode))
+	if (!inode_owner_or_capable(idmap, inode))
 		return -EACCES;
 
 	if (get_user(flags, (int __user *)arg))
@@ -81,7 +82,7 @@ static int ssdfs_ioctl_setflags(struct file *file, void __user *arg)
 	ii->flags = flags;
 
 	ssdfs_set_inode_flags(inode);
-	inode->i_ctime = current_time(inode);
+	inode_set_ctime_to_ts(inode, current_time(inode));
 	mark_inode_dirty(inode);
 
 out_unlock_inode:

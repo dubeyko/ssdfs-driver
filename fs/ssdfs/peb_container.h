@@ -95,7 +95,7 @@ struct ssdfs_thread_state {
  * struct ssdfs_peb_container - PEB container
  * @peb_type: type of PEB
  * @peb_index: index of PEB in the array
- * @log_pages: count of pages in full log
+ * @log_blocks: count of logical blocks in full log
  * @thread_state: threads state
  * @threads: PEB container's threads array
  * @read_rq: read requests queue
@@ -123,7 +123,7 @@ struct ssdfs_peb_container {
 	/* Static data */
 	u8 peb_type;
 	u16 peb_index;
-	u32 log_pages;
+	u32 log_blocks;
 
 	/* PEB container's threads */
 	struct ssdfs_thread_state thread_state[SSDFS_PEB_THREAD_TYPE_MAX];
@@ -341,7 +341,7 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 				struct ssdfs_offset_position *pos,
 				struct ssdfs_metadata_descriptor *array,
 				size_t array_size);
-bool ssdfs_peb_has_dirty_pages(struct ssdfs_peb_info *pebi);
+bool ssdfs_peb_has_dirty_folios(struct ssdfs_peb_info *pebi);
 int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi);
 
 #endif /* _SSDFS_PEB_CONTAINER_H */

@@ -24,11 +24,9 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -43,7 +41,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_seg_tree_page_leaks;
 atomic64_t ssdfs_seg_tree_folio_leaks;
 atomic64_t ssdfs_seg_tree_memory_leaks;
 atomic64_t ssdfs_seg_tree_cache_leaks;
@@ -56,10 +53,12 @@ atomic64_t ssdfs_seg_tree_cache_leaks;
  * void *ssdfs_seg_tree_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_seg_tree_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_seg_tree_kfree(void *kaddr)
- * struct page *ssdfs_seg_tree_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_seg_tree_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_seg_tree_free_page(struct page *page)
- * void ssdfs_seg_tree_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_seg_tree_alloc_folio(gfp_t gfp_mask,
+ *                                          unsigned int order)
+ * struct folio *ssdfs_seg_tree_add_batch_folio(struct folio_batch *batch,
+ *                                              unsigned int order)
+ * void ssdfs_seg_tree_free_folio(struct folio *folio)
+ * void ssdfs_seg_tree_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seg_tree)
@@ -70,7 +69,6 @@ atomic64_t ssdfs_seg_tree_cache_leaks;
 void ssdfs_seg_tree_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_seg_tree_page_leaks, 0);
 	atomic64_set(&ssdfs_seg_tree_folio_leaks, 0);
 	atomic64_set(&ssdfs_seg_tree_memory_leaks, 0);
 	atomic64_set(&ssdfs_seg_tree_cache_leaks, 0);
@@ -80,12 +78,6 @@ void ssdfs_seg_tree_memory_leaks_init(void)
 void ssdfs_seg_tree_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_seg_tree_page_leaks) != 0) {
-		SSDFS_ERR("SEGMENT TREE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_seg_tree_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_seg_tree_folio_leaks) != 0) {
 		SSDFS_ERR("SEGMENT TREE: "
 			  "memory leaks include %lld folios\n",
@@ -294,7 +286,7 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 		le16_to_cpu(fsi->vh->user_data_log_pages);
 	fsi->segs_tree->default_log_pages = SSDFS_LOG_PAGES_DEFAULT;
 
-	ssdfs_segment_tree_mapping_init(&fsi->segs_tree->pages,
+	ssdfs_segment_tree_mapping_init(&fsi->segs_tree->folios,
 					fsi->segs_tree_inode);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -311,13 +303,13 @@ free_memory:
 }
 
 /*
- * ssdfs_segment_tree_destroy_objects_in_page() - destroy objects in page
+ * ssdfs_segment_tree_destroy_objects_in_folio() - destroy objects in folio
  * @fsi: pointer on shared file system object
- * @page: pointer on memory page
+ * @folio: pointer on memory folio
  */
 static
-void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
-						struct page *page)
+void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
+						 struct folio *folio)
 {
 	struct ssdfs_segment_info **kaddr;
 	size_t ptr_size = sizeof(struct ssdfs_segment_info *);
@@ -325,14 +317,16 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page || !fsi || !fsi->segs_tree);
+	BUG_ON(!folio || !fsi || !fsi->segs_tree);
 
-	SSDFS_DBG("page %p\n", page);
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_lock_page(page);
+	ssdfs_folio_get(folio);
+	ssdfs_folio_lock(folio);
 
-	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
 
 	for (i = 0; i < ptrs_per_page; i++) {
 		struct ssdfs_segment_info *si = *(kaddr + i);
@@ -346,7 +340,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			if (atomic_read(&si->refs_count) > 0) {
-				ssdfs_unlock_page(page);
+				ssdfs_folio_unlock(folio);
 
 				err = wait_event_killable_timeout(*wq,
 					atomic_read(&si->refs_count) <= 0,
@@ -356,7 +350,7 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 				else
 					err = 0;
 
-				ssdfs_lock_page(page);
+				ssdfs_folio_lock(folio);
 			}
 
 			err = ssdfs_segment_destroy_object(si);
@@ -371,55 +365,52 @@ void ssdfs_segment_tree_destroy_objects_in_page(struct ssdfs_fs_info *fsi,
 
 	kunmap_local(kaddr);
 
-	__ssdfs_clear_dirty_page(page);
+	__ssdfs_clear_dirty_folio(folio);
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-	SSDFS_DBG("page_index %ld, flags %#lx\n",
-		  page->index, page->flags);
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+	SSDFS_DBG("folio_index %ld, flags %#lx\n",
+		  folio->index, folio->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
  * ssdfs_segment_tree_destroy_objects_in_array() - destroy objects in array
  * @fsi: pointer on shared file system object
- * @array: pointer on array of pages
- * @pages_count: count of pages in array
+ * @batch: memory folio batch
  */
 static
 void ssdfs_segment_tree_destroy_objects_in_array(struct ssdfs_fs_info *fsi,
-						 struct page **array,
-						 size_t pages_count)
+						 struct folio_batch *batch)
 {
-	struct page *page;
+	struct folio *folio;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!array || !fsi);
+	BUG_ON(!fsi || !batch);
 
-	SSDFS_DBG("array %p, pages_count %zu\n",
-		  array, pages_count);
+	SSDFS_DBG("batch %p, batch_count %u\n",
+		  batch,
+		  folio_batch_count(batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < pages_count; i++) {
-		page = array[i];
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		folio = batch->folios[i];
 
-		if (!page) {
-			SSDFS_WARN("page pointer is NULL: "
+		if (!folio) {
+			SSDFS_WARN("folio pointer is NULL: "
 				   "index %d\n",
 				   i);
 			continue;
 		}
 
-		ssdfs_segment_tree_destroy_objects_in_page(fsi, page);
+		ssdfs_segment_tree_destroy_objects_in_folio(fsi, folio);
 	}
 }
-
-#define SSDFS_MEM_PAGE_ARRAY_SIZE	(16)
 
 /*
  * ssdfs_segment_tree_destroy_segment_objects() - destroy all segment objects
@@ -428,10 +419,9 @@ void ssdfs_segment_tree_destroy_objects_in_array(struct ssdfs_fs_info *fsi,
 static
 void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 {
-	pgoff_t start = 0;
-	pgoff_t end = -1;
-	size_t pages_count = 0;
-	struct page *array[SSDFS_MEM_PAGE_ARRAY_SIZE] = {0};
+	struct folio_batch fbatch;
+	pgoff_t index = 0;
+	int nr_folios;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree);
@@ -439,30 +429,32 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p\n", fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	do {
-		pages_count = find_get_pages_range_tag(&fsi->segs_tree->pages,
-					    &start, end,
-					    PAGECACHE_TAG_DIRTY,
-					    SSDFS_MEM_PAGE_ARRAY_SIZE,
-					    &array[0]);
+	folio_batch_init(&fbatch);
+
+	while ((nr_folios = filemap_get_folios_tag(&fsi->segs_tree->folios,
+						   &index, (pgoff_t)-1,
+						   PAGECACHE_TAG_DIRTY,
+						   &fbatch))) {
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("start %lu, pages_count %zu\n",
-			  start, pages_count);
+		SSDFS_DBG("index %lu, batch_count %u\n",
+			  index, folio_batch_count(&fbatch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (pages_count != 0) {
+		if (nr_folios != 0) {
 			ssdfs_segment_tree_destroy_objects_in_array(fsi,
-								&array[0],
-								pages_count);
+								    &fbatch);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!array[pages_count - 1]);
+			BUG_ON(nr_folios != folio_batch_count(&fbatch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			start = page_index(array[pages_count - 1]) + 1;
+			index = folio_index(fbatch.folios[nr_folios - 1]) + 1;
 		}
-	} while (pages_count != 0);
+
+		folio_batch_release(&fbatch);
+		folio_batch_reinit(&fbatch);
+	}
 }
 
 /*
@@ -483,8 +475,8 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 
 	ssdfs_segment_tree_destroy_segment_objects(fsi);
 
-	if (fsi->segs_tree->pages.nrpages != 0)
-		truncate_inode_pages(&fsi->segs_tree->pages, 0);
+	if (fsi->segs_tree->folios.nrpages != 0)
+		truncate_inode_pages(&fsi->segs_tree->folios, 0);
 
 	inode_unlock(fsi->segs_tree_inode);
 
@@ -511,9 +503,9 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 			   struct ssdfs_segment_info *si)
 {
-	pgoff_t page_index;
+	pgoff_t folio_index;
 	u32 object_index;
-	struct page *page;
+	struct folio *folio;
 	struct ssdfs_segment_info **kaddr, *object;
 	int err = 0;
 
@@ -524,27 +516,27 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 		  fsi, si, si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
+	folio_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
 				 &object_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %lu, object_index %u\n",
-		  page_index, object_index);
+	SSDFS_DBG("folio_index %lu, object_index %u\n",
+		  folio_index, object_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock(fsi->segs_tree_inode);
 
-	page = grab_cache_page(&fsi->segs_tree->pages, page_index);
-	if (!page) {
+	folio = filemap_grab_folio(&fsi->segs_tree->folios, folio_index);
+	if (!folio) {
 		err = -ENOMEM;
-		SSDFS_ERR("fail to grab page: page_index %lu\n",
-			  page_index);
+		SSDFS_ERR("fail to grab folio: folio_index %lu\n",
+			  folio_index);
 		goto finish_add_segment;
 	}
 
-	ssdfs_account_locked_page(page);
+	ssdfs_account_locked_folio(folio);
 
-	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
 	object = *(kaddr + object_index);
 	if (object) {
 		err = -EEXIST;
@@ -556,18 +548,18 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 		*(kaddr + object_index) = si;
 	kunmap_local(kaddr);
 
-	SetPageUptodate(page);
-	if (!PageDirty(page))
-		ssdfs_set_page_dirty(page);
+	folio_mark_uptodate(folio);
+	if (!folio_test_dirty(folio))
+		ssdfs_set_folio_dirty(folio);
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-	SSDFS_DBG("page_index %ld, flags %#lx\n",
-		  page->index, page->flags);
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
+	SSDFS_DBG("folio_index %ld, flags %#lx\n",
+		  folio->index, folio->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_add_segment:
@@ -597,9 +589,9 @@ finish_add_segment:
 int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 			      struct ssdfs_segment_info *si)
 {
-	pgoff_t page_index;
+	pgoff_t folio_index;
 	u32 object_index;
-	struct page *page;
+	struct folio *folio;
 	struct ssdfs_segment_info **kaddr, *object;
 	int err = 0;
 
@@ -610,18 +602,24 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		  fsi, si, si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
-				 &object_index);
+	folio_index = div_u64_rem(si->seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
+				  &object_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %lu, object_index %u\n",
-		  page_index, object_index);
+	SSDFS_DBG("folio_index %lu, object_index %u\n",
+		  folio_index, object_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock(fsi->segs_tree_inode);
 
-	page = find_lock_page(&fsi->segs_tree->pages, page_index);
-	if (!page) {
+	folio = filemap_lock_folio(&fsi->segs_tree->folios, folio_index);
+	if (IS_ERR(folio)) {
+		err = -ENODATA;
+		SSDFS_ERR("failed to remove segment object: "
+			  "seg %llu\n",
+			  si->seg_id);
+		goto finish_remove_segment;
+	} else if (!folio) {
 		err = -ENODATA;
 		SSDFS_ERR("failed to remove segment object: "
 			  "seg %llu\n",
@@ -629,8 +627,8 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		goto finish_remove_segment;
 	}
 
-	ssdfs_account_locked_page(page);
-	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
+	ssdfs_account_locked_folio(folio);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
 	object = *(kaddr + object_index);
 	if (!object) {
 		err = -ENODATA;
@@ -645,16 +643,16 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	}
 	kunmap_local(kaddr);
 
-	SetPageUptodate(page);
-	if (!PageDirty(page))
-		ssdfs_set_page_dirty(page);
+	folio_mark_uptodate(folio);
+	if (!folio_test_dirty(folio))
+		ssdfs_set_folio_dirty(folio);
 
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	/*
@@ -691,9 +689,9 @@ finish_remove_segment:
 struct ssdfs_segment_info *
 ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 {
-	pgoff_t page_index;
+	pgoff_t folio_index;
 	u32 object_index;
-	struct page *page;
+	struct folio *folio;
 	struct ssdfs_segment_info **kaddr, *object;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -709,18 +707,26 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 		  fsi, seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page_index = div_u64_rem(seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
-				 &object_index);
+	folio_index = div_u64_rem(seg_id, SSDFS_SEG_OBJ_PTR_PER_PAGE,
+				  &object_index);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index %lu, object_index %u\n",
-		  page_index, object_index);
+	SSDFS_DBG("folio_index %lu, object_index %u\n",
+		  folio_index, object_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	inode_lock_shared(fsi->segs_tree_inode);
 
-	page = find_lock_page(&fsi->segs_tree->pages, page_index);
-	if (!page) {
+	folio = filemap_lock_folio(&fsi->segs_tree->folios, folio_index);
+	if (IS_ERR(folio)) {
+		object = ERR_PTR(-ENODATA);
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find segment object: "
+			  "seg %llu\n",
+			  seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_find_segment;
+	} else if (!folio) {
 		object = ERR_PTR(-ENODATA);
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to find segment object: "
@@ -730,9 +736,11 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 		goto finish_find_segment;
 	}
 
-	ssdfs_account_locked_page(page);
-	kaddr = (struct ssdfs_segment_info **)kmap_local_page(page);
+	ssdfs_account_locked_folio(folio);
+	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
+
 	object = *(kaddr + object_index);
+
 	if (!object) {
 		object = ERR_PTR(-ENODATA);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -742,12 +750,12 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 	kunmap_local(kaddr);
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_find_segment:

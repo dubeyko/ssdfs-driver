@@ -25,11 +25,9 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "block_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -47,7 +45,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_seg_obj_page_leaks;
 atomic64_t ssdfs_seg_obj_folio_leaks;
 atomic64_t ssdfs_seg_obj_memory_leaks;
 atomic64_t ssdfs_seg_obj_cache_leaks;
@@ -60,10 +57,12 @@ atomic64_t ssdfs_seg_obj_cache_leaks;
  * void *ssdfs_seg_obj_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_seg_obj_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_seg_obj_kfree(void *kaddr)
- * struct page *ssdfs_seg_obj_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_seg_obj_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_seg_obj_free_page(struct page *page)
- * void ssdfs_seg_obj_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_seg_obj_alloc_folio(gfp_t gfp_mask,
+ *                                         unsigned int order)
+ * struct folio *ssdfs_seg_obj_add_batch_folio(struct folio_batch *batch,
+ *                                             unsigned int order)
+ * void ssdfs_seg_obj_free_folio(struct folio *folio)
+ * void ssdfs_seg_obj_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seg_obj)
@@ -74,7 +73,6 @@ atomic64_t ssdfs_seg_obj_cache_leaks;
 void ssdfs_seg_obj_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_seg_obj_page_leaks, 0);
 	atomic64_set(&ssdfs_seg_obj_folio_leaks, 0);
 	atomic64_set(&ssdfs_seg_obj_memory_leaks, 0);
 	atomic64_set(&ssdfs_seg_obj_cache_leaks, 0);
@@ -84,12 +82,6 @@ void ssdfs_seg_obj_memory_leaks_init(void)
 void ssdfs_seg_obj_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_seg_obj_page_leaks) != 0) {
-		SSDFS_ERR("SEGMENT: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_seg_obj_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_seg_obj_folio_leaks) != 0) {
 		SSDFS_ERR("SEGMENT: "
 			  "memory leaks include %lld folios\n",

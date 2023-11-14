@@ -26,7 +26,6 @@
 #include "dynamic_array.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_dynamic_array_page_leaks;
 atomic64_t ssdfs_dynamic_array_folio_leaks;
 atomic64_t ssdfs_dynamic_array_memory_leaks;
 atomic64_t ssdfs_dynamic_array_cache_leaks;
@@ -39,10 +38,12 @@ atomic64_t ssdfs_dynamic_array_cache_leaks;
  * void *ssdfs_dynamic_array_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_dynamic_array_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_dynamic_array_kfree(void *kaddr)
- * struct page *ssdfs_dynamic_array_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_dynamic_array_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_dynamic_array_free_page(struct page *page)
- * void ssdfs_dynamic_array_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_dynamic_array_alloc_folio(gfp_t gfp_mask,
+ *                                               unsigned int order)
+ * struct folio *ssdfs_dynamic_array_add_batch_folio(struct folio_batch *batch,
+ *                                                   unsigned int order)
+ * void ssdfs_dynamic_array_free_folio(struct folio *folio)
+ * void ssdfs_dynamic_array_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dynamic_array)
@@ -53,7 +54,6 @@ atomic64_t ssdfs_dynamic_array_cache_leaks;
 void ssdfs_dynamic_array_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_dynamic_array_page_leaks, 0);
 	atomic64_set(&ssdfs_dynamic_array_folio_leaks, 0);
 	atomic64_set(&ssdfs_dynamic_array_memory_leaks, 0);
 	atomic64_set(&ssdfs_dynamic_array_cache_leaks, 0);
@@ -63,12 +63,6 @@ void ssdfs_dynamic_array_memory_leaks_init(void)
 void ssdfs_dynamic_array_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_dynamic_array_page_leaks) != 0) {
-		SSDFS_ERR("DYNAMIC ARRAY: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_dynamic_array_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_dynamic_array_folio_leaks) != 0) {
 		SSDFS_ERR("DYNAMIC ARRAY: "
 			  "memory leaks include %lld folios\n",
@@ -158,7 +152,7 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 
 	if (bytes_count > PAGE_SIZE) {
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(folios_count >= ssdfs_page_vector_max_threshold());
+		BUG_ON(folios_count >= ssdfs_folio_vector_max_threshold());
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_folio_vector_create(&array->batch,

@@ -32,7 +32,7 @@
  * @dentries_btree: dentries b-tree descriptor
  * @extents_btree: extents b-tree descriptor
  * @xattr_btree: xattrs b-tree descriptor
- * @pages: pages of segment tree
+ * @folios: folios of segment tree
  */
 struct ssdfs_segment_tree {
 	u16 lnodes_seg_log_pages;
@@ -45,7 +45,7 @@ struct ssdfs_segment_tree {
 	struct ssdfs_extents_btree_descriptor extents_btree;
 	struct ssdfs_xattr_btree_descriptor xattr_btree;
 
-	struct address_space pages;
+	struct address_space folios;
 };
 
 #define SSDFS_SEG_OBJ_PTR_PER_PAGE \

@@ -32,7 +32,6 @@
 #include "btree_node.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_btree_search_page_leaks;
 atomic64_t ssdfs_btree_search_folio_leaks;
 atomic64_t ssdfs_btree_search_memory_leaks;
 atomic64_t ssdfs_btree_search_cache_leaks;
@@ -45,10 +44,12 @@ atomic64_t ssdfs_btree_search_cache_leaks;
  * void *ssdfs_btree_search_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_btree_search_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_btree_search_kfree(void *kaddr)
- * struct page *ssdfs_btree_search_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_btree_search_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_btree_search_free_page(struct page *page)
- * void ssdfs_btree_search_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_btree_search_alloc_folio(gfp_t gfp_mask,
+ *                                              unsigned int order)
+ * struct folio *ssdfs_btree_search_add_batch_folio(struct folio_batch *batch,
+ *                                                  unsigned int order)
+ * void ssdfs_btree_search_free_folio(struct folio *folio)
+ * void ssdfs_btree_search_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(btree_search)
@@ -59,7 +60,6 @@ atomic64_t ssdfs_btree_search_cache_leaks;
 void ssdfs_btree_search_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_btree_search_page_leaks, 0);
 	atomic64_set(&ssdfs_btree_search_folio_leaks, 0);
 	atomic64_set(&ssdfs_btree_search_memory_leaks, 0);
 	atomic64_set(&ssdfs_btree_search_cache_leaks, 0);
@@ -69,12 +69,6 @@ void ssdfs_btree_search_memory_leaks_init(void)
 void ssdfs_btree_search_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_btree_search_page_leaks) != 0) {
-		SSDFS_ERR("BTREE SEARCH: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_btree_search_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_btree_search_folio_leaks) != 0) {
 		SSDFS_ERR("BTREE SEARCH: "
 			  "memory leaks include %lld folios\n",

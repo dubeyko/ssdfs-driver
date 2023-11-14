@@ -24,12 +24,10 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_fs_error_page_leaks;
 atomic64_t ssdfs_fs_error_folio_leaks;
 atomic64_t ssdfs_fs_error_memory_leaks;
 atomic64_t ssdfs_fs_error_cache_leaks;
@@ -42,10 +40,12 @@ atomic64_t ssdfs_fs_error_cache_leaks;
  * void *ssdfs_fs_error_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_fs_error_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_fs_error_kfree(void *kaddr)
- * struct page *ssdfs_fs_error_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_fs_error_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_fs_error_free_page(struct page *page)
- * void ssdfs_fs_error_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_fs_error_alloc_folio(gfp_t gfp_mask,
+ *                                          unsigned int order)
+ * struct folio *ssdfs_fs_error_add_batch_folio(struct folio_batch *batch,
+ *                                            unsigned int order)
+ * void ssdfs_fs_error_free_folio(struct folio *folio)
+ * void ssdfs_fs_error_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(fs_error)
@@ -56,7 +56,6 @@ atomic64_t ssdfs_fs_error_cache_leaks;
 void ssdfs_fs_error_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_fs_error_page_leaks, 0);
 	atomic64_set(&ssdfs_fs_error_folio_leaks, 0);
 	atomic64_set(&ssdfs_fs_error_memory_leaks, 0);
 	atomic64_set(&ssdfs_fs_error_cache_leaks, 0);
@@ -66,12 +65,6 @@ void ssdfs_fs_error_memory_leaks_init(void)
 void ssdfs_fs_error_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_fs_error_page_leaks) != 0) {
-		SSDFS_ERR("FS ERROR: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_fs_error_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_fs_error_folio_leaks) != 0) {
 		SSDFS_ERR("FS ERROR: "
 			  "memory leaks include %lld folios\n",
@@ -135,35 +128,6 @@ void ssdfs_fs_error(struct super_block *sb, const char *file,
 	ssdfs_handle_error(sb);
 }
 
-int ssdfs_set_page_dirty(struct page *page)
-{
-	struct address_space *mapping = page->mapping;
-	unsigned long flags;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index: %llu, mapping %p\n",
-		  (u64)page_index(page), mapping);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (!PageLocked(page)) {
-		SSDFS_WARN("page isn't locked: "
-			   "page_index %llu, mapping %p\n",
-			   (u64)page_index(page), mapping);
-		return -ERANGE;
-	}
-
-	SetPageDirty(page);
-
-	if (mapping) {
-		xa_lock_irqsave(&mapping->i_pages, flags);
-		__xa_set_mark(&mapping->i_pages, page_index(page),
-				PAGECACHE_TAG_DIRTY);
-		xa_unlock_irqrestore(&mapping->i_pages, flags);
-	}
-
-	return 0;
-}
-
 int ssdfs_set_folio_dirty(struct folio *folio)
 {
 	struct address_space *mapping = folio->mapping;
@@ -189,38 +153,6 @@ int ssdfs_set_folio_dirty(struct folio *folio)
 				PAGECACHE_TAG_DIRTY);
 		xa_unlock_irqrestore(&mapping->i_pages, flags);
 	}
-
-	return 0;
-}
-
-int __ssdfs_clear_dirty_page(struct page *page)
-{
-	struct address_space *mapping = page->mapping;
-	unsigned long flags;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index: %llu, mapping %p\n",
-		  (u64)page_index(page), mapping);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (!PageLocked(page)) {
-		SSDFS_WARN("page isn't locked: "
-			   "page_index %llu, mapping %p\n",
-			   (u64)page_index(page), mapping);
-		return -ERANGE;
-	}
-
-	if (mapping) {
-		xa_lock_irqsave(&mapping->i_pages, flags);
-		if (test_bit(PG_dirty, &page->flags)) {
-			__xa_clear_mark(&mapping->i_pages,
-					page_index(page),
-					PAGECACHE_TAG_DIRTY);
-		}
-		xa_unlock_irqrestore(&mapping->i_pages, flags);
-	}
-
-	TestClearPageDirty(page);
 
 	return 0;
 }
@@ -253,41 +185,6 @@ int __ssdfs_clear_dirty_folio(struct folio *folio)
 	}
 
 	folio_test_clear_dirty(folio);
-
-	return 0;
-}
-
-int ssdfs_clear_dirty_page(struct page *page)
-{
-	struct address_space *mapping = page->mapping;
-	unsigned long flags;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_index: %llu, mapping %p\n",
-		  (u64)page_index(page), mapping);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (!PageLocked(page)) {
-		SSDFS_WARN("page isn't locked: "
-			   "page_index %llu, mapping %p\n",
-			   (u64)page_index(page), mapping);
-		return -ERANGE;
-	}
-
-	if (mapping) {
-		xa_lock_irqsave(&mapping->i_pages, flags);
-		if (test_bit(PG_dirty, &page->flags)) {
-			__xa_clear_mark(&mapping->i_pages,
-					page_index(page),
-					PAGECACHE_TAG_DIRTY);
-			xa_unlock_irqrestore(&mapping->i_pages, flags);
-			return clear_page_dirty_for_io(page);
-		}
-		xa_unlock_irqrestore(&mapping->i_pages, flags);
-		return 0;
-	}
-
-	TestClearPageDirty(page);
 
 	return 0;
 }
@@ -328,36 +225,40 @@ int ssdfs_clear_dirty_folio(struct folio *folio)
 }
 
 /*
- * ssdfs_clear_dirty_pages - discard dirty pages in address space
+ * ssdfs_clear_dirty_folios - discard dirty folios in address space
  * @mapping: address space with dirty pages for discarding
  */
-void ssdfs_clear_dirty_pages(struct address_space *mapping)
+void ssdfs_clear_dirty_folios(struct address_space *mapping)
 {
-	struct pagevec pvec;
-	unsigned int i;
+	struct folio_batch fbatch;
 	pgoff_t index = 0;
+	int nr_folios;
 	int err;
 
-	pagevec_init(&pvec);
+	folio_batch_init(&fbatch);
 
-	while (pagevec_lookup_tag(&pvec, mapping, &index,
-				  PAGECACHE_TAG_DIRTY)) {
-		for (i = 0; i < pagevec_count(&pvec); i++) {
-			struct page *page = pvec.pages[i];
+	while ((nr_folios = filemap_get_folios_tag(mapping, &index,
+					(pgoff_t)-1, PAGECACHE_TAG_DIRTY,
+					&fbatch))) {
+		unsigned int i;
 
-			ssdfs_lock_page(page);
-			err = ssdfs_clear_dirty_page(page);
-			ssdfs_unlock_page(page);
+		for (i = 0; i < nr_folios; i++) {
+			struct folio *folio = fbatch.folios[i];
+
+			ssdfs_folio_lock(folio);
+			err = ssdfs_clear_dirty_folio(folio);
+			ssdfs_folio_unlock(folio);
 
 			if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("fail clear page dirty: "
-					  "page_index %llu\n",
-					  (u64)page_index(page));
+				SSDFS_DBG("fail clear folio dirty: "
+					  "folio_index %llu\n",
+					  (u64)folio_index(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 			}
 		}
-		ssdfs_fs_error_pagevec_release(&pvec);
+
+		folio_batch_release(&fbatch);
 		cond_resched();
 	}
 }

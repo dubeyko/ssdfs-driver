@@ -41,8 +41,9 @@ void ssdfs_snapshot_rules_list_remove_all(struct ssdfs_snapshot_rules_list *rl);
 struct ssdfs_snapshot_rule_item *ssdfs_snapshot_rule_alloc(void);
 void ssdfs_snapshot_rule_free(struct ssdfs_snapshot_rule_item *ri);
 
-struct page *ssdfs_snapshot_rules_add_pagevec_page(struct pagevec *pvec);
-void ssdfs_snapshot_rules_pagevec_release(struct pagevec *pvec);
+struct folio *ssdfs_snapshot_rules_add_batch_folio(struct folio_batch *batch,
+						   unsigned int order);
+void ssdfs_snapshot_rules_folio_batch_release(struct folio_batch *batch);
 
 int ssdfs_process_snapshot_rules(struct ssdfs_fs_info *fsi);
 int ssdfs_modify_snapshot_rule(struct ssdfs_fs_info *fsi,

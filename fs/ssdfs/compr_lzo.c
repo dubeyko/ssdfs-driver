@@ -34,7 +34,6 @@
 #include "compression.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_lzo_page_leaks;
 atomic64_t ssdfs_lzo_folio_leaks;
 atomic64_t ssdfs_lzo_memory_leaks;
 atomic64_t ssdfs_lzo_cache_leaks;
@@ -47,10 +46,12 @@ atomic64_t ssdfs_lzo_cache_leaks;
  * void *ssdfs_lzo_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_lzo_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_lzo_kfree(void *kaddr)
- * struct page *ssdfs_lzo_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_lzo_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_lzo_free_page(struct page *page)
- * void ssdfs_lzo_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_lzo_alloc_folio(gfp_t gfp_mask,
+ *                                     unsigned int order)
+ * struct folio *ssdfs_lzo_add_batch_folio(struct folio_batch *batch,
+ *                                         unsigned int order)
+ * void ssdfs_lzo_free_folio(struct folio *folio)
+ * void ssdfs_lzo_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(lzo)
@@ -61,7 +62,6 @@ atomic64_t ssdfs_lzo_cache_leaks;
 void ssdfs_lzo_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_lzo_page_leaks, 0);
 	atomic64_set(&ssdfs_lzo_folio_leaks, 0);
 	atomic64_set(&ssdfs_lzo_memory_leaks, 0);
 	atomic64_set(&ssdfs_lzo_cache_leaks, 0);
@@ -71,12 +71,6 @@ void ssdfs_lzo_memory_leaks_init(void)
 void ssdfs_lzo_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_lzo_page_leaks) != 0) {
-		SSDFS_ERR("LZO: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_lzo_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_lzo_folio_leaks) != 0) {
 		SSDFS_ERR("LZO: "
 			  "memory leaks include %lld folios\n",

@@ -22,11 +22,9 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "request_queue.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -45,7 +43,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_file_page_leaks;
 atomic64_t ssdfs_file_folio_leaks;
 atomic64_t ssdfs_file_memory_leaks;
 atomic64_t ssdfs_file_cache_leaks;
@@ -58,10 +55,12 @@ atomic64_t ssdfs_file_cache_leaks;
  * void *ssdfs_file_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_file_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_file_kfree(void *kaddr)
- * struct page *ssdfs_file_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_file_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_file_free_page(struct page *page)
- * void ssdfs_file_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_file_alloc_folio(gfp_t gfp_mask,
+ *                                      unsigned int order)
+ * struct folio *ssdfs_file_add_batch_folio(struct folio_batch *batch,
+ *                                          unsigned int order)
+ * void ssdfs_file_free_folio(struct folio *folio)
+ * void ssdfs_file_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(file)
@@ -72,7 +71,6 @@ atomic64_t ssdfs_file_cache_leaks;
 void ssdfs_file_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_file_page_leaks, 0);
 	atomic64_set(&ssdfs_file_folio_leaks, 0);
 	atomic64_set(&ssdfs_file_memory_leaks, 0);
 	atomic64_set(&ssdfs_file_cache_leaks, 0);
@@ -82,12 +80,6 @@ void ssdfs_file_memory_leaks_init(void)
 void ssdfs_file_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_file_page_leaks) != 0) {
-		SSDFS_ERR("FILE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_file_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_file_folio_leaks) != 0) {
 		SSDFS_ERR("FILE: "
 			  "memory leaks include %lld folios\n",
@@ -929,8 +921,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 	memset(&env.cur_extent, 0, sizeof(struct ssdfs_volume_extent));
 
 	for (i = 0; i < env.capacity; i++) {
-		folio_batch_init(&env.batch);
-//		folio_batch_reinit(&env.batch);
+		folio_batch_reinit(&env.batch);
 
 		folio = readahead_folio(rac);
 		if (!folio) {
@@ -1590,7 +1581,7 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (need_add_block2(folio)) {
+	if (need_add_block(folio)) {
 		err = ssdfs_segment_add_data_block_async(fsi, pool, batch);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("wait finishing requests in pool\n");
@@ -1663,7 +1654,7 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (need_add_block2(folio)) {
+	if (need_add_block(folio)) {
 		err = ssdfs_segment_add_data_block_sync(fsi, pool, batch);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("wait finishing requests in pool\n");
@@ -1736,7 +1727,7 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (need_add_block2(folio)) {
+	if (need_add_block(folio)) {
 		err = ssdfs_segment_add_data_extent_async(fsi, pool, batch);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("wait finishing requests in pool\n");
@@ -1809,7 +1800,7 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (need_add_block2(folio)) {
+	if (need_add_block(folio)) {
 		err = ssdfs_segment_add_data_extent_sync(fsi, pool, batch);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("wait finishing requests in pool\n");
@@ -2274,7 +2265,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 	SSDFS_DBG("cur_blk %llu\n", (u64)cur_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!need_add_block2(folio)) {
+	if (!need_add_block(folio)) {
 		is_new_blk = !ssdfs_extents_tree_has_logical_block(cur_blk,
 								   inode);
 
@@ -2391,15 +2382,13 @@ int ssdfs_writepages(struct address_space *mapping,
 		     struct writeback_control *wbc)
 {
 	struct inode *inode = mapping->host;
-//	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	ino_t ino = inode->i_ino;
 	struct ssdfs_segment_request_pool pool;
 	struct ssdfs_dirty_folios_batch batch;
 	struct folio_batch fvec;
-//	int blocks;
-	struct pagevec pvec;
-	int nr_pages;
+	int blocks;
 	pgoff_t index = 0;
 	pgoff_t end;		/* Inclusive */
 	pgoff_t done_index = 0;
@@ -2431,17 +2420,13 @@ int ssdfs_writepages(struct address_space *mapping,
 		goto out_writepages;
 
 	folio_batch_init(&fvec);
-	pagevec_init(&pvec);
 
 	if (wbc->range_cyclic) {
 		index = mapping->writeback_index; /* prev offset */
 		end = -1;
 	} else {
-//		index = wbc->range_start >> fsi->log_pagesize;
-//		end = wbc->range_end >> fsi->log_pagesize;
-
-		index = wbc->range_start >> PAGE_SHIFT;
-		end = wbc->range_end >> PAGE_SHIFT;
+		index = wbc->range_start >> fsi->log_pagesize;
+		end = wbc->range_end >> fsi->log_pagesize;
 
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
@@ -2456,40 +2441,26 @@ int ssdfs_writepages(struct address_space *mapping,
 	done_index = index;
 
 	while (!done && (index <= end)) {
-//		blocks = (int)min_t(pgoff_t, end - index,
-//					(pgoff_t)PAGEVEC_SIZE-1) + 1;
-
-		nr_pages = (int)min_t(pgoff_t, end - index,
+		blocks = (int)min_t(pgoff_t, end - index,
 					(pgoff_t)PAGEVEC_SIZE-1) + 1;
 
 #ifdef CONFIG_SSDFS_DEBUG
-//		SSDFS_DBG("index %llu, end %llu, "
-//			  "blocks %d, tag %#x\n",
-//			  (u64)index, (u64)end, blocks, tag);
 		SSDFS_DBG("index %llu, end %llu, "
-			  "nr_pages %d, tag %#x\n",
-			  (u64)index, (u64)end, nr_pages, tag);
+			  "blocks %d, tag %#x\n",
+			  (u64)index, (u64)end, blocks, tag);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-//		blocks = filemap_get_folios_tag(mapping, &index, last,
-//						tag, &fvec);
-//		if (blocks == 0)
-//			break;
-
-		nr_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
-						    end, tag);
-		if (nr_pages == 0)
+		blocks = filemap_get_folios_tag(mapping, &index, end,
+						tag, &fvec);
+		if (blocks == 0)
 			break;
 
 #ifdef CONFIG_SSDFS_DEBUG
-//		SSDFS_DBG("FOUND: blocks %d\n", blocks);
-		SSDFS_DBG("FOUND: nr_pages %d\n", nr_pages);
+		SSDFS_DBG("FOUND: blocks %d\n", blocks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-//		for (i = 0; i < blocks; i++) {
-		for (i = 0; i < nr_pages; i++) {
-//			struct folio *folio = fvec.folios[i];
-			struct folio *folio = page_folio(pvec.pages[i]);
+		for (i = 0; i < blocks; i++) {
+			struct folio *folio = fvec.folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, index %d, folio->index %ld\n",
@@ -2659,8 +2630,7 @@ continue_unlock:
 			  (u64)index, (u64)end, wbc->nr_to_write);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio_batch_init(&fvec);
-//		folio_batch_reinit(&fvec);
+		folio_batch_reinit(&fvec);
 		cond_resched();
 	};
 
@@ -2719,13 +2689,13 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
-	struct page *page;
-	pgoff_t index = pos >> PAGE_SHIFT;
+	struct folio *folio;
+	pgoff_t index = pos >> fsi->log_pagesize;
 	unsigned blks = 0;
 	loff_t start_blk, end_blk, cur_blk;
 	u64 last_blk = U64_MAX;
 #ifdef CONFIG_SSDFS_DEBUG
-	u64 free_pages = 0;
+	u64 free_blocks = 0;
 #endif /* CONFIG_SSDFS_DEBUG */
 	bool is_new_blk = false;
 	int err = 0;
@@ -2743,19 +2713,24 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		  inode->i_ino, index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	page = grab_cache_page_write_begin(mapping, index);
-	if (!page) {
-		SSDFS_ERR("fail to grab page: index %lu\n",
+	folio = __filemap_get_folio(mapping, index, FGP_WRITEBEGIN,
+				    mapping_gfp_mask(mapping));
+	if (!folio) {
+		SSDFS_ERR("fail to grab folio: index %lu\n",
 			  index);
 		return -ENOMEM;
+	} else if (IS_ERR(folio)) {
+		SSDFS_ERR("fail to grab folio: index %lu, err %ld\n",
+			  index, PTR_ERR(folio));
+		return PTR_ERR(folio);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_account_locked_page(page);
+	ssdfs_account_locked_folio(folio);
 
 	if (can_file_be_inline(inode, pos + len)) {
 		if (!ii->inline_file) {
@@ -2814,8 +2789,8 @@ try_regular_write:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			if (is_new_blk) {
-				if (!need_add_block(page)) {
-					set_page_new(page);
+				if (!need_add_block(folio)) {
+					set_folio_new(folio);
 					err = ssdfs_reserve_free_pages(fsi, 1,
 							SSDFS_USER_DATA_PAGES);
 					if (!err)
@@ -2824,11 +2799,11 @@ try_regular_write:
 
 #ifdef CONFIG_SSDFS_DEBUG
 				spin_lock(&fsi->volume_state_lock);
-				free_pages = fsi->free_pages;
+				free_blocks = fsi->free_pages;
 				spin_unlock(&fsi->volume_state_lock);
 
-				SSDFS_DBG("free_pages %llu, blks %u, err %d\n",
-					  free_pages, blks, err);
+				SSDFS_DBG("free_blocks %llu, blks %u, err %d\n",
+					  free_blocks, blks, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				if (err) {
@@ -2836,22 +2811,22 @@ try_regular_write:
 					fsi->free_pages += blks;
 					spin_unlock(&fsi->volume_state_lock);
 
-					ssdfs_unlock_page(page);
-					ssdfs_put_page(page);
+					ssdfs_folio_unlock(folio);
+					ssdfs_folio_put(folio);
 
 					ssdfs_write_failed(mapping, pos + len);
 
 #ifdef CONFIG_SSDFS_DEBUG
-					SSDFS_DBG("page %p, count %d\n",
-						  page, page_ref_count(page));
+					SSDFS_DBG("folio %p, count %d\n",
+						  folio, folio_ref_count(folio));
 					SSDFS_DBG("volume hasn't free space\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 					return err;
 				}
-			} else if (!PageDirty(page)) {
+			} else if (!folio_test_dirty(folio)) {
 				/*
-				 * ssdfs_write_end() marks page as dirty
+				 * ssdfs_write_end() marks folio as dirty
 				 */
 				ssdfs_account_updated_user_data_pages(fsi, 1);
 			}
@@ -2861,13 +2836,13 @@ try_regular_write:
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*pagep = page;
+	*pagep = &folio->page;
 
-	if ((len == PAGE_SIZE) || PageUptodate(page))
+	if ((len == fsi->pagesize) || folio_test_uptodate(folio))
 		return 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2876,7 +2851,7 @@ try_regular_write:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if ((pos & PAGE_MASK) >= i_size_read(inode)) {
-		unsigned start = pos & (PAGE_SIZE - 1);
+		unsigned start = offset_in_folio(folio, pos);
 		unsigned end = start + len;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2885,11 +2860,11 @@ try_regular_write:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		/* Reading beyond i_size is simple: memset to zero */
-		zero_user_segments(page, 0, start, end, PAGE_SIZE);
+		folio_zero_segments(folio, 0, start, end, folio_size(folio));
 		return 0;
 	}
 
-	return ssdfs_read_block_nolock(file, page_folio(page),
+	return ssdfs_read_block_nolock(file, folio,
 					SSDFS_CURRENT_THREAD_READ);
 }
 
@@ -2903,8 +2878,10 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 		    struct page *page, void *fsdata)
 {
 	struct inode *inode = mapping->host;
-	pgoff_t index = page->index;
-	unsigned start = pos & (PAGE_SIZE - 1);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct folio *folio = page_folio(page);
+	pgoff_t index = folio_index(folio);
+	unsigned start = offset_in_folio(folio, pos);
 	unsigned end = start + copied;
 	loff_t old_size = i_size_read(inode);
 	int err = 0;
@@ -2918,34 +2895,34 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 
 	if (copied < len) {
 		/*
-		 * VFS copied less data to the page that it intended and
+		 * VFS copied less data to the folio that it intended and
 		 * declared in its '->write_begin()' call via the @len
-		 * argument. Just tell userspace to retry the entire page.
+		 * argument. Just tell userspace to retry the entire block.
 		 */
-		if (!PageUptodate(page)) {
+		if (!folio_test_uptodate(folio)) {
 			copied = 0;
 			goto out;
 		}
 	}
 
-	if (old_size < (index << PAGE_SHIFT) + end) {
-		i_size_write(inode, (index << PAGE_SHIFT) + end);
+	if (old_size < (index << fsi->log_pagesize) + end) {
+		i_size_write(inode, (index << fsi->log_pagesize) + end);
 		mark_inode_dirty_sync(inode);
 	}
 
-	flush_dcache_page(page);
+	flush_dcache_folio(folio);
 
-	SetPageUptodate(page);
-	if (!PageDirty(page))
-		__set_page_dirty_nobuffers(page);
+	folio_mark_uptodate(folio);
+	if (!folio_test_dirty(folio))
+		filemap_dirty_folio(mapping, folio);
 
 out:
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
+	SSDFS_DBG("folio %p, count %d\n",
+		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err ? err : copied;
@@ -3011,7 +2988,7 @@ const struct file_operations ssdfs_file_operations = {
 	.mmap		= generic_file_mmap,
 	.open		= generic_file_open,
 	.fsync		= ssdfs_fsync,
-	.splice_read	= generic_file_splice_read,
+	.splice_read	= filemap_splice_read,
 	.splice_write	= iter_file_splice_write,
 };
 

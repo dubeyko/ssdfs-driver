@@ -44,7 +44,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_inode_page_leaks;
 atomic64_t ssdfs_inode_folio_leaks;
 atomic64_t ssdfs_inode_memory_leaks;
 atomic64_t ssdfs_inode_cache_leaks;
@@ -57,10 +56,12 @@ atomic64_t ssdfs_inode_cache_leaks;
  * void *ssdfs_inode_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_inode_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_inode_kfree(void *kaddr)
- * struct page *ssdfs_inode_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_inode_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_inode_free_page(struct page *page)
- * void ssdfs_inode_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_inode_alloc_folio(gfp_t gfp_mask,
+ *                                       unsigned int order)
+ * struct folio *ssdfs_inode_add_batch_folio(struct folio_batch *batch,
+ *                                           unsigned int order)
+ * void ssdfs_inode_free_folio(struct folio *folio)
+ * void ssdfs_inode_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(inode)
@@ -71,7 +72,6 @@ atomic64_t ssdfs_inode_cache_leaks;
 void ssdfs_inode_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_inode_page_leaks, 0);
 	atomic64_set(&ssdfs_inode_folio_leaks, 0);
 	atomic64_set(&ssdfs_inode_memory_leaks, 0);
 	atomic64_set(&ssdfs_inode_cache_leaks, 0);
@@ -81,12 +81,6 @@ void ssdfs_inode_memory_leaks_init(void)
 void ssdfs_inode_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_inode_page_leaks) != 0) {
-		SSDFS_ERR("INODE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_inode_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_inode_folio_leaks) != 0) {
 		SSDFS_ERR("INODE: "
 			  "memory leaks include %lld folios\n",
@@ -297,12 +291,12 @@ static int ssdfs_read_inode(struct inode *inode)
 	i_gid_write(inode, le32_to_cpu(raw_inode->gid));
 	set_nlink(inode, le32_to_cpu(raw_inode->refcount));
 
-	inode->i_atime.tv_sec = le64_to_cpu(raw_inode->atime);
-	inode->i_ctime.tv_sec = le64_to_cpu(raw_inode->ctime);
-	inode->i_mtime.tv_sec = le64_to_cpu(raw_inode->mtime);
-	inode->i_atime.tv_nsec = le32_to_cpu(raw_inode->atime_nsec);
-	inode->i_ctime.tv_nsec = le32_to_cpu(raw_inode->ctime_nsec);
-	inode->i_mtime.tv_nsec = le32_to_cpu(raw_inode->mtime_nsec);
+	inode_set_atime(inode, le64_to_cpu(raw_inode->atime),
+			le32_to_cpu(raw_inode->atime_nsec));
+	inode_set_ctime(inode, le64_to_cpu(raw_inode->ctime),
+			le32_to_cpu(raw_inode->ctime_nsec));
+	inode_set_mtime(inode, le64_to_cpu(raw_inode->mtime),
+			le32_to_cpu(raw_inode->mtime_nsec));
 
 	ii->birthtime.tv_sec = le64_to_cpu(raw_inode->birthtime);
 	ii->birthtime.tv_nsec = le32_to_cpu(raw_inode->birthtime_nsec);
@@ -510,12 +504,12 @@ static void ssdfs_init_raw_inode(struct ssdfs_inode_info *ii)
 	ri->flags = cpu_to_le32(ii->flags);
 	ri->uid = cpu_to_le32(i_uid_read(&ii->vfs_inode));
 	ri->gid = cpu_to_le32(i_gid_read(&ii->vfs_inode));
-	ri->atime = cpu_to_le64(ii->vfs_inode.i_atime.tv_sec);
-	ri->ctime = cpu_to_le64(ii->vfs_inode.i_ctime.tv_sec);
-	ri->mtime = cpu_to_le64(ii->vfs_inode.i_mtime.tv_sec);
-	ri->atime_nsec = cpu_to_le32(ii->vfs_inode.i_atime.tv_nsec);
-	ri->ctime_nsec = cpu_to_le32(ii->vfs_inode.i_ctime.tv_nsec);
-	ri->mtime_nsec = cpu_to_le32(ii->vfs_inode.i_mtime.tv_nsec);
+	ri->atime = cpu_to_le64(inode_get_atime_sec(&ii->vfs_inode));
+	ri->ctime = cpu_to_le64(inode_get_ctime_sec(&ii->vfs_inode));
+	ri->mtime = cpu_to_le64(inode_get_mtime_sec(&ii->vfs_inode));
+	ri->atime_nsec = cpu_to_le32(inode_get_atime_nsec(&ii->vfs_inode));
+	ri->ctime_nsec = cpu_to_le32(inode_get_ctime_nsec(&ii->vfs_inode));
+	ri->mtime_nsec = cpu_to_le32(inode_get_mtime_nsec(&ii->vfs_inode));
 	ri->birthtime = cpu_to_le64(ii->birthtime.tv_sec);
 	ri->birthtime_nsec = cpu_to_le32(ii->birthtime.tv_nsec);
 	ri->generation = cpu_to_le64(ii->vfs_inode.i_generation);
@@ -529,7 +523,8 @@ static void ssdfs_init_raw_inode(struct ssdfs_inode_info *ii)
 	ri->name_len = cpu_to_le16(ii->name_len);
 }
 
-static void ssdfs_init_inode(struct inode *dir,
+static void ssdfs_init_inode(struct mnt_idmap *idmap,
+			     struct inode *dir,
 			     struct inode *inode,
 			     umode_t mode,
 			     ino_t ino,
@@ -543,8 +538,10 @@ static void ssdfs_init_inode(struct inode *dir,
 	ii->parent_ino = dir->i_ino;
 	ii->birthtime = current_time(inode);
 	ii->raw_inode_size = fsi->raw_inode_size;
-	inode->i_mtime = inode->i_atime = inode->i_ctime = ii->birthtime;
-	inode_init_owner(&init_user_ns, inode, dir, mode);
+	inode_set_atime_to_ts(inode, ii->birthtime);
+	inode_set_mtime_to_ts(inode, ii->birthtime);
+	inode_set_ctime_to_ts(inode, ii->birthtime);
+	inode_init_owner(idmap, inode, dir, mode);
 	ii->flags = ssdfs_mask_flags(mode,
 			 SSDFS_I(dir)->flags & SSDFS_FL_INHERITED);
 	ssdfs_set_inode_flags(inode);
@@ -561,7 +558,8 @@ static void ssdfs_init_inode(struct inode *dir,
 	up_write(&ii->lock);
 }
 
-struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
+struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
+			      struct inode *dir, umode_t mode,
 			      const struct qstr *qstr)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(dir->i_sb);
@@ -611,7 +609,7 @@ struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
 		goto failed_new_inode;
 	}
 
-	ssdfs_init_inode(dir, inode, mode, ino, qstr);
+	ssdfs_init_inode(idmap, dir, inode, mode, ino, qstr);
 
 	err = ssdfs_inode_setops(inode);
 	if (unlikely(err)) {
@@ -668,7 +666,7 @@ failed_new_inode:
 	return ERR_PTR(err);
 }
 
-int ssdfs_getattr(struct user_namespace *mnt_userns,
+int ssdfs_getattr(struct mnt_idmap *idmap,
 		  const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int query_flags)
 {
@@ -696,7 +694,7 @@ int ssdfs_getattr(struct user_namespace *mnt_userns,
 				  STATX_ATTR_IMMUTABLE |
 				  STATX_ATTR_NODUMP);
 
-	generic_fillattr(&init_user_ns, inode, stat);
+	generic_fillattr(idmap, request_mask, inode, stat);
 	return 0;
 }
 
@@ -705,6 +703,7 @@ static int ssdfs_truncate(struct inode *inode)
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct ssdfs_extents_btree_info *tree = NULL;
+	struct timespec64 cur_time;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -780,7 +779,10 @@ static int ssdfs_truncate(struct inode *inode)
 		}
 	}
 
-	inode->i_mtime = inode->i_ctime = current_time(inode);
+	cur_time = current_time(inode);
+	inode_set_mtime_to_ts(inode, cur_time);
+	inode_set_ctime_to_ts(inode, cur_time);
+
 	mark_inode_dirty(inode);
 
 	return 0;
@@ -790,6 +792,7 @@ int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 {
 	loff_t oldsize = i_size_read(inode);
 	loff_t newsize = attr->ia_size;
+	struct timespec64 cur_time;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -816,12 +819,15 @@ int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 			return err;
 	}
 
-	inode->i_mtime = inode->i_ctime = current_time(inode);
+	cur_time = current_time(inode);
+	inode_set_mtime_to_ts(inode, cur_time);
+	inode_set_ctime_to_ts(inode, cur_time);
+
 	mark_inode_dirty(inode);
 	return 0;
 }
 
-int ssdfs_setattr(struct user_namespace *mnt_userns,
+int ssdfs_setattr(struct mnt_idmap *idmap,
 		  struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = dentry->d_inode;
@@ -831,7 +837,7 @@ int ssdfs_setattr(struct user_namespace *mnt_userns,
 	SSDFS_DBG("ino %lu\n", (unsigned long)inode->i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = setattr_prepare(&init_user_ns, dentry, attr);
+	err = setattr_prepare(idmap, dentry, attr);
 	if (err)
 		return err;
 
@@ -844,11 +850,11 @@ int ssdfs_setattr(struct user_namespace *mnt_userns,
 	}
 
 	if (attr->ia_valid) {
-		setattr_copy(&init_user_ns, inode, attr);
+		setattr_copy(idmap, inode, attr);
 		mark_inode_dirty(inode);
 
 		if (attr->ia_valid & ATTR_MODE) {
-			err = posix_acl_chmod(&init_user_ns,
+			err = posix_acl_chmod(idmap,
 					      dentry, inode->i_mode);
 		}
 	}
@@ -889,7 +895,7 @@ void ssdfs_evict_inode(struct inode *inode)
 	if (err) {
 		SSDFS_WARN("inode %lu fdatawait error: %d\n",
 			   ino, err);
-		ssdfs_clear_dirty_pages(inode->i_mapping);
+		ssdfs_clear_dirty_folios(inode->i_mapping);
 	}
 
 	if (!inode->i_nlink && !is_bad_inode(inode))

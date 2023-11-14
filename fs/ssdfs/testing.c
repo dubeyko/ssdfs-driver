@@ -17,11 +17,9 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "extents_queue.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -540,7 +538,7 @@ int ssdfs_check_dirty_folio_presence(struct ssdfs_testing_environment *env,
 
 		err = ssdfs_folio_array_lookup_range(farray,
 						     &folio_index, end,
-						     SSDFS_DIRTY_PAGE_TAG,
+						     SSDFS_DIRTY_FOLIO_TAG,
 						     count,
 						     &batch);
 		if (unlikely(err)) {
@@ -611,7 +609,7 @@ int ssdfs_check_dirty_folio_absence(struct ssdfs_testing_environment *env,
 
 	err = ssdfs_folio_array_lookup_range(farray,
 					     &folio_index, end,
-					     SSDFS_DIRTY_PAGE_TAG,
+					     SSDFS_DIRTY_FOLIO_TAG,
 					     count,
 					     &batch);
 	if (err == -ENOENT) {
@@ -1866,7 +1864,7 @@ int ssdfs_testing_dentries_tree_add_file(struct ssdfs_fs_info *fsi,
 		  dentry_inode->d_parent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_create(&init_user_ns, root_i, dentry_inode,
+	err = ssdfs_create(&nop_mnt_idmap, root_i, dentry_inode,
 			   S_IFREG | S_IRWXU, false);
 	if (err) {
 		SSDFS_ERR("fail to create file: "

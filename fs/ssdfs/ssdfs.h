@@ -35,7 +35,6 @@
 #include "snapshot_rules.h"
 #include "ssdfs_fs_info.h"
 #include "ssdfs_inline.h"
-#include "page_vector.h"
 #include "fingerprint_array.h"
 
 /*
@@ -106,23 +105,20 @@ struct bio *ssdfs_bdev_bio_alloc(struct block_device *bdev,
 				 unsigned int op,
 				 gfp_t gfp_mask);
 void ssdfs_bdev_bio_put(struct bio *bio);
-int ssdfs_bdev_bio_add_page(struct bio *bio, struct page *page,
-			    unsigned int len, unsigned int offset);
 int ssdfs_bdev_bio_add_folio(struct bio *bio, struct folio *folio,
 			    unsigned int offset);
-int ssdfs_bdev_readpage(struct super_block *sb, struct page *page,
-			loff_t offset);
-int ssdfs_bdev_readpages(struct super_block *sb, struct pagevec *pvec,
-			 loff_t offset);
+int ssdfs_bdev_read_block(struct super_block *sb, struct folio *folio,
+			  loff_t offset);
+int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
+			   loff_t offset);
 int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
 		    size_t len, void *buf);
-int ssdfs_bdev_can_write_page(struct super_block *sb, loff_t offset,
-			      bool need_check);
-int ssdfs_bdev_writepage(struct super_block *sb, loff_t to_off,
-			 struct page *page, u32 from_off, size_t len);
-int ssdfs_bdev_writepages(struct super_block *sb, loff_t to_off,
-			  struct pagevec *pvec,
-			  u32 from_off, size_t len);
+int ssdfs_bdev_can_write_block(struct super_block *sb, loff_t offset,
+			       bool need_check);
+int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
+			   struct folio *folio);
+int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
+			    struct folio_batch *batch);
 
 /* dev_zns.c */
 u64 ssdfs_zns_zone_size(struct super_block *sb, loff_t offset);
@@ -133,7 +129,7 @@ u64 ssdfs_zns_zone_write_pointer(struct super_block *sb, loff_t offset);
 int ssdfs_inode_by_name(struct inode *dir,
 			const struct qstr *child,
 			ino_t *ino);
-int ssdfs_create(struct user_namespace *mnt_userns,
+int ssdfs_create(struct mnt_idmap *idmap,
 		 struct inode *dir, struct dentry *dentry,
 		 umode_t mode, bool excl);
 
@@ -147,24 +143,22 @@ extern __printf(5, 6)
 void ssdfs_fs_error(struct super_block *sb, const char *file,
 		    const char *function, unsigned int line,
 		    const char *fmt, ...);
-int ssdfs_set_page_dirty(struct page *page);
 int ssdfs_set_folio_dirty(struct folio *folio);
-int __ssdfs_clear_dirty_page(struct page *page);
 int __ssdfs_clear_dirty_folio(struct folio *folio);
-int ssdfs_clear_dirty_page(struct page *page);
 int ssdfs_clear_dirty_folio(struct folio *folio);
-void ssdfs_clear_dirty_pages(struct address_space *mapping);
+void ssdfs_clear_dirty_folios(struct address_space *mapping);
 
 /* inode.c */
 bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 				   void *buf, size_t size);
 struct inode *ssdfs_iget(struct super_block *sb, ino_t ino);
-struct inode *ssdfs_new_inode(struct inode *dir, umode_t mode,
+struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,
+			      struct inode *dir, umode_t mode,
 			      const struct qstr *qstr);
-int ssdfs_getattr(struct user_namespace *mnt_userns,
+int ssdfs_getattr(struct mnt_idmap *idmap,
 		  const struct path *path, struct kstat *stat,
 		  u32 request_mask, unsigned int query_flags);
-int ssdfs_setattr(struct user_namespace *mnt_userns,
+int ssdfs_setattr(struct mnt_idmap *idmap,
 		  struct dentry *dentry, struct iattr *attr);
 void ssdfs_evict_inode(struct inode *inode);
 int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc);
@@ -243,12 +237,12 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 					 struct ssdfs_block_bmap_range *range);
 
 /* readwrite.c */
-int ssdfs_read_page_from_volume(struct ssdfs_fs_info *fsi,
-				u64 peb_id, u32 bytes_off,
-				struct page *page);
-int ssdfs_read_pagevec_from_volume(struct ssdfs_fs_info *fsi,
-				   u64 peb_id, u32 bytes_off,
-				   struct pagevec *pvec);
+int ssdfs_read_folio_from_volume(struct ssdfs_fs_info *fsi,
+				 u64 peb_id, u32 bytes_offset,
+				 struct folio *folio);
+int ssdfs_read_folio_batch_from_volume(struct ssdfs_fs_info *fsi,
+					u64 peb_id, u32 bytes_offset,
+					struct folio_batch *batch);
 int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 			      u64 peb_id, u32 bytes_off,
 			      void *buf, size_t size,
@@ -258,24 +252,19 @@ int ssdfs_unaligned_read_buffer(struct ssdfs_fs_info *fsi,
 				void *buf, size_t size);
 int ssdfs_can_write_sb_log(struct super_block *sb,
 			   struct ssdfs_peb_extent *sb_log);
-int ssdfs_unaligned_read_pagevec(struct pagevec *pvec,
-				 u32 offset, u32 size,
-				 void *buf);
-int ssdfs_unaligned_write_pagevec(struct pagevec *pvec,
-				  u32 offset, u32 size,
-				  void *buf);
+int ssdfs_unaligned_read_folio_batch(struct folio_batch *batch,
+				     u32 offset, u32 size,
+				     void *buf);
 int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
 				      struct folio_batch *batch,
 				      u32 offset, u32 size,
 				      void *buf);
-int ssdfs_unaligned_read_page_vector(struct ssdfs_page_vector *pvec,
-				     u32 offset, u32 size,
-				     void *buf);
 int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 				      struct ssdfs_folio_vector *vec,
 				      u32 offset, u32 size,
 				      void *buf);
-int ssdfs_unaligned_write_page_vector(struct ssdfs_page_vector *pvec,
+int ssdfs_unaligned_write_folio_vector(struct ssdfs_fs_info *fsi,
+					struct ssdfs_folio_vector *batch,
 					u32 offset, u32 size,
 					void *buf);
 

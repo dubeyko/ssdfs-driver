@@ -31,7 +31,6 @@
 #include "folio_array.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_farray_page_leaks;
 atomic64_t ssdfs_farray_folio_leaks;
 atomic64_t ssdfs_farray_memory_leaks;
 atomic64_t ssdfs_farray_cache_leaks;
@@ -44,11 +43,11 @@ atomic64_t ssdfs_farray_cache_leaks;
  * void *ssdfs_farray_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_farray_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_farray_kfree(void *kaddr)
- * struct folio *ssdfs_farray_folio_alloc(gfp_t gfp_mask,
+ * struct folio *ssdfs_farray_alloc_folio(gfp_t gfp_mask,
  *                                        unsigned int order)
  * struct folio *ssdfs_farray_add_batch_folio(struct folio_batch *batch,
  *                                            unsigned int order)
- * void ssdfs_farray_folio_free(struct folio *folio)
+ * void ssdfs_farray_free_folio(struct folio *folio)
  * void ssdfs_farray_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -60,7 +59,6 @@ atomic64_t ssdfs_farray_cache_leaks;
 void ssdfs_farray_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_farray_page_leaks, 0);
 	atomic64_set(&ssdfs_farray_folio_leaks, 0);
 	atomic64_set(&ssdfs_farray_memory_leaks, 0);
 	atomic64_set(&ssdfs_farray_cache_leaks, 0);
@@ -1262,8 +1260,7 @@ int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
 		return -ERANGE;
 	}
 
-	folio_batch_init(batch);
-//	folio_batch_reinit(batch);
+	folio_batch_reinit(batch);
 
 	if (*start > end) {
 		SSDFS_ERR("start %lu > end %lu\n",

@@ -32,41 +32,12 @@
  */
 
 #ifdef CONFIG_SSDFS_DIFF_ON_WRITE
-
 bool can_diff_on_write_metadata_be_used(struct ssdfs_btree_node *node);
-
-/* TODO: freeze memory page state */
-int ssdfs_dow_freeze_page_state(struct page *page);
-
-/* TODO: extract delta between old and new states */
-int ssdfs_dow_extract_delta(struct page *page, struct page *delta);
-
-/* TODO: forget memory page state */
-int ssdfs_dow_forget_page_state(struct page *page);
-
 #else
 static inline
 bool can_diff_on_write_metadata_be_used(struct ssdfs_btree_node *node)
 {
 	return false;
-}
-
-static inline
-int ssdfs_dow_freeze_page_state(struct page *page)
-{
-	return 0;
-}
-
-static inline
-int ssdfs_dow_extract_delta(struct page *page, struct page *delta)
-{
-	return 0;
-}
-
-static inline
-int ssdfs_dow_forget_page_state(struct page *page)
-{
-	return 0;
 }
 #endif /* CONFIG_SSDFS_DIFF_ON_WRITE */
 

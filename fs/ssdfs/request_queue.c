@@ -24,12 +24,10 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -41,7 +39,6 @@
 #include "snapshots_tree.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_req_queue_page_leaks;
 atomic64_t ssdfs_req_queue_folio_leaks;
 atomic64_t ssdfs_req_queue_memory_leaks;
 atomic64_t ssdfs_req_queue_cache_leaks;
@@ -54,10 +51,12 @@ atomic64_t ssdfs_req_queue_cache_leaks;
  * void *ssdfs_req_queue_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_req_queue_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_req_queue_kfree(void *kaddr)
- * struct page *ssdfs_req_queue_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_req_queue_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_req_queue_free_page(struct page *page)
- * void ssdfs_req_queue_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_req_queue_alloc_folio(gfp_t gfp_mask,
+ *                                           unsigned int order)
+ * struct folio *ssdfs_req_queue_add_batch_folio(struct folio_batch *batch,
+ *                                               unsigned int order)
+ * void ssdfs_req_queue_free_folio(struct folio *folio)
+ * void ssdfs_req_queue_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(req_queue)
@@ -68,7 +67,6 @@ atomic64_t ssdfs_req_queue_cache_leaks;
 void ssdfs_req_queue_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_req_queue_page_leaks, 0);
 	atomic64_set(&ssdfs_req_queue_folio_leaks, 0);
 	atomic64_set(&ssdfs_req_queue_memory_leaks, 0);
 	atomic64_set(&ssdfs_req_queue_cache_leaks, 0);
@@ -78,12 +76,6 @@ void ssdfs_req_queue_memory_leaks_init(void)
 void ssdfs_req_queue_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_req_queue_page_leaks) != 0) {
-		SSDFS_ERR("REQUESTS QUEUE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_req_queue_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_req_queue_folio_leaks) != 0) {
 		SSDFS_ERR("REQUESTS QUEUE: "
 			  "memory leaks include %lld folios\n",
@@ -639,7 +631,7 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&batch->fvec) == 0) {
+	if (folio_batch_space(&batch->fvec) == 0) {
 		SSDFS_WARN("batch's folio vector is full\n");
 		return -E2BIG;
 	}
@@ -667,7 +659,7 @@ int ssdfs_request_add_folio(struct folio *folio,
 	BUG_ON(!folio || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.batch) == 0) {
+	if (folio_batch_space(&req->result.batch) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return -E2BIG;
 	}
@@ -688,7 +680,7 @@ int ssdfs_request_add_diff_folio(struct folio *folio,
 	BUG_ON(!folio || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.diffs) == 0) {
+	if (folio_batch_space(&req->result.diffs) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return -E2BIG;
 	}
@@ -714,7 +706,7 @@ ssdfs_request_allocate_and_add_folio(struct ssdfs_segment_request *req)
 		  folio_batch_count(&req->result.batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.batch) == 0) {
+	if (folio_batch_space(&req->result.batch) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -757,7 +749,7 @@ ssdfs_request_allocate_and_add_diff_folio(struct ssdfs_segment_request *req)
 		  folio_batch_count(&req->result.diffs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.diffs) == 0) {
+	if (folio_batch_space(&req->result.diffs) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -800,7 +792,7 @@ ssdfs_request_allocate_and_add_old_state_folio(struct ssdfs_segment_request *req
 		  folio_batch_count(&req->result.old_state));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.old_state) == 0) {
+	if (folio_batch_space(&req->result.old_state) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -845,7 +837,7 @@ ssdfs_request_allocate_locked_folio(struct ssdfs_segment_request *req,
 		  folio_batch_count(&req->result.batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.batch) == 0) {
+	if (folio_batch_space(&req->result.batch) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -910,7 +902,7 @@ ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
 		  folio_batch_count(&req->result.diffs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (fbatch_space(&req->result.diffs) == 0) {
+	if (folio_batch_space(&req->result.diffs) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -1209,8 +1201,7 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 			   folio_batch_count(&req->result.diffs));
 		ssdfs_req_queue_folio_batch_release(&req->result.diffs);
 	} else {
-		folio_batch_init(&req->result.diffs);
-//		folio_batch_reinit(&req->result.diffs);
+		folio_batch_reinit(&req->result.diffs);
 	}
 
 	return 0;
@@ -1270,7 +1261,7 @@ void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
 			continue;
 		}
 
-		if (need_add_block2(folio)) {
+		if (need_add_block(folio)) {
 			clear_folio_new(folio);
 
 			if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
@@ -1308,8 +1299,7 @@ void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
 		 * Do nothing
 		 */
 	} else {
-		folio_batch_init(&req->result.batch);
-//		folio_batch_reinit(&req->result.batch);
+		folio_batch_reinit(&req->result.batch);
 	}
 }
 

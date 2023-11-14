@@ -26,10 +26,8 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -44,7 +42,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_gc_page_leaks;
 atomic64_t ssdfs_gc_folio_leaks;
 atomic64_t ssdfs_gc_memory_leaks;
 atomic64_t ssdfs_gc_cache_leaks;
@@ -57,10 +54,12 @@ atomic64_t ssdfs_gc_cache_leaks;
  * void *ssdfs_gc_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_gc_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_gc_kfree(void *kaddr)
- * struct page *ssdfs_gc_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_gc_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_gc_free_page(struct page *page)
- * void ssdfs_gc_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_gc_alloc_folio(gfp_t gfp_mask,
+ *                                    unsigned int order)
+ * struct folio *ssdfs_gc_add_batch_folio(struct folio_batch *batch,
+ *                                        unsigned int order)
+ * void ssdfs_gc_free_folio(struct folio *folio)
+ * void ssdfs_gc_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(gc)
@@ -71,7 +70,6 @@ atomic64_t ssdfs_gc_cache_leaks;
 void ssdfs_gc_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_gc_page_leaks, 0);
 	atomic64_set(&ssdfs_gc_folio_leaks, 0);
 	atomic64_set(&ssdfs_gc_memory_leaks, 0);
 	atomic64_set(&ssdfs_gc_cache_leaks, 0);
@@ -81,12 +79,6 @@ void ssdfs_gc_memory_leaks_init(void)
 void ssdfs_gc_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_gc_page_leaks) != 0) {
-		SSDFS_ERR("GC: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_gc_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_gc_folio_leaks) != 0) {
 		SSDFS_ERR("GC: "
 			  "memory leaks include %lld folios\n",
@@ -299,7 +291,7 @@ int __ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
 		goto finish_copy_block;
 	}
 
-	if (fbatch_space(&req->result.batch) == 0) {
+	if (folio_batch_space(&req->result.batch) == 0) {
 		err = -EAGAIN;
 		SSDFS_DBG("request's folio batch is full\n");
 		goto finish_copy_block;
@@ -986,7 +978,7 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 	u64 peb_id;
 	bool is_rq_empty;
 	bool is_fq_empty;
-	bool peb_has_dirty_pages = false;
+	bool peb_has_dirty_folios = false;
 	bool is_blk_bmap_dirty = false;
 	bool dont_touch = false;
 	int i;
@@ -1020,25 +1012,25 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 			return false;
 
 		ssdfs_peb_current_log_lock(pebi);
-		peb_has_dirty_pages = ssdfs_peb_has_dirty_pages(pebi);
+		peb_has_dirty_folios = ssdfs_peb_has_dirty_folios(pebi);
 		peb_id = pebi->peb_id;
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_unlock_current_peb(pebc);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_id %llu, peb_id %llu, refs_count %d, "
-			  "peb_has_dirty_pages %#x, "
+			  "peb_has_dirty_folios %#x, "
 			  "not empty: (read %#x, flush %#x), "
 			  "dont_touch %#x, is_blk_bmap_dirty %#x\n",
 			  si->seg_id, peb_id,
 			  atomic_read(&si->refs_count),
-			  peb_has_dirty_pages,
+			  peb_has_dirty_folios,
 			  !is_rq_empty, !is_fq_empty,
 			  dont_touch, is_blk_bmap_dirty);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (!is_rq_empty || !is_fq_empty ||
-		    peb_has_dirty_pages || is_blk_bmap_dirty)
+		    peb_has_dirty_folios || is_blk_bmap_dirty)
 			return false;
 	}
 

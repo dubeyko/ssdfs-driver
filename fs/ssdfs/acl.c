@@ -31,7 +31,6 @@
 #include "acl.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_acl_page_leaks;
 atomic64_t ssdfs_acl_folio_leaks;
 atomic64_t ssdfs_acl_memory_leaks;
 atomic64_t ssdfs_acl_cache_leaks;
@@ -44,10 +43,11 @@ atomic64_t ssdfs_acl_cache_leaks;
  * void *ssdfs_acl_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_acl_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_acl_kfree(void *kaddr)
- * struct page *ssdfs_acl_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_acl_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_acl_free_page(struct page *page)
- * void ssdfs_acl_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_acl_alloc_foliogfp_t gfp_mask, unsigned int order)
+ * struct folio *ssdfs_acl_add_batch_folio(struct folio_batch *batch,
+ *                                         unsigned int order)
+ * void ssdfs_acl_free_folio(struct folio *folio)
+ * void ssdfs_acl_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(acl)
@@ -58,7 +58,6 @@ atomic64_t ssdfs_acl_cache_leaks;
 void ssdfs_acl_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_acl_page_leaks, 0);
 	atomic64_set(&ssdfs_acl_folio_leaks, 0);
 	atomic64_set(&ssdfs_acl_memory_leaks, 0);
 	atomic64_set(&ssdfs_acl_cache_leaks, 0);
@@ -68,12 +67,6 @@ void ssdfs_acl_memory_leaks_init(void)
 void ssdfs_acl_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_acl_page_leaks) != 0) {
-		SSDFS_ERR("ACL: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_acl_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_acl_folio_leaks) != 0) {
 		SSDFS_ERR("ACL: "
 			  "memory leaks include %lld folios\n",
@@ -204,7 +197,7 @@ end_set_acl:
 	return err;
 }
 
-int ssdfs_set_acl(struct user_namespace *mnt_userns, struct dentry *dentry,
+int ssdfs_set_acl(struct mnt_idmap *idmap, struct dentry *dentry,
 		  struct posix_acl *acl, int type)
 {
 	int update_mode = 0;
@@ -218,7 +211,7 @@ int ssdfs_set_acl(struct user_namespace *mnt_userns, struct dentry *dentry,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (type == ACL_TYPE_ACCESS && acl) {
-		err = posix_acl_update_mode(&init_user_ns, inode, &mode, &acl);
+		err = posix_acl_update_mode(idmap, inode, &mode, &acl);
 		if (err)
 			goto end_set_acl;
 
@@ -229,7 +222,8 @@ int ssdfs_set_acl(struct user_namespace *mnt_userns, struct dentry *dentry,
 	err = __ssdfs_set_acl(inode, acl, type);
 	if (!err && update_mode) {
 		inode->i_mode = mode;
-		inode->i_ctime = current_time(inode);
+
+		inode_set_ctime_to_ts(inode, current_time(inode));
 		mark_inode_dirty(inode);
 	}
 

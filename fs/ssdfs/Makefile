@@ -11,7 +11,7 @@ obj-$(CONFIG_SSDFS)			+= ssdfs.o
 ssdfs-y	:= super.o fs_error.o recovery.o \
 		recovery_fast_search.o recovery_slow_search.o \
 		recovery_thread.o \
-		options.o page_array.o page_vector.o folio_array.o folio_vector.o \
+		options.o folio_array.o folio_vector.o \
 		dynamic_array.o volume_header.o log_footer.o \
 		block_bitmap.o block_bitmap_tables.o \
 		peb_block_bitmap.o segment_block_bitmap.o \

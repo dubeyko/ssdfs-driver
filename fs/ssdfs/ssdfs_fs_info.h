@@ -123,12 +123,11 @@ struct ssdfs_sb_info {
  * @reopen_zone: reopen closed zone
  * @close_zone: close zone
  * @read: read from device
- * @readpage: read page
- * @readpages: read sequence of pages
- * @can_write_page: can we write into page?
- * @writepage: write page to device
- * @write_folio: write folio to device
- * @writepages: write sequence of pages to device
+ * @read_block: read logical block
+ * @read_blocks: read sequence of logical blocks
+ * @can_write_block: can we write into logical block?
+ * @write_block: write logical block to device
+ * @write_blocks: write sequence of logical blocks to device
  * @erase: erase block
  * @trim: support of background erase operation
  * @peb_isbad: check that physical erase block is bad
@@ -142,18 +141,16 @@ struct ssdfs_device_ops {
 	int (*close_zone)(struct super_block *sb, loff_t offset);
 	int (*read)(struct super_block *sb, loff_t offset, size_t len,
 		    void *buf);
-	int (*readpage)(struct super_block *sb, struct page *page,
-			loff_t offset);
-	int (*readpages)(struct super_block *sb, struct pagevec *pvec,
-			 loff_t offset);
-	int (*can_write_page)(struct super_block *sb, loff_t offset,
+	int (*read_block)(struct super_block *sb, struct folio *folio,
+			  loff_t offset);
+	int (*read_blocks)(struct super_block *sb, struct folio_batch *batch,
+			   loff_t offset);
+	int (*can_write_block)(struct super_block *sb, loff_t offset,
 				bool need_check);
-	int (*writepage)(struct super_block *sb, loff_t to_off,
-			 struct page *page, u32 from_off, size_t len);
-	int (*write_folio)(struct super_block *sb, loff_t to_off,
+	int (*write_block)(struct super_block *sb, loff_t offset,
 			   struct folio *folio);
-	int (*writepages)(struct super_block *sb, loff_t to_off,
-			  struct pagevec *pvec, u32 from_off, size_t len);
+	int (*write_blocks)(struct super_block *sb, loff_t offset,
+			    struct folio_batch *batch);
 	int (*erase)(struct super_block *sb, loff_t offset, size_t len);
 	int (*trim)(struct super_block *sb, loff_t offset, size_t len);
 	int (*peb_isbad)(struct super_block *sb, loff_t offset);
@@ -252,7 +249,7 @@ struct ssdfs_snapshot_subsystem {
  * @mtd: MTD info
  * @devops: device access operations
  * @pending_bios: count of pending BIOs (dev_bdev.c ONLY)
- * @erase_page: page with content for erase operation (dev_bdev.c ONLY)
+ * @erase_folio: folio with content for erase operation (dev_bdev.c ONLY)
  * @is_zns_device: file system volume is on ZNS device
  * @zone_size: zone size in bytes
  * @zone_capacity: zone capacity in bytes available for write operations
@@ -362,7 +359,7 @@ struct ssdfs_fs_info {
 	struct mtd_info *mtd;
 	const struct ssdfs_device_ops *devops;
 	atomic_t pending_bios;			/* for dev_bdev.c */
-	struct page *erase_page;		/* for dev_bdev.c */
+	struct folio *erase_folio;		/* for dev_bdev.c */
 
 	bool is_zns_device;
 	u64 zone_size;

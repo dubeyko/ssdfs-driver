@@ -18,10 +18,8 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "segment_bitmap.h"
@@ -541,9 +539,9 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 	sb_seg_log_pages =
 		le16_to_cpu(SSDFS_VH(env->sbi.vh_buf)->sb_seg_log_pages);
 
-	if (!env->fsi->devops->can_write_page) {
+	if (!env->fsi->devops->can_write_block) {
 		SSDFS_CRIT("fail to find latest valid sb info: "
-			   "can_write_page is not supported\n");
+			   "can_write_block is not supported\n");
 		return true;
 	}
 

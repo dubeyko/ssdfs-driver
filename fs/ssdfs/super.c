@@ -32,12 +32,10 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "version.h"
 #include "segment_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -65,15 +63,12 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_allocated_pages;
 atomic64_t ssdfs_allocated_folios;
 atomic64_t ssdfs_memory_leaks;
-atomic64_t ssdfs_super_page_leaks;
 atomic64_t ssdfs_super_folio_leaks;
 atomic64_t ssdfs_super_memory_leaks;
 atomic64_t ssdfs_super_cache_leaks;
 
-atomic64_t ssdfs_locked_pages;
 atomic64_t ssdfs_locked_folios;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
@@ -84,10 +79,12 @@ atomic64_t ssdfs_locked_folios;
  * void *ssdfs_super_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_super_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_super_kfree(void *kaddr)
- * struct page *ssdfs_super_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_super_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_super_free_page(struct page *page)
- * void ssdfs_super_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_super_alloc_folio(gfp_t gfp_mask,
+ *                                       unsigned int order)
+ * struct folio *ssdfs_super_add_batch_folio(struct folio_batch *batch,
+ *                                           unsigned int order)
+ * void ssdfs_super_free_folio(struct folio *folio)
+ * void ssdfs_super_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(super)
@@ -98,7 +95,6 @@ atomic64_t ssdfs_locked_folios;
 void ssdfs_super_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_super_page_leaks, 0);
 	atomic64_set(&ssdfs_super_folio_leaks, 0);
 	atomic64_set(&ssdfs_super_memory_leaks, 0);
 	atomic64_set(&ssdfs_super_cache_leaks, 0);
@@ -108,12 +104,6 @@ void ssdfs_super_memory_leaks_init(void)
 void ssdfs_super_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_super_page_leaks) != 0) {
-		SSDFS_ERR("SUPER: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_super_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_super_folio_leaks) != 0) {
 		SSDFS_ERR("SUPER: "
 			  "memory leaks include %lld folios\n",
@@ -2127,7 +2117,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sb || !last_sb_log);
 	BUG_ON(!SSDFS_FS_I(sb)->devops);
-	BUG_ON(!SSDFS_FS_I(sb)->devops->writepage);
+	BUG_ON(!SSDFS_FS_I(sb)->devops->write_block);
 	BUG_ON((last_sb_log->page_offset + last_sb_log->pages_count) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
 	BUG_ON((last_sb_log->leb_id * SSDFS_FS_I(sb)->pebs_per_seg) >=
@@ -2251,7 +2241,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	SSDFS_DBG("offset %llu\n", offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_folio(sb, offset, folio);
+	err = fsi->devops->write_block(sb, offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
@@ -2300,7 +2290,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		SSDFS_DBG("offset %llu\n", offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = fsi->devops->write_folio(sb, offset, payload_folio);
+		err = fsi->devops->write_block(sb, offset, payload_folio);
 		if (err) {
 			SSDFS_ERR("fail to write maptbl cache page: "
 				  "offset %llu, folio_index %u, size %zu\n",
@@ -2342,7 +2332,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	SSDFS_DBG("offset %llu\n", offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_folio(sb, offset, folio);
+	err = fsi->devops->write_block(sb, offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write log footer: "
 			  "offset %llu, size %zu\n",
@@ -2399,7 +2389,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!sb || !last_sb_log);
 	BUG_ON(!SSDFS_FS_I(sb)->devops);
-	BUG_ON(!SSDFS_FS_I(sb)->devops->writepage);
+	BUG_ON(!SSDFS_FS_I(sb)->devops->write_block);
 	BUG_ON((last_sb_log->page_offset + last_sb_log->pages_count) >
 		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
 	BUG_ON((last_sb_log->leb_id * SSDFS_FS_I(sb)->pebs_per_seg) >=
@@ -2583,7 +2573,7 @@ free_payload_buffer:
 	SSDFS_DBG("offset %llu\n", offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_folio(sb, offset, folio);
+	err = fsi->devops->write_block(sb, offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
@@ -2622,7 +2612,7 @@ free_payload_buffer:
 	SSDFS_DBG("offset %llu\n", offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_folio(sb, offset, folio);
+	err = fsi->devops->write_block(sb, offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write log footer: "
 			  "offset %llu, size %zu\n",
@@ -2783,23 +2773,6 @@ finish_commit_super:
 	return err;
 }
 
-static void ssdfs_memory_page_locks_checker_init(void)
-{
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_locked_pages, 0);
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-}
-
-static void ssdfs_check_memory_page_locks(void)
-{
-#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_locked_pages) != 0) {
-		SSDFS_WARN("Lock keeps %lld memory pages\n",
-			   atomic64_read(&ssdfs_locked_pages));
-	}
-#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-}
-
 static void ssdfs_memory_folio_locks_checker_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -2820,7 +2793,6 @@ static void ssdfs_check_memory_folio_locks(void)
 static void ssdfs_memory_leaks_checker_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_allocated_pages, 0);
 	atomic64_set(&ssdfs_allocated_folios, 0);
 	atomic64_set(&ssdfs_memory_leaks, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
@@ -2882,8 +2854,6 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_blk2off_memory_leaks_init();
 	ssdfs_farray_memory_leaks_init();
 	ssdfs_folio_vector_memory_leaks_init();
-	ssdfs_parray_memory_leaks_init();
-	ssdfs_page_vector_memory_leaks_init();
 	ssdfs_flush_memory_leaks_init();
 	ssdfs_gc_memory_leaks_init();
 	ssdfs_map_queue_memory_leaks_init();
@@ -2968,8 +2938,6 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_blk2off_check_memory_leaks();
 	ssdfs_farray_check_memory_leaks();
 	ssdfs_folio_vector_check_memory_leaks();
-	ssdfs_parray_check_memory_leaks();
-	ssdfs_page_vector_check_memory_leaks();
 	ssdfs_flush_check_memory_leaks();
 	ssdfs_gc_check_memory_leaks();
 	ssdfs_map_queue_check_memory_leaks();
@@ -2996,11 +2964,6 @@ static void ssdfs_check_memory_leaks(void)
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 #ifdef CONFIG_SSDFS_SHOW_CONSUMED_MEMORY
-	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
-		SSDFS_ERR("Memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_allocated_pages));
-	}
-
 	if (atomic64_read(&ssdfs_allocated_folios) != 0) {
 		SSDFS_ERR("Memory leaks include %lld folios\n",
 			  atomic64_read(&ssdfs_allocated_folios));
@@ -3011,14 +2974,9 @@ static void ssdfs_check_memory_leaks(void)
 			  atomic64_read(&ssdfs_memory_leaks));
 	}
 #else
-	if (atomic64_read(&ssdfs_allocated_pages) != 0) {
-		SSDFS_WARN("Memory leaks include %lld pages\n",
-			   atomic64_read(&ssdfs_allocated_pages));
-	}
-
 	if (atomic64_read(&ssdfs_allocated_folios) != 0) {
 		SSDFS_WARN("Memory leaks include %lld folios\n",
-			   atomic64_read(&ssdfs_allocated_pages));
+			   atomic64_read(&ssdfs_allocated_folios));
 	}
 
 	if (atomic64_read(&ssdfs_memory_leaks) != 0) {
@@ -3054,13 +3012,16 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		  sizeof(struct ssdfs_log_footer));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_memory_page_locks_checker_init();
 	ssdfs_memory_folio_locks_checker_init();
 	ssdfs_memory_leaks_checker_init();
 
 	fs_info = ssdfs_super_kzalloc(sizeof(*fs_info), GFP_KERNEL);
 	if (!fs_info)
 		return -ENOMEM;
+
+	/* set initial block size value for valid log search */
+	fs_info->log_pagesize = ilog2(SSDFS_4KB);
+	fs_info->pagesize = SSDFS_4KB;
 
 #ifdef CONFIG_SSDFS_TESTING
 	fs_info->do_fork_invalidation = true;
@@ -3110,14 +3071,15 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_bdi = bdi_get(sb->s_bdev->bd_disk->bdi);
 	atomic_set(&fs_info->pending_bios, 0);
-	fs_info->erase_page = ssdfs_super_alloc_page(GFP_KERNEL);
-	if (IS_ERR_OR_NULL(fs_info->erase_page)) {
-		err = (fs_info->erase_page == NULL ?
-				-ENOMEM : PTR_ERR(fs_info->erase_page));
-		SSDFS_ERR("unable to allocate memory page\n");
-		goto free_erase_page;
+	fs_info->erase_folio = ssdfs_super_alloc_folio(GFP_KERNEL,
+							get_order(PAGE_SIZE));
+	if (IS_ERR_OR_NULL(fs_info->erase_folio)) {
+		err = (fs_info->erase_folio == NULL ?
+				-ENOMEM : PTR_ERR(fs_info->erase_folio));
+		SSDFS_ERR("unable to allocate memory folio\n");
+		goto free_erase_folio;
 	}
-	memset(page_address(fs_info->erase_page), 0xFF, PAGE_SIZE);
+	memset(folio_address(fs_info->erase_folio), 0xFF, PAGE_SIZE);
 #else
 	BUILD_BUG();
 #endif
@@ -3142,7 +3104,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	err = ssdfs_parse_options(fs_info, data);
 	if (err)
-		goto free_erase_page;
+		goto free_erase_folio;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("gather superblock info started...\n");
@@ -3152,7 +3114,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	err = ssdfs_gather_superblock_info(fs_info, silent);
 	if (err)
-		goto free_erase_page;
+		goto free_erase_folio;
 
 	spin_lock(&fs_info->volume_state_lock);
 	fs_feature_compat = fs_info->fs_feature_compat;
@@ -3525,9 +3487,9 @@ destroy_sysfs_device_group:
 release_maptbl_cache:
 	ssdfs_maptbl_cache_destroy(&fs_info->maptbl_cache);
 
-free_erase_page:
-	if (fs_info->erase_page)
-		ssdfs_super_free_page(fs_info->erase_page);
+free_erase_folio:
+	if (fs_info->erase_folio)
+		ssdfs_super_free_folio(fs_info->erase_folio);
 
 	ssdfs_destruct_sb_info(&fs_info->sbi);
 	ssdfs_destruct_sb_info(&fs_info->sbi_backup);
@@ -3538,7 +3500,6 @@ free_erase_page:
 
 	rcu_barrier();
 
-	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();
 	return err;
@@ -3914,8 +3875,8 @@ static void ssdfs_put_super(struct super_block *sb)
 	ssdfs_current_segment_array_destroy(fsi);
 	ssdfs_sysfs_delete_device_group(fsi);
 
-	if (fsi->erase_page)
-		ssdfs_super_free_page(fsi->erase_page);
+	if (fsi->erase_folio)
+		ssdfs_super_free_folio(fsi->erase_folio);
 
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
@@ -3928,7 +3889,6 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_INFO("%s has been unmounted from device %s\n",
 		   SSDFS_VERSION, fsi->devops->device_name(sb));
 
-	ssdfs_check_memory_page_locks();
 	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();
 

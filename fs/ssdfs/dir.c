@@ -32,7 +32,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_dir_page_leaks;
 atomic64_t ssdfs_dir_folio_leaks;
 atomic64_t ssdfs_dir_memory_leaks;
 atomic64_t ssdfs_dir_cache_leaks;
@@ -45,10 +44,12 @@ atomic64_t ssdfs_dir_cache_leaks;
  * void *ssdfs_dir_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_dir_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_dir_kfree(void *kaddr)
- * struct page *ssdfs_dir_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_dir_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_dir_free_page(struct page *page)
- * void ssdfs_dir_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_dir_alloc_folio(gfp_t gfp_mask,
+ *                                     unsigned int order)
+ * struct folio *ssdfs_dir_add_batch_folio(struct folio_batch *batch,
+ *                                         unsigned int order)
+ * void ssdfs_dir_free_folio(struct folio *folio)
+ * void ssdfs_dir_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dir)
@@ -59,7 +60,6 @@ atomic64_t ssdfs_dir_cache_leaks;
 void ssdfs_dir_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_dir_page_leaks, 0);
 	atomic64_set(&ssdfs_dir_folio_leaks, 0);
 	atomic64_set(&ssdfs_dir_memory_leaks, 0);
 	atomic64_set(&ssdfs_dir_cache_leaks, 0);
@@ -69,12 +69,6 @@ void ssdfs_dir_memory_leaks_init(void)
 void ssdfs_dir_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_dir_page_leaks) != 0) {
-		SSDFS_ERR("DIR: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_dir_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_dir_folio_leaks) != 0) {
 		SSDFS_ERR("DIR: "
 			  "memory leaks include %lld folios\n",
@@ -274,6 +268,7 @@ static int ssdfs_add_link(struct inode *dir, struct dentry *dentry,
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct ssdfs_btree_search *search;
 	int private_flags;
+	struct timespec64 cur_time;
 	bool is_locked_outside = false;
 	int err = 0;
 
@@ -348,7 +343,9 @@ finish_create_dentries_tree:
 			  "ino %lu, err %d\n",
 			  inode->i_ino, err);
 	} else {
-		dir->i_mtime = dir->i_ctime = current_time(dir);
+		cur_time = current_time(dir);
+		inode_set_mtime_to_ts(dir, cur_time);
+		inode_set_ctime_to_ts(dir, cur_time);
 		mark_inode_dirty(dir);
 	}
 
@@ -390,7 +387,7 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
  * The ssdfs_create() is called by the open(2) and
  * creat(2) system calls.
  */
-int ssdfs_create(struct user_namespace *mnt_userns,
+int ssdfs_create(struct mnt_idmap *idmap,
 		 struct inode *dir, struct dentry *dentry,
 		 umode_t mode, bool excl)
 {
@@ -401,7 +398,7 @@ int ssdfs_create(struct user_namespace *mnt_userns,
 	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode = ssdfs_new_inode(dir, mode, &dentry->d_name);
+	inode = ssdfs_new_inode(idmap, dir, mode, &dentry->d_name);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto failed_create;
@@ -419,7 +416,7 @@ failed_create:
  * to create a device (char, block) inode or a named pipe
  * (FIFO) or socket.
  */
-static int ssdfs_mknod(struct user_namespace *mnt_userns,
+static int ssdfs_mknod(struct mnt_idmap *idmap,
 			struct inode *dir, struct dentry *dentry,
 			umode_t mode, dev_t rdev)
 {
@@ -433,7 +430,7 @@ static int ssdfs_mknod(struct user_namespace *mnt_userns,
 	if (dentry->d_name.len > SSDFS_MAX_NAME_LEN)
 		return -ENAMETOOLONG;
 
-	inode = ssdfs_new_inode(dir, mode, &dentry->d_name);
+	inode = ssdfs_new_inode(idmap, dir, mode, &dentry->d_name);
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
 
@@ -447,7 +444,7 @@ static int ssdfs_mknod(struct user_namespace *mnt_userns,
  * Create symlink.
  * The ssdfs_symlink() is called by the symlink(2) system call.
  */
-static int ssdfs_symlink(struct user_namespace *mnt_userns,
+static int ssdfs_symlink(struct mnt_idmap *idmap,
 			 struct inode *dir, struct dentry *dentry,
 			 const char *target)
 {
@@ -480,7 +477,7 @@ static int ssdfs_symlink(struct user_namespace *mnt_userns,
 
 	inline_len = raw_inode_size - inline_len;
 
-	inode = ssdfs_new_inode(dir, S_IFLNK | S_IRWXUGO, &dentry->d_name);
+	inode = ssdfs_new_inode(idmap, dir, S_IFLNK | S_IRWXUGO, &dentry->d_name);
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
 
@@ -532,7 +529,7 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 	if (!S_ISREG(inode->i_mode))
 		return -EPERM;
 
-	inode->i_ctime = current_time(inode);
+	inode_set_ctime_to_ts(inode, current_time(inode));
 	inode_inc_link_count(inode);
 	ihold(inode);
 
@@ -646,7 +643,7 @@ finish_make_empty_dir:
  * Create subdirectory.
  * The ssdfs_mkdir() is called by the mkdir(2) system call.
  */
-static int ssdfs_mkdir(struct user_namespace *mnt_userns,
+static int ssdfs_mkdir(struct mnt_idmap *idmap,
 			struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
@@ -662,7 +659,7 @@ static int ssdfs_mkdir(struct user_namespace *mnt_userns,
 
 	inode_inc_link_count(dir);
 
-	inode = ssdfs_new_inode(dir, S_IFDIR | mode, &dentry->d_name);
+	inode = ssdfs_new_inode(idmap, dir, S_IFDIR | mode, &dentry->d_name);
 	err = PTR_ERR(inode);
 	if (IS_ERR(inode))
 		goto out_dir;
@@ -702,6 +699,7 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct ssdfs_btree_search *search;
 	int private_flags;
 	u64 name_hash;
+	struct timespec64 cur_time;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -766,7 +764,12 @@ finish_delete_dentry:
 
 	mark_inode_dirty(dir);
 	mark_inode_dirty(inode);
-	inode->i_ctime = dir->i_ctime = dir->i_mtime = current_time(dir);
+
+	cur_time = current_time(dir);
+	inode_set_ctime_to_ts(inode, cur_time);
+	inode_set_mtime_to_ts(dir, cur_time);
+	inode_set_ctime_to_ts(dir, cur_time);
+
 	inode_dec_link_count(inode);
 
 finish_unlink:
@@ -1052,7 +1055,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 	 * rename.
 	 */
 	time = current_time(old_dir);
-	old_inode->i_ctime = time;
+	inode_set_ctime_to_ts(old_inode, time);
 	mark_inode_dirty(old_inode);
 
 	/* We must adjust parent link count when renaming directories */
@@ -1080,8 +1083,10 @@ static int ssdfs_rename_target(struct inode *old_dir,
 		}
 	}
 
-	old_dir->i_mtime = old_dir->i_ctime = time;
-	new_dir->i_mtime = new_dir->i_ctime = time;
+	inode_set_mtime_to_ts(old_dir, time);
+	inode_set_ctime_to_ts(old_dir, time);
+	inode_set_mtime_to_ts(new_dir, time);
+	inode_set_ctime_to_ts(new_dir, time);
 
 	/*
 	 * And finally, if we unlinked a direntry which happened to have the
@@ -1098,7 +1103,7 @@ static int ssdfs_rename_target(struct inode *old_dir,
 			mark_inode_dirty(new_inode);
 		} else
 			inode_dec_link_count(new_inode);
-		new_inode->i_ctime = time;
+		inode_set_ctime_to_ts(new_inode, time);
 	}
 
 finish_target_rename:
@@ -1259,10 +1264,12 @@ static int ssdfs_cross_rename(struct inode *old_dir,
 	new_ii->parent_ino = old_dir->i_ino;
 
 	time = current_time(old_dir);
-	old_inode->i_ctime = time;
-	new_inode->i_ctime = time;
-	old_dir->i_mtime = old_dir->i_ctime = time;
-	new_dir->i_mtime = new_dir->i_ctime = time;
+	inode_set_ctime_to_ts(old_inode, time);
+	inode_set_ctime_to_ts(new_inode, time);
+	inode_set_mtime_to_ts(old_dir, time);
+	inode_set_ctime_to_ts(old_dir, time);
+	inode_set_mtime_to_ts(new_dir, time);
+	inode_set_ctime_to_ts(new_dir, time);
 
 	if (old_dir != new_dir) {
 		if (S_ISDIR(old_inode->i_mode) &&
@@ -1293,7 +1300,7 @@ out:
  * to rename the object to have the parent and name given by
  * the second inode and dentry.
  */
-static int ssdfs_rename(struct user_namespace *mnt_userns,
+static int ssdfs_rename(struct mnt_idmap *idmap,
 			struct inode *old_dir, struct dentry *old_dentry,
 			struct inode *new_dir, struct dentry *new_dentry,
 			unsigned int flags)

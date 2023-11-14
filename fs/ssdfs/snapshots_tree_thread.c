@@ -27,7 +27,6 @@
 #include "shared_dictionary.h"
 #include "dentries_tree.h"
 #include "snapshot.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb_mapping_table.h"
 #include "snapshots_tree.h"

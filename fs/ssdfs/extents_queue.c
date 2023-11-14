@@ -24,11 +24,9 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -43,7 +41,6 @@
 #include "xattr_tree.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_ext_queue_page_leaks;
 atomic64_t ssdfs_ext_queue_folio_leaks;
 atomic64_t ssdfs_ext_queue_memory_leaks;
 atomic64_t ssdfs_ext_queue_cache_leaks;
@@ -56,10 +53,12 @@ atomic64_t ssdfs_ext_queue_cache_leaks;
  * void *ssdfs_ext_queue_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_ext_queue_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_ext_queue_kfree(void *kaddr)
- * struct page *ssdfs_ext_queue_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_ext_queue_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_ext_queue_free_page(struct page *page)
- * void ssdfs_ext_queue_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_ext_queue_alloc_folio(gfp_t gfp_mask,
+ *                                           unsigned int order)
+ * struct folio *ssdfs_ext_queue_add_batch_folio(struct folio_batch *batch,
+ *                                               unsigned int order)
+ * void ssdfs_ext_queue_free_folio(struct folio *folio)
+ * void ssdfs_ext_queue_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(ext_queue)
@@ -70,7 +69,6 @@ atomic64_t ssdfs_ext_queue_cache_leaks;
 void ssdfs_ext_queue_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_ext_queue_page_leaks, 0);
 	atomic64_set(&ssdfs_ext_queue_folio_leaks, 0);
 	atomic64_set(&ssdfs_ext_queue_memory_leaks, 0);
 	atomic64_set(&ssdfs_ext_queue_cache_leaks, 0);
@@ -80,12 +78,6 @@ void ssdfs_ext_queue_memory_leaks_init(void)
 void ssdfs_ext_queue_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_ext_queue_page_leaks) != 0) {
-		SSDFS_ERR("EXTENTS QUEUE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_ext_queue_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_ext_queue_folio_leaks) != 0) {
 		SSDFS_ERR("EXTENTS QUEUE: "
 			  "memory leaks include %lld folios\n",

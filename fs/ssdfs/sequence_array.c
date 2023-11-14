@@ -18,13 +18,11 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "sequence_array.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_seq_arr_page_leaks;
 atomic64_t ssdfs_seq_arr_folio_leaks;
 atomic64_t ssdfs_seq_arr_memory_leaks;
 atomic64_t ssdfs_seq_arr_cache_leaks;
@@ -37,10 +35,12 @@ atomic64_t ssdfs_seq_arr_cache_leaks;
  * void *ssdfs_seq_arr_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_seq_arr_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_seq_arr_kfree(void *kaddr)
- * struct page *ssdfs_seq_arr_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_seq_arr_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_seq_arr_free_page(struct page *page)
- * void ssdfs_seq_arr_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_seq_arr_alloc_folio(gfp_t gfp_mask,
+ *                                         unsigned int order)
+ * struct folio *ssdfs_seq_arr_add_batch_folio(struct folio_batch *batch,
+ *                                             unsigned int order)
+ * void ssdfs_seq_arr_free_folio(struct folio *folio)
+ * void ssdfs_seq_arr_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seq_arr)
@@ -51,7 +51,6 @@ atomic64_t ssdfs_seq_arr_cache_leaks;
 void ssdfs_seq_arr_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_seq_arr_page_leaks, 0);
 	atomic64_set(&ssdfs_seq_arr_folio_leaks, 0);
 	atomic64_set(&ssdfs_seq_arr_memory_leaks, 0);
 	atomic64_set(&ssdfs_seq_arr_cache_leaks, 0);
@@ -61,12 +60,6 @@ void ssdfs_seq_arr_memory_leaks_init(void)
 void ssdfs_seq_arr_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_seq_arr_page_leaks) != 0) {
-		SSDFS_ERR("SEQUENCE ARRAY: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_seq_arr_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_seq_arr_folio_leaks) != 0) {
 		SSDFS_ERR("SEQUENCE ARRAY: "
 			  "memory leaks include %lld folios\n",

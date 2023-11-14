@@ -28,13 +28,11 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "block_bitmap.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_block_bmap_page_leaks;
 atomic64_t ssdfs_block_bmap_folio_leaks;
 atomic64_t ssdfs_block_bmap_memory_leaks;
 atomic64_t ssdfs_block_bmap_cache_leaks;
@@ -47,10 +45,12 @@ atomic64_t ssdfs_block_bmap_cache_leaks;
  * void *ssdfs_block_bmap_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_block_bmap_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_block_bmap_kfree(void *kaddr)
- * struct page *ssdfs_block_bmap_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_block_bmap_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_block_bmap_free_page(struct page *page)
- * void ssdfs_block_bmap_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_block_bmap_alloc_folio(gfp_t gfp_mask,
+ *                                            unsigned int order)
+ * struct folio *ssdfs_block_bmap_add_batch_folio(struct folio_batch *batch,
+ *                                                unsigned int order)
+ * void ssdfs_block_bmap_free_folio(struct folio *folio)
+ * void ssdfs_block_bmap_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(block_bmap)
@@ -61,7 +61,6 @@ atomic64_t ssdfs_block_bmap_cache_leaks;
 void ssdfs_block_bmap_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_block_bmap_page_leaks, 0);
 	atomic64_set(&ssdfs_block_bmap_folio_leaks, 0);
 	atomic64_set(&ssdfs_block_bmap_memory_leaks, 0);
 	atomic64_set(&ssdfs_block_bmap_cache_leaks, 0);
@@ -71,12 +70,6 @@ void ssdfs_block_bmap_memory_leaks_init(void)
 void ssdfs_block_bmap_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_block_bmap_page_leaks) != 0) {
-		SSDFS_ERR("BLOCK BMAP: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_block_bmap_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_block_bmap_folio_leaks) != 0) {
 		SSDFS_ERR("BLOCK BMAP: "
 			  "memory leaks include %lld folios\n",
@@ -985,7 +978,7 @@ finish_define_last_free_page:
  * @blk_bmap: pointer on block bitmap
  * @snapshot: folio vector with snapshot of block bitmap state [out]
  *
- * This function copies pages of block bitmap's styorage into
+ * This function copies folios of block bitmap's storage into
  * @snapshot folio vector.
  *
  * RETURN:
@@ -1122,7 +1115,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 }
 
 /*
- * ssdfs_block_bmap_snapshot() - make snapshot of block bitmap's pagevec
+ * ssdfs_block_bmap_snapshot() - make snapshot of block bitmap's folio vector
  * @blk_bmap: pointer on block bitmap
  * @snapshot: folio vector with snapshot of block bitmap state [out]
  * @last_free_blk: pointer on last free page value [out]
@@ -1130,8 +1123,8 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
  * @invalid_blks: pointer on invalid blocks count [out]
  * @bytes_count: size of block bitmap in bytes [out]
  *
- * This function copy pages of block bitmap's pagevec into
- * @snapshot pagevec.
+ * This function copy folios of block bitmap's folio vector into
+ * @snapshot folio vector.
  *
  * RETURN:
  * [success] - @snapshot contains copy of block bitmap's state

@@ -35,7 +35,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_dev_mtd_page_leaks;
 atomic64_t ssdfs_dev_mtd_folio_leaks;
 atomic64_t ssdfs_dev_mtd_memory_leaks;
 atomic64_t ssdfs_dev_mtd_cache_leaks;
@@ -48,10 +47,12 @@ atomic64_t ssdfs_dev_mtd_cache_leaks;
  * void *ssdfs_dev_mtd_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_dev_mtd_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_dev_mtd_kfree(void *kaddr)
- * struct page *ssdfs_dev_mtd_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_dev_mtd_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_dev_mtd_free_page(struct page *page)
- * void ssdfs_dev_mtd_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_dev_mtd_alloc_folio(gfp_t gfp_mask,
+ *                                         unsigned int order)
+ * struct folio *ssdfs_dev_mtd_add_batch_folio(struct folio_batch *batch,
+ *                                             unsigned int order)
+ * void ssdfs_dev_mtd_free_folio(struct folio *folio)
+ * void ssdfs_dev_mtd_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dev_mtd)
@@ -62,7 +63,6 @@ atomic64_t ssdfs_dev_mtd_cache_leaks;
 void ssdfs_dev_mtd_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_dev_mtd_page_leaks, 0);
 	atomic64_set(&ssdfs_dev_mtd_folio_leaks, 0);
 	atomic64_set(&ssdfs_dev_mtd_memory_leaks, 0);
 	atomic64_set(&ssdfs_dev_mtd_cache_leaks, 0);
@@ -72,12 +72,6 @@ void ssdfs_dev_mtd_memory_leaks_init(void)
 void ssdfs_dev_mtd_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_dev_mtd_page_leaks) != 0) {
-		SSDFS_ERR("MTD DEV: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_dev_mtd_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_dev_mtd_folio_leaks) != 0) {
 		SSDFS_ERR("MTD DEV: "
 			  "memory leaks include %lld folios\n",
@@ -153,6 +147,7 @@ static int ssdfs_mtd_read(struct super_block *sb, loff_t offset, size_t len,
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct mtd_info *mtd = fsi->mtd;
+	loff_t folio_index;
 	size_t retlen;
 	int ret;
 
@@ -160,6 +155,9 @@ static int ssdfs_mtd_read(struct super_block *sb, loff_t offset, size_t len,
 	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
 		  sb, (unsigned long long)offset, len, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	folio_index = offset >> fsi->log_pagesize;
+	offset = folio_index << fsi->log_pagesize;
 
 	ret = mtd_read(mtd, offset, len, &retlen, buf);
 	if (ret) {
@@ -177,13 +175,13 @@ static int ssdfs_mtd_read(struct super_block *sb, loff_t offset, size_t len,
 }
 
 /*
- * ssdfs_mtd_readpage() - read page from the volume
+ * ssdfs_mtd_read_block() - read block from the volume
  * @sb: superblock object
- * @page: memory page
+ * @folio: memory folio
  * @offset: offset in bytes from partition's begin
  *
  * This function tries to read data on @offset
- * from partition's begin in memory page.
+ * from partition's begin in memory folio.
  *
  * RETURN:
  * [success]
@@ -191,46 +189,57 @@ static int ssdfs_mtd_read(struct super_block *sb, loff_t offset, size_t len,
  *
  * %-EIO         - I/O error.
  */
-static int ssdfs_mtd_readpage(struct super_block *sb, struct page *page,
+static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 				loff_t offset)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	void *kaddr;
+	u32 processed_bytes = 0;
+	int i = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, page %p, page_index %llu\n",
-		  sb, (unsigned long long)offset, page,
-		  (unsigned long long)page_index(page));
+	SSDFS_DBG("sb %p, offset %llu, folio %p, folio_index %llu\n",
+		  sb, (unsigned long long)offset, folio,
+		  (unsigned long long)folio_index(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_page(page);
-	err = ssdfs_mtd_read(sb, offset, PAGE_SIZE, kaddr);
-	flush_dcache_page(page);
-	kunmap_local(kaddr);
+	while (processed_bytes < folio_size(folio)) {
+		kaddr = kmap_local_folio(folio, i);
+		err = ssdfs_mtd_read(sb, offset + processed_bytes,
+				     PAGE_SIZE, kaddr);
+		kunmap_local(kaddr);
 
-	if (err) {
-		ClearPageUptodate(page);
-		ssdfs_clear_page_private(page, 0);
-		SetPageError(page);
-	} else {
-		SetPageUptodate(page);
-		ClearPageError(page);
-		flush_dcache_page(page);
+		if (err) {
+			folio_clear_uptodate(folio);
+			ssdfs_clear_folio_private(folio, 0);
+			folio_set_error(folio);
+			break;
+		}
+
+		i++;
+		processed_bytes += PAGE_SIZE;
+	};
+
+	if (!err) {
+		folio_mark_uptodate(folio);
+		folio_clear_error(folio);
+		flush_dcache_folio(folio);
 	}
 
-	ssdfs_unlock_page(page);
+	ssdfs_folio_unlock(folio);
 
 	return err;
 }
 
 /*
- * ssdfs_mtd_readpages() - read pages from the volume
+ * ssdfs_mtd_read_blocks() - read logical blocks from the volume
  * @sb: superblock object
- * @pvec: vector of memory pages
+ * @batch: memory folios batch
  * @offset: offset in bytes from partition's begin
  *
  * This function tries to read data on @offset
- * from partition's begin in memory pages.
+ * from partition's begin in memory folios.
  *
  * RETURN:
  * [success]
@@ -238,56 +247,53 @@ static int ssdfs_mtd_readpage(struct super_block *sb, struct page *page,
  *
  * %-EIO         - I/O error.
  */
-static int ssdfs_mtd_readpages(struct super_block *sb, struct pagevec *pvec,
-				loff_t offset)
+static int ssdfs_mtd_read_blocks(struct super_block *sb,
+				 struct folio_batch *batch,
+				 loff_t offset)
 {
-	struct page *page;
+	struct folio *folio;
 	loff_t cur_offset = offset;
-	u32 page_off;
-	u32 read_bytes = 0;
 	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, pvec %p\n",
-		  sb, (unsigned long long)offset, pvec);
+	SSDFS_DBG("sb %p, offset %llu, batch %p\n",
+		  sb, (unsigned long long)offset, batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (pagevec_count(pvec) == 0) {
-		SSDFS_WARN("empty page vector\n");
+	if (folio_batch_count(batch) == 0) {
+		SSDFS_WARN("empty folio batch\n");
 		return 0;
 	}
 
-	for (i = 0; i < pagevec_count(pvec); i++) {
-		page = pvec->pages[i];
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		folio = batch->folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_mtd_readpage(sb, page, cur_offset);
+		err = ssdfs_mtd_read_block(sb, folio, cur_offset);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to read page: "
+			SSDFS_ERR("fail to read block: "
 				  "cur_offset %llu, err %d\n",
 				  cur_offset, err);
 			return err;
 		}
 
-		div_u64_rem(cur_offset, PAGE_SIZE, &page_off);
-		read_bytes = PAGE_SIZE - page_off;
-		cur_offset += read_bytes;
+		cur_offset += folio_size(folio);
 	}
 
 	return 0;
 }
 
 /*
- * ssdfs_mtd_can_write_page() - check that page can be written
+ * ssdfs_mtd_can_write_block() - check that logical block can be written
  * @sb: superblock object
  * @offset: offset in bytes from partition's begin
  * @need_check: make check or not?
  *
- * This function checks that page can be written.
+ * This function checks that logical block can be written.
  *
  * RETURN:
  * [success]
@@ -297,8 +303,8 @@ static int ssdfs_mtd_readpages(struct super_block *sb, struct pagevec *pvec,
  * %-ENOMEM      - fail to allocate memory.
  * %-EIO         - I/O error.
  */
-static int ssdfs_mtd_can_write_page(struct super_block *sb, loff_t offset,
-				    bool need_check)
+static int ssdfs_mtd_can_write_block(struct super_block *sb, loff_t offset,
+				     bool need_check)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	void *buf;
@@ -334,93 +340,13 @@ free_buf:
 }
 
 /*
- * ssdfs_mtd_writepage() - write memory page on volume
+ * ssdfs_mtd_write_block() - write logical block to volume
  * @sb: superblock object
- * @to_off: offset in bytes from partition's begin
- * @page: memory page
- * @from_off: offset in bytes from page's begin
- * @len: size of data in bytes
- *
- * This function tries to write from @page data of @len size
- * on @offset from partition's begin in memory page.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EROFS       - file system in RO mode.
- * %-EIO         - I/O error.
- */
-static int ssdfs_mtd_writepage(struct super_block *sb, loff_t to_off,
-				struct page *page, u32 from_off, size_t len)
-{
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	struct mtd_info *mtd = fsi->mtd;
-	size_t retlen;
-	unsigned char *kaddr;
-	int ret;
-#ifdef CONFIG_SSDFS_DEBUG
-	u32 remainder;
-#endif /* CONFIG_SSDFS_DEBUG */
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, to_off %llu, page %p, from_off %u, len %zu\n",
-		  sb, to_off, page, from_off, len);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (sb->s_flags & SB_RDONLY) {
-		SSDFS_WARN("unable to write on RO file system\n");
-		return -EROFS;
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!page);
-	BUG_ON((to_off >= mtd->size) || (len > (mtd->size - to_off)));
-	BUG_ON(len == 0);
-	div_u64_rem((u64)to_off, (u64)fsi->pagesize, &remainder);
-	BUG_ON(remainder);
-	BUG_ON((from_off + len) > PAGE_SIZE);
-	BUG_ON(!PageDirty(page));
-	BUG_ON(PageLocked(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	ssdfs_lock_page(page);
-	kaddr = kmap_local_page(page);
-	ret = mtd_write(mtd, to_off, len, &retlen, kaddr + from_off);
-	kunmap_local(kaddr);
-
-	if (ret || (retlen != len)) {
-		SetPageError(page);
-		SSDFS_ERR("failed to write (err %d): offset %llu, "
-			  "len %zu, retlen %zu\n",
-			  ret, (unsigned long long)to_off, len, retlen);
-		err = -EIO;
-	} else {
-		ssdfs_clear_dirty_page(page);
-		SetPageUptodate(page);
-		ClearPageError(page);
-	}
-
-	ssdfs_unlock_page(page);
-	ssdfs_put_page(page);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page %p, count %d\n",
-		  page, page_ref_count(page));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
-}
-
-/*
- * ssdfs_mtd_write_folio() - write memory folio on volume
- * @sb: superblock object
- * @offset: offset in bytes from partition's begin
+ * @offset: offset in bytes from partition's beginning
  * @folio: memory folio
  *
  * This function tries to write from @folio data
- * on @offset from partition's begin.
+ * on @offset from partition's beginning.
  *
  * RETURN:
  * [success]
@@ -504,15 +430,13 @@ static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
 }
 
 /*
- * ssdfs_mtd_writepages() - write memory pages on volume
+ * ssdfs_mtd_write_blocks() - write logical blocks to volume
  * @sb: superblock object
- * @to_off: offset in bytes from partition's begin
- * @pvec: vector of memory pages
- * @from_off: offset in bytes from page's begin
- * @len: size of data in bytes
+ * @offset: offset in bytes from partition's beginning
+ * @batch: memory folios batch
  *
- * This function tries to write from @pvec data of @len size
- * on @offset from partition's begin in memory page.
+ * This function tries to write from @batch data
+ * to @offset from partition's beginning.
  *
  * RETURN:
  * [success]
@@ -521,14 +445,11 @@ static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
  * %-EROFS       - file system in RO mode.
  * %-EIO         - I/O error.
  */
-static int ssdfs_mtd_writepages(struct super_block *sb, loff_t to_off,
-				struct pagevec *pvec, u32 from_off, size_t len)
+static int ssdfs_mtd_write_blocks(struct super_block *sb, loff_t offset,
+				  struct folio_batch *batch)
 {
-	struct page *page;
-	loff_t cur_to_off = to_off;
-	u32 page_off = from_off;
-	u32 written_bytes = 0;
-	size_t write_len;
+	struct folio *folio;
+	loff_t cur_offset = offset;
 	int i;
 	int err;
 
@@ -542,39 +463,27 @@ static int ssdfs_mtd_writepages(struct super_block *sb, loff_t to_off,
 		return -EROFS;
 	}
 
-	if (pagevec_count(pvec) == 0) {
-		SSDFS_WARN("empty page vector\n");
+	if (folio_batch_count(batch) == 0) {
+		SSDFS_WARN("empty folio batch\n");
 		return 0;
 	}
 
-	for (i = 0; i < pagevec_count(pvec); i++) {
-		page = pvec->pages[i];
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		folio = batch->folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!page);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (written_bytes >= len) {
-			SSDFS_ERR("written_bytes %u >= len %zu\n",
-				  written_bytes, len);
-			return -ERANGE;
-		}
-
-		write_len = min_t(size_t, (size_t)(PAGE_SIZE - page_off),
-					  (size_t)(len - written_bytes));
-
-		err = ssdfs_mtd_writepage(sb, cur_to_off, page, page_off, write_len);
+		err = ssdfs_mtd_write_block(sb, cur_offset, folio);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to write page: "
-				  "cur_to_off %llu, page_off %u, "
-				  "write_len %zu, err %d\n",
-				  cur_to_off, page_off, write_len, err);
+			SSDFS_ERR("fail to write block: "
+				  "cur_offset %llu, err %d\n",
+				  cur_offset, err);
 			return err;
 		}
 
-		div_u64_rem(cur_to_off, PAGE_SIZE, &page_off);
-		written_bytes += write_len;
-		cur_to_off += write_len;
+		cur_offset += folio_size(folio);
 	}
 
 	return 0;
@@ -727,12 +636,11 @@ const struct ssdfs_device_ops ssdfs_mtd_devops = {
 	.reopen_zone		= ssdfs_mtd_reopen_zone,
 	.close_zone		= ssdfs_mtd_close_zone,
 	.read			= ssdfs_mtd_read,
-	.readpage		= ssdfs_mtd_readpage,
-	.readpages		= ssdfs_mtd_readpages,
-	.can_write_page		= ssdfs_mtd_can_write_page,
-	.writepage		= ssdfs_mtd_writepage,
-	.write_folio		= ssdfs_mtd_write_folio,
-	.writepages		= ssdfs_mtd_writepages,
+	.read_block		= ssdfs_mtd_read_block,
+	.read_blocks		= ssdfs_mtd_read_blocks,
+	.can_write_block	= ssdfs_mtd_can_write_block,
+	.write_block		= ssdfs_mtd_write_block,
+	.write_blocks		= ssdfs_mtd_write_blocks,
 	.erase			= ssdfs_mtd_erase,
 	.trim			= ssdfs_mtd_trim,
 	.peb_isbad		= ssdfs_mtd_peb_isbad,

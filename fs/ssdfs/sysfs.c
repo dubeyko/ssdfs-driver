@@ -18,10 +18,8 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -88,7 +86,7 @@ static ssize_t ssdfs_peb_log_pages_show(struct ssdfs_peb_attr *attr,
 					struct ssdfs_peb_container *pebc,
 					char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n", pebc->log_pages);
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebc->log_blocks);
 }
 
 static ssize_t ssdfs_peb_valid_pages_show(struct ssdfs_peb_attr *attr,

@@ -30,11 +30,9 @@
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "segment_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -52,7 +50,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_map_tbl_page_leaks;
 atomic64_t ssdfs_map_tbl_folio_leaks;
 atomic64_t ssdfs_map_tbl_memory_leaks;
 atomic64_t ssdfs_map_tbl_cache_leaks;
@@ -65,10 +62,12 @@ atomic64_t ssdfs_map_tbl_cache_leaks;
  * void *ssdfs_map_tbl_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_map_tbl_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_map_tbl_kfree(void *kaddr)
- * struct page *ssdfs_map_tbl_alloc_page(gfp_t gfp_mask)
- * struct page *ssdfs_map_tbl_add_pagevec_page(struct pagevec *pvec)
- * void ssdfs_map_tbl_free_page(struct page *page)
- * void ssdfs_map_tbl_pagevec_release(struct pagevec *pvec)
+ * struct folio *ssdfs_map_tbl_alloc_folio(gfp_t gfp_mask,
+ *                                         unsigned int order)
+ * struct folio *ssdfs_map_tbl_add_batch_folio(struct folio_batch *batch,
+ *                                             unsigned int order)
+ * void ssdfs_map_tbl_free_folio(struct folio *folio)
+ * void ssdfs_map_tbl_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	SSDFS_MEMORY_LEAKS_CHECKER_FNS(map_tbl)
@@ -79,7 +78,6 @@ atomic64_t ssdfs_map_tbl_cache_leaks;
 void ssdfs_map_tbl_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_map_tbl_page_leaks, 0);
 	atomic64_set(&ssdfs_map_tbl_folio_leaks, 0);
 	atomic64_set(&ssdfs_map_tbl_memory_leaks, 0);
 	atomic64_set(&ssdfs_map_tbl_cache_leaks, 0);
@@ -89,12 +87,6 @@ void ssdfs_map_tbl_memory_leaks_init(void)
 void ssdfs_map_tbl_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	if (atomic64_read(&ssdfs_map_tbl_page_leaks) != 0) {
-		SSDFS_ERR("MAPPING TABLE: "
-			  "memory leaks include %lld pages\n",
-			  atomic64_read(&ssdfs_map_tbl_page_leaks));
-	}
-
 	if (atomic64_read(&ssdfs_map_tbl_folio_leaks) != 0) {
 		SSDFS_ERR("MAPPING TABLE: "
 			  "memory leaks include %lld folios\n",
@@ -1667,8 +1659,7 @@ void ssdfs_maptbl_move_fragment_folios(struct ssdfs_segment_request *req,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio_batch_init(&req->result.batch);
-//	folio_batch_reinit(&req->result.batch);
+	folio_batch_reinit(&req->result.batch);
 }
 
 /*
@@ -2516,7 +2507,7 @@ retrive_dirty_folios:
 
 	err = ssdfs_folio_array_lookup_range(&fdesc->array,
 					     &folio_index, end,
-					     SSDFS_DIRTY_PAGE_TAG,
+					     SSDFS_DIRTY_FOLIO_TAG,
 					     tbl->fragment_folios,
 					     &batch);
 	if (unlikely(err)) {
@@ -2715,8 +2706,7 @@ fail_issue_fragment_updates:
 			  (pgoff_t)(tbl->fragment_folios - folio_index));
 		end = folio_index + range_len - 1;
 
-		folio_batch_init(&batch);
-//		folio_batch_reinit(&batch);
+		folio_batch_reinit(&batch);
 		goto retrive_dirty_folios;
 	}
 
@@ -2749,8 +2739,7 @@ finish_fragment_update:
 
 	up_write(&fdesc->lock);
 
-	folio_batch_init(&batch);
-//	folio_batch_reinit(&batch);
+	folio_batch_reinit(&batch);
 
 	return err;
 }

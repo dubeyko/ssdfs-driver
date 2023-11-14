@@ -22,7 +22,6 @@
 #include "ssdfs.h"
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-atomic64_t ssdfs_folio_vector_page_leaks;
 atomic64_t ssdfs_folio_vector_folio_leaks;
 atomic64_t ssdfs_folio_vector_memory_leaks;
 atomic64_t ssdfs_folio_vector_cache_leaks;
@@ -35,11 +34,11 @@ atomic64_t ssdfs_folio_vector_cache_leaks;
  * void *ssdfs_folio_vector_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_folio_vector_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_folio_vector_kfree(void *kaddr)
- * struct folio *ssdfs_folio_vector_folio_alloc(gfp_t gfp_mask,
+ * struct folio *ssdfs_folio_vector_alloc_folio(gfp_t gfp_mask,
  *                                              unsigned int order)
  * struct folio *ssdfs_folio_vector_add_batch_folio(struct folio_batch *batch,
  *                                                  unsigned int order)
- * void ssdfs_folio_vector_folio_free(struct folio *folio)
+ * void ssdfs_folio_vector_free_folio(struct folio *folio)
  * void ssdfs_folio_vector_folio_batch_release(struct folio_batch *batch)
  */
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -51,7 +50,6 @@ atomic64_t ssdfs_folio_vector_cache_leaks;
 void ssdfs_folio_vector_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-	atomic64_set(&ssdfs_folio_vector_page_leaks, 0);
 	atomic64_set(&ssdfs_folio_vector_folio_leaks, 0);
 	atomic64_set(&ssdfs_folio_vector_memory_leaks, 0);
 	atomic64_set(&ssdfs_folio_vector_cache_leaks, 0);
