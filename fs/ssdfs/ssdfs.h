@@ -111,10 +111,10 @@ int ssdfs_bdev_read_block(struct super_block *sb, struct folio *folio,
 			  loff_t offset);
 int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
 			   loff_t offset);
-int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
+int ssdfs_bdev_read(struct super_block *sb, u32 block_size, loff_t offset,
 		    size_t len, void *buf);
-int ssdfs_bdev_can_write_block(struct super_block *sb, loff_t offset,
-			       bool need_check);
+int ssdfs_bdev_can_write_block(struct super_block *sb, u32 block_size,
+				loff_t offset, bool need_check);
 int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 			   struct folio *folio);
 int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
@@ -183,7 +183,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 					   struct ssdfs_log_footer *footer,
 					   u64 dev_size);
 int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
-				    u64 peb_id, u32 bytes_off,
+				    u64 peb_id, u32 block_size, u32 bytes_off,
 				    void *buf, bool silent,
 				    u32 *log_pages);
 int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
@@ -191,8 +191,8 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 			   struct ssdfs_log_footer *footer,
 			   bool silent);
 int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
-				  u64 peb_id, u32 bytes_off, void *buf,
-				  bool silent);
+				  u64 peb_id, u32 block_size, u32 bytes_off,
+				  void *buf, bool silent);
 int ssdfs_prepare_current_segment_ids(struct ssdfs_fs_info *fsi,
 					__le64 *array,
 					size_t size);
@@ -204,6 +204,7 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 						u64 last_log_cno,
 						struct ssdfs_volume_state *vs);
 int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
+					u32 block_size,
 					u32 log_pages,
 					u32 log_flags,
 					u64 last_log_time,
@@ -244,11 +245,11 @@ int ssdfs_read_folio_batch_from_volume(struct ssdfs_fs_info *fsi,
 					u64 peb_id, u32 bytes_offset,
 					struct folio_batch *batch);
 int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
-			      u64 peb_id, u32 bytes_off,
+			      u64 peb_id, u32 block_size, u32 bytes_off,
 			      void *buf, size_t size,
 			      size_t *read_bytes);
 int ssdfs_unaligned_read_buffer(struct ssdfs_fs_info *fsi,
-				u64 peb_id, u32 bytes_off,
+				u64 peb_id, u32 block_size, u32 bytes_off,
 				void *buf, size_t size);
 int ssdfs_can_write_sb_log(struct super_block *sb,
 			   struct ssdfs_peb_extent *sb_log);
@@ -310,7 +311,8 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_header *hdr,
 				bool silent);
 int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
-					u64 peb_id, u32 pages_off,
+					u64 peb_id, u32 block_size,
+					u32 pages_off,
 					void *buf, bool silent);
 int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_partial_log_header *hdr,

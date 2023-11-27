@@ -11,6 +11,11 @@
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
  */
 
+#include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/highmem.h>
+#include <linux/pagemap.h>
 #include <linux/pagevec.h>
 
 #include "peb_mapping_queue.h"
@@ -628,7 +633,7 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 				for (j = 0; j < mem_pages_per_block; j++) {
 					content_kaddr =
 						kmap_local_folio(content_folio,
-								 j);
+								 j * PAGE_SIZE);
 					SSDFS_DBG("PAGE DUMP: folio_index %d, "
 						  "page_index %d\n",
 						  i, j);
@@ -743,7 +748,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 			continue;
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
 				  i, j);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
@@ -767,7 +772,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 		WARN_ON(!folio_test_locked(folio));
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("DIFF DUMP: folio_index %d, page_index %d\n",
 				  i, j);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
@@ -805,7 +810,7 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 			continue;
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
 				  i, j);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,

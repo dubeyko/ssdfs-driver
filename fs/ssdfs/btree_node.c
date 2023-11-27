@@ -1186,7 +1186,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		u32 page_index = 0;
 
 		do {
-			kaddr = kmap_local_folio(folio, page_index);
+			kaddr = kmap_local_folio(folio, processed_bytes);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, "
 				  "page_index %u\n",
 				  i, page_index);
@@ -1209,7 +1209,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
 		folio_batch_add(batch, req->result.batch.folios[i]);
 		ssdfs_btree_node_account_folio(req->result.batch.folios[i]);
-		ssdfs_request_unlock_and_remove_folio(req, i);
+		ssdfs_request_unlock_and_forget_folio(req, i);
 	}
 	folio_batch_reinit(&req->result.batch);
 
@@ -1592,7 +1592,7 @@ int __ssdfs_init_index_area_hash_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_folio_lock(folio.ptr);
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 	ptr = (struct ssdfs_btree_index_key *)((u8 *)kaddr +
 						folio.desc.offset_inside_page);
 	*start_hash = le64_to_cpu(ptr->index.hash);
@@ -1633,7 +1633,7 @@ int __ssdfs_init_index_area_hash_range(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_folio_lock(folio.ptr);
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 	ptr = (struct ssdfs_btree_index_key *)((u8 *)kaddr +
 					folio.desc.offset_inside_page);
 	*end_hash = le64_to_cpu(ptr->index.hash);
@@ -5830,7 +5830,7 @@ int ssdfs_find_index_in_memory_page(struct ssdfs_btree_node *node,
 	BUG_ON(!folio.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 
 	prev_found = *found_index;
 	while (lower_index <= upper_index) {
@@ -7511,7 +7511,7 @@ int ssdfs_btree_common_node_insert_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio.ptr);
-		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 
 		if (moving_count == 0) {
 			err = ssdfs_memcpy(kaddr,
@@ -8706,7 +8706,7 @@ int ssdfs_btree_common_node_remove_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio.ptr);
-		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 
 		if (moving_count == 0) {
 			err = ssdfs_memcpy(&buffer,
@@ -13940,7 +13940,7 @@ try_lock_checking_item:
 			goto finish_extract_range;
 		}
 
-		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 		err = check_item(fsi, search,
 				 (u8 *)kaddr + item_offset,
 				 index,
@@ -14130,7 +14130,7 @@ try_lock_extracting_item:
 			  item_offset, item_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 		err = extract_item(fsi, search, item_size,
 				   (u8 *)kaddr + item_offset,
 				   &start_hash, &end_hash);
@@ -17394,7 +17394,7 @@ void ssdfs_debug_btree_node_object(struct ssdfs_btree_node *node)
 		j = 0;
 
 		while (capacity > 0) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, "
 				  "page_in_folio %d\n",
 				  i, j);

@@ -1175,7 +1175,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		u32 page_index = 0;
 
 		do {
-			kaddr = kmap_local_folio(folio, page_index);
+			kaddr = kmap_local_folio(folio, processed_bytes);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, "
 				  "page_index %u\n",
 				  i, page_index);

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.88 [November 27, 2023]
+    (*) Fix bugs in logic of supporting logical block size bigger than 4KB.
+
 v.4.87 [November 14, 2023]
     (*) Rework page array on using memory folio.
     (*) Migrate on Linux kernel v.6.7.0-rc1.

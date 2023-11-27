@@ -828,7 +828,7 @@ int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
 			return err;
 		}
 
-		ssdfs_request_init(req, si->fsi->pagesize);
+		ssdfs_request_init(req, page_size);
 		ssdfs_get_request(req);
 
 		logical_offset += bytes_per_peb * i;
@@ -840,7 +840,7 @@ int ssdfs_maptbl_segment_init(struct ssdfs_peb_mapping_table *tbl,
 		ssdfs_request_define_segment(si->seg_id, req);
 
 		logical_blk = (u64)i * fragment_bytes;
-		logical_blk = div64_u64(logical_blk, si->fsi->pagesize);
+		logical_blk = div64_u64(logical_blk, page_size);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(logical_blk >= U16_MAX);
@@ -959,7 +959,8 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	atomic_set(&ptr->flags, le16_to_cpu(fsi->vh->maptbl.flags));
 	ptr->fragments_count = le32_to_cpu(fsi->vh->maptbl.fragments_count);
 	ptr->fragment_bytes = le32_to_cpu(fsi->vh->maptbl.fragment_bytes);
-	ptr->fragment_folios = (ptr->fragment_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	ptr->fragment_folios =
+		(ptr->fragment_bytes + fsi->pagesize - 1) / fsi->pagesize;
 	ptr->fragments_per_seg = le16_to_cpu(fsi->vh->maptbl.fragments_per_seg);
 	ptr->fragments_per_peb = le16_to_cpu(fsi->vh->maptbl.fragments_per_peb);
 	ptr->lebs_count = le64_to_cpu(fsi->vh->maptbl.lebs_count);
@@ -1645,7 +1646,7 @@ void ssdfs_maptbl_move_fragment_folios(struct ssdfs_segment_request *req,
 		area->folios[area->folios_count] = folio;
 		area->folios_count++;
 		ssdfs_map_tbl_account_folio(folio);
-		ssdfs_request_unlock_and_remove_folio(req, i);
+		ssdfs_request_unlock_and_forget_folio(req, i);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2280,33 +2281,23 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 	fragment_offset *= tbl->fragment_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(div_u64(fragment_offset, PAGE_SIZE) >= U16_MAX);
+	SSDFS_DBG("fragment_bytes %u, fragment_offset %llu\n",
+		  tbl->fragment_bytes,
+		  fragment_offset);
+
+	BUG_ON(div_u64(fragment_offset, pagesize) >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	item_index = (u16)div_u64(fragment_offset, PAGE_SIZE);
+	item_index = (u16)div_u64(fragment_offset, pagesize);
 	item_index += area_start;
 
-	if (tbl->fsi->pagesize < PAGE_SIZE) {
-		u32 pages_per_item;
-		u32 items_count = folios_count;
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("item_index %u, folios_count %u\n",
+		  item_index, folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-		pages_per_item = PAGE_SIZE + pagesize - 1;
-		pages_per_item /= pagesize;
-		req->place.start.blk_index = item_index * pages_per_item;
-		req->place.len = items_count * pages_per_item;
-	} else if (tbl->fsi->pagesize > PAGE_SIZE) {
-		u32 items_per_page;
-		u32 items_count = folios_count;
-
-		items_per_page = pagesize + PAGE_SIZE - 1;
-		items_per_page /= PAGE_SIZE;
-		req->place.start.blk_index = item_index / items_per_page;
-		req->place.len = items_count + items_per_page - 1;
-		req->place.len /= items_per_page;
-	} else {
-		req->place.start.blk_index = item_index;
-		req->place.len = folios_count;
-	}
+	req->place.start.blk_index = item_index;
+	req->place.len = folios_count;
 
 	return 0;
 }
@@ -2607,9 +2598,9 @@ define_update_area:
 			ssdfs_maptbl_replicate_dirty_folio(req1, j, req2);
 	}
 
-	offset = area_start * PAGE_SIZE;
+	offset = area_start * tbl->fsi->pagesize;
 	offset += fragment_index * tbl->fragment_bytes;
-	size = area_size * PAGE_SIZE;
+	size = area_size * tbl->fsi->pagesize;
 
 	ssdfs_request_prepare_logical_extent(ino, offset, size, 0, 0, req1);
 	if (has_backup) {
@@ -3172,7 +3163,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 			ssdfs_get_request(req2);
 		}
 
-		offset = area_start * PAGE_SIZE;
+		offset = area_start * tbl->fsi->pagesize;
 		offset += fragment_index * tbl->fragment_bytes;
 
 		ssdfs_request_prepare_logical_extent(ino, offset,
@@ -3506,7 +3497,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 			ssdfs_get_request(req2);
 		}
 
-		offset = area_start * PAGE_SIZE;
+		offset = area_start * tbl->fsi->pagesize;
 		offset += fragment_index * tbl->fragment_bytes;
 
 		ssdfs_request_prepare_logical_extent(ino, offset,

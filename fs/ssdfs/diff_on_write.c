@@ -19,6 +19,11 @@
  *                  Zvonimir Bandic
  */
 
+#include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/highmem.h>
+#include <linux/pagemap.h>
 #include <linux/pagevec.h>
 
 #include "peb_mapping_queue.h"

@@ -294,6 +294,7 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = env->fsi->devops->read(sb,
+					     env->fsi->pagesize,
 					     lower_off,
 					     hdr_size,
 					     env->sbi.vh_buf);
@@ -869,7 +870,8 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 		  peb_id, offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = env->fsi->devops->read(sb, offset, hdr_size,
+	err = env->fsi->devops->read(sb, env->fsi->pagesize,
+				     offset, hdr_size,
 				     env->sbi.vh_buf);
 	vh = SSDFS_VH(env->sbi.vh_buf);
 	magic_valid = is_ssdfs_magic_valid(&vh->magic);

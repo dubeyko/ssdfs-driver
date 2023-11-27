@@ -1966,7 +1966,7 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 	}
 
 	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 	ptr = (struct ssdfs_shdict_ltbl2_item *)((u8 *)kaddr +
 						folio.desc.offset_inside_page);
 	hash32_lo = le32_to_cpu(ptr->hash_lo);
@@ -2006,7 +2006,7 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 	}
 
 	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 	ptr = (struct ssdfs_shdict_ltbl2_item *)((u8 *)kaddr +
 						folio.desc.offset_inside_page);
 	hash32_lo = le32_to_cpu(ptr->hash_lo);
@@ -2095,7 +2095,7 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 	}
 
 	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 	ptr = (struct ssdfs_shdict_htbl_item *)((u8 *)kaddr +
 						folio.desc.offset_inside_page);
 	*start_hash = SSDFS_NAME_HASH(0, le32_to_cpu(ptr->hash_hi));
@@ -2134,7 +2134,7 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 	}
 
 	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 	ptr = (struct ssdfs_shdict_htbl_item *)((u8 *)kaddr +
 						folio.desc.offset_inside_page);
 	*end_hash = SSDFS_NAME_HASH(0, le32_to_cpu(ptr->hash_hi));
@@ -6381,7 +6381,7 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 		cur_len = min_t(u32, (u32)full_len - processed_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_in_folio);
+		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
 
 		for (i = 0; i < cur_len; i++) {
 			const char *symbol1, *symbol2;
@@ -7362,7 +7362,7 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 
 	i = 0;
 	while (processed_bytes < fsi->pagesize) {
-		kaddr = kmap_local_folio(folio.ptr, i);
+		kaddr = kmap_local_folio(folio.ptr, i * PAGE_SIZE);
 		SSDFS_DBG("PAGE DUMP: index %u\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,
@@ -7628,7 +7628,7 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 
 	i = 0;
 	while (processed_bytes < fsi->pagesize) {
-		kaddr = kmap_local_folio(folio.ptr, i);
+		kaddr = kmap_local_folio(folio.ptr, i * PAGE_SIZE);
 		SSDFS_DBG("PAGE DUMP: index %u\n", i);
 		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 				     kaddr,

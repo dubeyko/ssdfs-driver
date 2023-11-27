@@ -20,6 +20,7 @@
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
+#include "folio_array.h"
 #include "request_queue.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -100,7 +101,7 @@ int ssdfs_calculate_fingerprint(struct ssdfs_peb_info *pebi,
 			portion_size = min_t(u32, PAGE_SIZE,
 						  rest_bytes - processed_bytes);
 
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			crypto_shash_update(shash, kaddr, portion_size);
 			kunmap_local(kaddr);
 

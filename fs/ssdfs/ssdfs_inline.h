@@ -1359,8 +1359,8 @@ int __ssdfs_memcpy_folio(struct folio *dst_folio, u32 dst_off, u32 dst_size,
 		dst_iter_offset = dst_off + copied_bytes;
 		dst_page = dst_iter_offset >> PAGE_SHIFT;
 
-		src_kaddr = kmap_local_folio(src_folio, src_page);
-		dst_kaddr = kmap_local_folio(dst_folio, dst_page);
+		src_kaddr = kmap_local_folio(src_folio, src_page * PAGE_SIZE);
+		dst_kaddr = kmap_local_folio(dst_folio, dst_page * PAGE_SIZE);
 		err = ssdfs_iter_copy(dst_kaddr, dst_iter_offset,
 				      src_kaddr, src_iter_offset,
 				      copy_size - copied_bytes,
@@ -1489,7 +1489,14 @@ int __ssdfs_memcpy_from_folio(void *dst, u32 dst_off, u32 dst_size,
 
 		dst_iter_offset = dst_off + copied_bytes;
 
-		src_kaddr = kmap_local_folio(folio, src_page);
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("src_off %u, src_iter_offset %u, src_page %u, "
+			  "dst_off %u, dst_iter_offset %u\n",
+			  src_off, src_iter_offset, src_page,
+			  dst_off, dst_iter_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		src_kaddr = kmap_local_folio(folio, src_page * PAGE_SIZE);
 		err = ssdfs_iter_copy_from_folio(dst, dst_iter_offset, dst_size,
 						 src_kaddr, src_iter_offset,
 						 copy_size - copied_bytes,
@@ -1535,7 +1542,7 @@ int ssdfs_memcpy_from_folio(void *dst, u32 dst_off, u32 dst_size,
 
 	return __ssdfs_memcpy_from_folio(dst, dst_off, dst_size,
 					 src_folio->ptr,
-					 src_off, src_folio->desc.block_size,
+					 src_off, folio_size(src_folio->ptr),
 					 copy_size);
 }
 
@@ -1668,7 +1675,7 @@ int __ssdfs_memcpy_to_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 		dst_iter_offset = dst_off + copied_bytes;
 		dst_page = dst_iter_offset >> PAGE_SHIFT;
 
-		dst_kaddr = kmap_local_folio(folio, dst_page);
+		dst_kaddr = kmap_local_folio(folio, dst_page * PAGE_SIZE);
 		err = ssdfs_iter_copy_to_folio(dst_kaddr, dst_iter_offset,
 						src, src_iter_offset, src_size,
 						copy_size - copied_bytes,
@@ -1832,7 +1839,7 @@ int ssdfs_memmove_folio(struct ssdfs_smart_folio *dst_folio,
 		dst_offset = dst_folio->desc.offset_inside_page;
 
 		kaddr = kmap_local_folio(src_folio->ptr,
-					 src_folio->desc.page_in_folio);
+					 src_folio->desc.page_offset);
 		err = ssdfs_memmove(kaddr, dst_offset, PAGE_SIZE,
 				    kaddr, src_offset, PAGE_SIZE,
 				    move_size);
@@ -1955,7 +1962,7 @@ int __ssdfs_memset_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 		iter_bytes = min_t(u32, PAGE_SIZE - dst_iter_offset,
 				   set_size - processed_bytes);
 
-		dst_kaddr = kmap_local_folio(folio, dst_page);
+		dst_kaddr = kmap_local_folio(folio, dst_page * PAGE_SIZE);
 		memset((u8 *)dst_kaddr + dst_iter_offset,
 			value, iter_bytes);
 		kunmap_local(dst_kaddr);

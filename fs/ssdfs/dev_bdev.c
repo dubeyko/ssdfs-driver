@@ -201,7 +201,6 @@ static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
 					 loff_t offset,
 					 unsigned int op, int op_flags)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct bio *bio;
 	loff_t folio_index;
 	sector_t sector;
@@ -211,8 +210,8 @@ static int ssdfs_bdev_sync_folio_request(struct super_block *sb,
 	BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio_index = offset >> fsi->log_pagesize;
-	sector = (pgoff_t)(((u64)folio_index << fsi->log_pagesize) >>
+	folio_index = div_u64(offset, folio_size(folio));
+	sector = (pgoff_t)(((u64)folio_index * folio_size(folio)) >>
 								SECTOR_SHIFT);
 
 	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, 1, op, GFP_NOIO);
@@ -267,10 +266,10 @@ static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 					 loff_t offset,
 					 unsigned int op, int op_flags)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct bio *bio;
 	loff_t folio_index;
 	sector_t sector;
+	u32 block_size;
 	int i;
 	int err = 0;
 
@@ -286,9 +285,14 @@ static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 		return 0;
 	}
 
-	folio_index = offset >> fsi->log_pagesize;
-	sector = (pgoff_t)(((u64)folio_index << fsi->log_pagesize) >>
-								SECTOR_SHIFT);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch->folios[0]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block_size = folio_size(batch->folios[0]);
+
+	folio_index = div_u64(offset, block_size);
+	sector = (pgoff_t)(((u64)folio_index * block_size) >> SECTOR_SHIFT);
 
 	bio = ssdfs_bdev_bio_alloc(sb->s_bdev, folio_batch_count(batch),
 				   op, GFP_NOIO);
@@ -423,6 +427,7 @@ int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
 /*
  * ssdfs_bdev_read_batch() - read from volume into buffer
  * @sb: superblock object
+ * @block_size: block size in bytes
  * @offset: offset in bytes from partition's begin
  * @len: size of buffer in bytes
  * @buf: buffer
@@ -439,10 +444,10 @@ int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
  * %-EIO         - I/O error.
  */
 static int ssdfs_bdev_read_batch(struct super_block *sb,
+				 u32 block_size,
 				 loff_t offset, size_t len,
 				 void *buf, size_t *read_bytes)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct folio_batch batch;
 	struct folio *folio;
 	loff_t folio_start, folio_end;
@@ -454,24 +459,32 @@ static int ssdfs_bdev_read_batch(struct super_block *sb,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
-		  sb, (unsigned long long)offset, len, buf);
+	SSDFS_DBG("sb %p, block_size %u, offset %llu, len %zu, buf %p\n",
+		  sb, block_size, (unsigned long long)offset, len, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*read_bytes = 0;
 
-	folio_start = offset >> fsi->log_pagesize;
-	folio_end = (offset + len + fsi->pagesize - 1) >> fsi->log_pagesize;
+	folio_start = div_u64(offset, block_size);
+	folio_end = div_u64(offset + len + block_size - 1, block_size);
 	folios_count = (u32)(folio_end - folio_start);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("offset %llu, len %zu, block_size %u, "
+		  "folio_start %llu, folio_end %llu, folios_count %u\n",
+		  (unsigned long long)offset, len, block_size,
+		  (unsigned long long)folio_start,
+		  (unsigned long long)folio_end,
+		  folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (folios_count > PAGEVEC_SIZE) {
 		SSDFS_WARN("folios_count %u > batch_capacity %u, "
-			   "offset %llu, len %zu, fsi->log_pagesize %u, "
+			   "offset %llu, len %zu, block_size %u, "
 			   "folio_start %llu, folio_end %llu\n",
 			   folios_count, PAGEVEC_SIZE,
 			   (unsigned long long)offset, len,
-			   fsi->log_pagesize,
-			   folio_start, folio_end);
+			   block_size, folio_start, folio_end);
 		return -ERANGE;
 	}
 
@@ -479,7 +492,7 @@ static int ssdfs_bdev_read_batch(struct super_block *sb,
 
 	for (i = 0; i < folios_count; i++) {
 		folio = ssdfs_dev_bdev_alloc_folio(GFP_KERNEL | __GFP_ZERO,
-						   get_order(fsi->pagesize));
+						   get_order(block_size));
 		if (IS_ERR_OR_NULL(folio)) {
 			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
 			SSDFS_ERR("unable to allocate memory folio\n");
@@ -518,15 +531,15 @@ static int ssdfs_bdev_read_batch(struct super_block *sb,
 			goto finish_bdev_read_batch;
 		}
 
-		div_u64_rem(cur_offset, fsi->pagesize, &offset_inside_folio);
-		read_len = min_t(size_t, (size_t)(fsi->pagesize -
+		div_u64_rem(cur_offset, block_size, &offset_inside_folio);
+		read_len = min_t(size_t, (size_t)(block_size -
 							offset_inside_folio),
-					  (size_t)(len - *read_bytes));
+					 (size_t)(len - *read_bytes));
 
 		err = __ssdfs_memcpy_from_folio(buf, *read_bytes,
 						len,
 						folio, offset_inside_folio,
-						fsi->pagesize,
+						block_size,
 						read_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
@@ -569,6 +582,7 @@ finish_bdev_read_batch:
 /*
  * ssdfs_bdev_read() - read from volume into buffer
  * @sb: superblock object
+ * @block_size: block size in bytes
  * @offset: offset in bytes from partition's begin
  * @len: size of buffer in bytes
  * @buf: buffer
@@ -583,8 +597,8 @@ finish_bdev_read_batch:
  *
  * %-EIO         - I/O error.
  */
-int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
-		    size_t len, void *buf)
+int ssdfs_bdev_read(struct super_block *sb, u32 block_size,
+		    loff_t offset, size_t len, void *buf)
 {
 	size_t read_bytes = 0;
 	loff_t cur_offset = offset;
@@ -592,8 +606,8 @@ int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, len %zu, buf %p\n",
-		  sb, (unsigned long long)offset, len, buf);
+	SSDFS_DBG("sb %p, block_size %u, offset %llu, len %zu, buf %p\n",
+		  sb, block_size, (unsigned long long)offset, len, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (len == 0) {
@@ -604,15 +618,17 @@ int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
 	while (read_bytes < len) {
 		size_t iter_read;
 
-		err = ssdfs_bdev_read_batch(sb, cur_offset,
+		err = ssdfs_bdev_read_batch(sb, block_size,
+					    cur_offset,
 					    len - read_bytes,
 					    ptr,
 					    &iter_read);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to read batch: "
-				  "cur_offset %llu, read_bytes %zu, "
-				  "err %d\n",
-				  cur_offset, read_bytes, err);
+				  "block_size %u, cur_offset %llu, "
+				  "read_bytes %zu, err %d\n",
+				  block_size, cur_offset,
+				  read_bytes, err);
 			return err;
 		}
 
@@ -627,6 +643,7 @@ int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
 /*
  * ssdfs_bdev_can_write_block() - check that logical block can be written
  * @sb: superblock object
+ * @block_size: size of block in bytes
  * @offset: offset in bytes from partition's begin
  * @need_check: make check or not?
  *
@@ -640,33 +657,33 @@ int ssdfs_bdev_read(struct super_block *sb, loff_t offset,
  * %-ENOMEM      - fail to allocate memory.
  * %-EIO         - I/O error.
  */
-int ssdfs_bdev_can_write_block(struct super_block *sb, loff_t offset,
-			       bool need_check)
+int ssdfs_bdev_can_write_block(struct super_block *sb, u32 block_size,
+				loff_t offset, bool need_check)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	void *buf;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, offset %llu, need_check %d\n",
-		  sb, (unsigned long long)offset, (int)need_check);
+	SSDFS_DBG("sb %p, offset %llu, block_size %u, need_check %d\n",
+		  sb, (unsigned long long)offset,
+		  block_size, (int)need_check);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!need_check)
 		return 0;
 
-	buf = ssdfs_dev_bdev_kzalloc(fsi->pagesize, GFP_KERNEL);
+	buf = ssdfs_dev_bdev_kzalloc(block_size, GFP_KERNEL);
 	if (!buf) {
-		SSDFS_ERR("unable to allocate %d bytes\n", fsi->pagesize);
+		SSDFS_ERR("unable to allocate %d bytes\n", block_size);
 		return -ENOMEM;
 	}
 
-	err = ssdfs_bdev_read(sb, offset, fsi->pagesize, buf);
+	err = ssdfs_bdev_read(sb, block_size, offset, block_size, buf);
 	if (err)
 		goto free_buf;
 
-	if (memchr_inv(buf, 0xff, fsi->pagesize)) {
-		if (memchr_inv(buf, 0x00, fsi->pagesize)) {
+	if (memchr_inv(buf, 0xff, block_size)) {
+		if (memchr_inv(buf, 0x00, block_size)) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("area with offset %llu contains data\n",
 				  (unsigned long long)offset);
@@ -725,7 +742,7 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 	BUG_ON(!folio);
 	BUG_ON((offset >= ssdfs_bdev_device_size(sb)) ||
 		(folio_size(folio) > (ssdfs_bdev_device_size(sb) - offset)));
-	div_u64_rem((u64)offset, (u64)fsi->pagesize, &remainder);
+	div_u64_rem((u64)offset, (u64)folio_size(folio), &remainder);
 	BUG_ON(remainder);
 	BUG_ON(!folio_test_dirty(folio));
 	BUG_ON(folio_test_locked(folio));
@@ -800,14 +817,17 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!batch);
 	BUG_ON(offset >= ssdfs_bdev_device_size(sb));
-	div_u64_rem((u64)offset, (u64)fsi->pagesize, &remainder);
-	BUG_ON(remainder);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (folio_batch_count(batch) == 0) {
 		SSDFS_WARN("empty batch\n");
 		return 0;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	div_u64_rem((u64)offset, (u64)folio_size(batch->folios[0]), &remainder);
+	BUG_ON(remainder);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < folio_batch_count(batch); i++) {
 		folio = batch->folios[i];

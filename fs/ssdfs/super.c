@@ -656,7 +656,7 @@ static u32 ssdfs_define_sb_log_size(struct super_block *sb)
 		log_size += PAGE_SIZE;
 	}
 
-	log_size = (log_size + fsi->pagesize - 1) >> fsi->log_pagesize;
+	log_size = (log_size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 
 	return log_size;
 }
@@ -732,6 +732,7 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 	u32 log_size;
 	u64 cur_peb, prev_peb;
 	u64 cur_leb;
+	u32 pages_per_peb;
 	int i;
 	int err = 0;
 
@@ -752,22 +753,28 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		  fsi->sbi.last_log.pages_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	/*
+	 * Superblock segment uses 4KB page always.
+	 * It needs to calculate pages_per_peb value.
+	 */
+	pages_per_peb = fsi->erasesize / PAGE_SIZE;
+
 	offset = fsi->sbi.last_log.page_offset;
 
 	log_size = ssdfs_define_sb_log_size(sb);
-	if (log_size > fsi->pages_per_peb) {
-		SSDFS_ERR("log_size %u > fsi->pages_per_peb %u\n",
-			  log_size, fsi->pages_per_peb);
+	if (log_size > pages_per_peb) {
+		SSDFS_ERR("log_size %u > pages_per_peb %u\n",
+			  log_size, pages_per_peb);
 		return -ERANGE;
 	}
 
 	log_size = max_t(u32, log_size, fsi->sbi.last_log.pages_count);
 
-	if (offset > fsi->pages_per_peb || offset > (UINT_MAX - log_size)) {
+	if (offset > pages_per_peb || offset > (UINT_MAX - log_size)) {
 		SSDFS_ERR("inconsistent metadata state: "
 			  "last_sb_log.page_offset %u, "
 			  "pages_per_peb %u, log_size %u\n",
-			  offset, fsi->pages_per_peb, log_size);
+			  offset, pages_per_peb, log_size);
 		return -EINVAL;
 	}
 
@@ -783,13 +790,13 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (fsi->sbi.last_log.peb_id == cur_peb) {
-			if ((offset + (2 * log_size)) > fsi->pages_per_peb) {
+			if ((offset + (2 * log_size)) > pages_per_peb) {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("sb PEB %llu is full: "
 					  "(offset %u + (2 * log_size %u)) > "
 					  "pages_per_peb %u\n",
 					  cur_peb, offset, log_size,
-					  fsi->pages_per_peb);
+					  pages_per_peb);
 #endif /* CONFIG_SSDFS_DEBUG */
 				return -EFBIG;
 			}
@@ -825,13 +832,28 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_sb_log->leb_id %llu, "
+		  "last_sb_log->peb_id %llu, "
+		  "last_sb_log->page_offset %u, "
+		  "last_sb_log->pages_count %u\n",
+		  fsi->sbi.last_log.leb_id,
+		  fsi->sbi.last_log.peb_id,
+		  fsi->sbi.last_log.page_offset,
+		  fsi->sbi.last_log.pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	for (i = 0; i < SSDFS_SB_SEG_COPY_MAX; i++) {
 		last_sb_log->leb_id = fsi->sb_lebs[SSDFS_CUR_SB_SEG][i];
 		last_sb_log->peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
 		err = ssdfs_can_write_sb_log(sb, last_sb_log);
 		if (err) {
-			SSDFS_ERR("fail to write sb log into PEB %llu\n",
-				  last_sb_log->peb_id);
+			SSDFS_ERR("fail to write sb log into PEB %llu: "
+				  "last_sb_log->page_offset %u, "
+				  "last_sb_log->pages_count %u\n",
+				  last_sb_log->peb_id,
+				  last_sb_log->page_offset,
+				  last_sb_log->pages_count);
 			return err;
 		}
 	}
@@ -2119,7 +2141,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	BUG_ON(!SSDFS_FS_I(sb)->devops);
 	BUG_ON(!SSDFS_FS_I(sb)->devops->write_block);
 	BUG_ON((last_sb_log->page_offset + last_sb_log->pages_count) >
-		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
+		(ULLONG_MAX >> PAGE_SHIFT));
 	BUG_ON((last_sb_log->leb_id * SSDFS_FS_I(sb)->pebs_per_seg) >=
 		SSDFS_FS_I(sb)->nsegs);
 	BUG_ON(last_sb_log->peb_id >
@@ -2140,7 +2162,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	memset(hdr_desc, 0, hdr_array_bytes);
 	memset(footer_desc, 0, footer_array_bytes);
 
-	offset = (loff_t)last_sb_log->page_offset << fsi->log_pagesize;
+	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
 	offset += PAGE_SIZE;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_MAPTBL_CACHE_INDEX];
@@ -2193,7 +2215,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		     footer_desc, 0, footer_array_bytes,
 		     footer_array_bytes);
 
-	err = ssdfs_prepare_log_footer_for_commit(fsi, last_sb_log->pages_count,
+	err = ssdfs_prepare_log_footer_for_commit(fsi, PAGE_SIZE,
+						  last_sb_log->pages_count,
 						  flags, timestamp,
 						  cno, footer);
 	if (err) {
@@ -2229,10 +2252,10 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
 	peb_offset <<= fsi->log_pagesize;
-	offset = (loff_t)last_sb_log->page_offset << fsi->log_pagesize;
+	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(peb_offset > (ULLONG_MAX - (offset + fsi->pagesize)));
+	BUG_ON(peb_offset > (ULLONG_MAX - (offset + PAGE_SIZE)));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	offset += peb_offset;
@@ -2391,13 +2414,13 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	BUG_ON(!SSDFS_FS_I(sb)->devops);
 	BUG_ON(!SSDFS_FS_I(sb)->devops->write_block);
 	BUG_ON((last_sb_log->page_offset + last_sb_log->pages_count) >
-		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
+		(ULLONG_MAX >> PAGE_SHIFT));
 	BUG_ON((last_sb_log->leb_id * SSDFS_FS_I(sb)->pebs_per_seg) >=
 		SSDFS_FS_I(sb)->nsegs);
 	BUG_ON(last_sb_log->peb_id >
-		div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
+		    div_u64(ULLONG_MAX, SSDFS_FS_I(sb)->pages_per_peb));
 	BUG_ON((last_sb_log->peb_id * SSDFS_FS_I(sb)->pages_per_peb) >
-		(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
+				(ULLONG_MAX >> SSDFS_FS_I(sb)->log_pagesize));
 
 	SSDFS_DBG("sb %p, last_sb_log->leb_id %llu, last_sb_log->peb_id %llu, "
 		  "last_sb_log->page_offset %u, last_sb_log->pages_count %u\n",
@@ -2412,7 +2435,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	memset(hdr_desc, 0, hdr_array_bytes);
 	memset(footer_desc, 0, footer_array_bytes);
 
-	offset = (loff_t)last_sb_log->page_offset << fsi->log_pagesize;
+	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
 	offset += hdr_size;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_MAPTBL_CACHE_INDEX];
@@ -2468,7 +2491,8 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		     footer_desc, 0, footer_array_bytes,
 		     footer_array_bytes);
 
-	err = ssdfs_prepare_log_footer_for_commit(fsi, last_sb_log->pages_count,
+	err = ssdfs_prepare_log_footer_for_commit(fsi, PAGE_SIZE,
+						  last_sb_log->pages_count,
 						  flags, timestamp,
 						  cno, footer);
 	if (err) {
@@ -2561,10 +2585,10 @@ free_payload_buffer:
 
 	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
 	peb_offset <<= fsi->log_pagesize;
-	offset = (loff_t)last_sb_log->page_offset << fsi->log_pagesize;
+	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(peb_offset > (ULLONG_MAX - (offset + fsi->pagesize)));
+	BUG_ON(peb_offset > (ULLONG_MAX - (offset + PAGE_SIZE)));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	offset += peb_offset;

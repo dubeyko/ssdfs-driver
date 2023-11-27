@@ -139,14 +139,14 @@ struct ssdfs_device_ops {
 	int (*open_zone)(struct super_block *sb, loff_t offset);
 	int (*reopen_zone)(struct super_block *sb, loff_t offset);
 	int (*close_zone)(struct super_block *sb, loff_t offset);
-	int (*read)(struct super_block *sb, loff_t offset, size_t len,
-		    void *buf);
+	int (*read)(struct super_block *sb, u32 block_size,
+		    loff_t offset, size_t len, void *buf);
 	int (*read_block)(struct super_block *sb, struct folio *folio,
 			  loff_t offset);
 	int (*read_blocks)(struct super_block *sb, struct folio_batch *batch,
 			   loff_t offset);
-	int (*can_write_block)(struct super_block *sb, loff_t offset,
-				bool need_check);
+	int (*can_write_block)(struct super_block *sb, u32 block_size,
+				loff_t offset, bool need_check);
 	int (*write_block)(struct super_block *sb, loff_t offset,
 			   struct folio *folio);
 	int (*write_blocks)(struct super_block *sb, loff_t offset,

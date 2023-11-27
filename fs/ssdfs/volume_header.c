@@ -742,6 +742,7 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
  * ssdfs_read_checked_segment_header() - read and check segment header
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
+ * @block_size: block size in bytes
  * @pages_off: offset from PEB's begin in pages
  * @buf: buffer
  * @silent: show error or not?
@@ -756,7 +757,8 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
  * %-EIO         - segment header is corrupted.
  */
 int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
-					u64 peb_id, u32 pages_off,
+					u64 peb_id, u32 block_size,
+					u32 pages_off,
 					void *buf, bool silent)
 {
 	struct ssdfs_signature *magic;
@@ -768,33 +770,37 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("peb_id %llu, pages_off %u, buf %p, silent %#x\n",
-		  peb_id, pages_off, buf, silent);
+	SSDFS_DBG("peb_id %llu, block_size %u, "
+		  "pages_off %u, buf %p, silent %#x\n",
+		  peb_id, block_size, pages_off, buf, silent);
 
 	BUG_ON(!fsi);
 	BUG_ON(!fsi->devops->read);
 	BUG_ON(!buf);
-	BUG_ON(pages_off >= fsi->pages_per_peb);
+	BUG_ON(pages_off >= (fsi->erasesize / block_size));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (peb_id == 0 && pages_off == 0)
 		offset = SSDFS_RESERVED_VBR_SIZE;
 	else
-		offset = (u64)pages_off * fsi->pagesize;
+		offset = (u64)pages_off * block_size;
 
-	err = ssdfs_aligned_read_buffer(fsi, peb_id, offset,
+	err = ssdfs_aligned_read_buffer(fsi, peb_id,
+					block_size, offset,
 					buf, hdr_size,
 					&read_bytes);
 	if (unlikely(err)) {
 		if (!silent) {
 			SSDFS_ERR("fail to read segment header: "
-				  "peb_id %llu, pages_off %u, err %d\n",
-				  peb_id, pages_off, err);
+				  "peb_id %llu, block_size %u, "
+				  "pages_off %u, err %d\n",
+				  peb_id, block_size, pages_off, err);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read segment header: "
-				  "peb_id %llu, pages_off %u, err %d\n",
-				  peb_id, pages_off, err);
+				  "peb_id %llu, block_size %u, "
+				  "pages_off %u, err %d\n",
+				  peb_id, block_size, pages_off, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;

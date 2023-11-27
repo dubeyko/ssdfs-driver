@@ -5966,7 +5966,6 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 	void *kaddr;
 	u8 compr_type;
 	u32 block_size;
-	u32 page_in_folio;
 	u32 offset_into_page;
 	int err = 0;
 
@@ -5996,13 +5995,12 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 	}
 
 	block_size = 1 << log_offset->blocksize_shift;
-	page_in_folio = log_offset->offset_into_block / block_size;
 	offset_into_page = log_offset->offset_into_block % block_size;
 	*compr_size = PAGE_SIZE - offset_into_page;
 
-	kaddr = kmap_local_folio(folio, page_in_folio);
+	kaddr = kmap_local_folio(folio, log_offset->offset_into_block);
 	err = ssdfs_compress(compr_type,
-			     uncompr_buf, (u8 *)kaddr + offset_into_page,
+			     uncompr_buf, kaddr,
 			     uncompr_size, compr_size);
 	flush_dcache_folio(folio);
 	kunmap_local(kaddr);

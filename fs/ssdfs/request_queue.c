@@ -1208,11 +1208,11 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_request_unlock_and_remove_folio() - unlock and remove folio
+ * ssdfs_request_unlock_and_forget_folio() - unlock and forget folio
  * @req: segment request [in|out]
  * @folio_index: folio index
  */
-void ssdfs_request_unlock_and_remove_folio(struct ssdfs_segment_request *req,
+void ssdfs_request_unlock_and_forget_folio(struct ssdfs_segment_request *req,
 					   int folio_index)
 {
 #ifdef CONFIG_SSDFS_DEBUG

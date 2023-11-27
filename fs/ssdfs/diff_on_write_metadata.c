@@ -11,15 +11,18 @@
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
  */
 
+#include <linux/kernel.h>
+#include <linux/mm.h>
+#include <linux/slab.h>
+#include <linux/highmem.h>
+#include <linux/pagemap.h>
 #include <linux/pagevec.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
-#include "page_vector.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "common_bitmap.h"
-#include "page_array.h"
 #include "folio_array.h"
 #include "peb.h"
 #include "offset_translation_table.h"
@@ -2103,7 +2106,7 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 			continue;
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, "
 				  "page_index %d\n",
 				  i, j);
@@ -2165,7 +2168,7 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 			continue;
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("DIFF DUMP: folio_index %d, "
 				  "page_index %d\n",
 				  i, j);
@@ -2770,7 +2773,7 @@ finish_apply_diff_folio:
 				continue;
 
 			for (j = 0; j < mem_pages_per_block; j++) {
-				kaddr = kmap_local_folio(folio, j);
+				kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 				SSDFS_DBG("PAGE DUMP: folio_index %d, "
 					  "page_index %d\n",
 					  i, j);
@@ -2863,7 +2866,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 			continue;
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
 				  i, j);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
@@ -2887,7 +2890,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 		WARN_ON(!folio_test_locked(folio));
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("DIFF DUMP: folio_index %d, page_index %d\n",
 				  i, j);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
@@ -2925,7 +2928,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 			continue;
 
 		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j);
+			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
 			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
 				  i, j);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,

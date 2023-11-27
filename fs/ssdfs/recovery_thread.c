@@ -145,7 +145,8 @@ int ssdfs_read_checked_sb_info3(struct ssdfs_recovery_env *env,
 		  env, peb_id, pages_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_read_checked_segment_header(env->fsi, peb_id, pages_off,
+	err = ssdfs_read_checked_segment_header(env->fsi, peb_id,
+						PAGE_SIZE, pages_off,
 						env->sbi.vh_buf, true);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -160,7 +161,8 @@ int ssdfs_read_checked_sb_info3(struct ssdfs_recovery_env *env,
 
 	err = ssdfs_read_checked_log_footer(env->fsi,
 					    SSDFS_SEG_HDR(env->sbi.vh_buf),
-					    peb_id, lf_off, env->sbi.vs_buf,
+					    peb_id, PAGE_SIZE,
+					    lf_off, env->sbi.vs_buf,
 					    true);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -196,7 +198,8 @@ int ssdfs_read_and_check_volume_header(struct ssdfs_recovery_env *env,
 	sb = env->fsi->sb;
 	dev_size = env->fsi->devops->device_size(sb);
 
-	err = env->fsi->devops->read(sb, offset, hdr_size,
+	err = env->fsi->devops->read(sb, PAGE_SIZE,
+				     offset, hdr_size,
 				     env->sbi.vh_buf);
 	if (err)
 		goto found_corrupted_peb;
@@ -553,9 +556,9 @@ bool is_sb_peb_exhausted(struct ssdfs_recovery_env *env,
 
 	if (env->fsi->is_zns_device) {
 		pages_per_peb = div64_u64(env->fsi->zone_capacity,
-					  env->fsi->pagesize);
+					  PAGE_SIZE);
 	} else
-		pages_per_peb = env->fsi->pages_per_peb;
+		pages_per_peb = env->fsi->erasesize / PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(pages_per_peb >= U32_MAX);

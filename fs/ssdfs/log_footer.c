@@ -316,6 +316,7 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
  * ssdfs_read_unchecked_log_footer() - read log footer without check
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
+ * @block_size: block size in bytes
  * @bytes_off: offset inside PEB in bytes
  * @buf: buffer for log footer
  * @silent: show error or not?
@@ -332,7 +333,7 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
  * %-EIO         - log footer is corrupted.
  */
 int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
-				    u64 peb_id, u32 bytes_off,
+				    u64 peb_id, u32 block_size, u32 bytes_off,
 				    void *buf, bool silent,
 				    u32 *log_pages)
 {
@@ -343,31 +344,35 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 	struct ssdfs_partial_log_header *pl_hdr;
 	size_t hdr_size = sizeof(struct ssdfs_partial_log_header);
 	bool major_magic_valid, minor_magic_valid;
+	u32 pages_per_peb;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->devops->read);
 	BUG_ON(!buf || !log_pages);
-	BUG_ON(bytes_off >= (fsi->pages_per_peb * fsi->pagesize));
+	BUG_ON(bytes_off >= fsi->erasesize);
 
-	SSDFS_DBG("peb_id %llu, bytes_off %u, buf %p\n",
-		  peb_id, bytes_off, buf);
+	SSDFS_DBG("peb_id %llu, block_size %u, bytes_off %u, buf %p\n",
+		  peb_id, block_size, bytes_off, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*log_pages = U32_MAX;
+	pages_per_peb = fsi->erasesize / block_size;
 
-	err = ssdfs_unaligned_read_buffer(fsi, peb_id, bytes_off,
+	err = ssdfs_unaligned_read_buffer(fsi, peb_id, block_size, bytes_off,
 					  buf, footer_size);
 	if (unlikely(err)) {
 		if (!silent) {
 			SSDFS_ERR("fail to read log footer: "
-				  "peb_id %llu, bytes_off %u, err %d\n",
-				  peb_id, bytes_off, err);
+				  "peb_id %llu, block_size %u, "
+				  "bytes_off %u, err %d\n",
+				  peb_id, block_size, bytes_off, err);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("fail to read log footer: "
-				  "peb_id %llu, bytes_off %u, err %d\n",
-				  peb_id, bytes_off, err);
+			SSDFS_DBG("unable to read log footer: "
+				  "peb_id %llu, block_size %u, "
+				  "bytes_off %u, err %d\n",
+				  peb_id, block_size, bytes_off, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
@@ -420,9 +425,9 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		}
 
 		*log_pages = le32_to_cpu(footer->log_bytes);
-		*log_pages /= fsi->pagesize;
+		*log_pages /= block_size;
 
-		if (*log_pages == 0 || *log_pages >= fsi->pages_per_peb) {
+		if (*log_pages == 0 || *log_pages >= pages_per_peb) {
 			if (!silent)
 				SSDFS_ERR("invalid log pages %u\n", *log_pages);
 			else
@@ -465,9 +470,9 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		}
 
 		*log_pages = le32_to_cpu(pl_hdr->log_bytes);
-		*log_pages /= fsi->pagesize;
+		*log_pages /= block_size;
 
-		if (*log_pages == 0 || *log_pages >= fsi->pages_per_peb) {
+		if (*log_pages == 0 || *log_pages >= pages_per_peb) {
 			if (!silent)
 				SSDFS_ERR("invalid log pages %u\n", *log_pages);
 			else
@@ -477,13 +482,13 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 	} else {
 		if (!silent) {
 			SSDFS_ERR("log footer is corrupted: "
-				  "peb_id %llu, bytes_off %u\n",
-				  peb_id, bytes_off);
+				  "peb_id %llu, block_size %u, bytes_off %u\n",
+				  peb_id, block_size, bytes_off);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log footer is corrupted: "
-				  "peb_id %llu, bytes_off %u\n",
-				  peb_id, bytes_off);
+				  "peb_id %llu, block_size %u, bytes_off %u\n",
+				  peb_id, block_size, bytes_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
@@ -498,6 +503,7 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
  * @fsi: pointer on shared file system object
  * @log_hdr: log header
  * @peb_id: PEB identification number
+ * @block_size: block size in bytes
  * @bytes_off: offset inside PEB in bytes
  * @buf: buffer for log footer
  * @silent: show error or not?
@@ -512,7 +518,8 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
  * %-EIO         - log footer is corrupted.
  */
 int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
-				  u64 peb_id, u32 bytes_off, void *buf,
+				  u64 peb_id, u32 block_size,
+				  u32 bytes_off, void *buf,
 				  bool silent)
 {
 	struct ssdfs_signature *magic;
@@ -526,22 +533,24 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 	BUG_ON(!log_hdr || !buf);
 	BUG_ON(bytes_off >= (fsi->pages_per_peb * fsi->pagesize));
 
-	SSDFS_DBG("peb_id %llu, bytes_off %u, buf %p\n",
-		  peb_id, bytes_off, buf);
+	SSDFS_DBG("peb_id %llu, block_size %u, bytes_off %u, buf %p\n",
+		  peb_id, block_size, bytes_off, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_unaligned_read_buffer(fsi, peb_id, bytes_off,
+	err = ssdfs_unaligned_read_buffer(fsi, peb_id, block_size, bytes_off,
 					  buf, footer_size);
 	if (unlikely(err)) {
 		if (!silent) {
 			SSDFS_ERR("fail to read log footer: "
-				  "peb_id %llu, bytes_off %u, err %d\n",
-				  peb_id, bytes_off, err);
+				  "peb_id %llu, block_size %u, "
+				  "bytes_off %u, err %d\n",
+				  peb_id, block_size, bytes_off, err);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fail to read log footer: "
-				  "peb_id %llu, bytes_off %u, err %d\n",
-				  peb_id, bytes_off, err);
+				  "peb_id %llu, block_size %u, "
+				  "bytes_off %u, err %d\n",
+				  peb_id, block_size, bytes_off, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return err;
@@ -846,6 +855,7 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
 /*
  * ssdfs_prepare_log_footer_for_commit() - prepare log footer for commit
  * @fsi: pointer on shared file system object
+ * @block_size: block size in bytes
  * @log_pages: count of pages in the log
  * @log_flags: log's flags
  * @last_log_time: log creation timestamp
@@ -861,6 +871,7 @@ int ssdfs_prepare_volume_state_info_for_commit(struct ssdfs_fs_info *fsi,
  * %-EINVAL     - invalid input values.
  */
 int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
+					u32 block_size,
 					u32 log_pages,
 					u32 log_flags,
 					u64 last_log_time,
@@ -871,8 +882,9 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("fsi %p, log_pages %u, log_flags %#x, footer %p\n",
-		  fsi, log_pages, log_flags, footer);
+	SSDFS_DBG("fsi %p, block_size %u, log_pages %u, "
+		  "log_flags %#x, footer %p\n",
+		  fsi, block_size, log_pages, log_flags, footer);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	footer->volume_state.magic.key = cpu_to_le16(SSDFS_LOG_FOOTER_MAGIC);
@@ -880,12 +892,12 @@ int ssdfs_prepare_log_footer_for_commit(struct ssdfs_fs_info *fsi,
 	footer->timestamp = cpu_to_le64(last_log_time);
 	footer->cno = cpu_to_le64(last_log_cno);
 
-	if (log_pages >= (U32_MAX >> fsi->log_pagesize)) {
+	if (log_pages >= (U32_MAX / block_size)) {
 		SSDFS_ERR("invalid value of log_pages %u\n", log_pages);
 		return -EINVAL;
 	}
 
-	footer->log_bytes = cpu_to_le32(log_pages << fsi->log_pagesize);
+	footer->log_bytes = cpu_to_le32(log_pages * block_size);
 
 	if (log_flags & ~SSDFS_LOG_FOOTER_FLAG_MASK) {
 		SSDFS_ERR("unknow log flags %#x\n", log_flags);

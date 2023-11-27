@@ -565,8 +565,6 @@ ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
 int ssdfs_request_add_allocated_folio_locked(struct ssdfs_segment_request *req);
 int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req);
 int ssdfs_request_add_old_state_folio_locked(struct ssdfs_segment_request *req);
-void ssdfs_request_unlock_and_remove_folio(struct ssdfs_segment_request *req,
-					   int folio_index);
 void ssdfs_request_unlock_and_remove_folios(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_update(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req);
@@ -574,6 +572,8 @@ void ssdfs_request_unlock_and_remove_old_state(struct ssdfs_segment_request *req
 int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 					struct folio *diff_folio,
 					struct ssdfs_segment_request *req);
+void ssdfs_request_unlock_and_forget_folio(struct ssdfs_segment_request *req,
+					   int folio_index);
 void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req);
 u32 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
 			    struct folio_batch *batch);

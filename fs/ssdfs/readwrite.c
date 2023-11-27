@@ -224,6 +224,7 @@ int ssdfs_read_folio_batch_from_volume(struct ssdfs_fs_info *fsi,
  * ssdfs_aligned_read_buffer() - aligned read from volume into buffer
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
+ * @block_size: block size in bytes
  * @bytes_off: offset from PEB's begining in bytes
  * @buf: buffer
  * @size: buffer size
@@ -241,14 +242,14 @@ int ssdfs_read_folio_batch_from_volume(struct ssdfs_fs_info *fsi,
  * %-EIO        - I/O error.
  */
 int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
-			      u64 peb_id, u32 bytes_off,
+			      u64 peb_id, u32 block_size,
+			      u32 bytes_off,
 			      void *buf, size_t size,
 			      size_t *read_bytes)
 {
 	struct super_block *sb;
 	loff_t offset;
 	u32 peb_size;
-	u32 pagesize;
 	u32 pages_per_peb;
 	u32 pages_off;
 	int err;
@@ -257,22 +258,22 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !buf);
 	BUG_ON(!fsi->devops->read);
 
-	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, buf %p, size %zu\n",
-		  fsi, peb_id, bytes_off, buf, size);
+	SSDFS_DBG("fsi %p, peb_id %llu, block_size %u, "
+		  "bytes_off %u, buf %p, size %zu\n",
+		  fsi, peb_id, block_size, bytes_off, buf, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	sb = fsi->sb;
-	pagesize = fsi->pagesize;
-	pages_per_peb = fsi->pages_per_peb;
-	pages_off = bytes_off / pagesize;
+	pages_per_peb = fsi->erasesize / block_size;
+	pages_off = bytes_off / block_size;
 
-	if (pages_per_peb >= (U32_MAX / pagesize)) {
-		SSDFS_ERR("pages_per_peb %u >= U32_MAX / pagesize %u\n",
-			  pages_per_peb, pagesize);
+	if (pages_per_peb >= (U32_MAX / block_size)) {
+		SSDFS_ERR("pages_per_peb %u >= U32_MAX / block_size %u\n",
+			  pages_per_peb, block_size);
 		return -EINVAL;
 	}
 
-	peb_size = pages_per_peb * pagesize;
+	peb_size = pages_per_peb * block_size;
 
 	if (peb_id >= div_u64(ULLONG_MAX, peb_size)) {
 		SSDFS_ERR("peb_id %llu >= ULLONG_MAX / peb_size %u\n",
@@ -288,21 +289,21 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 		return -EINVAL;
 	}
 
-	if (pages_off >= (U32_MAX / pagesize)) {
-		SSDFS_ERR("pages_off %u >= U32_MAX / pagesize %u\n",
-			  pages_off, fsi->pagesize);
+	if (pages_off >= (U32_MAX / block_size)) {
+		SSDFS_ERR("pages_off %u >= U32_MAX / block_size %u\n",
+			  pages_off, block_size);
 		return -EINVAL;
 	}
 
-	if (size > pagesize) {
-		SSDFS_ERR("size %zu > pagesize %u\n",
-			  size, fsi->pagesize);
+	if (size > block_size) {
+		SSDFS_ERR("size %zu > block_size %u\n",
+			  size, block_size);
 		return -EINVAL;
 	}
 
 	offset += bytes_off;
 
-	*read_bytes = ((pages_off + 1) * pagesize) - bytes_off;
+	*read_bytes = ((pages_off + 1) * block_size) - bytes_off;
 	*read_bytes = min_t(size_t, *read_bytes, size);
 
 	if (fsi->devops->peb_isbad) {
@@ -316,7 +317,7 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	err = fsi->devops->read(sb, offset, *read_bytes, buf);
+	err = fsi->devops->read(sb, block_size, offset, *read_bytes, buf);
 	if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fail to read from offset %llu, size %zu, err %d\n",
@@ -332,6 +333,7 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
  * ssdfs_unaligned_read_buffer() - unaligned read from volume into buffer
  * @fsi: pointer on shared file system object
  * @peb_id: PEB identification number
+ * @block_size: block size in bytes
  * @bytes_off: offset from PEB's begining in bytes
  * @buf: buffer
  * @size: buffer size
@@ -347,7 +349,8 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
  * %-EIO        - I/O error.
  */
 int ssdfs_unaligned_read_buffer(struct ssdfs_fs_info *fsi,
-				u64 peb_id, u32 bytes_off,
+				u64 peb_id, u32 block_size,
+				u32 bytes_off,
 				void *buf, size_t size)
 {
 	size_t read_bytes = 0;
@@ -357,15 +360,16 @@ int ssdfs_unaligned_read_buffer(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !buf);
 	BUG_ON(!fsi->devops->read);
 
-	SSDFS_DBG("fsi %p, peb_id %llu, bytes_off %u, buf %p, size %zu\n",
-		  fsi, peb_id, bytes_off, buf, size);
+	SSDFS_DBG("fsi %p, peb_id %llu, block_size %u, "
+		  "bytes_off %u, buf %p, size %zu\n",
+		  fsi, peb_id, block_size, bytes_off, buf, size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	do {
 		size_t iter_size = size - read_bytes;
 		size_t iter_read_bytes;
 
-		err = ssdfs_aligned_read_buffer(fsi, peb_id,
+		err = ssdfs_aligned_read_buffer(fsi, peb_id, block_size,
 						bytes_off + read_bytes,
 						buf + read_bytes,
 						iter_size,
@@ -406,6 +410,7 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 	u32 page_offset;
 	u32 log_size;
 	loff_t byte_off;
+	u32 pages_per_peb;
 	int i;
 	int err;
 
@@ -426,64 +431,66 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 	cur_peb = sb_log->peb_id;
 	page_offset = sb_log->page_offset;
 	log_size = sb_log->pages_count;
+	pages_per_peb = fsi->erasesize / PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("cur_peb %llu, page_offset %u, "
 		  "log_size %u, pages_per_peb %u\n",
 		  cur_peb, page_offset,
-		  log_size, fsi->pages_per_peb);
+		  log_size, pages_per_peb);
 
-	if (log_size > fsi->pages_per_seg) {
+	if (log_size > pages_per_peb) {
 		SSDFS_ERR("log_size value %u is too big\n",
 			  log_size);
 		return -ERANGE;
 	}
 
-	if (cur_peb > div_u64(ULLONG_MAX, fsi->pages_per_seg)) {
+	if (cur_peb > div_u64(ULLONG_MAX, fsi->pebs_per_seg)) {
 		SSDFS_ERR("cur_peb value %llu is too big\n",
 			  cur_peb);
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	byte_off = cur_peb * fsi->pages_per_peb;
+	byte_off = cur_peb * pages_per_peb;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	if (byte_off > div_u64(ULLONG_MAX, fsi->pagesize)) {
+	if (byte_off > div_u64(ULLONG_MAX, PAGE_SIZE)) {
 		SSDFS_ERR("byte_off value %llu is too big\n",
 			  byte_off);
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	byte_off *= fsi->pagesize;
+	byte_off *= PAGE_SIZE;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	if ((u64)page_offset > div_u64(ULLONG_MAX, fsi->pagesize)) {
+	if ((u64)page_offset > div_u64(ULLONG_MAX, PAGE_SIZE)) {
 		SSDFS_ERR("page_offset value %u is too big\n",
 			  page_offset);
 		return -ERANGE;
 	}
 
-	if (byte_off > (ULLONG_MAX - ((u64)page_offset * fsi->pagesize))) {
+	if (byte_off > (ULLONG_MAX - ((u64)page_offset * PAGE_SIZE))) {
 		SSDFS_ERR("byte_off value %llu is too big\n",
 			  byte_off);
 			return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	byte_off += (u64)page_offset * fsi->pagesize;
+	byte_off += (u64)page_offset * PAGE_SIZE;
 
 	for (i = 0; i < log_size; i++) {
 #ifdef CONFIG_SSDFS_DEBUG
-		if (byte_off > (ULLONG_MAX - (i * fsi->pagesize))) {
+		if (byte_off > (ULLONG_MAX - (i * PAGE_SIZE))) {
 			SSDFS_ERR("offset value %llu is too big\n",
 				  byte_off);
 			return -ERANGE;
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = fsi->devops->can_write_block(sb, byte_off, true);
+		err = fsi->devops->can_write_block(sb, PAGE_SIZE,
+						   byte_off, true);
 		if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("page can't be written: err %d\n", err);
@@ -491,7 +498,7 @@ int ssdfs_can_write_sb_log(struct super_block *sb,
 			return err;
 		}
 
-		byte_off += fsi->pagesize;
+		byte_off += PAGE_SIZE;
 	}
 
 	return 0;
@@ -635,6 +642,7 @@ int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 				      void *buf)
 {
 	struct ssdfs_smart_folio folio;
+	u32 block_size;
 	u32 bytes_off;
 	size_t read_bytes = 0;
 	int err;
@@ -646,12 +654,23 @@ int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 		  batch, offset, size, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (ssdfs_folio_vector_count(batch) == 0) {
+		SSDFS_ERR("empty batch\n");
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch->folios[0]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block_size = folio_size(batch->folios[0]);
+
 	do {
 		size_t iter_read_bytes;
 
 		bytes_off = offset + read_bytes;
 
-		err = SSDFS_OFF2FOLIO(fsi->pagesize, bytes_off, &folio.desc);
+		err = SSDFS_OFF2FOLIO(block_size, bytes_off, &folio.desc);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to convert offset into folio: "
 				  "bytes_off %u, err %d\n",
@@ -741,6 +760,7 @@ int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
 				      void *buf)
 {
 	struct ssdfs_smart_folio folio;
+	u32 block_size;
 	u32 bytes_off;
 	size_t written_bytes = 0;
 	int err;
@@ -752,12 +772,23 @@ int ssdfs_unaligned_write_folio_batch(struct ssdfs_fs_info *fsi,
 		  batch, offset, size, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (folio_batch_count(batch) == 0) {
+		SSDFS_ERR("empty batch\n");
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch->folios[0]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block_size = folio_size(batch->folios[0]);
+
 	do {
 		size_t iter_write_bytes;
 
 		bytes_off = offset + written_bytes;
 
-		err = SSDFS_OFF2FOLIO(fsi->pagesize, bytes_off, &folio.desc);
+		err = SSDFS_OFF2FOLIO(block_size, bytes_off, &folio.desc);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to convert offset into folio: "
 				  "bytes_off %u, err %d\n",
@@ -844,6 +875,7 @@ int ssdfs_unaligned_write_folio_vector(struct ssdfs_fs_info *fsi,
 					void *buf)
 {
 	struct ssdfs_smart_folio folio;
+	u32 block_size;
 	u32 bytes_off;
 	size_t written_bytes = 0;
 	int err;
@@ -855,12 +887,23 @@ int ssdfs_unaligned_write_folio_vector(struct ssdfs_fs_info *fsi,
 		  batch, offset, size, buf);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (ssdfs_folio_vector_count(batch) == 0) {
+		SSDFS_ERR("empty batch\n");
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch->folios[0]);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block_size = folio_size(batch->folios[0]);
+
 	do {
 		size_t iter_write_bytes;
 
 		bytes_off = offset + written_bytes;
 
-		err = SSDFS_OFF2FOLIO(fsi->pagesize, bytes_off, &folio.desc);
+		err = SSDFS_OFF2FOLIO(block_size, bytes_off, &folio.desc);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to convert offset into folio: "
 				  "bytes_off %u, err %d\n",
