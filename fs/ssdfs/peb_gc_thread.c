@@ -1325,6 +1325,9 @@ void ssdfs_gc_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 			if (refs_count != 0) {
 				SSDFS_WARN("unexpected refs_count %d\n",
 					   refs_count);
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 			ssdfs_request_free(pair->req);

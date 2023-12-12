@@ -611,8 +611,11 @@ check_req_state:
 }
 
 static
-int ssdfs_wait_read_request_end(struct ssdfs_segment_request *req)
+int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
+				struct ssdfs_segment_request *req)
 {
+	struct ssdfs_segment_info *si;
+	wait_queue_head_t *wait;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -626,10 +629,43 @@ int ssdfs_wait_read_request_end(struct ssdfs_segment_request *req)
 	if (unlikely(err)) {
 		SSDFS_ERR("read request failed: "
 			  "err %d\n", err);
+		goto free_request;
 	}
 
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				req->place.start.seg_id, U64_MAX);
+	if (unlikely(IS_ERR_OR_NULL(si))) {
+		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+		SSDFS_ERR("fail to grab segment object: "
+			  "seg %llu, err %d\n",
+			  req->place.start.seg_id,
+			  err);
+		goto finish_wait;
+	}
+
+	wait = &si->wait_queue[SSDFS_PEB_READ_THREAD];
+
+	if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("start waiting: refs_count %d\n",
+			   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0)
+			WARN_ON(err < 0);
+		else
+			err = 0;
+	}
+
+	ssdfs_segment_put_object(si);
+
+free_request:
 	ssdfs_request_free(req);
 
+finish_wait:
 	return err;
 }
 
@@ -966,7 +1002,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 	}
 
 	for (i = 0; i < env.count; i++) {
-		res = ssdfs_wait_read_request_end(env.reqs[i]);
+		res = ssdfs_wait_read_request_end(fsi, env.reqs[i]);
 		if (res) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("waiting has finished with issue: "
@@ -1146,9 +1182,12 @@ int ssdfs_check_sync_write_request(struct ssdfs_segment_request *req)
 }
 
 static
-int ssdfs_wait_write_pool_requests_end(struct ssdfs_segment_request_pool *pool)
+int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
+					struct ssdfs_segment_request_pool *pool)
 {
 	struct ssdfs_segment_request *req;
+	struct ssdfs_segment_info *si;
+	wait_queue_head_t *wait;
 	bool has_request_failed = false;
 	int i;
 	int err;
@@ -1242,6 +1281,39 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_segment_request_pool *pool)
 			}
 
 			ssdfs_put_request(req);
+
+			si = ssdfs_grab_segment(fsi,
+						SSDFS_USER_DATA_SEG_TYPE,
+						req->place.start.seg_id,
+						U64_MAX);
+			if (unlikely(IS_ERR_OR_NULL(si))) {
+				err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+				SSDFS_ERR("fail to grab segment object: "
+					  "seg %llu, err %d\n",
+					  req->place.start.seg_id,
+					  err);
+				continue;
+			}
+
+			wait = &si->wait_queue[SSDFS_PEB_READ_THREAD];
+
+			if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("start waiting: refs_count %d\n",
+					   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				err = wait_event_killable_timeout(*wait,
+				    atomic_read(&req->private.refs_count) == 0,
+				    SSDFS_DEFAULT_TIMEOUT);
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
+			}
+
+			ssdfs_segment_put_object(si);
+
 			ssdfs_request_free(req);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1842,7 +1914,7 @@ int ssdfs_issue_async_write_request(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			wake_up_all(&fsi->pending_wq);
 
-			err = ssdfs_wait_write_pool_requests_end(pool);
+			err = ssdfs_wait_write_pool_requests_end(fsi, pool);
 			if (unlikely(err)) {
 				SSDFS_ERR("write request failed: err %d\n",
 					  err);
@@ -1857,7 +1929,7 @@ int ssdfs_issue_async_write_request(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			wake_up_all(&fsi->pending_wq);
 
-			err = ssdfs_wait_write_pool_requests_end(pool);
+			err = ssdfs_wait_write_pool_requests_end(fsi, pool);
 			if (unlikely(err)) {
 				SSDFS_ERR("write request failed: err %d\n",
 					  err);
@@ -1899,7 +1971,7 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			wake_up_all(&fsi->pending_wq);
 
-			err = ssdfs_wait_write_pool_requests_end(pool);
+			err = ssdfs_wait_write_pool_requests_end(fsi, pool);
 			if (unlikely(err)) {
 				SSDFS_ERR("write request failed: err %d\n",
 					  err);
@@ -1914,7 +1986,7 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 		if (err == -EAGAIN) {
 			wake_up_all(&fsi->pending_wq);
 
-			err = ssdfs_wait_write_pool_requests_end(pool);
+			err = ssdfs_wait_write_pool_requests_end(fsi, pool);
 			if (unlikely(err)) {
 				SSDFS_ERR("write request failed: err %d\n",
 					  err);
@@ -2333,8 +2405,9 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 	struct ssdfs_segment_request_pool pool;
 	struct ssdfs_dirty_folios_batch batch;
 	struct folio *folio = page_folio(page);
-#ifdef CONFIG_SSDFS_DEBUG
 	struct inode *inode = folio->mapping->host;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+#ifdef CONFIG_SSDFS_DEBUG
 	ino_t ino = inode->i_ino;
 	pgoff_t index = folio_index(folio);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2357,7 +2430,7 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 
 		ssdfs_clean_failed_request_pool(&pool);
 	} else {
-		err = ssdfs_wait_write_pool_requests_end(&pool);
+		err = ssdfs_wait_write_pool_requests_end(fsi, &pool);
 		if (unlikely(err)) {
 			SSDFS_ERR("finish write request failed: "
 				  "err %d\n", err);
@@ -2635,7 +2708,7 @@ continue_unlock:
 	};
 
 	if (!ret) {
-		ret = ssdfs_wait_write_pool_requests_end(&pool);
+		ret = ssdfs_wait_write_pool_requests_end(fsi, &pool);
 		if (unlikely(ret)) {
 			SSDFS_ERR("finish write request failed: "
 				  "err %d\n", ret);

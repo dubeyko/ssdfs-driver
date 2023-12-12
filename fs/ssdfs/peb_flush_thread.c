@@ -6337,9 +6337,11 @@ int ssdfs_peb_create_extent(struct ssdfs_peb_info *pebi,
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to create block: "
 				  "seg %llu, logical_block %u, "
-				  "peb %llu, err %d\n",
+				  "peb %llu, processed_blks %u, "
+				  "rest_bytes %u, err %d\n",
 				  req->place.start.seg_id, logical_block,
-				  pebi->peb_id, err);
+				  pebi->peb_id, req->result.processed_blks,
+				  rest_bytes, err);
 			return err;
 		}
 
@@ -7362,7 +7364,7 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		return err;
 	}
 
-	range.start = le16_to_cpu(blk_desc_off->page_desc.peb_page);
+	range.start = blk;
 	range.len = (written_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -9798,7 +9800,7 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	size_t frag_desc_size = sizeof(struct ssdfs_fragment_desc);
 	size_t allocation_size = 0;
 	u32 frag_hdr_off;
-	u32 pages_per_peb;
+	u32 pages_per_seg;
 	u32 folio_index;
 	u32 offset_inside_block;
 	int err = 0;
@@ -9901,11 +9903,11 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 	frag_hdr->flags = desc->flags;
 	frag_hdr->type = desc->type;
 
-	pages_per_peb = fsi->pages_per_peb;
+	pages_per_seg = fsi->pages_per_seg;
 
-	if (desc->last_free_blk >= pages_per_peb) {
-		SSDFS_ERR("last_free_page %u >= pages_per_peb %u\n",
-			  desc->last_free_blk, pages_per_peb);
+	if (desc->last_free_blk > pages_per_seg) {
+		SSDFS_ERR("last_free_page %u > pages_per_seg %u\n",
+			  desc->last_free_blk, pages_per_seg);
 		err = -ERANGE;
 		goto fail_store_bmap_fragment;
 	}
@@ -14712,6 +14714,7 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
 
 		complete(&req->result.wait);
+		wake_up_all(&req->private.wait_queue);
 
 		if (atomic_read(&req->private.refs_count) != 0) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -14728,13 +14731,10 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 				err = 0;
 		}
 
-		wake_up_all(&req->private.wait_queue);
 		ssdfs_request_free(req);
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
-		ssdfs_put_request(req);
-
 		if (err) {
 			SSDFS_DBG("failure: req %p, err %d\n", req, err);
 			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
@@ -14742,23 +14742,9 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
 
 		complete(&req->result.wait);
-
-		if (atomic_read(&req->private.refs_count) != 0) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("start waiting: refs_count %d\n",
-				   atomic_read(&req->private.refs_count));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			err = wait_event_killable_timeout(*wait,
-			    atomic_read(&req->private.refs_count) == 0,
-			    SSDFS_DEFAULT_TIMEOUT);
-			if (err < 0)
-				WARN_ON(err < 0);
-			else
-				err = 0;
-		}
-
 		wake_up_all(&req->private.wait_queue);
+		ssdfs_put_request(req);
+		wake_up_all(wait);
 		break;
 
 	default:
@@ -16809,6 +16795,7 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 	struct ssdfs_peb_info *pebi = NULL;
 	wait_queue_head_t *wait_queue;
 	bool is_user_data = false;
+	int peb_free_pages;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -16949,11 +16936,31 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 		}
 	} else {
 get_next_update_request:
-		ssdfs_finish_flush_request(pebc, thread_state->req,
-					   wait_queue, err);
-		err = -EAGAIN;
-		thread_state->state =
-			SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		peb_free_pages = ssdfs_peb_get_free_pages(pebc);
+		if (unlikely(peb_free_pages < 0)) {
+			err = peb_free_pages;
+			SSDFS_ERR("fail to calculate PEB's free pages: "
+				  "seg %llu, peb index %d, err %d\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index, err);
+			ssdfs_finish_flush_request(pebc, thread_state->req,
+						   wait_queue, err);
+			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+			thread_state->err = err;
+			goto finish_create_request_processing;
+		}
+
+		if (peb_free_pages == 0) {
+			err = -EAGAIN;
+			thread_state->skip_finish_flush_request = false;
+			thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+		} else {
+			ssdfs_finish_flush_request(pebc, thread_state->req,
+						   wait_queue, err);
+			err = -EAGAIN;
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+		}
 	}
 
 finish_create_request_processing:

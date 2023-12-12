@@ -660,7 +660,8 @@ ssdfs_commit_queue_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 					struct ssdfs_seg2req_pair *pair)
 {
 	struct ssdfs_seg2req_pair *cur_pair;
-	int refs_count;
+	struct ssdfs_segment_request *req;
+	wait_queue_head_t *wait;
 	int i;
 	int err = 0;
 
@@ -673,35 +674,45 @@ ssdfs_commit_queue_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 
 	for (i = 0; i < fsi->pebs_per_seg; i++) {
 		cur_pair = pair + i;
+		req = cur_pair->req;
 
-		if (cur_pair->req != NULL) {
-			err = ssdfs_commit_queue_check_request(cur_pair->req);
-			if (unlikely(err)) {
-				SSDFS_ERR("flush request failed: "
-					  "err %d\n", err);
-			}
+		if (req == NULL)
+			continue;
 
-			refs_count =
-				atomic_read(&cur_pair->req->private.refs_count);
-			if (refs_count != 0) {
-				SSDFS_WARN("unexpected refs_count %d\n",
-					   refs_count);
-			}
-
-			ssdfs_request_free(cur_pair->req);
-			cur_pair->req = NULL;
-		} else {
-			SSDFS_ERR("request is NULL: "
-				  "item_index %d\n", i);
+		err = ssdfs_commit_queue_check_request(req);
+		if (unlikely(err)) {
+			SSDFS_ERR("flush request failed: "
+				  "err %d\n", err);
 		}
 
-		if (cur_pair->si != NULL) {
-			ssdfs_segment_put_object(cur_pair->si);
-			cur_pair->si = NULL;
-		} else {
+		if (cur_pair->si == NULL) {
 			SSDFS_ERR("segment is NULL: "
 				  "item_index %d\n", i);
+			continue;
 		}
+
+		wait = &cur_pair->si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+
+		if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("start waiting: refs_count %d\n",
+				   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = wait_event_killable_timeout(*wait,
+				    atomic_read(&req->private.refs_count) == 0,
+				    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+		}
+
+		ssdfs_request_free(req);
+		cur_pair->req = NULL;
+
+		ssdfs_segment_put_object(cur_pair->si);
+		cur_pair->si = NULL;
 	}
 }
 

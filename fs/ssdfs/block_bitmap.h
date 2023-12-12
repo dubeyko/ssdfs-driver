@@ -330,6 +330,7 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 				     int blk_state,
 				     struct ssdfs_block_bmap_range *range);
 int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap);
+int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap);
 
 #define SSDFS_BLK_BMAP_FNS(state, name)					\
 static inline								\

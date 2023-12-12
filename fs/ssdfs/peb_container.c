@@ -4799,6 +4799,11 @@ ssdfs_get_peb_for_migration_id(struct ssdfs_peb_container *pebc,
 					   src_peb_id, src_migration_id,
 					   dst_peb_id, dst_migration_id,
 					   migration_id);
+
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+
 				goto fail_to_get_peb;
 			}
 		}
@@ -5200,6 +5205,7 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	int new_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 	u64 leb_id;
 	bool is_peb_exhausted = false;
+	bool is_first_log_created = false;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5281,13 +5287,16 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 
 		ssdfs_peb_current_log_lock(pebi);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		is_first_log_created = pebi->current_log.start_block > 0;
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  "invalid_pages %d, is_peb_exhausted %#x, "
+			  "is_first_log_created %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted);
+			  invalid_pages, is_peb_exhausted,
+			  is_first_log_created);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (free_pages == 0) {
@@ -5328,8 +5337,13 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			}
 		} else if (used_pages == 0) {
 			if (invalid_pages == 0) {
-				new_peb_state =
-					SSDFS_MAPTBL_CLEAN_PEB_STATE;
+				if (is_first_log_created) {
+					new_peb_state =
+						SSDFS_MAPTBL_USING_PEB_STATE;
+				} else {
+					new_peb_state =
+						SSDFS_MAPTBL_CLEAN_PEB_STATE;
+				}
 			} else {
 				new_peb_state =
 					SSDFS_MAPTBL_USING_PEB_STATE;
@@ -5401,13 +5415,16 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 
 		ssdfs_peb_current_log_lock(pebi);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		is_first_log_created = pebi->current_log.start_block > 0;
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  "invalid_pages %d, is_peb_exhausted %#x, "
+			  "is_first_log_created %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted);
+			  invalid_pages, is_peb_exhausted,
+			  is_first_log_created);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (free_pages == 0) {
@@ -5448,8 +5465,13 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			}
 		} else if (used_pages == 0) {
 			if (invalid_pages == 0) {
-				new_peb_state =
-					SSDFS_MAPTBL_CLEAN_PEB_STATE;
+				if (is_first_log_created) {
+					new_peb_state =
+						SSDFS_MAPTBL_USING_PEB_STATE;
+				} else {
+					new_peb_state =
+						SSDFS_MAPTBL_CLEAN_PEB_STATE;
+				}
 			} else {
 				new_peb_state =
 					SSDFS_MAPTBL_USING_PEB_STATE;
@@ -5605,13 +5627,16 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 
 		ssdfs_peb_current_log_lock(pebi);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		is_first_log_created = pebi->current_log.start_block > 0;
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("destination PEB: free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  "invalid_pages %d, is_peb_exhausted %#x, "
+			  "is_first_log_created %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted);
+			  invalid_pages, is_peb_exhausted,
+			  is_first_log_created);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (free_pages == 0) {
@@ -5652,8 +5677,13 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			}
 		} else if (used_pages == 0) {
 			if (invalid_pages == 0) {
-				new_peb_state =
-					SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE;
+				if (is_first_log_created) {
+					new_peb_state =
+					    SSDFS_MAPTBL_MIGRATION_DST_USING_STATE;
+				} else {
+					new_peb_state =
+					    SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE;
+				}
 			} else {
 				new_peb_state =
 					SSDFS_MAPTBL_MIGRATION_DST_USING_STATE;

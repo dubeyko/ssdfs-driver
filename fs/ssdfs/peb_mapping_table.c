@@ -1791,21 +1791,25 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 		folio_index++;
 	}
 
-	if (fdesc->lebs_count < (fdesc->mapped_lebs + fdesc->migrating_lebs)) {
-		err = -EIO;
-		SSDFS_ERR("lebs_count %u, mapped_lebs %u, migratind_lebs %u\n",
-			  fdesc->lebs_count,
-			  fdesc->mapped_lebs,
-			  fdesc->migrating_lebs);
-		goto finish_fragment_init;
-	}
+	if (fdesc->start_leb < tbl->lebs_count) {
+		if (fdesc->lebs_count <
+			(fdesc->mapped_lebs + fdesc->migrating_lebs)) {
+			err = -EIO;
+			SSDFS_ERR("lebs_count %u, mapped_lebs %u, "
+				  "migratind_lebs %u\n",
+				  fdesc->lebs_count,
+				  fdesc->mapped_lebs,
+				  fdesc->migrating_lebs);
+			goto finish_fragment_init;
+		}
 
-	if (fdesc->lebs_count < fdesc->pre_erase_pebs) {
-		err = -EIO;
-		SSDFS_ERR("lebs_count %u, pre_erase_pebs %u\n",
-			  fdesc->lebs_count,
-			  fdesc->pre_erase_pebs);
-		goto finish_fragment_init;
+		if (fdesc->lebs_count < fdesc->pre_erase_pebs) {
+			err = -EIO;
+			SSDFS_ERR("lebs_count %u, pre_erase_pebs %u\n",
+				  fdesc->lebs_count,
+				  fdesc->pre_erase_pebs);
+			goto finish_fragment_init;
+		}
 	}
 
 	for (i = 0, fragment_id = 0; i < tbl->stripes_per_fragment; i++) {
@@ -1843,38 +1847,42 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 		}
 	}
 
-	if (lebs_per_fragment > pebs_per_fragment) {
-		err = -EIO;
-		SSDFS_ERR("lebs_per_fragment %u > pebs_per_fragment %u\n",
-			  lebs_per_fragment, pebs_per_fragment);
-		goto finish_fragment_init;
-	} else if (lebs_per_fragment < pebs_per_fragment) {
+	if (fdesc->start_leb < tbl->lebs_count) {
+		if (lebs_per_fragment > pebs_per_fragment) {
+			err = -EIO;
+			SSDFS_ERR("lebs_per_fragment %u > pebs_per_fragment %u\n",
+				  lebs_per_fragment, pebs_per_fragment);
+			goto finish_fragment_init;
+		} else if (lebs_per_fragment < pebs_per_fragment) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("lebs_per_fragment %u < pebs_per_fragment %u\n",
-			  lebs_per_fragment, pebs_per_fragment);
+			SSDFS_DBG("lebs_per_fragment %u < pebs_per_fragment %u\n",
+				  lebs_per_fragment, pebs_per_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
-	}
+		}
 
-	if (lebs_per_fragment > tbl->lebs_per_fragment ||
-	    lebs_per_fragment != fdesc->lebs_count) {
-		err = -EIO;
-		SSDFS_ERR("lebs_per_fragment %u, tbl->lebs_per_fragment %u, "
-			  "fdesc->lebs_count %u\n",
-			  lebs_per_fragment,
-			  tbl->lebs_per_fragment,
-			  fdesc->lebs_count);
-		goto finish_fragment_init;
-	}
+		if (lebs_per_fragment > tbl->lebs_per_fragment ||
+		    lebs_per_fragment != fdesc->lebs_count) {
+			err = -EIO;
+			SSDFS_ERR("lebs_per_fragment %u, "
+				  "tbl->lebs_per_fragment %u, "
+				  "fdesc->lebs_count %u\n",
+				  lebs_per_fragment,
+				  tbl->lebs_per_fragment,
+				  fdesc->lebs_count);
+			goto finish_fragment_init;
+		}
 
-	if (pebs_per_fragment > tbl->pebs_per_fragment ||
-	    fdesc->lebs_count > pebs_per_fragment) {
-		err = -EIO;
-		SSDFS_ERR("pebs_per_fragment %u, tbl->pebs_per_fragment %u, "
-			  "fdesc->lebs_count %u\n",
-			  pebs_per_fragment,
-			  tbl->pebs_per_fragment,
-			  fdesc->lebs_count);
-		goto finish_fragment_init;
+		if (pebs_per_fragment > tbl->pebs_per_fragment ||
+		    fdesc->lebs_count > pebs_per_fragment) {
+			err = -EIO;
+			SSDFS_ERR("pebs_per_fragment %u, "
+				  "tbl->pebs_per_fragment %u, "
+				  "fdesc->lebs_count %u\n",
+				  pebs_per_fragment,
+				  tbl->pebs_per_fragment,
+				  fdesc->lebs_count);
+			goto finish_fragment_init;
+		}
 	}
 
 	for (i = 0; i < area->folios_count; i++) {
@@ -3026,7 +3034,8 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 	BUG_ON(!tbl);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 
-	SSDFS_DBG("maptbl %p\n", tbl);
+	SSDFS_DBG("maptbl %p, fragments_count %u\n",
+		  tbl, tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragments_count = tbl->fragments_count;
@@ -3282,7 +3291,8 @@ int ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl)
 	BUG_ON(!tbl);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 
-	SSDFS_DBG("maptbl %p\n", tbl);
+	SSDFS_DBG("maptbl %p, fragments_count %u\n",
+		  tbl, tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragments_count = tbl->fragments_count;
@@ -3352,7 +3362,8 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 	BUG_ON(!tbl);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 
-	SSDFS_DBG("maptbl %p\n", tbl);
+	SSDFS_DBG("maptbl %p, fragments_count %u\n",
+		  tbl, tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragments_count = tbl->fragments_count;
@@ -3627,7 +3638,8 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 	BUG_ON(!tbl);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 
-	SSDFS_DBG("maptbl %p\n", tbl);
+	SSDFS_DBG("maptbl %p, fragments_count %u\n",
+		  tbl, tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragments_count = tbl->fragments_count;
@@ -3717,7 +3729,8 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 	BUG_ON(!tbl);
 	BUG_ON(!rwsem_is_locked(&tbl->tbl_lock));
 
-	SSDFS_DBG("maptbl %p\n", tbl);
+	SSDFS_DBG("maptbl %p, fragments_count %u\n",
+		  tbl, tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fragments_count = tbl->fragments_count;
@@ -12401,7 +12414,8 @@ int ssdfs_wait_maptbl_init_ending(struct ssdfs_fs_info *fsi, u32 count)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 
-	SSDFS_DBG("fsi %p\n", fsi);
+	SSDFS_DBG("fsi %p, fragments_count %u\n",
+		  fsi, tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	tbl = fsi->maptbl;

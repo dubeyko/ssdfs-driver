@@ -8969,7 +8969,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 
 	last_free_blk = le16_to_cpu(frag_hdr->last_free_blk);
 
-	if (last_free_blk >= fsi->pages_per_seg) {
+	if (last_free_blk > fsi->pages_per_seg) {
 		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
 				"block bitmap is corrupted: "
 				"last_free_blk %u, pages_per_seg %u\n",
@@ -13529,33 +13529,19 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 
 	req->result.err = err;
 
-	if (err)
-		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
-	else
-		atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
-
 	switch (req->private.type) {
 	case SSDFS_REQ_SYNC:
+		if (err) {
+			SSDFS_DBG("failure: req %p, err %d\n", req, err);
+			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+		} else
+			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
 		complete(&req->result.wait);
 		wake_up_all(&req->private.wait_queue);
 		break;
 
 	case SSDFS_REQ_ASYNC:
-		complete(&req->result.wait);
-
-		ssdfs_put_request(req);
-		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable_timeout(*wait,
-				atomic_read(&req->private.refs_count) == 0,
-				SSDFS_DEFAULT_TIMEOUT);
-			if (err < 0)
-				WARN_ON(err < 0);
-			else
-				err = 0;
-		}
-
-		wake_up_all(&req->private.wait_queue);
-
 		for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
 			struct folio *folio = req->result.batch.folios[i];
 
@@ -13577,27 +13563,38 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 			SSDFS_DBG("folio_index %llu, flags %#lx\n",
 				  (u64)folio_index(folio), folio->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
+		}
+
+		ssdfs_put_request(req);
+
+		if (err) {
+			SSDFS_DBG("failure: req %p, err %d\n", req, err);
+			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+		} else
+			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
+		complete(&req->result.wait);
+		wake_up_all(&req->private.wait_queue);
+
+		if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("start waiting: refs_count %d\n",
+				   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 		}
 
 		ssdfs_request_free(req);
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
-		complete(&req->result.wait);
-
-		ssdfs_put_request(req);
-		if (atomic_read(&req->private.refs_count) != 0) {
-			err = wait_event_killable_timeout(*wait,
-				atomic_read(&req->private.refs_count) == 0,
-				SSDFS_DEFAULT_TIMEOUT);
-			if (err < 0)
-				WARN_ON(err < 0);
-			else
-				err = 0;
-		}
-
-		wake_up_all(&req->private.wait_queue);
-
 		for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
 			struct folio *folio = req->result.batch.folios[i];
 
@@ -13620,6 +13617,17 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 				  (u64)folio_index(folio), folio->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
+
+		if (err) {
+			SSDFS_DBG("failure: req %p, err %d\n", req, err);
+			atomic_set(&req->result.state, SSDFS_REQ_FAILED);
+		} else
+			atomic_set(&req->result.state, SSDFS_REQ_FINISHED);
+
+		complete(&req->result.wait);
+		wake_up_all(&req->private.wait_queue);
+		ssdfs_put_request(req);
+		wake_up_all(wait);
 		break;
 
 	default:
