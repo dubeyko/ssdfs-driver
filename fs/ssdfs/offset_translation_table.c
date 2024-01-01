@@ -1,12 +1,13 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/offset_translation_table.c - offset translation table functionality.
  *
  * Copyright (c) 2014-2019 HGST, a Western Digital Company.
  *              http://www.hgst.com/
- * Copyright (c) 2014-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2014-2024 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
  *              https://www.bytedance.com/

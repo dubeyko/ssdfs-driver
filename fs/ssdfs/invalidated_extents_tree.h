@@ -1,13 +1,14 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/invalidated_extents_tree.h - invalidated extents btree declarations.
  *
+ * Copyright (c) 2022-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ *              http://www.ssdfs.org/
  * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
  *              https://www.bytedance.com/
- * Copyright (c) 2022-2023 Viacheslav Dubeyko <slava@dubeyko.com>
- *              http://www.ssdfs.org/
  * All rights reserved.
  *
  * Authors: Viacheslav Dubeyko <slava@dubeyko.com>

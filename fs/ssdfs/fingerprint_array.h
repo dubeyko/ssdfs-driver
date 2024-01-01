@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/fingerprint_array.h - fingerprint array's declarations.
  *
- * Copyright (c) 2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2023-2024 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

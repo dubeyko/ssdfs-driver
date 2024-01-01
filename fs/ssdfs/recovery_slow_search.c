@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/recovery_slow_search.c - slow superblock search.
  *
- * Copyright (c) 2020-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2020-2024 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

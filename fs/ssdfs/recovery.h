@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
  * SSDFS -- SSD-oriented File System.
  *
  * fs/ssdfs/recovery.h - recovery logic declarations.
  *
- * Copyright (c) 2019-2023 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2024 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *
