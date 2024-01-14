@@ -93,6 +93,7 @@ atomic64_t ssdfs_locked_folios;
 	SSDFS_MEMORY_ALLOCATOR_FNS(super)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
+static inline
 void ssdfs_super_memory_leaks_init(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -102,6 +103,7 @@ void ssdfs_super_memory_leaks_init(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+static inline
 void ssdfs_super_check_memory_leaks(void)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -157,6 +159,7 @@ static void init_once(void *foo)
  * This method is called by inode_alloc() to allocate memory
  * for struct inode and initialize it
  */
+static inline
 struct inode *ssdfs_alloc_inode(struct super_block *sb)
 {
 	struct ssdfs_inode_info *ii;
@@ -2656,6 +2659,7 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_diff_memory_leaks_init();
 #endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
 
+	ssdfs_dynamic_array_memory_leaks_init();
 	ssdfs_ext_queue_memory_leaks_init();
 	ssdfs_ext_tree_memory_leaks_init();
 
@@ -2740,6 +2744,7 @@ static void ssdfs_check_memory_leaks(void)
 	ssdfs_diff_check_memory_leaks();
 #endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
 
+	ssdfs_dynamic_array_check_memory_leaks();
 	ssdfs_ext_queue_check_memory_leaks();
 	ssdfs_ext_tree_check_memory_leaks();
 

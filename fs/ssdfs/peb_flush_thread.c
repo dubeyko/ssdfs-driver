@@ -14385,6 +14385,7 @@ finish_commit_log:
  * @pebs_per_seg: number of PEBs in one segment
  * @log_strategy: stategy of log commiting
  */
+static
 u16 ssdfs_peb_calculate_reserved_metapages(u32 block_size,
 					   u32 data_blocks,
 					   u32 pebs_per_seg,

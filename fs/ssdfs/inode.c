@@ -795,7 +795,7 @@ static int ssdfs_truncate(struct inode *inode)
 	return 0;
 }
 
-int ssdfs_setsize(struct inode *inode, struct iattr *attr)
+static int ssdfs_setsize(struct inode *inode, struct iattr *attr)
 {
 	loff_t oldsize = i_size_read(inode);
 	loff_t newsize = attr->ia_size;

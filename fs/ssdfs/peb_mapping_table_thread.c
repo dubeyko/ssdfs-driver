@@ -1855,6 +1855,7 @@ int ssdfs_maptbl_correct_max_erase_ops(struct ssdfs_fs_info *fsi,
  * @tbl: mapping table object
  * @array: array of erase operation results
  */
+static
 int ssdfs_maptbl_process_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_erase_result_array *array)
 {

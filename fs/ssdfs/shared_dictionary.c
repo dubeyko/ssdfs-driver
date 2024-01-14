@@ -14767,6 +14767,7 @@ int ssdfs_invalidate_items_area_partially(struct ssdfs_btree_node *node,
  *
  * %-ERANGE     - internal error.
  */
+static
 int ssdfs_shift_strings_range_left(struct ssdfs_btree_node *node,
 				   u16 start_hindex, u16 end_hindex,
 				   u32 *deleted_space)

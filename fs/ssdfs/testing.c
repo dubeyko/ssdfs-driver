@@ -100,7 +100,7 @@ void ssdfs_testing_mapping_init(struct address_space *mapping,
 	mapping->flags = 0;
 	atomic_set(&mapping->i_mmap_writable, 0);
 	mapping_set_gfp_mask(mapping, GFP_KERNEL);
-	mapping->private_data = NULL;
+	mapping->i_private_data = NULL;
 	mapping->writeback_index = 0;
 	inode->i_mapping = mapping;
 }

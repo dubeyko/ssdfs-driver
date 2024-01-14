@@ -116,6 +116,7 @@ void ssdfs_fsck_check_memory_leaks(void)
  * This method tries to estimate the I/O load with
  * the goal to define the good time for FSCK activity.
  */
+static inline
 int is_time_do_fsck_check(struct ssdfs_fs_info *fsi,
 			  struct ssdfs_io_load_stats *io_stats)
 {

@@ -454,6 +454,7 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
  * [true]  - partial log header is consistent.
  * [false] - partial log header is corrupted.
  */
+static
 bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 					    struct ssdfs_partial_log_header *ph,
 					    u64 dev_size)

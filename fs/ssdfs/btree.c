@@ -2066,6 +2066,7 @@ finish_child_search:
  * [success] - new node ID
  * [failure] - U32_MAX
  */
+static
 u32 ssdfs_btree_generate_node_id(struct ssdfs_btree *tree)
 {
 	struct ssdfs_btree_node *node;

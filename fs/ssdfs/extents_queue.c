@@ -99,6 +99,7 @@ void ssdfs_ext_queue_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+static inline
 void ssdfs_ext_queue_account_folio_batch(struct folio_batch *batch)
 {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING

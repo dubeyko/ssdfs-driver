@@ -1015,7 +1015,7 @@ static int ssdfs_bdev_peb_isbad(struct super_block *sb, loff_t offset)
  *
  * This function tries to mark PEB as bad.
  */
-int ssdfs_bdev_mark_peb_bad(struct super_block *sb, loff_t offset)
+static int ssdfs_bdev_mark_peb_bad(struct super_block *sb, loff_t offset)
 {
 	/* do nothing */
 	return 0;

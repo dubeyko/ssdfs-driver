@@ -773,6 +773,7 @@ bool need_initialize_xattrs_btree_search(u64 name_hash,
  * @name: pointer on the name's string
  * @len: length of the name
  */
+static inline
 u64 ssdfs_generate_xattr_name_hash(const char *name, size_t len)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1143,6 +1144,7 @@ finish_search_inline_xattr:
  * %-ERANGE     - internal error.
  * %-ENODATA    - item hasn't been found
  */
+static
 int __ssdfs_xattrs_tree_find(struct ssdfs_xattrs_btree_info *tree,
 				struct ssdfs_btree_search *search)
 {
@@ -8773,6 +8775,7 @@ finish_change_item:
  *
  * %-ERANGE     - internal error.
  */
+static
 int ssdfs_invalidate_blobs_range(struct ssdfs_btree_node *node,
 				 struct ssdfs_btree_node_items_area *area,
 				 u16 start_index, u16 range_len)

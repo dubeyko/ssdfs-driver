@@ -202,6 +202,7 @@ void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)
 		     extent_size);
 }
 
+static
 void ssdfs_copy_sb_info(struct ssdfs_fs_info *fsi,
 			struct ssdfs_recovery_env *env)
 {

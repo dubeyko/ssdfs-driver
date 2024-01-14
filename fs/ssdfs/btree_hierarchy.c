@@ -4937,6 +4937,7 @@ try_add_node:
  * %-ERANGE     - internal error.
  * %-ENOSPC     - needs to increase the tree's height.
  */
+static
 int ssdfs_btree_check_level_for_add(struct ssdfs_btree_state_descriptor *desc,
 				    struct ssdfs_btree *tree,
 				    struct ssdfs_btree_search *search,

@@ -3268,8 +3268,7 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 			BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			if (folio_start_writeback(folio))
-				WARN_ON(1);
+			folio_start_writeback(folio);
 		}
 	}
 

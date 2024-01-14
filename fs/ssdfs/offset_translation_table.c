@@ -1081,6 +1081,7 @@ bool ssdfs_blk2off_table_extent_vacant(struct ssdfs_bitmap_array *lbmap,
  * is_ssdfs_table_header_magic_valid() - check segment header's magic
  * @hdr: table header
  */
+static inline
 bool is_ssdfs_table_header_magic_valid(struct ssdfs_blk2off_table_header *hdr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8207,6 +8208,7 @@ int ssdfs_blk2off_table_check_fragment_desc(struct ssdfs_blk2off_table *table,
 	return 0;
 }
 
+static inline
 bool has_logical_block_id_assigned(struct ssdfs_blk2off_table *table,
 				   u16 logical_blk)
 {

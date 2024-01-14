@@ -395,6 +395,7 @@ finish_get_first:
  * %-ENODATA    - queue is empty.
  * %-ERANGE     - internal error.
  */
+static inline
 int ssdfs_free_inodes_queue_remove_first(struct ssdfs_free_inode_range_queue *q,
 					struct ssdfs_inodes_btree_range **range)
 {

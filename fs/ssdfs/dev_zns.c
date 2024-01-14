@@ -676,8 +676,8 @@ finish_sync_batch_request:
  *
  * %-EIO         - I/O error.
  */
-int ssdfs_zns_read_block(struct super_block *sb, struct folio *folio,
-			 loff_t offset)
+static int ssdfs_zns_read_block(struct super_block *sb, struct folio *folio,
+				loff_t offset)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	struct blk_zone zone;
@@ -728,6 +728,7 @@ int ssdfs_zns_read_block(struct super_block *sb, struct folio *folio,
  *
  * %-EIO         - I/O error.
  */
+static
 int ssdfs_zns_read_blocks(struct super_block *sb, struct folio_batch *batch,
 			  loff_t offset)
 {
@@ -783,6 +784,7 @@ int ssdfs_zns_read_blocks(struct super_block *sb, struct folio_batch *batch,
  *
  * %-EIO         - I/O error.
  */
+static
 int ssdfs_zns_read(struct super_block *sb, u32 block_size,
 		   loff_t offset, size_t len, void *buf)
 {
@@ -995,6 +997,7 @@ static int ssdfs_zns_can_write_block(struct super_block *sb, u32 block_size,
  * %-EROFS       - file system in RO mode.
  * %-EIO         - I/O error.
  */
+static
 int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
 			  struct folio *folio)
 {
@@ -1093,6 +1096,7 @@ int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
  * %-EROFS       - file system in RO mode.
  * %-EIO         - I/O error.
  */
+static
 int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 			   struct folio_batch *batch)
 {
@@ -1291,7 +1295,7 @@ static int ssdfs_zns_peb_isbad(struct super_block *sb, loff_t offset)
  *
  * This function tries to mark PEB as bad.
  */
-int ssdfs_zns_mark_peb_bad(struct super_block *sb, loff_t offset)
+static int ssdfs_zns_mark_peb_bad(struct super_block *sb, loff_t offset)
 {
 	/* do nothing */
 	return 0;

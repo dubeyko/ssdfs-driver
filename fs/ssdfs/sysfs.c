@@ -1122,6 +1122,7 @@ static struct kobj_type ssdfs_segbmap_ktype = {
 	.release	= ssdfs_segbmap_attr_release,
 };
 
+static inline
 int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
@@ -1140,6 +1141,7 @@ int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 	return 0;
 }
 
+static inline
 void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1443,6 +1445,7 @@ static struct kobj_type ssdfs_maptbl_ktype = {
 	.release	= ssdfs_maptbl_attr_release,
 };
 
+static inline
 int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
@@ -1461,6 +1464,7 @@ int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
 	return 0;
 }
 
+static inline
 void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
