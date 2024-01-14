@@ -36,8 +36,8 @@
 #include "folio_vector.h"
 #include "ssdfs.h"
 #include "version.h"
-#include "segment_bitmap.h"
 #include "folio_array.h"
+#include "segment_bitmap.h"
 #include "peb.h"
 #include "offset_translation_table.h"
 #include "peb_container.h"
@@ -45,9 +45,9 @@
 #include "segment_tree.h"
 #include "current_segment.h"
 #include "peb_mapping_table.h"
-#include "extents_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
+#include "extents_queue.h"
 #include "btree.h"
 #include "inodes_tree.h"
 #include "shared_extents_tree.h"
@@ -160,8 +160,12 @@ static void init_once(void *foo)
 struct inode *ssdfs_alloc_inode(struct super_block *sb)
 {
 	struct ssdfs_inode_info *ii;
+	unsigned int nofs_flags;
 
+	nofs_flags = memalloc_nofs_save();
 	ii = alloc_inode_sb(sb, ssdfs_inode_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ii)
 		return NULL;
 
@@ -446,6 +450,10 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 
 	if (fsi->fs_feature_compat &
 			SSDFS_HAS_INVALID_EXTENTS_TREE_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush invalidated extents btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_invextree_flush(fsi);
 		if (err) {
 			SSDFS_ERR("fail to flush invalidated extents btree: "
@@ -454,6 +462,10 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_EXTENTS_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush shared extents btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_shextree_flush(fsi);
 		if (err) {
 			SSDFS_ERR("fail to flush shared extents btree: "
@@ -462,6 +474,10 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_INODES_TREE_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush inodes btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_inodes_btree_flush(fsi->inodes_tree);
 		if (err) {
 			SSDFS_ERR("fail to flush inodes btree: "
@@ -470,6 +486,10 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_SHARED_DICT_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush shared dictionary\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_shared_dict_btree_flush(fsi->shdictree);
 		if (err) {
 			SSDFS_ERR("fail to flush shared dictionary: "
@@ -477,12 +497,20 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("process the snapshots creation\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	err = ssdfs_execute_create_snapshots(fsi);
 	if (err) {
 		SSDFS_ERR("fail to process the snapshots creation\n");
 	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_SNAPSHOTS_TREE_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush snapshots btree\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_snapshots_btree_flush(fsi);
 		if (err) {
 			SSDFS_ERR("fail to flush snapshots btree: "
@@ -491,6 +519,10 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_SEGBMAP_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush segment bitmap\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_segbmap_flush(fsi->segbmap);
 		if (err) {
 			SSDFS_ERR("fail to flush segment bitmap: "
@@ -499,6 +531,10 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	}
 
 	if (fsi->fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("flush mapping table\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_flush(fsi->maptbl);
 		if (err) {
 			SSDFS_ERR("fail to flush mapping table: "
@@ -1854,7 +1890,7 @@ finish_copy_items:
 
 	hdr->items_count = cpu_to_le16(items_count);
 	hdr->items_capacity = cpu_to_le16(items_capacity);
-	hdr->area_size = cpu_to_le16(area_size);
+	hdr->area_size = cpu_to_le32(area_size);
 
 	desc->offset = cpu_to_le32(offset);
 	desc->size = cpu_to_le32(area_size);
@@ -3733,6 +3769,7 @@ static void ssdfs_destroy_caches(void)
 		kmem_cache_destroy(ssdfs_inode_cachep);
 
 	ssdfs_destroy_seg_req_obj_cache();
+	ssdfs_destroy_dirty_folios_obj_cache();
 	ssdfs_destroy_btree_search_obj_cache();
 	ssdfs_destroy_free_ino_desc_cache();
 	ssdfs_destroy_btree_node_obj_cache();
@@ -3749,6 +3786,7 @@ static int ssdfs_init_caches(void)
 
 	ssdfs_zero_seg_obj_cache_ptr();
 	ssdfs_zero_seg_req_obj_cache_ptr();
+	ssdfs_zero_dirty_folios_obj_cache_ptr();
 	ssdfs_zero_extent_info_cache_ptr();
 	ssdfs_zero_btree_node_obj_cache_ptr();
 	ssdfs_zero_btree_search_obj_cache_ptr();
@@ -3778,6 +3816,14 @@ static int ssdfs_init_caches(void)
 	err = ssdfs_init_seg_req_obj_cache();
 	if (unlikely(err)) {
 		SSDFS_ERR("unable to create segment request object cache: "
+			  "err %d\n",
+			  err);
+		goto destroy_caches;
+	}
+
+	err = ssdfs_init_dirty_folios_obj_cache();
+	if (unlikely(err)) {
+		SSDFS_ERR("unable to create dirty folios object cache: "
 			  "err %d\n",
 			  err);
 		goto destroy_caches;

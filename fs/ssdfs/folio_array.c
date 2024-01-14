@@ -135,10 +135,13 @@ int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
 	array->folios_count = 0;
 	array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
 	array->order = order;
+	array->folio_size = PAGE_SIZE << order;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("folios_count %lu, last_folio %lu, order %u\n",
-		  array->folios_count, array->last_folio, order);
+	SSDFS_DBG("folios_count %lu, last_folio %lu, "
+		  "order %u, folio_size %zu\n",
+		  array->folios_count, array->last_folio,
+		  order, array->folio_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	array->folios = ssdfs_farray_kcalloc(capacity, sizeof(struct folio *),
@@ -150,7 +153,7 @@ int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
 		goto finish_create_folio_array;
 	}
 
-	bmap_bytes = capacity + BITS_PER_LONG;
+	bmap_bytes = capacity + BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 	array->bmap_bytes = bmap_bytes;
 
@@ -335,7 +338,7 @@ int ssdfs_reinit_folio_array(int capacity, struct ssdfs_folio_array *array)
 		goto finish_reinit;
 	}
 
-	bmap_bytes = capacity + BITS_PER_LONG;
+	bmap_bytes = capacity + BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
@@ -1283,7 +1286,7 @@ int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
 		return -EINVAL;
 	}
 
-	max_folios = min_t(int, max_folios, (int)PAGEVEC_SIZE);
+	max_folios = min_t(int, max_folios, (int)SSDFS_EXTENT_LEN_MAX);
 
 	down_read(&array->lock);
 

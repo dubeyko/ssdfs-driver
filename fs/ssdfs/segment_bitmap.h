@@ -25,6 +25,7 @@
 
 #include "common_bitmap.h"
 #include "request_queue.h"
+#include "folio_array.h"
 
 /* Segment states */
 enum {
@@ -127,7 +128,7 @@ enum {
  * @search_lock: lock for search and change state operations
  * @fbmap: array of fragment bitmaps
  * @desc_array: array of fragments' descriptors
- * @pages: memory folios of the whole segment bitmap
+ * @folios: memory folios of the whole segment bitmap
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_segment_bmap {
@@ -148,7 +149,7 @@ struct ssdfs_segment_bmap {
 	struct rw_semaphore search_lock;
 	unsigned long *fbmap[SSDFS_SEGBMAP_FBMAP_TYPE_MAX];
 	struct ssdfs_segbmap_fragment_desc *desc_array;
-	struct address_space folios;
+	struct ssdfs_folio_array folios;
 
 	struct ssdfs_fs_info *fsi;
 };
@@ -394,13 +395,11 @@ void ssdfs_debug_segbmap_object(struct ssdfs_segment_bmap *bmap)
 		struct folio *folio;
 		void *kaddr;
 
-		folio = filemap_lock_folio(&bmap->folios, i);
+		folio = ssdfs_folio_array_get_folio_locked(&bmap->folios, i);
 
 		SSDFS_DBG("folio[%d] %p\n", i, folio);
 		if (!folio)
 			continue;
-
-		ssdfs_account_locked_folio(folio);
 
 		SSDFS_DBG("folio_index %llu, flags %#lx\n",
 			  (u64)folio_index(folio), folio->flags);

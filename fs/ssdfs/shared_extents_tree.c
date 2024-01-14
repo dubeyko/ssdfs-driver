@@ -27,9 +27,10 @@
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "extents_queue.h"
+#include "folio_array.h"
 #include "btree_search.h"
 #include "btree_node.h"
+#include "extents_queue.h"
 #include "btree.h"
 #include "segment_tree.h"
 #include "shared_extents_tree.h"
@@ -178,6 +179,7 @@ int ssdfs_shextree_create(struct ssdfs_fs_info *fsi)
 
 	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
 		ssdfs_extents_queue_init(&ptr->array[i].queue);
+		ssdfs_btree_node_content_init(&ptr->array[i].content);
 
 		err = ssdfs_shextree_start_thread(ptr, i);
 		if (err == -EINTR) {
@@ -1176,11 +1178,11 @@ int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
-		if (le32_to_cpu(shared_extent->ref_count) != 0) {
+		if (le64_to_cpu(shared_extent->ref_count) != 0) {
 			err = -ERANGE;
 			SSDFS_ERR("shared extent has references yet: "
-				  "ref_count %u\n",
-				  le32_to_cpu(shared_extent->ref_count));
+				  "ref_count %llu\n",
+				  le64_to_cpu(shared_extent->ref_count));
 			goto finish_delete_shared_extent;
 		}
 		break;
@@ -2177,7 +2179,7 @@ int ssdfs_shextree_create_node(struct ssdfs_btree_node *node)
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	node->bmap_array.bmap_bytes = bmap_bytes;
@@ -2321,14 +2323,14 @@ int ssdfs_shextree_init_node(struct ssdfs_btree_node *node)
 
 	down_read(&node->full_lock);
 
-	if (folio_batch_count(&node->content.batch) == 0) {
+	if (node->content.count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  node->node_id);
 		goto finish_init_node;
 	}
 
-	folio = node->content.batch.folios[0];
+	folio = node->content.blocks[0].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -2565,7 +2567,7 @@ finish_header_init:
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SHEXTREE_BMAP_SIZE) {
@@ -2723,7 +2725,7 @@ int ssdfs_shextree_add_node(struct ssdfs_btree_node *node)
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, shared_extents %u\n",
 		  node->node_id,
-		  le16_to_cpu(node->raw.shextree_header.shared_extents));
+		  le32_to_cpu(node->raw.shextree_header.shared_extents));
 	SSDFS_DBG("items_count %u, items_capacity %u, "
 		  "start_hash %llx, end_hash %llx\n",
 		  node->items_area.items_count,
@@ -2810,7 +2812,7 @@ int ssdfs_shextree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct folio *folio;
 	u16 items_count;
 	u32 items_area_size;
-	u16 shared_extents;
+	u32 shared_extents;
 	u32 used_space;
 	int err = 0;
 
@@ -2891,7 +2893,7 @@ int ssdfs_shextree_pre_flush_node(struct ssdfs_btree_node *node)
 
 	items_count = node->items_area.items_count;
 	items_area_size = node->items_area.area_size;
-	shared_extents = le16_to_cpu(header.shared_extents);
+	shared_extents = le32_to_cpu(header.shared_extents);
 
 	if (shared_extents != items_count) {
 		err = -ERANGE;
@@ -2936,13 +2938,13 @@ finish_shextree_header_preparation:
 	if (unlikely(err))
 		goto finish_node_pre_flush;
 
-	if (folio_batch_count(&node->content.batch) < 1) {
+	if (node->content.count < 1) {
 		err = -ERANGE;
 		SSDFS_ERR("folio batch is empty\n");
 		goto finish_node_pre_flush;
 	}
 
-	folio = node->content.batch.folios[0];
+	folio = node->content.blocks[0].batch.folios[0];
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				&header, 0, hdr_size,
 				hdr_size);
@@ -3844,20 +3846,22 @@ int ssdfs_shextree_node_allocate_range(struct ssdfs_btree_node *node,
  */
 static
 int __ssdfs_shextree_node_get_shared_extent(struct ssdfs_fs_info *fsi,
-					    struct folio_batch *batch,
-					    u32 area_offset,
-					    u32 area_size,
-					    u32 node_size,
-					    u16 item_index,
-					    struct ssdfs_shared_extent *extent)
+					struct ssdfs_btree_node_content *content,
+					u32 area_offset,
+					u32 area_size,
+					u32 node_size,
+					u16 item_index,
+					struct ssdfs_shared_extent *extent)
 {
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_shared_extent);
 	u32 item_offset;
+	u32 src_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !batch || !extent);
+	BUG_ON(!fsi || !content || !extent);
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
 		  area_offset, area_size, item_index);
@@ -3889,22 +3893,25 @@ int __ssdfs_shextree_node_get_shared_extent(struct ssdfs_fs_info *fsi,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(batch)) {
+	if (folio.desc.folio_index >= content->count) {
 		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(batch));
+			  content->count);
 		return -ERANGE;
 	}
 
-	folio.ptr = batch->folios[folio.desc.folio_index];
+	batch = &content->blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_from_folio(extent, 0, item_size,
-				      &folio, item_size);
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(extent, 0, item_size,
+				      batch, src_offset,
+				      item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d, err\n", err);
 		return err;
@@ -3948,7 +3955,7 @@ int ssdfs_shextree_node_get_shared_extent(struct ssdfs_btree_node *node,
 	fsi = node->tree->fsi;
 
 	return __ssdfs_shextree_node_get_shared_extent(fsi,
-							&node->content.batch,
+							&node->content,
 							area->offset,
 							area->area_size,
 							node->node_size,
@@ -4440,6 +4447,7 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 	for (i = 0; i < range_len; i++) {
 		int item_index = start_index + i;
 		u16 lookup_index;
+		u64 hash;
 
 		if (is_hash_for_lookup_table(node->node_size, item_index)) {
 			lookup_index =
@@ -4457,9 +4465,9 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 				return err;
 			}
 
-			lookup_table[lookup_index] =
-				ssdfs_fingerprint2hash(extent.fingerprint,
+			hash = ssdfs_fingerprint2hash(extent.fingerprint,
 							extent.fingerprint_len);
+			lookup_table[lookup_index] = cpu_to_le64(hash);
 		}
 	}
 
@@ -6421,21 +6429,21 @@ finish_detect_affected_items:
 
 	hdr = &node->raw.shextree_header;
 
-	old_shared_extents = le16_to_cpu(hdr->shared_extents);
+	old_shared_extents = le32_to_cpu(hdr->shared_extents);
 
 	if (node->items_area.items_count == 0) {
-		hdr->shared_extents = cpu_to_le16(0);
+		hdr->shared_extents = cpu_to_le32(0);
 	} else {
 		if (old_shared_extents < search->request.count) {
-			hdr->shared_extents = cpu_to_le16(0);
+			hdr->shared_extents = cpu_to_le32(0);
 		} else {
-			shared_extents = le16_to_cpu(hdr->shared_extents);
+			shared_extents = le32_to_cpu(hdr->shared_extents);
 			shared_extents -= search->request.count;
-			hdr->shared_extents = cpu_to_le16(shared_extents);
+			hdr->shared_extents = cpu_to_le32(shared_extents);
 		}
 	}
 
-	shared_extents = le16_to_cpu(hdr->shared_extents);
+	shared_extents = le32_to_cpu(hdr->shared_extents);
 	extents_diff = old_shared_extents - shared_extents;
 	atomic64_sub(extents_diff, &tree_info->shared_extents);
 

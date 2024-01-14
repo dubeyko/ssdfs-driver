@@ -35,9 +35,9 @@
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
-#include "extents_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
+#include "extents_queue.h"
 #include "btree.h"
 #include "btree_hierarchy.h"
 
@@ -5216,7 +5216,7 @@ ssdfs_btree_descend_to_leaf_node(struct ssdfs_btree *tree,
 
 	if (search->node.height == SSDFS_BTREE_LEAF_NODE_HEIGHT) {
 		SSDFS_DBG("search object contains leaf node\n");
-		return 0;
+		return NULL;
 	}
 
 	if (!search->node.child) {
@@ -10138,7 +10138,7 @@ int ssdfs_btree_delete_index(struct ssdfs_btree_state_descriptor *desc,
 	} else
 		delete->op_state = SSDFS_BTREE_AREA_OP_FAILED;
 
-	hash = cpu_to_le64(delete->node_index.index.hash);
+	hash = le64_to_cpu(delete->node_index.index.hash);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("tree type %#x, node_id %u, hash %llx\n",

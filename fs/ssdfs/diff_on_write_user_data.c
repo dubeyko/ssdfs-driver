@@ -127,6 +127,7 @@ void ssdfs_reserve_diff_blob_header(struct ssdfs_diff_blob_header *hdr,
  * @pebc: PEB container object
  * @desc_off: block descriptor offset
  * @pos: offset position
+ * @blk_index: block index
  * @req: segment request
  *
  * This method tries to prepare the logical block's diff for flush operation.
@@ -143,10 +144,13 @@ void ssdfs_reserve_diff_blob_header(struct ssdfs_diff_blob_header *hdr,
 int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 				 struct ssdfs_phys_offset_descriptor *desc_off,
 				 struct ssdfs_offset_position *pos,
+				 int blk_index,
 				 struct ssdfs_segment_request *req)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_diff_blob_header hdr;
 	size_t hdr_size = sizeof(struct ssdfs_diff_blob_header);
 	u32 hdr_offset = 0;
@@ -161,7 +165,6 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 	unsigned long bits_threshold;
 	unsigned long dirty_bits = 0;
 	u8 compression_type;
-	u32 mem_pages_per_block;
 	int folio_index;
 	int i;
 	int err = 0;
@@ -172,9 +175,10 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 	BUG_ON(!req || !desc_off || !pos);
 
 	SSDFS_DBG("seg %llu, peb_index %u, ino %llu, "
-		  "processed_blks %d\n",
+		  "processed_blks %d, blk_index %d\n",
 		  req->place.start.seg_id, pebc->peb_index,
-		  req->extent.ino, req->result.processed_blks);
+		  req->extent.ino, req->result.processed_blks,
+		  blk_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_peb_containing_user_data(pebc)) {
@@ -188,14 +192,15 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		return -ENOENT;
 	}
 
+	if (blk_index >= req->result.content.count) {
+		SSDFS_ERR("invalid request: "
+			  "blk_index %d >= req->result.content.count %d\n",
+			  blk_index, req->result.content.count);
+		return -EINVAL;
+	}
+
 	fsi = pebc->parent_si->fsi;
 	compression_type = fsi->metadata_options.user_data.compression;
-
-	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(mem_pages_per_block == 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	bits_threshold =
 		bits_count * CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA_THRESHOLD;
@@ -204,7 +209,7 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 	req->private.flags |= SSDFS_REQ_READ_ONLY_CACHE |
 				SSDFS_REQ_PREPARE_DIFF;
 
-	err = ssdfs_request_add_old_state_folio_locked(req);
+	err = ssdfs_request_add_old_state_folio_locked(blk_index, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate old state folio: "
 			  "err %d\n", err);
@@ -241,7 +246,7 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
-	diff_folio = ssdfs_request_allocate_locked_diff_folio(req, 0);
+	diff_folio = ssdfs_request_allocate_locked_diff_folio(req, blk_index);
 	if (unlikely(IS_ERR_OR_NULL(diff_folio))) {
 		err = diff_folio == NULL ? -ERANGE : PTR_ERR(diff_folio);
 		SSDFS_ERR("fail to add folio into request: "
@@ -257,8 +262,13 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		return -ENOMEM;
 	}
 
-	batch_size1 = folio_batch_count(&req->result.old_state);
-	batch_size2 = folio_batch_count(&req->result.batch);
+	block = &req->result.content.blocks[blk_index];
+
+	blk_state = &block->old_state;
+	batch_size1 = folio_batch_count(&blk_state->batch);
+
+	blk_state = &block->new_state;
+	batch_size2 = folio_batch_count(&blk_state->batch);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("batch_size1 %zu, batch_size2 %zu, "
@@ -294,7 +304,8 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 
 		blob_offset = write_offset;
 
-		old_folio = req->result.old_state.folios[i];
+		blk_state = &block->old_state;
+		old_folio = blk_state->batch.folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!old_folio);
@@ -309,7 +320,8 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 			goto finish_prepare_diff;
 		}
 
-		new_folio = req->result.batch.folios[folio_index];
+		blk_state = &block->new_state;
+		new_folio = blk_state->batch.folios[folio_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!new_folio);
@@ -422,28 +434,48 @@ finish_prepare_diff:
 }
 
 static inline
-u32 ssdfs_content_folio_batch_size(struct ssdfs_segment_request *req)
+struct folio_batch *ssdfs_get_block_content(int blk_index,
+					    struct ssdfs_segment_request *req)
 {
-	struct folio_batch *batch = NULL;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
+
+	if (blk_index >= req->result.content.count)
+		return NULL;
+
+	block = &req->result.content.blocks[blk_index];
 
 	if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
-		batch = &req->result.old_state;
+		blk_state = &block->old_state;
 	else
-		batch = &req->result.batch;
+		blk_state = &block->new_state;
+
+	return &blk_state->batch;
+}
+
+static inline
+u32 ssdfs_content_folio_batch_size(int blk_index,
+				   struct ssdfs_segment_request *req)
+{
+	struct folio_batch *batch;
+
+	batch = ssdfs_get_block_content(blk_index, req);
+	if (IS_ERR_OR_NULL(batch))
+		return 0;
 
 	return folio_batch_count(batch);
 }
 
 static inline
-struct folio *ssdfs_get_content_folio(struct ssdfs_segment_request *req,
-				      int folio_index)
+struct folio *ssdfs_get_content_folio(int blk_index,
+				      int folio_index,
+				      struct ssdfs_segment_request *req)
 {
-	struct folio_batch *batch = NULL;
+	struct folio_batch *batch;
 
-	if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
-		batch = &req->result.old_state;
-	else
-		batch = &req->result.batch;
+	batch = ssdfs_get_block_content(blk_index, req);
+	if (IS_ERR_OR_NULL(batch))
+		return NULL;
 
 	if (folio_index >= folio_batch_count(batch)) {
 		SSDFS_WARN("folio_index %d >= batch_size %u\n",
@@ -456,9 +488,59 @@ struct folio *ssdfs_get_content_folio(struct ssdfs_segment_request *req,
 }
 
 /*
+ * ssdfs_show_logical_block_content() - show logical block's content
+ * @blk_index: block index
+ * @req: segment request
+ */
+static inline
+void ssdfs_show_logical_block_content(int blk_index,
+				      struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 batch_size;
+	int i;
+
+	if (blk_index >= req->result.content.count)
+		return;
+
+	batch_size = ssdfs_content_folio_batch_size(blk_index, req);
+
+	SSDFS_DBG("LOGICAL BLOCK CONTENT: blk_index %d\n", blk_index);
+
+	for (i = 0; i < batch_size; i++) {
+		struct folio *folio;
+		u32 processed_bytes = 0;
+
+		folio = ssdfs_get_content_folio(blk_index, i, req);
+
+		if (!folio)
+			continue;
+
+		while (processed_bytes < folio_size(folio)) {
+			void *kaddr = kmap_local_folio(folio, processed_bytes);
+
+			SSDFS_DBG("PAGE DUMP: blk_index %d, "
+				  "folio_index %d, "
+				  "processed_bytes %u\n",
+				  blk_index, i, processed_bytes);
+			print_hex_dump_bytes("",
+					DUMP_PREFIX_OFFSET,
+					kaddr,
+					PAGE_SIZE);
+			SSDFS_DBG("\n");
+			kunmap_local(kaddr);
+
+			processed_bytes += PAGE_SIZE;
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
  * ssdfs_user_data_apply_diff_page() - apply diff on memory folio
  * @fsi: file system info object
  * @req: segment request
+ * @blk_index: block index
  * @folio: memory folio [in|out]
  *
  * This method tries to apply the diff on memory folio.
@@ -473,6 +555,7 @@ struct folio *ssdfs_get_content_folio(struct ssdfs_segment_request *req,
 static
 int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 				    struct ssdfs_segment_request *req,
+				    int blk_index,
 				    struct folio *folio)
 {
 	struct ssdfs_diff_blob_header *hdr;
@@ -488,23 +571,19 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 	__le32 calculated_csum;
 	__le32 csum;
 	u8 compression_type;
-	u32 mem_pages_per_block;
 	int i;
-#ifdef CONFIG_SSDFS_DEBUG
-	int j;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req || !folio);
 	WARN_ON(!folio_test_locked(folio));
 
-	SSDFS_DBG("req %p, folio %p\n", req, folio);
+	SSDFS_DBG("req %p, blk_index %d, folio %p\n",
+		  req, blk_index, folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
 	compression_type = fsi->metadata_options.user_data.compression;
-	batch_size = ssdfs_content_folio_batch_size(req);
+	batch_size = ssdfs_content_folio_batch_size(blk_index, req);
 
 	bmap = ssdfs_diff_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (unlikely(!bmap)) {
@@ -594,7 +673,7 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 			  offset, i);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		content_folio = ssdfs_get_content_folio(req, i);
+		content_folio = ssdfs_get_content_folio(blk_index, i, req);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!content_folio);
@@ -622,31 +701,7 @@ int ssdfs_user_data_apply_diff_page(struct ssdfs_fs_info *fsi,
 				   le32_to_cpu(csum));
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("LOGICAL BLOCK CONTENT: batch_size %u\n",
-				  folio_batch_count(&req->result.batch));
-
-			for (i = 0; i < batch_size; i++) {
-				content_folio = ssdfs_get_content_folio(req, i);
-
-				if (!content_folio)
-					continue;
-
-				for (j = 0; j < mem_pages_per_block; j++) {
-					content_kaddr =
-						kmap_local_folio(content_folio,
-								 j * PAGE_SIZE);
-					SSDFS_DBG("PAGE DUMP: folio_index %d, "
-						  "page_index %d\n",
-						  i, j);
-					print_hex_dump_bytes("",
-							     DUMP_PREFIX_OFFSET,
-							     content_kaddr,
-							     PAGE_SIZE);
-					SSDFS_DBG("\n");
-					kunmap_local(content_kaddr);
-				}
-			}
-
+			ssdfs_show_logical_block_content(blk_index, req);
 			BUG();
 #else
 			err = -EIO;
@@ -700,11 +755,10 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct folio *folio;
-	u32 mem_pages_per_block;
 	int i;
 #ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
-	int j;
+	u32 processed_bytes;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
@@ -721,7 +775,6 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
-	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
 
 	if (folio_batch_count(&req->result.diffs) == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -738,30 +791,11 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 		return 0;
 	}
 
+	for (i = 0; i < folio_batch_count(&req->result.diffs); i++) {
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("LOGICAL BLOCK CONTENT: batch_size %u\n",
-		  folio_batch_count(&req->result.batch));
-
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		folio = req->result.batch.folios[i];
-
-		if (!folio)
-			continue;
-
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-	}
+		ssdfs_show_logical_block_content(i, req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < folio_batch_count(&req->result.diffs); i++) {
 		folio = req->result.diffs.folios[i];
 
 		if (!folio) {
@@ -772,19 +806,24 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 		WARN_ON(!folio_test_locked(folio));
 
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("DIFF DUMP: folio_index %d, page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
+		processed_bytes = 0;
+		while (processed_bytes < folio_size(folio)) {
+			kaddr = kmap_local_folio(folio, processed_bytes);
+			SSDFS_DBG("DIFF DUMP: blk_index %d, "
+				  "processed_bytes %u\n",
+				  i, processed_bytes);
+			print_hex_dump_bytes("",
+					DUMP_PREFIX_OFFSET,
+					kaddr,
+					PAGE_SIZE);
 			SSDFS_DBG("\n");
 			kunmap_local(kaddr);
+
+			processed_bytes += PAGE_SIZE;
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_user_data_apply_diff_page(fsi, req, folio);
+		err = ssdfs_user_data_apply_diff_page(fsi, req, i, folio);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to apply diff folio: "
 				  "seg %llu, peb %llu, page_index %d, "
@@ -798,30 +837,11 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 				  req->extent.data_bytes);
 			return err;
 		}
-	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("LOGICAL BLOCK CONTENT: batch_size %u\n",
-		  folio_batch_count(&req->result.batch));
-
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		folio = req->result.batch.folios[i];
-
-		if (!folio)
-			continue;
-
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-	}
+		ssdfs_show_logical_block_content(i, req);
 #endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	return 0;
 }

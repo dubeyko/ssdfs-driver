@@ -1068,10 +1068,10 @@ int ssdfs_invextree_delete(struct ssdfs_invextree_info *tree,
 
 	switch (search->result.state) {
 	case SSDFS_BTREE_SEARCH_VALID_ITEM:
-		if (seg_id != cpu_to_le64(desc->seg_id)) {
+		if (seg_id != le64_to_cpu(desc->seg_id)) {
 			SSDFS_ERR("invalid result state: "
 				  "seg_id1 %llu != seg_id2 %llu\n",
-				  seg_id, cpu_to_le64(desc->seg_id));
+				  seg_id, le64_to_cpu(desc->seg_id));
 			goto finish_delete_invalidated_extent;
 		}
 		break;
@@ -1683,7 +1683,7 @@ int ssdfs_invextree_create_node(struct ssdfs_btree_node *node)
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	node->bmap_array.bmap_bytes = bmap_bytes;
@@ -1827,14 +1827,18 @@ int ssdfs_invextree_init_node(struct ssdfs_btree_node *node)
 
 	down_read(&node->full_lock);
 
-	if (folio_batch_count(&node->content.batch) == 0) {
+	if (node->content.count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  node->node_id);
 		goto finish_init_node;
 	}
 
-	folio = node->content.batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(&node->content.blocks[0].batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = node->content.blocks[0].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -2071,7 +2075,7 @@ finish_header_init:
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	if (bmap_bytes == 0 || bmap_bytes > SSDFS_INVEXTREE_BMAP_SIZE) {
@@ -2317,7 +2321,7 @@ int ssdfs_invextree_pre_flush_node(struct ssdfs_btree_node *node)
 	struct folio *folio;
 	u16 items_count;
 	u32 items_area_size;
-	u16 extents_count;
+	u32 extents_count;
 	u32 used_space;
 	int err = 0;
 
@@ -2399,7 +2403,7 @@ int ssdfs_invextree_pre_flush_node(struct ssdfs_btree_node *node)
 
 	items_count = node->items_area.items_count;
 	items_area_size = node->items_area.area_size;
-	extents_count = le16_to_cpu(invextree_header.extents_count);
+	extents_count = le32_to_cpu(invextree_header.extents_count);
 
 	if (extents_count != items_count) {
 		err = -ERANGE;
@@ -2444,13 +2448,22 @@ finish_invextree_header_preparation:
 	if (unlikely(err))
 		goto finish_node_pre_flush;
 
-	if (folio_batch_count(&node->content.batch) < 1) {
+	if (node->content.count < 1) {
 		err = -ERANGE;
 		SSDFS_ERR("folio batch is empty\n");
 		goto finish_node_pre_flush;
 	}
 
-	folio = node->content.batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(&node->content.blocks[0].batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = node->content.blocks[0].batch.folios[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				&invextree_header, 0, hdr_size,
 				hdr_size);
@@ -3369,7 +3382,8 @@ int ssdfs_invextree_node_allocate_range(struct ssdfs_btree_node *node,
 
 /*
  * __ssdfs_invextree_node_get_extent() - extract the invalidated extent
- * @batch: pointer on folio batch
+ * @fsi: pointer on shared file system object
+ * @content: btree node's content
  * @area_offset: area offset from the node's beginning
  * @area_size: area size
  * @node_size: size of the node
@@ -3386,7 +3400,7 @@ int ssdfs_invextree_node_allocate_range(struct ssdfs_btree_node *node,
  */
 static
 int __ssdfs_invextree_node_get_extent(struct ssdfs_fs_info *fsi,
-					struct folio_batch *batch,
+					struct ssdfs_btree_node_content *content,
 					u32 area_offset,
 					u32 area_size,
 					u32 node_size,
@@ -3394,12 +3408,14 @@ int __ssdfs_invextree_node_get_extent(struct ssdfs_fs_info *fsi,
 					struct ssdfs_raw_extent *extent)
 {
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_raw_extent);
 	u32 item_offset;
+	u32 src_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !batch || !extent);
+	BUG_ON(!fsi || !content || !extent);
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
 		  area_offset, area_size, item_index);
@@ -3431,18 +3447,25 @@ int __ssdfs_invextree_node_get_extent(struct ssdfs_fs_info *fsi,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(batch)) {
+	if (folio.desc.folio_index >= content->count) {
 		SSDFS_ERR("invalid page_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(batch));
+			  content->count);
 		return -ERANGE;
 	}
 
-	folio.ptr = batch->folios[folio.desc.folio_index];
+	batch = &content->blocks[folio.desc.folio_index].batch;
 
-	err = ssdfs_memcpy_from_folio(extent, 0, item_size,
-				      &folio, item_size);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(extent, 0, item_size,
+				      batch, src_offset,
+				      item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -3485,7 +3508,7 @@ int ssdfs_invextree_node_get_extent(struct ssdfs_btree_node *node,
 	fsi = node->tree->fsi;
 
 	return __ssdfs_invextree_node_get_extent(fsi,
-						 &node->content.batch,
+						 &node->content,
 						 area->offset,
 						 area->area_size,
 						 node->node_size,
@@ -3928,7 +3951,7 @@ int ssdfs_correct_lookup_table(struct ssdfs_btree_node *node,
 			hash = ssdfs_invextree_calculate_hash(fsi, seg_id,
 							      logical_blk);
 
-			lookup_table[lookup_index] = hash;
+			lookup_table[lookup_index] = cpu_to_le64(hash);
 		}
 	}
 

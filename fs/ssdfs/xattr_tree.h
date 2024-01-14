@@ -117,7 +117,7 @@ int ssdfs_xattrs_tree_delete_all(struct ssdfs_xattrs_btree_info *tree);
  * Xattr tree internal API
  */
 int __ssdfs_xattrs_btree_node_get_xattr(struct ssdfs_fs_info *fsi,
-					struct folio_batch *batch,
+					struct ssdfs_btree_node_content *content,
 					u32 area_offset,
 					u32 area_size,
 					u32 node_size,

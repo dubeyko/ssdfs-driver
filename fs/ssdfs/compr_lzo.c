@@ -142,6 +142,7 @@ static void ssdfs_lzo_free_workspace(struct list_head *ptr)
 static struct list_head *ssdfs_lzo_alloc_workspace(void)
 {
 	struct ssdfs_lzo_workspace *workspace;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("try to allocate workspace\n");
@@ -151,8 +152,11 @@ static struct list_head *ssdfs_lzo_alloc_workspace(void)
 	if (unlikely(!workspace))
 		goto failed_alloc_workspaces;
 
+	nofs_flags = memalloc_nofs_save();
 	workspace->mem = vmalloc(LZO1X_MEM_COMPRESS);
 	workspace->cbuf = vmalloc(lzo1x_worst_compress(PAGE_SIZE));
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!workspace->mem || !workspace->cbuf)
 		goto failed_alloc_workspaces;
 

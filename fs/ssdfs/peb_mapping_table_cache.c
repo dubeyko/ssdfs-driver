@@ -1530,7 +1530,7 @@ int ssdfs_maptbl_cache_init_folio(void *kaddr, unsigned sequence_id)
 		  kaddr, sequence_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (sequence_id >= PAGEVEC_SIZE) {
+	if (sequence_id >= SSDFS_EXTENT_LEN_MAX) {
 		SSDFS_ERR("invalid sequence_id %u\n",
 			  sequence_id);
 		return -EINVAL;
@@ -2395,8 +2395,8 @@ int ssdfs_maptbl_cache_remove_leb(struct ssdfs_maptbl_cache *cache,
 	}
 
 	if (items_count == 0) {
-		hdr->start_leb = U64_MAX;
-		hdr->end_leb = U64_MAX;
+		hdr->start_leb = cpu_to_le64(U64_MAX);
+		hdr->end_leb = cpu_to_le64(U64_MAX);
 	} else {
 		cur_pair = LEB2PEB_PAIR_AREA(kaddr);
 		hdr->start_leb = cur_pair->leb_id;

@@ -847,11 +847,15 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
 		u64 reserved = 0;
 		u32 pending = 0;
+		u32 mem_pages;
+
+		mem_pages = SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(fsi);
+		mem_pages *= *reserved_blks;
 
 		spin_lock(&fsi->volume_state_lock);
 		reserved = fsi->reserved_new_user_data_pages;
-		if (fsi->reserved_new_user_data_pages >= *reserved_blks) {
-			fsi->reserved_new_user_data_pages -= *reserved_blks;
+		if (fsi->reserved_new_user_data_pages >= mem_pages) {
+			fsi->reserved_new_user_data_pages -= mem_pages;
 		} else
 			err1 = -ERANGE;
 		spin_unlock(&fsi->volume_state_lock);
@@ -859,12 +863,12 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		if (err1) {
 			err = err1;
 			SSDFS_ERR("count %u is bigger than reserved %llu\n",
-				  *reserved_blks, reserved);
+				  mem_pages, reserved);
 			goto finish_reserve_extent;
 		}
 
 		spin_lock(&si->pending_lock);
-		si->pending_new_user_data_pages += *reserved_blks;
+		si->pending_new_user_data_pages += mem_pages;
 		pending = si->pending_new_user_data_pages;
 		spin_unlock(&si->pending_lock);
 

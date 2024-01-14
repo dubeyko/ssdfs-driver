@@ -199,6 +199,7 @@ int ssdfs_compressors_init(void)
 	for (i = 0; i < SSDFS_COMPR_TYPES_CNT; i++) {
 		INIT_LIST_HEAD(&compr_idle_workspace[i]);
 		spin_lock_init(&compr_workspace_lock[i]);
+		compr_num_workspace[i] = 0;
 		atomic_set(&compr_alloc_workspace[i], 0);
 		init_waitqueue_head(&compr_workspace_wait[i]);
 	}
@@ -252,6 +253,7 @@ void ssdfs_free_workspaces(void)
 			if (ops->free_workspace)
 				ops->free_workspace(workspace);
 			atomic_dec(&compr_alloc_workspace[i]);
+			compr_num_workspace[i]--;
 		}
 	}
 }
@@ -320,11 +322,12 @@ again:
 
 		spin_unlock(workspace_lock);
 		prepare_to_wait(workspace_wait, &wait, TASK_UNINTERRUPTIBLE);
-		if (atomic_read(alloc_workspace) > cpus && !*num_workspace)
+		if (atomic_read(alloc_workspace) > cpus)
 			schedule();
 		finish_wait(workspace_wait, &wait);
 		goto again;
 	}
+
 	atomic_inc(alloc_workspace);
 	spin_unlock(workspace_lock);
 
@@ -378,8 +381,7 @@ static void ssdfs_free_workspace(int type, struct list_head *workspace)
 	ops->free_workspace(workspace);
 	atomic_dec(alloc_workspace);
 wake:
-	smp_mb();
-	if (waitqueue_active(workspace_wait))
+	if (wq_has_sleeper(workspace_wait))
 		wake_up(workspace_wait);
 }
 

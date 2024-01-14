@@ -39,9 +39,9 @@
 #include "offset_translation_table.h"
 #include "peb_container.h"
 #include "segment.h"
-#include "extents_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
+#include "extents_queue.h"
 #include "btree.h"
 #include "shared_extents_tree.h"
 #include "segment_tree.h"
@@ -214,6 +214,7 @@ int ssdfs_commit_queue_realloc(struct ssdfs_extents_btree_info *tree)
 {
 	size_t old_size, new_size;
 	size_t step_size = sizeof(u64) * SSDFS_COMMIT_QUEUE_DEFAULT_CAPACITY;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!tree);
@@ -254,9 +255,12 @@ int ssdfs_commit_queue_realloc(struct ssdfs_extents_btree_info *tree)
 	old_size = sizeof(u64) * tree->updated_segs.capacity;
 	new_size = old_size + step_size;
 
+	nofs_flags = memalloc_nofs_save();
 	tree->updated_segs.ids = krealloc(tree->updated_segs.ids,
 					  new_size,
 					  GFP_KERNEL | __GFP_ZERO);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!tree->updated_segs.ids) {
 		SSDFS_ERR("fail to re-allocate commit queue\n");
 		return -ENOMEM;
@@ -2053,6 +2057,8 @@ finish_prepare_volume_extent:
 int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct inode *inode;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2067,9 +2073,18 @@ int ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 		  req->extent.data_bytes,
 		  req->extent.cno,
 		  req->extent.parent_snapshot);
+
+	BUG_ON(req->result.content.count == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode = req->result.batch.folios[0]->mapping->host;
+	block = &req->result.content.blocks[0];
+	blk_state = &block->new_state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(&blk_state->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	inode = blk_state->batch.folios[0]->mapping->host;
 
 	return __ssdfs_prepare_volume_extent(fsi, inode,
 					     &req->extent, &req->place);
@@ -2095,6 +2110,8 @@ int ssdfs_recommend_migration_extent(struct ssdfs_fs_info *fsi,
 				     struct ssdfs_segment_request *req,
 				     struct ssdfs_zone_fragment *fragment)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_inode_info *ii;
 	struct ssdfs_extents_btree_info *tree;
 	struct ssdfs_btree_search *search;
@@ -2126,7 +2143,14 @@ int ssdfs_recommend_migration_extent(struct ssdfs_fs_info *fsi,
 
 	memset(fragment, 0xFF, sizeof(struct ssdfs_zone_fragment));
 
-	ii = SSDFS_I(req->result.batch.folios[0]->mapping->host);
+	block = &req->result.content.blocks[0];
+	blk_state = &block->new_state;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(&blk_state->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ii = SSDFS_I(blk_state->batch.folios[0]->mapping->host);
 
 	tree = SSDFS_EXTREE(ii);
 	if (!tree) {
@@ -7739,7 +7763,7 @@ int ssdfs_extents_btree_create_node(struct ssdfs_btree_node *node)
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	node->bmap_array.bmap_bytes = bmap_bytes;
@@ -7894,14 +7918,14 @@ int ssdfs_extents_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_write(&node->full_lock);
 
-	if (folio_batch_count(&node->content.batch) == 0) {
+	if (node->content.count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  node->node_id);
 		goto finish_init_node;
 	}
 
-	folio = node->content.batch.folios[0];
+	folio = node->content.blocks[0].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -8136,7 +8160,7 @@ finish_header_init:
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	if (bmap_bytes == 0 || bmap_bytes > SSDFS_EXTENT_MAX_BMAP_SIZE) {
@@ -8575,13 +8599,13 @@ finish_extents_header_preparation:
 	if (unlikely(err))
 		goto finish_node_pre_flush;
 
-	if (folio_batch_count(&node->content.batch) < 1) {
+	if (node->content.count < 1) {
 		err = -ERANGE;
 		SSDFS_ERR("folio batch is empty\n");
 		goto finish_node_pre_flush;
 	}
 
-	folio = node->content.batch.folios[0];
+	folio = node->content.blocks[0].batch.folios[0];
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				&extents_header, 0, hdr_size,
 				hdr_size);
@@ -9499,7 +9523,7 @@ int ssdfs_extents_btree_node_allocate_range(struct ssdfs_btree_node *node,
 /*
  * __ssdfs_extents_btree_node_get_fork() - extract the fork from folio batch
  * @fsi: pointer on shared file system object
- * @batch: pointer on folio batch
+ * @content: btree node's content
  * @area_offset: area offset from the node's beginning
  * @area_size: area size
  * @node_size: size of the node
@@ -9515,7 +9539,7 @@ int ssdfs_extents_btree_node_allocate_range(struct ssdfs_btree_node *node,
  * %-ERANGE     - internal error.
  */
 int __ssdfs_extents_btree_node_get_fork(struct ssdfs_fs_info *fsi,
-					struct folio_batch *batch,
+					struct ssdfs_btree_node_content *content,
 					u32 area_offset,
 					u32 area_size,
 					u32 node_size,
@@ -9523,12 +9547,14 @@ int __ssdfs_extents_btree_node_get_fork(struct ssdfs_fs_info *fsi,
 					struct ssdfs_raw_fork *fork)
 {
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_raw_fork);
 	u32 item_offset;
+	u32 src_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !batch || !fork);
+	BUG_ON(!fsi || !content || !fork);
 
 	SSDFS_DBG("area_offset %u, area_size %u, item_index %u\n",
 		  area_offset, area_size, item_index);
@@ -9560,22 +9586,25 @@ int __ssdfs_extents_btree_node_get_fork(struct ssdfs_fs_info *fsi,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(batch)) {
+	if (folio.desc.folio_index >= content->count) {
 		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(batch));
+			  content->count);
 		return -ERANGE;
 	}
 
-	folio.ptr = batch->folios[folio.desc.folio_index];
+	batch = &content->blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_from_folio(fork, 0, item_size,
-				      &folio, item_size);
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(fork, 0, item_size,
+				      batch, src_offset,
+				      item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -9618,7 +9647,7 @@ int ssdfs_extents_btree_node_get_fork(struct ssdfs_btree_node *node,
 	fsi = node->tree->fsi;
 
 	return __ssdfs_extents_btree_node_get_fork(fsi,
-						   &node->content.batch,
+						   &node->content,
 						   area->offset,
 						   area->area_size,
 						   node->node_size,
@@ -11313,7 +11342,7 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		hdr->blks_count = cpu_to_le64(blks_count);
 	} else if (old_blks_count > blks_count) {
 		diff_blks_count = old_blks_count - blks_count;
-		blks_count = le32_to_cpu(hdr->blks_count);
+		blks_count = le64_to_cpu(hdr->blks_count);
 
 		if (blks_count < diff_blks_count) {
 			err = -ERANGE;
@@ -11681,7 +11710,7 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 								    &index);
 		} else {
 			err = ssdfs_btree_node_get_index(fsi,
-							 &node->content.batch,
+							 &node->content,
 							 index_area.offset,
 							 index_area.area_size,
 							 node->node_size,
@@ -11719,7 +11748,7 @@ int ssdfs_invalidate_index_tail(struct ssdfs_btree_node *node,
 								    &index);
 		} else {
 			err = ssdfs_btree_node_get_index(fsi,
-							 &node->content.batch,
+							 &node->content,
 							 index_area.offset,
 							 index_area.area_size,
 							 node->node_size,
@@ -12385,7 +12414,7 @@ int ssdfs_change_item_and_invalidate_tail(struct ssdfs_btree_node *node,
 		hdr->blks_count = cpu_to_le64(blks_count);
 	} else if (old_blks_count > blks_count) {
 		diff_blks_count = old_blks_count - blks_count;
-		blks_count = le32_to_cpu(hdr->blks_count);
+		blks_count = le64_to_cpu(hdr->blks_count);
 
 		if (blks_count < diff_blks_count) {
 			err = -ERANGE;

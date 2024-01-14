@@ -585,12 +585,9 @@ int ssdfs_unaligned_read_folio_batch(struct folio_batch *batch,
 		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_folio_lock(folio);
 		err = __ssdfs_memcpy_from_folio(buf, read_bytes, size,
 						folio, cur_offset, block_size,
 						iter_read_bytes);
-		ssdfs_folio_unlock(folio);
-
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: "
 				  "read_bytes %zu, offset %zu, "
@@ -705,11 +702,12 @@ int ssdfs_unaligned_read_folio_vector(struct ssdfs_fs_info *fsi,
 
 		folio.ptr = batch->folios[folio.desc.folio_index];
 
-		ssdfs_folio_lock(folio.ptr);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_memcpy_from_folio(buf, read_bytes, size,
 					      &folio, iter_read_bytes);
-		ssdfs_folio_unlock(folio.ptr);
-
 		if (unlikely(err)) {
 			SSDFS_ERR("bytes_off %u, read_bytes %zu, "
 				  "iter_read_bytes %zu, err %d\n",

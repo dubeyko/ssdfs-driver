@@ -91,16 +91,20 @@ void ssdfs_extent_info_init(int type, void *ptr, u64 owner_ino,
 int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_raw_extent *extent);
 int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
-					 u64 owner_ino,
-					 struct ssdfs_btree_index_key *index);
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index);
 int ssdfs_invalidate_dentries_btree_index(struct ssdfs_fs_info *fsi,
-					  u64 owner_ino,
-					  struct ssdfs_btree_index_key *index);
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index);
 int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
-					  u64 owner_ino,
-					  struct ssdfs_btree_index_key *index);
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index);
 int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
-					u64 owner_ino,
-					struct ssdfs_btree_index_key *index);
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index);
 
 #endif /* _SSDFS_EXTENTS_QUEUE_H */

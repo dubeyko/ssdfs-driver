@@ -1012,6 +1012,9 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_offset_position pos;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
+	struct folio *folio;
 	u16 blob_size;
 	u64 seg_id;
 	u32 logical_blk;
@@ -1021,7 +1024,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	u32 data_bytes;
 	u32 copied_bytes = 0;
 	struct completion *end;
-	int i;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1069,9 +1072,9 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	if (batch_size == 0)
 		batch_size = 1;
 
-	if (batch_size > PAGEVEC_SIZE) {
+	if (batch_size > SSDFS_EXTENT_LEN_MAX) {
 		err = -ERANGE;
-		SSDFS_WARN("invalid memory pages count: "
+		SSDFS_WARN("invalid memory folios count: "
 			   "blob_size %u, batch_size %u\n",
 			   blob_size, batch_size);
 		goto finish_prepare_request;
@@ -1096,7 +1099,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 					     0, 0, req);
 
 	for (i = 0; i < batch_size; i++) {
-		err = ssdfs_request_add_allocated_folio_locked(req);
+		err = ssdfs_request_add_allocated_folio_locked(i, req);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to add folio into request: "
 				  "err %d\n",
@@ -1169,55 +1172,74 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		void *kaddr;
-		struct folio *folio = req->result.batch.folios[i];
-		u32 processed_bytes = 0;
-		u32 page_index = 0;
+	BUG_ON(req->result.content.count == 0);
 
-		do {
-			kaddr = kmap_local_folio(folio, processed_bytes);
-			SSDFS_DBG("PAGE DUMP: folio_index %d, "
-				  "page_index %u\n",
-				  i, page_index);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
+	for (i = 0; i < req->result.content.count; i++) {
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
 
-			processed_bytes += PAGE_SIZE;
-			page_index++;
-		} while (processed_bytes < folio_size(folio));
+		BUG_ON(folio_batch_count(&blk_state->batch) == 0);
 
-		WARN_ON(!folio_test_locked(folio));
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			void *kaddr;
+			u32 processed_bytes = 0;
+			u32 page_index = 0;
+
+			folio = blk_state->batch.folios[j];
+
+			WARN_ON(!folio_test_locked(folio));
+
+			do {
+				kaddr = kmap_local_folio(folio,
+							 processed_bytes);
+				SSDFS_DBG("PAGE DUMP: blk_index %d, "
+					  "folio_index %d, page_index %u\n",
+					  i, j, page_index);
+				print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+						     kaddr,
+						     PAGE_SIZE);
+				SSDFS_DBG("\n");
+				kunmap_local(kaddr);
+
+				processed_bytes += PAGE_SIZE;
+				page_index++;
+			} while (processed_bytes < folio_size(folio));
+		}
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		u32 cur_len;
+	for (i = 0; i < req->result.content.count; i++) {
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
 
-		if (copied_bytes >= blob_size)
-			break;
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			u32 cur_len;
 
-		cur_len = min_t(u32, (u32)fsi->pagesize,
-				blob_size - copied_bytes);
+			folio = blk_state->batch.folios[j];
 
-		err = __ssdfs_memcpy_from_folio(value,
-						copied_bytes, size,
-						req->result.batch.folios[i],
-						0, fsi->pagesize,
-						cur_len);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to copy: "
-				  "copied_bytes %u, cur_len %u\n",
-				  copied_bytes, cur_len);
-			goto fail_read_blob;
+			if (copied_bytes >= blob_size)
+				goto finish_copy_operation;
+
+			cur_len = min_t(u32, (u32)folio_size(folio),
+					blob_size - copied_bytes);
+
+			err = __ssdfs_memcpy_from_folio(value,
+							copied_bytes, size,
+							folio,
+							0, folio_size(folio),
+							cur_len);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to copy: "
+					  "copied_bytes %u, cur_len %u\n",
+					  copied_bytes, cur_len);
+				goto fail_read_blob;
+			}
+
+			copied_bytes += cur_len;
 		}
-
-		copied_bytes += cur_len;
 	}
 
+finish_copy_operation:
 	ssdfs_request_unlock_and_remove_folios(req);
 
 	ssdfs_put_request(req);

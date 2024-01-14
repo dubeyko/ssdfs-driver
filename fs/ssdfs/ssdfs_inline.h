@@ -87,7 +87,12 @@ void ssdfs_memory_leaks_decrement(void *kaddr)
 static inline
 void *ssdfs_kmalloc(size_t size, gfp_t flags)
 {
-	void *kaddr = kmalloc(size, flags);
+	void *kaddr;
+	unsigned int nofs_flags;
+
+	nofs_flags = memalloc_nofs_save();
+	kaddr = kmalloc(size, flags);
+	memalloc_nofs_restore(nofs_flags);
 
 	if (kaddr)
 		ssdfs_memory_leaks_increment(kaddr);
@@ -98,7 +103,12 @@ void *ssdfs_kmalloc(size_t size, gfp_t flags)
 static inline
 void *ssdfs_kzalloc(size_t size, gfp_t flags)
 {
-	void *kaddr = kzalloc(size, flags);
+	void *kaddr;
+	unsigned int nofs_flags;
+
+	nofs_flags = memalloc_nofs_save();
+	kaddr = kzalloc(size, flags);
+	memalloc_nofs_restore(nofs_flags);
 
 	if (kaddr)
 		ssdfs_memory_leaks_increment(kaddr);
@@ -109,7 +119,12 @@ void *ssdfs_kzalloc(size_t size, gfp_t flags)
 static inline
 void *ssdfs_kvzalloc(size_t size, gfp_t flags)
 {
-	void *kaddr = kvzalloc(size, flags);
+	void *kaddr;
+	unsigned int nofs_flags;
+
+	nofs_flags = memalloc_nofs_save();
+	kaddr = kvzalloc(size, flags);
+	memalloc_nofs_restore(nofs_flags);
 
 	if (kaddr)
 		ssdfs_memory_leaks_increment(kaddr);
@@ -120,7 +135,12 @@ void *ssdfs_kvzalloc(size_t size, gfp_t flags)
 static inline
 void *ssdfs_kcalloc(size_t n, size_t size, gfp_t flags)
 {
-	void *kaddr = kcalloc(n, size, flags);
+	void *kaddr;
+	unsigned int nofs_flags;
+
+	nofs_flags = memalloc_nofs_save();
+	kaddr = kcalloc(n, size, flags);
+	memalloc_nofs_restore(nofs_flags);
 
 	if (kaddr)
 		ssdfs_memory_leaks_increment(kaddr);
@@ -238,6 +258,7 @@ static inline
 struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 {
 	struct folio *folio;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("mask %#x, order %u\n",
@@ -250,7 +271,10 @@ struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	folio = folio_alloc(gfp_mask, order);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (unlikely(!folio)) {
 		SSDFS_WARN("unable to allocate folio\n");
 		return ERR_PTR(-ENOMEM);
@@ -914,6 +938,14 @@ bool IS_SSDFS_OFF2FOLIO_VALID(struct ssdfs_offset2folio *desc)
 		return false;
 	}
 
+	if (desc->folio_offset % desc->block_size) {
+		SSDFS_ERR("unaligned folio offset: "
+			  "folio_offset %llu, block_size %u\n",
+			  desc->folio_offset,
+			  desc->block_size);
+		return false;
+	}
+
 	calculated = (u64)desc->folio_index * desc->block_size;
 	if (calculated != desc->folio_offset) {
 		SSDFS_ERR("invalid folio index: "
@@ -922,6 +954,14 @@ bool IS_SSDFS_OFF2FOLIO_VALID(struct ssdfs_offset2folio *desc)
 			  desc->folio_index,
 			  desc->block_size,
 			  desc->folio_offset);
+		return false;
+	}
+
+	if (desc->page_offset % PAGE_SIZE) {
+		SSDFS_ERR("unaligned page offset: "
+			  "page_offset %u, page_size %lu\n",
+			  desc->page_offset,
+			  PAGE_SIZE);
 		return false;
 	}
 
@@ -949,6 +989,31 @@ bool IS_SSDFS_OFF2FOLIO_VALID(struct ssdfs_offset2folio *desc)
 	}
 
 	return true;
+}
+
+/*
+ * SSDFS_PAGE_OFFSET_IN_FOLIO() - calculate page offset in folio
+ * @folio_size: size of folio in bytes
+ * @offset: offset in bytes
+ */
+static inline
+u32 SSDFS_PAGE_OFFSET_IN_FOLIO(u32 folio_size, u64 offset)
+{
+	u64 folio_offset;
+	u64 index;
+	u64 page_offset;
+
+	index = div_u64(offset, folio_size);
+	folio_offset = index * folio_size;
+
+	index = (offset - folio_offset) >> PAGE_SHIFT;
+	page_offset = index << PAGE_SHIFT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(page_offset >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)page_offset;
 }
 
 /*
@@ -1037,13 +1102,16 @@ int SSDFS_OFF2FOLIO(u32 block_size, u64 offset,
 static inline
 bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(folio1->mapping->host->i_sb);
 	ino_t ino1 = folio1->mapping->host->i_ino;
 	ino_t ino2 = folio2->mapping->host->i_ino;
+	int pages_per_folio = fsi->pagesize >> PAGE_SHIFT;
 	pgoff_t index1 = folio_index(folio1);
 	pgoff_t index2 = folio_index(folio2);
 	pgoff_t diff_index;
 	bool has_identical_type;
 	bool has_identical_ino;
+	bool has_adjacent_index;
 
 	has_identical_type = (folio_test_checked(folio1) &&
 					folio_test_checked(folio2)) ||
@@ -1056,7 +1124,9 @@ bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 	else
 		diff_index = index2 - index1;
 
-	return has_identical_type && has_identical_ino && (diff_index == 1);
+	has_adjacent_index = diff_index == 1 || diff_index == pages_per_folio;
+
+	return has_identical_type && has_identical_ino && has_adjacent_index;
 }
 
 static inline
@@ -1548,63 +1618,6 @@ int ssdfs_memcpy_from_folio(void *dst, u32 dst_off, u32 dst_size,
 }
 
 static inline
-int ssdfs_memcpy_from_batch(u32 pagesize,
-			    void *dst, u32 dst_off, u32 dst_size,
-			    struct folio_batch *batch, u32 src_off,
-			    u32 copy_size)
-{
-	struct ssdfs_smart_folio folio;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!dst || !batch);
-
-	SSDFS_DBG("dst_off %u, dst_size %u, "
-		  "src_off %u, copy_size %u\n",
-		  dst_off, dst_size,
-		  src_off, copy_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	err = SSDFS_OFF2FOLIO(pagesize, src_off, &folio.desc);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to convert offset into folio: "
-			  "src_off %u, err %d\n",
-			  src_off, err);
-		return err;
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (folio.desc.folio_index >= folio_batch_count(batch)) {
-		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
-			  folio.desc.folio_index,
-			  folio_batch_count(batch));
-		return -ERANGE;
-	}
-
-	folio.ptr = batch->folios[folio.desc.folio_index];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	ssdfs_folio_lock(folio.ptr);
-	err = ssdfs_memcpy_from_folio(dst, dst_off, dst_size,
-				      &folio, copy_size);
-	ssdfs_folio_unlock(folio.ptr);
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		return err;
-	}
-
-	return 0;
-}
-
-static inline
 int __ssdfs_memcpy_to_folio(struct folio *folio, u32 dst_off, u32 dst_size,
 			    void *src, u32 src_off, u32 src_size,
 			    u32 copy_size)
@@ -1729,12 +1742,15 @@ int ssdfs_memcpy_to_folio(struct ssdfs_smart_folio *dst_folio,
 }
 
 static inline
-int ssdfs_memcpy_to_batch(u32 pagesize,
-			  struct folio_batch *batch, u32 dst_off,
+int ssdfs_memcpy_to_batch(struct folio_batch *batch, u32 dst_off,
 			  void *src, u32 src_off, u32 src_size,
 			  u32 copy_size)
 {
-	struct ssdfs_smart_folio folio;
+	struct folio *folio = NULL;
+	int index;
+	u32 batch_size;
+	u32 offset;
+	u32 processed_bytes = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1745,41 +1761,349 @@ int ssdfs_memcpy_to_batch(u32 pagesize,
 		  dst_off, src_off, src_size, copy_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = SSDFS_OFF2FOLIO(pagesize, dst_off, &folio.desc);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to convert offset into folio: "
-			  "dst_off %u, err %d\n",
-			  dst_off, err);
-		return err;
-	}
+	batch_size = folio_batch_count(batch);
+	offset = 0;
+	for (index = 0; index < batch_size; index++) {
+		folio = batch->folios[index];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(batch)) {
-		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
-			  folio.desc.folio_index,
-			  folio_batch_count(batch));
+		offset += folio_size(folio);
+
+		if (dst_off <= offset)
+			break;
+	}
+
+	if (!folio) {
+		SSDFS_ERR("fail to find folio: "
+			  "dst_off %u\n",
+			  dst_off);
 		return -ERANGE;
 	}
 
-	folio.ptr = batch->folios[folio.desc.folio_index];
-
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(index >= folio_batch_count(batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_folio_lock(folio.ptr);
-	err = ssdfs_memcpy_to_folio(&folio,
-				    src, src_off, src_size,
-				    copy_size);
-	ssdfs_folio_unlock(folio.ptr);
+	while (processed_bytes < copy_size) {
+		u32 offset_inside_folio;
+		u32 dst_size;
+		u32 copied_bytes = 0;
 
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		return err;
+		if (index >= folio_batch_count(batch)) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stop copy operation: "
+				  "index %d, batch_size %u\n",
+				  index,
+				  folio_batch_count(batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+		}
+
+		folio = batch->folios[index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset_inside_folio = dst_off + processed_bytes;
+		offset_inside_folio %= folio_size(folio);
+		dst_size = folio_size(folio) - offset_inside_folio;
+
+		copied_bytes = min_t(u32, src_size, dst_size);
+		copied_bytes = min_t(u32, copied_bytes,
+					copy_size - processed_bytes);
+
+		err = __ssdfs_memcpy_to_folio(folio,
+						offset_inside_folio,
+						folio_size(folio),
+						src,
+						src_off + processed_bytes,
+						src_size,
+						copied_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "offset_inside_folio %u, "
+				  "folio_size %zu, "
+				  "copied_bytes %u, err %d\n",
+				  offset_inside_folio,
+				  folio_size(folio),
+				  copied_bytes,
+				  err);
+			return err;
+		}
+
+		processed_bytes += copied_bytes;
+
+		index++;
+	}
+
+	if (processed_bytes < copy_size) {
+		SSDFS_ERR("fail to copy: "
+			  "processed_bytes %u < copy_size %u\n",
+			  processed_bytes, copy_size);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static inline
+int ssdfs_memcpy_from_batch(void *dst, u32 dst_off, u32 dst_size,
+			    struct folio_batch *batch, u32 src_off,
+			    u32 copy_size)
+{
+	struct folio *folio = NULL;
+	int index;
+	u32 batch_size;
+	u32 offset;
+	u32 processed_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dst || !batch);
+
+	SSDFS_DBG("dst_off %u, src_off %u, "
+		  "dst_size %u, copy_size %u\n",
+		  dst_off, src_off, dst_size, copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	batch_size = folio_batch_count(batch);
+	offset = 0;
+	for (index = 0; index < batch_size; index++) {
+		folio = batch->folios[index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset += folio_size(folio);
+
+		if (src_off <= offset)
+			break;
+	}
+
+	if (!folio) {
+		SSDFS_ERR("fail to find folio: "
+			  "dst_off %u\n",
+			  dst_off);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(index >= folio_batch_count(batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	while (processed_bytes < copy_size) {
+		u32 offset_inside_folio;
+		u32 src_size;
+		u32 copied_bytes = 0;
+
+		if (index >= folio_batch_count(batch)) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stop copy operation: "
+				  "index %d, batch_size %u\n",
+				  index,
+				  folio_batch_count(batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+		}
+
+		folio = batch->folios[index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset_inside_folio = src_off + processed_bytes;
+		offset_inside_folio %= folio_size(folio);
+		src_size = folio_size(folio) - offset_inside_folio;
+
+		copied_bytes = min_t(u32, src_size, dst_size);
+		copied_bytes = min_t(u32, copied_bytes,
+					copy_size - processed_bytes);
+
+		err = __ssdfs_memcpy_from_folio(dst,
+						dst_off,
+						dst_size,
+						folio,
+						offset_inside_folio,
+						folio_size(folio),
+						copied_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "offset_inside_folio %u, "
+				  "folio_size %zu, "
+				  "copied_bytes %u, err %d\n",
+				  offset_inside_folio,
+				  folio_size(folio),
+				  copied_bytes,
+				  err);
+			return err;
+		}
+
+		processed_bytes += copied_bytes;
+
+		index++;
+	}
+
+	if (processed_bytes < copy_size) {
+		SSDFS_ERR("fail to copy: "
+			  "processed_bytes %u < copy_size %u\n",
+			  processed_bytes, copy_size);
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+static inline
+int ssdfs_memcpy_batch2batch(struct folio_batch *dst_batch, u32 dst_off,
+			     struct folio_batch *src_batch, u32 src_off,
+			     u32 copy_size)
+{
+	struct folio *src_folio = NULL;
+	struct folio *dst_folio = NULL;
+	int src_index, dst_index;
+	u32 batch_size;
+	u32 offset;
+	u32 processed_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dst_batch || !src_batch);
+
+	SSDFS_DBG("dst_off %u, src_off %u, "
+		  "copy_size %u\n",
+		  dst_off, src_off, copy_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	batch_size = folio_batch_count(src_batch);
+	offset = 0;
+	for (src_index = 0; src_index < batch_size; src_index++) {
+		src_folio = src_batch->folios[src_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!src_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset += folio_size(src_folio);
+
+		if (src_off <= offset)
+			break;
+	}
+
+	if (!src_folio) {
+		SSDFS_ERR("fail to find source folio: "
+			  "src_off %u\n",
+			  src_off);
+		return -ERANGE;
+	}
+
+	batch_size = folio_batch_count(dst_batch);
+	offset = 0;
+	for (dst_index = 0; dst_index < batch_size; dst_index++) {
+		dst_folio = dst_batch->folios[dst_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!dst_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset += folio_size(dst_folio);
+
+		if (dst_off <= offset)
+			break;
+	}
+
+	if (!dst_folio) {
+		SSDFS_ERR("fail to find destination folio: "
+			  "dst_off %u\n",
+			  dst_off);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(src_index >= folio_batch_count(src_batch));
+	BUG_ON(dst_index >= folio_batch_count(dst_batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	while (processed_bytes < copy_size) {
+		u32 src_offset_inside_folio;
+		u32 dst_offset_inside_folio;
+		u32 src_size;
+		u32 dst_size;
+		u32 copied_bytes = 0;
+
+		if (src_index >= folio_batch_count(src_batch) ||
+		    dst_index >= folio_batch_count(dst_batch)) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stop copy operation: "
+				  "src_index %d, src_batch_size %u, "
+				  "dst_index %d, dst_batch_size %u\n",
+				  src_index,
+				  folio_batch_count(src_batch),
+				  dst_index,
+				  folio_batch_count(dst_batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+		}
+
+		src_folio = src_batch->folios[src_index];
+		dst_folio = dst_batch->folios[dst_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!src_folio);
+		BUG_ON(!dst_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		src_offset_inside_folio = src_off + processed_bytes;
+		src_offset_inside_folio %= folio_size(src_folio);
+		src_size = folio_size(src_folio) - src_offset_inside_folio;
+
+		dst_offset_inside_folio = dst_off + processed_bytes;
+		dst_offset_inside_folio %= folio_size(dst_folio);
+		dst_size = folio_size(dst_folio) - dst_offset_inside_folio;
+
+		copied_bytes = min_t(u32, src_size, dst_size);
+		copied_bytes = min_t(u32, copied_bytes,
+					copy_size - processed_bytes);
+
+		err = __ssdfs_memcpy_folio(dst_folio,
+					   dst_offset_inside_folio,
+					   folio_size(dst_folio),
+					   src_folio,
+					   src_offset_inside_folio,
+					   folio_size(src_folio),
+					   copied_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "src_offset_inside_folio %u, "
+				  "src_folio_size %zu, "
+				  "dst_offset_inside_folio %u, "
+				  "dst_folio_size %zu, "
+				  "copied_bytes %u, err %d\n",
+				  src_offset_inside_folio,
+				  folio_size(src_folio),
+				  dst_offset_inside_folio,
+				  folio_size(dst_folio),
+				  copied_bytes,
+				  err);
+			return err;
+		}
+
+		processed_bytes += copied_bytes;
+
+		src_index++;
+		dst_index++;
+	}
+
+	if (processed_bytes < copy_size) {
+		SSDFS_ERR("fail to copy: "
+			  "processed_bytes %u < copy_size %u\n",
+			  processed_bytes, copy_size);
+		return -ERANGE;
 	}
 
 	return 0;
@@ -1898,7 +2222,165 @@ int __ssdfs_memmove_folio(struct folio *dst_ptr, u32 dst_off, u32 dst_size,
 
 	dst_folio.ptr = dst_ptr;
 
-	return ssdfs_memcpy_folio(&dst_folio, &src_folio, move_size);
+	return ssdfs_memmove_folio(&dst_folio, &src_folio, move_size);
+}
+
+static inline
+int ssdfs_memmove_inside_batch(struct folio_batch *batch,
+				u32 dst_off, u32 src_off,
+				u32 move_size)
+{
+	struct folio *src_folio = NULL;
+	struct folio *dst_folio = NULL;
+	int src_index, dst_index;
+	u32 batch_size;
+	u32 offset;
+	u32 processed_bytes = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!batch);
+
+	SSDFS_DBG("dst_off %u, src_off %u, move_size %u\n",
+		  dst_off, src_off, move_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	batch_size = folio_batch_count(batch);
+
+	offset = 0;
+	for (src_index = 0; src_index < batch_size; src_index++) {
+		src_folio = batch->folios[src_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!src_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset += folio_size(src_folio);
+
+		if (src_off <= offset)
+			break;
+	}
+
+	if (!src_folio) {
+		SSDFS_ERR("fail to find source folio: "
+			  "src_off %u\n",
+			  src_off);
+		return -ERANGE;
+	}
+
+	offset = 0;
+	for (dst_index = 0; dst_index < batch_size; dst_index++) {
+		dst_folio = batch->folios[dst_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!dst_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset += folio_size(dst_folio);
+
+		if (dst_off <= offset)
+			break;
+	}
+
+	if (!dst_folio) {
+		SSDFS_ERR("fail to find destination folio: "
+			  "dst_off %u\n",
+			  dst_off);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(src_index >= folio_batch_count(batch));
+	BUG_ON(dst_index >= folio_batch_count(batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	while (processed_bytes < move_size) {
+		u32 src_offset_inside_folio;
+		u32 dst_offset_inside_folio;
+		u32 src_size;
+		u32 dst_size;
+		u32 copied_bytes = 0;
+
+		if (src_index >= folio_batch_count(batch) ||
+		    dst_index >= folio_batch_count(batch)) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("stop copy operation: "
+				  "src_index %d, dst_index %d, "
+				  "batch_size %u\n",
+				  src_index, dst_index,
+				  folio_batch_count(batch));
+#endif /* CONFIG_SSDFS_DEBUG */
+			break;
+		}
+
+		src_folio = batch->folios[src_index];
+		dst_folio = batch->folios[dst_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!src_folio);
+		BUG_ON(!dst_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		src_offset_inside_folio = src_off + processed_bytes;
+		src_offset_inside_folio %= folio_size(src_folio);
+		src_size = folio_size(src_folio) - src_offset_inside_folio;
+
+		dst_offset_inside_folio = dst_off + processed_bytes;
+		dst_offset_inside_folio %= folio_size(dst_folio);
+		dst_size = folio_size(dst_folio) - dst_offset_inside_folio;
+
+		copied_bytes = min_t(u32, src_size, dst_size);
+		copied_bytes = min_t(u32, copied_bytes,
+					move_size - processed_bytes);
+
+		if (src_index == dst_index) {
+			err = __ssdfs_memmove_folio(dst_folio,
+						    dst_offset_inside_folio,
+						    folio_size(dst_folio),
+						    src_folio,
+						    src_offset_inside_folio,
+						    folio_size(src_folio),
+						    copied_bytes);
+		} else {
+			err = __ssdfs_memcpy_folio(dst_folio,
+						   dst_offset_inside_folio,
+						   folio_size(dst_folio),
+						   src_folio,
+						   src_offset_inside_folio,
+						   folio_size(src_folio),
+						   copied_bytes);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to copy: "
+				  "src_offset_inside_folio %u, "
+				  "src_folio_size %zu, "
+				  "dst_offset_inside_folio %u, "
+				  "dst_folio_size %zu, "
+				  "copied_bytes %u, err %d\n",
+				  src_offset_inside_folio,
+				  folio_size(src_folio),
+				  dst_offset_inside_folio,
+				  folio_size(dst_folio),
+				  copied_bytes,
+				  err);
+			return err;
+		}
+
+		processed_bytes += copied_bytes;
+
+		src_index++;
+		dst_index++;
+	}
+
+	if (processed_bytes < move_size) {
+		SSDFS_ERR("fail to move: "
+			  "processed_bytes %u < move_size %u\n",
+			  processed_bytes, move_size);
+		return -ERANGE;
+	}
+
+	return 0;
 }
 
 static inline
@@ -2024,6 +2506,26 @@ int ssdfs_memzero_folio(struct ssdfs_smart_folio *dst_folio,
 	return __ssdfs_memzero_folio(dst_folio->ptr,
 				     dst_off, dst_folio->desc.block_size,
 				     set_size);
+}
+
+static inline
+u32 SSDFS_MEM_PAGES_PER_FOLIO(struct folio *folio)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return (u32)folio_size(folio) >> PAGE_SHIFT;
+}
+
+static inline
+u32 SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return fsi->pagesize >> PAGE_SHIFT;
 }
 
 static inline

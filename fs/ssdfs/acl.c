@@ -44,7 +44,7 @@ atomic64_t ssdfs_acl_cache_leaks;
  * void *ssdfs_acl_kzalloc(size_t size, gfp_t flags)
  * void *ssdfs_acl_kcalloc(size_t n, size_t size, gfp_t flags)
  * void ssdfs_acl_kfree(void *kaddr)
- * struct folio *ssdfs_acl_alloc_foliogfp_t gfp_mask, unsigned int order)
+ * struct folio *ssdfs_acl_alloc_folio(gfp_t gfp_mask, unsigned int order)
  * struct folio *ssdfs_acl_add_batch_folio(struct folio_batch *batch,
  *                                         unsigned int order)
  * void ssdfs_acl_free_folio(struct folio *folio)

@@ -28,10 +28,12 @@
 /*
  * struct ssdfs_invalidation_queue - invalidation queue object
  * @queue: extents/index queue object
+ * @content: btree node's content buffer
  * @thread: descriptor of queue's thread
  */
 struct ssdfs_invalidation_queue {
 	struct ssdfs_extents_queue queue;
+	struct ssdfs_btree_node_content content;
 	struct ssdfs_thread_info thread;
 };
 

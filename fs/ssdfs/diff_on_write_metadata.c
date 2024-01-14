@@ -45,62 +45,99 @@
 			sizeof(__le32)))
 
 /*
+ * ssdfs_show_btree_node_content() - show btree node's content
+ * @content: btree node's content
+ */
+static inline
+void ssdfs_show_btree_node_content(struct ssdfs_btree_node_content *content)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_content_block *blk;
+	int i, j;
+
+	SSDFS_DBG("NODE CONTENT:\n");
+
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
+		u32 batch_size = folio_batch_count(&blk->batch);
+
+		for (j = 0; j < batch_size; j++) {
+			struct folio *folio = blk->batch.folios[i];
+			u32 processed_bytes = 0;
+
+			if (!folio)
+				continue;
+
+			while (processed_bytes < folio_size(folio)) {
+				void *kaddr = kmap_local_folio(folio,
+							processed_bytes);
+				SSDFS_DBG("PAGE DUMP: blk_index %d, "
+					  "folio_index %d, "
+					  "processed_bytes %u\n",
+					  i, j, processed_bytes);
+				print_hex_dump_bytes("",
+						DUMP_PREFIX_OFFSET,
+						kaddr,
+						PAGE_SIZE);
+				SSDFS_DBG("\n");
+				kunmap_local(kaddr);
+
+				processed_bytes += PAGE_SIZE;
+			}
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
  * ssdfs_calculate_block_checksum() - calculate block's checksum
  * @fsi: file system info object
- * @blk_index: logical block index
- * @batch: folio batch with node's content
+ * @batch: block's content
  * @checksum: calculated checksum [out]
  */
 static inline
 int ssdfs_calculate_block_checksum(struct ssdfs_fs_info *fsi,
-				   u32 blk_index,
 				   struct folio_batch *batch,
 				   __le32 *checksum)
 {
-	u32 mem_pages_per_block;
-	u32 batch_size;
+	u32 processed_bytes = 0;
 	u32 csum = ~0;
 	u32 i;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !checksum);
+	BUG_ON(!fsi || !batch || !checksum);
 
-	SSDFS_DBG("blk_index %u, batch %p, checksum %p\n",
-		  blk_index, batch, checksum);
+	SSDFS_DBG("batch %p, checksum %p\n",
+		  batch, checksum);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*checksum = U32_MAX;
 
-	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
-	batch_size = folio_batch_count(batch);
-
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("mem_pages_per_block %u, blk_index %u, "
-		  "batch_size %u\n",
-		  mem_pages_per_block,
-		  blk_index,
-		  batch_size);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (blk_index >= batch_size) {
-		SSDFS_ERR("blk_index %u >= batch_size %u\n",
-			  blk_index, batch_size);
-		return -ERANGE;
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		struct folio *folio = batch->folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		while (processed_bytes < folio_size(folio)) {
+			void *kaddr;
+
+			kaddr = kmap_local_folio(folio, processed_bytes);
+			csum = crc32(csum, kaddr, PAGE_SIZE);
+			kunmap_local(kaddr);
+
+			processed_bytes += PAGE_SIZE;
+		}
 	}
 
-	for (i = 0; i < mem_pages_per_block; i++) {
-		struct page *page;
-		void *kaddr;
-
-		page = folio_page(batch->folios[blk_index], i);
-
-		if (!page)
-			BUG();
-
-		kaddr = kmap_local_page(page);
-		csum = crc32(csum, kaddr, PAGE_SIZE);
-		kunmap_local(kaddr);
-	}
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(csum == 0 || csum == ~0);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*checksum = cpu_to_le32(csum);
 
@@ -471,6 +508,7 @@ int ssdfs_btree_node_save_diff_blob_metadata(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_state_bitmap *bmap;
+	struct folio_batch *batch;
 	void *kaddr;
 	u8 index_size;
 	u32 index_area_offset;
@@ -692,9 +730,8 @@ int ssdfs_btree_node_save_diff_blob_metadata(struct ssdfs_btree_node *node,
 		goto unlock_bmap;
 	}
 
-	err = ssdfs_calculate_block_checksum(fsi, blk_index,
-					     &node->content.batch,
-					     &csum);
+	batch = &node->content.blocks[blk_index].batch;
+	err = ssdfs_calculate_block_checksum(fsi, batch, &csum);
 	if (err) {
 		SSDFS_ERR("fail to calculate block's checksum: "
 			  "blk_index %u, err %d\n",
@@ -1123,11 +1160,11 @@ int ssdfs_btree_node_copy_dirty_indexes(struct ssdfs_btree_node *node,
 		}
 
 		err = ssdfs_btree_node_get_index(fsi,
-					 &node->content.batch,
+					 &node->content,
 					 area_offset, area_size,
 					 node->node_size,
 					 (u16)found_item - index_start_bit,
-					  &index);
+					 &index);
 		if (err == -ENODATA) {
 			err = 0;
 			is_deleted_index = true;
@@ -1818,6 +1855,8 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 						u32 blk_index)
 {
 	struct ssdfs_metadata_diff_blob_header hdr;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct folio *folio;
 	size_t hdr_size = sizeof(struct ssdfs_metadata_diff_blob_header);
 	u8 index_size;
@@ -1860,17 +1899,25 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 
 	if (!is_ssdfs_btree_node_logical_block_modified(node, blk_index)) {
 #ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(node->flush_req.result.content.count <= blk_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		block = &node->flush_req.result.content.blocks[blk_index];
+		blk_state = &block->new_state;
+
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical block has not been modified: "
 			  "logical_blk %u\n",
 			  logical_blk);
 
-		BUG_ON(node->flush_req.result.batch.folios[blk_index] != NULL);
+		BUG_ON(folio_batch_count(&blk_state->batch) != 0);
+		BUG_ON(blk_state->batch.folios[0] != NULL);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		node->flush_req.result.batch.folios[blk_index] = NULL;
+		folio_batch_reinit(&blk_state->batch);
 
-		if ((blk_index + 1) > node->flush_req.result.batch.nr)
-			node->flush_req.result.batch.nr = blk_index + 1;
+		if ((blk_index + 1) > node->flush_req.result.content.count)
+			node->flush_req.result.content.count = blk_index + 1;
 
 		return 0;
 	}
@@ -2049,11 +2096,6 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 	u32 logical_blk;
 	u32 len;
 	u32 i;
-#ifdef CONFIG_SSDFS_DEBUG
-	struct folio *folio;
-	void *kaddr;
-	int j;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2096,28 +2138,11 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 		  node->node_id, atomic_read(&node->height),
 		  atomic_read(&node->type));
 
-	SSDFS_DBG("NODE CONTENT: is_locked %d, batch_size %u\n",
+	SSDFS_DBG("NODE CONTENT: is_locked %d, blks_count %u\n",
 		  rwsem_is_locked(&node->full_lock),
-		  folio_batch_count(&node->content.batch));
+		  node->content.count);
 
-	for (i = 0; i < folio_batch_count(&node->content.batch); i++) {
-		folio = node->content.batch.folios[i];
-
-		if (!folio)
-			continue;
-
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("PAGE DUMP: folio_index %d, "
-				  "page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-	}
+	ssdfs_show_btree_node_content(&node->content);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&node->descriptor_lock);
@@ -2157,30 +2182,6 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 			goto finish_prepare_diff_blob;
 		}
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("DIFF CONTENT: batch_size %u\n",
-		  folio_batch_count(&node->flush_req.result.batch));
-
-	for (i = 0; i < folio_batch_count(&node->flush_req.result.batch); i++) {
-		folio = node->flush_req.result.batch.folios[i];
-
-		if (!folio)
-			continue;
-
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("DIFF DUMP: folio_index %d, "
-				  "page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	logical_offset = (u64)node->node_id * node->node_size;
 	data_bytes = len * fsi->pagesize;
@@ -2254,8 +2255,9 @@ int ssdfs_btree_node_apply_header(struct ssdfs_fs_info *fsi,
 				  struct ssdfs_segment_request *req,
 				  void *kaddr, u32 *offset)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	size_t hdr_size = sizeof(union ssdfs_aggregated_btree_node_header);
-	u32 hdr_offset = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2271,11 +2273,16 @@ int ssdfs_btree_node_apply_header(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	hdr_offset = req->result.processed_blks * fsi->pagesize;
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(req->result.content.count <= req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block = &req->result.content.blocks[req->result.processed_blks];
+	blk_state = &block->new_state;
 
 	err = ssdfs_unaligned_write_folio_batch(fsi,
-						&req->result.batch,
-						hdr_offset, hdr_size,
+						&blk_state->batch,
+						0, hdr_size,
 						(u8 *)kaddr + *offset);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to apply btree node's header: "
@@ -2316,6 +2323,8 @@ int ssdfs_btree_node_apply_indexes(struct ssdfs_fs_info *fsi,
 				   u16 start_bit, u16 max_bit,
 				   void *kaddr, u32 *offset)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_metadata_diff_blob_header *hdr;
 	size_t hdr_size = sizeof(union ssdfs_aggregated_btree_node_header);
 	u16 diff_flags;
@@ -2372,9 +2381,14 @@ int ssdfs_btree_node_apply_indexes(struct ssdfs_fs_info *fsi,
 			  "start_bit %lu, max_bit %u\n",
 			  found_item,
 			  search_start, max_bit);
+
+		BUG_ON(req->result.content.count <= req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		index_offset = req->result.processed_blks * fsi->pagesize;
+		block = &req->result.content.blocks[req->result.processed_blks];
+		blk_state = &block->new_state;
+
+		index_offset = 0;
 
 		if (diff_flags & SSDFS_DIFF_BLOB_HAS_BTREE_NODE_HEADER)
 			index_offset += hdr_size;
@@ -2387,7 +2401,7 @@ int ssdfs_btree_node_apply_indexes(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_unaligned_write_folio_batch(fsi,
-							&req->result.batch,
+							&blk_state->batch,
 							index_offset, index_size,
 							(u8 *)kaddr + *offset);
 		if (unlikely(err)) {
@@ -2447,6 +2461,8 @@ int ssdfs_btree_node_apply_items(struct ssdfs_fs_info *fsi,
 				 u16 start_bit, u16 max_bit,
 				 void *kaddr, u32 *offset)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_metadata_diff_blob_header *hdr;
 	size_t hdr_size = sizeof(union ssdfs_aggregated_btree_node_header);
 	u16 diff_flags;
@@ -2505,9 +2521,14 @@ int ssdfs_btree_node_apply_items(struct ssdfs_fs_info *fsi,
 			  "start_bit %lu, max_bit %u\n",
 			  found_item,
 			  search_start, max_bit);
+
+		BUG_ON(req->result.content.count <= req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		item_offset = req->result.processed_blks * fsi->pagesize;
+		block = &req->result.content.blocks[req->result.processed_blks];
+		blk_state = &block->new_state;
+
+		item_offset = 0;
 
 		if (diff_flags & SSDFS_DIFF_BLOB_HAS_BTREE_NODE_HEADER)
 			item_offset += hdr_size;
@@ -2521,7 +2542,7 @@ int ssdfs_btree_node_apply_items(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_unaligned_write_folio_batch(fsi,
-							&req->result.batch,
+							&blk_state->batch,
 							item_offset, item_size,
 							(u8 *)kaddr + *offset);
 		if (unlikely(err)) {
@@ -2550,9 +2571,56 @@ finish_apply_items:
 }
 
 /*
+ * ssdfs_show_segment_request_content() - show segment request's content
+ * @req: segment request
+ */
+static inline
+void ssdfs_show_segment_request_content(struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
+	int i, j;
+
+	SSDFS_DBG("NODE CONTENT:\n");
+
+	for (i = 0; i < req->result.content.count; i++) {
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+		u32 batch_size = folio_batch_count(&blk_state->batch);
+
+		for (j = 0; j < batch_size; j++) {
+			struct folio *folio = blk_state->batch.folios[i];
+			u32 processed_bytes = 0;
+
+			if (!folio)
+				continue;
+
+			while (processed_bytes < folio_size(folio)) {
+				void *kaddr = kmap_local_folio(folio,
+							processed_bytes);
+				SSDFS_DBG("PAGE DUMP: blk_index %d, "
+					  "folio_index %d, "
+					  "processed_bytes %u\n",
+					  i, j, processed_bytes);
+				print_hex_dump_bytes("",
+						DUMP_PREFIX_OFFSET,
+						kaddr,
+						PAGE_SIZE);
+				SSDFS_DBG("\n");
+				kunmap_local(kaddr);
+
+				processed_bytes += PAGE_SIZE;
+			}
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
  * ssdfs_btree_node_apply_diff_page() - apply diff blob on btree node
  * @fsi: file system info object
- * @req: read request
+ * @req: segment request
  * @folio: current folio with diff blob
  *
  * This method tries to apply a diff blob on btree node.
@@ -2568,6 +2636,8 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 				     struct ssdfs_segment_request *req,
 				     struct folio *folio)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_metadata_diff_blob_header *hdr;
 	size_t hdr_size = sizeof(struct ssdfs_metadata_diff_blob_header);
 	size_t index_size = sizeof(struct ssdfs_btree_index_key);
@@ -2583,10 +2653,6 @@ int ssdfs_btree_node_apply_diff_page(struct ssdfs_fs_info *fsi,
 	u32 offset;
 	__le32 calculated_csum = ~0;
 	__le32 csum;
-#ifdef CONFIG_SSDFS_DEBUG
-	u32 mem_pages_per_block;
-	int i, j;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2737,9 +2803,15 @@ finish_apply_diff_folio:
 		return err;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(req->result.content.count <= req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block = &req->result.content.blocks[req->result.processed_blks];
+	blk_state = &block->new_state;
+
 	err = ssdfs_calculate_block_checksum(fsi,
-					     req->result.processed_blks,
-					     &req->result.batch,
+					     &blk_state->batch,
 					     &calculated_csum);
 	if (err) {
 		SSDFS_ERR("fail to calculate block's checksum: "
@@ -2761,31 +2833,7 @@ finish_apply_diff_folio:
 			   le32_to_cpu(csum));
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("NODE CONTENT: batch_size %u\n",
-			  folio_batch_count(&req->result.batch));
-
-		mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
-
-		for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-			struct folio *content_folio =
-						req->result.batch.folios[i];
-
-			if (!content_folio)
-				continue;
-
-			for (j = 0; j < mem_pages_per_block; j++) {
-				kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-				SSDFS_DBG("PAGE DUMP: folio_index %d, "
-					  "page_index %d\n",
-					  i, j);
-				print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-						     kaddr,
-						     PAGE_SIZE);
-				SSDFS_DBG("\n");
-				kunmap_local(kaddr);
-			}
-		}
-
+		ssdfs_show_segment_request_content(req);
 		BUG();
 #else
 		return -EIO;
@@ -2818,11 +2866,10 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct folio *folio;
-	u32 mem_pages_per_block;
 	int i;
 #ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
-	int j;
+	u32 processed_bytes;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
@@ -2839,7 +2886,6 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
-	mem_pages_per_block = fsi->pagesize / PAGE_SIZE;
 
 	if (folio_batch_count(&req->result.diffs) == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2857,26 +2903,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("NODE CONTENT: batch_size %u\n",
-		  folio_batch_count(&req->result.batch));
-
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		folio = req->result.batch.folios[i];
-
-		if (!folio)
-			continue;
-
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-	}
+	ssdfs_show_segment_request_content(req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < folio_batch_count(&req->result.diffs); i++) {
@@ -2890,15 +2917,20 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 		WARN_ON(!folio_test_locked(folio));
 
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("DIFF DUMP: folio_index %d, page_index %d\n",
-				  i, j);
+		processed_bytes = 0;
+
+		while (processed_bytes < folio_size(folio)) {
+			kaddr = kmap_local_folio(folio, processed_bytes);
+			SSDFS_DBG("DIFF DUMP: folio_index %d, "
+				  "processed_bytes %u\n",
+				  i, processed_bytes);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
 					     kaddr,
 					     PAGE_SIZE);
 			SSDFS_DBG("\n");
 			kunmap_local(kaddr);
+
+			processed_bytes += PAGE_SIZE;
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -2919,26 +2951,7 @@ int ssdfs_btree_node_apply_diffs(struct ssdfs_peb_info *pebi,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("NODE CONTENT: batch_size %u\n",
-		  folio_batch_count(&req->result.batch));
-
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		folio = req->result.batch.folios[i];
-
-		if (!folio)
-			continue;
-
-		for (j = 0; j < mem_pages_per_block; j++) {
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			SSDFS_DBG("PAGE DUMP: folio_index %d, page_index %d\n",
-				  i, j);
-			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-					     kaddr,
-					     PAGE_SIZE);
-			SSDFS_DBG("\n");
-			kunmap_local(kaddr);
-		}
-	}
+	ssdfs_show_segment_request_content(req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;

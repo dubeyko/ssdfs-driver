@@ -479,11 +479,11 @@ static int ssdfs_bdev_read_batch(struct super_block *sb,
 		  folios_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folios_count > PAGEVEC_SIZE) {
+	if (folios_count > SSDFS_EXTENT_LEN_MAX) {
 		SSDFS_WARN("folios_count %u > batch_capacity %u, "
 			   "offset %llu, len %zu, block_size %u, "
 			   "folio_start %llu, folio_end %llu\n",
-			   folios_count, PAGEVEC_SIZE,
+			   folios_count, SSDFS_EXTENT_LEN_MAX,
 			   (unsigned long long)offset, len,
 			   block_size, folio_start, folio_end);
 		return -ERANGE;
@@ -835,6 +835,12 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio);
+
+		SSDFS_DBG("folio_index %lu, folio_size %zu, "
+			  "folio_dirty %#x\n",
+			  folio_index(folio), folio_size(folio),
+			  folio_test_dirty(folio));
+
 		BUG_ON(!folio_test_dirty(folio));
 		BUG_ON(folio_test_locked(folio));
 #endif /* CONFIG_SSDFS_DEBUG */

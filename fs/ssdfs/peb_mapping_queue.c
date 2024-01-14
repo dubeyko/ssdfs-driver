@@ -283,12 +283,16 @@ void ssdfs_peb_mapping_queue_remove_all(struct ssdfs_peb_mapping_queue *pmq)
 struct ssdfs_peb_mapping_info *ssdfs_peb_mapping_info_alloc(void)
 {
 	struct ssdfs_peb_mapping_info *ptr;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_peb_mapping_info_cachep);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	ptr = kmem_cache_alloc(ssdfs_peb_mapping_info_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for PEB mapping\n");
 		return ERR_PTR(-ENOMEM);

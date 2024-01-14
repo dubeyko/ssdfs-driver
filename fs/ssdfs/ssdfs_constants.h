@@ -81,6 +81,7 @@ enum {
 #define SSDFS_HOURS_PER_DAY	(24)
 #define SSDFS_DAYS_PER_WEEK	(7)
 #define SSDFS_WEEKS_PER_MONTH	(4)
+#define SSDFS_EXTENT_LEN_MAX	(8)
 
 /*
  * Every PEB contains a sequence of logs. Log starts from

@@ -45,13 +45,14 @@ int ssdfs_calculate_fingerprint(struct ssdfs_peb_info *pebi,
 				struct ssdfs_fingerprint *hash)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	SHASH_DESC_ON_STACK(shash, pebi->dedup.shash_tfm);
-	u32 mem_pages_per_folio;
 	u32 rest_bytes;
-	u32 start_folio = 0;
-	u32 num_folios = 0;
+	u32 start_blk = 0;
+	u32 num_blks = 0;
 	u32 processed_bytes = 0;
-	int i, j;
+	int i, j, k;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req || !hash);
@@ -70,43 +71,50 @@ int ssdfs_calculate_fingerprint(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
-	mem_pages_per_folio = fsi->pagesize / PAGE_SIZE;
 
 	shash->tfm = pebi->dedup.shash_tfm;
 	crypto_shash_init(shash);
 
 	rest_bytes = ssdfs_request_rest_bytes(pebi, req);
 
-	start_folio = req->result.processed_blks;
+	start_blk = req->result.processed_blks;
 	rest_bytes = min_t(u32, rest_bytes, fsi->pagesize);
-	num_folios = rest_bytes + fsi->pagesize - 1;
-	num_folios >>= fsi->log_pagesize;
+	num_blks = rest_bytes + fsi->pagesize - 1;
+	num_blks >>= fsi->log_pagesize;
 
-	for (i = 0; i < num_folios; i++) {
+	for (i = 0; i < num_blks; i++) {
 		struct folio *folio;
 		void *kaddr;
-		int folio_index = i + start_folio;
+		int blk_index = i + start_blk;
 		u32 portion_size;
 
+		if (blk_index >= req->result.content.count)
+			break;
+
+		block = &req->result.content.blocks[blk_index];
+		blk_state = &block->new_state;
+
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			u32 mem_pages_per_folio;
+
+			folio = blk_state->batch.folios[j];
+
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(folio_index >= folio_batch_count(&req->result.batch));
+			BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio = req->result.batch.folios[folio_index];
+			mem_pages_per_folio = folio_size(folio) >> PAGE_SHIFT;
 
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		for (j = 0; j < mem_pages_per_folio; j++) {
-			portion_size = min_t(u32, PAGE_SIZE,
+			for (k = 0; k < mem_pages_per_folio; k++) {
+				portion_size = min_t(u32, PAGE_SIZE,
 						  rest_bytes - processed_bytes);
 
-			kaddr = kmap_local_folio(folio, j * PAGE_SIZE);
-			crypto_shash_update(shash, kaddr, portion_size);
-			kunmap_local(kaddr);
+				kaddr = kmap_local_folio(folio, k * PAGE_SIZE);
+				crypto_shash_update(shash, kaddr, portion_size);
+				kunmap_local(kaddr);
 
-			processed_bytes += portion_size;
+				processed_bytes += portion_size;
+			}
 		}
 	}
 

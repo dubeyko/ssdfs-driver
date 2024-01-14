@@ -177,21 +177,60 @@ struct ssdfs_request_internal_data {
 	wait_queue_head_t wait_queue;
 };
 
+#define SSDFS_REQ_EXTENT_LEN_MAX	(SSDFS_EXTENT_LEN_MAX)
+
+enum {
+	SSDFS_REQ_CONTENT_TYPE_UNKNOWN,
+	SSDFS_REQ_CONTENT_NEW_STATE,
+	SSDFS_REQ_CONTENT_OLD_STATE,
+	SSDFS_REQ_CONTENT_DIFF_STATE,
+	SSDFS_REQ_CONTENT_TYPE_MAX
+};
+
+/*
+ * struct ssdfs_content_block - logical block's memory folios
+ * @batch: array of memory folios
+ */
+struct ssdfs_content_block {
+	struct folio_batch batch;
+};
+
+/*
+ * struct ssdfs_request_content_block - logical block's content
+ * @new_state: logical block's content
+ * @old_state: array of memory folios with initial state
+ */
+struct ssdfs_request_content_block {
+	struct ssdfs_content_block new_state;
+	struct ssdfs_content_block old_state;
+};
+
+/*
+ * struct ssdfs_request_content_extent - extent of logical blocks
+ * @blocks: array of logical blocks' content
+ * @count: number of blocks in extent
+ */
+struct ssdfs_request_content_extent {
+	struct ssdfs_request_content_block blocks[SSDFS_REQ_EXTENT_LEN_MAX];
+	int count;
+};
+
 /*
  * struct ssdfs_request_result - requst result
- * @batch: array of memory folios
- * @old_state: array of memory folios with initial state
+ * @content: extent of logical blocks
  * @diffs: array of diffs
  * @processed_blks: count of processed blocks
+ * @number_of_tries: number of tries to process the request
  * @state: result's state
  * @wait: wait-for-completion of operation
  * @err: code of error
  */
 struct ssdfs_request_result {
-	struct folio_batch batch;
-	struct folio_batch old_state;
+	struct ssdfs_request_content_extent content;
 	struct folio_batch diffs;
 	int processed_blks;
+#define SSDFS_MAX_NUMBER_OF_TRIES	(10)
+	int number_of_tries;
 	atomic_t state;
 	struct completion wait;
 	int err;
@@ -270,9 +309,19 @@ struct ssdfs_segment_request_pool {
 };
 
 /*
+ * struct ssdfs_request_content_extent - extent of logical blocks
+ * @blocks: array of dirty logical blocks
+ * @count: number of blocks in extent
+ */
+struct ssdfs_dirty_blocks_extent {
+	struct ssdfs_content_block blocks[SSDFS_REQ_EXTENT_LEN_MAX];
+	int count;
+};
+
+/*
  * struct ssdfs_dirty_folios_batch - dirty folios batch
  * @state: batch state
- * @fvec: folio vector with dirty folios
+ * @content: content of dirty blocks' extent
  * @processed_blks: number processed blocks
  * @requested_extent: requested to store extent
  * @allocated_extent: really allocated extent of logical blocks
@@ -281,7 +330,7 @@ struct ssdfs_segment_request_pool {
 struct ssdfs_dirty_folios_batch {
 	int state;
 
-	struct folio_batch fvec;
+	struct ssdfs_dirty_blocks_extent content;
 	u8 processed_blks;
 
 	struct ssdfs_logical_extent requested_extent;
@@ -325,6 +374,25 @@ void ssdfs_segment_request_pool_init(struct ssdfs_segment_request_pool *pool)
 }
 
 /*
+ * ssdfs_dirty_blocks_extent_init() - init dirty blocks' extent
+ * @content: dirty blocks' extent
+ */
+static inline
+void ssdfs_dirty_blocks_extent_init(struct ssdfs_dirty_blocks_extent *content)
+{
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	content->count = 0;
+
+	for (i = 0; i < SSDFS_REQ_EXTENT_LEN_MAX; i++)
+		folio_batch_init(&content->blocks[i].batch);
+}
+
+/*
  * ssdfs_dirty_folios_batch_init() - initialize dirty folios batch
  * @batch: dirty folios batch
  */
@@ -341,7 +409,7 @@ void ssdfs_dirty_folios_batch_init(struct ssdfs_dirty_folios_batch *batch)
 
 	batch->state = SSDFS_DIRTY_BATCH_CREATED;
 
-	folio_batch_init(&batch->fvec);
+	ssdfs_dirty_blocks_extent_init(&batch->content);
 	batch->processed_blks = 0;
 
 	memset(&batch->requested_extent, 0xFF, extent_desc_size);
@@ -539,7 +607,15 @@ int ssdfs_init_seg_req_obj_cache(void);
 void ssdfs_shrink_seg_req_obj_cache(void);
 void ssdfs_destroy_seg_req_obj_cache(void);
 
+void ssdfs_zero_dirty_folios_obj_cache_ptr(void);
+int ssdfs_init_dirty_folios_obj_cache(void);
+void ssdfs_shrink_dirty_folios_obj_cache(void);
+void ssdfs_destroy_dirty_folios_obj_cache(void);
+
+struct ssdfs_dirty_folios_batch *ssdfs_dirty_folios_batch_alloc(void);
+void ssdfs_dirty_folios_batch_free(struct ssdfs_dirty_folios_batch *batch);
 int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
+					int block_index,
 					struct ssdfs_dirty_folios_batch *batch);
 
 struct ssdfs_segment_request *ssdfs_request_alloc(void);
@@ -548,24 +624,26 @@ void ssdfs_request_init(struct ssdfs_segment_request *req, u32 block_size);
 void ssdfs_get_request(struct ssdfs_segment_request *req);
 void ssdfs_put_request(struct ssdfs_segment_request *req);
 int ssdfs_request_add_folio(struct folio *folio,
+			    int block_index,
 			    struct ssdfs_segment_request *req);
 int ssdfs_request_add_diff_folio(struct folio *folio,
 				 struct ssdfs_segment_request *req);
 struct folio *
-ssdfs_request_allocate_and_add_folio(struct ssdfs_segment_request *req);
+ssdfs_request_allocate_and_add_folio(int block_index,
+				     struct ssdfs_segment_request *req);
 struct folio *
 ssdfs_request_allocate_and_add_diff_folio(struct ssdfs_segment_request *req);
 struct folio *
-ssdfs_request_allocate_and_add_old_state_folio(struct ssdfs_segment_request *req);
-struct page *
-ssdfs_request_allocate_locked_page(struct ssdfs_segment_request *req,
-				   int page_index);
+ssdfs_request_allocate_and_add_old_state_folio(int block_index,
+						struct ssdfs_segment_request *req);
 struct folio *
 ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
 					 int folio_index);
-int ssdfs_request_add_allocated_folio_locked(struct ssdfs_segment_request *req);
+int ssdfs_request_add_allocated_folio_locked(int block_index,
+					     struct ssdfs_segment_request *req);
 int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req);
-int ssdfs_request_add_old_state_folio_locked(struct ssdfs_segment_request *req);
+int ssdfs_request_add_old_state_folio_locked(int block_index,
+					     struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_folios(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_update(struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req);
@@ -573,10 +651,9 @@ void ssdfs_request_unlock_and_remove_old_state(struct ssdfs_segment_request *req
 int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 					struct folio *diff_folio,
 					struct ssdfs_segment_request *req);
-void ssdfs_request_unlock_and_forget_folio(struct ssdfs_segment_request *req,
-					   int folio_index);
+void ssdfs_request_unlock_and_forget_block(int block_index,
+					   struct ssdfs_segment_request *req);
 void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req);
-u32 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
-			    struct folio_batch *batch);
+void ssdfs_reinit_request_content(struct ssdfs_segment_request *req);
 
 #endif /* _SSDFS_REQUEST_QUEUE_H */

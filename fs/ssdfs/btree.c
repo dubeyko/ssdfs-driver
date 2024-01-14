@@ -29,7 +29,6 @@
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "extents_queue.h"
 #include "request_queue.h"
 #include "segment_bitmap.h"
 #include "folio_array.h"
@@ -39,6 +38,7 @@
 #include "segment.h"
 #include "btree_search.h"
 #include "btree_node.h"
+#include "extents_queue.h"
 #include "btree_hierarchy.h"
 #include "peb_mapping_table.h"
 #include "btree.h"
@@ -408,7 +408,7 @@ void ssdfs_btree_destroy(struct ssdfs_btree *tree)
 {
 	int tree_state;
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	struct ssdfs_btree_node *node;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -549,7 +549,7 @@ static
 int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	struct ssdfs_btree_node *node;
 	int tree_height, cur_height;
 	struct ssdfs_segment_request *req;
@@ -1034,7 +1034,7 @@ int ssdfs_btree_destroy_node_range(struct ssdfs_btree *tree,
 {
 	int tree_state;
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	struct ssdfs_btree_node *node;
 	int err = 0;
 
@@ -7929,8 +7929,8 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 {
 #ifdef CONFIG_SSDFS_BTREE_CONSISTENCY_CHECK
 	struct radix_tree_iter iter1, iter2;
-	void **slot1;
-	void **slot2;
+	void __rcu **slot1;
+	void __rcu **slot2;
 	struct ssdfs_btree_node *node1;
 	struct ssdfs_btree_node *node2;
 	u32 node_id1, node_id2;
@@ -8157,7 +8157,7 @@ void ssdfs_debug_btree_object(struct ssdfs_btree *tree)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	struct ssdfs_btree_node *node;
 
 	BUG_ON(!tree);

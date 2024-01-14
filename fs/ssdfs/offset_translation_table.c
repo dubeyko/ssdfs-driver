@@ -157,12 +157,16 @@ static
 struct ssdfs_phys_offset_table_fragment *ssdfs_blk2off_frag_alloc(void)
 {
 	struct ssdfs_phys_offset_table_fragment *ptr;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_blk2off_frag_obj_cachep);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	ptr = kmem_cache_alloc(ssdfs_blk2off_frag_obj_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for blk2off fragment\n");
 		return ERR_PTR(-ENOMEM);
@@ -6005,11 +6009,12 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 					size_t *compr_size,
 					struct ssdfs_peb_log_offset *log_offset)
 {
+	struct ssdfs_fs_info *fsi;
 	struct folio *folio;
 	void *kaddr;
 	u8 compr_type;
-	u32 block_size;
-	u32 offset_into_page;
+	pgoff_t folio_index;
+	u32 offset_into_folio;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6027,21 +6032,25 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = pebi->pebc->parent_si->fsi;
 	compr_type = ssdfs_blk2off_table_compression_type(pebi, *uncompr_size);
 
-	folio = ssdfs_folio_array_grab_folio(&pebi->cache, log_offset->cur_block);
+	folio_index = log_offset->cur_block << fsi->log_pagesize;
+	folio_index /= pebi->cache.folio_size;
+
+	folio = ssdfs_folio_array_grab_folio(&pebi->cache, folio_index);
 	if (IS_ERR_OR_NULL(folio)) {
 		err = (folio == NULL ? -ENOENT : PTR_ERR(folio));
 		SSDFS_ERR("fail to get cache folio: index %lu\n",
-			  log_offset->cur_block);
+			  folio_index);
 		return err;
 	}
 
-	block_size = 1 << log_offset->blocksize_shift;
-	offset_into_page = log_offset->offset_into_block % block_size;
-	*compr_size = PAGE_SIZE - offset_into_page;
+	offset_into_folio =
+		log_offset->offset_into_block % pebi->cache.folio_size;
+	*compr_size = folio_size(folio) - offset_into_folio;
 
-	kaddr = kmap_local_folio(folio, log_offset->offset_into_block);
+	kaddr = kmap_local_folio(folio, offset_into_folio);
 	err = ssdfs_compress(compr_type,
 			     uncompr_buf, kaddr,
 			     uncompr_size, compr_size);
@@ -6051,25 +6060,25 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 	if (err == -E2BIG) {
 		*compr_size = *uncompr_size;
 		SSDFS_DBG("unable to compress fragment in place: "
-			  "cur_block %lu, offset_into_page %u, "
+			  "cur_block %lu, offset_into_folio %u, "
 			  "uncompr_size %zu\n",
-			  log_offset->cur_block, offset_into_page,
+			  log_offset->cur_block, offset_into_folio,
 			  *uncompr_size);
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to compress fragment in place: "
-			  "cur_block %lu, offset_into_page %u, "
+			  "cur_block %lu, offset_into_folio %u, "
 			  "uncompr_size %zu, err %d\n",
-			  log_offset->cur_block, offset_into_page,
+			  log_offset->cur_block, offset_into_folio,
 			  *uncompr_size, err);
 	} else {
 		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 
 		err = ssdfs_folio_array_set_folio_dirty(&pebi->cache,
-							log_offset->cur_block);
+							folio_index);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to set block %lu as dirty: err %d\n",
-				  log_offset->cur_block, err);
+			SSDFS_ERR("fail to set folio %lu as dirty: err %d\n",
+				  folio_index, err);
 		}
 
 		err = SSDFS_SHIFT_LOG_OFFSET(log_offset, *compr_size);
@@ -6113,8 +6122,10 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 					  size_t *copied_len,
 					  struct ssdfs_peb_log_offset *log_offset)
 {
+	struct ssdfs_fs_info *fsi;
 	struct folio *folio;
-	u32 block_size;
+	pgoff_t folio_index;
+	u32 offset_into_folio;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6130,12 +6141,16 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = ssdfs_folio_array_grab_folio(&pebi->cache,
-					     log_offset->cur_block);
+	fsi = pebi->pebc->parent_si->fsi;
+
+	folio_index = log_offset->cur_block << fsi->log_pagesize;
+	folio_index /= pebi->cache.folio_size;
+
+	folio = ssdfs_folio_array_grab_folio(&pebi->cache, folio_index);
 	if (IS_ERR_OR_NULL(folio)) {
 		err = (folio == NULL ? -ENOENT : PTR_ERR(folio));
 		SSDFS_ERR("fail to get cache folio: index %lu\n",
-			  log_offset->cur_block);
+			  folio_index);
 		return err;
 	}
 
@@ -6143,12 +6158,13 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 	BUG_ON(!IS_SSDFS_LOG_OFFSET_VALID(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	block_size = 1 << log_offset->blocksize_shift;
-	*copied_len = block_size - log_offset->offset_into_block;
+	offset_into_folio =
+		log_offset->offset_into_block % pebi->cache.folio_size;
+	*copied_len = folio_size(folio) - offset_into_folio;
 	*copied_len = min_t(size_t, *copied_len, blob_size);
 
 	err = __ssdfs_memcpy_to_folio(folio,
-				      log_offset->offset_into_block, block_size,
+				      offset_into_folio, folio_size(folio),
 				      blob, 0, blob_size,
 				      *copied_len);
 	if (unlikely(err)) {
@@ -6159,12 +6175,11 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
-	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache,
-						log_offset->cur_block);
+	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, folio_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to set folio %lu dirty: "
 			  "err %d\n",
-			  log_offset->cur_block, err);
+			  folio_index, err);
 		goto unlock_grabbed_folio;
 	}
 
@@ -6452,7 +6467,7 @@ void ssdfs_peb_prepare_blk2off_table_header(struct ssdfs_peb_info *pebi,
 	blk2off_tbl->hdr.chain_hdr.compr_bytes = 0;
 	blk2off_tbl->hdr.chain_hdr.uncompr_bytes = 0;
 	blk2off_tbl->hdr.chain_hdr.fragments_count = 0;
-	blk2off_tbl->hdr.chain_hdr.desc_size = le16_to_cpu(desc_size);
+	blk2off_tbl->hdr.chain_hdr.desc_size = cpu_to_le16(desc_size);
 	blk2off_tbl->hdr.chain_hdr.magic = SSDFS_CHAIN_HDR_MAGIC;
 	blk2off_tbl->hdr.chain_hdr.flags = 0;
 
@@ -6559,6 +6574,7 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 	reserved_offset = blk2off_tbl->reserved_offset;
 	folio_index = reserved_offset / fsi->pagesize;
 	folio_index += pebi->current_log.start_block;
+	folio_index *= fsi->pagesize / pebi->cache.folio_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_offset %u, folio_index %lu\n",
@@ -6573,7 +6589,7 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 		return err;
 	}
 
-	offset_inside_folio = reserved_offset % fsi->pagesize;
+	offset_inside_folio = reserved_offset % folio_size(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_offset %u, folio_index %lu, "
@@ -6581,8 +6597,10 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 		  reserved_offset, folio_index, offset_inside_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = __ssdfs_memcpy_to_folio(folio, offset_inside_folio, fsi->pagesize,
-				      &blk2off_tbl->hdr, 0, hdr_size,
+	err = __ssdfs_memcpy_to_folio(folio,
+				      offset_inside_folio, folio_size(folio),
+				      &blk2off_tbl->hdr,
+				      0, hdr_size,
 				      hdr_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
@@ -10008,6 +10026,109 @@ int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
 }
 
 /*
+ * ssdfs_save_logical_block_content() - copy logical block's content
+ * @fsi: pointer on shared file system object
+ * @block_index: block index in request's extent
+ * @migrating_blk: pointer on migrating block [out]
+ * @req: request's result with block's content [in|out]
+ *
+ * This method tries to save the logical block's content.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal logic error.
+ */
+static
+int ssdfs_save_logical_block_content(struct ssdfs_fs_info *fsi,
+				     u16 block_index,
+				     struct ssdfs_migrating_block *migrating_blk,
+				     struct ssdfs_segment_request *req)
+{
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
+	struct folio *folio;
+	u32 allocation_size;
+	u32 offset;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !migrating_blk || !req);
+
+	SSDFS_DBG("fsi %p, block_index %u, "
+		  "migrating_blk %p, req %p\n",
+		  fsi, block_index, migrating_blk, req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return -EINVAL;
+	}
+
+	block = &req->result.content.blocks[block_index];
+	state = &block->new_state;
+
+	if (folio_batch_count(&state->batch) == 0) {
+		SSDFS_ERR("empty block state: block_index %d\n",
+			  block_index);
+		return -ERANGE;
+	}
+
+	offset = 0;
+	allocation_size = fsi->pagesize;
+
+	while (allocation_size > 0) {
+		void *kaddr;
+		u32 processed_bytes = 0;
+
+		folio = ssdfs_blk2off_alloc_folio(GFP_KERNEL,
+						  get_order(allocation_size));
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("unable to allocate memory folio\n");
+			ssdfs_blk2off_folio_batch_release(&migrating_blk->batch);
+			return err;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio %p, count %d, folio_size %zu\n",
+			  folio,
+			  folio_ref_count(folio),
+			  folio_size(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		while (processed_bytes < folio_size(folio)) {
+			kaddr = kmap_local_folio(folio, processed_bytes);
+			err = ssdfs_unaligned_read_folio_batch(&state->batch,
+								offset,
+								PAGE_SIZE,
+								kaddr);
+			kunmap_local(kaddr);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read folio batch: "
+					  "offset %u, err %d\n",
+					  offset, err);
+				return err;
+			}
+
+			processed_bytes += PAGE_SIZE;
+			offset += PAGE_SIZE;
+		}
+
+		folio_batch_add(&migrating_blk->batch, folio);
+
+		allocation_size -= folio_size(folio);
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_blk2off_table_set_block_migration() - set block migration
  * @table: pointer on table object
  * @logical_blk: logical block number
@@ -10031,7 +10152,6 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_migrating_block *blk = NULL;
-	struct folio *folio;
 	u32 logical_blk_diff;
 	u32 count;
 	int err = 0;
@@ -10063,7 +10183,7 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 		return -EINVAL;
 	}
 
-	count = folio_batch_count(&req->result.batch);
+	count = req->result.content.count;
 	if (count == 0) {
 		SSDFS_ERR("empty batch\n");
 		return -EINVAL;
@@ -10129,36 +10249,17 @@ int ssdfs_blk2off_table_set_block_migration(struct ssdfs_blk2off_table *table,
 
 	logical_blk_diff = logical_blk - req->place.start.blk_index;
 
-	folio = ssdfs_blk2off_alloc_folio(GFP_KERNEL,
-					  get_order(fsi->pagesize));
-	if (IS_ERR_OR_NULL(folio)) {
-		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-		SSDFS_ERR("unable to allocate memory folio\n");
-		ssdfs_blk2off_folio_batch_release(&blk->batch);
-		goto finish_set_block_migration;
-	}
-
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("folio %p, count %d\n",
-		  folio, folio_ref_count(folio));
-
-	BUG_ON(logical_blk_diff >= folio_batch_count(&req->result.batch));
-	BUG_ON(!req->result.batch.folios[logical_blk_diff]);
+	BUG_ON(logical_blk_diff >= count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = __ssdfs_memcpy_folio(folio,
-				   0, fsi->pagesize,
-				   req->result.batch.folios[logical_blk_diff],
-				   0, fsi->pagesize,
-				   fsi->pagesize);
+	err = ssdfs_save_logical_block_content(fsi, logical_blk_diff, blk, req);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: "
-			  "logical block %u, err %d\n",
-			  logical_blk, err);
+		SSDFS_ERR("fail to save logical block's content: "
+			  "block_index %u, err %d\n",
+			  logical_blk_diff, err);
 		goto finish_set_block_migration;
 	}
-
-	folio_batch_add(&blk->batch, folio);
 
 	blk->state = SSDFS_LBLOCK_UNDER_MIGRATION;
 	blk->peb_index = peb_index;
@@ -10216,6 +10317,132 @@ int ssdfs_blk2off_table_get_block_migration(struct ssdfs_blk2off_table *table,
 }
 
 /*
+ * ssdfs_retrieve_logical_block_content() - retrieve logical block's content
+ * @fsi: pointer on shared file system object
+ * @block_index: block index in request's extent
+ * @migrating_blk: pointer on migrating block [in]
+ * @req: request's result with block's content [in|out]
+ *
+ * This method tries to retrieve the logical block's content.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal logic error.
+ */
+static
+int ssdfs_retrieve_logical_block_content(struct ssdfs_fs_info *fsi,
+				     u16 block_index,
+				     struct ssdfs_migrating_block *migrating_blk,
+				     struct ssdfs_segment_request *req)
+{
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
+	struct folio *folio;
+	u32 read_size;
+	u32 offset;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !migrating_blk || !req);
+
+	SSDFS_DBG("fsi %p, block_index %u, "
+		  "migrating_blk %p, req %p\n",
+		  fsi, block_index, migrating_blk, req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return -EINVAL;
+	}
+
+	block = &req->result.content.blocks[block_index];
+	state = &block->new_state;
+
+	if (folio_batch_count(&state->batch) == 0) {
+		SSDFS_ERR("empty block state: block_index %d\n",
+			  block_index);
+		return -ERANGE;
+	}
+
+	if (folio_batch_count(&migrating_blk->batch) == 0) {
+		SSDFS_ERR("empty migrating block\n");
+		return -ERANGE;
+	}
+
+	offset = 0;
+	read_size = fsi->pagesize;
+
+	while (read_size > 0) {
+		void *kaddr;
+
+		for (i = 0; i < folio_batch_count(&migrating_blk->batch); i++) {
+			u32 processed_bytes = 0;
+
+			folio = migrating_blk->batch.folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+
+			SSDFS_DBG("folio %p, count %d, folio_size %zu\n",
+				  folio,
+				  folio_ref_count(folio),
+				  folio_size(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			while (processed_bytes < folio_size(folio)) {
+				ssdfs_folio_lock(folio);
+				kaddr = kmap_local_folio(folio,
+							 processed_bytes);
+				err = ssdfs_unaligned_write_folio_batch(fsi,
+								&state->batch,
+								offset,
+								PAGE_SIZE,
+								kaddr);
+				kunmap_local(kaddr);
+				ssdfs_folio_unlock(folio);
+
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to write folio batch: "
+						  "offset %u, err %d\n",
+						  offset, err);
+					return err;
+				}
+
+				processed_bytes += PAGE_SIZE;
+				offset += PAGE_SIZE;
+			}
+
+			read_size -= folio_size(folio);
+		}
+
+		read_size -= folio_size(folio);
+	}
+
+	for (i = 0; i < folio_batch_count(&state->batch); i++) {
+		folio = state->batch.folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+
+		SSDFS_DBG("folio %p, count %d, folio_size %zu\n",
+			  folio,
+			  folio_ref_count(folio),
+			  folio_size(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		folio_mark_uptodate(folio);
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_blk2off_table_get_block_state() - get state migrating block
  * @table: pointer on table object
  * @req: segment request [in|out]
@@ -10236,7 +10463,6 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_migrating_block *blk = NULL;
-	struct folio *folio;
 	u16 logical_blk;
 	int processed_blks;
 	int err = 0;
@@ -10250,14 +10476,6 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 
 	fsi = table->fsi;
 	processed_blks = req->result.processed_blks;
-
-	if (folio_batch_count(&req->result.batch) <= processed_blks) {
-		SSDFS_ERR("folio_index %d >= batch_count %u\n",
-			  processed_blks,
-			  folio_batch_count(&req->result.batch));
-		return -ERANGE;
-	}
-
 	logical_blk = req->place.start.blk_index + processed_blks;
 
 	down_read(&table->translation_lock);
@@ -10299,36 +10517,21 @@ int ssdfs_blk2off_table_get_block_state(struct ssdfs_blk2off_table *table,
 		  logical_blk, blk->state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_count(&blk->batch) == 0 ||
-	    folio_batch_count(&blk->batch) > 1) {
+	if (folio_batch_count(&blk->batch) == 0) {
 		err = -ERANGE;
 		SSDFS_WARN("logical_blk %u, blk pagevec count %u\n",
-			  logical_blk, folio_batch_count(&blk->batch));
+			   logical_blk, folio_batch_count(&blk->batch));
 		goto finish_get_block_state;
 	}
 
-	folio = req->result.batch.folios[processed_blks];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	ssdfs_folio_lock(blk->batch.folios[0]);
-	err = __ssdfs_memcpy_folio(folio,
-				   0, folio_size(folio),
-				   blk->batch.folios[0],
-				   0, folio_size(blk->batch.folios[0]),
-				   fsi->pagesize);
-	ssdfs_folio_unlock(blk->batch.folios[0]);
-
+	err = ssdfs_retrieve_logical_block_content(fsi, processed_blks,
+						   blk, req);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy block's state: "
+		SSDFS_ERR("fail to retrieve logical block's content: "
 			  "logical_blk %u, err %d\n",
 			  logical_blk, err);
 		goto finish_get_block_state;
 	}
-
-	folio_mark_uptodate(folio);
 
 finish_get_block_state:
 	up_read(&table->translation_lock);
@@ -10338,6 +10541,106 @@ finish_get_block_state:
 	}
 
 	return err;
+}
+
+/*
+ * ssdfs_update_migrating_block_content() - update logical block's content
+ * @fsi: pointer on shared file system object
+ * @block_index: block index in request's extent
+ * @migrating_blk: pointer on migrating block [out]
+ * @req: request's result with block's content [in|out]
+ *
+ * This method tries to update migrating state of logical block's content.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal logic error.
+ */
+static
+int ssdfs_update_migrating_block_content(struct ssdfs_fs_info *fsi,
+				     u16 block_index,
+				     struct ssdfs_migrating_block *migrating_blk,
+				     struct ssdfs_segment_request *req)
+{
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
+	struct folio *folio;
+	u32 offset;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !migrating_blk || !req);
+
+	SSDFS_DBG("fsi %p, block_index %u, "
+		  "migrating_blk %p, req %p\n",
+		  fsi, block_index, migrating_blk, req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return -EINVAL;
+	}
+
+	block = &req->result.content.blocks[block_index];
+	state = &block->new_state;
+
+	if (folio_batch_count(&state->batch) == 0) {
+		SSDFS_ERR("empty block state: block_index %d\n",
+			  block_index);
+		return -ERANGE;
+	}
+
+	if (folio_batch_count(&migrating_blk->batch) == 0) {
+		SSDFS_ERR("empty migrating block\n");
+		return -ERANGE;
+	}
+
+	offset = 0;
+
+	for (i = 0; i < folio_batch_count(&migrating_blk->batch); i++) {
+		void *kaddr;
+		u32 processed_bytes = 0;
+
+		folio = migrating_blk->batch.folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+
+		SSDFS_DBG("folio %p, count %d, folio_size %zu\n",
+			  folio,
+			  folio_ref_count(folio),
+			  folio_size(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		while (processed_bytes < folio_size(folio)) {
+			ssdfs_folio_lock(folio);
+			kaddr = kmap_local_folio(folio, processed_bytes);
+			err = ssdfs_unaligned_read_folio_batch(&state->batch,
+								offset,
+								PAGE_SIZE,
+								kaddr);
+			kunmap_local(kaddr);
+			ssdfs_folio_unlock(folio);
+
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to read folio batch: "
+					  "offset %u, err %d\n",
+					  offset, err);
+				return err;
+			}
+
+			processed_bytes += PAGE_SIZE;
+			offset += PAGE_SIZE;
+		}
+	}
+
+	return 0;
 }
 
 /*
@@ -10361,7 +10664,6 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_migrating_block *blk = NULL;
-	struct folio *folio;
 	u16 logical_blk;
 	int processed_blks;
 	int err = 0;
@@ -10376,14 +10678,6 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 
 	fsi = table->fsi;
 	processed_blks = req->result.processed_blks;
-
-	if (folio_batch_count(&req->result.batch) <= processed_blks) {
-		SSDFS_ERR("folio_index %d >= batch_count %u\n",
-			  processed_blks,
-			  folio_batch_count(&req->result.batch));
-		return -ERANGE;
-	}
-
 	logical_blk = req->place.start.blk_index + processed_blks;
 
 	if (logical_blk > table->last_allocated_blk) {
@@ -10418,8 +10712,7 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 		  logical_blk, blk->state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_count(&blk->batch) == 0 ||
-	    folio_batch_count(&blk->batch) > 1) {
+	if (folio_batch_count(&blk->batch) == 0) {
 		err = -ERANGE;
 		SSDFS_WARN("logical_blk %u, batch_count %u\n",
 			  logical_blk,
@@ -10427,22 +10720,10 @@ int ssdfs_blk2off_table_update_block_state(struct ssdfs_blk2off_table *table,
 		goto finish_update_block_state;
 	}
 
-	folio = req->result.batch.folios[processed_blks];
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	ssdfs_folio_lock(blk->batch.folios[0]);
-	err = __ssdfs_memcpy_folio(blk->batch.folios[0],
-				   0, folio_size(blk->batch.folios[0]),
-				   folio,
-				   0, folio_size(folio),
-				   fsi->pagesize);
-	ssdfs_folio_unlock(blk->batch.folios[0]);
-
+	err = ssdfs_update_migrating_block_content(fsi, processed_blks,
+						   blk, req);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy block's state: "
+		SSDFS_ERR("fail to update migrating block's content: "
 			  "logical_blk %u, err %d\n",
 			  logical_blk, err);
 		goto finish_update_block_state;

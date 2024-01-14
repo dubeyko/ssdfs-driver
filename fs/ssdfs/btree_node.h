@@ -191,10 +191,13 @@ struct ssdfs_state_bitmap_array {
 
 /*
  * struct ssdfs_btree_node_content - btree node's content
- * @batch: folio batch
+ * @blocks: array of logical blocks
+ * @count: number of blocks in extent
  */
 struct ssdfs_btree_node_content {
-	struct folio_batch batch;
+#define SSDFS_BTREE_NODE_EXTENT_LEN_MAX		(SSDFS_EXTENT_LEN_MAX)
+	struct ssdfs_content_block blocks[SSDFS_BTREE_NODE_EXTENT_LEN_MAX];
+	int count;
 };
 
 union ssdfs_aggregated_btree_node_header {
@@ -338,6 +341,25 @@ enum {
 /*
  * Inline functions
  */
+
+/*
+ * ssdfs_btree_node_content_init() - init btree node's content
+ * @content: btree node's content
+ */
+static inline
+void ssdfs_btree_node_content_init(struct ssdfs_btree_node_content *content)
+{
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	content->count = 0;
+
+	for (i = 0; i < SSDFS_BTREE_NODE_EXTENT_LEN_MAX; i++)
+		folio_batch_init(&content->blocks[i].batch);
+}
 
 /*
  * NODE2SEG_TYPE() - convert node type into segment type
@@ -531,6 +553,59 @@ u16 __ssdfs_convert_item2lookup_index(u16 item_index,
 }
 
 /*
+ * ssdfs_find_node_content_folio() - find node content's folio
+ * @content: node's content
+ * @folio: smart folio descriptor
+ */
+static inline
+int ssdfs_find_node_content_folio(struct ssdfs_btree_node_content *content,
+				  struct ssdfs_smart_folio *folio)
+{
+	struct folio_batch *batch;
+	u32 offset = 0;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content || !folio);
+
+	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio->desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio->ptr = NULL;
+
+	if (folio->desc.folio_index >= content->count) {
+		SSDFS_ERR("folio_index %u > blocks_count %u\n",
+			  folio->desc.folio_index,
+			  content->count);
+		return -ERANGE;
+	}
+
+	batch = &content->blocks[folio->desc.folio_index].batch;
+
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		struct folio *cur_folio = batch->folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!cur_folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		offset += folio_size(cur_folio);
+
+		if (offset >= folio->desc.page_offset) {
+			folio->ptr = cur_folio;
+			break;
+		}
+	}
+
+	if (!folio->ptr) {
+		SSDFS_ERR("fail to find folio\n");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+/*
  * Btree node API
  */
 struct ssdfs_btree_node *
@@ -625,7 +700,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 					u32 node_size,
 					u64 owner_id,
 					struct ssdfs_segment_info **si,
-					struct folio_batch *batch);
+					struct ssdfs_btree_node_content *content);
 int ssdfs_btree_create_root_node(struct ssdfs_btree_node *node,
 				struct ssdfs_btree_inline_root_node *root_node);
 int ssdfs_btree_node_pre_flush_header(struct ssdfs_btree_node *node,
@@ -650,7 +725,7 @@ int ssdfs_btree_node_find_index_position(struct ssdfs_btree_node *node,
 int ssdfs_btree_node_extract_range(u16 start_index, u16 count,
 				   struct ssdfs_btree_search *search);
 int ssdfs_btree_node_get_index(struct ssdfs_fs_info *fsi,
-				struct folio_batch *batch,
+				struct ssdfs_btree_node_content *content,
 				u32 area_offset, u32 area_size,
 				u32 node_size, u16 position,
 				struct ssdfs_btree_index_key *ptr);

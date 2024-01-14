@@ -494,12 +494,14 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 					 struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_segment_request *req;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_block_bmap_range copy_range;
 	struct ssdfs_block_bmap_range sub_range;
+	struct folio *folio;
 	bool need_repeat = false;
 	int processed_blks;
-	struct folio *folio;
-	int i;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -563,14 +565,23 @@ repeat_valid_blocks_processing:
 	for (i = 0; i < processed_blks; i++)
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		folio = req->result.batch.folios[i];
-
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
+	BUG_ON(req->result.content.count == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio_start_writeback(folio);
+	for (i = 0; i < req->result.content.count; i++) {
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			folio = blk_state->batch.folios[j];
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			folio_start_writeback(folio);
+		}
 	}
 
 	req->result.err = 0;
@@ -606,7 +617,12 @@ repeat_valid_blocks_processing:
 	return 0;
 
 fail_process_valid_blocks:
-	ssdfs_migration_folio_batch_release(&req->result.batch);
+	for (i = 0; i < req->result.content.count; i++) {
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+		ssdfs_migration_folio_batch_release(&blk_state->batch);
+	}
+
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 
@@ -628,10 +644,13 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 					struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_segment_request *req;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct ssdfs_block_bmap_range sub_range;
 	int processed_blks = 0;
 	u32 logical_blk;
 	bool has_data = false;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -691,20 +710,29 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 				  logical_blk, err);
 			goto fail_process_pre_alloc_blocks;
 		} else {
-			int i;
-			u32 folios_count = folio_batch_count(&req->result.batch);
+			u32 blks_count = req->result.content.count;
 			struct folio *folio;
 
 			ssdfs_peb_mark_request_block_uptodate(pebc, req, 0);
 
-			for (i = 0; i < folios_count; i++) {
-				folio = req->result.batch.folios[i];
+			for (i = 0; i < blks_count; i++) {
+				u32 folios_count;
+
+				block = &req->result.content.blocks[i];
+				blk_state = &block->new_state;
+
+				folios_count =
+					folio_batch_count(&blk_state->batch);
+
+				for (j = 0; j < folios_count; j++) {
+					folio = blk_state->batch.folios[j];
 
 #ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(!folio);
+					BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-				folio_start_writeback(folio);
+					folio_start_writeback(folio);
+				}
 			}
 
 			has_data = true;
@@ -747,7 +775,12 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 	return 0;
 
 fail_process_pre_alloc_blocks:
-	ssdfs_migration_folio_batch_release(&req->result.batch);
+	for (i = 0; i < req->result.content.count; i++) {
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+		ssdfs_migration_folio_batch_release(&blk_state->batch);
+	}
+
 	ssdfs_put_request(req);
 	ssdfs_request_free(req);
 
@@ -815,12 +848,14 @@ bool has_ssdfs_source_peb_valid_blocks(struct ssdfs_peb_container *pebc)
 int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 				      u32 range_len, int blk_type)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_block_bmap_range range = {0, 0};
 	u32 pages_per_seg;
 	int used_pages;
+	u32 mem_pages;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -868,6 +903,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 	}
 
 	si = pebc->parent_si;
+	fsi = si->fsi;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
 	pages_per_seg = si->fsi->pages_per_seg;
@@ -957,8 +993,11 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (is_ssdfs_peb_containing_user_data(pebc)) {
+			mem_pages = SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(fsi);
+			mem_pages *= range.len;
+
 			ssdfs_account_updated_user_data_pages(si->fsi,
-							      range.len);
+							      mem_pages);
 		}
 
 		switch (blk_type) {
@@ -1021,6 +1060,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	u32 pages_per_seg;
 	int old_migration_state;
 	bool is_peb_exhausted = false;
+	u32 mem_pages;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1200,8 +1240,11 @@ try_finish_migration_now:
 
 		if (range1.len > 0) {
 			if (is_ssdfs_peb_containing_user_data(pebc)) {
+				mem_pages = SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(fsi);
+				mem_pages *= range1.len;
+
 				ssdfs_account_updated_user_data_pages(si->fsi,
-								    range1.len);
+								      mem_pages);
 			}
 
 			err = ssdfs_peb_migrate_valid_blocks_range(si, pebc,
@@ -1217,8 +1260,11 @@ try_finish_migration_now:
 
 		if (range2.len > 0) {
 			if (is_ssdfs_peb_containing_user_data(pebc)) {
+				mem_pages = SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(fsi);
+				mem_pages *= range2.len;
+
 				ssdfs_account_updated_user_data_pages(si->fsi,
-								    range2.len);
+								      mem_pages);
 			}
 
 			err = ssdfs_peb_migrate_pre_alloc_blocks_range(si,

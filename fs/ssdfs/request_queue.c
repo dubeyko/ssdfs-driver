@@ -97,6 +97,10 @@ void ssdfs_req_queue_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
+/*
+ * Segment request objects cache
+ */
+
 static struct kmem_cache *ssdfs_seg_req_obj_cachep;
 
 void ssdfs_zero_seg_req_obj_cache_ptr(void)
@@ -134,6 +138,54 @@ int ssdfs_init_seg_req_obj_cache(void)
 					ssdfs_init_seg_req_object_once);
 	if (!ssdfs_seg_req_obj_cachep) {
 		SSDFS_ERR("unable to create segment request objects cache\n");
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+/*
+ * Dirty folio batch objects cache
+ */
+
+static struct kmem_cache *ssdfs_dirty_folios_obj_cachep;
+
+void ssdfs_zero_dirty_folios_obj_cache_ptr(void)
+{
+	ssdfs_dirty_folios_obj_cachep = NULL;
+}
+
+static
+void ssdfs_init_dirty_folios_object_once(void *obj)
+{
+	struct ssdfs_dirty_folios_batch *dirty_folios_obj = obj;
+
+	memset(dirty_folios_obj, 0, sizeof(struct ssdfs_dirty_folios_batch));
+}
+
+void ssdfs_shrink_dirty_folios_obj_cache(void)
+{
+	if (ssdfs_dirty_folios_obj_cachep)
+		kmem_cache_shrink(ssdfs_dirty_folios_obj_cachep);
+}
+
+void ssdfs_destroy_dirty_folios_obj_cache(void)
+{
+	if (ssdfs_dirty_folios_obj_cachep)
+		kmem_cache_destroy(ssdfs_dirty_folios_obj_cachep);
+}
+
+int ssdfs_init_dirty_folios_obj_cache(void)
+{
+	ssdfs_dirty_folios_obj_cachep =
+			kmem_cache_create("ssdfs_dirty_folios_obj_cache",
+			sizeof(struct ssdfs_dirty_folios_batch), 0,
+			SLAB_RECLAIM_ACCOUNT |
+			SLAB_MEM_SPREAD |
+			SLAB_ACCOUNT,
+			ssdfs_init_dirty_folios_object_once);
+	if (!ssdfs_dirty_folios_obj_cachep) {
+		SSDFS_ERR("unable to create dirty folios objects cache\n");
 		return -ENOMEM;
 	}
 
@@ -390,6 +442,40 @@ int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
 }
 
 /*
+ * ssdfs_requests_queue_remove_block() - remove folios of the logical block
+ * @block: memory folios of the logical block
+ */
+static inline
+void ssdfs_requests_queue_remove_block(struct ssdfs_content_block *block)
+{
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!block);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < folio_batch_count(&block->batch); i++) {
+		struct folio *folio = block->batch.folios[i];
+
+		if (!folio) {
+			SSDFS_WARN("empty folio ptr: index %u\n", i);
+			continue;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		WARN_ON(!folio_test_locked(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		folio_clear_uptodate(folio);
+		ssdfs_clear_folio_private(folio, 0);
+		folio_clear_mappedtodisk(folio);
+		ssdfs_clear_dirty_folio(folio);
+		ssdfs_folio_unlock(folio);
+		folio_end_writeback(folio);
+	}
+}
+
+/*
  * ssdfs_requests_queue_remove_all() - remove all requests from queue
  * @rq: requests queue
  * @err: error code
@@ -402,6 +488,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 	bool is_empty;
 	LIST_HEAD(tmp_list);
 	struct list_head *this, *next;
+	struct ssdfs_content_block *block;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!rq);
@@ -418,7 +505,6 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 
 	list_for_each_safe(this, next, &tmp_list) {
 		struct ssdfs_segment_request *req;
-		unsigned int batch_count;
 		unsigned int i;
 
 		req = list_entry(this, struct ssdfs_segment_request, list);
@@ -453,26 +539,9 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 			complete(&req->result.wait);
 			wake_up_all(&req->private.wait_queue);
 
-			batch_count = folio_batch_count(&req->result.batch);
-			for (i = 0; i < batch_count; i++) {
-				struct folio *folio =
-						req->result.batch.folios[i];
-
-				if (!folio) {
-					SSDFS_WARN("empty folio ptr: index %u\n", i);
-					continue;
-				}
-
-#ifdef CONFIG_SSDFS_DEBUG
-				WARN_ON(!folio_test_locked(folio));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-				folio_clear_uptodate(folio);
-				ssdfs_clear_folio_private(folio, 0);
-				folio_clear_mappedtodisk(folio);
-				ssdfs_clear_dirty_folio(folio);
-				ssdfs_folio_unlock(folio);
-				folio_end_writeback(folio);
+			for (i = 0; i < req->result.content.count; i++) {
+				block = &req->result.content.blocks[i].new_state;
+				ssdfs_requests_queue_remove_block(block);
 			}
 
 			ssdfs_put_request(req);
@@ -483,26 +552,9 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 			complete(&req->result.wait);
 			wake_up_all(&req->private.wait_queue);
 
-			batch_count = folio_batch_count(&req->result.batch);
-			for (i = 0; i < batch_count; i++) {
-				struct folio *folio = req->result.batch.folios[i];
-
-				if (!folio) {
-					SSDFS_WARN("empty folio ptr: index %u\n",
-						   i);
-					continue;
-				}
-
-#ifdef CONFIG_SSDFS_DEBUG
-				WARN_ON(!folio_test_locked(folio));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-				folio_clear_uptodate(folio);
-				ssdfs_clear_folio_private(folio, 0);
-				folio_clear_mappedtodisk(folio);
-				ssdfs_clear_dirty_folio(folio);
-				ssdfs_folio_unlock(folio);
-				folio_end_writeback(folio);
+			for (i = 0; i < req->result.content.count; i++) {
+				block = &req->result.content.blocks[i].new_state;
+				ssdfs_requests_queue_remove_block(block);
 			}
 
 			ssdfs_put_request(req);
@@ -520,12 +572,16 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 struct ssdfs_segment_request *ssdfs_request_alloc(void)
 {
 	struct ssdfs_segment_request *ptr;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_seg_req_obj_cachep);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	ptr = kmem_cache_alloc(ssdfs_seg_req_obj_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for request\n");
 		return ERR_PTR(-ENOMEM);
@@ -554,6 +610,27 @@ void ssdfs_request_free(struct ssdfs_segment_request *req)
 }
 
 /*
+ * ssdfs_request_content_init() - init request's content
+ * @content: dirty blocks' extent
+ */
+static inline
+void ssdfs_request_content_init(struct ssdfs_request_content_extent *content)
+{
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	content->count = 0;
+
+	for (i = 0; i < SSDFS_REQ_EXTENT_LEN_MAX; i++) {
+		folio_batch_init(&content->blocks[i].new_state.batch);
+		folio_batch_init(&content->blocks[i].old_state.batch);
+	}
+}
+
+/*
  * ssdfs_request_init() - common request initialization
  * @req: request [out]
  */
@@ -569,10 +646,11 @@ void ssdfs_request_init(struct ssdfs_segment_request *req,
 	INIT_LIST_HEAD(&req->list);
 	atomic_set(&req->private.refs_count, 0);
 	init_waitqueue_head(&req->private.wait_queue);
-	folio_batch_init(&req->result.batch);
+	ssdfs_request_content_init(&req->result.content);
 	folio_batch_init(&req->result.diffs);
 	atomic_set(&req->result.state, SSDFS_REQ_CREATED);
 	init_completion(&req->result.wait);
+	req->result.number_of_tries = 0;
 	req->result.err = 0;
 	req->private.block_size = block_size;
 }
@@ -609,13 +687,59 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 }
 
 /*
+ * ssdfs_dirty_folios_batch_alloc() - allocate memory for dirty folios object
+ */
+struct ssdfs_dirty_folios_batch *ssdfs_dirty_folios_batch_alloc(void)
+{
+	struct ssdfs_dirty_folios_batch *ptr;
+	unsigned int nofs_flags;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ssdfs_dirty_folios_obj_cachep);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	nofs_flags = memalloc_nofs_save();
+	ptr = kmem_cache_alloc(ssdfs_dirty_folios_obj_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
+	if (!ptr) {
+		SSDFS_ERR("fail to allocate memory for dirty folios batch\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	ssdfs_req_queue_cache_leaks_increment(ptr);
+
+	return ptr;
+}
+
+/*
+ * ssdfs_dirty_folios_batch_free() - free memory for dirty folios object
+ */
+void ssdfs_dirty_folios_batch_free(struct ssdfs_dirty_folios_batch *batch)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ssdfs_dirty_folios_obj_cachep);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!batch)
+		return;
+
+	ssdfs_req_queue_cache_leaks_decrement(batch);
+	kmem_cache_free(ssdfs_dirty_folios_obj_cachep, batch);
+}
+
+/*
  * ssdfs_dirty_folios_batch_add_folio() - add memory folio into batch
  * @folio: memory folio
+ * @block_index: index of logical block in extent
  * @batch: dirty folios batch [out]
  */
 int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
-				     struct ssdfs_dirty_folios_batch *batch)
+					int block_index,
+					struct ssdfs_dirty_folios_batch *batch)
 {
+	struct ssdfs_content_block *block;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio || !batch);
 
@@ -632,7 +756,30 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_space(&batch->fvec) == 0) {
+	if (batch->content.count >= SSDFS_REQ_EXTENT_LEN_MAX) {
+		SSDFS_DBG("invalid block index: "
+			   "block_index %d, batch->content.count %d\n",
+			   block_index, batch->content.count);
+		return -E2BIG;
+	}
+
+	if (block_index > batch->content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, batch->content.count %d\n",
+			   block_index, batch->content.count);
+		return -EINVAL;
+	} else if (block_index == batch->content.count) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("increment extent length: "
+			  "block_index %d, batch->content.count %d\n",
+			  block_index, batch->content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+		batch->content.count++;
+	}
+
+	block = &batch->content.blocks[block_index];
+
+	if (folio_batch_space(&block->batch) == 0) {
 		SSDFS_WARN("batch's folio vector is full\n");
 		return -E2BIG;
 	}
@@ -642,7 +789,7 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 		  (u64)folio_index(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio_batch_add(&batch->fvec, folio);
+	folio_batch_add(&block->batch, folio);
 	batch->state = SSDFS_DIRTY_BATCH_HAS_UNPROCESSED_BLOCKS;
 	return 0;
 
@@ -650,22 +797,49 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 
 /*
  * ssdfs_request_add_folio() - add memory folio into segment request
- * @page: memory page
+ * @folio: memory folio
+ * @block_index: index of logical block in extent
  * @req: segment request [out]
  */
 int ssdfs_request_add_folio(struct folio *folio,
+			    int block_index,
 			    struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_space(&req->result.batch) == 0) {
-		SSDFS_WARN("request's folio batch is full\n");
+	if (req->result.content.count >= SSDFS_REQ_EXTENT_LEN_MAX) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
 		return -E2BIG;
 	}
 
-	folio_batch_add(&req->result.batch, folio);
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return -EINVAL;
+	} else if (block_index == req->result.content.count) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("increment extent length: "
+			  "block_index %d, req->result.content.count %d\n",
+			  block_index, req->result.content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+		req->result.content.count++;
+	}
+
+	block = &req->result.content.blocks[block_index];
+
+	if (folio_batch_space(&block->new_state.batch) == 0) {
+		SSDFS_WARN("folio batch is full\n");
+		return -E2BIG;
+	}
+
+	folio_batch_add(&block->new_state.batch, folio);
 	return 0;
 }
 
@@ -691,23 +865,83 @@ int ssdfs_request_add_diff_folio(struct folio *folio,
 }
 
 /*
- * ssdfs_request_allocate_and_add_folio() - allocate and add folio into request
+ * __ssdfs_request_allocate_and_add_folio() - allocate and add folio into request
+ * @block_index: index of logical block in extent
+ * @content_type: type of extent's content
  * @req: segment request [out]
  */
-struct folio *
-ssdfs_request_allocate_and_add_folio(struct ssdfs_segment_request *req)
+static
+struct folio *__ssdfs_request_allocate_and_add_folio(int block_index,
+					    int content_type,
+					    struct ssdfs_segment_request *req)
 {
-	struct folio *folio;
+	struct ssdfs_request_content_block *block = NULL;
+	struct ssdfs_content_block *state = NULL;
+	struct folio *folio = NULL;
+	u32 allocated_bytes = 0;
+	u32 allocation_size;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 
-	SSDFS_DBG("folio batch count %d\n",
-		  folio_batch_count(&req->result.batch));
+	SSDFS_DBG("block_index %d, extent length %d, "
+		  "content_type %#x\n",
+		  block_index,
+		  req->result.content.count,
+		  content_type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_space(&req->result.batch) == 0) {
+	switch (content_type) {
+	case SSDFS_REQ_CONTENT_NEW_STATE:
+	case SSDFS_REQ_CONTENT_OLD_STATE:
+		/* expected content type */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected content type %#x\n",
+			  content_type);
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (req->result.content.count >= SSDFS_REQ_EXTENT_LEN_MAX) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return ERR_PTR(-E2BIG);
+	}
+
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return ERR_PTR(-EINVAL);
+	} else if (block_index == req->result.content.count) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("increment extent length: "
+			  "block_index %d, req->result.content.count %d\n",
+			  block_index, req->result.content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+		req->result.content.count++;
+	}
+
+	block = &req->result.content.blocks[block_index];
+
+	switch (content_type) {
+	case SSDFS_REQ_CONTENT_NEW_STATE:
+		state = &block->new_state;
+		break;
+
+	case SSDFS_REQ_CONTENT_OLD_STATE:
+		state = &block->old_state;
+		break;
+
+	default:
+		BUG();
+	}
+
+	if (folio_batch_space(&state->batch) == 0) {
 		SSDFS_WARN("request's folio batch is full\n");
 		return ERR_PTR(-E2BIG);
 	}
@@ -721,16 +955,77 @@ ssdfs_request_allocate_and_add_folio(struct ssdfs_segment_request *req)
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	for (i = 0; i < folio_batch_count(&state->batch); i++) {
+		folio = state->batch.folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		allocated_bytes += folio_size(folio);
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(allocated_bytes >= req->private.block_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	allocation_size = req->private.block_size - allocated_bytes;
+
 	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
-					    get_order(req->private.block_size));
+					    get_order(allocation_size));
 	if (IS_ERR_OR_NULL(folio)) {
 		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
 		SSDFS_ERR("unable to allocate memory folio\n");
 		return ERR_PTR(err);
 	}
 
-	folio_batch_add(&req->result.batch, folio);
+	folio_batch_add(&state->batch, folio);
 	return folio;
+
+}
+
+/*
+ * ssdfs_request_allocate_and_add_folio() - allocate and add folio into request
+ * @block_index: index of logical block in extent
+ * @req: segment request [out]
+ */
+struct folio *
+ssdfs_request_allocate_and_add_folio(int block_index,
+				     struct ssdfs_segment_request *req)
+{
+	int type = SSDFS_REQ_CONTENT_NEW_STATE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+
+	SSDFS_DBG("block_index %d, extent length %d\n",
+		  block_index,
+		  req->result.content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __ssdfs_request_allocate_and_add_folio(block_index, type, req);
+}
+
+/*
+ * ssdfs_request_allocate_and_add_old_state_folio() - allocate+add old state folio
+ * @block_index: index of logical block in extent
+ * @req: segment request [out]
+ */
+struct folio *
+ssdfs_request_allocate_and_add_old_state_folio(int block_index,
+						struct ssdfs_segment_request *req)
+{
+	int type = SSDFS_REQ_CONTENT_OLD_STATE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+
+	SSDFS_DBG("block_index %d, extent length %d\n",
+		  block_index,
+		  req->result.content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __ssdfs_request_allocate_and_add_folio(block_index, type, req);
 }
 
 /*
@@ -777,114 +1072,6 @@ ssdfs_request_allocate_and_add_diff_folio(struct ssdfs_segment_request *req)
 }
 
 /*
- * ssdfs_request_allocate_and_add_old_state_folio() - allocate+add old state folio
- * @req: segment request [out]
- */
-struct folio *
-ssdfs_request_allocate_and_add_old_state_folio(struct ssdfs_segment_request *req)
-{
-	struct folio *folio;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!req);
-
-	SSDFS_DBG("folio batch count %d\n",
-		  folio_batch_count(&req->result.old_state));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (folio_batch_space(&req->result.old_state) == 0) {
-		SSDFS_WARN("request's folio batch is full\n");
-		return ERR_PTR(-E2BIG);
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (req->private.block_size == 0 ||
-	    req->private.block_size > SSDFS_128KB) {
-		SSDFS_ERR("req->private.block_size %u\n",
-			  req->private.block_size);
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
-					    get_order(req->private.block_size));
-	if (IS_ERR_OR_NULL(folio)) {
-		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-		SSDFS_ERR("unable to allocate memory folio\n");
-		return ERR_PTR(err);
-	}
-
-	folio_batch_add(&req->result.old_state, folio);
-	return folio;
-}
-
-/*
- * ssdfs_request_allocate_locked_folio() - allocate and add locked folio
- * @req: segment request [out]
- * @folio_index: index of the folio
- */
-struct folio *
-ssdfs_request_allocate_locked_folio(struct ssdfs_segment_request *req,
-				    int folio_index)
-{
-	struct folio *folio;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!req);
-
-	SSDFS_DBG("folio batch count %d\n",
-		  folio_batch_count(&req->result.batch));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (folio_batch_space(&req->result.batch) == 0) {
-		SSDFS_WARN("request's folio batch is full\n");
-		return ERR_PTR(-E2BIG);
-	}
-
-	if (folio_index >= PAGEVEC_SIZE) {
-		SSDFS_ERR("invalid folio index %d\n",
-			  folio_index);
-		return ERR_PTR(-EINVAL);
-	}
-
-	folio = req->result.batch.folios[folio_index];
-
-	if (folio) {
-		SSDFS_ERR("folio already exists: index %d\n",
-			  folio_index);
-		return ERR_PTR(-EINVAL);
-	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (req->private.block_size == 0 ||
-	    req->private.block_size > SSDFS_128KB) {
-		SSDFS_ERR("req->private.block_size %u\n",
-			  req->private.block_size);
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	folio = ssdfs_req_queue_alloc_folio(GFP_KERNEL | __GFP_ZERO,
-					    get_order(req->private.block_size));
-	if (IS_ERR_OR_NULL(folio)) {
-		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-		SSDFS_ERR("unable to allocate memory folio\n");
-		return ERR_PTR(err);
-	}
-
-	req->result.batch.folios[folio_index] = folio;
-
-	if ((folio_index + 1) > req->result.batch.nr)
-		req->result.batch.nr = folio_index + 1;
-
-	ssdfs_folio_lock(folio);
-
-	return folio;
-}
-
-/*
  * ssdfs_request_allocate_locked_diff_folio() - allocate locked diff folio
  * @req: segment request [out]
  * @folio_index: index of the folio
@@ -908,7 +1095,7 @@ ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
 		return ERR_PTR(-E2BIG);
 	}
 
-	if (folio_index >= PAGEVEC_SIZE) {
+	if (folio_index >= SSDFS_EXTENT_LEN_MAX) {
 		SSDFS_ERR("invalid folio index %d\n",
 			  folio_index);
 		return ERR_PTR(-EINVAL);
@@ -951,26 +1138,41 @@ ssdfs_request_allocate_locked_diff_folio(struct ssdfs_segment_request *req,
 
 /*
  * ssdfs_request_add_allocated_folio_locked() - allocate, add and lock folio
+ * @block_index: index of logical block in extent
  * @req: segment request [out]
  */
-int ssdfs_request_add_allocated_folio_locked(struct ssdfs_segment_request *req)
+int ssdfs_request_add_allocated_folio_locked(int block_index,
+					     struct ssdfs_segment_request *req)
 {
 	struct folio *folio;
+	size_t allocated_size = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
+
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = ssdfs_request_allocate_and_add_folio(req);
-	if (IS_ERR_OR_NULL(folio)) {
-		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-		SSDFS_ERR("fail to allocate folio: err %d\n",
-			  err);
-		return err;
+	while (allocated_size < req->private.block_size) {
+		folio = ssdfs_request_allocate_and_add_folio(block_index, req);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("fail to allocate folio: err %d\n",
+				  err);
+			return err;
+		}
+
+		ssdfs_folio_lock(folio);
+
+		allocated_size += folio_size(folio);
 	}
 
-	ssdfs_folio_lock(folio);
 	return 0;
 }
 
@@ -1001,26 +1203,43 @@ int ssdfs_request_add_allocated_diff_locked(struct ssdfs_segment_request *req)
 
 /*
  * ssdfs_request_add_old_state_folio_locked() - allocate, add and lock folio
+ * @block_index: index of logical block in extent
  * @req: segment request [out]
  */
-int ssdfs_request_add_old_state_folio_locked(struct ssdfs_segment_request *req)
+int ssdfs_request_add_old_state_folio_locked(int block_index,
+					     struct ssdfs_segment_request *req)
 {
 	struct folio *folio;
+	size_t allocated_size = 0;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
+
+	if (req->private.block_size == 0 ||
+	    req->private.block_size > SSDFS_128KB) {
+		SSDFS_ERR("req->private.block_size %u\n",
+			  req->private.block_size);
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = ssdfs_request_allocate_and_add_old_state_folio(req);
-	if (IS_ERR_OR_NULL(folio)) {
-		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-		SSDFS_ERR("fail to allocate folio: err %d\n",
-			  err);
-		return err;
+	while (allocated_size < req->private.block_size) {
+		folio =
+		    ssdfs_request_allocate_and_add_old_state_folio(block_index,
+								   req);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+			SSDFS_ERR("fail to allocate folio: err %d\n",
+				  err);
+			return err;
+		}
+
+		ssdfs_folio_lock(folio);
+
+		allocated_size += folio_size(folio);
 	}
 
-	ssdfs_folio_lock(folio);
 	return 0;
 }
 
@@ -1045,34 +1264,43 @@ void ssdfs_request_unlock_and_remove_folios(struct ssdfs_segment_request *req)
  */
 void ssdfs_request_unlock_and_remove_update(struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
 	unsigned count;
-	int i;
+	int i, j;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	count = folio_batch_count(&req->result.batch);
+	count = req->result.content.count;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("result: folios count %u\n",
+	SSDFS_DBG("result: logical blocks count %u\n",
 		  count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < count; i++) {
-		struct folio *folio = req->result.batch.folios[i];
+		block = &req->result.content.blocks[i];
+		state = &block->new_state;
 
-		if (!folio) {
+		for (j = 0; j < folio_batch_count(&state->batch); j++) {
+			struct folio *folio = state->batch.folios[j];
+
+			if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("folio %d is NULL\n", i);
+				SSDFS_DBG("folio %d is NULL\n", j);
 #endif /* CONFIG_SSDFS_DEBUG */
-			continue;
+				continue;
+			}
+
+			ssdfs_folio_unlock(folio);
 		}
 
-		ssdfs_folio_unlock(folio);
+		ssdfs_req_queue_folio_batch_release(&state->batch);
 	}
 
-	ssdfs_req_queue_folio_batch_release(&req->result.batch);
+	req->result.content.count = 0;
 }
 
 /*
@@ -1117,34 +1345,41 @@ void ssdfs_request_unlock_and_remove_diffs(struct ssdfs_segment_request *req)
  */
 void ssdfs_request_unlock_and_remove_old_state(struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
 	unsigned count;
-	int i;
+	int i, j;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	count = folio_batch_count(&req->result.old_state);
+	count = SSDFS_REQ_EXTENT_LEN_MAX;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("old_state: folios count %u\n",
+	SSDFS_DBG("result: logical blocks count %u\n",
 		  count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < count; i++) {
-		struct folio *folio = req->result.old_state.folios[i];
+		block = &req->result.content.blocks[i];
+		state = &block->old_state;
 
-		if (!folio) {
+		for (j = 0; j < folio_batch_count(&state->batch); j++) {
+			struct folio *folio = state->batch.folios[j];
+
+			if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("folio %d is NULL\n", i);
+				SSDFS_DBG("folio %d is NULL\n", j);
 #endif /* CONFIG_SSDFS_DEBUG */
-			continue;
+				continue;
+			}
+
+			ssdfs_folio_unlock(folio);
 		}
 
-		ssdfs_folio_unlock(folio);
+		ssdfs_req_queue_folio_batch_release(&state->batch);
 	}
-
-	ssdfs_req_queue_folio_batch_release(&req->result.old_state);
 }
 
 /*
@@ -1157,8 +1392,11 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 					struct folio *diff_folio,
 					struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
 	struct folio *folio;
-	u32 folio_index;
+	u32 block_index;
+	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !req);
@@ -1166,36 +1404,49 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 
 	ssdfs_request_unlock_and_remove_old_state(req);
 
-	folio_index = req->result.processed_blks;
+	block_index = req->result.processed_blks;
 
-	if (folio_index >= folio_batch_count(&req->result.batch)) {
-		SSDFS_ERR("folio_index %d >= batch_size %u\n",
-			  folio_index,
-			  folio_batch_count(&req->result.batch));
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
 		return -ERANGE;
 	}
 
-	folio = req->result.batch.folios[folio_index];
+	block = &req->result.content.blocks[block_index];
+	state = &block->new_state;
+
+	if (folio_batch_count(&state->batch) == 0) {
+		SSDFS_ERR("empty block state: block_index %d\n",
+			  block_index);
+		return -ERANGE;
+	}
+
+	for (i = 0; i < folio_batch_count(&state->batch); i++) {
+		folio = state->batch.folios[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	clear_folio_new(folio);
-	folio_mark_uptodate(folio);
-	ssdfs_clear_dirty_folio(folio);
+		clear_folio_new(folio);
+		folio_mark_uptodate(folio);
+		ssdfs_clear_dirty_folio(folio);
 
-	ssdfs_folio_unlock(folio);
-	folio_end_writeback(folio);
+		ssdfs_folio_unlock(folio);
+		folio_end_writeback(folio);
 
-	if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
-		ssdfs_req_queue_forget_folio(folio);
+		if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
+			ssdfs_req_queue_forget_folio(folio);
 
-	req->result.batch.folios[folio_index] = NULL;
+		state->batch.folios[i] = NULL;
+	}
+
+	folio_batch_reinit(&state->batch);
 
 	set_folio_new(diff_folio);
-	req->result.batch.folios[folio_index] = diff_folio;
-	req->result.diffs.folios[0] = NULL;
+	state->batch.folios[block_index] = diff_folio;
+	req->result.diffs.folios[block_index] = NULL;
 
 	if (folio_batch_count(&req->result.diffs) > 1) {
 		SSDFS_WARN("diff folio batch contains several folios %u\n",
@@ -1209,51 +1460,41 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_request_unlock_and_forget_folio() - unlock and forget folio
+ * ssdfs_request_unlock_and_forget_block() - unlock and forget logical block
+ * @block_index: index of logical block in extent
  * @req: segment request [in|out]
- * @folio_index: folio index
  */
-void ssdfs_request_unlock_and_forget_folio(struct ssdfs_segment_request *req,
-					   int folio_index)
+void ssdfs_request_unlock_and_forget_block(int block_index,
+					   struct ssdfs_segment_request *req)
 {
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!req);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (folio_index >= folio_batch_count(&req->result.batch)) {
-		SSDFS_ERR("folio_index %d >= folio_batch_count %u\n",
-			  folio_index,
-			  folio_batch_count(&req->result.batch));
-		return;
-	}
-
-	if (!req->result.batch.folios[folio_index]) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("folio %d is NULL\n", folio_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return;
-	}
-
-	ssdfs_folio_unlock(req->result.batch.folios[folio_index]);
-	ssdfs_req_queue_forget_folio(req->result.batch.folios[folio_index]);
-	req->result.batch.folios[folio_index] = NULL;
-}
-
-/*
- * ssdfs_free_flush_request_folios() - unlock and remove flush request's folios
- * @req: segment request [out]
- */
-void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
-{
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		struct folio *folio = req->result.batch.folios[i];
-		bool need_free_folio = false;
+	if (block_index > req->result.content.count) {
+		SSDFS_WARN("invalid block index: "
+			   "block_index %d, req->result.content.count %d\n",
+			   block_index, req->result.content.count);
+		return;
+	}
+
+	block = &req->result.content.blocks[block_index];
+	state = &block->new_state;
+
+	if (folio_batch_count(&state->batch) == 0) {
+		SSDFS_ERR("empty block state: block_index %d\n",
+			  block_index);
+		return;
+	}
+
+	for (i = 0; i < folio_batch_count(&state->batch); i++) {
+		struct folio *folio;
+
+		folio = state->batch.folios[i];
 
 		if (!folio) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1262,37 +1503,91 @@ void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
 			continue;
 		}
 
-		if (need_add_block(folio)) {
-			clear_folio_new(folio);
+		ssdfs_folio_unlock(folio);
+		ssdfs_req_queue_forget_folio(folio);
+		state->batch.folios[i] = NULL;
+	}
 
-			if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
-				need_free_folio = true;
+	folio_batch_reinit(&state->batch);
+}
+
+/*
+ * ssdfs_free_flush_request_folios() - unlock and remove flush request's folios
+ * @req: segment request [out]
+ */
+void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
+{
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
+	unsigned count;
+	int i, j;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	count = req->result.content.count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("result: logical blocks count %u\n",
+		  count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < count; i++) {
+		block = &req->result.content.blocks[i];
+		state = &block->new_state;
+
+		for (j = 0; j < folio_batch_count(&state->batch); j++) {
+			struct folio *folio = state->batch.folios[j];
+			bool need_free_folio = false;
+
+			if (!folio) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("folio %d is NULL\n", j);
+#endif /* CONFIG_SSDFS_DEBUG */
+				continue;
+			}
+
+			if (need_add_block(folio)) {
+				clear_folio_new(folio);
+
+				if (req->private.flags & SSDFS_REQ_PREPARE_DIFF)
+					need_free_folio = true;
+			}
+
+			if (folio_test_writeback(folio))
+				folio_end_writeback(folio);
+			else {
+				SSDFS_WARN("folio %d is not under writeback: "
+					   "cmd %#x, type %#x\n",
+					   j, req->private.cmd,
+					   req->private.type);
+			}
+
+			if (folio_test_locked(folio))
+				ssdfs_folio_unlock(folio);
+			else {
+				SSDFS_WARN("folio %d is not locked: "
+					   "cmd %#x, type %#x\n",
+					   j, req->private.cmd,
+					   req->private.type);
+			}
+
+			state->batch.folios[j] = NULL;
+
+			if (need_free_folio)
+				ssdfs_req_queue_free_folio(folio);
+			else if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
+				ssdfs_req_queue_free_folio(folio);
+
+			if (req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS) {
+				/*
+				 * Do nothing
+				 */
+			} else {
+				folio_batch_reinit(&state->batch);
+			}
 		}
-
-		if (folio_test_writeback(folio))
-			folio_end_writeback(folio);
-		else {
-			SSDFS_WARN("folio %d is not under writeback: "
-				   "cmd %#x, type %#x\n",
-				   i, req->private.cmd,
-				   req->private.type);
-		}
-
-		if (folio_test_locked(folio))
-			ssdfs_folio_unlock(folio);
-		else {
-			SSDFS_WARN("folio %d is not locked: "
-				   "cmd %#x, type %#x\n",
-				   i, req->private.cmd,
-				   req->private.type);
-		}
-
-		req->result.batch.folios[i] = NULL;
-
-		if (need_free_folio)
-			ssdfs_req_queue_free_folio(folio);
-		else if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
-			ssdfs_req_queue_free_folio(folio);
 	}
 
 	if (req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS) {
@@ -1300,24 +1595,33 @@ void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
 		 * Do nothing
 		 */
 	} else {
-		folio_batch_reinit(&req->result.batch);
+		req->result.content.count = 0;
 	}
 }
 
 /*
- * ssdfs_peb_extent_length() - determine extent length
- * @si: segment object
- * @batch: folio batch
- *
- * The folio represents one logical block. As a result,
- * extent length is a number of folios in the batch.
+ * ssdfs_reinit_request_content() - reinit request's content
+ * @req: segment request [out]
  */
-u32 ssdfs_peb_extent_length(struct ssdfs_segment_info *si,
-			    struct folio_batch *batch)
+void ssdfs_reinit_request_content(struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
+	int i;
+
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!si || !si->fsi || !batch);
+	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return folio_batch_count(batch);
+	for (i = 0; i < SSDFS_REQ_EXTENT_LEN_MAX; i++) {
+		block = &req->result.content.blocks[i];
+
+		state = &block->new_state;
+		folio_batch_reinit(&state->batch);
+
+		state = &block->old_state;
+		folio_batch_reinit(&state->batch);
+	}
+
+	req->result.content.count = 0;
 }

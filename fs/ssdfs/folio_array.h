@@ -42,6 +42,7 @@ struct ssdfs_folio_array_bitmap {
  * @folios_count: current number of allocated folios
  * @last_folio: latest folio index
  * @order: allocation order of a particular sized block of memory
+ * @folio_size: folio size in bytes
  * @bmap_bytes: number of bytes in every bitmap
  * bmap: array of bitmaps
  */
@@ -55,6 +56,7 @@ struct ssdfs_folio_array {
 #define SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO	(ULONG_MAX)
 	unsigned long last_folio;
 	unsigned order;
+	size_t folio_size;
 	size_t bmap_bytes;
 
 #define SSDFS_FOLIO_ARRAY_ALLOC_BMAP		(0)

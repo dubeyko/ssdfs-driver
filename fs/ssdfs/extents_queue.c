@@ -345,12 +345,16 @@ void ssdfs_extents_queue_remove_all(struct ssdfs_extents_queue *eq)
 struct ssdfs_extent_info *ssdfs_extent_info_alloc(void)
 {
 	struct ssdfs_extent_info *ptr;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_extent_info_cachep);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	ptr = kmem_cache_alloc(ssdfs_extent_info_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for extent\n");
 		return ERR_PTR(-ENOMEM);
@@ -477,12 +481,37 @@ int ssdfs_revert_invalidation_to_regular_activity(struct ssdfs_segment_info *si)
 }
 
 /*
+ * ssdfs_destroy_btree_node_content() - destroy btree node's content
+ * @content: buffer for btree node's content
+ */
+static inline
+void ssdfs_destroy_btree_node_content(struct ssdfs_btree_node_content *content)
+{
+	struct ssdfs_content_block *blk;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!content);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_ext_queue_folio_batch_release(&blk->batch);
+	}
+}
+
+/*
  * ssdfs_invalidate_index_area() - invalidate index area
  * @fsi: pointer on shared file system object
  * @shextree: shared dictionary tree
  * @owner_ino: inode ID of btree's owner
  * @node_size: node size in bytes
- * @batch: folio batch of the node's content
+ * @content: btree node's content
  *
  * This method tries to invalidate the index area.
  *
@@ -499,7 +528,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_fs_info *fsi,
 				u64 owner_ino,
 				struct ssdfs_btree_node_header *hdr,
 				u32 node_size,
-				struct folio_batch *batch)
+				struct ssdfs_btree_node_content *content)
 {
 	struct ssdfs_btree_index_key cur_index;
 	u8 index_size;
@@ -512,7 +541,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_fs_info *fsi,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!shextree || !hdr || !batch);
+	BUG_ON(!shextree || !hdr || !content);
 
 	SSDFS_DBG("owner_id %llu, node_size %u\n",
 		  owner_ino, node_size);
@@ -557,7 +586,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_fs_info *fsi,
 
 	for (i = 0; i < index_count; i++) {
 		err = ssdfs_btree_node_get_index(fsi,
-						 batch,
+						 content,
 						 area_offset,
 						 area_size,
 						 node_size,
@@ -654,6 +683,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_fs_info *fsi,
 /*
  * __ssdfs_invalidate_btree_index() - invalidate btree's index
  * @fsi: pointer on shared file system object
+ * @content: buffer for btree node's content
  * @owner_ino: inode ID of btree's owner
  * @node_size: node size in bytes
  * @hdr: pointer on header's buffer
@@ -671,6 +701,7 @@ int ssdfs_invalidate_index_area(struct ssdfs_fs_info *fsi,
  */
 static
 int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_btree_node_content *content,
 				   u64 owner_ino,
 				   u32 node_size,
 				   void *hdr,
@@ -680,7 +711,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	struct ssdfs_shared_extents_tree *shextree = NULL;
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_btree_node_header *hdr_ptr;
-	struct folio_batch batch;
+	struct ssdfs_content_block *blk;
 	struct folio *folio;
 	u32 node_id1, node_id2;
 	int node_type1, node_type2;
@@ -693,7 +724,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !hdr || !index);
+	BUG_ON(!fsi || !content || !hdr || !index);
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu, "
@@ -714,10 +745,10 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	}
 
 	hdr_ptr = (struct ssdfs_btree_node_header *)hdr;
-	folio_batch_init(&batch);
 
+	ssdfs_btree_node_content_init(content);
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
-						 owner_ino, &si, &batch);
+						 owner_ino, &si, content);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to prepare node's content: "
 			  "node_id %u, node_type %#x, "
@@ -736,17 +767,26 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 		goto fail_invalidate_index;
 	}
 
-	if (folio_batch_count(&batch) == 0) {
+	if (content->count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
 
-	ssdfs_btree_node_forget_folio_batch(&batch);
-	ssdfs_ext_queue_account_folio_batch(&batch);
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
 
-	folio = batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
+	}
+
+	blk = &content->blocks[0];
+	folio = blk->batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -824,7 +864,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	if (has_index_area) {
 		err = ssdfs_invalidate_index_area(fsi, shextree, owner_ino,
 						  hdr_ptr,
-						  node_size, &batch);
+						  node_size, content);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate index area: "
 				  "err %d\n", err);
@@ -891,13 +931,15 @@ finish_invalidate_index:
 	ssdfs_segment_put_object(si);
 
 fail_invalidate_index:
-	ssdfs_ext_queue_folio_batch_release(&batch);
+	ssdfs_destroy_btree_node_content(content);
+
 	return err;
 }
 
 /*
  * ssdfs_invalidate_dentries_btree_index() - invalidate dentries btree index
  * @fsi: pointer on shared file system object
+ * @content: buffer for btree node's content
  * @owner_ino: inode ID of btree's owner
  * @extent: extent for invalidation
  *
@@ -911,8 +953,9 @@ fail_invalidate_index:
  * %-EIO        - node is corrupted.
  */
 int ssdfs_invalidate_dentries_btree_index(struct ssdfs_fs_info *fsi,
-					  u64 owner_ino,
-					  struct ssdfs_btree_index_key *index)
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index)
 {
 	struct ssdfs_dentries_btree_descriptor *dentries_btree;
 	u32 node_size;
@@ -933,13 +976,14 @@ int ssdfs_invalidate_dentries_btree_index(struct ssdfs_fs_info *fsi,
 	dentries_btree = &fsi->vh->dentries_btree;
 	node_size = 1 << dentries_btree->desc.log_node_size;
 
-	return __ssdfs_invalidate_btree_index(fsi, owner_ino, node_size,
+	return __ssdfs_invalidate_btree_index(fsi, content, owner_ino, node_size,
 					      &hdr, hdr_size, index);
 }
 
 /*
  * ssdfs_invalidate_shared_dict_btree_index() - invalidate shared dict index
  * @fsi: pointer on shared file system object
+ * @content: buffer for btree node's content
  * @owner_ino: inode ID of btree's owner
  * @extent: extent for invalidation
  *
@@ -953,8 +997,9 @@ int ssdfs_invalidate_dentries_btree_index(struct ssdfs_fs_info *fsi,
  * %-EIO        - node is corrupted.
  */
 int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
-					    u64 owner_ino,
-					    struct ssdfs_btree_index_key *index)
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index)
 {
 	struct ssdfs_shared_dictionary_btree *shared_dict;
 	struct ssdfs_shared_dictionary_node_header hdr;
@@ -962,7 +1007,7 @@ int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
 	u32 node_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !index);
+	BUG_ON(!fsi || !content || !index);
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -975,13 +1020,14 @@ int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
 	shared_dict = &fsi->vs->shared_dict_btree;
 	node_size = 1 << shared_dict->desc.log_node_size;
 
-	return __ssdfs_invalidate_btree_index(fsi, owner_ino, node_size,
+	return __ssdfs_invalidate_btree_index(fsi, content, owner_ino, node_size,
 					      &hdr, hdr_size, index);
 }
 
 /*
  * ssdfs_invalidate_extents_btree_index() - invalidate extents btree index
  * @fsi: pointer on shared file system object
+ * @content: buffer for btree node's content
  * @owner_ino: inode ID of btree's owner
  * @extent: extent for invalidation
  *
@@ -995,19 +1041,20 @@ int ssdfs_invalidate_shared_dict_btree_index(struct ssdfs_fs_info *fsi,
  * %-EIO        - node is corrupted.
  */
 int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
-					 u64 owner_ino,
-					 struct ssdfs_btree_index_key *index)
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index)
 {
 	struct ssdfs_shared_extents_tree *shextree = NULL;
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_extents_btree_descriptor *extents_btree;
-	u32 node_size;
-	struct folio_batch batch;
+	struct ssdfs_content_block *blk;
 	struct ssdfs_btree_node_header hdr;
 	struct ssdfs_extents_btree_node_header *hdr_ptr;
 	struct folio *folio;
 	void *kaddr;
 	size_t hdr_size = sizeof(struct ssdfs_extents_btree_node_header);
+	u32 node_size;
 	u64 parent_ino;
 	u64 blks_count, calculated_blks = 0;
 	u32 forks_count;
@@ -1026,7 +1073,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !index);
+	BUG_ON(!fsi || !content || !index);
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -1045,10 +1092,10 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 
 	extents_btree = &fsi->vh->extents_btree;
 	node_size = 1 << extents_btree->desc.log_node_size;
-	folio_batch_init(&batch);
 
+	ssdfs_btree_node_content_init(content);
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
-						 owner_ino, &si, &batch);
+						 owner_ino, &si, content);
 	if (err == -ENODATA) {
 		SSDFS_DBG("unable to prepare node's content: "
 			  "node_id %u, node_type %#x, "
@@ -1067,17 +1114,26 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		goto fail_invalidate_extents_btree_index;
 	}
 
-	if (folio_batch_count(&batch) == 0) {
+	if (content->count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
 
-	ssdfs_btree_node_forget_folio_batch(&batch);
-	ssdfs_ext_queue_account_folio_batch(&batch);
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
 
-	folio = batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
+	}
+
+	blk = &content->blocks[0];
+	folio = blk->batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1168,7 +1224,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	if (has_index_area) {
 		err = ssdfs_invalidate_index_area(fsi, shextree,
 						  owner_ino, &hdr,
-						  node_size, &batch);
+						  node_size, content);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate index area: "
 				  "err %d\n", err);
@@ -1209,7 +1265,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 			u64 start_offset, fork_blks;
 
 			err = __ssdfs_extents_btree_node_get_fork(fsi,
-								  &batch,
+								  content,
 								  area_offset,
 								  area_size,
 								  node_size,
@@ -1337,13 +1393,15 @@ finish_invalidate_index:
 	ssdfs_segment_put_object(si);
 
 fail_invalidate_extents_btree_index:
-	ssdfs_ext_queue_folio_batch_release(&batch);
+	ssdfs_destroy_btree_node_content(content);
+
 	return err;
 }
 
 /*
  * ssdfs_invalidate_xattrs_btree_index() - invalidate xattrs btree index
  * @fsi: pointer on shared file system object
+ * @content: buffer for btree node's content
  * @owner_ino: inode ID of btree's owner
  * @extent: extent for invalidation
  *
@@ -1357,19 +1415,20 @@ fail_invalidate_extents_btree_index:
  * %-EIO        - node is corrupted.
  */
 int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
-					u64 owner_ino,
-					struct ssdfs_btree_index_key *index)
+				    struct ssdfs_btree_node_content *content,
+				    u64 owner_ino,
+				    struct ssdfs_btree_index_key *index)
 {
 	struct ssdfs_shared_extents_tree *shextree = NULL;
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_xattr_btree_descriptor *xattrs_btree;
-	u32 node_size;
-	struct folio_batch batch;
+	struct ssdfs_content_block *blk;
 	struct ssdfs_btree_node_header hdr;
 	struct ssdfs_xattrs_btree_node_header *hdr_ptr;
 	struct folio *folio;
 	void *kaddr;
 	size_t hdr_size = sizeof(struct ssdfs_xattrs_btree_node_header);
+	u32 node_size;
 	u64 parent_ino;
 	u32 xattrs_count;
 	u32 node_id1, node_id2;
@@ -1384,7 +1443,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	int err = 0, err1;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !index);
+	BUG_ON(!fsi || !content || !index);
 
 	SSDFS_DBG("node_id %u, node_type %#x, "
 		  "height %u, owner_ino %llu\n",
@@ -1403,10 +1462,10 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 
 	xattrs_btree = &fsi->vh->xattr_btree;
 	node_size = 1 << xattrs_btree->desc.log_node_size;
-	folio_batch_init(&batch);
 
+	ssdfs_btree_node_content_init(content);
 	err = __ssdfs_btree_node_prepare_content(fsi, index, node_size,
-						 owner_ino, &si, &batch);
+						 owner_ino, &si, content);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare node's content: "
 			  "node_id %u, node_type %#x, "
@@ -1417,17 +1476,26 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 		goto finish_invalidate_index;
 	}
 
-	if (folio_batch_count(&batch) == 0) {
+	if (content->count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
 	}
 
-	ssdfs_btree_node_forget_folio_batch(&batch);
-	ssdfs_ext_queue_account_folio_batch(&batch);
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
 
-	folio = batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
+	}
+
+	blk = &content->blocks[0];
+	folio = blk->batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1514,7 +1582,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	if (has_index_area) {
 		err = ssdfs_invalidate_index_area(fsi, shextree,
 						  owner_ino, &hdr,
-						  node_size, &batch);
+						  node_size, content);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to invalidate index area: "
 				  "err %d\n", err);
@@ -1558,7 +1626,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 			bool is_flag_invalid;
 
 			err = __ssdfs_xattrs_btree_node_get_xattr(fsi,
-								  &batch,
+								  content,
 								  area_offset,
 								  area_size,
 								  node_size,
@@ -1683,7 +1751,7 @@ revert_invalidation_state:
 	}
 
 finish_invalidate_index:
-	ssdfs_ext_queue_folio_batch_release(&batch);
+	ssdfs_destroy_btree_node_content(content);
 	ssdfs_segment_put_object(si);
 	return err;
 }

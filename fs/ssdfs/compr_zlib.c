@@ -144,6 +144,7 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 {
 	struct ssdfs_zlib_workspace *workspace;
 	int deflate_size, inflate_size;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("try to allocate workspace\n");
@@ -155,8 +156,11 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	nofs_flags = memalloc_nofs_save();
 	deflate_size = zlib_deflate_workspacesize(MAX_WBITS, MAX_MEM_LEVEL);
 	workspace->deflate_stream.workspace = vmalloc(deflate_size);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (unlikely(!workspace->deflate_stream.workspace)) {
 		SSDFS_ERR("unable to allocate memory for deflate stream\n");
 		goto failed_alloc_workspaces;
@@ -166,8 +170,11 @@ static struct list_head *ssdfs_zlib_alloc_workspace(void)
 	SSDFS_DBG("deflate stream size %d\n", deflate_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	inflate_size = zlib_inflate_workspacesize();
 	workspace->inflate_stream.workspace = vmalloc(inflate_size);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (unlikely(!workspace->inflate_stream.workspace)) {
 		SSDFS_ERR("unable to allocate memory for inflate stream\n");
 		goto failed_alloc_workspaces;

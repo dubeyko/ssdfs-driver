@@ -274,6 +274,8 @@ size_t ssdfs_peb_temp_buffer_default_size(u32 pagesize)
 int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 				  size_t new_size)
 {
+	unsigned int nofs_flags;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!buf);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -300,7 +302,10 @@ int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 		return -EOPNOTSUPP;
 	}
 
+	nofs_flags = memalloc_nofs_save();
 	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!buf->ptr) {
 		SSDFS_ERR("fail to allocate buffer\n");
 		return -ENOMEM;
@@ -318,6 +323,7 @@ int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
 int ssdfs_peb_realloc_write_buffer(struct ssdfs_peb_temp_buffer *buf)
 {
 	size_t new_size;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!buf);
@@ -334,7 +340,10 @@ int ssdfs_peb_realloc_write_buffer(struct ssdfs_peb_temp_buffer *buf)
 
 	new_size = min_t(size_t, buf->size * 2, (size_t)PAGE_SIZE);
 
+	nofs_flags = memalloc_nofs_save();
 	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!buf->ptr) {
 		SSDFS_ERR("fail to allocate buffer\n");
 		return -ENOMEM;
@@ -360,6 +369,7 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	u16 flags;
 	size_t bmap_bytes;
 	size_t bmap_folios;
+	u32 pages_capacity;
 	int i;
 	int err = 0;
 
@@ -406,6 +416,9 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	pebi->current_log.blk2off_tbl.reserved_offset = U32_MAX;
 	pebi->current_log.blk2off_tbl.compressed_offset = 0;
 	pebi->current_log.blk2off_tbl.sequence_id = 0;
+
+	pages_capacity = fsi->pagesize >> PAGE_SHIFT;
+	pages_capacity *= fsi->pages_per_peb;
 
 	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
 		struct ssdfs_peb_area_metadata *metadata;
@@ -461,12 +474,12 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 		};
 
 		err = ssdfs_create_folio_array(&area->array,
-					       get_order(fsi->pagesize),
-					       fsi->pages_per_peb);
+					       get_order(PAGE_SIZE),
+					       pages_capacity);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create page array: "
 				  "capacity %u, err %d\n",
-				  fsi->pages_per_peb, err);
+				  pages_capacity, err);
 			goto fail_init_current_log;
 		}
 	}
@@ -586,6 +599,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	int peb_type;
 	size_t buf_size;
 	u16 flags;
+	u32 pages_capacity;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -698,14 +712,16 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	}
 
 	pebi->pebc = pebc;
+	pages_capacity = fsi->pagesize >> PAGE_SHIFT;
+	pages_capacity *= fsi->pages_per_peb;
 
 	err = ssdfs_create_folio_array(&pebi->cache,
-				       get_order(fsi->pagesize),
-				       fsi->pages_per_peb);
+				       get_order(PAGE_SIZE),
+				       pages_capacity);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to create page array: "
 			  "capacity %u, err %d\n",
-			  fsi->pages_per_peb, err);
+			  pages_capacity, err);
 		goto fail_conctruct_peb_obj;
 	}
 

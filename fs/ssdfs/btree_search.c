@@ -150,12 +150,16 @@ int ssdfs_init_btree_search_obj_cache(void)
 struct ssdfs_btree_search *ssdfs_btree_search_alloc(void)
 {
 	struct ssdfs_btree_search *ptr;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_btree_search_obj_cachep);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	ptr = kmem_cache_alloc(ssdfs_btree_search_obj_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for btree search object\n");
 		return ERR_PTR(-ENOMEM);
@@ -664,12 +668,12 @@ void ssdfs_btree_search_free_result_name(struct ssdfs_btree_search *search)
 		if (search->result.name) {
 			ssdfs_btree_search_kfree(search->result.name);
 			search->result.name = NULL;
-			search->result.name =
+			search->result.name_state =
 				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 		}
 	} else {
 		search->result.name = NULL;
-		search->result.name =
+		search->result.name_state =
 			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
 	}
 }

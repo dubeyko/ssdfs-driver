@@ -78,7 +78,10 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 					   struct ssdfs_segment_request *req,
 					   int blk_index)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *state;
 	struct folio *folio;
+	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
@@ -88,35 +91,49 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 		  blk_index, req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_count(&req->result.batch) == 0) {
-		SSDFS_DBG("folio batch is empty\n");
+	if (req->result.content.count == 0) {
+		SSDFS_DBG("extent content is empty\n");
 		return;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(blk_index >= req->result.processed_blks);
-	BUG_ON(blk_index >= folio_batch_count(&req->result.batch));
+	BUG_ON(blk_index >= req->result.content.count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = req->result.batch.folios[blk_index];
+	block = &req->result.content.blocks[blk_index];
+	state = &block->new_state;
 
-	if (!folio_test_locked(folio)) {
-		SSDFS_WARN("failed to mark block uptodate: "
-			   "folio %d is not locked\n",
-			   blk_index);
-	} else {
-		if (!folio_test_error(folio)) {
-			folio_clear_dirty(folio);
-			folio_mark_uptodate(folio);
-		}
+	if (folio_batch_count(&state->batch) == 0) {
+		SSDFS_DBG("logical block content is empty\n");
+		return;
 	}
 
+	for (i = 0; i < folio_batch_count(&state->batch); i++) {
+		folio = state->batch.folios[i];
+
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("folio %p, count %d\n",
-		  folio, folio_ref_count(folio));
-	SSDFS_DBG("folio_index %ld, flags %#lx\n",
-		  folio->index, folio->flags);
+		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!folio_test_locked(folio)) {
+			SSDFS_WARN("failed to mark block uptodate: "
+				   "folio %d is not locked\n",
+				   i);
+		} else {
+			if (!folio_test_error(folio)) {
+				folio_clear_dirty(folio);
+				folio_mark_uptodate(folio);
+			}
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio %p, count %d\n",
+			  folio, folio_ref_count(folio));
+		SSDFS_DBG("folio_index %ld, flags %#lx\n",
+			  folio->index, folio->flags);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 }
 
 /*
@@ -2164,6 +2181,7 @@ fail_start_threads:
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input.
+ * %-ENOSPC     - no free space.
  */
 int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 				u64 seg, u32 peb_index,
@@ -2267,29 +2285,44 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 						   &pebr);
 	if (err == -ENODATA) {
 		struct ssdfs_peb_blk_bmap *peb_blkbmap;
+		struct ssdfs_blk2off_table *tbl;
 
-		err = 0;
-
-		peb_blkbmap = &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
-		ssdfs_set_block_bmap_initialized(peb_blkbmap->src);
-		atomic_set(&peb_blkbmap->state, SSDFS_PEB_BLK_BMAP_INITIALIZED);
-
-		err = ssdfs_blk2off_table_partial_clean_init(si->blk2off_table,
-							     peb_index);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to initialize blk2off table: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  si->seg_id, peb_index, err);
-			goto fail_init_peb_container;
-		}
-
+		if (peb_index == 0) {
+			err = -ENOSPC;
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("can't map LEB to PEB: "
-			  "seg %llu, peb_index %u, "
-			  "peb_type %#x, err %d\n",
-			  seg, peb_index, peb_type, err);
+			SSDFS_DBG("NO FREE SPACE: can't map LEB to PEB: "
+				  "seg %llu, peb_index %u, "
+				  "peb_type %#x, err %d\n",
+				  seg, peb_index, peb_type, err);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_init_peb_container;
+			goto fail_init_peb_container;
+		} else {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("can't map LEB to PEB: "
+				  "seg %llu, peb_index %u, "
+				  "peb_type %#x, err %d\n",
+				  seg, peb_index, peb_type, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			peb_blkbmap =
+			    &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+			ssdfs_set_block_bmap_initialized(peb_blkbmap->src);
+			atomic_set(&peb_blkbmap->state,
+				   SSDFS_PEB_BLK_BMAP_INITIALIZED);
+
+			tbl = si->blk2off_table;
+			err = ssdfs_blk2off_table_partial_clean_init(tbl,
+								     peb_index);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to initialize blk2off table: "
+					  "seg %llu, peb_index %u, err %d\n",
+					  si->seg_id, peb_index, err);
+				goto fail_init_peb_container;
+			}
+
+			goto finish_init_peb_container;
+		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to map LEB to PEB: "
 			  "seg %llu, peb_index %u, "

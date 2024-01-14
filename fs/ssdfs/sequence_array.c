@@ -438,7 +438,7 @@ int ssdfs_sequence_array_search(struct ssdfs_sequence_array *array,
 				void *search_condition)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
 	int err = 0;
 
@@ -547,7 +547,7 @@ int ssdfs_sequence_array_pre_delete_all(struct ssdfs_sequence_array *array,
 					u64 peb_id)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
 	int err = 0;
 
@@ -627,7 +627,7 @@ int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
 					ssdfs_apply_action apply_action)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
 	int err = 0;
 
@@ -811,7 +811,7 @@ ssdfs_sequence_array_change_all_tagged_states(struct ssdfs_sequence_array *ptr,
 					   unsigned long *found_items)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
 	int tag = SSDFS_SEQUENCE_ITEM_DIRTY_TAG;
 	int err = 0;
@@ -931,7 +931,7 @@ int __ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
 					   unsigned long *found_items)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 	void *item_ptr;
 	int tag = SSDFS_SEQUENCE_ITEM_DIRTY_TAG;
 	int err = 0;

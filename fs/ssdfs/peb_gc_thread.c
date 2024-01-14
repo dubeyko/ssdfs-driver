@@ -244,6 +244,7 @@ finish_define_extent:
 /*
  * __ssdfs_peb_copy_block() - copy block from PEB into buffer
  * @pebc: pointer on PEB container
+ * @logical_blk: logical block
  * @desc_off: physical offset descriptor
  * @pos: position offset
  * @req: request
@@ -259,6 +260,7 @@ finish_define_extent:
  */
 static
 int __ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
+			   u32 logical_blk,
 			   struct ssdfs_phys_offset_descriptor *desc_off,
 			   struct ssdfs_offset_position *pos,
 			   struct ssdfs_segment_request *req)
@@ -266,15 +268,16 @@ int __ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_info *pebi = NULL;
 	struct ssdfs_metadata_descriptor desc_array[SSDFS_SEG_HDR_DESC_MAX];
+	u32 block_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!desc_off || !pos || !req);
 
-	SSDFS_DBG("seg %llu, peb_index %u, "
+	SSDFS_DBG("seg %llu, peb_index %u, logical_blk %u, "
 		  "class %#x, cmd %#x, type %#x\n",
-		  pebc->parent_si->seg_id, pebc->peb_index,
+		  pebc->parent_si->seg_id, pebc->peb_index, logical_blk,
 		  req->private.class, req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -292,7 +295,7 @@ int __ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
 		goto finish_copy_block;
 	}
 
-	if (folio_batch_space(&req->result.batch) == 0) {
+	if (req->result.content.count >= SSDFS_REQ_EXTENT_LEN_MAX) {
 		err = -EAGAIN;
 		SSDFS_DBG("request's folio batch is full\n");
 		goto finish_copy_block;
@@ -311,7 +314,8 @@ int __ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
 		goto finish_copy_block;
 	}
 
-	err = ssdfs_request_add_allocated_folio_locked(req);
+	block_index = logical_blk - req->place.start.blk_index;
+	err = ssdfs_request_add_allocated_folio_locked(block_index, req);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to allocate memory folio: "
 			  "err %d\n", err);
@@ -486,7 +490,8 @@ int ssdfs_peb_copy_pre_alloc_block(struct ssdfs_peb_container *pebc,
 	if (has_data) {
 		ssdfs_peb_read_request_cno(pebc);
 
-		err = __ssdfs_peb_copy_block(pebc, desc_off, &pos, req);
+		err = __ssdfs_peb_copy_block(pebc, logical_blk,
+					     desc_off, &pos, req);
 		if (err == -EAGAIN) {
 			SSDFS_DBG("unable to add block of another inode\n");
 			goto finish_copy_block;
@@ -600,7 +605,8 @@ int ssdfs_peb_copy_block(struct ssdfs_peb_container *pebc,
 
 	ssdfs_peb_read_request_cno(pebc);
 
-	err = __ssdfs_peb_copy_block(pebc, desc_off, &pos, req);
+	err = __ssdfs_peb_copy_block(pebc, logical_blk,
+				     desc_off, &pos, req);
 	if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to copy the whole range: "

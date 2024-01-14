@@ -384,9 +384,9 @@ int ssdfs_read_block_nolock(struct file *file, struct folio *folio,
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(file_inode(file)->i_sb);
 	struct inode *inode = file_inode(file);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
+	struct ssdfs_segment_request *req;
 	ino_t ino = file_inode(file)->i_ino;
 	pgoff_t index = folio_index(folio);
-	struct ssdfs_segment_request *req;
 	loff_t logical_offset;
 	loff_t data_bytes;
 	loff_t file_size;
@@ -397,15 +397,15 @@ int ssdfs_read_block_nolock(struct file *file, struct folio *folio,
 		  ino, (u64)index, read_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	logical_offset = (loff_t)index << fsi->log_pagesize;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 
 	file_size = i_size_read(file_inode(file));
 	data_bytes = file_size - logical_offset;
-	data_bytes = min_t(loff_t, fsi->pagesize, data_bytes);
+	data_bytes = min_t(loff_t, folio_size(folio), data_bytes);
 
 	BUG_ON(data_bytes > U32_MAX);
 
-	__ssdfs_memzero_folio(folio, 0, fsi->pagesize, fsi->pagesize);
+	__ssdfs_memzero_folio(folio, 0, folio_size(folio), folio_size(folio));
 
 	if (logical_offset >= file_size) {
 		/* Reading beyond inode */
@@ -433,7 +433,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio *folio,
 			return -E2BIG;
 		}
 
-		err = __ssdfs_memcpy_to_folio(folio, 0, fsi->pagesize,
+		err = __ssdfs_memcpy_to_folio(folio, 0, folio_size(folio),
 					      ii->inline_file, 0, inline_capacity,
 					      data_bytes);
 		if (unlikely(err)) {
@@ -467,7 +467,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio *folio,
 					     (u32)data_bytes,
 					     0, 0, req);
 
-	err = ssdfs_request_add_folio(folio, req);
+	err = ssdfs_request_add_folio(folio, 0, req);
 	if (err) {
 		SSDFS_ERR("fail to add folio into request: "
 			  "ino %lu, folio_index %lu, err %d\n",
@@ -667,6 +667,9 @@ free_request:
 	ssdfs_request_free(req);
 
 finish_wait:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -689,7 +692,7 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_request *req = NULL;
 	struct ssdfs_segment_info *si;
-	loff_t data_bytes;
+	loff_t data_bytes = 0;
 	int i;
 	int err;
 
@@ -721,7 +724,22 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	ssdfs_request_init(req, fsi->pagesize);
 	ssdfs_get_request(req);
 
-	data_bytes = folio_batch_count(&env->batch) * fsi->pagesize;
+	for (i = 0; i < folio_batch_count(&env->batch); i++) {
+		struct folio *folio;
+
+		folio = env->batch.folios[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		data_bytes += folio_size(folio);
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(data_bytes == 0);
+	BUG_ON(data_bytes > fsi->pagesize);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_request_prepare_logical_extent(env->requested.ino,
 					     env->requested.logical_offset,
@@ -741,11 +759,11 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 					   req);
 
 	for (i = 0; i < folio_batch_count(&env->batch); i++) {
-		err = ssdfs_request_add_folio(env->batch.folios[i], req);
+		err = ssdfs_request_add_folio(env->batch.folios[i], 0, req);
 		if (err) {
 			SSDFS_ERR("fail to add folio into request: "
-				  "ino %llu, index %d, err %d\n",
-				  env->requested.ino, i, err);
+				  "ino %llu, err %d\n",
+				  env->requested.ino, err);
 			goto fail_issue_read_request;
 		}
 	}
@@ -771,6 +789,10 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	}
 
 	ssdfs_segment_put_object(si);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return req;
 
@@ -814,7 +836,7 @@ int ssdfs_readahead_block(struct ssdfs_readahead_env *env)
 	folio = env->batch.folios[0];
 
 	index = folio_index(folio);
-	logical_offset = (loff_t)index << fsi->log_pagesize;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 
 	file_size = i_size_read(inode);
 	data_bytes = file_size - logical_offset;
@@ -887,13 +909,22 @@ int ssdfs_readahead_block(struct ssdfs_readahead_env *env)
 	} else
 		env->count++;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 
 fail_readahead_block:
 	for (i = 0; i < folio_batch_count(&env->batch); i++) {
 		folio = env->batch.folios[i];
 
-		__ssdfs_memzero_folio(folio, 0, fsi->pagesize, fsi->pagesize);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		__ssdfs_memzero_folio(folio, 0, folio_size(folio),
+					folio_size(folio));
 
 		folio_set_error(folio);
 		folio_clear_uptodate(folio);
@@ -958,41 +989,64 @@ void ssdfs_readahead(struct readahead_control *rac)
 	memset(&env.cur_extent, 0, sizeof(struct ssdfs_volume_extent));
 
 	for (i = 0; i < env.capacity; i++) {
+		u32 processed_bytes = 0;
+
 		folio_batch_reinit(&env.batch);
 
-		folio = readahead_folio(rac);
-		if (!folio) {
-			SSDFS_DBG("no more folios\n");
-			break;
-		}
+		while (processed_bytes < fsi->pagesize) {
+			folio = readahead_folio(rac);
+			if (!folio) {
+				SSDFS_DBG("no more folios\n");
 
-		prefetchw(&folio->flags);
+				if (processed_bytes > 0)
+					goto try_readahead_block;
+				else
+					goto finish_requests_processing;
+			}
 
-		index = folio_index(folio);
-		logical_offset = (loff_t)index << fsi->log_pagesize;
-		file_size = i_size_read(file_inode(env.file));
+			prefetchw(&folio->flags);
 
-		if (logical_offset >= file_size) {
-			/* Reading beyond inode */
-			err = -ENODATA;
+			index = folio_index(folio);
+			logical_offset = (loff_t)index << PAGE_SHIFT;
+			file_size = i_size_read(file_inode(env.file));
+
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("Reading beyond inode: "
+			SSDFS_DBG("index %lu, folio_size %zu, "
 				  "logical_offset %llu, file_size %llu\n",
+				  index, folio_size(folio),
 				  logical_offset, file_size);
 #endif /* CONFIG_SSDFS_DEBUG */
-			folio_mark_uptodate(folio);
-			folio_clear_error(folio);
-			flush_dcache_folio(folio);
-			break;
+
+			if (logical_offset >= file_size) {
+				/* Reading beyond inode */
+				err = -ENODATA;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("Reading beyond inode: "
+					  "logical_offset %llu, file_size %llu\n",
+					  logical_offset, file_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+				folio_mark_uptodate(folio);
+				folio_clear_error(folio);
+				flush_dcache_folio(folio);
+
+				if (processed_bytes > 0)
+					goto try_readahead_block;
+				else
+					goto finish_requests_processing;
+			}
+
+			ssdfs_folio_get(folio);
+			ssdfs_account_locked_folio(folio);
+
+			__ssdfs_memzero_folio(folio, 0, folio_size(folio),
+					      folio_size(folio));
+
+			folio_batch_add(&env.batch, folio);
+
+			processed_bytes += folio_size(folio);
 		}
 
-		ssdfs_folio_get(folio);
-		ssdfs_account_locked_folio(folio);
-
-		__ssdfs_memzero_folio(folio, 0, fsi->pagesize, fsi->pagesize);
-
-		folio_batch_add(&env.batch, folio);
-
+try_readahead_block:
 		err = ssdfs_readahead_block(&env);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to process block: "
@@ -1002,6 +1056,7 @@ void ssdfs_readahead(struct readahead_control *rac)
 		}
 	}
 
+finish_requests_processing:
 	for (i = 0; i < env.count; i++) {
 		res = ssdfs_wait_read_request_end(fsi, env.reqs[i]);
 		if (res) {
@@ -1021,14 +1076,19 @@ void ssdfs_readahead(struct readahead_control *rac)
 	if (env.reqs)
 		ssdfs_file_kfree(env.reqs);
 
-	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
+	if (err) {
 		SSDFS_DBG("readahead fails: "
 			  "ino %lu, nr_pages %u, err %d\n",
 			  file_inode(rac->file)->i_ino,
 			  readahead_count(rac), err);
-#endif /* CONFIG_SSDFS_DEBUG */
+	} else {
+		SSDFS_DBG("readahead finished: "
+			  "ino %lu, nr_pages %u, err %d\n",
+			  file_inode(rac->file)->i_ino,
+			  readahead_count(rac), err);
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return;
 }
@@ -1116,7 +1176,7 @@ check_req_state:
 static
 int ssdfs_check_sync_write_request(struct ssdfs_segment_request *req)
 {
-	int i;
+	int i, j;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1164,19 +1224,31 @@ int ssdfs_check_sync_write_request(struct ssdfs_segment_request *req)
 		return req->result.err;
 	}
 
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		struct folio *folio = req->result.batch.folios[i];
+	for (i = 0; i < req->result.content.count; i++) {
+		struct ssdfs_request_content_block *block;
+		struct ssdfs_content_block *blk_state;
+
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
+		BUG_ON(folio_batch_count(&blk_state->batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		clear_folio_new(folio);
-		folio_mark_uptodate(folio);
-		ssdfs_clear_dirty_folio(folio);
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			struct folio *folio = blk_state->batch.folios[j];
 
-		ssdfs_folio_unlock(folio);
-		folio_end_writeback(folio);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			clear_folio_new(folio);
+			folio_mark_uptodate(folio);
+			ssdfs_clear_dirty_folio(folio);
+
+			ssdfs_folio_unlock(folio);
+			folio_end_writeback(folio);
+		}
 	}
 
 	return 0;
@@ -1408,7 +1480,7 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_ERR("batch is empty\n");
 		return -ERANGE;
 	}
@@ -1417,14 +1489,14 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 		  fsi, pool, batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+	if (batch->processed_blks >= batch->content.count) {
 		SSDFS_ERR("processed_blks %u >= batch_size %u\n",
 			  batch->processed_blks,
-			  folio_batch_count(&batch->fvec));
+			  batch->content.count);
 		return -ERANGE;
 	}
 
-	folio = batch->fvec.folios[batch->processed_blks];
+	folio = batch->content.blocks[batch->processed_blks].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1507,7 +1579,7 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_ERR("batch is empty\n");
 		return -ERANGE;
 	}
@@ -1516,7 +1588,7 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 		  fsi, pool, batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	batch_size = folio_batch_count(&batch->fvec);
+	batch_size = batch->content.count;
 
 	if (batch->processed_blks >= batch_size) {
 		SSDFS_ERR("processed_blks %u >= batch_size %u\n",
@@ -1524,7 +1596,7 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
-	folio = batch->fvec.folios[batch->processed_blks];
+	folio = batch->content.blocks[batch->processed_blks].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1622,20 +1694,20 @@ int ssdfs_issue_async_block_write_request(struct writeback_control *wbc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!wbc || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_ERR("batch is empty\n");
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+	if (batch->processed_blks >= batch->content.count) {
 		SSDFS_ERR("processed_blks %u >= batch_size %u\n",
 			  batch->processed_blks,
-			  folio_batch_count(&batch->fvec));
+			  batch->content.count);
 		return -ERANGE;
 	}
 
-	folio = batch->fvec.folios[batch->processed_blks];
+	folio = batch->content.blocks[batch->processed_blks].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1695,20 +1767,20 @@ int ssdfs_issue_sync_block_write_request(struct writeback_control *wbc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!wbc || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_ERR("batch is empty\n");
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+	if (batch->processed_blks >= batch->content.count) {
 		SSDFS_ERR("processed_blks %u >= batch_size %u\n",
 			  batch->processed_blks,
-			  folio_batch_count(&batch->fvec));
+			  batch->content.count);
 		return -ERANGE;
 	}
 
-	folio = batch->fvec.folios[batch->processed_blks];
+	folio = batch->content.blocks[batch->processed_blks].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1768,20 +1840,20 @@ int ssdfs_issue_async_extent_write_request(struct writeback_control *wbc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!wbc || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_ERR("batch is empty\n");
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+	if (batch->processed_blks >= batch->content.count) {
 		SSDFS_ERR("processed_blks %u >= batch_size %u\n",
 			  batch->processed_blks,
-			  folio_batch_count(&batch->fvec));
+			  batch->content.count);
 		return -ERANGE;
 	}
 
-	folio = batch->fvec.folios[batch->processed_blks];
+	folio = batch->content.blocks[batch->processed_blks].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1841,20 +1913,20 @@ int ssdfs_issue_sync_extent_write_request(struct writeback_control *wbc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!wbc || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_ERR("batch is empty\n");
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (batch->processed_blks >= folio_batch_count(&batch->fvec)) {
+	if (batch->processed_blks >= batch->content.count) {
 		SSDFS_ERR("processed_blks %u >= batch_size %u\n",
 			  batch->processed_blks,
-			  folio_batch_count(&batch->fvec));
+			  batch->content.count);
 		return -ERANGE;
 	}
 
-	folio = batch->fvec.folios[batch->processed_blks];
+	folio = batch->content.blocks[batch->processed_blks].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -1955,12 +2027,12 @@ int ssdfs_issue_async_write_request(struct ssdfs_fs_info *fsi,
 
 static
 int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
-			      struct writeback_control *wbc,
-			      struct ssdfs_segment_request_pool *pool,
-			      struct ssdfs_dirty_folios_batch *batch,
-			      int req_type)
+				   struct writeback_control *wbc,
+				   struct ssdfs_segment_request_pool *pool,
+				   struct ssdfs_dirty_folios_batch *batch,
+				   int req_type)
 {
-	int i;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2004,25 +2076,39 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("fail to write sync: err %d\n",
 			  err);
 
-		for (i = 0; i < folio_batch_count(&batch->fvec); i++) {
-			struct folio *folio = batch->fvec.folios[i];
+		for (i = 0; i < batch->content.count; i++) {
+			struct ssdfs_content_block *blk_state;
+			u32 batch_size;
+
+			blk_state = &batch->content.blocks[i];
+			batch_size = folio_batch_count(&blk_state->batch);
 
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
+			BUG_ON(batch_size == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			if (!folio_test_locked(folio)) {
-				SSDFS_WARN("folio %p, folio_test_locked %#x\n",
-					   folio, folio_test_locked(folio));
-				ssdfs_folio_lock(folio);
+			for (j = 0; j < batch_size; j++) {
+				struct folio *folio;
+
+				folio = blk_state->batch.folios[j];
+
+#ifdef CONFIG_SSDFS_DEBUG
+				BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				if (!folio_test_locked(folio)) {
+					SSDFS_WARN("folio %p, folio_test_locked %#x\n",
+						   folio, folio_test_locked(folio));
+					ssdfs_folio_lock(folio);
+				}
+
+				clear_folio_new(folio);
+				folio_mark_uptodate(folio);
+				folio_clear_dirty(folio);
+
+				ssdfs_folio_unlock(folio);
+				folio_end_writeback(folio);
 			}
-
-			clear_folio_new(folio);
-			folio_mark_uptodate(folio);
-			folio_clear_dirty(folio);
-
-			ssdfs_folio_unlock(folio);
-			folio_end_writeback(folio);
 		}
 	}
 
@@ -2043,19 +2129,19 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 	ino_t ino;
 	u64 logical_offset;
 	u32 data_bytes;
-	int i;
+	int i, j;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!wbc || !pool || !batch);
 
-	if (folio_batch_count(&batch->fvec) == 0) {
+	if (batch->content.count == 0) {
 		SSDFS_WARN("batch is empty\n");
 		return -ERANGE;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = batch->fvec.folios[0];
+	folio = batch->content.blocks[0].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -2073,17 +2159,28 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 		  ino, logical_offset, data_bytes, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < folio_batch_count(&batch->fvec); i++) {
-		folio = batch->fvec.folios[i];
+	for (i = 0; i < batch->content.count; i++) {
+		struct ssdfs_content_block *blk_state;
+
+		blk_state = &batch->content.blocks[i];
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio);
-		SSDFS_DBG("folio_index %llu\n",
-			  (u64)folio_index(folio));
+		BUG_ON(folio_batch_count(&blk_state->batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio_start_writeback(folio);
-		ssdfs_clear_dirty_folio(folio);
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			struct folio *folio = blk_state->batch.folios[j];
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+
+			SSDFS_DBG("folio_index %llu\n",
+				  (u64)folio_index(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			folio_start_writeback(folio);
+			ssdfs_clear_dirty_folio(folio);
+		}
 	}
 
 	if (wbc->sync_mode == WB_SYNC_NONE) {
@@ -2120,7 +2217,6 @@ int __ssdfs_writepage(struct folio *folio, u32 len,
 		      struct ssdfs_dirty_folios_batch *batch)
 {
 	struct inode *inode = folio->mapping->host;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	ino_t ino = inode->i_ino;
 	pgoff_t index = folio_index(folio);
 	loff_t logical_offset;
@@ -2131,7 +2227,7 @@ int __ssdfs_writepage(struct folio *folio, u32 len,
 		  ino, (u64)index, len, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_dirty_folios_batch_add_folio(folio, batch);
+	err = ssdfs_dirty_folios_batch_add_folio(folio, 0, batch);
 	if (err) {
 		SSDFS_ERR("fail to add folio into batch: "
 			  "ino %lu, folio_index %lu, err %d\n",
@@ -2139,7 +2235,7 @@ int __ssdfs_writepage(struct folio *folio, u32 len,
 		goto fail_write_folio;
 	}
 
-	logical_offset = (loff_t)index << fsi->log_pagesize;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 	ssdfs_dirty_folios_batch_prepare_logical_extent(ino,
 							(u64)logical_offset,
 							len, 0, 0,
@@ -2170,11 +2266,13 @@ int __ssdfs_writepages(struct folio *folio, u32 len,
 		  ino, (u64)index, len, wbc->sync_mode);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	logical_offset = (loff_t)index << fsi->log_pagesize;
+	logical_offset = (loff_t)index << PAGE_SHIFT;
 
 try_add_folio_into_request:
 	if (is_ssdfs_logical_extent_invalid(&batch->requested_extent)) {
-		err = ssdfs_dirty_folios_batch_add_folio(folio, batch);
+		err = ssdfs_dirty_folios_batch_add_folio(folio,
+							 batch->content.count,
+							 batch);
 		if (err) {
 			SSDFS_ERR("fail to add folio into batch: "
 				  "ino %lu, folio_index %lu, err %d\n",
@@ -2187,19 +2285,29 @@ try_add_folio_into_request:
 							len, 0, 0,
 							batch);
 	} else {
+		struct ssdfs_content_block *blk_state;
+		struct folio *last_folio;
 		u64 upper_bound = batch->requested_extent.logical_offset +
 					batch->requested_extent.data_bytes;
+		u32 last_blk;
 		u32 last_index;
-		struct folio *last_folio;
 
-		if (folio_batch_count(&batch->fvec) == 0) {
+		if (batch->content.count == 0) {
 			err = -ERANGE;
 			SSDFS_WARN("batch is empty\n");
 			goto fail_write_folios;
 		}
 
-		last_index = folio_batch_count(&batch->fvec) - 1;
-		last_folio = batch->fvec.folios[last_index];
+		last_blk = batch->content.count - 1;
+		blk_state = &batch->content.blocks[last_blk];
+
+		last_index = folio_batch_count(&blk_state->batch);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(last_index == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+		last_index -= 1;
+
+		last_folio = blk_state->batch.folios[last_index];
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical_offset %llu, upper_bound %llu, "
@@ -2208,6 +2316,8 @@ try_add_folio_into_request:
 
 		BUG_ON(!last_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+		last_index = folio_index(last_folio);
 
 		if (last_index == index) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2219,7 +2329,25 @@ try_add_folio_into_request:
 
 		if (logical_offset == upper_bound &&
 		    can_be_merged_into_extent(last_folio, folio)) {
-			err = ssdfs_dirty_folios_batch_add_folio(folio, batch);
+			pgoff_t logical_blk1, logical_blk2;
+			pgoff_t cur_blk;
+
+			logical_blk1 = folio_index(last_folio);
+			logical_blk1 <<= PAGE_SHIFT;
+			logical_blk1 >>= fsi->log_pagesize;
+
+			logical_blk2 = folio_index(folio);
+			logical_blk2 <<= PAGE_SHIFT;
+			logical_blk2 >>= fsi->log_pagesize;
+
+			if (logical_blk1 == logical_blk2)
+				cur_blk = last_blk;
+			else
+				cur_blk = batch->content.count;
+
+			err = ssdfs_dirty_folios_batch_add_folio(folio,
+								 cur_blk,
+								 batch);
 			if (err) {
 				err = ssdfs_issue_write_request(wbc,
 						    pool, batch,
@@ -2266,14 +2394,18 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 	ino_t ino = inode->i_ino;
 	pgoff_t index = folio_index(folio);
 	loff_t i_size = i_size_read(inode);
-	pgoff_t end_index = i_size >> fsi->log_pagesize;
-	int len = i_size & (fsi->pagesize - 1);
+	pgoff_t end_index = i_size >> PAGE_SHIFT;
+	int len = i_size & (folio_size(folio) - 1);
 	loff_t cur_blk;
 	bool is_new_blk = false;
+#ifdef CONFIG_SSDFS_DEBUG
+	u32 folio_processed_bytes = 0;
+	void *kaddr;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, folio_index %llu, "
+	SSDFS_DBG("ino %lu, page_index %llu, "
 		  "i_size %llu, len %d\n",
 		  ino, (u64)index,
 		  (u64)i_size, len);
@@ -2291,7 +2423,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 	}
 
 	/* Is the page fully outside @i_size? (truncate in progress) */
-	if (index > end_index || (index == end_index && !len)) {
+	if (index > end_index) {
 		err = 0;
 		goto finish_write_folio;
 	}
@@ -2312,7 +2444,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 		err = __ssdfs_memcpy_from_folio(ii->inline_file,
 						0, inline_capacity,
 						folio,
-						0, fsi->pagesize,
+						0, folio_size(folio),
 						len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy file's content: "
@@ -2332,7 +2464,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 		return 0;
 	}
 
-	cur_blk = index;
+	cur_blk = ((u64)index << PAGE_SHIFT) >> fsi->log_pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("cur_blk %llu\n", (u64)cur_blk);
@@ -2351,38 +2483,63 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			set_folio_new(folio);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	do {
+		kaddr = kmap_local_folio(folio, folio_processed_bytes);
+		SSDFS_DBG("PAGE DUMP: "
+			  "folio_processed_bytes %u\n",
+			  folio_processed_bytes);
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     kaddr,
+				     PAGE_SIZE);
+		SSDFS_DBG("\n");
+		kunmap_local(kaddr);
+
+		folio_processed_bytes += PAGE_SIZE;
+	} while (folio_processed_bytes < folio_size(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	/* Is the page fully inside @i_size? */
 	if (index < end_index) {
-		err = (*writepage)(folio, fsi->pagesize, wbc, pool, batch);
+		err = (*writepage)(folio, folio_size(folio), wbc, pool, batch);
 		if (unlikely(err)) {
 			ssdfs_fs_error(inode->i_sb, __FILE__,
 					__func__, __LINE__,
 					"fail to write block: "
-					"ino %lu, folio_index %llu, err %d\n",
+					"ino %lu, page_index %llu, err %d\n",
 					ino, (u64)index, err);
 			goto discard_folio;
 		}
+	} else if (len > 0) {
+		/*
+		 * The page straddles @i_size. It must be zeroed out on each and every
+		 * writepage invocation because it may be mmapped. "A file is mapped
+		 * in multiples of the page size. For a file that is not a multiple of
+		 * the page size, the remaining memory is zeroed when mapped, and
+		 * writes to that region are not written out to the file."
+		 */
+		folio_zero_segment(folio, len, folio_size(folio));
 
-		return 0;
-	}
-
-	/*
-	 * The page straddles @i_size. It must be zeroed out on each and every
-	 * writepage invocation because it may be mmapped. "A file is mapped
-	 * in multiples of the page size. For a file that is not a multiple of
-	 * the page size, the remaining memory is zeroed when mapped, and
-	 * writes to that region are not written out to the file."
-	 */
-	folio_zero_segment(folio, len, fsi->pagesize);
-
-	err = (*writepage)(folio, len, wbc, pool, batch);
-	if (unlikely(err)) {
-		ssdfs_fs_error(inode->i_sb, __FILE__,
-				__func__, __LINE__,
-				"fail to write block: "
-				"ino %lu, folio_index %llu, err %d\n",
-				ino, (u64)index, err);
-		goto discard_folio;
+		err = (*writepage)(folio, len, wbc, pool, batch);
+		if (unlikely(err)) {
+			ssdfs_fs_error(inode->i_sb, __FILE__,
+					__func__, __LINE__,
+					"fail to write block: "
+					"ino %lu, page_index %llu, err %d\n",
+					ino, (u64)index, err);
+			goto discard_folio;
+		}
+	} else {
+		/* Write out the whole last folio (len == 0) */
+		err = (*writepage)(folio, folio_size(folio), wbc, pool, batch);
+		if (unlikely(err)) {
+			ssdfs_fs_error(inode->i_sb, __FILE__,
+					__func__, __LINE__,
+					"fail to write block: "
+					"ino %lu, page_index %llu, err %d\n",
+					ino, (u64)index, err);
+			goto discard_folio;
+		}
 	}
 
 	return 0;
@@ -2404,7 +2561,7 @@ static
 int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 {
 	struct ssdfs_segment_request_pool pool;
-	struct ssdfs_dirty_folios_batch batch;
+	struct ssdfs_dirty_folios_batch *batch;
 	struct folio *folio = page_folio(page);
 	struct inode *inode = folio->mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
@@ -2415,15 +2572,22 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, folio_index %llu\n",
+	SSDFS_DBG("ino %lu, page_index %llu\n",
 		  ino, (u64)index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	batch = ssdfs_dirty_folios_batch_alloc();
+	if (IS_ERR_OR_NULL(batch)) {
+		err = (batch == NULL ? -ENOMEM : PTR_ERR(batch));
+		SSDFS_ERR("unable to allocate dirty folios batch\n");
+		return err;
+	}
+
 	ssdfs_segment_request_pool_init(&pool);
-	ssdfs_dirty_folios_batch_init(&batch);
+	ssdfs_dirty_folios_batch_init(batch);
 
 	err = ssdfs_writepage_wrapper(folio, wbc,
-					&pool, &batch,
+					&pool, batch,
 					__ssdfs_writepage);
 	if (unlikely(err)) {
 		SSDFS_ERR("writepage is failed: err %d\n",
@@ -2437,6 +2601,8 @@ int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
 				  "err %d\n", err);
 		}
 	}
+
+	ssdfs_dirty_folios_batch_free(batch);
 
 	return err;
 }
@@ -2460,7 +2626,7 @@ int ssdfs_writepages(struct address_space *mapping,
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	ino_t ino = inode->i_ino;
 	struct ssdfs_segment_request_pool pool;
-	struct ssdfs_dirty_folios_batch batch;
+	struct ssdfs_dirty_folios_batch *batch;
 	struct folio_batch fvec;
 	int blocks;
 	pgoff_t index = 0;
@@ -2484,8 +2650,15 @@ int ssdfs_writepages(struct address_space *mapping,
 		  wbc->range_cyclic);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	batch = ssdfs_dirty_folios_batch_alloc();
+	if (IS_ERR_OR_NULL(batch)) {
+		ret = (batch == NULL ? -ENOMEM : PTR_ERR(batch));
+		SSDFS_ERR("unable to allocate dirty folios batch\n");
+		return ret;
+	}
+
 	ssdfs_segment_request_pool_init(&pool);
-	ssdfs_dirty_folios_batch_init(&batch);
+	ssdfs_dirty_folios_batch_init(batch);
 
 	/*
 	 * No folios to write?
@@ -2499,8 +2672,8 @@ int ssdfs_writepages(struct address_space *mapping,
 		index = mapping->writeback_index; /* prev offset */
 		end = -1;
 	} else {
-		index = wbc->range_start >> fsi->log_pagesize;
-		end = wbc->range_end >> fsi->log_pagesize;
+		index = wbc->range_start >> PAGE_SHIFT;
+		end = wbc->range_end >> PAGE_SHIFT;
 
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
@@ -2515,13 +2688,10 @@ int ssdfs_writepages(struct address_space *mapping,
 	done_index = index;
 
 	while (!done && (index <= end)) {
-		blocks = (int)min_t(pgoff_t, end - index,
-					(pgoff_t)PAGEVEC_SIZE-1) + 1;
-
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("index %llu, end %llu, "
-			  "blocks %d, tag %#x\n",
-			  (u64)index, (u64)end, blocks, tag);
+		SSDFS_DBG("index %llu, end %llu, done_index %llu, "
+			  "done %#x, tag %#x\n",
+			  (u64)index, (u64)end, (u64)done_index, done, tag);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		blocks = filemap_get_folios_tag(mapping, &index, end,
@@ -2535,10 +2705,12 @@ int ssdfs_writepages(struct address_space *mapping,
 
 		for (i = 0; i < blocks; i++) {
 			struct folio *folio = fvec.folios[i];
+			unsigned long nr;
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("folio %p, index %d, folio->index %ld\n",
-				  folio, i, folio->index);
+			SSDFS_DBG("folio %p, index %d, "
+				  "folio->index %ld, end %llu\n",
+				  folio, i, folio->index, (u64)end);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			/*
@@ -2571,6 +2743,10 @@ int ssdfs_writepages(struct address_space *mapping,
 			 */
 			if (unlikely(folio->mapping != mapping)) {
 continue_unlock:
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("UNLOCK FOLIO: index %ld\n",
+					  folio->index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				ssdfs_folio_unlock(folio);
 				continue;
 			}
@@ -2588,13 +2764,28 @@ continue_unlock:
 
 			if (!folio_test_dirty(folio)) {
 				/* someone wrote it for us */
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("FOLIO IS NOT DIRTY: index %ld\n",
+					  folio->index);
+#endif /* CONFIG_SSDFS_DEBUG */
 				goto continue_unlock;
 			}
 
 			if (folio_test_writeback(folio)) {
-				if (wbc->sync_mode != WB_SYNC_NONE)
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("FOLIO IS UNDER WRITEBACK: "
+					  "index %ld\n",
+					  folio->index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				if (wbc->sync_mode != WB_SYNC_NONE) {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("WAIT WRITEBACK: "
+						  "folio_index %ld\n",
+						  folio->index);
+#endif /* CONFIG_SSDFS_DEBUG */
 					folio_wait_writeback(folio);
-				else
+				} else
 					goto continue_unlock;
 			}
 
@@ -2603,8 +2794,10 @@ continue_unlock:
 				goto continue_unlock;
 
 			ret = ssdfs_writepage_wrapper(folio, wbc,
-						      &pool, &batch,
+						      &pool, batch,
 						      __ssdfs_writepages);
+			nr = folio_nr_pages(folio);
+
 			if (unlikely(ret)) {
 				if (ret == -EROFS) {
 					/*
@@ -2620,7 +2813,7 @@ continue_unlock:
 					 * not be suitable for data integrity
 					 * writeout).
 					 */
-					done_index = folio->index + 1;
+					done_index = folio->index + nr;
 					done = 1;
 					break;
 				}
@@ -2643,18 +2836,28 @@ continue_unlock:
 			 * keep going until we have written all the pages
 			 * we tagged for writeback prior to entering this loop.
 			 */
-			if (--wbc->nr_to_write <= 0 &&
+			wbc->nr_to_write -= nr;
+			if (wbc->nr_to_write <= 0 &&
 			    wbc->sync_mode == WB_SYNC_NONE) {
 				done = 1;
 				break;
 			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("wbc->nr_to_write %lu, "
+				  "wbc->sync_mode %#x, "
+				  "done_index %llu, "
+				  "done %#x\n",
+				  wbc->nr_to_write,
+				  wbc->sync_mode,
+				  (u64)done_index,
+				  done);
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		if (!is_ssdfs_file_inline(ii) &&
-		    is_ssdfs_dirty_batch_not_processed(&batch)) {
-			u32 batch_size;
-
-			ret = ssdfs_issue_write_request(wbc, &pool, &batch,
+		    is_ssdfs_dirty_batch_not_processed(batch)) {
+			ret = ssdfs_issue_write_request(wbc, &pool, batch,
 						SSDFS_EXTENT_BASED_REQUEST);
 			if (ret < 0) {
 				SSDFS_ERR("ino %lu, nr_to_write %lu, "
@@ -2670,29 +2873,6 @@ continue_unlock:
 					  wbc->range_cyclic,
 					  (u64)index, (u64)end,
 					  (u64)done_index);
-
-				batch_size = folio_batch_count(&batch.fvec);
-
-				for (i = 0; i < batch_size; i++) {
-					struct folio *folio;
-
-					folio = batch.fvec.folios[i];
-
-#ifdef CONFIG_SSDFS_DEBUG
-					BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-				SSDFS_ERR("folio %p, index %d, "
-					  "folio->index %ld, "
-					  "folio_test_locked %#x, "
-					  "folio_test_dirty %#x, "
-					  "folio_test_writeback %#x\n",
-					  folio, i, folio->index,
-					  folio_test_locked(folio),
-					  folio_test_dirty(folio),
-					  folio_test_writeback(folio));
-				}
-
 				goto out_writepages;
 			}
 		}
@@ -2731,13 +2911,17 @@ out_writepages:
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, nr_to_write %lu, "
+		  "range_whole %d, done_index %llu, done %#x, "
 		  "range_start %llu, range_end %llu, "
 		  "writeback_index %llu\n",
 		  ino, wbc->nr_to_write,
+		  range_whole, (u64)done_index, done,
 		  (u64)wbc->range_start,
 		  (u64)wbc->range_end,
 		  (u64)mapping->writeback_index);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_dirty_folios_batch_free(batch);
 
 	return ret;
 }
@@ -2764,10 +2948,13 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct ssdfs_inode_info *ii = SSDFS_I(inode);
 	struct folio *folio;
-	pgoff_t index = pos >> fsi->log_pagesize;
+	fgf_t fgp_flags = FGP_WRITEBEGIN;
+	unsigned int nofs_flags;
+	pgoff_t index = pos >> PAGE_SHIFT;
 	unsigned blks = 0;
 	loff_t start_blk, end_blk, cur_blk;
 	u64 last_blk = U64_MAX;
+	pgoff_t last_folio;
 #ifdef CONFIG_SSDFS_DEBUG
 	u64 free_blocks = 0;
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2783,12 +2970,19 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		return -EROFS;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, index %lu\n",
-		  inode->i_ino, index);
+	SSDFS_DBG("ino %lu, page_index %lu, "
+		  "large_folios_support %#x\n",
+		  inode->i_ino, index,
+		  mapping_large_folio_support(mapping));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio = __filemap_get_folio(mapping, index, FGP_WRITEBEGIN,
+	fgp_flags |= fgf_set_order(fsi->pagesize);
+
+	nofs_flags = memalloc_nofs_save();
+	folio = __filemap_get_folio(mapping, index, fgp_flags,
 				    mapping_gfp_mask(mapping));
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!folio) {
 		SSDFS_ERR("fail to grab folio: index %lu\n",
 			  index);
@@ -2800,8 +2994,13 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("folio %p, count %d\n",
-		  folio, folio_ref_count(folio));
+	SSDFS_DBG("folio %p, count %d, folio_index %lu, "
+		  "folio_size %zu, page_size %u, "
+		  "fgp_flags %#x, order %u\n",
+		  folio, folio_ref_count(folio),
+		  folio_index(folio), folio_size(folio),
+		  fsi->pagesize, fgp_flags,
+		  FGF_GET_ORDER(fgp_flags));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_account_locked_folio(folio);
@@ -2864,7 +3063,6 @@ try_regular_write:
 
 			if (is_new_blk) {
 				if (!need_add_block(folio)) {
-					set_folio_new(folio);
 					err = ssdfs_reserve_free_pages(fsi, 1,
 							SSDFS_USER_DATA_PAGES);
 					if (!err)
@@ -2898,15 +3096,43 @@ try_regular_write:
 
 					return err;
 				}
-			} else if (!folio_test_dirty(folio)) {
-				/*
-				 * ssdfs_write_end() marks folio as dirty
-				 */
-				ssdfs_account_updated_user_data_pages(fsi, 1);
 			}
 
 			cur_blk++;
 		} while (cur_blk < end_blk);
+
+		if (i_size_read(inode) == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("SET NEW FOLIO: "
+				  "file_size %llu, last_folio %lu, "
+				  "folio_index %lu\n",
+				  (u64)i_size_read(inode),
+				  last_folio,
+				  folio_index(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			set_folio_new(folio);
+		} else {
+			last_folio = (i_size_read(inode) - 1) >> PAGE_SHIFT;
+
+			if (folio_index(folio) > last_folio) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("SET NEW FOLIO: "
+					  "file_size %llu, last_folio %lu, "
+					  "folio_index %lu\n",
+					  (u64)i_size_read(inode),
+					  last_folio,
+					  folio_index(folio));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				set_folio_new(folio);
+			}
+		}
+
+		if (!need_add_block(folio)) {
+			ssdfs_account_updated_user_data_pages(fsi,
+					SSDFS_MEM_PAGES_PER_FOLIO(folio));
+		}
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2914,7 +3140,7 @@ try_regular_write:
 		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*pagep = &folio->page;
+	*pagep = folio_page(folio, offset_in_folio(folio, pos) >> PAGE_SHIFT);
 
 	if ((len == fsi->pagesize) || folio_test_uptodate(folio))
 		return 0;
@@ -2952,7 +3178,6 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 		    struct page *page, void *fsdata)
 {
 	struct inode *inode = mapping->host;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	struct folio *folio = page_folio(page);
 	pgoff_t index = folio_index(folio);
 	unsigned start = offset_in_folio(folio, pos);
@@ -2962,9 +3187,11 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("ino %lu, pos %llu, len %u, copied %u, "
-		  "index %lu, start %u, end %u, old_size %llu\n",
+		  "index %lu, start %u, end %u, old_size %llu, "
+		  "folio_size %zu\n",
 		  inode->i_ino, pos, len, copied,
-		  index, start, end, old_size);
+		  index, start, end, old_size,
+		  folio_size(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (copied < len) {
@@ -2979,8 +3206,8 @@ int ssdfs_write_end(struct file *file, struct address_space *mapping,
 		}
 	}
 
-	if (old_size < (index << fsi->log_pagesize) + end) {
-		i_size_write(inode, (index << fsi->log_pagesize) + end);
+	if (old_size < (index << PAGE_SHIFT) + end) {
+		i_size_write(inode, (index << PAGE_SHIFT) + end);
 		mark_inode_dirty_sync(inode);
 	}
 
@@ -2995,8 +3222,10 @@ out:
 	ssdfs_folio_put(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("folio %p, count %d\n",
-		  folio, folio_ref_count(folio));
+	SSDFS_DBG("folio %p, count %d, "
+		  "folio_test_dirty %#x\n",
+		  folio, folio_ref_count(folio),
+		  folio_test_dirty(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err ? err : copied;

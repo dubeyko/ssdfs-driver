@@ -103,131 +103,6 @@ void ssdfs_seg_tree_check_memory_leaks(void)
  *                        SEGMENTS TREE FUNCTIONALITY                         *
  ******************************************************************************/
 
-static
-void ssdfs_segment_tree_invalidate_folio(struct folio *folio, size_t offset,
-					 size_t length)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("do nothing: offset %zu, length %zu\n",
-		  offset, length);
-#endif /* CONFIG_SSDFS_DEBUG */
-}
-
-/*
- * ssdfs_segment_tree_release_folio() - Release fs-specific metadata on a folio.
- * @folio: The folio which the kernel is trying to free.
- * @gfp: Memory allocation flags (and I/O mode).
- *
- * The address_space is trying to release any data attached to a folio
- * (presumably at folio->private).
- *
- * This will also be called if the private_2 flag is set on a page,
- * indicating that the folio has other metadata associated with it.
- *
- * The @gfp argument specifies whether I/O may be performed to release
- * this page (__GFP_IO), and whether the call may block
- * (__GFP_RECLAIM & __GFP_FS).
- *
- * Return: %true if the release was successful, otherwise %false.
- */
-static
-bool ssdfs_segment_tree_release_folio(struct folio *folio, gfp_t gfp)
-{
-	return false;
-}
-
-static
-bool ssdfs_segment_tree_noop_dirty_folio(struct address_space *mapping,
-					 struct folio *folio)
-{
-	return true;
-}
-
-const struct address_space_operations ssdfs_segment_tree_aops = {
-	.invalidate_folio	= ssdfs_segment_tree_invalidate_folio,
-	.release_folio		= ssdfs_segment_tree_release_folio,
-	.dirty_folio		= ssdfs_segment_tree_noop_dirty_folio,
-};
-
-/*
- * ssdfs_segment_tree_mapping_init() - segment tree's mapping init
- */
-static inline
-void ssdfs_segment_tree_mapping_init(struct address_space *mapping,
-				     struct inode *inode)
-{
-	address_space_init_once(mapping);
-	mapping->a_ops = &ssdfs_segment_tree_aops;
-	mapping->host = inode;
-	mapping->flags = 0;
-	atomic_set(&mapping->i_mmap_writable, 0);
-	mapping_set_gfp_mask(mapping, GFP_KERNEL | __GFP_ZERO);
-	mapping->private_data = NULL;
-	mapping->writeback_index = 0;
-	inode->i_mapping = mapping;
-}
-
-static const struct inode_operations def_segment_tree_ino_iops;
-static const struct file_operations def_segment_tree_ino_fops;
-static const struct address_space_operations def_segment_tree_ino_aops;
-
-/*
- * ssdfs_create_segment_tree_inode() - create segments tree's inode
- * @fsi: pointer on shared file system object
- */
-static
-int ssdfs_create_segment_tree_inode(struct ssdfs_fs_info *fsi)
-{
-	struct inode *inode;
-	struct ssdfs_inode_info *ii;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi);
-
-	SSDFS_DBG("fsi %p\n", fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	inode = iget_locked(fsi->sb, SSDFS_SEG_TREE_INO);
-	if (unlikely(!inode)) {
-		err = -ENOMEM;
-		SSDFS_ERR("unable to allocate segment tree inode: err %d\n",
-			  err);
-		return err;
-	}
-
-	BUG_ON(!(inode->i_state & I_NEW));
-
-	inode->i_mode = S_IFREG;
-	mapping_set_gfp_mask(inode->i_mapping, GFP_KERNEL);
-
-	inode->i_op = &def_segment_tree_ino_iops;
-	inode->i_fop = &def_segment_tree_ino_fops;
-	inode->i_mapping->a_ops = &def_segment_tree_ino_aops;
-
-	ii = SSDFS_I(inode);
-	ii->birthtime = current_time(inode);
-	ii->parent_ino = U64_MAX;
-
-	down_write(&ii->lock);
-	err = ssdfs_extents_tree_create(fsi, ii);
-	up_write(&ii->lock);
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to create the extents tree: "
-			  "err %d\n", err);
-		unlock_new_inode(inode);
-		iput(inode);
-		return -ERANGE;
-	}
-
-	unlock_new_inode(inode);
-
-	fsi->segs_tree_inode = inode;
-
-	return 0;
-}
-
 /*
  * ssdfs_segment_tree_create() - create segments tree
  * @fsi: pointer on shared file system object
@@ -240,6 +115,8 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 		sizeof(struct ssdfs_extents_btree_descriptor);
 	size_t xattr_desc_size =
 		sizeof(struct ssdfs_xattr_btree_descriptor);
+	u64 nsegs;
+	u64 capacity;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -269,14 +146,6 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 		     &fsi->vh->xattr_btree, 0, xattr_desc_size,
 		     xattr_desc_size);
 
-	err = ssdfs_create_segment_tree_inode(fsi);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to create segment tree's inode: "
-			  "err %d\n",
-			  err);
-		goto free_memory;
-	}
-
 	fsi->segs_tree->lnodes_seg_log_pages =
 		le16_to_cpu(fsi->vh->lnodes_seg_log_pages);
 	fsi->segs_tree->hnodes_seg_log_pages =
@@ -287,8 +156,29 @@ int ssdfs_segment_tree_create(struct ssdfs_fs_info *fsi)
 		le16_to_cpu(fsi->vh->user_data_log_pages);
 	fsi->segs_tree->default_log_pages = SSDFS_LOG_PAGES_DEFAULT;
 
-	ssdfs_segment_tree_mapping_init(&fsi->segs_tree->folios,
-					fsi->segs_tree_inode);
+	nsegs = fsi->nsegs + SSDFS_SEG_OBJ_PTR_PER_PAGE - 1;
+	capacity = div_u64(nsegs, SSDFS_SEG_OBJ_PTR_PER_PAGE);
+
+	if (capacity >= U32_MAX) {
+		err = -E2BIG;
+		SSDFS_ERR("fail to create segment tree: "
+			  "capacity %llu is too huge\n",
+			  capacity);
+		goto free_memory;
+	}
+
+	init_rwsem(&fsi->segs_tree->lock);
+	fsi->segs_tree->capacity = (u32)capacity;
+
+	err = ssdfs_create_folio_array(&fsi->segs_tree->folios,
+					get_order(PAGE_SIZE),
+					(u32)capacity);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create folio array: "
+			  "capacity %llu, err %d\n",
+			  capacity, err);
+		goto free_memory;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create segment tree\n");
@@ -420,9 +310,13 @@ void ssdfs_segment_tree_destroy_objects_in_array(struct ssdfs_fs_info *fsi,
 static
 void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 {
+	struct ssdfs_folio_array *folios;
 	struct folio_batch fbatch;
 	pgoff_t index = 0;
+	pgoff_t end = fsi->segs_tree->capacity;
 	int nr_folios;
+	int i;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !fsi->segs_tree);
@@ -430,32 +324,52 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p\n", fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	folios = &fsi->segs_tree->folios;
 	folio_batch_init(&fbatch);
 
-	while ((nr_folios = filemap_get_folios_tag(&fsi->segs_tree->folios,
-						   &index, (pgoff_t)-1,
-						   PAGECACHE_TAG_DIRTY,
-						   &fbatch))) {
+	do {
+		folio_batch_reinit(&fbatch);
 
+		err = ssdfs_folio_array_lookup_range(folios,
+						     &index, end,
+						     SSDFS_DIRTY_FOLIO_TAG,
+						     fsi->segs_tree->capacity,
+						     &fbatch);
+		if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("index %lu, batch_count %u\n",
-			  index, folio_batch_count(&fbatch));
+			SSDFS_DBG("unable to find dirty folios: "
+				  "start %lu, end %lu, err %d\n",
+				  index, end, err);
 #endif /* CONFIG_SSDFS_DEBUG */
+			return;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find dirty folios: "
+				  "start %lu, end %lu, err %d\n",
+				  index, end, err);
+			return;
+		}
 
-		if (nr_folios != 0) {
+		nr_folios = folio_batch_count(&fbatch);
+
+		if (nr_folios > 0) {
 			ssdfs_segment_tree_destroy_objects_in_array(fsi,
 								    &fbatch);
 
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(nr_folios != folio_batch_count(&fbatch));
-#endif /* CONFIG_SSDFS_DEBUG */
+			for (i = 0; i < nr_folios; i++) {
+				struct folio *folio;
+
+				folio = fbatch.folios[i];
+
+				if (!folio)
+					continue;
+
+				ssdfs_folio_array_clear_dirty_folio(folios,
+							folio_index(folio));
+			}
 
 			index = folio_index(fbatch.folios[nr_folios - 1]) + 1;
 		}
-
-		folio_batch_release(&fbatch);
-		folio_batch_reinit(&fbatch);
-	}
+	} while (folio_batch_count(&fbatch) > 0);
 }
 
 /*
@@ -470,18 +384,14 @@ void ssdfs_segment_tree_destroy(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("fsi %p\n", fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode_lock(fsi->segs_tree_inode);
+	if (!fsi->segs_tree)
+		return;
 
-	ssdfs_destroy_and_decrement_btree_of_inode(fsi->segs_tree_inode);
-
+	down_write(&fsi->segs_tree->lock);
 	ssdfs_segment_tree_destroy_segment_objects(fsi);
+	ssdfs_destroy_folio_array(&fsi->segs_tree->folios);
+	up_write(&fsi->segs_tree->lock);
 
-	if (fsi->segs_tree->folios.nrpages != 0)
-		truncate_inode_pages(&fsi->segs_tree->folios, 0);
-
-	inode_unlock(fsi->segs_tree_inode);
-
-	iput(fsi->segs_tree_inode);
 	ssdfs_seg_tree_kfree(fsi->segs_tree);
 	fsi->segs_tree = NULL;
 }
@@ -525,17 +435,16 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 		  folio_index, object_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode_lock(fsi->segs_tree_inode);
+	down_write(&fsi->segs_tree->lock);
 
-	folio = filemap_grab_folio(&fsi->segs_tree->folios, folio_index);
+	folio = ssdfs_folio_array_grab_folio(&fsi->segs_tree->folios,
+					     folio_index);
 	if (!folio) {
 		err = -ENOMEM;
 		SSDFS_ERR("fail to grab folio: folio_index %lu\n",
 			  folio_index);
 		goto finish_add_segment;
 	}
-
-	ssdfs_account_locked_folio(folio);
 
 	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
 	object = *(kaddr + object_index);
@@ -550,8 +459,10 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	kunmap_local(kaddr);
 
 	folio_mark_uptodate(folio);
-	if (!folio_test_dirty(folio))
-		ssdfs_set_folio_dirty(folio);
+	if (!folio_test_dirty(folio)) {
+		ssdfs_folio_array_set_folio_dirty(&fsi->segs_tree->folios,
+						  folio_index);
+	}
 
 	ssdfs_folio_unlock(folio);
 	ssdfs_folio_put(folio);
@@ -564,7 +475,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_add_segment:
-	inode_unlock(fsi->segs_tree_inode);
+	up_write(&fsi->segs_tree->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
@@ -611,9 +522,10 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		  folio_index, object_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode_lock(fsi->segs_tree_inode);
+	down_write(&fsi->segs_tree->lock);
 
-	folio = filemap_lock_folio(&fsi->segs_tree->folios, folio_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fsi->segs_tree->folios,
+						   folio_index);
 	if (IS_ERR(folio)) {
 		err = -ENODATA;
 		SSDFS_ERR("failed to remove segment object: "
@@ -628,7 +540,6 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 		goto finish_remove_segment;
 	}
 
-	ssdfs_account_locked_folio(folio);
 	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
 	object = *(kaddr + object_index);
 	if (!object) {
@@ -645,8 +556,10 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	kunmap_local(kaddr);
 
 	folio_mark_uptodate(folio);
-	if (!folio_test_dirty(folio))
-		ssdfs_set_folio_dirty(folio);
+	if (!folio_test_dirty(folio)) {
+		ssdfs_folio_array_set_folio_dirty(&fsi->segs_tree->folios,
+						  folio_index);
+	}
 
 	ssdfs_folio_unlock(folio);
 	ssdfs_folio_put(folio);
@@ -663,7 +576,7 @@ int ssdfs_segment_tree_remove(struct ssdfs_fs_info *fsi,
 	ssdfs_sysfs_delete_seg_group(si);
 
 finish_remove_segment:
-	inode_unlock(fsi->segs_tree_inode);
+	up_write(&fsi->segs_tree->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
@@ -716,9 +629,10 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 		  folio_index, object_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	inode_lock_shared(fsi->segs_tree_inode);
+	down_read(&fsi->segs_tree->lock);
 
-	folio = filemap_lock_folio(&fsi->segs_tree->folios, folio_index);
+	folio = ssdfs_folio_array_get_folio_locked(&fsi->segs_tree->folios,
+						   folio_index);
 	if (IS_ERR(folio)) {
 		object = ERR_PTR(-ENODATA);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -737,7 +651,6 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 		goto finish_find_segment;
 	}
 
-	ssdfs_account_locked_folio(folio);
 	kaddr = (struct ssdfs_segment_info **)kmap_local_folio(folio, 0);
 
 	object = *(kaddr + object_index);
@@ -750,6 +663,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 			  seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
+
 	kunmap_local(kaddr);
 	ssdfs_folio_unlock(folio);
 	ssdfs_folio_put(folio);
@@ -760,7 +674,7 @@ ssdfs_segment_tree_find(struct ssdfs_fs_info *fsi, u64 seg_id)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_find_segment:
-	inode_unlock_shared(fsi->segs_tree_inode);
+	up_read(&fsi->segs_tree->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");

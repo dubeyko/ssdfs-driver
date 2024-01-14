@@ -157,7 +157,7 @@ int ssdfs_extents_tree_delete_extent(struct ssdfs_extents_btree_info *tree,
 				     struct ssdfs_btree_search *search);
 int ssdfs_extents_tree_delete_all(struct ssdfs_extents_btree_info *tree);
 int __ssdfs_extents_btree_node_get_fork(struct ssdfs_fs_info *fsi,
-					struct folio_batch *batch,
+					struct ssdfs_btree_node_content *content,
 					u32 area_offset,
 					u32 area_size,
 					u32 node_size,

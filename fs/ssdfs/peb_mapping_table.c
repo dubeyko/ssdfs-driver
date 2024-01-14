@@ -415,7 +415,8 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	ptr->flush_req2 = NULL;
 	ptr->flush_req_count = 0;
 
-	ptr->flush_seq_size = min_t(u32, ptr->fragment_folios, PAGEVEC_SIZE);
+	ptr->flush_seq_size = min_t(u32, ptr->fragment_folios,
+				    SSDFS_EXTENT_LEN_MAX);
 	ptr->flush_req1 = ssdfs_map_tbl_kcalloc(ptr->flush_seq_size,
 					sizeof(struct ssdfs_segment_request),
 					GFP_KERNEL);
@@ -1632,6 +1633,8 @@ void ssdfs_maptbl_move_fragment_folios(struct ssdfs_segment_request *req,
 					struct ssdfs_maptbl_area *area,
 					u16 folios_count)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct folio *folio;
 	int i;
 
@@ -1643,25 +1646,34 @@ void ssdfs_maptbl_move_fragment_folios(struct ssdfs_segment_request *req,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < folios_count; i++) {
-		folio = req->result.batch.folios[i];
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+		folio = blk_state->batch.folios[0];
 		area->folios[area->folios_count] = folio;
 		area->folios_count++;
 		ssdfs_map_tbl_account_folio(folio);
-		ssdfs_request_unlock_and_forget_folio(req, i);
+		ssdfs_request_unlock_and_forget_block(i, req);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	for (i = 0; i < folio_batch_count(&req->result.batch); i++) {
-		folio = req->result.batch.folios[i];
+	for (i = 0; i < req->result.content.count; i++) {
+		int j;
 
-		if (folio) {
-			SSDFS_ERR("folio %d is valid\n", i);
-			BUG_ON(folio);
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			folio = blk_state->batch.folios[j];
+
+			if (folio) {
+				SSDFS_ERR("folio %d is valid\n", i);
+				BUG_ON(folio);
+			}
 		}
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio_batch_reinit(&req->result.batch);
+	ssdfs_reinit_request_content(req);
 }
 
 /*
@@ -2014,7 +2026,7 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(atomic_read(&tbl->pre_erase_pebs) >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
-	hdr->pre_erase_pebs = le16_to_cpu(atomic_read(&tbl->pre_erase_pebs));
+	hdr->pre_erase_pebs = cpu_to_le16((u16)atomic_read(&tbl->pre_erase_pebs));
 
 	hdr->lebs_per_fragment = cpu_to_le16(tbl->lebs_per_fragment);
 	hdr->pebs_per_fragment = cpu_to_le16(tbl->pebs_per_fragment);
@@ -2051,6 +2063,8 @@ int ssdfs_maptbl_copy_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
 				  int sfolio_index, int dfolio_index,
 				  struct ssdfs_segment_request *req)
 {
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
 	struct folio *sfolio, *dfolio;
 	void *kaddr1, *kaddr2;
 	struct ssdfs_leb_table_fragment_header *lhdr;
@@ -2084,8 +2098,8 @@ int ssdfs_maptbl_copy_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
 		if (csum != lhdr->checksum) {
 			err = -ERANGE;
 			SSDFS_ERR("csum %#x != lhdr->checksum %#x\n",
-				  le16_to_cpu(csum),
-				  le16_to_cpu(lhdr->checksum));
+				  le32_to_cpu(csum),
+				  le32_to_cpu(lhdr->checksum));
 			lhdr->checksum = csum;
 			goto end_copy_dirty_folio;
 		}
@@ -2098,8 +2112,8 @@ int ssdfs_maptbl_copy_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
 		if (csum != phdr->checksum) {
 			err = -ERANGE;
 			SSDFS_ERR("csum %#x != phdr->checksum %#x\n",
-				  le16_to_cpu(csum),
-				  le16_to_cpu(phdr->checksum));
+				  le32_to_cpu(csum),
+				  le32_to_cpu(phdr->checksum));
 			phdr->checksum = csum;
 			goto end_copy_dirty_folio;
 		}
@@ -2110,7 +2124,13 @@ int ssdfs_maptbl_copy_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
 		goto end_copy_dirty_folio;
 	}
 
-	dfolio = req->result.batch.folios[dfolio_index];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(dfolio_index >= req->result.content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block = &req->result.content.blocks[dfolio_index];
+	blk_state = &block->new_state;
+	dfolio = blk_state->batch.folios[0];
 
 	if (!dfolio) {
 		err = -ERANGE;
@@ -2150,19 +2170,32 @@ void ssdfs_maptbl_replicate_dirty_folio(struct ssdfs_segment_request *req1,
 					int folio_index,
 					struct ssdfs_segment_request *req2)
 {
+	struct ssdfs_request_content_block *sblock, *dblock;
+	struct ssdfs_content_block *sblk_state, *dblk_state;
 	struct folio *sfolio, *dfolio;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req1 || !req2);
-	BUG_ON(folio_index >= folio_batch_count(&req1->result.batch));
-	BUG_ON(folio_index >= folio_batch_count(&req2->result.batch));
+	BUG_ON(folio_index >= req1->result.content.count);
+	BUG_ON(folio_index >= req2->result.content.count);
 
 	SSDFS_DBG("req1 %p, req2 %p, folio_index %d\n",
 		  req1, req2, folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	sfolio = req1->result.batch.folios[folio_index];
-	dfolio = req2->result.batch.folios[folio_index];
+	sblock = &req1->result.content.blocks[folio_index];
+	sblk_state = &sblock->new_state;
+	sfolio = sblk_state->batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sfolio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dblock = &req2->result.content.blocks[folio_index];
+	dblk_state = &dblock->new_state;
+	dfolio = dblk_state->batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!dfolio);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	__ssdfs_memcpy_folio(dfolio, 0, PAGE_SIZE,
 			     sfolio, 0, PAGE_SIZE,
@@ -2175,11 +2208,11 @@ void ssdfs_maptbl_replicate_dirty_folio(struct ssdfs_segment_request *req1,
 }
 
 /*
- * ssdfs_check_portion_id() - check portion_id in the folio batch
- * @pvec: checking folio batch
+ * ssdfs_check_portion_id() - check portion_id in the content
+ * @extent: content of extent
  */
 static inline
-int ssdfs_check_portion_id(struct folio_batch *batch)
+int ssdfs_check_portion_id(struct ssdfs_request_content_extent *extent)
 {
 	struct ssdfs_leb_table_fragment_header *lhdr;
 	struct ssdfs_peb_table_fragment_header *phdr;
@@ -2190,30 +2223,42 @@ int ssdfs_check_portion_id(struct folio_batch *batch)
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!batch);
+	BUG_ON(!extent);
 
-	SSDFS_DBG("batch %p\n", batch);
+	SSDFS_DBG("extent %p\n", extent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio_batch_count(batch) == 0) {
-		SSDFS_ERR("empty folio batch\n");
+	if (extent->count == 0) {
+		SSDFS_ERR("empty content\n");
 		return -EINVAL;
 	}
 
-	for (i = 0; i < folio_batch_count(batch); i++) {
-		kaddr = kmap_local_folio(batch->folios[i], 0);
+	for (i = 0; i < extent->count; i++) {
+		struct ssdfs_request_content_block *block;
+		struct ssdfs_content_block *blk_state;
+		struct folio *folio;
+
+		block = &extent->blocks[i];
+		blk_state = &block->new_state;
+		folio = blk_state->batch.folios[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		kaddr = kmap_local_folio(folio, 0);
 		magic = (__le16 *)kaddr;
 		if (le16_to_cpu(*magic) == SSDFS_LEB_TABLE_MAGIC) {
 			lhdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 			if (portion_id == U32_MAX)
-				portion_id = le32_to_cpu(lhdr->portion_id);
-			else if (portion_id != le32_to_cpu(lhdr->portion_id))
+				portion_id = le16_to_cpu(lhdr->portion_id);
+			else if (portion_id != le16_to_cpu(lhdr->portion_id))
 				err = -ERANGE;
 		} else if (le16_to_cpu(*magic) == SSDFS_PEB_TABLE_MAGIC) {
 			phdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 			if (portion_id == U32_MAX)
-				portion_id = le32_to_cpu(phdr->portion_id);
-			else if (portion_id != le32_to_cpu(phdr->portion_id))
+				portion_id = le16_to_cpu(phdr->portion_id);
+			else if (portion_id != le16_to_cpu(phdr->portion_id))
 				err = -ERANGE;
 		} else {
 			err = -ERANGE;
@@ -2269,10 +2314,10 @@ int ssdfs_maptbl_define_volume_extent(struct ssdfs_peb_mapping_table *tbl,
 	magic = (__le16 *)fragment;
 	if (le16_to_cpu(*magic) == SSDFS_LEB_TABLE_MAGIC) {
 		lhdr = (struct ssdfs_leb_table_fragment_header *)fragment;
-		portion_id = le32_to_cpu(lhdr->portion_id);
+		portion_id = le16_to_cpu(lhdr->portion_id);
 	} else if (le16_to_cpu(*magic) == SSDFS_PEB_TABLE_MAGIC) {
 		phdr = (struct ssdfs_peb_table_fragment_header *)fragment;
-		portion_id = le32_to_cpu(phdr->portion_id);
+		portion_id = le16_to_cpu(phdr->portion_id);
 	} else {
 		SSDFS_ERR("corrupted maptbl's folio\n");
 		return -ERANGE;
@@ -2404,6 +2449,8 @@ int ssdfs_maptbl_set_fragment_checksum(struct folio_batch *batch)
 static inline
 int ssdfs_realloc_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
 {
+	unsigned int nofs_flags;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fdesc);
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
@@ -2418,17 +2465,23 @@ int ssdfs_realloc_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
 
 		fdesc->flush_seq_size *= 2;
 
+		nofs_flags = memalloc_nofs_save();
 		fdesc->flush_req1 = krealloc(fdesc->flush_req1,
 					fdesc->flush_seq_size * seg_req_size,
 					GFP_KERNEL | __GFP_ZERO);
+		memalloc_nofs_restore(nofs_flags);
+
 		if (!fdesc->flush_req1) {
 			SSDFS_ERR("fail to reallocate buffer\n");
 			return -ENOMEM;
 		}
 
+		nofs_flags = memalloc_nofs_save();
 		fdesc->flush_req2 = krealloc(fdesc->flush_req2,
 					fdesc->flush_seq_size * seg_req_size,
 					GFP_KERNEL | __GFP_ZERO);
+		memalloc_nofs_restore(nofs_flags);
+
 		if (!fdesc->flush_req2) {
 			SSDFS_ERR("fail to reallocate buffer\n");
 			return -ENOMEM;
@@ -2460,6 +2513,9 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	struct ssdfs_segment_info *si;
 	struct folio_batch batch;
+	struct ssdfs_request_content_block *block;
+	struct ssdfs_content_block *blk_state;
+	struct folio *folio;
 	void *kaddr;
 	int state;
 	bool has_backup;
@@ -2494,7 +2550,7 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 
 	folio_index = 0;
 	range_len = min_t(pgoff_t,
-			  (pgoff_t)PAGEVEC_SIZE,
+			  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 			  (pgoff_t)(tbl->fragment_folios - folio_index));
 	end = folio_index + range_len - 1;
 
@@ -2525,7 +2581,7 @@ retrive_dirty_folios:
 			goto finish_fragment_update;
 
 		range_len = min_t(pgoff_t,
-			  (pgoff_t)PAGEVEC_SIZE,
+			  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 			  (pgoff_t)(tbl->fragment_folios - folio_index));
 		end = folio_index + range_len - 1;
 		goto retrive_dirty_folios;
@@ -2585,9 +2641,9 @@ define_update_area:
 	}
 
 	for (j = 0; j < area_size; j++) {
-		err = ssdfs_request_add_allocated_folio_locked(req1);
+		err = ssdfs_request_add_allocated_folio_locked(j, req1);
 		if (!err && has_backup)
-			err = ssdfs_request_add_allocated_folio_locked(req2);
+			err = ssdfs_request_add_allocated_folio_locked(j, req2);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail allocate memory folio: err %d\n", err);
 			goto fail_issue_fragment_updates;
@@ -2617,14 +2673,26 @@ define_update_area:
 						     0, 0, req2);
 	}
 
-	err = ssdfs_check_portion_id(&req1->result.batch);
+	err = ssdfs_check_portion_id(&req1->result.content);
 	if (unlikely(err)) {
 		SSDFS_ERR("corrupted maptbl's folio was found: "
 			  "err %d\n", err);
 		goto fail_issue_fragment_updates;
 	}
 
-	kaddr = kmap_local_folio(req1->result.batch.folios[0], 0);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(req1->result.content.count == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	block = &req1->result.content.blocks[0];
+	blk_state = &block->new_state;
+	folio = blk_state->batch.folios[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kaddr = kmap_local_folio(folio, 0);
 	err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
 						area_start, area_size,
 						&seg_index);
@@ -2702,7 +2770,7 @@ fail_issue_fragment_updates:
 
 	if (folio_index < tbl->fragment_folios) {
 		range_len = min_t(pgoff_t,
-			  (pgoff_t)PAGEVEC_SIZE,
+			  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 			  (pgoff_t)(tbl->fragment_folios - folio_index));
 		end = folio_index + range_len - 1;
 
@@ -3145,7 +3213,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 
 	area_start = 0;
 	area_size = min_t(pgoff_t,
-			  (pgoff_t)PAGEVEC_SIZE,
+			  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 			  (pgoff_t)tbl->fragment_folios);
 	processed_folios = 0;
 
@@ -3252,7 +3320,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		area_start += area_size;
 		processed_folios += area_size;
 		area_size = min_t(pgoff_t,
-				  (pgoff_t)PAGEVEC_SIZE,
+				  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 				  (pgoff_t)(tbl->fragment_folios -
 					    processed_folios));
 	} while (processed_folios < tbl->fragment_folios);
@@ -3481,7 +3549,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 
 	area_start = 0;
 	area_size = min_t(pgoff_t,
-			  (pgoff_t)PAGEVEC_SIZE,
+			  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 			  (pgoff_t)tbl->fragment_folios);
 	processed_folios = 0;
 
@@ -3599,7 +3667,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		area_start += area_size;
 		processed_folios += area_size;
 		area_size = min_t(pgoff_t,
-				  (pgoff_t)PAGEVEC_SIZE,
+				  (pgoff_t)SSDFS_EXTENT_LEN_MAX,
 				  (pgoff_t)(tbl->fragment_folios -
 					    processed_folios));
 	} while (processed_folios < tbl->fragment_folios);
@@ -4389,7 +4457,7 @@ int ssdfs_maptbl_get_peb_relation(struct ssdfs_maptbl_fragment_desc *fdesc,
 	ptr->erase_cycles = le32_to_cpu(peb_desc.erase_cycles);
 	ptr->type = peb_desc.type;
 	ptr->state = peb_desc.state;
-	ptr->flags = le16_to_cpu(peb_desc.flags);
+	ptr->flags = peb_desc.flags;
 
 	return 0;
 }
@@ -7038,7 +7106,7 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	leb_desc->physical_index = cpu_to_le16(peb_index);
-	leb_desc->relation_index = U16_MAX;
+	leb_desc->relation_index = cpu_to_le16(U16_MAX);
 
 	lebtbl_hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 	le16_add_cpu(&lebtbl_hdr->mapped_lebs, 1);
@@ -12284,6 +12352,7 @@ static inline
 int __ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count,
 				int type, u64 *free_pages)
 {
+	u32 mem_pages;
 #ifdef CONFIG_SSDFS_DEBUG
 	u64 reserved = 0;
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -12306,7 +12375,9 @@ int __ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count,
 		fsi->free_pages -= count;
 		switch (type) {
 		case SSDFS_USER_DATA_PAGES:
-			fsi->reserved_new_user_data_pages += count;
+			mem_pages = SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(fsi);
+			mem_pages *= count;
+			fsi->reserved_new_user_data_pages += mem_pages;
 			break;
 
 		default:

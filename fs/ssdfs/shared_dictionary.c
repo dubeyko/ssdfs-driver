@@ -139,12 +139,16 @@ int ssdfs_init_name_info_cache(void)
 struct ssdfs_name_info *ssdfs_name_info_alloc(void)
 {
 	struct ssdfs_name_info *ptr;
+	unsigned int nofs_flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_name_info_cachep);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	ptr = kmem_cache_alloc(ssdfs_name_info_cachep, GFP_KERNEL);
+	memalloc_nofs_restore(nofs_flags);
+
 	if (!ptr) {
 		SSDFS_ERR("fail to allocate memory for name\n");
 		return ERR_PTR(-ENOMEM);
@@ -1838,7 +1842,7 @@ int ssdfs_shared_dict_btree_create_node(struct ssdfs_btree_node *node)
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SHARED_DICT_BMAP_SIZE) {
@@ -1912,11 +1916,12 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 					u64 *start_hash, u64 *end_hash)
 {
 	struct ssdfs_fs_info *fsi;
-	struct ssdfs_shdict_ltbl2_item *ptr;
+	struct ssdfs_shdict_ltbl2_item item;
 	struct ssdfs_smart_folio folio;
-	void *kaddr;
+	struct ssdfs_content_block *blk;
 	size_t desc_size = sizeof(struct ssdfs_shdict_ltbl2_item);
 	u16 position;
+	u32 src_offset;
 	u32 hash32_lo;
 	int err;
 
@@ -1958,21 +1963,27 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid page index: "
-			  "folio_index %u, folio_batch_count %u\n",
+			  "folio_index %u, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
-	ptr = (struct ssdfs_shdict_ltbl2_item *)((u8 *)kaddr +
-						folio.desc.offset_inside_page);
-	hash32_lo = le32_to_cpu(ptr->hash_lo);
+	blk = &node->content.blocks[folio.desc.folio_index];
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(&item, 0, desc_size,
+					&blk->batch, src_offset,
+					desc_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
+	hash32_lo = le32_to_cpu(item.hash_lo);
 	*start_hash = SSDFS_NAME_HASH(hash32_lo, 0);
-	kunmap_local(kaddr);
 
 	position = desc_count - 1;
 
@@ -1998,21 +2009,27 @@ int ssdfs_init_lookup_table_hash_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
-		SSDFS_ERR("invalid page index: "
-			  "folio_index %u, folio_batch_count %u\n",
+	if (folio.desc.folio_index >= node->content.count) {
+		SSDFS_ERR("invalid block index: "
+			  "folio_index %u, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
-	ptr = (struct ssdfs_shdict_ltbl2_item *)((u8 *)kaddr +
-						folio.desc.offset_inside_page);
-	hash32_lo = le32_to_cpu(ptr->hash_lo);
+	blk = &node->content.blocks[folio.desc.folio_index];
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(&item, 0, desc_size,
+					&blk->batch, src_offset,
+					desc_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
+	hash32_lo = le32_to_cpu(item.hash_lo);
 	*end_hash = SSDFS_NAME_HASH(hash32_lo, 0);
-	kunmap_local(kaddr);
 
 	return 0;
 }
@@ -2042,10 +2059,11 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 				u64 *start_hash, u64 *end_hash)
 {
 	struct ssdfs_fs_info *fsi;
-	struct ssdfs_shdict_htbl_item *ptr;
+	struct ssdfs_shdict_htbl_item item;
 	struct ssdfs_smart_folio folio;
-	void *kaddr;
+	struct ssdfs_content_block *blk;
 	size_t desc_size = sizeof(struct ssdfs_shdict_htbl_item);
+	u32 src_offset;
 	u16 position;
 	int err;
 
@@ -2087,20 +2105,26 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid page index: "
-			  "folio_index %u, folio_batch_count %u\n",
+			  "folio_index %u, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
-	ptr = (struct ssdfs_shdict_htbl_item *)((u8 *)kaddr +
-						folio.desc.offset_inside_page);
-	*start_hash = SSDFS_NAME_HASH(0, le32_to_cpu(ptr->hash_hi));
-	kunmap_local(kaddr);
+	blk = &node->content.blocks[folio.desc.folio_index];
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(&item, 0, desc_size,
+					&blk->batch, src_offset,
+					desc_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
+	*start_hash = SSDFS_NAME_HASH(0, le32_to_cpu(item.hash_hi));
 
 	position = desc_count - 1;
 
@@ -2126,20 +2150,26 @@ int ssdfs_init_hash_table_range(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid page index: "
-			  "folio_index %u, folio_batch_count %u\n",
+			  "folio_index %u, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-	kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
-	ptr = (struct ssdfs_shdict_htbl_item *)((u8 *)kaddr +
-						folio.desc.offset_inside_page);
-	*end_hash = SSDFS_NAME_HASH(0, le32_to_cpu(ptr->hash_hi));
-	kunmap_local(kaddr);
+	blk = &node->content.blocks[folio.desc.folio_index];
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(&item, 0, desc_size,
+					&blk->batch, src_offset,
+					desc_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
+
+	*end_hash = SSDFS_NAME_HASH(0, le32_to_cpu(item.hash_hi));
 
 	return 0;
 }
@@ -2424,14 +2454,18 @@ int ssdfs_shared_dict_btree_init_node(struct ssdfs_btree_node *node)
 
 	down_read(&node->full_lock);
 
-	if (folio_batch_count(&node->content.batch) == 0) {
+	if (node->content.count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("empty node's content: id %u\n",
 			  node->node_id);
 		goto finish_init_node;
 	}
 
-	folio = node->content.batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(&node->content.blocks[0].batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = node->content.blocks[0].batch.folios[0];
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
@@ -2615,7 +2649,7 @@ finish_header_init:
 		index_capacity = 0;
 
 	bmap_bytes = index_capacity + items_capacity + 1;
-	bmap_bytes += BITS_PER_LONG;
+	bmap_bytes += BITS_PER_LONG + (BITS_PER_LONG - 1);
 	bmap_bytes /= BITS_PER_BYTE;
 
 	if (bmap_bytes == 0 || bmap_bytes > SSDFS_SHARED_DICT_BMAP_SIZE) {
@@ -3219,22 +3253,22 @@ int ssdfs_shared_dict_btree_pre_flush_node(struct ssdfs_btree_node *node)
 	BUG_ON(lookup_tbl2_free_space >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	dict_header.str_area.offset = le16_to_cpu((u16)str_area_offset);
-	dict_header.str_area.size =  le16_to_cpu((u16)str_area_size);
-	dict_header.str_area.free_space = le16_to_cpu((u16)str_area_free_space);
-	dict_header.str_area.items_count = le16_to_cpu(strings_count);
+	dict_header.str_area.offset = cpu_to_le16((u16)str_area_offset);
+	dict_header.str_area.size =  cpu_to_le16((u16)str_area_size);
+	dict_header.str_area.free_space = cpu_to_le16((u16)str_area_free_space);
+	dict_header.str_area.items_count = cpu_to_le16(strings_count);
 
-	dict_header.hash_table.offset = le16_to_cpu((u16)hash_tbl_offset);
-	dict_header.hash_table.size =  le16_to_cpu((u16)hash_tbl_size);
+	dict_header.hash_table.offset = cpu_to_le16((u16)hash_tbl_offset);
+	dict_header.hash_table.size = cpu_to_le16((u16)hash_tbl_size);
 	dict_header.hash_table.free_space =
-					le16_to_cpu((u16)hash_tbl_free_space);
-	dict_header.hash_table.items_count = le16_to_cpu(hash_tbl_items);
+					cpu_to_le16((u16)hash_tbl_free_space);
+	dict_header.hash_table.items_count = cpu_to_le16(hash_tbl_items);
 
-	dict_header.lookup_table2.offset = le16_to_cpu((u16)lookup_tbl2_offset);
-	dict_header.lookup_table2.size = le16_to_cpu((u16)lookup_tbl2_size);
+	dict_header.lookup_table2.offset = cpu_to_le16((u16)lookup_tbl2_offset);
+	dict_header.lookup_table2.size = cpu_to_le16((u16)lookup_tbl2_size);
 	dict_header.lookup_table2.free_space =
-					le16_to_cpu((u16)lookup_tbl2_free_space);
-	dict_header.lookup_table2.items_count = le16_to_cpu(lookup_tbl2_items);
+					cpu_to_le16((u16)lookup_tbl2_free_space);
+	dict_header.lookup_table2.items_count = cpu_to_le16(lookup_tbl2_items);
 
 	dict_header.node.check.bytes = cpu_to_le16((u16)hdr_size);
 	dict_header.node.check.flags = cpu_to_le16(SSDFS_CRC32);
@@ -3259,13 +3293,22 @@ finish_shared_dict_header_preparation:
 	if (unlikely(err))
 		goto finish_node_pre_flush;
 
-	if (folio_batch_count(&node->content.batch) < 1) {
+	if (node->content.count < 1) {
 		err = -ERANGE;
 		SSDFS_ERR("folio batch is empty\n");
 		goto finish_node_pre_flush;
 	}
 
-	folio = node->content.batch.folios[0];
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(folio_batch_count(&node->content.blocks[0].batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = node->content.blocks[0].batch.folios[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				&dict_header, 0, hdr_size,
 				hdr_size);
@@ -3495,7 +3538,7 @@ bool is_ssdfs_hash32_lo_valid(struct ssdfs_shdict_search_key *value)
 	BUG_ON(!value);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return value->name.hash_lo < U32_MAX;
+	return le32_to_cpu(value->name.hash_lo) < U32_MAX;
 }
 
 /*
@@ -3509,7 +3552,7 @@ bool is_ssdfs_hash32_hi_valid(struct ssdfs_shdict_search_key *value)
 	BUG_ON(!value);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return value->name.hash_hi < U32_MAX;
+	return le32_to_cpu(value->name.hash_hi) < U32_MAX;
 }
 
 typedef int (*search_key_compare_fn)(struct ssdfs_shdict_search_key *value1,
@@ -3531,6 +3574,8 @@ static inline
 int ssdfs_hash32_lo_compare(struct ssdfs_shdict_search_key *value1,
 			    struct ssdfs_shdict_search_key *value2)
 {
+	u32 hash1, hash2;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!value1 || !value2);
 
@@ -3542,9 +3587,12 @@ int ssdfs_hash32_lo_compare(struct ssdfs_shdict_search_key *value1,
 		  le32_to_cpu(value2->name.hash_lo));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (value1->name.hash_lo == value2->name.hash_lo)
+	hash1 = le32_to_cpu(value1->name.hash_lo);
+	hash2 = le32_to_cpu(value2->name.hash_lo);
+
+	if (hash1 == hash2)
 		return 0;
-	else if (value1->name.hash_lo < value2->name.hash_lo)
+	else if (hash1 < hash2)
 		return -1;
 	else
 		return 1;
@@ -3566,6 +3614,8 @@ static inline
 int ssdfs_hash32_hi_compare(struct ssdfs_shdict_search_key *value1,
 			    struct ssdfs_shdict_search_key *value2)
 {
+	u32 hash1, hash2;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!value1 || !value2);
 
@@ -3577,9 +3627,12 @@ int ssdfs_hash32_hi_compare(struct ssdfs_shdict_search_key *value1,
 		  le32_to_cpu(value2->name.hash_hi));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (value1->name.hash_hi == value2->name.hash_hi)
+	hash1 = le32_to_cpu(value1->name.hash_hi);
+	hash2 = le32_to_cpu(value2->name.hash_hi);
+
+	if (hash1 == hash2)
 		return 0;
-	else if (value1->name.hash_hi < value2->name.hash_hi)
+	else if (hash1 < hash2)
 		return -1;
 	else
 		return 1;
@@ -3666,11 +3719,13 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl2_item);
 	u32 area_offset;
 	u32 area_size;
 	u16 items_count;
 	u32 item_offset;
+	u32 src_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3720,22 +3775,25 @@ int ssdfs_get_lookup2_descriptor(struct ssdfs_btree_node *node,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+	batch = &node->content.blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_from_folio(desc, 0, item_size,
-				      &folio, item_size);
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(desc, 0, item_size,
+				      batch, src_offset,
+				      item_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to copy: err %d\n", err);
 		return err;
@@ -3807,11 +3865,13 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_shdict_ltbl2_item);
 	u32 area_offset;
 	u32 area_size;
 	u16 items_count;
 	u32 item_offset;
+	u32 dst_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3859,21 +3919,23 @@ int ssdfs_set_lookup2_descriptor(struct ssdfs_btree_node *node,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+	batch = &node->content.blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_to_folio(&folio,
+	dst_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_to_batch(batch, dst_offset,
 				    desc, 0, item_size,
 				    item_size);
 	if (unlikely(err)) {
@@ -3907,11 +3969,13 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_shdict_htbl_item);
 	u32 area_offset;
 	u32 area_size;
 	u16 items_count;
 	u32 item_offset;
+	u32 src_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3970,22 +4034,29 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+	batch = &node->content.blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_from_folio(desc, 0, item_size,
-				      &folio, item_size);
+	src_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_from_batch(desc, 0, item_size,
+				      batch, src_offset,
+				      item_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to copy: err %d\n", err);
+		return err;
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("item_offset %u, hash_hi %#x, str_offset %u\n",
@@ -3993,11 +4064,6 @@ int ssdfs_get_hash_descriptor(struct ssdfs_btree_node *node,
 		  le32_to_cpu(desc->hash_hi),
 		  le16_to_cpu(desc->str_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to copy: err %d\n", err);
-		return err;
-	}
 
 	return 0;
 }
@@ -4065,11 +4131,13 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	size_t item_size = sizeof(struct ssdfs_shdict_htbl_item);
 	u32 area_offset;
 	u32 area_size;
 	u16 items_count;
 	u32 item_offset;
+	u32 dst_offset;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -4117,21 +4185,23 @@ int ssdfs_set_hash_descriptor(struct ssdfs_btree_node *node,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (folio.desc.folio_index >= folio_batch_count(&node->content.batch)) {
+	if (folio.desc.folio_index >= node->content.count) {
 		SSDFS_ERR("invalid folio_index: "
-			  "index %d, batch_size %u\n",
+			  "index %d, blks_count %u\n",
 			  folio.desc.folio_index,
-			  folio_batch_count(&node->content.batch));
+			  node->content.count);
 		return -ERANGE;
 	}
 
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+	batch = &node->content.blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!folio.ptr);
+	BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_memcpy_to_folio(&folio,
+	dst_offset = folio.desc.offset - folio.desc.folio_offset;
+
+	err = ssdfs_memcpy_to_batch(batch, dst_offset,
 				    desc, 0, item_size,
 				    item_size);
 	if (unlikely(err)) {
@@ -4739,7 +4809,7 @@ int ssdfs_shared_dict_node_find_lookup2_index(struct ssdfs_btree_node *node,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ltbl2_item = (struct ssdfs_shdict_ltbl2_item *)&found;
-		found_items = min_t(u16, le16_to_cpu(ltbl2_item->str_count),
+		found_items = min_t(u16, (u16)ltbl2_item->str_count,
 				    (u16)search->request.count);
 
 		if (found_items == 0) {
@@ -5255,9 +5325,11 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	u32 area_offset;
 	u32 area_size;
 	u32 item_offset;
+	u32 src_offset;
 	u32 copied_len = 0;
 	u32 cur_len;
 	int err;
@@ -5314,28 +5386,29 @@ int ssdfs_extract_string(struct ssdfs_btree_node *node,
 		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (folio.desc.folio_index >=
-				folio_batch_count(&node->content.batch)) {
+		if (folio.desc.folio_index >= node->content.count) {
 			SSDFS_ERR("invalid folio_index: "
-				  "index %d, batch_size %u\n",
+				  "index %d, blks_count %u\n",
 				  folio.desc.folio_index,
-				  folio_batch_count(&node->content.batch));
+				  node->content.count);
 			return -ERANGE;
 		}
 
-		folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+		batch = &node->content.blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio.ptr);
+		BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		src_offset = folio.desc.offset - folio.desc.folio_offset;
 		cur_len = min_t(u32, (u32)desc->str_len - copied_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		err = ssdfs_memcpy_from_folio(buf,
+		err = ssdfs_memcpy_from_batch(buf,
 					      copied_len,
 					      SSDFS_MAX_NAME_LEN,
-					      &folio, cur_len);
+					      batch, src_offset,
+					      cur_len);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy: err %d\n", err);
 			return err;
@@ -6293,8 +6366,9 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 	u32 area_size;
 	u32 item_offset;
 	size_t full_len, cur_len;
-	u32 i;
+	u32 page_offset;
 	u32 processed_len = 0;
+	u32 i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6364,25 +6438,36 @@ int ssdfs_extract_intersection(struct ssdfs_btree_node *node,
 		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (folio.desc.folio_index >=
-				folio_batch_count(&node->content.batch)) {
+		if (folio.desc.folio_index >= node->content.count) {
 			SSDFS_ERR("invalid folio_index: "
-				  "index %d, batch_size %u\n",
+				  "index %d, blks_count %u\n",
 				  folio.desc.folio_index,
-				  folio_batch_count(&node->content.batch));
+				  node->content.count);
 			return -ERANGE;
 		}
 
-		folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+		err = ssdfs_find_node_content_folio(&node->content, &folio);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to find folio: err %d\n", err);
+			return err;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!folio.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		if (folio_size(folio.ptr) == fsi->pagesize) {
+			page_offset = folio.desc.page_offset;
+		} else {
+			page_offset =
+			    SSDFS_PAGE_OFFSET_IN_FOLIO(folio_size(folio.ptr),
+							    folio.desc.offset);
+		}
+
 		cur_len = min_t(u32, (u32)full_len - processed_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		kaddr = kmap_local_folio(folio.ptr, folio.desc.page_offset);
+		kaddr = kmap_local_folio(folio.ptr, page_offset);
 
 		for (i = 0; i < cur_len; i++) {
 			const char *symbol1, *symbol2;
@@ -7121,6 +7206,62 @@ int ssdfs_resize_string_area(struct ssdfs_btree_node *node,
 }
 
 /*
+ * ssdfs_show_node_block_content() - show node content's block
+ * @node: pointer on node object
+ * @offset: offset in bytes into the node
+ */
+static inline
+void ssdfs_show_node_block_content(struct ssdfs_btree_node *node,
+				   u32 offset)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
+	void *kaddr;
+	u32 processed_bytes;
+	int i;
+	int err;
+
+	fsi = node->tree->fsi;
+
+	err = SSDFS_OFF2FOLIO(fsi->pagesize, offset, &folio.desc);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to convert offset into folio: "
+			  "offset %u, err %d\n",
+			  offset, err);
+		return;
+	}
+
+	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
+
+	SSDFS_DBG("offset %u, folio_index %d\n",
+		  offset, folio.desc.folio_index);
+
+	batch = &node->content.blocks[folio.desc.folio_index].batch;
+
+	for (i = 0; i < folio_batch_count(batch); i++) {
+		folio.ptr = batch->folios[i];
+
+		processed_bytes = 0;
+
+		while (processed_bytes < folio_size(folio.ptr)) {
+			kaddr = kmap_local_folio(folio.ptr, processed_bytes);
+			SSDFS_DBG("PAGE DUMP: folio_index %u, offset %u\n",
+				  i, processed_bytes);
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr,
+					     PAGE_SIZE);
+			SSDFS_DBG("\n");
+			kunmap_local(kaddr);
+
+			processed_bytes += PAGE_SIZE;
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
  * ssdfs_resize_hash_table() - resize the hash table's area
  * @node: pointer on node object
  * @new_offset: new offset in bytes from the node's beginning
@@ -7145,13 +7286,6 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 	u32 items_capacity;
 	u8 item_size;
 	u32 diff;
-#ifdef CONFIG_SSDFS_DEBUG
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_smart_folio folio;
-	void *kaddr;
-	u32 processed_bytes;
-	int i;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7342,38 +7476,7 @@ int ssdfs_resize_hash_table(struct ssdfs_btree_node *node,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	fsi = node->tree->fsi;
-
-	err = SSDFS_OFF2FOLIO(fsi->pagesize, area_offset, &folio.desc);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to convert offset into folio: "
-			  "area_offset %u, err %d\n",
-			  area_offset, err);
-		return err;
-	}
-
-	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
-
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-
-	SSDFS_DBG("area_offset %u, folio_index %d\n",
-		  area_offset, folio.desc.folio_index);
-
-	processed_bytes = 0;
-
-	i = 0;
-	while (processed_bytes < fsi->pagesize) {
-		kaddr = kmap_local_folio(folio.ptr, i * PAGE_SIZE);
-		SSDFS_DBG("PAGE DUMP: index %u\n", i);
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr,
-				     PAGE_SIZE);
-		SSDFS_DBG("\n");
-		kunmap_local(kaddr);
-
-		i++;
-		processed_bytes += PAGE_SIZE;
-	}
+	ssdfs_show_node_block_content(node, area_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -7404,13 +7507,6 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 	u32 items_capacity;
 	u8 item_size;
 	u32 diff;
-#ifdef CONFIG_SSDFS_DEBUG
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_smart_folio folio;
-	void *kaddr;
-	u32 processed_bytes;
-	int i;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7608,38 +7704,7 @@ int ssdfs_resize_lookup2_table(struct ssdfs_btree_node *node,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	fsi = node->tree->fsi;
-
-	err = SSDFS_OFF2FOLIO(fsi->pagesize, area_offset, &folio.desc);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to convert offset into folio: "
-			  "area_offset %u, err %d\n",
-			  area_offset, err);
-		return err;
-	}
-
-	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
-
-	folio.ptr = node->content.batch.folios[folio.desc.folio_index];
-
-	SSDFS_DBG("area_offset %u, folio_index %d\n",
-		  area_offset, folio.desc.folio_index);
-
-	processed_bytes = 0;
-
-	i = 0;
-	while (processed_bytes < fsi->pagesize) {
-		kaddr = kmap_local_folio(folio.ptr, i * PAGE_SIZE);
-		SSDFS_DBG("PAGE DUMP: index %u\n", i);
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     kaddr,
-				     PAGE_SIZE);
-		SSDFS_DBG("\n");
-		kunmap_local(kaddr);
-
-		i++;
-		processed_bytes += PAGE_SIZE;
-	}
+	ssdfs_show_node_block_content(node, area_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -7715,9 +7780,11 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_smart_folio folio;
+	struct folio_batch *batch;
 	u32 area_offset;
 	u32 area_size;
 	u32 item_offset;
+	u32 dst_offset;
 	u32 copied_len = 0;
 	u32 cur_len;
 	int err;
@@ -7770,25 +7837,25 @@ int ssdfs_copy_string_from_buffer(struct ssdfs_btree_node *node,
 		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (folio.desc.folio_index >=
-				folio_batch_count(&node->content.batch)) {
+		if (folio.desc.folio_index >= node->content.count) {
 			SSDFS_ERR("invalid folio_index: "
-				  "index %d, batch_size %u\n",
+				  "index %d, blks_count %u\n",
 				  folio.desc.folio_index,
-				  folio_batch_count(&node->content.batch));
+				  node->content.count);
 			return -ERANGE;
 		}
 
-		folio.ptr = node->content.batch.folios[folio.desc.folio_index];
+		batch = &node->content.blocks[folio.desc.folio_index].batch;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!folio.ptr);
+		BUG_ON(folio_batch_count(batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		dst_offset = folio.desc.offset - folio.desc.folio_offset;
 		cur_len = min_t(u32, (u32)name_len - copied_len,
 				     (u32)PAGE_SIZE - item_offset);
 
-		err = ssdfs_memcpy_to_folio(&folio,
+		err = ssdfs_memcpy_to_batch(batch, dst_offset,
 					    (char *)name, copied_len, name_len,
 					    cur_len);
 		if (unlikely(err)) {
@@ -9729,9 +9796,9 @@ int ssdfs_lookup2_table_inc_str_count(struct ssdfs_btree_node *node,
 		return -ERANGE;
 	}
 
-	if (le16_to_cpu(read_desc.str_count) >= U16_MAX) {
+	if (read_desc.str_count >= U8_MAX) {
 		SSDFS_ERR("invalid str_count %u\n",
-			  le16_to_cpu(read_desc.str_count));
+			  read_desc.str_count);
 		return -ERANGE;
 	}
 
@@ -9872,7 +9939,7 @@ int __ssdfs_lookup2_table_insert_descriptor(struct ssdfs_btree_node *node,
 
 	desc.prefix_len = (u8)search->request.start.name_len;
 	desc.hash_index = cpu_to_le16(hash_index);
-	desc.str_count = cpu_to_le16(1);
+	desc.str_count = 1;
 
 	err = ssdfs_set_lookup2_descriptor(node, &node->lookup_tbl_area,
 					   lookup2_index, &desc);
@@ -9984,7 +10051,7 @@ int __ssdfs_lookup2_table_add_descriptor(struct ssdfs_btree_node *node,
 
 	desc.prefix_len = (u8)search->request.start.name_len;
 	desc.hash_index = cpu_to_le16(hash_index);
-	desc.str_count = cpu_to_le16(1);
+	desc.str_count = 1;
 
 	err = ssdfs_set_lookup2_descriptor(node, &node->lookup_tbl_area,
 					   lookup2_index, &desc);
@@ -16887,6 +16954,7 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 	size_t buf_size;
 	u16 hash_index, name_index;
 	u16 found_names = 0;
+	unsigned int nofs_flags;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -16989,8 +17057,11 @@ int ssdfs_shared_dict_btree_node_extract_range(struct ssdfs_btree_node *node,
 			search->result.name_string_size = buf_size;
 			search->result.names_in_buffer = 0;
 		} else {
+			nofs_flags = memalloc_nofs_save();
 			search->result.name = krealloc(search->result.name,
 						      buf_size, GFP_KERNEL);
+			memalloc_nofs_restore(nofs_flags);
+
 			if (!search->result.name) {
 				SSDFS_ERR("fail to allocate buffer\n");
 				return -ENOMEM;

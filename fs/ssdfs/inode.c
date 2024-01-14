@@ -318,6 +318,9 @@ static int ssdfs_read_inode(struct inode *inode)
 		goto finish_read_inode;
 	}
 
+	if (fsi->pagesize > SSDFS_4KB)
+		mapping_set_large_folios(inode->i_mapping);
+
 	err = ssdfs_inode_setops(inode);
 	if (unlikely(err))
 		goto finish_read_inode;
@@ -557,6 +560,9 @@ static void ssdfs_init_inode(struct mnt_idmap *idmap,
 	ii->name_len = (u16)qstr->len;
 	ssdfs_init_raw_inode(ii);
 	up_write(&ii->lock);
+
+	if (fsi->pagesize > SSDFS_4KB)
+		mapping_set_large_folios(inode->i_mapping);
 }
 
 struct inode *ssdfs_new_inode(struct mnt_idmap *idmap,

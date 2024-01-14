@@ -30,10 +30,10 @@
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
 #include "ssdfs.h"
-#include "extents_queue.h"
 #include "request_queue.h"
 #include "btree_search.h"
 #include "btree_node.h"
+#include "extents_queue.h"
 #include "btree.h"
 #include "extents_tree.h"
 #include "shared_extents_tree.h"
@@ -99,10 +99,12 @@ int ssdfs_shextree_invalidate_extent(struct ssdfs_shared_extents_tree *tree,
 /*
  * ssdfs_shextree_invalidate_index() - invalidate index
  * @tree: shared extents tree's object
+ * @content: buffer for btree node's content
  * @ei: index info
  */
 static
 int ssdfs_shextree_invalidate_index(struct ssdfs_shared_extents_tree *tree,
+				    struct ssdfs_btree_node_content *content,
 				    struct ssdfs_extent_info *ei)
 {
 	u32 node_id;
@@ -111,13 +113,13 @@ int ssdfs_shextree_invalidate_index(struct ssdfs_shared_extents_tree *tree,
 	u16 flags;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !ei);
+	BUG_ON(!tree || !content || !ei);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	node_id = le32_to_cpu(ei->raw.index.node_id);
 	node_type = ei->raw.index.node_type;
 	height = ei->raw.index.height;
-	flags = ei->raw.index.flags;
+	flags = le16_to_cpu(ei->raw.index.flags);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node_id %u, node_type %u, height %u, flags %#x\n",
@@ -127,21 +129,25 @@ int ssdfs_shextree_invalidate_index(struct ssdfs_shared_extents_tree *tree,
 	switch (ei->type) {
 	case SSDFS_EXTENT_INFO_INDEX_DESCRIPTOR:
 		return ssdfs_invalidate_extents_btree_index(tree->fsi,
+							    content,
 							    ei->owner_ino,
 							    &ei->raw.index);
 
 	case SSDFS_EXTENT_INFO_DENTRY_INDEX_DESCRIPTOR:
 		return ssdfs_invalidate_dentries_btree_index(tree->fsi,
+							     content,
 							     ei->owner_ino,
 							     &ei->raw.index);
 
 	case SSDFS_EXTENT_INFO_SHDICT_INDEX_DESCRIPTOR:
 		return ssdfs_invalidate_shared_dict_btree_index(tree->fsi,
+								content,
 								ei->owner_ino,
 								&ei->raw.index);
 
 	case SSDFS_EXTENT_INFO_XATTR_INDEX_DESCRIPTOR:
 		return ssdfs_invalidate_xattrs_btree_index(tree->fsi,
+							   content,
 							   ei->owner_ino,
 							   &ei->raw.index);
 	};
@@ -490,7 +496,7 @@ try_invalidate_queue:
 			goto repeat;
 		}
 
-		err = ssdfs_shextree_invalidate_index(tree, ei);
+		err = ssdfs_shextree_invalidate_index(tree, &ptr->content, ei);
 		if (err == -ENODATA) {
 			key = &ei->raw.index;
 			index = &key->index;

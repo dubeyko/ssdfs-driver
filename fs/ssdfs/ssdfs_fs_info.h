@@ -231,11 +231,9 @@ struct ssdfs_snapshot_subsystem {
  * @sb_lebs: array of LEB ID numbers
  * @sb_pebs: array of PEB ID numbers
  * @segbmap: segment bitmap object
- * @segbmap_inode: segment bitmap inode
  * @maptbl: PEB mapping table object
  * @maptbl_cache: maptbl cache
  * @segs_tree: tree of segment objects
- * @segs_tree_inode: segment tree inode
  * @cur_segs: array of current segments
  * @shextree: shared extents tree
  * @shdictree: shared dictionary
@@ -333,14 +331,9 @@ struct ssdfs_fs_info {
 	u64 sb_pebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
 
 	struct ssdfs_segment_bmap *segbmap;
-	struct inode *segbmap_inode;
-
 	struct ssdfs_peb_mapping_table *maptbl;
 	struct ssdfs_maptbl_cache maptbl_cache;
-
 	struct ssdfs_segment_tree *segs_tree;
-	struct inode *segs_tree_inode;
-
 	struct ssdfs_current_segs_array *cur_segs;
 
 	struct ssdfs_shared_extents_tree *shextree;
