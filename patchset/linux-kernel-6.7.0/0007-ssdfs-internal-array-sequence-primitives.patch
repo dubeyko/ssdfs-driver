@@ -1,0 +1,5451 @@
+From 5c8f097671c9d181decbb12ea641c456bd6ef9e1 Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Sun, 14 Jan 2024 20:26:51 +0300
+Subject: [RFC PATCH 07/44] ssdfs: internal array/sequence primitives
+
+Folio vector implements simple concept of dynamically growing
+folio set. For example, block bitmap requires 32 memory pages
+to represent 2GB erase block. Folio vector has simple interface:
+(1) create - allocate folio vector's metadata limited by capacity
+(2) destroy - deallocate folio vector's metadata
+(3) init/reinit - clean metadata and set count to zero
+(4) allocate - allocate memory folio and add to the tail of sequence
+(5) add - add memory folio to the tail of sequence
+(6) remove - remove a memory folio for requested index
+(7) release - free all folios and remove from folio vector
+
+Dynamic array implements concept of dynamically growing sequence
+of fixed-sized items based on folio vector primitive. Dynamic array
+has API:
+(1) create - create dynamic array for requested capacity and item size
+(2) destroy - destroy dynamic array
+(3) get_locked - get item locked for index in array
+(4) release - release and unlock item for index
+(5) set - set item for index
+(6) copy_content - copy content of dynamic array in buffer
+
+Sequence array is specialized structure that has goal
+to provide access to items via pointers on the basis of
+ID numbers. It means that every item has dedicated ID but
+sequence array could contain only some portion of existing
+items. Initialization phase has goal to add some limited
+number of existing items into the sequence array.
+The ID number could be reverted from some maximum number
+(threshold) to zero value. Sequence array has API:
+(1) create - create sequence array
+(2) destroy - destroy sequence array
+(3) init_item - init item for requested ID
+(4) add_item - add item to the tail of sequence
+(5) get_item - get pointer on item for requested ID
+(6) apply_for_all - apply an action/function for all items
+(7) change_state - change item state for requested ID
+(8) change_all_state - change state of all items in sequence
+
+Signed-off-by: Viacheslav Dubeyko <slava@dubeyko.com>
+CC: Luka Perkov <luka.perkov@sartura.hr>
+CC: Bruno Banelli <bruno.banelli@sartura.hr>
+---
+ fs/ssdfs/dynamic_array.c  | 1571 +++++++++++++++++++++++++++++++++
+ fs/ssdfs/dynamic_array.h  |  103 +++
+ fs/ssdfs/folio_array.c    | 1760 +++++++++++++++++++++++++++++++++++++
+ fs/ssdfs/folio_array.h    |  126 +++
+ fs/ssdfs/folio_vector.c   |  445 ++++++++++
+ fs/ssdfs/folio_vector.h   |   64 ++
+ fs/ssdfs/sequence_array.c | 1126 ++++++++++++++++++++++++
+ fs/ssdfs/sequence_array.h |  140 +++
+ 8 files changed, 5335 insertions(+)
+ create mode 100644 fs/ssdfs/dynamic_array.c
+ create mode 100644 fs/ssdfs/dynamic_array.h
+ create mode 100644 fs/ssdfs/folio_array.c
+ create mode 100644 fs/ssdfs/folio_array.h
+ create mode 100644 fs/ssdfs/folio_vector.c
+ create mode 100644 fs/ssdfs/folio_vector.h
+ create mode 100644 fs/ssdfs/sequence_array.c
+ create mode 100644 fs/ssdfs/sequence_array.h
+
+diff --git a/fs/ssdfs/dynamic_array.c b/fs/ssdfs/dynamic_array.c
+new file mode 100644
+index 000000000000..7116fbde41fd
+--- /dev/null
++++ b/fs/ssdfs/dynamic_array.c
+@@ -0,0 +1,1571 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/dymanic_array.c - dynamic array implementation.
++ *
++ * Copyright (c) 2022-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
++ *              https://www.bytedance.com/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cong Wang
++ */
++
++#include <linux/pagemap.h>
++#include <linux/slab.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "dynamic_array.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_dynamic_array_folio_leaks;
++atomic64_t ssdfs_dynamic_array_memory_leaks;
++atomic64_t ssdfs_dynamic_array_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_dynamic_array_cache_leaks_increment(void *kaddr)
++ * void ssdfs_dynamic_array_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_dynamic_array_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_dynamic_array_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_dynamic_array_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_dynamic_array_kfree(void *kaddr)
++ * struct folio *ssdfs_dynamic_array_alloc_folio(gfp_t gfp_mask,
++ *                                               unsigned int order)
++ * struct folio *ssdfs_dynamic_array_add_batch_folio(struct folio_batch *batch,
++ *                                                   unsigned int order)
++ * void ssdfs_dynamic_array_free_folio(struct folio *folio)
++ * void ssdfs_dynamic_array_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(dynamic_array)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(dynamic_array)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_dynamic_array_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_dynamic_array_folio_leaks, 0);
++	atomic64_set(&ssdfs_dynamic_array_memory_leaks, 0);
++	atomic64_set(&ssdfs_dynamic_array_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_dynamic_array_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_dynamic_array_folio_leaks) != 0) {
++		SSDFS_ERR("DYNAMIC ARRAY: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_dynamic_array_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_dynamic_array_memory_leaks) != 0) {
++		SSDFS_ERR("DYNAMIC ARRAY: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_dynamic_array_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_dynamic_array_cache_leaks) != 0) {
++		SSDFS_ERR("DYNAMIC ARRAY: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_dynamic_array_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++/*
++ * ssdfs_dynamic_array_create() - create dynamic array
++ * @array: pointer on dynamic array object
++ * @capacity: maximum number of items in array
++ * @item_size: item size in bytes
++ * @alloc_pattern: pattern to init memory pages
++ */
++int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
++				u32 capacity, size_t item_size,
++				u8 alloc_pattern)
++{
++	struct folio *folio;
++	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
++	u32 folios_count;
++	u64 bytes_count;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, capacity %u, item_size %zu\n",
++		  array, capacity, item_size);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT;
++	array->alloc_pattern = alloc_pattern;
++
++	if (capacity == 0) {
++		SSDFS_ERR("invalid capacity %u\n",
++			  capacity);
++		return -EINVAL;
++	}
++
++	if (item_size == 0 || item_size > PAGE_SIZE) {
++		SSDFS_ERR("invalid item_size %zu\n",
++			  item_size);
++		return -EINVAL;
++	}
++
++	array->capacity = capacity;
++	array->items_count = 0;
++	array->item_size = item_size;
++	array->items_per_folio = PAGE_SIZE / item_size;
++
++	folios_count = capacity + array->items_per_folio - 1;
++	folios_count /= array->items_per_folio;
++
++	if (folios_count == 0)
++		folios_count = 1;
++
++	if (folios_count > 1) {
++		bytes_count = (u64)folios_count * PAGE_SIZE;
++	} else {
++		bytes_count = min_t(u64,
++				    (u64)capacity * item_size,
++				    (u64)array->items_per_folio * item_size);
++	}
++
++	if (bytes_count > max_threshold) {
++		SSDFS_ERR("invalid request: "
++			  "bytes_count %llu > max_threshold %llu, "
++			  "capacity %u, item_size %zu\n",
++			  bytes_count, max_threshold,
++			  capacity, item_size);
++		return -EINVAL;
++	}
++
++	if (bytes_count > PAGE_SIZE) {
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(folios_count >= ssdfs_folio_vector_max_threshold());
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		err = ssdfs_folio_vector_create(&array->batch,
++						get_order(PAGE_SIZE),
++						folios_count);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to create folio vector: "
++				  "bytes_count %llu, folios_count %u, "
++				  "err %d\n",
++				  bytes_count, folios_count, err);
++			return err;
++		}
++
++		err = ssdfs_folio_vector_init(&array->batch);
++		if (unlikely(err)) {
++			ssdfs_folio_vector_destroy(&array->batch);
++			SSDFS_ERR("fail to init folio vector: "
++				  "bytes_count %llu, folios_count %u, "
++				  "err %d\n",
++				  bytes_count, folios_count, err);
++			return err;
++		}
++
++		folio = ssdfs_folio_vector_allocate(&array->batch);
++		if (IS_ERR_OR_NULL(folio)) {
++			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
++			SSDFS_ERR("unable to allocate folio\n");
++			return err;
++		}
++
++		ssdfs_folio_lock(folio);
++		__ssdfs_memset_folio(folio, 0, PAGE_SIZE,
++				     array->alloc_pattern, PAGE_SIZE);
++		ssdfs_folio_unlock(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("folio %p, count %d\n",
++			  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		array->bytes_count = PAGE_SIZE;
++		array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC;
++	} else {
++		array->buf = ssdfs_dynamic_array_kzalloc(bytes_count,
++							 GFP_KERNEL);
++		if (!array->buf) {
++			SSDFS_ERR("fail to allocate memory: "
++				  "bytes_count %llu\n",
++				  bytes_count);
++			return -ENOMEM;
++		}
++
++		memset(array->buf, array->alloc_pattern, bytes_count);
++
++		array->bytes_count = bytes_count;
++		array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER;
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_dynamic_array_destroy() - destroy dynamic array
++ * @array: pointer on dynamic array object
++ */
++void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, capacity %u, "
++		  "item_size %zu, bytes_count %u\n",
++		  array, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		ssdfs_folio_vector_release(&array->batch);
++		ssdfs_folio_vector_destroy(&array->batch);
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		if (array->buf)
++			ssdfs_dynamic_array_kfree(array->buf);
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		break;
++	}
++
++	array->capacity = 0;
++	array->items_count = 0;
++	array->item_size = 0;
++	array->items_per_folio = 0;
++	array->bytes_count = 0;
++	array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT;
++}
++
++/*
++ * SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET() - calculate item offset
++ * @array: pointer on dynamic array object
++ * @index: item index
++ */
++static inline
++u32 SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(struct ssdfs_dynamic_array *array,
++				    u32 index)
++{
++	u64 item_offset;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, index %u, capacity %u, "
++		  "item_size %zu, bytes_count %u\n",
++		  array, index, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	item_offset = index / array->items_per_folio;
++
++	if (item_offset > 0)
++		item_offset <<= PAGE_SHIFT;
++
++	item_offset += (u64)array->item_size * (index % array->items_per_folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(item_offset >= U32_MAX);
++
++	SSDFS_DBG("index %u, item_offset %llu\n",
++		  index, item_offset);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return (u32)item_offset;
++}
++
++/*
++ * ssdfs_dynamic_array_get_locked() - get locked item
++ * @array: pointer on dynamic array object
++ * @index: item index
++ *
++ * This method tries to get pointer on item. If short buffer
++ * (< 4K) represents dynamic array, then the logic is pretty
++ * straitforward. Otherwise, memory page is locked. The release
++ * method should be called to unlock memory folio.
++ *
++ * RETURN:
++ * [success] - pointer on requested item.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-E2BIG      - request is out of array capacity.
++ * %-ERANGE     - internal error.
++ */
++void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
++				     u32 index)
++{
++	struct ssdfs_smart_folio folio;
++	void *ptr = NULL;
++	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
++	u32 item_offset;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, index %u, capacity %u, "
++		  "item_size %zu, bytes_count %u\n",
++		  array, index, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
++		SSDFS_ERR("invalid item_size %zu\n",
++			  array->item_size);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid capacity %u\n",
++			  array->capacity);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->bytes_count == 0) {
++		SSDFS_ERR("invalid bytes_count %u\n",
++			  array->bytes_count);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (index >= array->capacity) {
++		SSDFS_WARN("invalid index: index %u, capacity %u\n",
++			   index, array->capacity);
++		return ERR_PTR(-ERANGE);
++	}
++
++	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
++
++	if (item_offset >= max_threshold) {
++		SSDFS_ERR("invalid item_offset: "
++			  "index %u, item_size %zu, "
++			  "item_offset %u, bytes_count %u, "
++			  "max_threshold %llu\n",
++			  index, array->item_size,
++			  item_offset, array->bytes_count,
++			  max_threshold);
++		return ERR_PTR(-E2BIG);
++	}
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		err = SSDFS_OFF2FOLIO(PAGE_SIZE, item_offset, &folio.desc);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to prepare folio descriptor: "
++				  "err %d\n", err);
++			return ERR_PTR(err);
++		}
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		if (folio.desc.folio_index >=
++				ssdfs_folio_vector_capacity(&array->batch)) {
++			SSDFS_ERR("invalid folio index: "
++				  "folio_index %u, item_offset %u\n",
++				  folio.desc.folio_index, item_offset);
++			return ERR_PTR(-E2BIG);
++		}
++
++		while (folio.desc.folio_index >=
++				ssdfs_folio_vector_count(&array->batch)) {
++			struct folio *temp;
++
++			temp = ssdfs_folio_vector_allocate(&array->batch);
++			if (IS_ERR_OR_NULL(temp)) {
++				err = (temp == NULL ?
++						-ENOMEM : PTR_ERR(temp));
++				SSDFS_ERR("unable to allocate folio\n");
++				return ERR_PTR(err);
++			}
++
++			ssdfs_folio_lock(temp);
++			__ssdfs_memset_folio(temp, 0, PAGE_SIZE,
++					   array->alloc_pattern, PAGE_SIZE);
++			ssdfs_folio_unlock(temp);
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("folio %p, count %d\n",
++				  temp, folio_ref_count(temp));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++			array->bytes_count += PAGE_SIZE;
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("array %p, index %u, capacity %u, "
++				  "item_size %zu, bytes_count %u, "
++				  "index %u, item_offset %u, "
++				  "folio_index %u, folio_count %u\n",
++				  array, index, array->capacity,
++				  array->item_size, array->bytes_count,
++				  index, item_offset,
++				  folio.desc.folio_index,
++				  ssdfs_folio_vector_count(&array->batch));
++#endif /* CONFIG_SSDFS_DEBUG */
++		}
++
++		folio.ptr = array->batch.folios[folio.desc.folio_index];
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!folio.ptr);
++
++		SSDFS_DBG("index %u, block_size %u, offset %llu, "
++			  "folio_index %u, folio_offset %llu, "
++			  "page_in_folio %u, page_offset %u, "
++			  "offset_inside_page %u\n",
++			  index,
++			  folio.desc.block_size,
++			  folio.desc.offset,
++			  folio.desc.folio_index,
++			  folio.desc.folio_offset,
++			  folio.desc.page_in_folio,
++			  folio.desc.page_offset,
++			  folio.desc.offset_inside_page);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		ssdfs_folio_lock(folio.ptr);
++		ptr = kmap_local_folio(folio.ptr, 0);
++		ptr = (u8 *)ptr + folio.desc.offset_inside_page;
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		if ((item_offset + array->item_size) > array->bytes_count) {
++			SSDFS_ERR("invalid item offset: "
++				  "item_offset %u, item_size %zu, "
++				  "bytes_count %u\n",
++				  item_offset,
++				  array->item_size,
++				  array->bytes_count);
++			return ERR_PTR(-ERANGE);
++		}
++
++		ptr = (u8 *)array->buf + item_offset;
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (index >= array->items_count)
++		array->items_count = index + 1;
++
++	return ptr;
++}
++
++/*
++ * ssdfs_dynamic_array_get_content_locked() - get locked items range
++ * @array: pointer on dynamic array object
++ * @index: item index
++ * @items_count: items count in range [out]
++ *
++ * This method tries to get pointer on range of items. If short buffer
++ * (< 4K) represents dynamic array, then the logic is pretty
++ * straitforward. Otherwise, memory page is locked. The release
++ * method should be called to unlock memory page.
++ *
++ * RETURN:
++ * [success] - pointer on requested range.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-E2BIG      - request is out of array capacity.
++ * %-ERANGE     - internal error.
++ */
++void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
++					     u32 index, u32 *items_count)
++{
++	struct ssdfs_smart_folio folio;
++	void *ptr = NULL;
++	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
++	u32 item_offset;
++	u32 first_index_in_folio;
++	u32 offset_inside_folio;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, index %u, capacity %u, "
++		  "item_size %zu, bytes_count %u\n",
++		  array, index, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	*items_count = 0;
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
++		SSDFS_ERR("invalid item_size %zu\n",
++			  array->item_size);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid capacity %u\n",
++			  array->capacity);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->bytes_count == 0) {
++		SSDFS_ERR("invalid bytes_count %u\n",
++			  array->bytes_count);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (array->items_count > array->capacity) {
++		SSDFS_ERR("corrupted array: "
++			  "items_count %u > capacity %u\n",
++			  array->items_count,
++			  array->capacity);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (index >= array->capacity) {
++		SSDFS_ERR("invalid index: index %u, capacity %u\n",
++			  index, array->capacity);
++		return ERR_PTR(-ERANGE);
++	}
++
++	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
++
++	if (item_offset >= max_threshold) {
++		SSDFS_ERR("invalid item_offset: "
++			  "index %u, item_size %zu, "
++			  "item_offset %u, bytes_count %u, "
++			  "max_threshold %llu\n",
++			  index, array->item_size,
++			  item_offset, array->bytes_count,
++			  max_threshold);
++		return ERR_PTR(-E2BIG);
++	}
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		err = SSDFS_OFF2FOLIO(PAGE_SIZE, item_offset, &folio.desc);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to prepare folio descriptor: "
++				  "err %d\n", err);
++			return ERR_PTR(err);
++		}
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		if (folio.desc.folio_index >=
++				ssdfs_folio_vector_count(&array->batch)) {
++			SSDFS_ERR("invalid folio index: "
++				  "folio_index %u, item_offset %u\n",
++				  folio.desc.folio_index, item_offset);
++			return ERR_PTR(-E2BIG);
++		}
++
++		folio.ptr = array->batch.folios[folio.desc.folio_index];
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!folio.ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		first_index_in_folio = index % array->items_per_folio;
++		offset_inside_folio = first_index_in_folio * array->item_size;
++
++		ssdfs_folio_lock(folio.ptr);
++		ptr = kmap_local_folio(folio.ptr, 0);
++		ptr = (u8 *)ptr + offset_inside_folio;
++
++		*items_count = array->items_count - index;
++		*items_count = min_t(u32, *items_count,
++					array->items_per_folio -
++						first_index_in_folio);
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		if ((item_offset + array->item_size) > array->bytes_count) {
++			SSDFS_ERR("invalid item offset: "
++				  "item_offset %u, item_size %zu, "
++				  "bytes_count %u\n",
++				  item_offset,
++				  array->item_size,
++				  array->bytes_count);
++			return ERR_PTR(-ERANGE);
++		}
++
++		ptr = (u8 *)array->buf + item_offset;
++		*items_count = array->items_count - index;
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return ERR_PTR(-ERANGE);
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("items_count %u\n", *items_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return ptr;
++}
++
++/*
++ * ssdfs_dynamic_array_release() - release item
++ * @array: pointer on dynamic array object
++ * @index: item index
++ * @ptr: pointer on item
++ *
++ * This method tries to release item pointer.
++ *
++ * RETURN:
++ * [success] - pointer on requested item.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-E2BIG      - request is out of array capacity.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
++				u32 index, void *ptr)
++{
++	struct folio *folio;
++	u32 item_offset;
++	u64 folio_index;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !ptr);
++
++	SSDFS_DBG("array %p, index %u, capacity %u, "
++		  "item_size %zu, bytes_count %u\n",
++		  array, index, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		/* continue logic */
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* do nothing */
++		return 0;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
++		SSDFS_ERR("invalid item_size %zu\n",
++			  array->item_size);
++		return -ERANGE;
++	}
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid capacity %u\n",
++			  array->capacity);
++		return -ERANGE;
++	}
++
++	if (array->bytes_count == 0) {
++		SSDFS_ERR("invalid bytes_count %u\n",
++			  array->bytes_count);
++		return -ERANGE;
++	}
++
++	if (index >= array->capacity) {
++		SSDFS_ERR("invalid index: index %u, capacity %u\n",
++			  index, array->capacity);
++		return -ERANGE;
++	}
++
++	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
++
++	if (item_offset >= array->bytes_count) {
++		SSDFS_ERR("invalid item_offset: "
++			  "index %u, item_size %zu, "
++			  "item_offset %u, bytes_count %u\n",
++			  index, array->item_size,
++			  item_offset, array->bytes_count);
++		return -E2BIG;
++	}
++
++	folio_index = index / array->items_per_folio;
++
++	if (folio_index >= ssdfs_folio_vector_count(&array->batch)) {
++		SSDFS_ERR("invalid folio index: "
++			  "folio_index %llu, item_offset %u\n",
++			  folio_index, item_offset);
++		return -E2BIG;
++	}
++
++	folio = array->batch.folios[folio_index];
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!folio);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	kunmap_local(ptr);
++	ssdfs_folio_unlock(folio);
++
++	return 0;
++}
++
++/*
++ * ssdfs_dynamic_array_set() - store item into dynamic array
++ * @array: pointer on dynamic array object
++ * @index: item index
++ * @item: pointer on item
++ *
++ * This method tries to store item into dynamic array.
++ *
++ * RETURN:
++ * [success] - pointer on requested item.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-E2BIG      - request is out of array capacity.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
++			    u32 index, void *item)
++{
++	struct ssdfs_smart_folio folio;
++	void *kaddr = NULL;
++	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
++	u32 item_offset;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !item);
++
++	SSDFS_DBG("array %p, index %u, capacity %u, "
++		  "item_size %zu, bytes_count %u\n",
++		  array, index, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
++		SSDFS_ERR("invalid item_size %zu\n",
++			  array->item_size);
++		return -ERANGE;
++	}
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid capacity %u\n",
++			  array->capacity);
++		return -ERANGE;
++	}
++
++	if (array->bytes_count == 0) {
++		SSDFS_ERR("invalid bytes_count %u\n",
++			  array->bytes_count);
++		return -ERANGE;
++	}
++
++	if (index >= array->capacity) {
++		SSDFS_ERR("invalid index: index %u, capacity %u\n",
++			  index, array->capacity);
++		return -ERANGE;
++	}
++
++	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, index);
++
++	if (item_offset >= max_threshold) {
++		SSDFS_ERR("invalid item_offset: "
++			  "index %u, item_size %zu, "
++			  "item_offset %u, bytes_count %u, "
++			  "max_threshold %llu\n",
++			  index, array->item_size,
++			  item_offset, array->bytes_count,
++			  max_threshold);
++		return -E2BIG;
++	}
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		err = SSDFS_OFF2FOLIO(PAGE_SIZE, item_offset, &folio.desc);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to prepare folio descriptor: "
++				  "err %d\n", err);
++			return err;
++		}
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		if (folio.desc.folio_index >=
++				ssdfs_folio_vector_capacity(&array->batch)) {
++			SSDFS_ERR("invalid folio index: "
++				  "folio_index %u, item_offset %u\n",
++				  folio.desc.folio_index, item_offset);
++			return -E2BIG;
++		}
++
++		while (folio.desc.folio_index >=
++				ssdfs_folio_vector_count(&array->batch)) {
++			struct folio *temp;
++
++			temp = ssdfs_folio_vector_allocate(&array->batch);
++			if (IS_ERR_OR_NULL(temp)) {
++				err = (temp == NULL ?
++						-ENOMEM : PTR_ERR(temp));
++				SSDFS_ERR("unable to allocate folio\n");
++				return err;
++			}
++
++			ssdfs_folio_lock(temp);
++			__ssdfs_memset_folio(temp, 0, PAGE_SIZE,
++					     array->alloc_pattern, PAGE_SIZE);
++			ssdfs_folio_unlock(temp);
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("folio %p, count %d\n",
++				  temp, folio_ref_count(temp));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++			array->bytes_count += PAGE_SIZE;
++		}
++
++		folio.ptr = array->batch.folios[folio.desc.folio_index];
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(!folio.ptr);
++
++		SSDFS_DBG("index %u, block_size %u, offset %llu, "
++			  "folio_index %u, folio_offset %llu, "
++			  "page_in_folio %u, page_offset %u, "
++			  "offset_inside_page %u\n",
++			  index,
++			  folio.desc.block_size,
++			  folio.desc.offset,
++			  folio.desc.folio_index,
++			  folio.desc.folio_offset,
++			  folio.desc.page_in_folio,
++			  folio.desc.page_offset,
++			  folio.desc.offset_inside_page);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		ssdfs_folio_lock(folio.ptr);
++		kaddr = kmap_local_folio(folio.ptr, 0);
++		err = ssdfs_memcpy(kaddr,
++				   folio.desc.offset_inside_page, PAGE_SIZE,
++				   item,
++				   0, array->item_size,
++				   array->item_size);
++		kunmap_local(kaddr);
++		ssdfs_folio_unlock(folio.ptr);
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		if ((item_offset + array->item_size) > array->bytes_count) {
++			SSDFS_ERR("invalid item offset: "
++				  "item_offset %u, item_size %zu, "
++				  "bytes_count %u\n",
++				  item_offset,
++				  array->item_size,
++				  array->bytes_count);
++			return -ERANGE;
++		}
++
++		err = ssdfs_memcpy(array->buf, item_offset, array->bytes_count,
++				   item, 0, array->item_size,
++				   array->item_size);
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to set item: index %u, err %d\n",
++			  index, err);
++	} else if (index >= array->items_count)
++		array->items_count = index + 1;
++
++	return err;
++}
++
++/*
++ * ssdfs_dynamic_array_copy_content() - copy the whole dynamic array
++ * @array: pointer on dynamic array object
++ * @copy_buf: pointer on copy buffer
++ * @buf_size: size of the buffer in bytes
++ *
++ * This method tries to copy the whole content of dynamic array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
++				     void *copy_buf, size_t buf_size)
++{
++	struct folio *folio;
++	u32 copied_bytes = 0;
++	u32 folios_count;
++	size_t bytes_count;
++	u32 items_count;
++	int i;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !copy_buf);
++
++	SSDFS_DBG("array %p, capacity %u, "
++		  "item_size %zu, bytes_count %u, "
++		  "copy_buf %p, buf_size %zu\n",
++		  array, array->capacity,
++		  array->item_size, array->bytes_count,
++		  copy_buf, buf_size);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	if (array->bytes_count == 0) {
++		SSDFS_ERR("invalid bytes_count %u\n",
++			  array->bytes_count);
++		return -ERANGE;
++	}
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		folios_count = ssdfs_folio_vector_count(&array->batch);
++
++		for (i = 0; i < folios_count; i++) {
++			if (copied_bytes >= buf_size) {
++#ifdef CONFIG_SSDFS_DEBUG
++				SSDFS_DBG("stop copy: "
++					  "copied_bytes %u, "
++					  "buf_size %zu, "
++					  "array->bytes_count %u, "
++					  "folios_count %u\n",
++					  copied_bytes,
++					  buf_size,
++					  array->bytes_count,
++					  folios_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++				break;
++			}
++
++			folio = array->batch.folios[i];
++
++			if (!folio) {
++				err = -ERANGE;
++				SSDFS_ERR("fail to copy content: "
++					  "copied_bytes %u, "
++					  "array->bytes_count %u, "
++					  "folio_index %d, "
++					  "folios_count %u\n",
++					  copied_bytes,
++					  array->bytes_count,
++					  i, folios_count);
++				goto finish_copy_content;
++			}
++
++			items_count = i * array->items_per_folio;
++
++			if (items_count >= array->items_count) {
++				SSDFS_DBG("stop copy: "
++					  "items_count %u, "
++					  "array->items_count %u\n",
++					  items_count,
++					  array->items_count);
++				break;
++			}
++
++			items_count = min_t(u32,
++					    array->items_count - items_count,
++					    array->items_per_folio);
++
++			bytes_count = array->item_size * items_count;
++			bytes_count = min_t(size_t, bytes_count,
++						buf_size - copied_bytes);
++
++			err = __ssdfs_memcpy_from_folio(copy_buf,
++							copied_bytes,
++							buf_size,
++							folio,
++							0,
++							PAGE_SIZE,
++							bytes_count);
++			if (unlikely(err)) {
++				SSDFS_ERR("fail to copy content: "
++					  "copied_bytes %u, "
++					  "array->bytes_count %u, "
++					  "folio_index %d, "
++					  "folios_count %u, "
++					  "err %d\n",
++					  copied_bytes,
++					  array->bytes_count,
++					  i, folios_count,
++					  err);
++				goto finish_copy_content;
++			}
++
++			copied_bytes += bytes_count;
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("array %p, capacity %u, "
++				  "item_size %zu, bytes_count %u, "
++				  "folio_index %d, folios_count %u, "
++				  "bytes_count %zu, copied_bytes %u\n",
++				  array, array->capacity,
++				  array->item_size, array->bytes_count,
++				  i, folios_count, bytes_count, copied_bytes);
++#endif /* CONFIG_SSDFS_DEBUG */
++		}
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		bytes_count = array->item_size * array->items_count;
++
++		if (bytes_count > array->bytes_count) {
++			SSDFS_ERR("corrupted array: "
++				  "bytes_count %zu > array->bytes_count %u\n",
++				  bytes_count, array->bytes_count);
++			return -ERANGE;
++		}
++
++		err = ssdfs_memcpy(copy_buf, 0, buf_size,
++				   array->buf, 0, array->bytes_count,
++				   bytes_count);
++		break;
++
++	default:
++		BUG();
++		break;
++	}
++
++finish_copy_content:
++	return err;
++}
++
++/*
++ * ssdfs_shift_folio_vector_content_right() - shift folio vector content right
++ * @array: pointer on dynamic array object
++ * @start_index: starting item index
++ * @shift: shift value
++ *
++ * This method tries to shift range of items in array's content.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++static
++int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
++					   u32 start_index, u32 shift)
++{
++	struct folio *folio1, *folio2;
++	void *kaddr;
++	int folio_index1, folio_index2;
++	int src_index, dst_index;
++	u32 item_offset1, item_offset2;
++	u32 vector_capacity;
++	u32 range_len;
++	u32 moved_items = 0;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, start_index %u, shift %u, "
++		  "capacity %u, item_size %zu, bytes_count %u\n",
++		  array, start_index, shift, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	vector_capacity = ssdfs_folio_vector_capacity(&array->batch);
++
++	range_len = array->items_count - start_index;
++	src_index = start_index + range_len - 1;
++	dst_index = src_index + shift;
++
++	if (dst_index >= array->capacity) {
++		SSDFS_ERR("shift is out of area: "
++			  "src_index %d, shift %u, "
++			  "capacity %u\n",
++			  src_index, shift,
++			  array->capacity);
++		return -ERANGE;
++	}
++
++	do {
++		u32 index_diff;
++		int moving_items;
++		u32 moving_bytes;
++
++		folio_index2 = dst_index / array->items_per_folio;
++		if (folio_index2 >= vector_capacity) {
++			SSDFS_ERR("invalid folio index: "
++				  "folio_index %d, capacity %u\n",
++				  folio_index2, vector_capacity);
++			return -E2BIG;
++		}
++
++		while (folio_index2 >= ssdfs_folio_vector_count(&array->batch)) {
++			struct folio *folio;
++
++			folio = ssdfs_folio_vector_allocate(&array->batch);
++			if (IS_ERR_OR_NULL(folio)) {
++				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
++				SSDFS_ERR("unable to allocate folio\n");
++				return err;
++			}
++
++			ssdfs_folio_lock(folio);
++			__ssdfs_memset_folio(folio, 0, PAGE_SIZE,
++					     array->alloc_pattern, PAGE_SIZE);
++			ssdfs_folio_unlock(folio);
++
++			SSDFS_DBG("folio %p, count %d\n",
++				  folio, folio_ref_count(folio));
++
++			array->bytes_count += PAGE_SIZE;
++		}
++
++		folio_index1 = src_index / array->items_per_folio;
++		if (folio_index1 >= vector_capacity) {
++			SSDFS_ERR("invalid folio index: "
++				  "folio_index %d, capacity %u\n",
++				  folio_index1, vector_capacity);
++			return -E2BIG;
++		}
++
++		if (folio_index1 != folio_index2) {
++			u32 index_diff1, index_diff2;
++
++			index_diff1 = (dst_index + 1) % array->items_per_folio;
++			if (index_diff1 == 0)
++				index_diff1 = 1;
++
++			index_diff2 = (src_index + 1) % array->items_per_folio;
++			if (index_diff2 == 0)
++				index_diff2 = 1;
++
++			index_diff = min_t(u32, index_diff1, index_diff2);
++		} else {
++			index_diff = (src_index + 1) % array->items_per_folio;
++
++			if (index_diff == 0)
++				index_diff = 1;
++		}
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("src_index %d, dst_index %d, "
++			  "array->items_count %u, range_len %u, "
++			  "array->items_per_folio %u, index_diff %u, "
++			  "folio_index2 %d, folio_index1 %d, "
++			  "array->item_size %zu\n",
++			  src_index, dst_index,
++			  array->items_count, range_len,
++			  array->items_per_folio, index_diff,
++			  folio_index2, folio_index1,
++			  array->item_size);
++
++		BUG_ON(index_diff >= U16_MAX);
++		BUG_ON(moved_items > range_len);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		moving_items = range_len - moved_items;
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("range_len %u, moved_items %u, "
++			  "moving_items %d, index_diff %u\n",
++			  range_len, moved_items,
++			  moving_items, index_diff);
++
++		BUG_ON(moving_items < 0);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		moving_items = min_t(int, moving_items, (int)index_diff);
++
++		if (moving_items == 0) {
++			SSDFS_WARN("no items for moving\n");
++			return -ERANGE;
++		}
++
++		moving_bytes = moving_items * array->item_size;
++
++#ifdef CONFIG_SSDFS_DEBUG
++		BUG_ON(moving_items >= U16_MAX);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		src_index -= moving_items - 1;
++		dst_index = src_index + shift;
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("moving_items %d, src_index %d, dst_index %d\n",
++			  moving_items, src_index, dst_index);
++
++		BUG_ON(start_index > src_index);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		folio_index1 = src_index / array->items_per_folio;
++		index_diff = src_index % array->items_per_folio;
++		item_offset1 = index_diff * array->item_size;
++
++		folio_index2 = dst_index / array->items_per_folio;
++		index_diff = dst_index % array->items_per_folio;
++		item_offset2 = index_diff * array->item_size;
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("items_offset1 %u, item_offset2 %u\n",
++			  item_offset1, item_offset2);
++
++		if ((item_offset1 + moving_bytes) > PAGE_SIZE) {
++			SSDFS_WARN("invalid offset: "
++				   "item_offset1 %u, moving_bytes %u\n",
++				   item_offset1, moving_bytes);
++			return -ERANGE;
++		}
++
++		if ((item_offset2 + moving_bytes) > PAGE_SIZE) {
++			SSDFS_WARN("invalid offset: "
++				   "item_offset2 %u, moving_bytes %u\n",
++				   item_offset2, moving_bytes);
++			return -ERANGE;
++		}
++
++		SSDFS_DBG("folio_index1 %d, item_offset1 %u, "
++			  "folio_index2 %d, item_offset2 %u, "
++			  "moving_bytes %u\n",
++			  folio_index1, item_offset1,
++			  folio_index2, item_offset2,
++			  moving_bytes);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		if (folio_index1 != folio_index2) {
++			folio1 = array->batch.folios[folio_index1];
++			folio2 = array->batch.folios[folio_index2];
++			ssdfs_folio_lock(folio1);
++			ssdfs_folio_lock(folio2);
++			err = __ssdfs_memmove_folio(folio2,
++						    item_offset2, PAGE_SIZE,
++						    folio1,
++						    item_offset1, PAGE_SIZE,
++						    moving_bytes);
++			ssdfs_folio_unlock(folio2);
++			ssdfs_folio_unlock(folio1);
++
++			if (unlikely(err)) {
++				SSDFS_ERR("fail to move: err %d\n", err);
++				return err;
++			}
++		} else {
++			folio1 = array->batch.folios[folio_index1];
++			ssdfs_folio_lock(folio1);
++			kaddr = kmap_local_folio(folio1, 0);
++			err = ssdfs_memmove(kaddr, item_offset2, PAGE_SIZE,
++					    kaddr, item_offset1, PAGE_SIZE,
++					    moving_bytes);
++			flush_dcache_folio(folio1);
++			kunmap_local(kaddr);
++			ssdfs_folio_unlock(folio1);
++
++			if (unlikely(err)) {
++				SSDFS_ERR("fail to move: err %d\n", err);
++				return err;
++			}
++		}
++
++		src_index--;
++		dst_index--;
++		moved_items += moving_items;
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("start_index %u, src_index %d, "
++			  "dst_index %d, moved_items %u\n",
++			  start_index, src_index,
++			  dst_index, moved_items);
++#endif /* CONFIG_SSDFS_DEBUG */
++	} while (src_index >= (int)start_index);
++
++	if (moved_items != range_len) {
++		SSDFS_ERR("moved_items %u != range_len %u\n",
++			  moved_items, range_len);
++		return -ERANGE;
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_shift_buffer_content_right() - shift buffer content right
++ * @array: pointer on dynamic array object
++ * @start_index: starting item index
++ * @shift: shift value
++ *
++ * This method tries to shift range of items in array's content.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++static inline
++int ssdfs_shift_buffer_content_right(struct ssdfs_dynamic_array *array,
++				     u32 start_index, u32 shift)
++{
++	u32 src_off, dst_off;
++	u32 bytes_count;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, start_index %u, shift %u, "
++		  "capacity %u, item_size %zu, bytes_count %u\n",
++		  array, start_index, shift, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	src_off = start_index * array->item_size;
++	dst_off = src_off + (shift * array->item_size);
++
++	bytes_count = array->items_count - start_index;
++	bytes_count *= array->item_size;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("start_index %u, shift %u, "
++		  "src_off %u, dst_off %u, "
++		  "bytes_count %u\n",
++		  start_index, shift,
++		  src_off, dst_off,
++		  bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	err = ssdfs_memmove(array->buf, dst_off, array->bytes_count,
++			    array->buf, src_off, array->bytes_count,
++			    bytes_count);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to move: src_off %u, dst_off %u, "
++			  "bytes_count %u, array->bytes_count %u, "
++			  "err %d\n",
++			  src_off, dst_off,
++			  bytes_count, array->bytes_count,
++			  err);
++		return err;
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_dynamic_array_shift_content_right() - shift content right
++ * @array: pointer on dynamic array object
++ * @start_index: starting item index
++ * @shift: shift value
++ *
++ * This method tries to shift range of items in array's content.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-E2BIG      - request is out of array capacity.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
++					    u32 start_index, u32 shift)
++{
++	u64 max_threshold = (u64)ssdfs_folio_vector_max_threshold() * PAGE_SIZE;
++	u32 item_offset;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, start_index %u, shift %u, "
++		  "capacity %u, item_size %zu, bytes_count %u\n",
++		  array, start_index, shift, array->capacity,
++		  array->item_size, array->bytes_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		/* continue logic */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x\n", array->state);
++		return -ERANGE;
++	}
++
++	if (array->item_size == 0 || array->item_size > PAGE_SIZE) {
++		SSDFS_ERR("invalid item_size %zu\n",
++			  array->item_size);
++		return -ERANGE;
++	}
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid capacity %u\n",
++			  array->capacity);
++		return -ERANGE;
++	}
++
++	if (array->bytes_count == 0) {
++		SSDFS_ERR("invalid bytes_count %u\n",
++			  array->bytes_count);
++		return -ERANGE;
++	}
++
++	if (array->items_count > array->capacity) {
++		SSDFS_ERR("corrupted array: "
++			  "items_count %u > capacity %u\n",
++			  array->items_count,
++			  array->capacity);
++		return -ERANGE;
++	}
++
++	if ((array->items_count + shift) > array->capacity) {
++		SSDFS_ERR("invalid shift: items_count %u, "
++			  "shift %u, capacity %u\n",
++			  array->items_count, shift, array->capacity);
++		return -ERANGE;
++	}
++
++	if ((start_index + shift) >= array->capacity) {
++		SSDFS_ERR("invalid index: start_index %u, "
++			  "shift %u, capacity %u\n",
++			  start_index, shift, array->capacity);
++		return -ERANGE;
++	}
++
++	item_offset = SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET(array, start_index);
++
++	if (item_offset >= max_threshold) {
++		SSDFS_ERR("invalid item_offset: "
++			  "start_index %u, item_size %zu, "
++			  "item_offset %u, bytes_count %u, "
++			  "max_threshold %llu\n",
++			  start_index, array->item_size,
++			  item_offset, array->bytes_count,
++			  max_threshold);
++		return -E2BIG;
++	}
++
++	switch (array->state) {
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC:
++		err = ssdfs_shift_folio_vector_content_right(array,
++							     start_index,
++							     shift);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to move: "
++				  "start_index %u, shift %u, err %d\n",
++				  start_index, shift, err);
++			return err;
++		}
++		break;
++
++	case SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER:
++		err = ssdfs_shift_buffer_content_right(array,
++							start_index,
++							shift);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to move: "
++				  "start_index %u, shift %u, err %d\n",
++				  start_index, shift, err);
++			return err;
++		}
++		break;
++
++	default:
++		BUG();
++		break;
++	}
++
++	array->items_count += shift;
++
++	return 0;
++}
+diff --git a/fs/ssdfs/dynamic_array.h b/fs/ssdfs/dynamic_array.h
+new file mode 100644
+index 000000000000..ace31ad6b495
+--- /dev/null
++++ b/fs/ssdfs/dynamic_array.h
+@@ -0,0 +1,103 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/dynamic_array.h - dynamic array's declarations.
++ *
++ * Copyright (c) 2022-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
++ *              https://www.bytedance.com/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cong Wang
++ */
++
++#ifndef _SSDFS_DYNAMIC_ARRAY_H
++#define _SSDFS_DYNAMIC_ARRAY_H
++
++#include "folio_vector.h"
++
++/*
++ * struct ssdfs_dynamic_array - dynamic array
++ * @state: array state
++ * @item_size: size of item in bytes
++ * @items_per_folio: number of items per memory folio
++ * @items_count: items count in array
++ * @capacity: maximum available items count
++ * @bytes_count: currently allocated bytes count
++ * @alloc_pattern: pattern to init memory pages
++ * @batch: vector of folios
++ * @buf: pointer on memory buffer
++ */
++struct ssdfs_dynamic_array {
++	int state;
++	size_t item_size;
++	u32 items_per_folio;
++	u32 items_count;
++	u32 capacity;
++	u32 bytes_count;
++	u8 alloc_pattern;
++	struct ssdfs_folio_vector batch;
++	void *buf;
++};
++
++/* Dynamic array's states */
++enum {
++	SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT,
++	SSDFS_DYNAMIC_ARRAY_STORAGE_FOLIO_VEC,
++	SSDFS_DYNAMIC_ARRAY_STORAGE_BUFFER,
++	SSDFS_DYNAMIC_ARRAY_STORAGE_STATE_MAX
++};
++
++/*
++ * Inline functions
++ */
++
++static inline
++u32 ssdfs_dynamic_array_allocated_bytes(struct ssdfs_dynamic_array *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return array->bytes_count;
++}
++
++static inline
++u32 ssdfs_dynamic_array_items_count(struct ssdfs_dynamic_array *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (array->bytes_count == 0 || array->item_size == 0)
++		return 0;
++
++	return array->bytes_count / array->item_size;
++}
++
++/*
++ * Dynamic array's API
++ */
++int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
++				u32 capacity, size_t item_size,
++				u8 alloc_pattern);
++void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array);
++void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
++				     u32 index);
++int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
++				u32 index, void *ptr);
++int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
++			    u32 index, void *ptr);
++int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
++				     void *copy_buf, size_t buf_size);
++void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
++					     u32 index, u32 *items_count);
++int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
++					    u32 start_index, u32 shift);
++
++#endif /* _SSDFS_DYNAMIC_ARRAY_H */
+diff --git a/fs/ssdfs/folio_array.c b/fs/ssdfs/folio_array.c
+new file mode 100644
+index 000000000000..eb856f86d0ae
+--- /dev/null
++++ b/fs/ssdfs/folio_array.c
+@@ -0,0 +1,1760 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/folio_array.c - folio array object's functionality.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/slab.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "folio_array.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_farray_folio_leaks;
++atomic64_t ssdfs_farray_memory_leaks;
++atomic64_t ssdfs_farray_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_farray_cache_leaks_increment(void *kaddr)
++ * void ssdfs_farray_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_farray_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_farray_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_farray_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_farray_kfree(void *kaddr)
++ * struct folio *ssdfs_farray_alloc_folio(gfp_t gfp_mask,
++ *                                        unsigned int order)
++ * struct folio *ssdfs_farray_add_batch_folio(struct folio_batch *batch,
++ *                                            unsigned int order)
++ * void ssdfs_farray_free_folio(struct folio *folio)
++ * void ssdfs_farray_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(farray)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(farray)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_farray_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_farray_folio_leaks, 0);
++	atomic64_set(&ssdfs_farray_memory_leaks, 0);
++	atomic64_set(&ssdfs_farray_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_farray_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_farray_folio_leaks) != 0) {
++		SSDFS_ERR("FOLIO ARRAY: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_farray_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_farray_memory_leaks) != 0) {
++		SSDFS_ERR("FOLIO ARRAY: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_farray_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_farray_cache_leaks) != 0) {
++		SSDFS_ERR("FOLIO ARRAY: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_farray_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++/*
++ * ssdfs_create_folio_array() - create folio array
++ * @array: pointer of memory area for the array creation [out]
++ * @order: allocation order of a particular sized block of memory
++ * @capacity: maximum number of folios in the array
++ *
++ * This method tries to create the folio array with @capacity
++ * of maximum number of folios in the array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ENOMEM     - unable to allocate memory.
++ */
++int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
++			     unsigned order,
++			     int capacity)
++{
++	void *addr[SSDFS_FOLIO_ARRAY_BMAP_COUNT];
++	size_t bmap_bytes;
++	int i;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("capacity %d, array %p\n",
++		  capacity, array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	memset(array, 0, sizeof(struct ssdfs_folio_array));
++	atomic_set(&array->state, SSDFS_FOLIO_ARRAY_UNKNOWN_STATE);
++
++	if (capacity == 0) {
++		SSDFS_ERR("invalid capacity %d\n",
++			  capacity);
++		return -EINVAL;
++	}
++
++	init_rwsem(&array->lock);
++	atomic_set(&array->folios_capacity, capacity);
++	array->folios_count = 0;
++	array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
++	array->order = order;
++	array->folio_size = PAGE_SIZE << order;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folios_count %lu, last_folio %lu, "
++		  "order %u, folio_size %zu\n",
++		  array->folios_count, array->last_folio,
++		  order, array->folio_size);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->folios = ssdfs_farray_kcalloc(capacity, sizeof(struct folio *),
++					     GFP_KERNEL);
++	if (!array->folios) {
++		err = -ENOMEM;
++		SSDFS_ERR("fail to allocate memory: capacity %d\n",
++			  capacity);
++		goto finish_create_folio_array;
++	}
++
++	bmap_bytes = capacity + BITS_PER_LONG + (BITS_PER_LONG - 1);
++	bmap_bytes /= BITS_PER_BYTE;
++	array->bmap_bytes = bmap_bytes;
++
++	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
++		spin_lock_init(&array->bmap[i].lock);
++		array->bmap[i].ptr = NULL;
++	}
++
++	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
++		addr[i] = ssdfs_farray_kmalloc(bmap_bytes, GFP_KERNEL);
++
++		if (!addr[i]) {
++			err = -ENOMEM;
++			SSDFS_ERR("fail to allocate bmap: index %d\n",
++				  i);
++			for (; i >= 0; i--)
++				ssdfs_farray_kfree(addr[i]);
++			goto free_folio_array;
++		}
++
++		memset(addr[i], 0xFF, bmap_bytes);
++	}
++
++	down_write(&array->lock);
++	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
++		spin_lock(&array->bmap[i].lock);
++		array->bmap[i].ptr = addr[i];
++		addr[i] = NULL;
++		spin_unlock(&array->bmap[i].lock);
++	}
++	up_write(&array->lock);
++
++	atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
++
++	return 0;
++
++free_folio_array:
++	ssdfs_farray_kfree(array->folios);
++	array->folios = NULL;
++
++finish_create_folio_array:
++	return err;
++}
++
++/*
++ * ssdfs_destroy_folio_array() - destroy folio array
++ * @array: folio array object
++ *
++ * This method tries to destroy the folio array.
++ */
++void ssdfs_destroy_folio_array(struct ssdfs_folio_array *array)
++{
++	int state;
++	int i;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++	BUG_ON(rwsem_is_locked(&array->lock));
++
++	SSDFS_DBG("array %p, state %#x\n",
++		  array,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	ssdfs_folio_array_release_all_folios(array);
++
++	state = atomic_xchg(&array->state, SSDFS_FOLIO_ARRAY_UNKNOWN_STATE);
++
++	switch (state) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++		/* expected state */
++		break;
++
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		SSDFS_WARN("folio array is dirty on destruction\n");
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  state);
++		break;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folios_count %lu, last_folio %lu\n",
++		  array->folios_count, array->last_folio);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	atomic_set(&array->folios_capacity, 0);
++	array->folios_count = 0;
++	array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
++
++	if (array->folios)
++		ssdfs_farray_kfree(array->folios);
++
++	array->folios = NULL;
++
++	array->bmap_bytes = 0;
++
++	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
++		spin_lock(&array->bmap[i].lock);
++		if (array->bmap[i].ptr)
++			ssdfs_farray_kfree(array->bmap[i].ptr);
++		array->bmap[i].ptr = NULL;
++		spin_unlock(&array->bmap[i].lock);
++	}
++}
++
++/*
++ * ssdfs_reinit_folio_array() - change the capacity of the folio array
++ * @capacity: new value of the capacity
++ * @array: pointer of memory area for the array creation
++ *
++ * This method tries to change the capacity of the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ENOMEM     - unable to allocate memory.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_reinit_folio_array(int capacity, struct ssdfs_folio_array *array)
++{
++	struct folio **folios;
++	void *addr[SSDFS_FOLIO_ARRAY_BMAP_COUNT];
++	int old_capacity;
++	size_t bmap_bytes;
++	int i;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, capacity %d, state %#x\n",
++		  array, capacity,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return -ERANGE;
++	}
++
++	down_write(&array->lock);
++
++	old_capacity = atomic_read(&array->folios_capacity);
++
++	if (capacity < old_capacity) {
++		err = -EINVAL;
++		SSDFS_ERR("unable to shrink: "
++			  "capacity %d, folios_capacity %d\n",
++			  capacity,
++			  old_capacity);
++		goto finish_reinit;
++	}
++
++	if (capacity == old_capacity) {
++		err = 0;
++		SSDFS_WARN("capacity %d == folios_capacity %d\n",
++			   capacity,
++			   old_capacity);
++		goto finish_reinit;
++	}
++
++	atomic_set(&array->folios_capacity, capacity);
++
++	folios = ssdfs_farray_kcalloc(capacity, sizeof(struct folio *),
++					GFP_KERNEL);
++	if (!folios) {
++		err = -ENOMEM;
++		SSDFS_ERR("fail to allocate memory: capacity %d\n",
++			  capacity);
++		goto finish_reinit;
++	}
++
++	bmap_bytes = capacity + BITS_PER_LONG + (BITS_PER_LONG - 1);
++	bmap_bytes /= BITS_PER_BYTE;
++
++	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
++		addr[i] = ssdfs_farray_kmalloc(bmap_bytes, GFP_KERNEL);
++
++		if (!addr[i]) {
++			err = -ENOMEM;
++			SSDFS_ERR("fail to allocate bmap: index %d\n",
++				  i);
++			for (; i >= 0; i--)
++				ssdfs_farray_kfree(addr[i]);
++			ssdfs_farray_kfree(folios);
++			goto finish_reinit;
++		}
++
++		memset(addr[i], 0xFF, bmap_bytes);
++	}
++
++	err = ssdfs_memcpy(folios,
++			   0, sizeof(struct folio *) * capacity,
++			   array->folios,
++			   0, sizeof(struct folio *) * old_capacity,
++			   sizeof(struct folio *) * old_capacity);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to copy: err %d\n", err);
++		goto finish_reinit;
++	}
++
++	ssdfs_farray_kfree(array->folios);
++	array->folios = folios;
++
++	for (i = 0; i < SSDFS_FOLIO_ARRAY_BMAP_COUNT; i++) {
++		void *tmp_addr = NULL;
++
++		spin_lock(&array->bmap[i].lock);
++		ssdfs_memcpy(addr[i], 0, bmap_bytes,
++			     array->bmap[i].ptr, 0, array->bmap_bytes,
++			     array->bmap_bytes);
++		tmp_addr = array->bmap[i].ptr;
++		array->bmap[i].ptr = addr[i];
++		addr[i] = NULL;
++		spin_unlock(&array->bmap[i].lock);
++
++		ssdfs_farray_kfree(tmp_addr);
++	}
++
++	array->bmap_bytes = bmap_bytes;
++
++finish_reinit:
++	if (unlikely(err))
++		atomic_set(&array->folios_capacity, old_capacity);
++
++	up_write(&array->lock);
++
++	return err;
++}
++
++/*
++ * is_ssdfs_folio_array_empty() - is folio array empty?
++ * @array: folio array object
++ *
++ * This method tries to check that folio array is empty.
++ */
++bool is_ssdfs_folio_array_empty(struct ssdfs_folio_array *array)
++{
++	bool is_empty = false;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	down_read(&array->lock);
++	is_empty = array->folios_count == 0;
++	up_read(&array->lock);
++
++	return is_empty;
++}
++
++/*
++ * ssdfs_folio_array_get_last_folio_index() - get latest folio index
++ * @array: folio array object
++ *
++ * This method tries to get latest folio index.
++ */
++unsigned long
++ssdfs_folio_array_get_last_folio_index(struct ssdfs_folio_array *array)
++{
++	unsigned long index;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	down_read(&array->lock);
++	index = array->last_folio;
++	up_read(&array->lock);
++
++	return index;
++}
++
++/*
++ * ssdfs_folio_array_add_folio() - add memory folio into the folio array
++ * @array: folio array object
++ * @folio: memory folio
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to add a folio into the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-EEXIST     - folio array contains the folio for the index.
++ */
++int ssdfs_folio_array_add_folio(struct ssdfs_folio_array *array,
++			      struct folio *folio,
++			      unsigned long folio_index)
++{
++	struct ssdfs_folio_array_bitmap *bmap;
++	int capacity;
++	unsigned long found;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !folio);
++
++	SSDFS_DBG("array %p, folio %p, folio_index %lu, state %#x\n",
++		  array, folio, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return -ERANGE;
++	}
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (folio_index >= capacity) {
++		SSDFS_ERR("folio_index %lu >= folios_capacity %d\n",
++			  folio_index,
++			  capacity);
++		return -EINVAL;
++	}
++
++	down_write(&array->lock);
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (array->folios_count > capacity) {
++		err = -ERANGE;
++		SSDFS_ERR("corrupted folio array: "
++			  "folios_count %lu, folios_capacity %d\n",
++			  array->folios_count,
++			  capacity);
++		goto finish_add_folio;
++	}
++
++	if (array->folios_count == capacity) {
++		err = -EEXIST;
++		SSDFS_ERR("folio %lu is allocated already\n",
++			  folio_index);
++		goto finish_add_folio;
++	}
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("bitmap is empty\n");
++		goto finish_add_folio;
++	}
++
++	spin_lock(&bmap->lock);
++	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++					   folio_index, 1, 0);
++	if (found == folio_index) {
++		/* folio is allocated already */
++		err = -EEXIST;
++	} else
++		bitmap_clear(bmap->ptr, folio_index, 1);
++	spin_unlock(&bmap->lock);
++
++	if (err) {
++		SSDFS_ERR("folio %lu is allocated already\n",
++			  folio_index);
++		goto finish_add_folio;
++	}
++
++	if (array->folios[folio_index]) {
++		err = -ERANGE;
++		SSDFS_WARN("position %lu contains folio pointer\n",
++			   folio_index);
++		goto finish_add_folio;
++	} else {
++		ssdfs_folio_get(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("folio %p, count %d\n",
++			  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		array->folios[folio_index] = folio;
++		folio->index = folio_index;
++	}
++
++	ssdfs_farray_account_folio(folio);
++	array->folios_count++;
++
++	if (array->last_folio >= SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO)
++		array->last_folio = folio_index;
++	else if (array->last_folio < folio_index)
++		array->last_folio = folio_index;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folios_count %lu, last_folio %lu\n",
++		  array->folios_count, array->last_folio);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++finish_add_folio:
++	up_write(&array->lock);
++
++	return err;
++}
++
++/*
++ * ssdfs_folio_array_allocate_folio_locked() - allocate and add folio
++ * @array: folio array object
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to allocate, to add into the folio array and
++ * to lock folio.
++ *
++ * RETURN:
++ * [success] - pointer on allocated and locked folio.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOMEM     - unable to allocate memory folio.
++ * %-EEXIST     - folio array contains the folio for the index.
++ */
++struct folio *
++ssdfs_folio_array_allocate_folio_locked(struct ssdfs_folio_array *array,
++					unsigned long folio_index)
++{
++	struct folio *folio;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return ERR_PTR(-ERANGE);
++	}
++
++	folio = ssdfs_farray_alloc_folio(GFP_KERNEL | __GFP_ZERO,
++					 array->order);
++	if (IS_ERR_OR_NULL(folio)) {
++		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
++		SSDFS_ERR("unable to allocate memory folio\n");
++		return ERR_PTR(err);
++	}
++
++	/*
++	 * The ssdfs_folio_array_add_folio() calls
++	 * ssdfs_farray_account_folio(). It needs to exclude
++	 * the improper leaks accounting.
++	 */
++	ssdfs_farray_forget_folio(folio);
++
++	err = ssdfs_folio_array_add_folio(array, folio, folio_index);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to add folio: "
++			  "folio_index %lu, err %d\n",
++			  folio_index, err);
++		ssdfs_farray_free_folio(folio);
++		return ERR_PTR(err);
++	}
++
++	ssdfs_folio_lock(folio);
++	return folio;
++}
++
++/*
++ * ssdfs_folio_array_get_folio() - get folio unlocked
++ * @array: folio array object
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to find a folio into the folio array.
++ *
++ * RETURN:
++ * [success] - pointer on folio.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOENT     - no allocated folio for the requested index.
++ */
++struct folio *ssdfs_folio_array_get_folio(struct ssdfs_folio_array *array,
++					  unsigned long folio_index)
++{
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *bmap;
++	int capacity;
++	unsigned long found;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return ERR_PTR(-ERANGE);
++	}
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (folio_index >= capacity) {
++		SSDFS_ERR("folio_index %lu >= folios_capacity %d\n",
++			  folio_index,
++			  capacity);
++		return ERR_PTR(-EINVAL);
++	}
++
++	down_read(&array->lock);
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("bitmap is empty\n");
++		goto finish_get_folio;
++	}
++
++	spin_lock(&bmap->lock);
++	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++					   folio_index, 1, 0);
++	if (found != folio_index) {
++		/* folio is not allocated yet */
++		err = -ENOENT;
++	}
++	spin_unlock(&bmap->lock);
++
++	if (err) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("folio %lu is not allocated yet\n",
++			  folio_index);
++#endif /* CONFIG_SSDFS_DEBUG */
++		goto finish_get_folio;
++	}
++
++	folio = array->folios[folio_index];
++
++	if (!folio) {
++		err = -ERANGE;
++		SSDFS_ERR("folio pointer is NULL\n");
++		goto finish_get_folio;
++	}
++
++finish_get_folio:
++	up_read(&array->lock);
++
++	if (unlikely(err))
++		return ERR_PTR(err);
++
++	ssdfs_folio_get(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folio %p, count %d\n",
++		  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return folio;
++}
++
++/*
++ * ssdfs_folio_array_get_folio_locked() - get folio locked
++ * @array: folio array object
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to find and to lock a folio into the
++ * folio array.
++ *
++ * RETURN:
++ * [success] - pointer on locked folio.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOENT     - no allocated folio for the requested index.
++ */
++struct folio *ssdfs_folio_array_get_folio_locked(struct ssdfs_folio_array *array,
++						 unsigned long folio_index)
++{
++	struct folio *folio;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	folio = ssdfs_folio_array_get_folio(array, folio_index);
++	if (PTR_ERR(folio) == -ENOENT) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("folio %lu is not allocated yet\n",
++			  folio_index);
++#endif /* CONFIG_SSDFS_DEBUG */
++	} else if (IS_ERR_OR_NULL(folio)) {
++		SSDFS_ERR("fail to get the folio: "
++			  "folio_index %lu, err %d\n",
++			  folio_index, (int)PTR_ERR(folio));
++	} else
++		ssdfs_folio_lock(folio);
++
++	return folio;
++}
++
++/*
++ * ssdfs_folio_array_grab_folio() - get or add folio locked
++ * @array: folio array object
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to find and to lock a folio into the
++ * folio array. If no such folio then to add and to lock
++ * the folio.
++ *
++ * RETURN:
++ * [success] - pointer on locked folio.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOMEM     - fail to add the folio.
++ */
++struct folio *ssdfs_folio_array_grab_folio(struct ssdfs_folio_array *array,
++					   unsigned long folio_index)
++{
++	struct folio *folio = ERR_PTR(-ENOMEM);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	folio = ssdfs_folio_array_get_folio_locked(array, folio_index);
++	if (PTR_ERR(folio) == -ENOENT) {
++		folio = ssdfs_folio_array_allocate_folio_locked(array,
++								folio_index);
++		if (IS_ERR_OR_NULL(folio)) {
++			if (!folio)
++				folio = ERR_PTR(-ENOMEM);
++
++			SSDFS_ERR("fail to allocate the folio: "
++				  "folio_index %lu, err %d\n",
++				  folio_index, (int)PTR_ERR(folio));
++		} else {
++			ssdfs_folio_get(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("folio %p, count %d\n",
++				  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++		}
++	} else if (IS_ERR_OR_NULL(folio)) {
++		if (!folio)
++			folio = ERR_PTR(-ENOMEM);
++
++		SSDFS_ERR("fail to get folio: "
++			  "folio_index %lu, err %d\n",
++			  folio_index, (int)PTR_ERR(folio));
++	}
++
++	return folio;
++}
++
++/*
++ * ssdfs_folio_array_set_folio_dirty() - set folio dirty
++ * @array: folio array object
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to set folio as dirty in the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOENT     - no allocated folio for the requested index.
++ */
++int ssdfs_folio_array_set_folio_dirty(struct ssdfs_folio_array *array,
++				      unsigned long folio_index)
++{
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *bmap;
++	int capacity;
++	unsigned long found;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return -ERANGE;
++	}
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (folio_index >= capacity) {
++		SSDFS_ERR("folio_index %lu >= folios_capacity %d\n",
++			  folio_index,
++			  capacity);
++		return -EINVAL;
++	}
++
++	down_read(&array->lock);
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("allocation bitmap is empty\n");
++		goto finish_set_folio_dirty;
++	}
++
++	spin_lock(&bmap->lock);
++	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++					   folio_index, 1, 0);
++	if (found != folio_index) {
++		/* folio is not allocated yet */
++		err = -ENOENT;
++	}
++	spin_unlock(&bmap->lock);
++
++	if (err) {
++		SSDFS_ERR("folio %lu is not allocated yet\n",
++			  folio_index);
++		goto finish_set_folio_dirty;
++	}
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("dirty bitmap is empty\n");
++		goto finish_set_folio_dirty;
++	}
++
++	spin_lock(&bmap->lock);
++	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++					   folio_index, 1, 0);
++	if (found == folio_index) {
++		/* folio is dirty already */
++		err = -EEXIST;
++	}
++	bitmap_clear(bmap->ptr, folio_index, 1);
++	spin_unlock(&bmap->lock);
++
++	if (err) {
++		err = 0;
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("folio %lu is dirty already\n",
++			  folio_index);
++#endif /* CONFIG_SSDFS_DEBUG */
++	}
++
++	folio = array->folios[folio_index];
++
++	if (!folio) {
++		err = -ERANGE;
++		SSDFS_ERR("folio pointer is NULL\n");
++		goto finish_set_folio_dirty;
++	}
++
++	folio_set_dirty(folio);
++
++	atomic_set(&array->state, SSDFS_FOLIO_ARRAY_DIRTY);
++
++finish_set_folio_dirty:
++	up_read(&array->lock);
++
++	return err;
++}
++
++/*
++ * ssdfs_folio_array_clear_dirty_folio() - set folio as clean
++ * @array: folio array object
++ * @folio_index: index of the folio in the folio array
++ *
++ * This method tries to set folio as clean in the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOENT     - no allocated folio for the requested index.
++ */
++int ssdfs_folio_array_clear_dirty_folio(struct ssdfs_folio_array *array,
++					unsigned long folio_index)
++{
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *bmap;
++	int capacity;
++	unsigned long found;
++	bool is_clean = false;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return -ERANGE;
++	}
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (folio_index >= capacity) {
++		SSDFS_ERR("folio_index %lu >= folios_capacity %d\n",
++			  folio_index,
++			  capacity);
++		return -EINVAL;
++	}
++
++	down_read(&array->lock);
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("allocation bitmap is empty\n");
++		goto finish_clear_folio_dirty;
++	}
++
++	spin_lock(&bmap->lock);
++	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++					   folio_index, 1, 0);
++	if (found != folio_index) {
++		/* folio is not allocated yet */
++		err = -ENOENT;
++	}
++	spin_unlock(&bmap->lock);
++
++	if (err) {
++		SSDFS_ERR("folio %lu is not allocated yet\n",
++			  folio_index);
++		goto finish_clear_folio_dirty;
++	}
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("dirty bitmap is empty\n");
++		goto finish_clear_folio_dirty;
++	}
++
++	spin_lock(&bmap->lock);
++	bitmap_set(bmap->ptr, folio_index, 1);
++	is_clean = bitmap_full(bmap->ptr, capacity);
++	spin_unlock(&bmap->lock);
++
++	folio = array->folios[folio_index];
++
++	if (!folio) {
++		err = -ERANGE;
++		SSDFS_ERR("folio pointer is NULL\n");
++		goto finish_clear_folio_dirty;
++	}
++
++	folio_clear_dirty(folio);
++
++	if (is_clean)
++		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
++
++finish_clear_folio_dirty:
++	up_read(&array->lock);
++
++	return err;
++}
++
++/*
++ * ssdfs_folio_array_clear_dirty_range() - clear dirty folios in the range
++ * @array: folio array object
++ * @start: starting index
++ * @end: ending index (inclusive)
++ *
++ * This method tries to set the range's dirty folios as clean
++ * in the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_folio_array_clear_dirty_range(struct ssdfs_folio_array *array,
++					unsigned long start,
++					unsigned long end)
++{
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *bmap;
++	int capacity;
++	bool is_clean = false;
++	int i;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, start %lu, end %lu, state %#x\n",
++		  array, start, end,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++		SSDFS_DBG("no dirty folios in folio array\n");
++		return 0;
++
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return -ERANGE;
++	}
++
++	if (start > end) {
++		SSDFS_ERR("start %lu > end %lu\n",
++			  start, end);
++		return -EINVAL;
++	}
++
++	down_write(&array->lock);
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("dirty bitmap is empty\n");
++		goto finish_clear_dirty_folios;
++	}
++
++	end = min_t(int, capacity, end + 1);
++
++	for (i = start; i < end; i++) {
++		folio = array->folios[i];
++
++		if (folio)
++			folio_clear_dirty(folio);
++	}
++
++	spin_lock(&bmap->lock);
++	bitmap_set(bmap->ptr, start, end - start);
++	is_clean = bitmap_full(bmap->ptr, capacity);
++	spin_unlock(&bmap->lock);
++
++	if (is_clean)
++		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
++
++finish_clear_dirty_folios:
++	up_write(&array->lock);
++
++	return err;
++}
++
++/*
++ * ssdfs_folio_array_clear_all_dirty_folios() - clear all dirty folios
++ * @array: folio array object
++ *
++ * This method tries to set all dirty folios as clean in the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_folio_array_clear_all_dirty_folios(struct ssdfs_folio_array *array)
++{
++	int capacity;
++	unsigned long start = 0, end = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, state %#x\n",
++		  array,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (capacity > 0)
++		end = capacity - 1;
++
++	return ssdfs_folio_array_clear_dirty_range(array, start, end);
++}
++
++/*
++ * ssdfs_folio_array_lookup_range() - find folios for a requested tag
++ * @array: folio array object
++ * @start: pointer on start index value [in|out]
++ * @end: ending index (inclusive)
++ * @tag: tag value for the search
++ * @max_folios: maximum number of folios in the foliovec
++ * @batch: folio batch for storing found folios [out]
++ *
++ * This method tries to find folios in the folio array for
++ * the requested tag.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOENT     - nothing was found for the requested tag.
++ */
++int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
++				  unsigned long *start,
++				  unsigned long end,
++				  int tag, int max_folios,
++				  struct folio_batch *batch)
++{
++	int state;
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *bmap;
++	int capacity;
++	unsigned long found;
++	int count = 0;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !start || !batch);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	state = atomic_read(&array->state);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("array %p, start %lu, end %lu, "
++		  "tag %#x, max_folios %d, state %#x\n",
++		  array, *start, end, tag, max_folios, state);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (state) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			   state);
++		return -ERANGE;
++	}
++
++	folio_batch_reinit(batch);
++
++	if (*start > end) {
++		SSDFS_ERR("start %lu > end %lu\n",
++			  *start, end);
++		return -EINVAL;
++	}
++
++	switch (tag) {
++	case SSDFS_DIRTY_FOLIO_TAG:
++		if (state != SSDFS_FOLIO_ARRAY_DIRTY) {
++			SSDFS_DBG("folio array is clean\n");
++			return -ENOENT;
++		}
++		break;
++
++	default:
++		SSDFS_ERR("unknown tag %#x\n",
++			  tag);
++		return -EINVAL;
++	}
++
++	max_folios = min_t(int, max_folios, (int)SSDFS_EXTENT_LEN_MAX);
++
++	down_read(&array->lock);
++
++	capacity = atomic_read(&array->folios_capacity);
++	if (capacity <= 0) {
++		err = -ERANGE;
++		SSDFS_ERR("invalid capacity %d\n", capacity);
++		goto finish_search;
++	}
++
++	bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
++	if (!bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("dirty bitmap is empty\n");
++		goto finish_search;
++	}
++
++	end = min_t(int, capacity - 1, end);
++
++	spin_lock(&bmap->lock);
++	found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++					   *start, 1, 0);
++	spin_unlock(&bmap->lock);
++
++	*start = (int)found;
++
++	while (found <= end) {
++		folio = array->folios[found];
++
++		if (folio) {
++			if (!folio_test_dirty(folio)) {
++				SSDFS_ERR("folio %lu is not dirty\n",
++					  folio_index(folio));
++			}
++			ssdfs_folio_get(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("folio %p, count %d\n",
++				  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++			folio_batch_add(batch, folio);
++			count++;
++		}
++
++		if (count >= max_folios)
++			goto finish_search;
++
++		found++;
++
++		if (found >= capacity)
++			break;
++
++		spin_lock(&bmap->lock);
++		found = bitmap_find_next_zero_area(bmap->ptr, capacity,
++						   found, 1, 0);
++		spin_unlock(&bmap->lock);
++	};
++
++finish_search:
++	up_read(&array->lock);
++
++	return err;
++}
++
++/*
++ * ssdfs_folio_array_define_last_folio() - define last folio index
++ * @array: folio array object
++ * @capacity: folios capacity in array
++ *
++ * This method tries to define last folio index.
++ */
++static inline
++void ssdfs_folio_array_define_last_folio(struct ssdfs_folio_array *array,
++					 int capacity)
++{
++	struct ssdfs_folio_array_bitmap *alloc_bmap;
++	unsigned long *ptr;
++	unsigned long found;
++	unsigned long i;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++	BUG_ON(!rwsem_is_locked(&array->lock));
++
++	SSDFS_DBG("array %p, state %#x\n",
++		  array, atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	alloc_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!alloc_bmap->ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (array->folios_count == 0) {
++		/* empty array */
++		array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
++	} else if (array->last_folio >= SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO) {
++		/* do nothing */
++	} else if (array->last_folio > 0) {
++		for (i = array->last_folio; i > array->folios_count; i--) {
++			spin_lock(&alloc_bmap->lock);
++			ptr = alloc_bmap->ptr;
++			found = bitmap_find_next_zero_area(ptr,
++							   capacity,
++							   i, 1, 0);
++			spin_unlock(&alloc_bmap->lock);
++
++			if (found == i)
++				break;
++		}
++
++		array->last_folio = i;
++	} else
++		array->last_folio = SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO;
++}
++
++/*
++ * ssdfs_folio_array_delete_folio() - delete folio from the folio array
++ * @array: folio array object
++ * @folio_index: index of the folio
++ *
++ * This method tries to delete a folio from the folio array.
++ *
++ * RETURN:
++ * [success] - pointer on deleted folio.
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ * %-ENOENT     - folio array hasn't a folio for the index.
++ */
++struct folio *ssdfs_folio_array_delete_folio(struct ssdfs_folio_array *array,
++					     unsigned long folio_index)
++{
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *alloc_bmap, *dirty_bmap;
++	int capacity;
++	unsigned long found;
++	bool is_clean = false;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, folio_index %lu, state %#x\n",
++		  array, folio_index,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			  atomic_read(&array->state));
++		return ERR_PTR(-ERANGE);
++	}
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (folio_index >= capacity) {
++		SSDFS_ERR("folio_index %lu >= folios_capacity %d\n",
++			  folio_index,
++			  capacity);
++		return ERR_PTR(-EINVAL);
++	}
++
++	down_write(&array->lock);
++
++	alloc_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++	if (!alloc_bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("alloc bitmap is empty\n");
++		goto finish_delete_folio;
++	}
++
++	dirty_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
++	if (!dirty_bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("dirty bitmap is empty\n");
++		goto finish_delete_folio;
++	}
++
++	spin_lock(&alloc_bmap->lock);
++	found = bitmap_find_next_zero_area(alloc_bmap->ptr, capacity,
++					   folio_index, 1, 0);
++	if (found != folio_index) {
++		/* folio is not allocated yet */
++		err = -ENOENT;
++	}
++	spin_unlock(&alloc_bmap->lock);
++
++	if (err) {
++		SSDFS_ERR("folio %lu is not allocated yet\n",
++			  folio_index);
++		goto finish_delete_folio;
++	}
++
++	folio = array->folios[folio_index];
++
++	if (!folio) {
++		err = -ERANGE;
++		SSDFS_ERR("folio pointer is NULL\n");
++		goto finish_delete_folio;
++	}
++
++	spin_lock(&alloc_bmap->lock);
++	bitmap_set(alloc_bmap->ptr, folio_index, 1);
++	spin_unlock(&alloc_bmap->lock);
++
++	spin_lock(&dirty_bmap->lock);
++	bitmap_set(dirty_bmap->ptr, folio_index, 1);
++	is_clean = bitmap_full(dirty_bmap->ptr, capacity);
++	spin_unlock(&dirty_bmap->lock);
++
++	array->folios_count--;
++	array->folios[folio_index] = NULL;
++
++	if (array->last_folio == folio_index)
++		ssdfs_folio_array_define_last_folio(array, capacity);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folios_count %lu, last_folio %lu\n",
++		  array->folios_count, array->last_folio);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (is_clean)
++		atomic_set(&array->state, SSDFS_FOLIO_ARRAY_CREATED);
++
++finish_delete_folio:
++	up_write(&array->lock);
++
++	if (unlikely(err))
++		return ERR_PTR(err);
++
++	ssdfs_folio_put(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folio %p, count %d\n",
++		  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	ssdfs_farray_forget_folio(folio);
++
++	return folio;
++}
++
++/*
++ * ssdfs_folio_array_release_folios() - release folios in the range
++ * @array: folio array object
++ * @start: pointer on start index value [in|out]
++ * @end: ending index (inclusive)
++ *
++ * This method tries to release folios for the requested range.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
++				     unsigned long *start,
++				     unsigned long end)
++{
++	struct folio *folio;
++	struct ssdfs_folio_array_bitmap *alloc_bmap, *dirty_bmap;
++	int capacity;
++	unsigned long found, found_dirty;
++#ifdef CONFIG_SSDFS_DEBUG
++	unsigned long released = 0;
++	unsigned long allocated_folios = 0;
++	unsigned long dirty_folios = 0;
++#endif /* CONFIG_SSDFS_DEBUG */
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !start);
++
++	SSDFS_DBG("array %p, start %lu, end %lu, state %#x\n",
++		  array, *start, end,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	switch (atomic_read(&array->state)) {
++	case SSDFS_FOLIO_ARRAY_CREATED:
++	case SSDFS_FOLIO_ARRAY_DIRTY:
++		/* expected state */
++		break;
++
++	default:
++		SSDFS_WARN("unexpected state %#x of folio array\n",
++			   atomic_read(&array->state));
++		return -ERANGE;
++	}
++
++	if (*start > end) {
++		SSDFS_ERR("start %lu > end %lu\n",
++			  *start, end);
++		return -EINVAL;
++	}
++
++	down_write(&array->lock);
++
++	capacity = atomic_read(&array->folios_capacity);
++	if (capacity <= 0) {
++		err = -ERANGE;
++		SSDFS_ERR("invalid capacity %d\n", capacity);
++		goto finish_release_folios_range;
++	}
++
++	if (array->folios_count == 0) {
++		err = 0;
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("folios_count %lu\n",
++			  array->folios_count);
++#endif /* CONFIG_SSDFS_DEBUG */
++		goto finish_release_folios_range;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	released = array->folios_count;
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	alloc_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_ALLOC_BMAP];
++	if (!alloc_bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("allocation bitmap is empty\n");
++		goto finish_release_folios_range;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	spin_lock(&alloc_bmap->lock);
++	allocated_folios = bitmap_weight(alloc_bmap->ptr, capacity);
++	spin_unlock(&alloc_bmap->lock);
++	allocated_folios = capacity - allocated_folios;
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	dirty_bmap = &array->bmap[SSDFS_FOLIO_ARRAY_DIRTY_BMAP];
++	if (!dirty_bmap->ptr) {
++		err = -ERANGE;
++		SSDFS_WARN("dirty bitmap is empty\n");
++		goto finish_release_folios_range;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	spin_lock(&dirty_bmap->lock);
++	dirty_folios = bitmap_weight(dirty_bmap->ptr, capacity);
++	spin_unlock(&dirty_bmap->lock);
++	dirty_folios = capacity - dirty_folios;
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&alloc_bmap->lock);
++	found = bitmap_find_next_zero_area(alloc_bmap->ptr, capacity,
++					   *start, 1, 0);
++	spin_unlock(&alloc_bmap->lock);
++
++	end = min_t(int, capacity - 1, end);
++
++	*start = found;
++
++	while (found <= end) {
++		spin_lock(&dirty_bmap->lock);
++		found_dirty = bitmap_find_next_zero_area(dirty_bmap->ptr,
++							 capacity,
++						         found, 1, 0);
++		spin_unlock(&dirty_bmap->lock);
++
++		if (found == found_dirty) {
++			err = -ERANGE;
++			SSDFS_ERR("folio %lu is dirty\n",
++				  found);
++			goto finish_release_folios_range;
++		}
++
++		folio = array->folios[found];
++
++		if (folio) {
++			ssdfs_folio_lock(folio);
++			folio_clear_uptodate(folio);
++			ssdfs_clear_folio_private(folio, 0);
++			ssdfs_folio_unlock(folio);
++
++			ssdfs_folio_put(folio);
++
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("folio %p, count %d\n",
++				  folio, folio_ref_count(folio));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++			ssdfs_farray_free_folio(folio);
++			array->folios[found] = NULL;
++		}
++
++		spin_lock(&alloc_bmap->lock);
++		bitmap_set(alloc_bmap->ptr, found, 1);
++		spin_unlock(&alloc_bmap->lock);
++
++		array->folios_count--;
++
++		found++;
++
++		if (found >= capacity)
++			break;
++
++		spin_lock(&alloc_bmap->lock);
++		found = bitmap_find_next_zero_area(alloc_bmap->ptr,
++						   capacity,
++						   found, 1, 0);
++		spin_unlock(&alloc_bmap->lock);
++	};
++
++	ssdfs_folio_array_define_last_folio(array, capacity);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("folios_count %lu, last_folio %lu\n",
++		  array->folios_count, array->last_folio);
++
++	released -= array->folios_count;
++
++	SSDFS_DBG("released %lu, folios_count %lu, "
++		  "allocated_folios %lu, dirty_folios %lu\n",
++		  released, array->folios_count,
++		  allocated_folios, dirty_folios);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++finish_release_folios_range:
++	up_write(&array->lock);
++
++	return err;
++}
++
++/*
++ * ssdfs_folio_array_release_all_folios() - release all folios
++ * @array: folio array object
++ *
++ * This method tries to release all folios in the folio array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL     - invalid input.
++ * %-ERANGE     - internal error.
++ */
++int ssdfs_folio_array_release_all_folios(struct ssdfs_folio_array *array)
++{
++	int capacity;
++	unsigned long start = 0, end = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, state %#x\n",
++		  array,
++		  atomic_read(&array->state));
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	capacity = atomic_read(&array->folios_capacity);
++
++	if (capacity > 0)
++		end = capacity - 1;
++
++	return ssdfs_folio_array_release_folios(array, &start, end);
++}
+diff --git a/fs/ssdfs/folio_array.h b/fs/ssdfs/folio_array.h
+new file mode 100644
+index 000000000000..deabe1258484
+--- /dev/null
++++ b/fs/ssdfs/folio_array.h
+@@ -0,0 +1,126 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/folio_array.h - folio array object declarations.
++ *
++ * Copyright (c) 2014-2019 HGST, a Western Digital Company.
++ *              http://www.hgst.com/
++ * Copyright (c) 2014-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ *
++ * (C) Copyright 2014-2019, HGST, Inc., All rights reserved.
++ *
++ * Created by HGST, San Jose Research Center, Storage Architecture Group
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ * Acknowledgement: Cyril Guyot
++ *                  Zvonimir Bandic
++ */
++
++#ifndef _SSDFS_FOLIO_ARRAY_H
++#define _SSDFS_FOLIO_ARRAY_H
++
++/*
++ * struct ssdfs_folio_array_bitmap - bitmap of states
++ * @lock: bitmap lock
++ * @ptr: bitmap
++ */
++struct ssdfs_folio_array_bitmap {
++	spinlock_t lock;
++	unsigned long *ptr;
++};
++
++/*
++ * struct ssdfs_folio_array - array of memory folios
++ * @state: folio array's state
++ * @folios_capacity: maximum possible number of folios in array
++ * @lock: folio array's lock
++ * @folios: array of memory folios' pointers
++ * @folios_count: current number of allocated folios
++ * @last_folio: latest folio index
++ * @order: allocation order of a particular sized block of memory
++ * @folio_size: folio size in bytes
++ * @bmap_bytes: number of bytes in every bitmap
++ * bmap: array of bitmaps
++ */
++struct ssdfs_folio_array {
++	atomic_t state;
++	atomic_t folios_capacity;
++
++	struct rw_semaphore lock;
++	struct folio **folios;
++	unsigned long folios_count;
++#define SSDFS_FOLIO_ARRAY_INVALID_LAST_FOLIO	(ULONG_MAX)
++	unsigned long last_folio;
++	unsigned order;
++	size_t folio_size;
++	size_t bmap_bytes;
++
++#define SSDFS_FOLIO_ARRAY_ALLOC_BMAP		(0)
++#define SSDFS_FOLIO_ARRAY_DIRTY_BMAP		(1)
++#define SSDFS_FOLIO_ARRAY_BMAP_COUNT		(2)
++	struct ssdfs_folio_array_bitmap bmap[SSDFS_FOLIO_ARRAY_BMAP_COUNT];
++};
++
++/* Folio array states */
++enum {
++	SSDFS_FOLIO_ARRAY_UNKNOWN_STATE,
++	SSDFS_FOLIO_ARRAY_CREATED,
++	SSDFS_FOLIO_ARRAY_DIRTY,
++	SSDFS_FOLIO_ARRAY_STATE_MAX
++};
++
++/* Available tags */
++enum {
++	SSDFS_UNKNOWN_FOLIO_TAG,
++	SSDFS_DIRTY_FOLIO_TAG,
++	SSDFS_FOLIO_TAG_MAX
++};
++
++/*
++ * Folio array's API
++ */
++int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
++			     unsigned order,
++			     int capacity);
++void ssdfs_destroy_folio_array(struct ssdfs_folio_array *array);
++int ssdfs_reinit_folio_array(int capacity, struct ssdfs_folio_array *array);
++bool is_ssdfs_folio_array_empty(struct ssdfs_folio_array *array);
++unsigned long
++ssdfs_folio_array_get_last_folio_index(struct ssdfs_folio_array *array);
++int ssdfs_folio_array_add_folio(struct ssdfs_folio_array *array,
++				struct folio *folio,
++				unsigned long folio_index);
++struct folio *
++ssdfs_folio_array_allocate_folio_locked(struct ssdfs_folio_array *array,
++					unsigned long folio_index);
++struct folio *ssdfs_folio_array_get_folio_locked(struct ssdfs_folio_array *array,
++						 unsigned long folio_index);
++struct folio *ssdfs_folio_array_get_folio(struct ssdfs_folio_array *array,
++					  unsigned long folio_index);
++struct folio *ssdfs_folio_array_grab_folio(struct ssdfs_folio_array *array,
++					   unsigned long folio_index);
++int ssdfs_folio_array_set_folio_dirty(struct ssdfs_folio_array *array,
++					unsigned long folio_index);
++int ssdfs_folio_array_clear_dirty_folio(struct ssdfs_folio_array *array,
++					unsigned long folio_index);
++int ssdfs_folio_array_clear_dirty_range(struct ssdfs_folio_array *array,
++					unsigned long start,
++					unsigned long end);
++int ssdfs_folio_array_clear_all_dirty_folios(struct ssdfs_folio_array *array);
++int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
++				   unsigned long *start,
++				   unsigned long end,
++				   int tag, int max_folios,
++				   struct folio_batch *batch);
++struct folio *ssdfs_folio_array_delete_folio(struct ssdfs_folio_array *array,
++					     unsigned long folio_index);
++int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
++				     unsigned long *start,
++				     unsigned long end);
++int ssdfs_folio_array_release_all_folios(struct ssdfs_folio_array *array);
++
++#endif /* _SSDFS_FOLIO_ARRAY_H */
+diff --git a/fs/ssdfs/folio_vector.c b/fs/ssdfs/folio_vector.c
+new file mode 100644
+index 000000000000..439f3c334f7d
+--- /dev/null
++++ b/fs/ssdfs/folio_vector.c
+@@ -0,0 +1,445 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/folio_vector.c - folio vector implementation.
++ *
++ * Copyright (c) 2023-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ *
++ */
++
++#include <linux/pagemap.h>
++#include <linux/slab.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_folio_vector_folio_leaks;
++atomic64_t ssdfs_folio_vector_memory_leaks;
++atomic64_t ssdfs_folio_vector_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_folio_vector_cache_leaks_increment(void *kaddr)
++ * void ssdfs_folio_vector_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_folio_vector_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_folio_vector_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_folio_vector_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_folio_vector_kfree(void *kaddr)
++ * struct folio *ssdfs_folio_vector_alloc_folio(gfp_t gfp_mask,
++ *                                              unsigned int order)
++ * struct folio *ssdfs_folio_vector_add_batch_folio(struct folio_batch *batch,
++ *                                                  unsigned int order)
++ * void ssdfs_folio_vector_free_folio(struct folio *folio)
++ * void ssdfs_folio_vector_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(folio_vector)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(folio_vector)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_folio_vector_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_folio_vector_folio_leaks, 0);
++	atomic64_set(&ssdfs_folio_vector_memory_leaks, 0);
++	atomic64_set(&ssdfs_folio_vector_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_folio_vector_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_folio_vector_folio_leaks) != 0) {
++		SSDFS_ERR("FOLIO VECTOR: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_folio_vector_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_folio_vector_memory_leaks) != 0) {
++		SSDFS_ERR("FOLIO VECTOR: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_folio_vector_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_folio_vector_cache_leaks) != 0) {
++		SSDFS_ERR("FOLIO VECTOR: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_folio_vector_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++/*
++ * ssdfs_folio_vector_create() - create folio vector
++ * @array: pointer on folio vector
++ * @order: allocation order of a particular sized block of memory
++ * @capacity: max number of memory folios in vector
++ */
++int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
++			      unsigned order,
++			      u32 capacity)
++{
++	size_t size = sizeof(struct folio *);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->count = 0;
++	array->capacity = 0;
++	array->order = order;
++
++	size *= capacity;
++	array->folios = ssdfs_folio_vector_kzalloc(size, GFP_KERNEL);
++	if (!array->folios) {
++		SSDFS_ERR("fail to allocate memory: size %zu\n",
++			  size);
++		return -ENOMEM;
++	}
++
++	array->capacity = capacity;
++
++	return 0;
++}
++
++/*
++ * ssdfs_folio_vector_destroy() - destroy folio vector
++ * @array: pointer on folio vector
++ */
++void ssdfs_folio_vector_destroy(struct ssdfs_folio_vector *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	int i;
++
++	BUG_ON(!array);
++
++	if (array->count > 0) {
++		SSDFS_ERR("invalid state: count %u\n",
++			  array->count);
++	}
++
++	for (i = 0; i < array->capacity; i++) {
++		struct folio *folio = array->folios[i];
++
++		if (folio)
++			SSDFS_ERR("folio %d is not released\n", i);
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->count = 0;
++
++	if (array->folios) {
++#ifdef CONFIG_SSDFS_DEBUG
++		if (array->capacity == 0) {
++			SSDFS_ERR("invalid state: capacity %u\n",
++				  array->capacity);
++		}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		array->capacity = 0;
++		ssdfs_folio_vector_kfree(array->folios);
++		array->folios = NULL;
++	}
++}
++
++/*
++ * ssdfs_folio_vector_init() - init folio vector
++ * @array: pointer on folio vector
++ */
++int ssdfs_folio_vector_init(struct ssdfs_folio_vector *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	if (!array->folios) {
++		SSDFS_ERR("fail to init\n");
++		return -ERANGE;
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->count = 0;
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid state: capacity %u\n",
++			  array->capacity);
++		return -ERANGE;
++	} else {
++		memset(array->folios, 0,
++			sizeof(struct folio *) * array->capacity);
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_folio_vector_reinit() - reinit folio vector
++ * @array: pointer on folio vector
++ */
++int ssdfs_folio_vector_reinit(struct ssdfs_folio_vector *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	int i;
++
++	BUG_ON(!array);
++
++	if (!array->folios) {
++		SSDFS_ERR("fail to reinit\n");
++		return -ERANGE;
++	}
++
++	for (i = 0; i < array->capacity; i++) {
++		struct folio *folio = array->folios[i];
++
++		if (folio)
++			SSDFS_WARN("folio %d is not released\n", i);
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->count = 0;
++
++	if (array->capacity == 0) {
++		SSDFS_ERR("invalid state: capacity %u\n",
++			  array->capacity);
++		return -ERANGE;
++	} else {
++		memset(array->folios, 0,
++			sizeof(struct folio *) * array->capacity);
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_folio_vector_count() - count of folios in folio vector
++ * @array: pointer on folio vector
++ */
++u32 ssdfs_folio_vector_count(struct ssdfs_folio_vector *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return array->count;
++}
++
++/*
++ * ssdfs_folio_vector_space() - free space in folio vector
++ * @array: pointer on folio vector
++ */
++u32 ssdfs_folio_vector_space(struct ssdfs_folio_vector *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	if (array->count > array->capacity) {
++		SSDFS_ERR("count %u is bigger than max %u\n",
++			  array->count, array->capacity);
++		return 0;
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return array->capacity - array->count;
++}
++
++/*
++ * ssdfs_folio_vector_capacity() - capacity of folio vector
++ * @array: pointer on folio vector
++ */
++u32 ssdfs_folio_vector_capacity(struct ssdfs_folio_vector *array)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return array->capacity;
++}
++
++/*
++ * ssdfs_folio_vector_add() - add folio in folio vector
++ * @array: pointer on folio vector
++ * @folio: memory folio
++ */
++int ssdfs_folio_vector_add(struct ssdfs_folio_vector *array,
++			  struct folio *folio)
++{
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !folio);
++
++	if (array->count >= array->capacity) {
++		SSDFS_ERR("array is full: count %u\n",
++			  array->count);
++		return -ENOSPC;
++	}
++
++	if (!array->folios) {
++		SSDFS_ERR("fail to add folio: "
++			  "count %u, capacity %u\n",
++			  array->count, array->capacity);
++		return -ERANGE;
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	array->folios[array->count] = folio;
++	array->count++;
++
++	ssdfs_folio_vector_account_folio(folio);
++
++	return 0;
++}
++
++/*
++ * ssdfs_folio_vector_allocate() - allocate + add folio
++ * @array: pointer on folio vector
++ */
++struct folio *ssdfs_folio_vector_allocate(struct ssdfs_folio_vector *array)
++{
++	struct folio *folio;
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (ssdfs_folio_vector_space(array) == 0) {
++		SSDFS_ERR("folio vector hasn't space\n");
++		return ERR_PTR(-E2BIG);
++	}
++
++	folio = ssdfs_folio_vector_alloc_folio(GFP_KERNEL | __GFP_ZERO,
++						array->order);
++	if (IS_ERR_OR_NULL(folio)) {
++		err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
++		SSDFS_ERR("unable to allocate memory folio\n");
++		return ERR_PTR(err);
++	}
++
++	ssdfs_folio_get(folio);
++
++	/*
++	 * ssdfs_folio_vector_add() accounts folio
++	 */
++	ssdfs_folio_vector_forget_folio(folio);
++
++	err = ssdfs_folio_vector_add(array, folio);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to add folio: err %d\n",
++			  err);
++		ssdfs_folio_free(folio);
++		return ERR_PTR(err);
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("array %p, folio vector count %u\n",
++		  array->folios, ssdfs_folio_vector_count(array));
++	SSDFS_DBG("folio %p, count %d\n",
++		  folio, folio_ref_count(folio));
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_DBG("folio %p, allocated_folios %lld\n",
++		  folio, atomic64_read(&ssdfs_folio_vector_folio_leaks));
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return folio;
++}
++
++/*
++ * ssdfs_folio_vector_remove() - remove folio
++ * @array: pointer on folio vector
++ * @folio_index: index of the folio
++ */
++struct folio *ssdfs_folio_vector_remove(struct ssdfs_folio_vector *array,
++				      u32 folio_index)
++{
++	struct folio *folio;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (ssdfs_folio_vector_count(array) == 0) {
++		SSDFS_ERR("folio vector is empty\n");
++		return ERR_PTR(-ENODATA);
++	}
++
++	if (array->count > array->capacity) {
++		SSDFS_ERR("folio vector is corrupted: "
++			  "array->count %u, array->capacity %u\n",
++			  array->count, array->capacity);
++		return ERR_PTR(-ERANGE);
++	}
++
++	if (folio_index >= array->count) {
++		SSDFS_ERR("folio index is out of range: "
++			  "folio_index %u, array->count %u\n",
++			  folio_index, array->count);
++		return ERR_PTR(-ENOENT);
++	}
++
++	folio = array->folios[folio_index];
++
++	if (!folio) {
++		SSDFS_ERR("folio index is absent: "
++			  "folio_index %u, array->count %u\n",
++			  folio_index, array->count);
++		return ERR_PTR(-ENOENT);
++	}
++
++	ssdfs_folio_vector_forget_folio(folio);
++	array->folios[folio_index] = NULL;
++
++	return folio;
++}
++
++/*
++ * ssdfs_folio_vector_release() - release folios from folio vector
++ * @array: pointer on folio vector
++ */
++void ssdfs_folio_vector_release(struct ssdfs_folio_vector *array)
++{
++	struct folio *folio;
++	int i;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	if (!array->folios) {
++		SSDFS_ERR("fail to release: "
++			  "count %u, capacity %u\n",
++			  array->count, array->capacity);
++		return;
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	for (i = 0; i < ssdfs_folio_vector_count(array); i++) {
++		folio = array->folios[i];
++
++		if (!folio)
++			continue;
++
++		ssdfs_folio_put(folio);
++
++		ssdfs_folio_vector_free_folio(folio);
++		array->folios[i] = NULL;
++
++#ifdef CONFIG_SSDFS_DEBUG
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++		SSDFS_DBG("folio %p, allocated_folios %lld\n",
++			  folio,
++			  atomic64_read(&ssdfs_folio_vector_folio_leaks));
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++#endif /* CONFIG_SSDFS_DEBUG */
++	}
++
++	ssdfs_folio_vector_reinit(array);
++}
+diff --git a/fs/ssdfs/folio_vector.h b/fs/ssdfs/folio_vector.h
+new file mode 100644
+index 000000000000..3be5c447d34c
+--- /dev/null
++++ b/fs/ssdfs/folio_vector.h
+@@ -0,0 +1,64 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/folio_vector.h - folio vector's declarations.
++ *
++ * Copyright (c) 2023-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_FOLIO_VECTOR_H
++#define _SSDFS_FOLIO_VECTOR_H
++
++/*
++ * struct ssdfs_folio_vector - vector of memory folios
++ * @count: current number of folios in vector
++ * @capacity: max number of folios in vector
++ * @order: allocation order of a particular sized block of memory
++ * @folios: array of pointers on folios
++ */
++struct ssdfs_folio_vector {
++	u32 count;
++	u32 capacity;
++	unsigned order;
++	struct folio **folios;
++};
++
++/*
++ * Inline functions
++ */
++
++/*
++ * ssdfs_folio_vector_max_threshold() - maximum possible capacity
++ */
++static inline
++u32 ssdfs_folio_vector_max_threshold(void)
++{
++	return S32_MAX;
++}
++
++/*
++ * Folio vector's API
++ */
++int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
++			      unsigned order,
++			      u32 capacity);
++void ssdfs_folio_vector_destroy(struct ssdfs_folio_vector *array);
++int ssdfs_folio_vector_init(struct ssdfs_folio_vector *array);
++int ssdfs_folio_vector_reinit(struct ssdfs_folio_vector *array);
++u32 ssdfs_folio_vector_count(struct ssdfs_folio_vector *array);
++u32 ssdfs_folio_vector_space(struct ssdfs_folio_vector *array);
++u32 ssdfs_folio_vector_capacity(struct ssdfs_folio_vector *array);
++struct folio *ssdfs_folio_vector_allocate(struct ssdfs_folio_vector *array);
++int ssdfs_folio_vector_add(struct ssdfs_folio_vector *array,
++			   struct folio *folio);
++struct folio *ssdfs_folio_vector_remove(struct ssdfs_folio_vector *array,
++					u32 folio_index);
++void ssdfs_folio_vector_release(struct ssdfs_folio_vector *array);
++
++#endif /* _SSDFS_FOLIO_VECTOR_H */
+diff --git a/fs/ssdfs/sequence_array.c b/fs/ssdfs/sequence_array.c
+new file mode 100644
+index 000000000000..98cef1a76a3d
+--- /dev/null
++++ b/fs/ssdfs/sequence_array.c
+@@ -0,0 +1,1126 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/sequence_array.c - sequence array implementation.
++ *
++ * Copyright (c) 2019-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/pagevec.h>
++
++#include "peb_mapping_queue.h"
++#include "peb_mapping_table_cache.h"
++#include "folio_vector.h"
++#include "ssdfs.h"
++#include "sequence_array.h"
++
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++atomic64_t ssdfs_seq_arr_folio_leaks;
++atomic64_t ssdfs_seq_arr_memory_leaks;
++atomic64_t ssdfs_seq_arr_cache_leaks;
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++/*
++ * void ssdfs_seq_arr_cache_leaks_increment(void *kaddr)
++ * void ssdfs_seq_arr_cache_leaks_decrement(void *kaddr)
++ * void *ssdfs_seq_arr_kmalloc(size_t size, gfp_t flags)
++ * void *ssdfs_seq_arr_kzalloc(size_t size, gfp_t flags)
++ * void *ssdfs_seq_arr_kcalloc(size_t n, size_t size, gfp_t flags)
++ * void ssdfs_seq_arr_kfree(void *kaddr)
++ * struct folio *ssdfs_seq_arr_alloc_folio(gfp_t gfp_mask,
++ *                                         unsigned int order)
++ * struct folio *ssdfs_seq_arr_add_batch_folio(struct folio_batch *batch,
++ *                                             unsigned int order)
++ * void ssdfs_seq_arr_free_folio(struct folio *folio)
++ * void ssdfs_seq_arr_folio_batch_release(struct folio_batch *batch)
++ */
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	SSDFS_MEMORY_LEAKS_CHECKER_FNS(seq_arr)
++#else
++	SSDFS_MEMORY_ALLOCATOR_FNS(seq_arr)
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++
++void ssdfs_seq_arr_memory_leaks_init(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	atomic64_set(&ssdfs_seq_arr_folio_leaks, 0);
++	atomic64_set(&ssdfs_seq_arr_memory_leaks, 0);
++	atomic64_set(&ssdfs_seq_arr_cache_leaks, 0);
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++void ssdfs_seq_arr_check_memory_leaks(void)
++{
++#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
++	if (atomic64_read(&ssdfs_seq_arr_folio_leaks) != 0) {
++		SSDFS_ERR("SEQUENCE ARRAY: "
++			  "memory leaks include %lld folios\n",
++			  atomic64_read(&ssdfs_seq_arr_folio_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_seq_arr_memory_leaks) != 0) {
++		SSDFS_ERR("SEQUENCE ARRAY: "
++			  "memory allocator suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_seq_arr_memory_leaks));
++	}
++
++	if (atomic64_read(&ssdfs_seq_arr_cache_leaks) != 0) {
++		SSDFS_ERR("SEQUENCE ARRAY: "
++			  "caches suffers from %lld leaks\n",
++			  atomic64_read(&ssdfs_seq_arr_cache_leaks));
++	}
++#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
++}
++
++/*
++ * ssdfs_create_sequence_array() - create sequence array
++ * @revert_threshold: threshold of rollbacking to zero
++ *
++ * This method tries to allocate memory and to create
++ * the sequence array.
++ *
++ * RETURN:
++ * [success] - pointer on created sequence array
++ * [failure] - error code:
++ *
++ * %-EINVAL  - invalid input.
++ * %-ENOMEM  - fail to allocate memory.
++ */
++struct ssdfs_sequence_array *
++ssdfs_create_sequence_array(unsigned long revert_threshold)
++{
++	struct ssdfs_sequence_array *ptr;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("revert_threshold %lu\n", revert_threshold);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (revert_threshold == 0) {
++		SSDFS_ERR("invalid revert_threshold %lu\n",
++			  revert_threshold);
++		return ERR_PTR(-EINVAL);
++	}
++
++	ptr = ssdfs_seq_arr_kmalloc(sizeof(struct ssdfs_sequence_array),
++				    GFP_KERNEL);
++	if (!ptr) {
++		SSDFS_ERR("fail to allocate memory\n");
++		return ERR_PTR(-ENOMEM);
++	}
++
++	ptr->revert_threshold = revert_threshold;
++	spin_lock_init(&ptr->lock);
++	ptr->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
++	INIT_RADIX_TREE(&ptr->map, GFP_ATOMIC);
++
++	return ptr;
++}
++
++/*
++ * ssdfs_destroy_sequence_array() - destroy sequence array
++ * @array: pointer on sequence array object
++ * @free_item: pointer on function that can free item
++ *
++ * This method tries to delete all items from the radix tree,
++ * to free memory of every item and to free the memory of
++ * sequence array itself.
++ */
++void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
++				  ssdfs_free_item free_item)
++{
++	struct radix_tree_iter iter;
++	void __rcu **slot;
++	void *item_ptr;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !free_item);
++
++	SSDFS_DBG("array %p\n", array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	rcu_read_lock();
++	spin_lock(&array->lock);
++	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
++		item_ptr = rcu_dereference_raw(*slot);
++
++		spin_unlock(&array->lock);
++		rcu_read_unlock();
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("index %llu, ptr %p\n",
++			  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		if (!item_ptr) {
++			SSDFS_WARN("empty node pointer: "
++				   "index %llu\n",
++				   (u64)iter.index);
++		} else {
++			free_item(item_ptr);
++		}
++
++		rcu_read_lock();
++		spin_lock(&array->lock);
++
++		radix_tree_iter_delete(&array->map, &iter, slot);
++	}
++	array->last_allocated_id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
++	spin_unlock(&array->lock);
++	rcu_read_unlock();
++
++	ssdfs_seq_arr_kfree(array);
++}
++
++/*
++ * ssdfs_sequence_array_init_item() - initialize the array by item
++ * @array: pointer on sequence array object
++ * @id: ID of inserting item
++ * @item: pointer on inserting item
++ *
++ * This method tries to initialize the array by item.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-EINVAL  - invalid input.
++ */
++int ssdfs_sequence_array_init_item(struct ssdfs_sequence_array *array,
++				   unsigned long id, void *item)
++{
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !item);
++
++	SSDFS_DBG("array %p, id %lu, item %p\n",
++		  array, id, item);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (id > array->revert_threshold) {
++		SSDFS_ERR("invalid input: "
++			  "id %lu, revert_threshold %lu\n",
++			  id, array->revert_threshold);
++		return -EINVAL;
++	}
++
++	err = radix_tree_preload(GFP_NOFS);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to preload radix tree: err %d\n",
++			  err);
++		return err;
++	}
++
++	spin_lock(&array->lock);
++	err = radix_tree_insert(&array->map, id, item);
++	spin_unlock(&array->lock);
++
++	radix_tree_preload_end();
++
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to add item into radix tree: "
++			  "id %llu, item %p, err %d\n",
++			  (u64)id, item, err);
++		return err;
++	}
++
++	spin_lock(&array->lock);
++	if (array->last_allocated_id == SSDFS_SEQUENCE_ARRAY_INVALID_ID)
++		array->last_allocated_id = id;
++	spin_unlock(&array->lock);
++
++	return 0;
++}
++
++/*
++ * ssdfs_sequence_array_add_item() - add new item into array
++ * @array: pointer on sequence array object
++ * @item: pointer on adding item
++ * @id: pointer on ID value [out]
++ *
++ * This method tries to add a new item into the array.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ */
++int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
++				  void *item, unsigned long *id)
++{
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !item || !id);
++
++	SSDFS_DBG("array %p, item %p, id %p\n",
++		  array, item, id);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	*id = SSDFS_SEQUENCE_ARRAY_INVALID_ID;
++
++	err = radix_tree_preload(GFP_NOFS);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to preload radix tree: err %d\n",
++			  err);
++		return err;
++	}
++
++	spin_lock(&array->lock);
++
++	if (array->last_allocated_id == SSDFS_SEQUENCE_ARRAY_INVALID_ID) {
++		*id = 0;
++		array->last_allocated_id = 0;
++	} else {
++		if ((array->last_allocated_id + 1) > array->revert_threshold) {
++			*id = 0;
++			array->last_allocated_id = 0;
++		} else {
++			array->last_allocated_id++;
++			*id = array->last_allocated_id;
++		}
++	}
++
++	if (*id > array->revert_threshold) {
++		err = -ERANGE;
++		goto finish_add_item;
++	}
++
++	err = radix_tree_insert(&array->map, *id, item);
++	if (!err) {
++		radix_tree_tag_set(&array->map, *id,
++				   SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
++	}
++
++finish_add_item:
++	spin_unlock(&array->lock);
++
++	radix_tree_preload_end();
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("id %lu\n", *id);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to add item into radix tree: "
++			  "id %llu, last_allocated_id %lu, "
++			  "item %p, err %d\n",
++			  (u64)*id, array->last_allocated_id,
++			  item, err);
++		return err;
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_sequence_array_get_item() - retrieve item from array
++ * @array: pointer on sequence array object
++ * @id: ID value
++ *
++ * This method tries to retrieve the pointer on an item
++ * with @id value.
++ *
++ * RETURN:
++ * [success] - pointer on existing item.
++ * [failure] - error code:
++ *
++ * %-ENOENT  - item is absent.
++ */
++void *ssdfs_sequence_array_get_item(struct ssdfs_sequence_array *array,
++				    unsigned long id)
++{
++	void *item_ptr;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, id %lu\n",
++		  array, id);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	spin_lock(&array->lock);
++	item_ptr = radix_tree_lookup(&array->map, id);
++	spin_unlock(&array->lock);
++
++	if (!item_ptr) {
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("unable to find the item: id %llu\n",
++			  (u64)id);
++#endif /* CONFIG_SSDFS_DEBUG */
++		return ERR_PTR(-ENOENT);
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("item_ptr %p\n", item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return item_ptr;
++}
++
++/*
++ * ssdfs_sequence_array_delete_item() - delete item
++ * @array: pointer on sequence array object
++ * @id: ID value
++ * @free_item: pointer on function that can free item
++ *
++ * This method tries to delete item and free item.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ENOENT  - item is absent.
++ */
++int ssdfs_sequence_array_delete_item(struct ssdfs_sequence_array *array,
++					unsigned long id,
++					ssdfs_free_item free_item)
++{
++	void *item_ptr;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !free_item);
++
++	SSDFS_DBG("array %p, id %lu\n",
++		  array, id);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	rcu_read_lock();
++	spin_lock(&array->lock);
++	item_ptr = radix_tree_delete(&array->map, id);
++	spin_unlock(&array->lock);
++	rcu_read_unlock();
++
++	if (!item_ptr) {
++		err = -ENOENT;
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("empty pointer: "
++			  "index %llu\n",
++			  (u64)id);
++#endif /* CONFIG_SSDFS_DEBUG */
++	} else {
++		free_item(item_ptr);
++	}
++
++	return err;
++}
++
++/*
++ * ssdfs_sequence_array_search() - apply search action for sequence
++ * @array: pointer on sequence array object
++ * @search_action: pointer on method that needs to be applied
++ * @free_item: pointer on function that can free item
++ * @search_condition: condition for checking in search
++ *
++ * This method tries to apply search action on the sequence.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ * %-ENOENT  - nothing has been found.
++ */
++int ssdfs_sequence_array_search(struct ssdfs_sequence_array *array,
++				ssdfs_search_action search_action,
++				ssdfs_free_item free_item,
++				void *search_condition)
++{
++	struct radix_tree_iter iter;
++	void __rcu **slot;
++	void *item_ptr;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !search_action || !search_condition);
++
++	SSDFS_DBG("array %p\n", array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	rcu_read_lock();
++
++	spin_lock(&array->lock);
++	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
++		item_ptr = radix_tree_deref_slot(slot);
++		if (unlikely(!item_ptr)) {
++			SSDFS_WARN("empty item ptr: id %llu\n",
++				   (u64)iter.index);
++			continue;
++		}
++		spin_unlock(&array->lock);
++
++		rcu_read_unlock();
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("id %llu, item_ptr %p\n",
++			  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		err = search_action(item_ptr, iter.index, search_condition);
++		if (err == -EFAULT) {
++			err = ssdfs_sequence_array_delete_item(array,
++								iter.index,
++								free_item);
++			if (unlikely(err)) {
++				SSDFS_ERR("fail to free item: "
++					  "id %llu, err %d\n",
++					  (u64)iter.index,
++					  err);
++				goto finish_search;
++			}
++		} else if (err == -EEXIST) {
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("found: id %llu, item_ptr %p\n",
++				  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++			goto finish_search;
++		} else if (err == -ENODATA) {
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("stop search: id %llu, item_ptr %p\n",
++				  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++			goto finish_search;
++		} else if (unlikely(err)) {
++			SSDFS_ERR("fail to apply action: "
++				  "id %llu, err %d\n",
++				  (u64)iter.index,  err);
++			goto finish_search;
++		}
++
++		rcu_read_lock();
++
++		spin_lock(&array->lock);
++	}
++	spin_unlock(&array->lock);
++
++	rcu_read_unlock();
++
++finish_search:
++	if (err == -EEXIST)
++		err = 0;
++	else if (err == -ENODATA) {
++		err = -ENOENT;
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("nothing has been found\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++	} else if (unlikely(err)) {
++		SSDFS_ERR("fail to apply action for all items: "
++			  "err %d\n", err);
++		return err;
++	} else {
++		err = -ENOENT;
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("nothing has been found\n");
++#endif /* CONFIG_SSDFS_DEBUG */
++	}
++
++	return err;
++}
++
++/*
++ * ssdfs_sequence_array_pre_delete_all() - apply pre-delete action for sequence
++ * @array: pointer on sequence array object
++ * @pre_delete: pointer on method that needs to be applied
++ * @peb_id: PEB ID for pre-deletion action
++ *
++ * This method tries to apply pre-delete action on the sequence.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ */
++int ssdfs_sequence_array_pre_delete_all(struct ssdfs_sequence_array *array,
++					ssdfs_pre_delete_action pre_delete,
++					u64 peb_id)
++{
++	struct radix_tree_iter iter;
++	void __rcu **slot;
++	void *item_ptr;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !pre_delete);
++
++	SSDFS_DBG("array %p, peb_id %llu\n",
++		  array, peb_id);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	rcu_read_lock();
++
++	spin_lock(&array->lock);
++	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
++		item_ptr = radix_tree_deref_slot(slot);
++		if (unlikely(!item_ptr)) {
++			SSDFS_WARN("empty item ptr: id %llu\n",
++				   (u64)iter.index);
++			continue;
++		}
++		spin_unlock(&array->lock);
++
++		rcu_read_unlock();
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("id %llu, item_ptr %p\n",
++			  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		err = pre_delete(item_ptr, peb_id);
++		if (err == -ENODATA) {
++			err = 0;
++#ifdef CONFIG_SSDFS_DEBUG
++			SSDFS_DBG("stop pre_delete: id %llu, item_ptr %p\n",
++				  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++			goto finish_pre_delete;
++		} else if (unlikely(err)) {
++			SSDFS_ERR("fail to apply action: "
++				  "id %llu, err %d\n",
++				  (u64)iter.index,  err);
++			goto finish_pre_delete;
++		}
++
++		rcu_read_lock();
++
++		spin_lock(&array->lock);
++	}
++	spin_unlock(&array->lock);
++
++	rcu_read_unlock();
++
++finish_pre_delete:
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to apply action for all items: "
++			  "err %d\n", err);
++		return err;
++	}
++
++	return err;
++}
++
++/*
++ * ssdfs_sequence_array_apply_for_all() - apply action for all items
++ * @array: pointer on sequence array object
++ * @apply_action: pointer on method that needs to be applied
++ *
++ * This method tries to apply some action on all items.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ */
++int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
++					ssdfs_apply_action apply_action)
++{
++	struct radix_tree_iter iter;
++	void __rcu **slot;
++	void *item_ptr;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !apply_action);
++
++	SSDFS_DBG("array %p\n", array);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	rcu_read_lock();
++
++	spin_lock(&array->lock);
++	radix_tree_for_each_slot(slot, &array->map, &iter, 0) {
++		item_ptr = radix_tree_deref_slot(slot);
++		if (unlikely(!item_ptr)) {
++			SSDFS_WARN("empty item ptr: id %llu\n",
++				   (u64)iter.index);
++			continue;
++		}
++		spin_unlock(&array->lock);
++
++		rcu_read_unlock();
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("id %llu, item_ptr %p\n",
++			  (u64)iter.index, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		err = apply_action(item_ptr);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to apply action: "
++				  "id %llu, err %d\n",
++				  (u64)iter.index,  err);
++			goto finish_apply_to_all;
++		}
++
++		rcu_read_lock();
++
++		spin_lock(&array->lock);
++	}
++	spin_unlock(&array->lock);
++
++	rcu_read_unlock();
++
++finish_apply_to_all:
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to apply action for all items: "
++			  "err %d\n", err);
++		return err;
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_sequence_array_change_state() - change item's state
++ * @array: pointer on sequence array object
++ * @id: ID value
++ * @old_tag: old tag value
++ * @new_tag: new tag value
++ * @change_state: pointer on method of changing item's state
++ * @old_state: old item's state value
++ * @new_state: new item's state value
++ *
++ * This method tries to change an item's state.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ * %-ENOENT  - item is absent.
++ */
++int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
++					unsigned long id,
++					int old_tag, int new_tag,
++					ssdfs_change_item_state change_state,
++					int old_state, int new_state)
++{
++	void *item_ptr = NULL;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array || !change_state);
++
++	SSDFS_DBG("array %p, id %lu, "
++		  "old_tag %#x, new_tag %#x, "
++		  "old_state %#x, new_state %#x\n",
++		  array, id, old_tag, new_tag,
++		  old_state, new_state);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (old_tag > SSDFS_SEQUENCE_MAX_TAGS ||
++	    old_tag < SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++		SSDFS_ERR("invalid tag: old_tag %#x\n",
++			  old_tag);
++		return -EINVAL;
++	}
++
++	if (new_tag > SSDFS_SEQUENCE_MAX_TAGS ||
++	    new_tag < SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++		SSDFS_ERR("invalid tag: new_tag %#x\n",
++			  new_tag);
++		return -EINVAL;
++	}
++
++	rcu_read_lock();
++
++	spin_lock(&array->lock);
++	item_ptr = radix_tree_lookup(&array->map, id);
++	if (!item_ptr)
++		err = -ENOENT;
++	spin_unlock(&array->lock);
++
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to find item id %llu\n",
++			  (u64)id);
++		goto finish_change_state;
++	}
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("id %llu, item_ptr %p\n",
++		  (u64)id, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	err = change_state(item_ptr, old_state, new_state);
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to change state: "
++			  "id %llu, old_state %#x, "
++			  "new_state %#x, err %d\n",
++			  (u64)id, old_state, new_state, err);
++		goto finish_change_state;
++	}
++
++	spin_lock(&array->lock);
++	if (old_tag >= SSDFS_SEQUENCE_MAX_TAGS) {
++		if (new_tag == SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++			radix_tree_tag_set(&array->map, id,
++					SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
++		} else {
++			radix_tree_tag_clear(&array->map, id,
++					SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
++		}
++	} else if (new_tag >= SSDFS_SEQUENCE_MAX_TAGS) {
++		radix_tree_tag_clear(&array->map, id,
++					SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
++	} else {
++		radix_tree_tag_set(&array->map, id,
++					SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
++	}
++	spin_unlock(&array->lock);
++
++finish_change_state:
++	rcu_read_unlock();
++
++	return err;
++}
++
++/*
++ * ssdfs_sequence_array_change_all_tagged_states() - change state of tagged items
++ * @array: pointer on sequence array object
++ * @new_tag: new tag value
++ * @change_state: pointer on method of changing item's state
++ * @old_state: old item's state value
++ * @new_state: new item's state value
++ * @found_items: pointer on count of found items [out]
++ *
++ * This method tries to change the state of all tagged items.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ */
++static int
++ssdfs_sequence_array_change_all_tagged_states(struct ssdfs_sequence_array *ptr,
++					   int new_tag,
++					   ssdfs_change_item_state change_state,
++					   int old_state, int new_state,
++					   unsigned long *found_items)
++{
++	struct radix_tree_iter iter;
++	void __rcu **slot;
++	void *item_ptr;
++	int tag = SSDFS_SEQUENCE_ITEM_DIRTY_TAG;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ptr || !change_state || !found_items);
++
++	SSDFS_DBG("array %p, new_tag %#x, "
++		  "old_state %#x, new_state %#x\n",
++		  ptr, new_tag, old_state, new_state);
++
++	if (new_tag > SSDFS_SEQUENCE_MAX_TAGS ||
++	    new_tag < SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++		SSDFS_ERR("invalid tag: new_tag %#x\n",
++			  new_tag);
++		return -EINVAL;
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	*found_items = 0;
++
++	rcu_read_lock();
++
++	spin_lock(&ptr->lock);
++	radix_tree_for_each_tagged(slot, &ptr->map, &iter, 0, tag) {
++		item_ptr = radix_tree_deref_slot(slot);
++		if (unlikely(!item_ptr)) {
++			SSDFS_WARN("empty item ptr: id %llu\n",
++				   (u64)iter.index);
++			radix_tree_tag_clear(&ptr->map, iter.index, tag);
++			continue;
++		}
++		spin_unlock(&ptr->lock);
++
++		rcu_read_unlock();
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("index %llu, next_index %llu, "
++			  "tags %#lx, item_ptr %p\n",
++			  (u64)iter.index, (u64)iter.next_index,
++			  iter.tags, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		err = change_state(item_ptr, old_state, new_state);
++		if (err == -ENOENT) {
++			SSDFS_DBG("unable to change state: "
++				  "id %llu, old_state %#x, "
++				  "new_state %#x\n",
++				  (u64)iter.index, old_state,
++				  new_state);
++		} else if (unlikely(err)) {
++			SSDFS_ERR("fail to change state: "
++				  "id %llu, old_state %#x, "
++				  "new_state %#x, err %d\n",
++				  (u64)iter.index, old_state,
++				  new_state, err);
++			goto finish_change_all_states;
++		} else
++			(*found_items)++;
++
++		rcu_read_lock();
++
++		spin_lock(&ptr->lock);
++
++		if (err == -ENOENT) {
++			err = 0;
++			continue;
++		}
++
++		if (new_tag >= SSDFS_SEQUENCE_MAX_TAGS)
++			radix_tree_tag_clear(&ptr->map, iter.index, tag);
++		else
++			radix_tree_tag_set(&ptr->map, iter.index, tag);
++	}
++	spin_unlock(&ptr->lock);
++
++	rcu_read_unlock();
++
++finish_change_all_states:
++	if (*found_items == 0) {
++		SSDFS_DBG("unable to change all items' state: "
++			  "found_items %lu\n",
++			  *found_items);
++	} else if (unlikely(err)) {
++		SSDFS_ERR("fail to change all items' state\n");
++		return err;
++	} else {
++		SSDFS_DBG("found_items %lu\n",
++			  *found_items);
++	}
++
++	return 0;
++}
++
++/*
++ * __ssdfs_sequence_array_change_all_states() - change state of all items
++ * @array: pointer on sequence array object
++ * @new_tag: new tag value
++ * @change_state: pointer on method of changing item's state
++ * @old_state: old item's state value
++ * @new_state: new item's state value
++ * @found_items: pointer on count of found items [out]
++ *
++ * This method tries to change the state of all items.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ */
++static
++int __ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
++					   int new_tag,
++					   ssdfs_change_item_state change_state,
++					   int old_state, int new_state,
++					   unsigned long *found_items)
++{
++	struct radix_tree_iter iter;
++	void __rcu **slot;
++	void *item_ptr;
++	int tag = SSDFS_SEQUENCE_ITEM_DIRTY_TAG;
++	int err = 0;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ptr || !change_state || !found_items);
++
++	SSDFS_DBG("array %p, new_tag %#x, "
++		  "old_state %#x, new_state %#x\n",
++		  ptr, new_tag, old_state, new_state);
++
++	if (new_tag > SSDFS_SEQUENCE_MAX_TAGS ||
++	    new_tag < SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++		SSDFS_ERR("invalid tag: new_tag %#x\n",
++			  new_tag);
++		return -EINVAL;
++	}
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	*found_items = 0;
++
++	rcu_read_lock();
++
++	spin_lock(&ptr->lock);
++	radix_tree_for_each_slot(slot, &ptr->map, &iter, 0) {
++		item_ptr = radix_tree_deref_slot(slot);
++		if (unlikely(!item_ptr)) {
++			SSDFS_WARN("empty item ptr: id %llu\n",
++				   (u64)iter.index);
++			radix_tree_tag_clear(&ptr->map, iter.index, tag);
++			continue;
++		}
++		spin_unlock(&ptr->lock);
++
++		rcu_read_unlock();
++
++#ifdef CONFIG_SSDFS_DEBUG
++		SSDFS_DBG("index %llu, next_index %llu, "
++			  "tags %#lx, item_ptr %p\n",
++			  (u64)iter.index, (u64)iter.next_index,
++			  iter.tags, item_ptr);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++		err = change_state(item_ptr, old_state, new_state);
++		if (unlikely(err)) {
++			SSDFS_ERR("fail to change state: "
++				  "id %llu, old_state %#x, "
++				  "new_state %#x, err %d\n",
++				  (u64)iter.index, old_state,
++				  new_state, err);
++			goto finish_change_all_states;
++		}
++
++		(*found_items)++;
++
++		rcu_read_lock();
++
++		spin_lock(&ptr->lock);
++		if (new_tag >= SSDFS_SEQUENCE_MAX_TAGS)
++			radix_tree_tag_clear(&ptr->map, iter.index, tag);
++		else
++			radix_tree_tag_set(&ptr->map, iter.index, tag);
++	}
++	spin_unlock(&ptr->lock);
++
++	rcu_read_unlock();
++
++finish_change_all_states:
++	if (*found_items == 0) {
++		SSDFS_DBG("unable to change all items' state: "
++			  "found_items %lu\n",
++			  *found_items);
++	} else if (unlikely(err)) {
++		SSDFS_ERR("fail to change all items' state\n");
++		return err;
++	} else {
++		SSDFS_DBG("found_items %lu\n",
++			  *found_items);
++	}
++
++	return 0;
++}
++
++/*
++ * ssdfs_sequence_array_change_all_states() - change state of all tagged items
++ * @array: pointer on sequence array object
++ * @old_tag: old tag value
++ * @new_tag: new tag value
++ * @change_state: pointer on method of changing item's state
++ * @old_state: old item's state value
++ * @new_state: new item's state value
++ * @found_items: pointer on count of found items [out]
++ *
++ * This method tries to change the state of all tagged items.
++ *
++ * RETURN:
++ * [success]
++ * [failure] - error code:
++ *
++ * %-ERANGE  - internal error.
++ */
++int ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
++					   int old_tag, int new_tag,
++					   ssdfs_change_item_state change_state,
++					   int old_state, int new_state,
++					   unsigned long *found_items)
++{
++	int err;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!ptr || !change_state || !found_items);
++
++	SSDFS_DBG("array %p, "
++		  "old_tag %#x, new_tag %#x, "
++		  "old_state %#x, new_state %#x\n",
++		  ptr, old_tag, new_tag,
++		  old_state, new_state);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (old_tag > SSDFS_SEQUENCE_MAX_TAGS ||
++	    old_tag < SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++		SSDFS_ERR("invalid tag: old_tag %#x\n",
++			  old_tag);
++		return -EINVAL;
++	}
++
++	if (new_tag > SSDFS_SEQUENCE_MAX_TAGS ||
++	    new_tag < SSDFS_SEQUENCE_ITEM_DIRTY_TAG) {
++		SSDFS_ERR("invalid tag: new_tag %#x\n",
++			  new_tag);
++		return -EINVAL;
++	}
++
++	if (old_tag >= SSDFS_SEQUENCE_MAX_TAGS) {
++		err = __ssdfs_sequence_array_change_all_states(ptr,
++								new_tag,
++								change_state,
++								old_state,
++								new_state,
++								found_items);
++	} else {
++		err = ssdfs_sequence_array_change_all_tagged_states(ptr,
++								    new_tag,
++								    change_state,
++								    old_state,
++								    new_state,
++								    found_items);
++	}
++
++	if (unlikely(err)) {
++		SSDFS_ERR("fail to change all states: "
++			  "old_tag %#x, new_tag %#x, err %d\n",
++			  old_tag, new_tag, err);
++		return err;
++	}
++
++	return 0;
++}
++
++/*
++ * has_ssdfs_sequence_array_state() - check that any item is tagged
++ * @array: pointer on sequence array object
++ * @tag: checking tag
++ *
++ * This method tries to check that any item is tagged.
++ */
++bool has_ssdfs_sequence_array_state(struct ssdfs_sequence_array *array,
++				    int tag)
++{
++	bool res;
++
++#ifdef CONFIG_SSDFS_DEBUG
++	BUG_ON(!array);
++
++	SSDFS_DBG("array %p, tag %#x\n", array, tag);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	if (tag >= SSDFS_SEQUENCE_MAX_TAGS) {
++		SSDFS_ERR("invalid tag %#x\n", tag);
++		return false;
++	}
++
++	spin_lock(&array->lock);
++	res = radix_tree_tagged(&array->map, tag);
++	spin_unlock(&array->lock);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("res %#x\n", res);
++#endif /* CONFIG_SSDFS_DEBUG */
++
++	return res;
++}
+diff --git a/fs/ssdfs/sequence_array.h b/fs/ssdfs/sequence_array.h
+new file mode 100644
+index 000000000000..2ec09d7a2496
+--- /dev/null
++++ b/fs/ssdfs/sequence_array.h
+@@ -0,0 +1,140 @@
++/*
++ * SPDX-License-Identifier: BSD-3-Clause-Clear
++ *
++ * SSDFS -- SSD-oriented File System.
++ *
++ * fs/ssdfs/sequence_array.h - sequence array's declarations.
++ *
++ * Copyright (c) 2019-2024 Viacheslav Dubeyko <slava@dubeyko.com>
++ *              http://www.ssdfs.org/
++ * All rights reserved.
++ *
++ * Authors: Viacheslav Dubeyko <slava@dubeyko.com>
++ */
++
++#ifndef _SSDFS_SEQUENCE_ARRAY_H
++#define _SSDFS_SEQUENCE_ARRAY_H
++
++#define SSDFS_SEQUENCE_ARRAY_INVALID_ID		ULONG_MAX
++
++/*
++ * Number of tags cannot be bigger than RADIX_TREE_MAX_TAGS
++ */
++#define SSDFS_SEQUENCE_ITEM_DIRTY_TAG		XA_MARK_0
++#define SSDFS_SEQUENCE_MAX_TAGS			RADIX_TREE_MAX_TAGS
++
++/*
++ * struct ssdfs_sequence_array - sequence of pointers on items
++ * @revert_threshold: threshold of reverting the ID numbers' sequence
++ * @lock: exclusive lock
++ * @last_allocated_id: the latest ID was allocated
++ * @map: pointers' radix tree
++ *
++ * The sequence array is specialized structure that has goal
++ * to provide access to items via pointers on the basis of
++ * ID numbers. It means that every item has dedicated ID but
++ * sequence array could contain only some portion of existing
++ * items. Initialization phase has goal to add some limited
++ * number of existing items into the sequence array.
++ * The ID number could be reverted from some maximum number
++ * (threshold) to zero value.
++ */
++struct ssdfs_sequence_array {
++	unsigned long revert_threshold;
++
++	spinlock_t lock;
++	unsigned long last_allocated_id;
++	struct radix_tree_root map;
++};
++
++/* function prototype */
++typedef void (*ssdfs_free_item)(void *item);
++typedef int (*ssdfs_apply_action)(void *item);
++typedef int (*ssdfs_change_item_state)(void *item,
++					int old_state,
++					int new_state);
++typedef int (*ssdfs_search_action)(void *item,
++				   unsigned long id,
++				   void *search_condition);
++typedef int (*ssdfs_pre_delete_action)(void *item,
++					u64 peb_id);
++
++/*
++ * Inline functions
++ */
++static inline
++bool is_ssdfs_sequence_array_last_id_invalid(struct ssdfs_sequence_array *ptr)
++{
++	bool is_invalid = false;
++
++	spin_lock(&ptr->lock);
++	is_invalid = ptr->last_allocated_id == SSDFS_SEQUENCE_ARRAY_INVALID_ID;
++	spin_unlock(&ptr->lock);
++
++	return is_invalid;
++}
++
++static inline
++unsigned long ssdfs_sequence_array_last_id(struct ssdfs_sequence_array *array)
++{
++	unsigned long last_id = ULONG_MAX;
++
++	spin_lock(&array->lock);
++	last_id = array->last_allocated_id;
++	spin_unlock(&array->lock);
++
++	return last_id;
++}
++
++static inline
++void ssdfs_sequence_array_set_last_id(struct ssdfs_sequence_array *array,
++				      unsigned long id)
++{
++	spin_lock(&array->lock);
++	array->last_allocated_id = id;
++	spin_unlock(&array->lock);
++
++#ifdef CONFIG_SSDFS_DEBUG
++	SSDFS_DBG("set last id %lu\n", id);
++#endif /* CONFIG_SSDFS_DEBUG */
++}
++
++/*
++ * Sequence array API
++ */
++struct ssdfs_sequence_array *
++ssdfs_create_sequence_array(unsigned long revert_threshold);
++void ssdfs_destroy_sequence_array(struct ssdfs_sequence_array *array,
++				  ssdfs_free_item free_item);
++int ssdfs_sequence_array_init_item(struct ssdfs_sequence_array *array,
++				   unsigned long id, void *item);
++int ssdfs_sequence_array_add_item(struct ssdfs_sequence_array *array,
++				  void *item, unsigned long *id);
++int ssdfs_sequence_array_delete_item(struct ssdfs_sequence_array *array,
++					unsigned long id,
++					ssdfs_free_item free_item);
++void *ssdfs_sequence_array_get_item(struct ssdfs_sequence_array *array,
++				    unsigned long id);
++int ssdfs_sequence_array_search(struct ssdfs_sequence_array *array,
++				ssdfs_search_action search_action,
++				ssdfs_free_item free_item,
++				void *search_condition);
++int ssdfs_sequence_array_apply_for_all(struct ssdfs_sequence_array *array,
++					ssdfs_apply_action apply_action);
++int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
++					unsigned long id,
++					int old_tag, int new_tag,
++					ssdfs_change_item_state change_state,
++					int old_state, int new_state);
++int ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
++					   int old_tag, int new_tag,
++					   ssdfs_change_item_state change_state,
++					   int old_state, int new_state,
++					   unsigned long *found_items);
++int ssdfs_sequence_array_pre_delete_all(struct ssdfs_sequence_array *array,
++					ssdfs_pre_delete_action pre_delete,
++					u64 peb_id);
++bool has_ssdfs_sequence_array_state(struct ssdfs_sequence_array *array,
++				    int tag);
++
++#endif /* _SSDFS_SEQUENCE_ARRAY_H */
+-- 
+2.34.1
+

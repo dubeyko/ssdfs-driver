@@ -1,0 +1,540 @@
+From 70f1bdf40073a18fb69d2a2e9f9b4297ea588c1b Mon Sep 17 00:00:00 2001
+From: Viacheslav Dubeyko <slava@dubeyko.com>
+Date: Mon, 15 Jan 2024 17:09:05 +0300
+Subject: [RFC PATCH 00/44] SSDFS: flash-friendly LFS file system for ZNS SSD
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Hello,
+
+[PROBLEM DECLARATION]
+
+SSD is a sophisticated device capable of managing in-place
+updates. However, in-place updates generate significant FTL GC
+responsibilities that increase write amplification factor, require
+substantial NAND flash overprovisioning, decrease SSD lifetime,
+and introduce performance spikes. Log-structured File System (LFS)
+approach can introduce a more flash-friendly Copy-On-Write (COW) model.
+However, F2FS and NILFS2 issue in-place updates anyway, even by using
+the COW policy for main volume area. Also, GC is an inevitable subsystem
+of any LFS file system that introduces write amplification, retention
+issue, excessive copy operations, and performance degradation for
+aged volume. Generally speaking, available file system technologies
+have side effects: (1) write amplification issue, (2) significant FTL GC
+responsibilities, (3) inevitable FS GC overhead, (4) read disturbance,
+(5) retention issue. As a result, SSD lifetime reduction, perfomance
+degradation, early SSD failure, and increased TCO cost are reality of
+data infrastructure.
+
+[WHY YET ANOTHER FS?]
+
+ZNS SSD is a good vehicle that can help to manage a subset of known
+issues by means of introducing a strict append-only mode of operations.
+However, for example, F2FS has an in-place update metadata area that
+can be placed into conventional zone and, anyway, introduces FTL GC
+responsibilities even for ZNS SSD case. Also, limited number of
+open/active zones (for example, 14 open/active zones) creates really
+complicated requirements that not every file system architecure can
+satisfy. It means that architecture of multiple file systems has
+peculiarities compromising the ZNS SSD model. Moreover, FS GC overhead is
+still a critical problem for LFS file systems (F2FS, NILFS2, for example),
+even for the case of ZNS SSD.
+
+Generally speaking, it will be good to see an LFS file system architecture
+that is capable:
+(1) eliminate FS GC overhead,
+(2) decrease/eliminate FTL GC responsibilities,
+(3) decrease write amplification factor,
+(4) introduce native architectural support of ZNS SSD + SMR HDD,
+(5) increase compression ratio by using delta-encoding and deduplication,
+(6) introduce smart management of "cold" data and efficient TRIM policy,
+(7) employ parallelism of multiple NAND dies/channels,
+(8) prolong SSD lifetime and decrease TCO cost,
+(9) guarantee strong reliability and capability to reconstruct heavily
+    corrupted file system volume,
+(10) guarantee stable performance.
+
+[SSDFS DESIGN GOALS]
+
+SSDFS is an open-source, kernel-space LFS file system designed:
+(1) eliminate GC overhead, (2) prolong SSD lifetime, (3) natively support
+a strict append-only mode (ZNS SSD + SMR HDD compatible), (4) guarantee
+strong reliability, (5) guarantee stable performance.
+
+[SSDFS ARCHITECTURE]
+
+One of the key goals of SSDFS is to decrease the write amplification
+factor. Logical extent concept is the fundamental technique to achieve
+the goal. Logical extent describes any volume extent on the basis of
+{segment ID, logical block ID, and length}. Segment is a portion of
+file system volume that has to be aligned on erase block size and
+always located at the same offset. It is basic unit to allocate and
+to manage free space of file system volume. Every segment can include
+one or several Logical Erase Blocks (LEB). LEB can be mapped into
+"Physical" Erase Block (PEB). Generally speaking, PEB is fixed-sized
+container that includes a number of logical blocks (physical sectors
+or NAND flash pages). SSDFS is pure Log-structured File System (LFS).
+It means that any write operation into erase block is the creation of
+log. Content of every erase block is a sequence of logs. PEB has block
+bitmap with the goal of tracking the state (free, pre-allocated,
+allocated, invalid) of logical blocks and to account the physical space
+is used for storing log's metadata (segment header, partial log header,
+footer). Also, log contains an offset translation table that converts
+logical block ID into particular offset inside of log's payload.
+Log concept implements a support of compression, delta-encoding,
+and compaction scheme. As a result, it provides the way: (1) decrease
+write amplification, (2) decrease FTL GC responsibilities, (3) improve
+compression ration and decrease payload size. Finally, SSD lifetime
+can be longer and write I/O performance can be improved.
+
+SSDFS file system is based on the concept of logical segment that
+is the aggregation of Logical Erase Blocks (LEB). Moreover, initially,
+LEB hasn’t association with a particular "Physical" Erase Block (PEB).
+It means that segment could have the association not for all LEBs or,
+even, to have no association at all with any PEB (for example, in the
+case of clean segment). Generally speaking, SSDFS file system needs
+a special metadata structure (PEB mapping table) that is capable of
+associating any LEB with any PEB. The PEB mapping table is the crucial
+metadata structure that has several goals: (1) mapping LEB to PEB,
+(2) implementation of the logical extent concept, (3) implementation of
+the concept of PEB migration, (4) implementation of the delayed erase
+operation by specialized thread.
+
+SSDFS implements a migration scheme. Migration scheme is a fundamental
+technique of GC overhead management. The key responsibility of the
+migration scheme is to guarantee the presence of data in the same segment
+for any update operations. Generally speaking, the migration scheme’s model
+is implemented on the basis of association an exhausted "Physical" Erase
+Block (PEB) with a clean one. The goal of such association of two PEBs is
+to implement the gradual migration of data by means of the update
+operations in the initial (exhausted) PEB. As a result, the old, exhausted
+PEB becomes invalidated after complete data migration and it will be
+possible to apply the erase operation to convert it to a clean state.
+The migration scheme is capable of decreasing GC activity significantly
+by means of excluding the necessity to update metadata and by means of
+self-migration of data between PEBs is triggered by regular update
+operations. Finally, migration scheme can: (1) eliminate GC overhead,
+(2) implement efficient TRIM policy, (3) prolong SDD lifetime,
+(4) guarantee stable performance.
+
+Generally speaking, SSDFS doesn't need a classical model of garbage
+collection that is used in NILFS2 or F2FS. However, SSDFS has several
+global GC threads (dirty, pre-dirty, used, using segment states) and
+segment bitmap. The main responsibility of global GC threads is:
+(1) find segment in a particular state, (2) check that segment object
+is constructed and initialized by file system driver logic,
+(3) check the necessity to stimulate or finish the migration
+(if segment is under update operations or has update operations
+recently, then migration stimulation is not necessary),
+(4) define valid blocks that require migration, (5) add recommended
+migration request to PEB update queue, (6) destroy in-core segment
+object if no migration is necessary and no create/update requests
+have been received by segment object recently. Global GC threads are
+used to recommend migration stimulation for particular PEBs and
+to destroy in-core segment objects that have no requests for
+processing. Segment bitmap is the critical metadata structure of
+SSDFS file system that implements several goals: (1) searching for
+a candidate for a current segment capable of storing new data,
+(2) searching by GC subsystem for the most optimal segment (dirty
+state, for example) with the goal of preparing the segment in
+background for storing new data (converting in a clean state).
+
+SSDFS file system uses b-tree architecture for metadata representation
+(for example, inodes tree, extents tree, dentries tree, xattr tree)
+because it provides the compact way of reserving the metadata space
+without the necessity to use the excessive overprovisioning of
+metadata reservation (for example, in the case of plain table or array).
+SSDFS file system uses a hybrid b-tree architecture with the goal
+to eliminate the index nodes’ side effect. The hybrid b-tree operates by
+three node types: (1) index node, (2) hybrid node, (3) leaf node.
+Generally speaking, the peculiarity of hybrid node is the mixture
+as index as data records into one node. Hybrid b-tree starts with
+root node that is capable to keep the two index records or two data
+records inline (if size of data record is equal or lesser than size
+of index record). If the b-tree needs to contain more than two items
+then it should be added the first hybrid node into the b-tree.
+The root level of b-tree is able to contain only two nodes because
+the root node is capable to store only two index records. Generally speaking,
+the initial goal of hybrid node is to store the data records in
+the presence of reserved index area. B-tree implements compact and
+flexible metadata structure that can decrease payload size and
+isolate hot, warm, and cold metadata types in different erase blocks.
+
+Migration scheme is completely enough for the case of conventional SSDs
+as for metadata as for user data. But ZNS SSD has huge zone size and
+limited number of active/open zones. As a result, it requires introducing
+a moving scheme for user data in the case of ZNS SSD. Finally, migration
+scheme works for metadata and moving scheme works for user data
+(ZNS SSD case). Initially, user data can be stored into current user
+data segment/zone. And user data can be updated at the same zone until
+exhaustion. Next, moving scheme starts to work. Updated user data is moved
+into current user data zone for updates. As a result, it needs to update
+the extents tree and to store invalidated extents of old zone into
+invalidated extents tree. Invalidated extents tree needs to track
+the moment when the old zone is completely invalidated and is ready
+to be erased.
+
+[BENCHMARKING]
+
+Benchmarking results show that SSDFS is capable:
+(1) generate smaller amount of write I/O requests compared with:
+    1.4x - 116x (ext4),
+    14x - 42x (xfs),
+    6.2x - 9.8x (btrfs),
+    1.5x - 41x (f2fs),
+    0.6x - 22x (nilfs2);
+(2) create smaller payload compared with:
+    0.3x - 300x (ext4),
+    0.3x - 190x (xfs),
+    0.7x - 400x (btrfs),
+    1.2x - 400x (f2fs),
+    0.9x - 190x (nilfs2);
+(3) decrease the write amplification factor compared with:
+    1.3x - 116x (ext4),
+    14x - 42x (xfs),
+    6x - 9x (btrfs),
+    1.5x - 50x (f2fs),
+    1.2x - 20x (nilfs2);
+(4) prolong SSD lifetime compared with:
+    1.4x - 7.8x (ext4),
+    15x - 60x (xfs),
+    6x - 12x (btrfs),
+    1.5x - 7x (f2fs),
+    1x - 4.6x (nilfs2).
+
+[CURRENT ISSUES]
+
+SSDFS code still has bugs and is not fully stable yet:
+(1) ZNS support is not fully stable;
+(2) The fsck and recoverfs tools are not fully implemented yet.
+
+[REFERENCES]
+[1] SSDFS tools: https://github.com/dubeyko/ssdfs-tools.git
+[2] SSDFS driver: https://github.com/dubeyko/ssdfs-driver.git
+[3] Linux kernel with SSDFS support: https://github.com/dubeyko/linux.git
+[4] SSDFS (paper): https://arxiv.org/abs/1907.11825
+[5] Linux Plumbers 2022: https://www.youtube.com/watch?v=sBGddJBHsIo
+
+Viacheslav Dubeyko (44):
+  ssdfs: introduce SSDFS on-disk layout
+  ssdfs: key file system declarations
+  ssdfs: implement raw device operations
+  ssdfs: implement super operations
+  ssdfs: segment header + log footer operations
+  ssdfs: basic mount logic implementation
+  ssdfs: internal array/sequence primitives
+  ssdfs: introduce PEB's block bitmap
+  ssdfs: implement support of migration scheme in PEB bitmap
+  ssdfs: introduce segment block bitmap
+  ssdfs: introduce segment request queue
+  ssdfs: introduce offset translation table
+  ssdfs: introduce PEB object
+  ssdfs: implement compression logic support
+  ssdfs: introduce PEB container
+  ssdfs: PEB read thread logic
+  ssdfs: PEB flush thread's finite state machine
+  ssdfs: auxilairy GC threads logic
+  ssdfs: introduce segment object
+  ssdfs: introduce PEB mapping table
+  ssdfs: introduce PEB mapping table cache
+  ssdfs: introduce segment bitmap
+  ssdfs: introduce b-tree object
+  ssdfs: introduce b-tree node object
+  ssdfs: introduce b-tree hierarchy object
+  ssdfs: introduce inodes b-tree
+  ssdfs: introduce dentries b-tree
+  ssdfs: introduce extents queue object
+  ssdfs: introduce extents b-tree
+  ssdfs: introduce invalidated extents b-tree
+  ssdfs: introduce shared extents b-tree
+  ssdfs: introduce PEB-based deduplication technique
+  ssdfs: introduce shared dictionary b-tree
+  ssdfs: introduce shared dictionary b-tree
+  ssdfs: implement extended attributes support
+  ssdfs: introduce Diff-On-Write approach
+  ssdfs: implement sysfs support
+  ssdfs: implement IOCTL operations
+  ssdfs: introduce online FSCK stub logic
+  ssdfs: introduce unit-tests
+  ssdfs: implement inode operations support
+  ssdfs: implement directory operations support
+  ssdfs: implement file operations support
+  Introduce SSDFS file system
+
+ fs/Kconfig                            |     1 +
+ fs/Makefile                           |     1 +
+ fs/ssdfs/Kconfig                      |   368 +
+ fs/ssdfs/Makefile                     |    53 +
+ fs/ssdfs/acl.c                        |   260 +
+ fs/ssdfs/acl.h                        |    54 +
+ fs/ssdfs/block_bitmap.c               |  5621 +++++++
+ fs/ssdfs/block_bitmap.h               |   375 +
+ fs/ssdfs/block_bitmap_tables.c        |   311 +
+ fs/ssdfs/btree.c                      |  8250 ++++++++++
+ fs/ssdfs/btree.h                      |   219 +
+ fs/ssdfs/btree_hierarchy.c            | 10648 +++++++++++++
+ fs/ssdfs/btree_hierarchy.h            |   298 +
+ fs/ssdfs/btree_node.c                 | 17857 +++++++++++++++++++++
+ fs/ssdfs/btree_node.h                 |   859 +
+ fs/ssdfs/btree_search.c               |   901 ++
+ fs/ssdfs/btree_search.h               |   360 +
+ fs/ssdfs/common_bitmap.h              |   230 +
+ fs/ssdfs/compr_lzo.c                  |   264 +
+ fs/ssdfs/compr_zlib.c                 |   370 +
+ fs/ssdfs/compression.c                |   556 +
+ fs/ssdfs/compression.h                |   108 +
+ fs/ssdfs/current_segment.c            |   686 +
+ fs/ssdfs/current_segment.h            |    77 +
+ fs/ssdfs/dentries_tree.c              |  9788 ++++++++++++
+ fs/ssdfs/dentries_tree.h              |   157 +
+ fs/ssdfs/dev_bdev.c                   |  1056 ++
+ fs/ssdfs/dev_mtd.c                    |   648 +
+ fs/ssdfs/dev_zns.c                    |  1336 ++
+ fs/ssdfs/diff_on_write.c              |   158 +
+ fs/ssdfs/diff_on_write.h              |   107 +
+ fs/ssdfs/diff_on_write_metadata.c     |  2958 ++++
+ fs/ssdfs/diff_on_write_user_data.c    |   847 +
+ fs/ssdfs/dir.c                        |  2088 +++
+ fs/ssdfs/dynamic_array.c              |  1571 ++
+ fs/ssdfs/dynamic_array.h              |   103 +
+ fs/ssdfs/extents_queue.c              |  1873 +++
+ fs/ssdfs/extents_queue.h              |   110 +
+ fs/ssdfs/extents_tree.c               | 13706 ++++++++++++++++
+ fs/ssdfs/extents_tree.h               |   177 +
+ fs/ssdfs/file.c                       |  3328 ++++
+ fs/ssdfs/fingerprint.h                |   261 +
+ fs/ssdfs/fingerprint_array.c          |   795 +
+ fs/ssdfs/fingerprint_array.h          |    82 +
+ fs/ssdfs/folio_array.c                |  1760 +++
+ fs/ssdfs/folio_array.h                |   126 +
+ fs/ssdfs/folio_vector.c               |   445 +
+ fs/ssdfs/folio_vector.h               |    64 +
+ fs/ssdfs/fs_error.c                   |   265 +
+ fs/ssdfs/inode.c                      |  1255 ++
+ fs/ssdfs/inodes_tree.c                |  6058 ++++++++
+ fs/ssdfs/inodes_tree.h                |   178 +
+ fs/ssdfs/invalidated_extents_tree.c   |  7113 +++++++++
+ fs/ssdfs/invalidated_extents_tree.h   |    96 +
+ fs/ssdfs/ioctl.c                      |   403 +
+ fs/ssdfs/ioctl.h                      |    50 +
+ fs/ssdfs/log_footer.c                 |   921 ++
+ fs/ssdfs/offset_translation_table.c   | 11032 +++++++++++++
+ fs/ssdfs/offset_translation_table.h   |   445 +
+ fs/ssdfs/options.c                    |   192 +
+ fs/ssdfs/peb.c                        |   908 ++
+ fs/ssdfs/peb.h                        |  2418 +++
+ fs/ssdfs/peb_block_bitmap.c           |  4276 +++++
+ fs/ssdfs/peb_block_bitmap.h           |   165 +
+ fs/ssdfs/peb_container.c              |  5769 +++++++
+ fs/ssdfs/peb_container.h              |   348 +
+ fs/ssdfs/peb_deduplication.c          |   478 +
+ fs/ssdfs/peb_flush_thread.c           | 19823 ++++++++++++++++++++++++
+ fs/ssdfs/peb_fsck_thread.c            |   232 +
+ fs/ssdfs/peb_gc_thread.c              |  2935 ++++
+ fs/ssdfs/peb_mapping_queue.c          |   342 +
+ fs/ssdfs/peb_mapping_queue.h          |    68 +
+ fs/ssdfs/peb_mapping_table.c          | 12802 +++++++++++++++
+ fs/ssdfs/peb_mapping_table.h          |   700 +
+ fs/ssdfs/peb_mapping_table_cache.c    |  4708 ++++++
+ fs/ssdfs/peb_mapping_table_cache.h    |   120 +
+ fs/ssdfs/peb_mapping_table_thread.c   |  2824 ++++
+ fs/ssdfs/peb_migration_scheme.c       |  1355 ++
+ fs/ssdfs/peb_read_thread.c            | 13894 +++++++++++++++++
+ fs/ssdfs/readwrite.c                  |   965 ++
+ fs/ssdfs/recovery.c                   |  3241 ++++
+ fs/ssdfs/recovery.h                   |   447 +
+ fs/ssdfs/recovery_fast_search.c       |  1197 ++
+ fs/ssdfs/recovery_slow_search.c       |   586 +
+ fs/ssdfs/recovery_thread.c            |  1200 ++
+ fs/ssdfs/request_queue.c              |  1627 ++
+ fs/ssdfs/request_queue.h              |   659 +
+ fs/ssdfs/segment.c                    |  6957 +++++++++
+ fs/ssdfs/segment.h                    |   972 ++
+ fs/ssdfs/segment_bitmap.c             |  4684 ++++++
+ fs/ssdfs/segment_bitmap.h             |   459 +
+ fs/ssdfs/segment_bitmap_tables.c      |   815 +
+ fs/ssdfs/segment_block_bitmap.c       |  1527 ++
+ fs/ssdfs/segment_block_bitmap.h       |   225 +
+ fs/ssdfs/segment_tree.c               |   684 +
+ fs/ssdfs/segment_tree.h               |    71 +
+ fs/ssdfs/sequence_array.c             |  1126 ++
+ fs/ssdfs/sequence_array.h             |   140 +
+ fs/ssdfs/shared_dictionary.c          | 17608 +++++++++++++++++++++
+ fs/ssdfs/shared_dictionary.h          |   186 +
+ fs/ssdfs/shared_dictionary_thread.c   |   445 +
+ fs/ssdfs/shared_extents_tree.c        |  6847 ++++++++
+ fs/ssdfs/shared_extents_tree.h        |   143 +
+ fs/ssdfs/shared_extents_tree_thread.c |   684 +
+ fs/ssdfs/snapshot.c                   |    99 +
+ fs/ssdfs/snapshot.h                   |   283 +
+ fs/ssdfs/snapshot_requests_queue.c    |  1248 ++
+ fs/ssdfs/snapshot_requests_queue.h    |    65 +
+ fs/ssdfs/snapshot_rules.c             |   739 +
+ fs/ssdfs/snapshot_rules.h             |    55 +
+ fs/ssdfs/snapshots_tree.c             |  8903 +++++++++++
+ fs/ssdfs/snapshots_tree.h             |   248 +
+ fs/ssdfs/snapshots_tree_thread.c      |   652 +
+ fs/ssdfs/ssdfs.h                      |   453 +
+ fs/ssdfs/ssdfs_constants.h            |    95 +
+ fs/ssdfs/ssdfs_fs_info.h              |   456 +
+ fs/ssdfs/ssdfs_inline.h               |  2683 ++++
+ fs/ssdfs/ssdfs_inode_info.h           |   144 +
+ fs/ssdfs/ssdfs_thread_info.h          |    43 +
+ fs/ssdfs/super.c                      |  3963 +++++
+ fs/ssdfs/sysfs.c                      |  2017 +++
+ fs/ssdfs/sysfs.h                      |   174 +
+ fs/ssdfs/testing.c                    |  5768 +++++++
+ fs/ssdfs/testing.h                    |   226 +
+ fs/ssdfs/version.h                    |     9 +
+ fs/ssdfs/volume_header.c              |  1265 ++
+ fs/ssdfs/xattr.c                      |  1693 ++
+ fs/ssdfs/xattr.h                      |    88 +
+ fs/ssdfs/xattr_security.c             |   159 +
+ fs/ssdfs/xattr_tree.c                 | 10115 ++++++++++++
+ fs/ssdfs/xattr_tree.h                 |   143 +
+ fs/ssdfs/xattr_trusted.c              |    93 +
+ fs/ssdfs/xattr_user.c                 |    93 +
+ include/linux/ssdfs_fs.h              |  3508 +++++
+ include/trace/events/ssdfs.h          |   256 +
+ include/uapi/linux/magic.h            |     1 +
+ include/uapi/linux/ssdfs_fs.h         |   118 +
+ 137 files changed, 293794 insertions(+)
+ create mode 100644 fs/ssdfs/Kconfig
+ create mode 100644 fs/ssdfs/Makefile
+ create mode 100644 fs/ssdfs/acl.c
+ create mode 100644 fs/ssdfs/acl.h
+ create mode 100644 fs/ssdfs/block_bitmap.c
+ create mode 100644 fs/ssdfs/block_bitmap.h
+ create mode 100644 fs/ssdfs/block_bitmap_tables.c
+ create mode 100644 fs/ssdfs/btree.c
+ create mode 100644 fs/ssdfs/btree.h
+ create mode 100644 fs/ssdfs/btree_hierarchy.c
+ create mode 100644 fs/ssdfs/btree_hierarchy.h
+ create mode 100644 fs/ssdfs/btree_node.c
+ create mode 100644 fs/ssdfs/btree_node.h
+ create mode 100644 fs/ssdfs/btree_search.c
+ create mode 100644 fs/ssdfs/btree_search.h
+ create mode 100644 fs/ssdfs/common_bitmap.h
+ create mode 100644 fs/ssdfs/compr_lzo.c
+ create mode 100644 fs/ssdfs/compr_zlib.c
+ create mode 100644 fs/ssdfs/compression.c
+ create mode 100644 fs/ssdfs/compression.h
+ create mode 100644 fs/ssdfs/current_segment.c
+ create mode 100644 fs/ssdfs/current_segment.h
+ create mode 100644 fs/ssdfs/dentries_tree.c
+ create mode 100644 fs/ssdfs/dentries_tree.h
+ create mode 100644 fs/ssdfs/dev_bdev.c
+ create mode 100644 fs/ssdfs/dev_mtd.c
+ create mode 100644 fs/ssdfs/dev_zns.c
+ create mode 100644 fs/ssdfs/diff_on_write.c
+ create mode 100644 fs/ssdfs/diff_on_write.h
+ create mode 100644 fs/ssdfs/diff_on_write_metadata.c
+ create mode 100644 fs/ssdfs/diff_on_write_user_data.c
+ create mode 100644 fs/ssdfs/dir.c
+ create mode 100644 fs/ssdfs/dynamic_array.c
+ create mode 100644 fs/ssdfs/dynamic_array.h
+ create mode 100644 fs/ssdfs/extents_queue.c
+ create mode 100644 fs/ssdfs/extents_queue.h
+ create mode 100644 fs/ssdfs/extents_tree.c
+ create mode 100644 fs/ssdfs/extents_tree.h
+ create mode 100644 fs/ssdfs/file.c
+ create mode 100644 fs/ssdfs/fingerprint.h
+ create mode 100644 fs/ssdfs/fingerprint_array.c
+ create mode 100644 fs/ssdfs/fingerprint_array.h
+ create mode 100644 fs/ssdfs/folio_array.c
+ create mode 100644 fs/ssdfs/folio_array.h
+ create mode 100644 fs/ssdfs/folio_vector.c
+ create mode 100644 fs/ssdfs/folio_vector.h
+ create mode 100644 fs/ssdfs/fs_error.c
+ create mode 100644 fs/ssdfs/inode.c
+ create mode 100644 fs/ssdfs/inodes_tree.c
+ create mode 100644 fs/ssdfs/inodes_tree.h
+ create mode 100644 fs/ssdfs/invalidated_extents_tree.c
+ create mode 100644 fs/ssdfs/invalidated_extents_tree.h
+ create mode 100644 fs/ssdfs/ioctl.c
+ create mode 100644 fs/ssdfs/ioctl.h
+ create mode 100644 fs/ssdfs/log_footer.c
+ create mode 100644 fs/ssdfs/offset_translation_table.c
+ create mode 100644 fs/ssdfs/offset_translation_table.h
+ create mode 100644 fs/ssdfs/options.c
+ create mode 100644 fs/ssdfs/peb.c
+ create mode 100644 fs/ssdfs/peb.h
+ create mode 100644 fs/ssdfs/peb_block_bitmap.c
+ create mode 100644 fs/ssdfs/peb_block_bitmap.h
+ create mode 100644 fs/ssdfs/peb_container.c
+ create mode 100644 fs/ssdfs/peb_container.h
+ create mode 100644 fs/ssdfs/peb_deduplication.c
+ create mode 100644 fs/ssdfs/peb_flush_thread.c
+ create mode 100644 fs/ssdfs/peb_fsck_thread.c
+ create mode 100644 fs/ssdfs/peb_gc_thread.c
+ create mode 100644 fs/ssdfs/peb_mapping_queue.c
+ create mode 100644 fs/ssdfs/peb_mapping_queue.h
+ create mode 100644 fs/ssdfs/peb_mapping_table.c
+ create mode 100644 fs/ssdfs/peb_mapping_table.h
+ create mode 100644 fs/ssdfs/peb_mapping_table_cache.c
+ create mode 100644 fs/ssdfs/peb_mapping_table_cache.h
+ create mode 100644 fs/ssdfs/peb_mapping_table_thread.c
+ create mode 100644 fs/ssdfs/peb_migration_scheme.c
+ create mode 100644 fs/ssdfs/peb_read_thread.c
+ create mode 100644 fs/ssdfs/readwrite.c
+ create mode 100644 fs/ssdfs/recovery.c
+ create mode 100644 fs/ssdfs/recovery.h
+ create mode 100644 fs/ssdfs/recovery_fast_search.c
+ create mode 100644 fs/ssdfs/recovery_slow_search.c
+ create mode 100644 fs/ssdfs/recovery_thread.c
+ create mode 100644 fs/ssdfs/request_queue.c
+ create mode 100644 fs/ssdfs/request_queue.h
+ create mode 100644 fs/ssdfs/segment.c
+ create mode 100644 fs/ssdfs/segment.h
+ create mode 100644 fs/ssdfs/segment_bitmap.c
+ create mode 100644 fs/ssdfs/segment_bitmap.h
+ create mode 100644 fs/ssdfs/segment_bitmap_tables.c
+ create mode 100644 fs/ssdfs/segment_block_bitmap.c
+ create mode 100644 fs/ssdfs/segment_block_bitmap.h
+ create mode 100644 fs/ssdfs/segment_tree.c
+ create mode 100644 fs/ssdfs/segment_tree.h
+ create mode 100644 fs/ssdfs/sequence_array.c
+ create mode 100644 fs/ssdfs/sequence_array.h
+ create mode 100644 fs/ssdfs/shared_dictionary.c
+ create mode 100644 fs/ssdfs/shared_dictionary.h
+ create mode 100644 fs/ssdfs/shared_dictionary_thread.c
+ create mode 100644 fs/ssdfs/shared_extents_tree.c
+ create mode 100644 fs/ssdfs/shared_extents_tree.h
+ create mode 100644 fs/ssdfs/shared_extents_tree_thread.c
+ create mode 100644 fs/ssdfs/snapshot.c
+ create mode 100644 fs/ssdfs/snapshot.h
+ create mode 100644 fs/ssdfs/snapshot_requests_queue.c
+ create mode 100644 fs/ssdfs/snapshot_requests_queue.h
+ create mode 100644 fs/ssdfs/snapshot_rules.c
+ create mode 100644 fs/ssdfs/snapshot_rules.h
+ create mode 100644 fs/ssdfs/snapshots_tree.c
+ create mode 100644 fs/ssdfs/snapshots_tree.h
+ create mode 100644 fs/ssdfs/snapshots_tree_thread.c
+ create mode 100644 fs/ssdfs/ssdfs.h
+ create mode 100644 fs/ssdfs/ssdfs_constants.h
+ create mode 100644 fs/ssdfs/ssdfs_fs_info.h
+ create mode 100644 fs/ssdfs/ssdfs_inline.h
+ create mode 100644 fs/ssdfs/ssdfs_inode_info.h
+ create mode 100644 fs/ssdfs/ssdfs_thread_info.h
+ create mode 100644 fs/ssdfs/super.c
+ create mode 100644 fs/ssdfs/sysfs.c
+ create mode 100644 fs/ssdfs/sysfs.h
+ create mode 100644 fs/ssdfs/testing.c
+ create mode 100644 fs/ssdfs/testing.h
+ create mode 100644 fs/ssdfs/version.h
+ create mode 100644 fs/ssdfs/volume_header.c
+ create mode 100644 fs/ssdfs/xattr.c
+ create mode 100644 fs/ssdfs/xattr.h
+ create mode 100644 fs/ssdfs/xattr_security.c
+ create mode 100644 fs/ssdfs/xattr_tree.c
+ create mode 100644 fs/ssdfs/xattr_tree.h
+ create mode 100644 fs/ssdfs/xattr_trusted.c
+ create mode 100644 fs/ssdfs/xattr_user.c
+ create mode 100644 include/linux/ssdfs_fs.h
+ create mode 100644 include/trace/events/ssdfs.h
+ create mode 100644 include/uapi/linux/ssdfs_fs.h
+
+-- 
+2.34.1
+
