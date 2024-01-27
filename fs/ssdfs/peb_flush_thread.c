@@ -15745,6 +15745,31 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 	case SSDFS_LOG_INITIALIZED:
 	case SSDFS_LOG_COMMITTED:
 	case SSDFS_LOG_CREATED:
+		if (empty_blocks > min_partial_log_blocks)
+			is_ready_to_exhaust = false;
+		else if (reserved_blocks == 0) {
+			if (free_data_blocks <= min_partial_log_blocks)
+				is_ready_to_exhaust = true;
+			else
+				is_ready_to_exhaust = false;
+		} else {
+			if (free_data_blocks < min_partial_log_blocks)
+				is_ready_to_exhaust = true;
+			else
+				is_ready_to_exhaust = false;
+		}
+		break;
+
+	default:
+		is_ready_to_exhaust = false;
+		break;
+	};
+
+/*
+	switch (atomic_read(&pebi->current_log.state)) {
+	case SSDFS_LOG_INITIALIZED:
+	case SSDFS_LOG_COMMITTED:
+	case SSDFS_LOG_CREATED:
 		if (available_for_data_blocks <= reserved_blocks) {
 			is_ready_to_exhaust = true;
 		} else {
@@ -15763,6 +15788,7 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 		is_ready_to_exhaust = false;
 		break;
 	};
+*/
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, free_data_blocks %u, "
