@@ -129,6 +129,9 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 int ssdfs_peb_blk_bmap_free_metapages(struct ssdfs_peb_blk_bmap *bmap,
 				      int bmap_index,
 				      u32 count);
+int ssdfs_peb_blk_bmap_get_block_state(struct ssdfs_peb_blk_bmap *bmap,
+					int bmap_index,
+					u32 blk);
 int ssdfs_peb_blk_bmap_pre_allocate(struct ssdfs_peb_blk_bmap *bmap,
 				    int bmap_index,
 				    struct ssdfs_block_bmap_range *range);

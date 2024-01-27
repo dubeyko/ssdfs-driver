@@ -1618,6 +1618,102 @@ finish_get_dst_invalid_pages:
 }
 
 /*
+ * ssdfs_peb_blk_bmap_get_block_state() - detect state of block
+ * @bmap: pointer on PEB's block bitmap object
+ * @bmap_index: source or destination block bitmap?
+ * @blk: logical block index
+ *
+ * This function retrieve state of @blk from block bitmap.
+ *
+ * RETURN:
+ * [success] - state of block
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ENODATA    - requsted @blk hasn't been found.
+ * %-ENOENT     - block bitmap doesn't initialized.
+ */
+int ssdfs_peb_blk_bmap_get_block_state(struct ssdfs_peb_blk_bmap *bmap,
+					int bmap_index,
+					u32 blk)
+{
+	struct ssdfs_block_bmap *cur_bmap = NULL;
+	int blk_state;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap);
+
+	SSDFS_DBG("seg %llu, bmap %p, bmap_index %u, blk %u, "
+		  "free_logical_blks %u, valid_logical_blks %u, "
+		  "invalid_logical_blks %u\n",
+		  bmap->parent->parent_si->seg_id,
+		  bmap, bmap_index, blk,
+		  atomic_read(&bmap->peb_free_blks),
+		  atomic_read(&bmap->peb_valid_blks),
+		  atomic_read(&bmap->peb_invalid_blks));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!ssdfs_peb_blk_bmap_initialized(bmap)) {
+		SSDFS_ERR("PEB block bitmap init failed: "
+			  "seg_id %llu, peb_index %u, "
+			  "err %d\n",
+			  bmap->parent->parent_si->seg_id,
+			  bmap->peb_index, err);
+		return err;
+	}
+
+	if (bmap_index < 0 || bmap_index >= SSDFS_PEB_BLK_BMAP_INDEX_MAX) {
+		SSDFS_WARN("invalid bmap_index %u\n",
+			   bmap_index);
+		return -ERANGE;
+	}
+
+	down_read(&bmap->lock);
+
+	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE)
+		cur_bmap = bmap->src;
+	else if (bmap_index == SSDFS_PEB_BLK_BMAP_DESTINATION)
+		cur_bmap = bmap->dst;
+	else
+		cur_bmap = NULL;
+
+	if (cur_bmap == NULL) {
+		err = -ERANGE;
+		SSDFS_WARN("bmap pointer is empty\n");
+		goto finish_get_block_state;
+	}
+
+	err = ssdfs_block_bmap_lock(cur_bmap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_get_block_state;
+	}
+
+	blk_state = ssdfs_get_block_state(cur_bmap, blk);
+	ssdfs_block_bmap_unlock(cur_bmap);
+
+finish_get_block_state:
+	up_read(&bmap->lock);
+
+	if (err)
+		return err;
+
+	if (blk_state < 0) {
+		SSDFS_ERR("fail to get block state: "
+			  "blk %u, err %d\n",
+			  blk, blk_state);
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("blk %u has state %#x\n",
+			  blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	return blk_state;
+}
+
+/*
  * ssdfs_peb_blk_bmap_reserve_metapages() - reserve metadata pages
  * @bmap: PEB's block bitmap object
  * @bmap_index: source or destination block bitmap?

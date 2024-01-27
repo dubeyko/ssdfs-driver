@@ -8471,7 +8471,7 @@ int __ssdfs_read_blk_desc_compressed_byte_stream(struct ssdfs_peb_info *pebi,
 
 		if (frag_offset < *processed_bytes) {
 			SSDFS_ERR("corrupted fragment descriptor: "
-				  "frag_offset %u < processed_bytes %u\n",
+				  "frag_offset %u, processed_bytes %u\n",
 				  frag_offset, *processed_bytes);
 			return -EIO;
 		}

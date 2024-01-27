@@ -2863,7 +2863,6 @@ int ssdfs_peb_store_area_block_table(struct ssdfs_peb_info *pebi,
 			    ssdfs_peb_correct_area_write_offset(write_offset,
 								blk_table_size);
 			area->compressed_offset = new_offset;
-			area->write_offset += new_offset - write_offset;
 		} else {
 			write_offset = area->write_offset;
 			new_offset =
@@ -7480,8 +7479,35 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		range_state = SSDFS_BLK_VALID;
 	else if (is_ssdfs_block_full(fsi->pagesize, written_bytes))
 		range_state = SSDFS_BLK_VALID;
-	else
-		range_state = SSDFS_BLK_PRE_ALLOCATED;
+	else {
+		int blk_state;
+
+		blk_state = ssdfs_segment_blk_bmap_get_block_state(seg_blkbmap,
+								   pebi->pebc,
+								   blk);
+		if (blk_state < 0) {
+			SSDFS_ERR("fail to detect block %u state: "
+				  "err %d\n", blk, err);
+			return err;
+		}
+
+		switch (blk_state) {
+		case SSDFS_BLK_PRE_ALLOCATED:
+			range_state = SSDFS_BLK_PRE_ALLOCATED;
+			break;
+
+		default:
+			range_state = SSDFS_BLK_VALID;
+			break;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("logical_blk %u, blk_state %#x, "
+			  "range_state %#x\n",
+			  blk, blk_state,
+			  range_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("logical_blk %u, peb_page %u\n",
@@ -11336,7 +11362,19 @@ int ssdfs_peb_copy_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 						     SSDFS_DIRTY_FOLIO_TAG,
 						     SSDFS_EXTENT_LEN_MAX,
 						     &batch);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("NO MORE DIRTY FOLIOS: "
+				  "start %lu, end %lu, "
+				  "range_len %lu, folios_count %lu\n",
+				  folio_index, end,
+				  range_len, folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			goto finish_copy_area_pages;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find any dirty folios: err %d\n",
 				  err);
 			return err;
@@ -11512,6 +11550,7 @@ finish_batch_copy:
 		cond_resched();
 	};
 
+finish_copy_area_pages:
 	err = ssdfs_folio_array_release_all_folios(smap);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to release area's folios: "
@@ -11563,6 +11602,7 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 	struct ssdfs_folio_array *smap, *dmap;
 	void *kaddr;
 	size_t blk_table_size = sizeof(struct ssdfs_area_block_table);
+	pgoff_t blocks_count;
 	pgoff_t folio_index, end, folios_count, range_len;
 	u32 area_offset, area_size;
 	int err = 0;
@@ -11645,8 +11685,12 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 	folio_batch_init(&batch);
 
 	folio_index = 0;
-	folios_count = area->write_offset + fsi->pagesize - 1;
-	folios_count >>= smap->folio_size;
+
+	blocks_count = area->write_offset + fsi->pagesize - 1;
+	blocks_count >>= fsi->log_pagesize;
+
+	folios_count = blocks_count << fsi->log_pagesize;
+	folios_count /= smap->folio_size;
 
 	while (folio_index < folios_count) {
 		int i;
@@ -11660,7 +11704,19 @@ int ssdfs_peb_move_area_pages_into_cache(struct ssdfs_peb_info *pebi,
 						     SSDFS_DIRTY_FOLIO_TAG,
 						     SSDFS_EXTENT_LEN_MAX,
 						     &batch);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("NO MORE DIRTY FOLIOS: "
+				  "start %lu, end %lu, "
+				  "range_len %lu, folios_count %lu\n",
+				  folio_index, end,
+				  range_len, folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			goto finish_move_area_pages;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find any dirty folios: err %d\n",
 				  err);
 			return err;
@@ -11768,6 +11824,7 @@ finish_current_move:
 		cond_resched();
 	};
 
+finish_move_area_pages:
 	pebi->current_log.seg_flags |= SSDFS_AREA_TYPE2FLAG(area_type);
 
 	return 0;
@@ -15621,11 +15678,12 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 	u16 reserved_blocks;
 	u16 min_partial_log_blocks;
 	int empty_blocks;
+	int available_for_data_blocks;
 	int migration_state;
 	int migration_phase;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
+	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!mutex_is_locked(&pebi->current_log.lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -15680,19 +15738,21 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 	reserved_blocks = pebi->current_log.reserved_blocks;
 	min_partial_log_blocks = ssdfs_peb_estimate_min_partial_log_pages(pebi);
 
+	available_for_data_blocks = max_t(int, empty_blocks, free_data_blocks);
+	reserved_blocks = max_t(u16, reserved_blocks, min_partial_log_blocks);
+
 	switch (atomic_read(&pebi->current_log.state)) {
 	case SSDFS_LOG_INITIALIZED:
 	case SSDFS_LOG_COMMITTED:
 	case SSDFS_LOG_CREATED:
-		if (empty_blocks > min_partial_log_blocks)
-			is_ready_to_exhaust = false;
-		else if (reserved_blocks == 0) {
-			if (free_data_blocks <= min_partial_log_blocks)
-				is_ready_to_exhaust = true;
-			else
-				is_ready_to_exhaust = false;
+		if (available_for_data_blocks <= reserved_blocks) {
+			is_ready_to_exhaust = true;
 		} else {
-			if (free_data_blocks < min_partial_log_blocks)
+			u16 threshold = reserved_blocks * 2;
+
+			available_for_data_blocks -= reserved_blocks;
+
+			if (available_for_data_blocks < threshold)
 				is_ready_to_exhaust = true;
 			else
 				is_ready_to_exhaust = false;
@@ -15707,10 +15767,12 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, free_data_blocks %u, "
 		  "reserved_blocks %u, min_partial_log_blocks %u, "
+		  "blocks_per_peb %u, empty_blocks %d, "
 		  "is_ready_to_exhaust %#x\n",
 		  pebi->pebc->parent_si->seg_id,
 		  pebi->peb_id, free_data_blocks,
 		  reserved_blocks, min_partial_log_blocks,
+		  blocks_per_peb, empty_blocks,
 		  is_ready_to_exhaust);
 #endif /* CONFIG_SSDFS_DEBUG */
 

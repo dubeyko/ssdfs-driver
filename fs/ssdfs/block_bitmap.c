@@ -680,6 +680,152 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 				struct ssdfs_block_bmap_range *range);
 
 /*
+ * ssdfs_calculate_items_for_state() - calculate items for state
+ * @blk_bmap: pointer on block bitmap
+ * @start_item: index of starting item
+ * @blk_state: block state
+ *
+ * This function tries to calculate number of items for
+ * a particular block state.
+ *
+ * RETURN:
+ * [success] - calculated number of found blocks
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ */
+static inline
+int ssdfs_calculate_items_for_state(struct ssdfs_block_bmap *blk_bmap,
+				    u32 start_item, int blk_state)
+{
+	struct ssdfs_block_bmap_range found;
+	int calculated_items = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("blk_bmap %p, start_item %u, blk_state %#x\n",
+		  blk_bmap, start_item, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		err = ssdfs_block_bmap_find_range(blk_bmap,
+					start_item,
+					blk_bmap->items_capacity - start_item,
+					blk_bmap->items_capacity,
+					blk_state, &found);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find more valid blocks: "
+				  "start_item %u\n",
+				  start_item);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find range: err %d\n", err);
+			return err;
+		}
+
+		calculated_items += found.len;
+		start_item = found.start + found.len;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("FOUND: range (start %u, len %u)\n",
+			  found.start, found.len);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} while (start_item < blk_bmap->items_capacity);
+
+finish_search:
+	return calculated_items;
+}
+
+/*
+ * ssdfs_calculate_used_blocks() - calculate number of used blocks
+ * @blk_bmap: pointer on block bitmap
+ * @start_item: index of starting item
+ *
+ * This function tries to calculate number of used blocks.
+ *
+ * RETURN:
+ * [success] - calculated number of used blocks
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ */
+static inline
+int ssdfs_calculate_used_blocks(struct ssdfs_block_bmap *blk_bmap,
+				u32 start_item)
+{
+	int blk_state;
+	int calculated;
+	int used_blks = 0;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("blk_bmap %p, start_item %u\n",
+		  blk_bmap, start_item);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	blk_state = SSDFS_BLK_VALID;
+
+	calculated = ssdfs_calculate_items_for_state(blk_bmap,
+						     start_item,
+						     blk_state);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of valid blocks: "
+			  "err %d\n", err);
+		return err;
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("valid blocks %d\n",
+			  calculated);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		used_blks += calculated;
+	}
+
+	blk_state = SSDFS_BLK_PRE_ALLOCATED;
+
+	calculated = ssdfs_calculate_items_for_state(blk_bmap,
+						     start_item,
+						     blk_state);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of pre-allocated blocks: "
+			  "err %d\n", err);
+		return err;
+	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("pre-allocated blocks %d\n",
+			  calculated);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		used_blks += calculated;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("used_blks %d\n",
+		  used_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return used_blks;
+}
+
+/*
  * ssdfs_block_bmap_init() - initialize block bitmap pagevec
  * @blk_bmap: pointer on block bitmap
  * @source: prepared folio vector after reading from volume
@@ -702,11 +848,10 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  u32 metadata_blks,
 			  u32 invalid_blks)
 {
-	struct ssdfs_block_bmap_range found;
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
 	u32 start_item;
-	int blk_state;
 	int free_pages;
+	int calculated;
 	int i;
 	int err;
 
@@ -800,69 +945,23 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	blk_bmap->used_blks = 0;
-
 	start_item = 0;
-	blk_state = SSDFS_BLK_VALID;
 
-	do {
-		err = ssdfs_block_bmap_find_range(blk_bmap,
-					start_item,
-					blk_bmap->items_capacity - start_item,
-					blk_bmap->items_capacity,
-					blk_state, &found);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find more valid blocks: "
-				  "start_item %u\n",
-				  start_item);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto check_pre_allocated_blocks;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find range: err %d\n", err);
-			return err;
-		}
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, start_item);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
+	}
 
-		blk_bmap->used_blks += found.len;
-		start_item = found.start + found.len;
+	blk_bmap->used_blks += calculated;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("VALID_BLK: range (start %u, len %u)\n",
-			  found.start, found.len);
+	SSDFS_DBG("used_blks %u\n",
+		  blk_bmap->used_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
-	} while (start_item < blk_bmap->items_capacity);
 
-check_pre_allocated_blocks:
-	start_item = 0;
-	blk_state = SSDFS_BLK_PRE_ALLOCATED;
-
-	do {
-		err = ssdfs_block_bmap_find_range(blk_bmap,
-					start_item,
-					blk_bmap->items_capacity - start_item,
-					blk_bmap->items_capacity,
-					blk_state, &found);
-		if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to find more pre-allocated blocks: "
-				  "start_item %u\n",
-				  start_item);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_block_bmap_init;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find range: err %d\n", err);
-			return err;
-		}
-
-		blk_bmap->used_blks += found.len;
-		start_item = found.start + found.len;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("PRE_ALLOCATED_BLK: range (start %u, len %u)\n",
-			  found.start, found.len);
-#endif /* CONFIG_SSDFS_DEBUG */
-	} while (start_item < blk_bmap->items_capacity);
-
-finish_block_bmap_init:
 	set_block_bmap_initialized(blk_bmap);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1142,6 +1241,9 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 				size_t *bytes_count)
 {
 	u32 used_pages;
+#ifdef CONFIG_SSDFS_DEBUG
+	int calculated;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1198,6 +1300,27 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 			  blk_bmap->invalid_blks, *last_free_page);
 		goto cleanup_snapshot_folio_vector;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		goto cleanup_snapshot_folio_vector;
+	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		goto cleanup_snapshot_folio_vector;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	*metadata_blks = blk_bmap->metadata_items;
 	*invalid_blks = blk_bmap->invalid_blks;
@@ -1984,8 +2107,9 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 	struct ssdfs_last_bmap_search *last_search;
 	u32 first_cached_blk;
+	u32 upper_cached_blk;
 	u32 byte_index;
-	u8 blks_diff;
+	u32 blks_diff;
 	size_t bytes_per_long = sizeof(unsigned long);
 	int err;
 
@@ -2031,6 +2155,17 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	first_cached_blk = SSDFS_FIRST_CACHED_BLOCK(last_search);
+	upper_cached_blk = first_cached_blk + (items_per_byte * bytes_per_long);
+
+	if (start < first_cached_blk || start >= upper_cached_blk) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("start %u is out of range [first %u, last %u]\n",
+			  start, first_cached_blk,
+			  upper_cached_blk - 1);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
+
 	blks_diff = start - first_cached_blk;
 	byte_index = blks_diff / items_per_byte;
 	blks_diff = blks_diff % items_per_byte;
@@ -4324,7 +4459,7 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 					    u32 count)
 {
 	u32 reserved_items;
-	u32 calculated_items;
+	int calculated_items;
 	int free_pages = 0;
 	int used_pages = 0;
 	int err = 0;

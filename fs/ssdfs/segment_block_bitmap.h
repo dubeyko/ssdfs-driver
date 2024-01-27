@@ -89,6 +89,9 @@ bool has_ssdfs_segment_blk_bmap_initialized(struct ssdfs_segment_blk_bmap *ptr,
 int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
 					 struct ssdfs_peb_container *pebc);
 
+int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
+					   struct ssdfs_peb_container *pebc,
+					   u32 blk);
 int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 					     struct ssdfs_peb_container *pebc,
 					     u32 count);

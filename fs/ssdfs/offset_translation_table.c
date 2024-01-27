@@ -2238,6 +2238,7 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		}
 
 		phys_tbl_portion_size = SSDFS_FRAGMENTS_CHAIN_MAX * PAGE_SIZE;
+		phys_tbl_portion_size += area_tbl_size;
 
 		phys_tbl_hdr_count = (byte_offset + phys_tbl_portion_size - 1);
 		phys_tbl_hdr_count /= phys_tbl_portion_size;
@@ -2376,6 +2377,13 @@ int ssdfs_process_used_translation_extent(struct ssdfs_blk2off_init *portion,
 		case SSDFS_BLK_DESC_BUF_INITIALIZED:
 			is_invalid =
 				IS_SSDFS_BLK_STATE_OFFSET_INVALID(state_off);
+			if (!is_invalid) {
+				u16 peb_page;
+
+				peb_page =
+				    le16_to_cpu(pos->blk_desc.buf.peb_page);
+				is_invalid = cur_blk != peb_page;
+			}
 			break;
 
 		default:
@@ -4279,39 +4287,7 @@ int ssdfs_blk2off_table_snapshot(struct ssdfs_blk2off_table *table,
 
 	start_sequence_id = snapshot->new_sequence_id;
 
-	if (!ssdfs_blk2off_table_dirtied(table, peb_index)) {
-		start_sequence_id = last_sequence_id;
-
-		if (start_sequence_id >= snapshot->new_sequence_id) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid start_sequence_id: "
-				  "start_sequence_id %d, "
-				  "snapshot->new_sequence_id %u\n",
-				  start_sequence_id,
-				  snapshot->new_sequence_id);
-			goto finish_snapshoting;
-		}
-
-		ptr = ssdfs_sequence_array_get_item(sequence,
-						    start_sequence_id);
-		if (IS_ERR_OR_NULL(ptr)) {
-			err = (ptr == NULL ? -ENOENT : PTR_ERR(ptr));
-			SSDFS_ERR("fail to get fragment: "
-				  "sequence_id %u, err %d\n",
-				  start_sequence_id, err);
-			goto finish_snapshoting;
-		}
-		fragment = (struct ssdfs_phys_offset_table_fragment *)ptr;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("start_sequence_id %u, new_sequence_id %u\n",
-			  start_sequence_id, snapshot->new_sequence_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		down_read(&fragment->lock);
-		snapshot->start_offset_id = fragment->start_id;
-		up_read(&fragment->lock);
-	} else if (snapshot->new_sequence_id > 0) {
+	if (snapshot->new_sequence_id > 0) {
 		struct ssdfs_offset_id_search id_search;
 
 		id_search.snapshot = snapshot;
@@ -6037,6 +6013,7 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 	compr_type = ssdfs_blk2off_table_compression_type(pebi, *uncompr_size);
 
 	folio_index = log_offset->cur_block << fsi->log_pagesize;
+	folio_index += log_offset->offset_into_block;
 	folio_index /= pebi->cache.folio_size;
 
 	folio = ssdfs_folio_array_grab_folio(&pebi->cache, folio_index);
@@ -6145,7 +6122,13 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 	fsi = pebi->pebc->parent_si->fsi;
 
 	folio_index = log_offset->cur_block << fsi->log_pagesize;
+	folio_index += log_offset->offset_into_block;
 	folio_index /= pebi->cache.folio_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("folio_index %lu, folio_size %zu\n",
+		  folio_index, pebi->cache.folio_size);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	folio = ssdfs_folio_array_grab_folio(&pebi->cache, folio_index);
 	if (IS_ERR_OR_NULL(folio)) {
@@ -6163,6 +6146,14 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 		log_offset->offset_into_block % pebi->cache.folio_size;
 	*copied_len = folio_size(folio) - offset_into_folio;
 	*copied_len = min_t(size_t, *copied_len, blob_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("offset_into_folio %u, offset_into_block %u, "
+		  "blob_size %zu, copied_len %zu\n",
+		  offset_into_folio,
+		  log_offset->offset_into_block,
+		  blob_size, *copied_len);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = __ssdfs_memcpy_to_folio(folio,
 				      offset_into_folio, folio_size(folio),
@@ -6190,6 +6181,27 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 			  "err %d\n", err);
 		goto unlock_grabbed_folio;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	{
+		void *kaddr;
+		u32 processed_bytes = 0;
+
+		do {
+			kaddr = kmap_local_folio(folio, processed_bytes);
+			SSDFS_DBG("PAGE DUMP: folio_index %lu, "
+				  "page_offset %u\n",
+				  folio_index, processed_bytes);
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr,
+					     PAGE_SIZE);
+			SSDFS_DBG("\n");
+			kunmap_local(kaddr);
+
+			processed_bytes += PAGE_SIZE;
+		} while (processed_bytes < folio_size(folio));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (*copied_len != blob_size) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6573,9 +6585,11 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 	}
 
 	reserved_offset = blk2off_tbl->reserved_offset;
-	folio_index = reserved_offset / fsi->pagesize;
-	folio_index += pebi->current_log.start_block;
-	folio_index *= fsi->pagesize / pebi->cache.folio_size;
+
+	folio_index = pebi->current_log.start_block;
+	folio_index <<= fsi->log_pagesize;
+	folio_index += reserved_offset;
+	folio_index /= pebi->cache.folio_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_offset %u, folio_index %lu\n",
@@ -7714,6 +7728,7 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 		if (!need_commit) {
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
 			struct ssdfs_sequence_array *sequence;
+			unsigned long last_sequence_id;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("delete fragment %d\n",
@@ -7721,6 +7736,20 @@ int ssdfs_peb_store_offsets_table(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			sequence = table->peb[peb_index].sequence;
+			last_sequence_id =
+				ssdfs_sequence_array_last_id(sequence);
+
+			if (sequence_id == last_sequence_id) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("DONT delete fragment:"
+					  "sequence_id %d, "
+					  "last_sequence_id %lu\n",
+					  sequence_id,
+					  last_sequence_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto get_next_sequence_id;
+			}
+
 			err = ssdfs_sequence_array_delete_item(sequence,
 							sequence_id,
 							ssdfs_blk2off_frag_free);

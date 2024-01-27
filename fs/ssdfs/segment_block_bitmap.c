@@ -598,6 +598,72 @@ int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
 }
 
 /*
+ * ssdfs_segment_blk_bmap_get_block_state() - get logical block's state
+ * @ptr: segment block bitmap object
+ * @pebc: pointer on PEB container
+ * @blk: logical block index
+ *
+ * This method tries to detect the state of logical block.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
+					   struct ssdfs_peb_container *pebc,
+					   u32 blk)
+{
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
+	u16 peb_index;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
+
+	SSDFS_DBG("seg_id %llu, peb_index %u, blk %u\n",
+		  ptr->parent_si->seg_id,
+		  pebc->peb_index, blk);
+	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
+		  ptr->pages_per_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&ptr->state));
+		return -ERANGE;
+	}
+
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define bmap_index: "
+			  "seg %llu, peb_index %u, err %d\n",
+			  ptr->parent_si->seg_id,
+			  pebc->peb_index, err);
+		return err;
+	}
+
+	if (peb_index >= ptr->pebs_count) {
+		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
+			  peb_index, ptr->pebs_count);
+		return -ERANGE;
+	}
+
+	peb_blkbmap = &ptr->peb[peb_index];
+
+	return ssdfs_peb_blk_bmap_get_block_state(peb_blkbmap,
+						  bmap_index,
+						  blk);
+}
+
+/*
  * ssdfs_segment_blk_bmap_reserve_metapages() - reserve metapages
  * @ptr: segment block bitmap object
  * @pebc: pointer on PEB container

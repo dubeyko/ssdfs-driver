@@ -756,10 +756,12 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (batch->content.count >= SSDFS_REQ_EXTENT_LEN_MAX) {
+	if (batch->content.count > SSDFS_REQ_EXTENT_LEN_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid block index: "
 			   "block_index %d, batch->content.count %d\n",
 			   block_index, batch->content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -E2BIG;
 	}
 
@@ -769,6 +771,15 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 			   block_index, batch->content.count);
 		return -EINVAL;
 	} else if (block_index == batch->content.count) {
+		if (batch->content.count == SSDFS_REQ_EXTENT_LEN_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("invalid block index: "
+				   "block_index %d, batch->content.count %d\n",
+				   block_index, batch->content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -E2BIG;
+		}
+
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("increment extent length: "
 			  "block_index %d, batch->content.count %d\n",
@@ -811,7 +822,7 @@ int ssdfs_request_add_folio(struct folio *folio,
 	BUG_ON(!folio || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (req->result.content.count >= SSDFS_REQ_EXTENT_LEN_MAX) {
+	if (req->result.content.count > SSDFS_REQ_EXTENT_LEN_MAX) {
 		SSDFS_WARN("invalid block index: "
 			   "block_index %d, req->result.content.count %d\n",
 			   block_index, req->result.content.count);
@@ -824,6 +835,17 @@ int ssdfs_request_add_folio(struct folio *folio,
 			   block_index, req->result.content.count);
 		return -EINVAL;
 	} else if (block_index == req->result.content.count) {
+		if (req->result.content.count == SSDFS_REQ_EXTENT_LEN_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("invalid block index: "
+				   "block_index %d, "
+				   "req->result.content.count %d\n",
+				   block_index,
+				   req->result.content.count);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -E2BIG;
+		}
+
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("increment extent length: "
 			  "block_index %d, req->result.content.count %d\n",

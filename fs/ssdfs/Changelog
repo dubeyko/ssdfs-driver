@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.91 [January 27, 2024]
+    (*) Fix bugs in logic of supporting 8KB logical block size.
+
 v.4.90 [January 14, 2024]
     (*) Fix bugs in logic of supporting memory folios.
 
