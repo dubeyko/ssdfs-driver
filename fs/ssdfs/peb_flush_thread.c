@@ -15745,31 +15745,6 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 	case SSDFS_LOG_INITIALIZED:
 	case SSDFS_LOG_COMMITTED:
 	case SSDFS_LOG_CREATED:
-		if (empty_blocks > min_partial_log_blocks)
-			is_ready_to_exhaust = false;
-		else if (reserved_blocks == 0) {
-			if (free_data_blocks <= min_partial_log_blocks)
-				is_ready_to_exhaust = true;
-			else
-				is_ready_to_exhaust = false;
-		} else {
-			if (free_data_blocks < min_partial_log_blocks)
-				is_ready_to_exhaust = true;
-			else
-				is_ready_to_exhaust = false;
-		}
-		break;
-
-	default:
-		is_ready_to_exhaust = false;
-		break;
-	};
-
-/*
-	switch (atomic_read(&pebi->current_log.state)) {
-	case SSDFS_LOG_INITIALIZED:
-	case SSDFS_LOG_COMMITTED:
-	case SSDFS_LOG_CREATED:
 		if (available_for_data_blocks <= reserved_blocks) {
 			is_ready_to_exhaust = true;
 		} else {
@@ -15788,7 +15763,6 @@ bool is_ssdfs_peb_ready_to_exhaust(struct ssdfs_fs_info *fsi,
 		is_ready_to_exhaust = false;
 		break;
 	};
-*/
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_id %llu, free_data_blocks %u, "
@@ -16155,6 +16129,13 @@ int ssdfs_check_peb_init_state(u64 seg_id, u64 peb_id, int state,
 		return 0;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("WAIT PEB INIT END: "
+		  "seg_id %llu, peb_id %llu, "
+		  "state %#x, init_end %p\n",
+		  seg_id, peb_id, state, init_end);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	res = wait_for_completion_timeout(init_end, SSDFS_DEFAULT_TIMEOUT);
 	if (res == 0) {
 		SSDFS_ERR("PEB init failed: "
@@ -16183,6 +16164,11 @@ int ssdfs_check_src_peb_init_state(struct ssdfs_peb_container *pebc)
 	}
 	up_read(&pebc->lock);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x, init_end %p\n",
+		  peb_id, state, init_end);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return ssdfs_check_peb_init_state(pebc->parent_si->seg_id,
 					  peb_id, state, init_end);
 }
@@ -16203,6 +16189,11 @@ int ssdfs_check_dst_peb_init_state(struct ssdfs_peb_container *pebc)
 		state = atomic_read(&pebi->state);
 	}
 	up_read(&pebc->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x, init_end %p\n",
+		  peb_id, state, init_end);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ssdfs_check_peb_init_state(pebc->parent_si->seg_id,
 					  peb_id, state, init_end);
@@ -18654,6 +18645,7 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 	bool is_peb_exhausted = false;
 	bool is_peb_ready_to_exhaust = false;
 	bool has_partial_empty_log = false;
+	bool migration_must_start = false;
 	int state;
 	int err = 0;
 
@@ -18700,12 +18692,18 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 	ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("is_peb_exhausted %#x, "
-			  "is_peb_ready_to_exhaust %#x\n",
-			  is_peb_exhausted, is_peb_ready_to_exhaust);
+	SSDFS_DBG("is_peb_exhausted %#x, "
+		  "is_peb_ready_to_exhaust %#x\n",
+		  is_peb_exhausted, is_peb_ready_to_exhaust);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (is_peb_exhausted || is_peb_ready_to_exhaust) {
+	migration_must_start = is_peb_exhausted;
+	if (!migration_must_start) {
+		migration_must_start =
+			is_peb_ready_to_exhaust && has_peb_migration_done(pebc);
+	}
+
+	if (migration_must_start) {
 		ssdfs_unlock_current_peb(pebc);
 
 		if (is_peb_under_migration(pebc)) {

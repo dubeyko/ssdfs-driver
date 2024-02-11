@@ -1842,6 +1842,7 @@ repeat:
 			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
 
 			switch (pebd->state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 				/* PEB is under migration */
@@ -1967,6 +1968,7 @@ try_collect_garbage:
 			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
 
 			switch (pebd->state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:

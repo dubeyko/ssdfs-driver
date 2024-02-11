@@ -3293,6 +3293,11 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("commit logs: seg %llu\n", si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_segment_commit_log_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
 						req1);
@@ -3739,6 +3744,9 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 		state = atomic_read(&fdesc->state);
 		switch (state) {
 		case SSDFS_MAPTBL_FRAG_INITIALIZED:
+			/* simply skip *NOT DIRTY* fragment */
+			continue;
+
 		case SSDFS_MAPTBL_FRAG_DIRTY:
 			/* expected state */
 			break;
@@ -8501,6 +8509,7 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
 	case SSDFS_MAPTBL_PRE_ERASE_STATE:
 	case SSDFS_MAPTBL_RECOVERING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -8619,6 +8628,7 @@ finish_change_state:
 			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
 			case SSDFS_MAPTBL_PRE_ERASE_STATE:
 			case SSDFS_MAPTBL_RECOVERING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -10867,6 +10877,10 @@ int ssdfs_maptbl_set_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 	switch (ptr->state) {
+	case SSDFS_MAPTBL_USING_PEB_STATE:
+		ptr->state = SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
+		break;
+
 	case SSDFS_MAPTBL_USED_PEB_STATE:
 		ptr->state = SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE;
 		break;
@@ -11198,6 +11212,10 @@ ssdfs_maptbl_set_zns_external_peb_ptr(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 	switch (ptr->state) {
+	case SSDFS_MAPTBL_USING_PEB_STATE:
+		ptr->state = SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
+		break;
+
 	case SSDFS_MAPTBL_USED_PEB_STATE:
 		ptr->state = SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE;
 		break;

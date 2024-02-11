@@ -3041,6 +3041,7 @@ ssdfs_maptbl_cache_define_relation_index(struct ssdfs_maptbl_peb_relation *pebr,
 		}
 		break;
 
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3177,6 +3178,7 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 			case SSDFS_MAPTBL_USED_PEB_STATE:
 			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3199,6 +3201,7 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 			case SSDFS_MAPTBL_USED_PEB_STATE:
 			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3221,6 +3224,7 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 			case SSDFS_MAPTBL_USED_PEB_STATE:
 			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3243,6 +3247,7 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 			case SSDFS_MAPTBL_USED_PEB_STATE:
 			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3265,6 +3270,25 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 			case SSDFS_MAPTBL_USED_PEB_STATE:
 			case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+				goto finish_check;
+
+			default:
+				SSDFS_ERR("invalid change: "
+					  "old peb_state %#x, "
+					  "new peb_state %#x\n",
+				    pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+				    peb_state);
+				return false;
+			}
+			break;
+
+		case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3282,6 +3306,7 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 
 		case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -3299,6 +3324,8 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 
 		case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
 				goto finish_check;
@@ -3315,6 +3342,9 @@ bool can_peb_state_be_changed(struct ssdfs_maptbl_peb_relation *pebr,
 
 		case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
 			switch (peb_state) {
+			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
 				goto finish_check;
 
@@ -3701,6 +3731,7 @@ int ssdfs_maptbl_cache_change_peb_state_nolock(struct ssdfs_maptbl_cache *cache,
 	case SSDFS_MAPTBL_USED_PEB_STATE:
 	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:

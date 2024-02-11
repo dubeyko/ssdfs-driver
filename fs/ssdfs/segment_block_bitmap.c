@@ -209,6 +209,7 @@ fail_create_seg_blk_bmap:
  */
 void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 {
+	int err;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -235,8 +236,14 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
 	atomic_set(&ptr->seg_free_blks, 0);
 	atomic_set(&ptr->seg_reserved_metapages, 0);
 
-	for (i = 0; i < ptr->pebs_count; i++)
-		ssdfs_peb_blk_bmap_destroy(&ptr->peb[i]);
+	for (i = 0; i < ptr->pebs_count; i++) {
+		err = ssdfs_peb_blk_bmap_destroy(&ptr->peb[i]);
+		if (unlikely(err)) {
+			SSDFS_ERR("block bitmap destroy failure: "
+				  "seg_id %llu, peb_index %d, err %d\n",
+				  ptr->parent_si->seg_id, i, err);
+		}
+	}
 
 	ssdfs_seg_blk_kfree(ptr->peb);
 	ptr->peb = NULL;

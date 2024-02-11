@@ -166,6 +166,12 @@ void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap)
 	clear_block_bmap_dirty(blk_bmap);
 }
 
+void ssdfs_block_bmap_set_dirty_state(struct ssdfs_block_bmap *blk_bmap)
+{
+	SSDFS_DBG("set dirty state\n");
+	set_block_bmap_dirty(blk_bmap);
+}
+
 static inline
 bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state);
 static
@@ -227,8 +233,10 @@ void ssdfs_block_bmap_storage_destroy(struct ssdfs_block_bmap_storage *storage)
  * This function releases memory folios of batch and
  * to free memory of ssdfs_block_bmap structure.
  */
-void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
+int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
 {
+	int err = 0;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
@@ -241,13 +249,19 @@ void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
 		SSDFS_WARN("block bitmap's mutex is locked\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!is_block_bmap_initialized(blk_bmap))
+	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		err = -EFAULT;
+	}
 
-	if (is_block_bmap_dirty(blk_bmap))
+	if (is_block_bmap_dirty(blk_bmap)) {
 		SSDFS_WARN("block bitmap is dirty\n");
+		err = -EFAULT;
+	}
 
 	ssdfs_block_bmap_storage_destroy(&blk_bmap->storage);
+
+	return err;
 }
 
 /*
@@ -5075,6 +5089,10 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 	blk_bmap->used_blks += range->len;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("set dirty state\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	set_block_bmap_dirty(blk_bmap);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -5287,6 +5305,10 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 		blk_bmap->used_blks += range->len;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("set dirty state\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	set_block_bmap_dirty(blk_bmap);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -5396,6 +5418,8 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+
+	SSDFS_DBG("set dirty state\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	set_block_bmap_dirty(blk_bmap);
@@ -5611,6 +5635,8 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
+
+	SSDFS_DBG("set dirty state\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	set_block_bmap_dirty(blk_bmap);

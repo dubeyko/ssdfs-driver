@@ -1954,6 +1954,37 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		}
 		break;
 
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+		switch (dst_peb_state) {
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			peb_blkbmap =
+			    &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+			atomic_set(&peb_blkbmap->state,
+					SSDFS_PEB_BLK_BMAP_HAS_CLEAN_DST);
+
+			err = ssdfs_create_using_peb_container(pebc,
+							       SSDFS_SRC_PEB);
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to create using PEB container: "
+					  "err %d\n", err);
+				goto fail_start_threads;
+			}
+			break;
+
+		default:
+			SSDFS_ERR("invalid PEB state: "
+				  "source %#x, destination %#x\n",
+				  src_peb_state, dst_peb_state);
+			err = -ERANGE;
+			goto fail_start_threads;
+		}
+		break;
+
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 		switch (dst_peb_state) {
 		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
@@ -2395,6 +2426,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 		goto start_container_threads;
 		break;
 
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -5387,6 +5419,13 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				SSDFS_MAPTBL_USING_PEB_STATE;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg %llu, peb_index %u, peb %llu, "
+			  "new_peb_state %#x\n",
+			  si->seg_id, pebc->peb_index,
+			  pebi->peb_id, new_peb_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
 						    pebc->peb_type,
 						    new_peb_state, &end);
@@ -5515,6 +5554,13 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				SSDFS_MAPTBL_USING_PEB_STATE;
 		}
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg %llu, peb_index %u, peb %llu, "
+			  "new_peb_state %#x\n",
+			  si->seg_id, pebc->peb_index,
+			  pebi->peb_id, new_peb_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
 						    pebc->peb_type,
 						    new_peb_state, &end);
@@ -5576,31 +5622,88 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
+		ssdfs_peb_current_log_lock(pebi);
+		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
+		ssdfs_peb_current_log_unlock(pebi);
+
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("source PEB: free_pages %d, used_pages %d, "
-			  "invalid_pages %d\n",
-			  free_pages, used_pages, invalid_pages);
+			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  free_pages, used_pages,
+			  invalid_pages, is_peb_exhausted);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		if (invalid_pages == 0) {
-			if (used_pages == 0) {
+		if (free_pages == 0) {
+			if (!is_peb_exhausted) {
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
+			} else if (invalid_pages == 0) {
+				if (used_pages == 0) {
+					SSDFS_ERR("invalid state: "
+						  "free_pages %d, "
+						  "used_pages %d, "
+						  "invalid_pages %d\n",
+						  free_pages,
+						  used_pages,
+						  invalid_pages);
+					return -ERANGE;
+				}
+
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE;
+			} else if (used_pages == 0) {
+				if (invalid_pages == 0) {
+					SSDFS_ERR("invalid state: "
+						  "free_pages %d, "
+						  "used_pages %d, "
+						  "invalid_pages %d\n",
+						  free_pages,
+						  used_pages,
+						  invalid_pages);
+					return -ERANGE;
+				}
+
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE;
+			} else {
+				new_peb_state =
+				    SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
+			}
+		} else if (used_pages == 0) {
+			if (invalid_pages == 0) {
 				SSDFS_ERR("invalid state: "
+					  "free_pages %d, "
 					  "used_pages %d, "
 					  "invalid_pages %d\n",
+					  free_pages,
 					  used_pages,
 					  invalid_pages);
 				return -ERANGE;
 			}
 
-			new_peb_state =
-				SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE;
-		} else if (used_pages == 0) {
-			new_peb_state =
-				SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE;
+			if (is_peb_exhausted) {
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE;
+			} else {
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
+			}
 		} else {
-			new_peb_state =
-				SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
+			if (is_peb_exhausted) {
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
+			} else {
+				new_peb_state =
+					SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
+			}
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("SOURCE PEB: seg %llu, peb_index %u, peb %llu, "
+			  "new_peb_state %#x\n",
+			  si->seg_id, pebc->peb_index,
+			  pebi->peb_id, new_peb_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
 						    pebc->peb_type,
@@ -5726,6 +5829,13 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			new_peb_state =
 				SSDFS_MAPTBL_MIGRATION_DST_USING_STATE;
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("DESTINATION PEB: seg %llu, peb_index %u, peb %llu, "
+			  "new_peb_state %#x\n",
+			  si->seg_id, pebc->peb_index,
+			  pebi->peb_id, new_peb_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
 						    pebc->peb_type,

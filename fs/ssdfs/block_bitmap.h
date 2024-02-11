@@ -280,7 +280,7 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 			    u32 items_capacity,
 			    u32 allocation_pool,
 			    int flag, int init_state);
-void ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap);
+int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  struct ssdfs_folio_vector *source,
 			  u32 last_free_blk,
@@ -299,6 +299,7 @@ bool ssdfs_block_bmap_is_locked(struct ssdfs_block_bmap *blk_bmap);
 void ssdfs_block_bmap_unlock(struct ssdfs_block_bmap *blk_bmap);
 
 bool ssdfs_block_bmap_dirtied(struct ssdfs_block_bmap *blk_bmap);
+void ssdfs_block_bmap_set_dirty_state(struct ssdfs_block_bmap *blk_bmap);
 void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap);
 bool ssdfs_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap);
 void ssdfs_set_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap);

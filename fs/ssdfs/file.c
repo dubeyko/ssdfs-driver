@@ -537,8 +537,10 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, folio_index %lu\n",
-		  file_inode(file)->i_ino, folio_index(folio));
+	SSDFS_DBG("ino %lu, folio_index %lu, "
+		  "folio_size %zu\n",
+		  file_inode(file)->i_ino, folio_index(folio),
+		  folio_size(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_account_locked_folio(folio);
@@ -734,6 +736,13 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		data_bytes += folio_size(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio_index %d, folio_size %zu, "
+			  "data_bytes %llu\n",
+			  i, folio_size(folio),
+			  (u64)data_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -843,6 +852,11 @@ int ssdfs_readahead_block(struct ssdfs_readahead_env *env)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(data_bytes > U32_MAX);
+
+	SSDFS_DBG("folio_index %llu, logical_offset %llu, "
+		  "file_size %llu, data_bytes %llu\n",
+		  (u64)index, (u64)logical_offset,
+		  (u64)file_size, (u64)data_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	env->requested.ino = ino;

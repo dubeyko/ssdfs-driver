@@ -205,10 +205,13 @@ fail_create_peb_bmap:
  *
  * This function tries to destroy PEB's block bitmap object.
  */
-void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
+int ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 {
+	int err1 = 0;
+	int err2 = 0;
+
 	if (!ptr)
-		return;
+		return 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(rwsem_is_locked(&ptr->lock));
@@ -218,22 +221,26 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 	SSDFS_ERR("ptr %p, peb_index %u, "
 		  "state %#x, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, "
-		  "free_logical_blks %d\n",
+		  "free_logical_blks %d, "
+		  "buffers_state %#x\n",
 		  ptr, ptr->peb_index,
 		  atomic_read(&ptr->state),
 		  atomic_read(&ptr->peb_valid_blks),
 		  atomic_read(&ptr->peb_invalid_blks),
-		  atomic_read(&ptr->peb_free_blks));
+		  atomic_read(&ptr->peb_free_blks),
+		  atomic_read(&ptr->buffers_state));
 #else
 	SSDFS_DBG("ptr %p, peb_index %u, "
 		  "state %#x, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, "
-		  "free_logical_blks %d\n",
+		  "free_logical_blks %d, "
+		  "buffers_state %#x\n",
 		  ptr, ptr->peb_index,
 		  atomic_read(&ptr->state),
 		  atomic_read(&ptr->peb_valid_blks),
 		  atomic_read(&ptr->peb_invalid_blks),
-		  atomic_read(&ptr->peb_free_blks));
+		  atomic_read(&ptr->peb_free_blks),
+		  atomic_read(&ptr->buffers_state));
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!is_peb_block_bmap_initialized(ptr))
@@ -247,8 +254,8 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 	ptr->dst = NULL;
 	atomic_set(&ptr->buffers_state, SSDFS_PEB_BMAP_BUFFERS_EMPTY);
 
-	ssdfs_block_bmap_destroy(&ptr->buffer[SSDFS_PEB_BLK_BMAP1]);
-	ssdfs_block_bmap_destroy(&ptr->buffer[SSDFS_PEB_BLK_BMAP2]);
+	err1 = ssdfs_block_bmap_destroy(&ptr->buffer[SSDFS_PEB_BLK_BMAP1]);
+	err2 = ssdfs_block_bmap_destroy(&ptr->buffer[SSDFS_PEB_BLK_BMAP2]);
 
 	atomic_set(&ptr->state, SSDFS_PEB_BLK_BMAP_STATE_UNKNOWN);
 
@@ -257,6 +264,20 @@ void ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 #else
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (err1) {
+		SSDFS_ERR("block bitmap destroy failure: "
+			  "peb_index %u, err %d\n",
+			  ptr->peb_index, err1);
+		return err1;
+	} else if (err2) {
+		SSDFS_ERR("block bitmap destroy failure: "
+			  "peb_index %u, err %d\n",
+			  ptr->peb_index, err2);
+		return err2;
+	}
+
+	return 0;
 }
 
 /*
@@ -4356,9 +4377,9 @@ unlock_src_bmap:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_block_bmap_clear_dirty_state(bmap->src);
-
 	bmap->src = &bmap->buffer[buffer_index];
 	bmap->dst = NULL;
+	ssdfs_block_bmap_set_dirty_state(bmap->src);
 	atomic_set(&bmap->buffers_state, new_buffers_state);
 
 finish_migration_stop:

@@ -3209,6 +3209,13 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		else
 			state = &block->new_state;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("fragment_index %d, fragments %u, "
+			  "processed_bytes %u, folio_index %d\n",
+			  i, fragments,
+			  processed_bytes, folio_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (folio_index >= folio_batch_count(&state->batch)) {
 			SSDFS_ERR("folio_index %d >= batch_count %u\n",
 				  folio_index,
@@ -3269,6 +3276,14 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 		}
 
 		processed_bytes += PAGE_SIZE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("folio.desc.page_offset %u, "
+			  "folio_size %zu, folio_index %d\n",
+			  folio.desc.page_offset,
+			  folio_size(folio.ptr),
+			  folio_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if ((folio.desc.page_offset + PAGE_SIZE) >=
 						folio_size(folio.ptr)) {
@@ -10006,7 +10021,9 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 	items_state = atomic_read(&pebc->items_state);
 	switch(items_state) {
 	case SSDFS_PEB1_SRC_CONTAINER:
+	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
 	case SSDFS_PEB2_SRC_CONTAINER:
+	case SSDFS_PEB2_SRC_PEB1_DST_CONTAINER:
 		/* valid states */
 		break;
 
@@ -10080,6 +10097,58 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 	atomic_set(&pebi->state,
 		   SSDFS_PEB_OBJECT_INITIALIZED);
 	complete_all(&pebi->init_end);
+
+	switch (items_state) {
+	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
+	case SSDFS_PEB2_SRC_PEB1_DST_CONTAINER:
+		if (!pebc->dst_peb) {
+			SSDFS_WARN("destination PEB is NULL\n");
+			err = -ERANGE;
+			goto finish_src_init_using_metadata_state;
+		}
+
+		id1 = __ssdfs_define_next_peb_migration_id(id1);
+		if (!is_peb_migration_id_valid(id1)) {
+			err = -EIO;
+			SSDFS_ERR("invalid peb_migration_id: "
+				  "seg_id %llu, peb_index %u, "
+				  "peb_migration_id %u\n",
+				  pebc->parent_si->seg_id,
+				  pebc->peb_index,
+				  id1);
+			goto finish_src_init_using_metadata_state;
+		}
+
+		id2 = ssdfs_get_peb_migration_id(pebc->dst_peb);
+
+		if (id2 == SSDFS_PEB_UNKNOWN_MIGRATION_ID) {
+			/* it needs to initialize the migration id */
+			ssdfs_set_peb_migration_id(pebc->dst_peb, id1);
+			atomic_set(&pebc->dst_peb->state,
+				   SSDFS_PEB_OBJECT_INITIALIZED);
+			complete_all(&pebc->dst_peb->init_end);
+		}  else if (is_peb_migration_id_valid(id2)) {
+			if (id1 != id2) {
+				err = -ERANGE;
+				SSDFS_ERR("id1 %d != id2 %d\n",
+					  id1, id2);
+				goto finish_src_init_using_metadata_state;
+			} else {
+				/*
+				 * Do nothing.
+				 */
+			}
+		} else {
+			err = -ERANGE;
+			SSDFS_ERR("invalid migration_id %d\n", id2);
+			goto finish_src_init_using_metadata_state;
+		}
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	};
 
 finish_src_init_using_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
