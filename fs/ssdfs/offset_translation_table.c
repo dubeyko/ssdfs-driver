@@ -4126,6 +4126,24 @@ int ssdfs_blk2off_table_pre_delete_fragment(void *item, u64 peb_id)
 }
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
+static inline
+bool has_logical_block_id_assigned(struct ssdfs_blk2off_table *table,
+				   u16 logical_blk)
+{
+	u16 capacity;
+	bool has_assigned = false;
+
+	down_read(&table->translation_lock);
+	capacity = table->lblk2off_capacity;
+	has_assigned = !ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
+						SSDFS_LBMAP_MODIFICATION_INDEX,
+						capacity,
+						logical_blk);
+	up_read(&table->translation_lock);
+
+	return has_assigned;
+}
+
 /*
  * ssdfs_blk2off_table_snapshot() - get table's snapshot
  * @table: pointer on translation table object
@@ -5343,13 +5361,16 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			if (pos->peb_index == U16_MAX) {
-				SSDFS_WARN("invalid peb_index: "
-					   "logical_blk %u\n",
-					   blk);
-				return -ERANGE;
-			}
-
-			if (is_found_logical_block_free(sp, blk)) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("IGNORE LOGICAL BLOCK: "
+					  "logical_blk %u\n",
+					  blk);
+#endif /* CONFIG_SSDFS_DEBUG */
+				if (found.range.start_lblk == U16_MAX)
+					is_extent_ended = false;
+				else
+					is_extent_ended = true;
+			} else if (is_found_logical_block_free(sp, blk)) {
 				/* free block */
 
 				switch (found.state) {
@@ -5457,7 +5478,24 @@ int ssdfs_blk2off_table_extract_extents(struct ssdfs_blk2off_table_snapshot *sp,
 
 				pos = &sp->tbl_copy[blk];
 
-				if (pos->id == SSDFS_BLK2OFF_TABLE_INVALID_ID) {
+				if (pos->peb_index == U16_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("ignore block: "
+						  "blk %u, "
+						  "pos->peb_index %u, "
+						  "sp->peb_index %u\n",
+						  blk,
+						  pos->peb_index,
+						  sp->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+					found.state =
+						SSDFS_LOGICAL_BLK_UNKNOWN_STATE;
+					found.range.start_lblk = U16_MAX;
+					found.range.len = 0;
+					found.start_id =
+						SSDFS_BLK2OFF_TABLE_INVALID_ID;
+				} else if (pos->id == SSDFS_BLK2OFF_TABLE_INVALID_ID) {
 					found.state = SSDFS_LOGICAL_BLK_FREE;
 					found.range.start_lblk = blk;
 					found.range.len = 1;
@@ -8235,24 +8273,6 @@ int ssdfs_blk2off_table_check_fragment_desc(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
-}
-
-static inline
-bool has_logical_block_id_assigned(struct ssdfs_blk2off_table *table,
-				   u16 logical_blk)
-{
-	u16 capacity;
-	bool has_assigned = false;
-
-	down_read(&table->translation_lock);
-	capacity = table->lblk2off_capacity;
-	has_assigned = !ssdfs_blk2off_table_bmap_vacant(&table->lbmap,
-						SSDFS_LBMAP_MODIFICATION_INDEX,
-						capacity,
-						logical_blk);
-	up_read(&table->translation_lock);
-
-	return has_assigned;
 }
 
 /*

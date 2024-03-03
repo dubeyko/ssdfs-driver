@@ -544,7 +544,10 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_account_locked_folio(folio);
-	err = ssdfs_read_block_nolock(file, folio, SSDFS_CURRENT_THREAD_READ);
+	if (!folio_test_uptodate(folio)) {
+		err = ssdfs_read_block_nolock(file, folio,
+						SSDFS_CURRENT_THREAD_READ);
+	}
 	ssdfs_folio_unlock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1105,6 +1108,107 @@ finish_requests_processing:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return;
+}
+
+static ssize_t ssdfs_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
+{
+	struct folio *folio;
+	struct file *file = iocb->ki_filp;
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct address_space *mapping = file->f_mapping;
+	pgoff_t start_index = iocb->ki_pos >> PAGE_SHIFT;
+	size_t iter_bytes = iov_iter_count(iter);
+	u32 processed_bytes;
+	size_t folios_count;
+	int pages_per_folio = fsi->pagesize >> PAGE_SHIFT;
+	fgf_t fgp_flags = FGP_CREAT | FGP_LOCK;
+	int i;
+	ssize_t res = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %lu, pos %llu, iter_bytes %zu\n",
+		  inode->i_ino, iocb->ki_pos, iter_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!iter_bytes)
+		return 0;
+
+	if (iocb->ki_pos >= i_size_read(inode))
+		return 0;
+
+	iter_bytes = min_t(size_t,
+			   iter_bytes, i_size_read(inode) - iocb->ki_pos);
+	folios_count = (iter_bytes + fsi->pagesize - 1) >> fsi->log_pagesize;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("iter_bytes %zu, folios_count %zu\n",
+		  iter_bytes, folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!mapping_large_folio_support(mapping))
+		goto read_file_content_now;
+
+	if (iter_bytes == 0) {
+		SSDFS_DBG("nothing to read: iter_bytes %zu\n",
+			  iter_bytes);
+		return 0;
+	}
+
+	for (i = 0; i < folios_count; i++) {
+		pgoff_t cur_index = start_index + (i * pages_per_folio);
+		processed_bytes = 0;
+
+		while (processed_bytes < fsi->pagesize) {
+			pgoff_t page_index = cur_index +
+						(processed_bytes >> PAGE_SHIFT);
+			fgp_flags |= fgf_set_order(fsi->pagesize -
+						   processed_bytes);
+
+			folio = __filemap_get_folio(mapping,
+						    page_index,
+						    fgp_flags,
+						    mapping_gfp_mask(mapping));
+			if (!folio) {
+				SSDFS_ERR("fail to grab folio: page_index %lu\n",
+					  page_index);
+				return -ENOMEM;
+			} else if (IS_ERR(folio)) {
+				SSDFS_ERR("fail to grab folio: "
+					  "page_index %lu, err %ld\n",
+					  page_index, PTR_ERR(folio));
+				return PTR_ERR(folio);
+			}
+
+			ssdfs_account_locked_folio(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("folio %p, page_index %lu, count %d, "
+				  "folio_size %zu, page_size %u, "
+				  "fgp_flags %#x, order %u\n",
+				  folio, page_index,
+				  folio_ref_count(folio),
+				  folio_size(folio),
+				  fsi->pagesize,
+				  fgp_flags,
+				  FGF_GET_ORDER(fgp_flags));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			processed_bytes += folio_size(folio);
+
+			ssdfs_folio_unlock(folio);
+			ssdfs_folio_put(folio);
+		}
+	}
+
+read_file_content_now:
+	res = generic_file_read_iter(iocb, iter);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: res %zd\n", res);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return res;
 }
 
 /*
@@ -3407,7 +3511,7 @@ int ssdfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 
 const struct file_operations ssdfs_file_operations = {
 	.llseek		= generic_file_llseek,
-	.read_iter	= generic_file_read_iter,
+	.read_iter	= ssdfs_file_read_iter,
 	.write_iter	= generic_file_write_iter,
 	.unlocked_ioctl	= ssdfs_ioctl,
 	.mmap		= generic_file_mmap,
