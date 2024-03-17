@@ -3802,9 +3802,7 @@ static int ssdfs_init_caches(void)
 
 	ssdfs_inode_cachep = kmem_cache_create("ssdfs_inode_cache",
 					sizeof(struct ssdfs_inode_info), 0,
-					SLAB_RECLAIM_ACCOUNT |
-					SLAB_MEM_SPREAD |
-					SLAB_ACCOUNT,
+					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 					ssdfs_init_inode_once);
 	if (!ssdfs_inode_cachep) {
 		SSDFS_ERR("unable to create inode cache\n");

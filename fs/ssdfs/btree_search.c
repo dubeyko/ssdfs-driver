@@ -125,9 +125,7 @@ int ssdfs_init_btree_search_obj_cache(void)
 	ssdfs_btree_search_obj_cachep =
 		kmem_cache_create_usercopy("ssdfs_btree_search_obj_cache",
 				sizeof(struct ssdfs_btree_search), 0,
-				SLAB_RECLAIM_ACCOUNT |
-				SLAB_MEM_SPREAD |
-				SLAB_ACCOUNT,
+				SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 				offsetof(struct ssdfs_btree_search, raw),
 				sizeof(union ssdfs_btree_search_raw_data) +
 				sizeof(struct ssdfs_name_string),

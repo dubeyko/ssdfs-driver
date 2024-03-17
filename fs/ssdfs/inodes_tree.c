@@ -124,9 +124,7 @@ int ssdfs_init_free_ino_desc_cache(void)
 	ssdfs_free_ino_desc_cachep =
 			kmem_cache_create("ssdfs_free_ino_desc_cache",
 				sizeof(struct ssdfs_inodes_btree_range), 0,
-				SLAB_RECLAIM_ACCOUNT |
-				SLAB_MEM_SPREAD |
-				SLAB_ACCOUNT,
+				SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 				ssdfs_init_free_ino_desc_once);
 	if (!ssdfs_free_ino_desc_cachep) {
 		SSDFS_ERR("unable to create free inode descriptors cache\n");

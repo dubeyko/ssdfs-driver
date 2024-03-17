@@ -128,6 +128,7 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	sector_t zone_size = fsi->erasesize >> SECTOR_SHIFT;
 	u32 open_zones;
+	unsigned int nofs_flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -137,8 +138,10 @@ static int ssdfs_zns_open_zone(struct super_block *sb, loff_t offset)
 		  atomic_read(&fsi->open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
-				zone_sector, zone_size, GFP_NOFS);
+				zone_sector, zone_size);
+	memalloc_nofs_restore(nofs_flags);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to open zone: "
 			  "zone_sector %llu, zone_size %llu, "
@@ -178,6 +181,7 @@ static int ssdfs_zns_reopen_zone(struct super_block *sb, loff_t offset)
 	struct blk_zone zone;
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	sector_t zone_size = fsi->erasesize >> SECTOR_SHIFT;
+	unsigned int nofs_flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -238,8 +242,10 @@ static int ssdfs_zns_reopen_zone(struct super_block *sb, loff_t offset)
 		break;
 	}
 
+	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_OPEN,
-				zone_sector, zone_size, GFP_NOFS);
+				zone_sector, zone_size);
+	memalloc_nofs_restore(nofs_flags);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to open zone: "
 			  "zone_sector %llu, zone_size %llu, "
@@ -315,6 +321,7 @@ static int ssdfs_zns_close_zone(struct super_block *sb, loff_t offset)
 	sector_t zone_sector = offset >> SECTOR_SHIFT;
 	sector_t zone_size = fsi->erasesize >> SECTOR_SHIFT;
 	u32 open_zones;
+	unsigned int nofs_flags;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -322,8 +329,10 @@ static int ssdfs_zns_close_zone(struct super_block *sb, loff_t offset)
 		  sb, (unsigned long long)offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_FINISH,
-				zone_sector, zone_size, GFP_NOFS);
+				zone_sector, zone_size);
+	memalloc_nofs_restore(nofs_flags);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to open zone: "
 			  "zone_sector %llu, zone_size %llu, err %d\n",
@@ -1228,6 +1237,7 @@ static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
 	u32 remainder;
 	sector_t start_sector;
 	sector_t sectors_count;
+	unsigned int nofs_flags;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1263,8 +1273,10 @@ static int ssdfs_zns_trim(struct super_block *sb, loff_t offset, size_t len)
 	start_sector = offset >> SECTOR_SHIFT;
 	sectors_count = fsi->erasesize >> SECTOR_SHIFT;
 
+	nofs_flags = memalloc_nofs_save();
 	err = blkdev_zone_mgmt(sb->s_bdev, REQ_OP_ZONE_RESET,
-				start_sector, sectors_count, GFP_NOFS);
+				start_sector, sectors_count);
+	memalloc_nofs_restore(nofs_flags);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to reset zone: "
 			  "zone_sector %llu, zone_size %llu, err %d\n",

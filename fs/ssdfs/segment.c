@@ -133,9 +133,7 @@ int ssdfs_init_seg_obj_cache(void)
 {
 	ssdfs_seg_obj_cachep = kmem_cache_create("ssdfs_seg_obj_cache",
 					sizeof(struct ssdfs_segment_info), 0,
-					SLAB_RECLAIM_ACCOUNT |
-					SLAB_MEM_SPREAD |
-					SLAB_ACCOUNT,
+					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 					ssdfs_init_seg_object_once);
 	if (!ssdfs_seg_obj_cachep) {
 		SSDFS_ERR("unable to create segment objects cache\n");

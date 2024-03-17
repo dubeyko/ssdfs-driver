@@ -132,9 +132,7 @@ int ssdfs_init_seg_req_obj_cache(void)
 {
 	ssdfs_seg_req_obj_cachep = kmem_cache_create("ssdfs_seg_req_obj_cache",
 					sizeof(struct ssdfs_segment_request), 0,
-					SLAB_RECLAIM_ACCOUNT |
-					SLAB_MEM_SPREAD |
-					SLAB_ACCOUNT,
+					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 					ssdfs_init_seg_req_object_once);
 	if (!ssdfs_seg_req_obj_cachep) {
 		SSDFS_ERR("unable to create segment request objects cache\n");
@@ -180,9 +178,7 @@ int ssdfs_init_dirty_folios_obj_cache(void)
 	ssdfs_dirty_folios_obj_cachep =
 			kmem_cache_create("ssdfs_dirty_folios_obj_cache",
 			sizeof(struct ssdfs_dirty_folios_batch), 0,
-			SLAB_RECLAIM_ACCOUNT |
-			SLAB_MEM_SPREAD |
-			SLAB_ACCOUNT,
+			SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 			ssdfs_init_dirty_folios_object_once);
 	if (!ssdfs_dirty_folios_obj_cachep) {
 		SSDFS_ERR("unable to create dirty folios objects cache\n");

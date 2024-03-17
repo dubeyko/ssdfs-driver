@@ -148,9 +148,7 @@ int ssdfs_init_btree_node_obj_cache(void)
 	ssdfs_btree_node_obj_cachep =
 			kmem_cache_create("ssdfs_btree_node_obj_cache",
 					sizeof(struct ssdfs_btree_node), 0,
-					SLAB_RECLAIM_ACCOUNT |
-					SLAB_MEM_SPREAD |
-					SLAB_ACCOUNT,
+					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 					ssdfs_init_btree_node_object_once);
 	if (!ssdfs_btree_node_obj_cachep) {
 		SSDFS_ERR("unable to create btree node objects cache\n");

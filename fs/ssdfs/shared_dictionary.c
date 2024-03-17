@@ -121,9 +121,7 @@ int ssdfs_init_name_info_cache(void)
 {
 	ssdfs_name_info_cachep = kmem_cache_create("ssdfs_name_info_cache",
 					sizeof(struct ssdfs_name_info), 0,
-					SLAB_RECLAIM_ACCOUNT |
-					SLAB_MEM_SPREAD |
-					SLAB_ACCOUNT,
+					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 					ssdfs_init_name_info_once);
 	if (!ssdfs_name_info_cachep) {
 		SSDFS_ERR("unable to create name info objects cache\n");

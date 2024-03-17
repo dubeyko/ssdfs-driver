@@ -138,9 +138,7 @@ int ssdfs_init_blk2off_frag_obj_cache(void)
 	ssdfs_blk2off_frag_obj_cachep =
 			kmem_cache_create("ssdfs_blk2off_frag_obj_cache",
 					obj_size, 0,
-					SLAB_RECLAIM_ACCOUNT |
-					SLAB_MEM_SPREAD |
-					SLAB_ACCOUNT,
+					SLAB_RECLAIM_ACCOUNT | SLAB_ACCOUNT,
 					ssdfs_init_blk2off_frag_object_once);
 	if (!ssdfs_blk2off_frag_obj_cachep) {
 		SSDFS_ERR("unable to create blk2off fragments cache\n");
