@@ -16430,6 +16430,7 @@ finish_process_free_space_absence:
  * %-EINVAL     - invalid input.
  * %-ERANGE     - internal error.
  * %-EFAULT     - file system is inconsistent.
+ * %-EROFS      - file system in RO state -> go to sleep
  */
 static
 int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
@@ -16572,6 +16573,9 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
 		}
+
+		err = -EROFS;
+		thread_state->state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 	}
 
 	ssdfs_unlock_current_peb(pebc);
@@ -19328,8 +19332,13 @@ repeat:
 
 	if (thread_state->state != SSDFS_FLUSH_THREAD_ERROR &&
 	    thread_state->state != SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT) {
-		if (fsi->sb->s_flags & SB_RDONLY)
-			thread_state->state = SSDFS_FLUSH_THREAD_RO_STATE;
+		if (kthread_should_stop()) {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+		} else if (fsi->sb->s_flags & SB_RDONLY) {
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_RO_STATE;
+		}
 	}
 
 next_partial_step:
@@ -19376,7 +19385,9 @@ next_partial_step:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_process_read_only_state(pebc);
-		if (err) {
+		if (err == -EROFS) {
+			goto sleep_flush_thread;
+		} else if (err) {
 			goto repeat;
 		} else {
 			goto next_partial_step;

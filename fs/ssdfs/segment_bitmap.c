@@ -751,6 +751,9 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	down_write(&fsi->segbmap->resize_lock);
 	down_write(&fsi->segbmap->search_lock);
 
+	if (fsi->sb->s_flags & SB_RDONLY)
+		ssdfs_folio_array_clear_all_dirty_folios(&fsi->segbmap->folios);
+
 	ssdfs_segbmap_destroy_segments(fsi->segbmap);
 	ssdfs_destroy_folio_array(&fsi->segbmap->folios);
 	ssdfs_segbmap_destroy_fragment_bitmaps(fsi->segbmap);
