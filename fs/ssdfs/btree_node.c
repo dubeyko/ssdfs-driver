@@ -15602,24 +15602,22 @@ int __ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 						src_folio.desc.page_offset);
 
 		moving_range = min_t(u32, cur_range, offset_diff);
-		range_offset1 -= moving_range;
 
-		range_offset1 = src_folio.desc.offset_inside_page;
-
-		if ((range_offset1 + moving_range + shift) > PAGE_SIZE) {
-			range_offset1 += moving_range - shift;
-			moving_range = shift;
-		}
-
-		range_offset2 = range_offset1 + shift;
-
+		range_offset2 = dst_offset;
 		if (range_offset2 > area_size) {
 			SSDFS_ERR("range_offset2 %u > area_size %u\n",
 				  range_offset2, area_size);
 			return -ERANGE;
 		}
 
-		err = SSDFS_OFF2FOLIO(fsi->pagesize, range_offset2,
+		range_offset2 += area_offset;
+		if (range_offset2 > node->node_size) {
+			SSDFS_ERR("range_offset2 %u > node_size %u\n",
+				  range_offset2, node->node_size);
+			return -ERANGE;
+		}
+
+		err = SSDFS_OFF2FOLIO(fsi->pagesize, range_offset2 - 1,
 					&dst_folio.desc);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to convert offset into folio: "
@@ -15640,28 +15638,52 @@ int __ssdfs_shift_memory_range_right(struct ssdfs_btree_node *node,
 			return -ERANGE;
 		}
 
-		range_offset2 = dst_folio.desc.offset_inside_page;
+		offset_diff = range_offset2 -
+				(dst_folio.desc.folio_offset +
+						dst_folio.desc.page_offset);
+
+		moving_range = min_t(u32, moving_range, offset_diff);
+
+		range_offset1 -= moving_range;
+		range_offset2 -= moving_range;
+
+		err = SSDFS_OFF2FOLIO(fsi->pagesize, range_offset1,
+					&src_folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert offset into folio: "
+				  "range_offset %u, err %d\n",
+				  range_offset1, err);
+			return err;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		if ((range_offset1 + moving_range) > PAGE_SIZE) {
-			SSDFS_WARN("invalid offset: "
-				   "range_offset1 %u, moving_range %u\n",
-				   range_offset1, moving_range);
-			return -ERANGE;
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&src_folio.desc));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = SSDFS_OFF2FOLIO(fsi->pagesize, range_offset2,
+					&dst_folio.desc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to convert offset into folio: "
+				  "range_offset %u, err %d\n",
+				  range_offset2, err);
+			return err;
 		}
 
-		if ((range_offset2 + moving_range) > PAGE_SIZE) {
-			SSDFS_WARN("invalid offset: "
-				   "range_offset2 %u, moving_range %u\n",
-				   range_offset2, moving_range);
-			return -ERANGE;
-		}
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&dst_folio.desc));
 
-		SSDFS_DBG("folio_index1 %d, folio_index2 %d, "
-			  "range_offset1 %u, range_offset2 %u\n",
+		SSDFS_DBG("range_offset1 %u, SOURCE: (folio_index %d, "
+			  "page_in_folio %u, offset_inside_page %u), "
+			  "range_offset2 %u, DESTINATION: (folio_index %d, "
+			  "page_in_folio %d, offset_inside_page %u)\n",
+			  range_offset1,
 			  src_folio.desc.folio_index,
+			  src_folio.desc.page_in_folio,
+			  src_folio.desc.offset_inside_page,
+			  range_offset2,
 			  dst_folio.desc.folio_index,
-			  range_offset1, range_offset2);
+			  dst_folio.desc.page_in_folio,
+			  dst_folio.desc.offset_inside_page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_move_memory_range_now(node, &dst_folio,

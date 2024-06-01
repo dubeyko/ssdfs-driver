@@ -2290,6 +2290,10 @@ int ssdfs_memmove_inside_batch(struct folio_batch *batch,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("src_index %d, dst_index %d, batch_size %u\n",
+		  src_index, dst_index,
+		  folio_batch_count(batch));
+
 	BUG_ON(src_index >= folio_batch_count(batch));
 	BUG_ON(dst_index >= folio_batch_count(batch));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -2332,6 +2336,17 @@ int ssdfs_memmove_inside_batch(struct folio_batch *batch,
 		copied_bytes = min_t(u32, src_size, dst_size);
 		copied_bytes = min_t(u32, copied_bytes,
 					move_size - processed_bytes);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("src_off %u, dst_off %u, processed_bytes %u, "
+			  "src_offset_inside_folio %u, src_size %u, "
+			  "dst_offset_inside_folio %u, dst_size %u, "
+			  "move_size %u, copied_bytes %u\n",
+			  src_off, dst_off, processed_bytes,
+			  src_offset_inside_folio, src_size,
+			  dst_offset_inside_folio, dst_size,
+			  move_size, copied_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (src_index == dst_index) {
 			err = __ssdfs_memmove_folio(dst_folio,
