@@ -105,7 +105,7 @@ static const char *ssdfs_zns_device_name(struct super_block *sb)
  */
 static __u64 ssdfs_zns_device_size(struct super_block *sb)
 {
-	return i_size_read(sb->s_bdev->bd_inode);
+	return i_size_read(sb->s_bdev->bd_mapping->host);
 }
 
 static int ssdfs_report_zone(struct blk_zone *zone,

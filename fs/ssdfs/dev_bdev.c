@@ -111,7 +111,7 @@ static const char *ssdfs_bdev_device_name(struct super_block *sb)
  */
 static __u64 ssdfs_bdev_device_size(struct super_block *sb)
 {
-	return i_size_read(sb->s_bdev->bd_inode);
+	return i_size_read(sb->s_bdev->bd_mapping->host);
 }
 
 static int ssdfs_bdev_open_zone(struct super_block *sb, loff_t offset)
