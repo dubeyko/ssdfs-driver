@@ -1084,6 +1084,10 @@ int ssdfs_prepare_volume_header_for_commit(struct ssdfs_fs_info *fsi,
 /*
  * ssdfs_prepare_segment_header_for_commit() - prepare segment header
  * @fsi: pointer on shared file system object
+ * @seg_id: segment ID that contains this PEB
+ * @leb_id: LEB ID that mapped with this PEB
+ * @peb_id: PEB ID
+ * @relation_peb_id: source PEB ID during migration
  * @log_pages: full log pages count
  * @seg_type: segment type
  * @seg_flags: segment flags
@@ -1092,6 +1096,10 @@ int ssdfs_prepare_volume_header_for_commit(struct ssdfs_fs_info *fsi,
  * @hdr: segment header [out]
  */
 int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
+					    u64 seg_id,
+					    u64 leb_id,
+					    u64 peb_id,
+					    u64 relation_peb_id,
 					    u32 log_pages,
 					    u16 seg_type,
 					    u32 seg_flags,
@@ -1104,8 +1112,11 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, hdr %p, "
+		  "seg_id %llu, leb_id %llu, "
+		  "peb_id %llu, relation_peb_id %llu, "
 		  "log_pages %u, seg_type %#x, seg_flags %#x\n",
-		  fsi, hdr, log_pages, seg_type, seg_flags);
+		  fsi, hdr, seg_id, leb_id, peb_id, relation_peb_id,
+		  log_pages, seg_type, seg_flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr->timestamp = cpu_to_le64(last_log_time);
@@ -1127,6 +1138,11 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->seg_type = cpu_to_le16(seg_type);
 	hdr->seg_flags = cpu_to_le32(seg_flags);
 
+	hdr->seg_id = cpu_to_le64(seg_id);
+	hdr->leb_id = cpu_to_le64(leb_id);
+	hdr->peb_id = cpu_to_le64(peb_id);
+	hdr->relation_peb_id = cpu_to_le64(relation_peb_id);
+
 	hdr->volume_hdr.check.bytes = cpu_to_le16(data_size);
 	hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
 
@@ -1144,6 +1160,10 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
  * ssdfs_prepare_partial_log_header_for_commit() - prepare partial log header
  * @fsi: pointer on shared file system object
  * @sequence_id: sequence ID of the partial log inside the full log
+ * @seg_id: segment ID that contains this PEB
+ * @leb_id: LEB ID that mapped with this PEB
+ * @peb_id: PEB ID
+ * @relation_peb_id: source PEB ID during migration
  * @log_pages: log pages count
  * @seg_type: segment type
  * @pl_flags: partial log's flags
@@ -1153,6 +1173,10 @@ int ssdfs_prepare_segment_header_for_commit(struct ssdfs_fs_info *fsi,
  */
 int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 					int sequence_id,
+					u64 seg_id,
+					u64 leb_id,
+					u64 peb_id,
+					u64 relation_peb_id,
 					u32 log_pages,
 					u16 seg_type,
 					u32 pl_flags,
@@ -1165,8 +1189,12 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fsi %p, hdr %p, sequence_id %d, "
+		  "seg_id %llu, leb_id %llu, "
+		  "peb_id %llu, relation_peb_id %llu, "
 		  "log_pages %u, seg_type %#x, pl_flags %#x\n",
-		  fsi, hdr, sequence_id, log_pages, seg_type, pl_flags);
+		  fsi, hdr, sequence_id,
+		  seg_id, leb_id, peb_id, relation_peb_id,
+		  log_pages, seg_type, pl_flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr->magic.common = cpu_to_le32(SSDFS_SUPER_MAGIC);
@@ -1250,6 +1278,11 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("open_zones %d\n",
 		  atomic_read(&fsi->open_zones));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	hdr->seg_id = cpu_to_le64(seg_id);
+	hdr->leb_id = cpu_to_le64(leb_id);
+	hdr->peb_id = cpu_to_le64(peb_id);
+	hdr->relation_peb_id = cpu_to_le64(relation_peb_id);
 
 	hdr->check.bytes = cpu_to_le16(data_size);
 	hdr->check.flags = cpu_to_le16(SSDFS_CRC32);

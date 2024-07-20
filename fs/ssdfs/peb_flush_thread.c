@@ -12628,6 +12628,12 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 	u16 seg_type;
 	u64 last_log_time;
 	u64 last_log_cno;
+	u64 seg_id;
+	u64 leb_id;
+	u64 peb_id;
+	u64 src_peb_id = U64_MAX;
+	u64 dst_peb_id = U64_MAX;
+	u64 relation_peb_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -12702,7 +12708,24 @@ int ssdfs_peb_store_log_header(struct ssdfs_peb_info *pebi,
 	BUG_ON(pebi->peb_create_time > last_log_time);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	seg_id = pebi->pebc->parent_si->seg_id;
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, seg_id, pebi->peb_index);
+	peb_id = pebi->peb_id;
+
+	if (pebi->pebc->src_peb)
+		src_peb_id = pebi->pebc->src_peb->peb_id;
+
+	if (pebi->pebc->dst_peb)
+		dst_peb_id = pebi->pebc->dst_peb->peb_id;
+
+	if (dst_peb_id == peb_id)
+		relation_peb_id = src_peb_id;
+
 	err = ssdfs_prepare_segment_header_for_commit(fsi,
+						      seg_id,
+						      leb_id,
+						      peb_id,
+						      relation_peb_id,
 						      log_blocks,
 						      seg_type,
 						      seg_flags,
@@ -13325,6 +13348,12 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	int sequence_id;
 	u64 last_log_time;
 	u64 last_log_cno;
+	u64 seg_id;
+	u64 leb_id;
+	u64 peb_id;
+	u64 src_peb_id = U64_MAX;
+	u64 dst_peb_id = U64_MAX;
+	u64 relation_peb_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -13399,8 +13428,25 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	BUG_ON(pebi->peb_create_time > last_log_time);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	seg_id = pebi->pebc->parent_si->seg_id;
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, seg_id, pebi->peb_index);
+	peb_id = pebi->peb_id;
+
+	if (pebi->pebc->src_peb)
+		src_peb_id = pebi->pebc->src_peb->peb_id;
+
+	if (pebi->pebc->dst_peb)
+		dst_peb_id = pebi->pebc->dst_peb->peb_id;
+
+	if (dst_peb_id == peb_id)
+		relation_peb_id = src_peb_id;
+
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
 							  sequence_id,
+							  seg_id,
+							  leb_id,
+							  peb_id,
+							  relation_peb_id,
 							  log_blocks,
 							  seg_type, flags,
 							  last_log_time,
@@ -13511,6 +13557,12 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 	int sequence_id;
 	u64 last_log_time;
 	u64 last_log_cno;
+	u64 seg_id;
+	u64 leb_id;
+	u64 peb_id;
+	u64 src_peb_id = U64_MAX;
+	u64 dst_peb_id = U64_MAX;
+	u64 relation_peb_id = U64_MAX;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -13585,8 +13637,25 @@ int ssdfs_peb_store_pl_header_like_header(struct ssdfs_peb_info *pebi,
 	BUG_ON(pebi->peb_create_time > last_log_time);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	seg_id = pebi->pebc->parent_si->seg_id;
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, seg_id, pebi->peb_index);
+	peb_id = pebi->peb_id;
+
+	if (pebi->pebc->src_peb)
+		src_peb_id = pebi->pebc->src_peb->peb_id;
+
+	if (pebi->pebc->dst_peb)
+		dst_peb_id = pebi->pebc->dst_peb->peb_id;
+
+	if (dst_peb_id == peb_id)
+		relation_peb_id = src_peb_id;
+
 	err = ssdfs_prepare_partial_log_header_for_commit(fsi,
 							  sequence_id,
+							  seg_id,
+							  leb_id,
+							  peb_id,
+							  relation_peb_id,
 							  log_blocks,
 							  seg_type,
 							  flags | seg_flags,

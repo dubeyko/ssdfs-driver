@@ -1934,6 +1934,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	loff_t peb_offset, offset;
 	u32 flags = 0;
 	u32 written = 0;
+	u64 seg_id;
 	unsigned i;
 	int err;
 
@@ -1986,7 +1987,13 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	hdr->peb_migration_id[SSDFS_CUR_MIGRATING_PEB] =
 					SSDFS_PEB_UNKNOWN_MIGRATION_ID;
 
+	seg_id = ssdfs_get_seg_id_for_leb_id(fsi, last_sb_log->leb_id);
+
 	err = ssdfs_prepare_segment_header_for_commit(fsi,
+						     seg_id,
+						     last_sb_log->leb_id,
+						     last_sb_log->peb_id,
+						     U64_MAX,
 						     last_sb_log->pages_count,
 						     SSDFS_SB_SEG_TYPE,
 						     SSDFS_LOG_HAS_FOOTER |
@@ -2208,6 +2215,7 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	u32 inline_capacity;
 	void *payload_buf;
 	u32 flags = 0;
+	u64 seg_id;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2262,7 +2270,13 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	hdr->peb_migration_id[SSDFS_CUR_MIGRATING_PEB] =
 					SSDFS_PEB_UNKNOWN_MIGRATION_ID;
 
+	seg_id = ssdfs_get_seg_id_for_leb_id(fsi, last_sb_log->leb_id);
+
 	err = ssdfs_prepare_segment_header_for_commit(fsi,
+						     seg_id,
+						     last_sb_log->leb_id,
+						     last_sb_log->peb_id,
+						     U64_MAX,
 						     last_sb_log->pages_count,
 						     SSDFS_SB_SEG_TYPE,
 						     SSDFS_LOG_HAS_FOOTER |

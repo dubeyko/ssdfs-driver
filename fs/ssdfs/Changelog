@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.95 [July 20, 2024]
+    (*) Implement logic of storing segment ID, LEB ID and relation PEB ID
+        in the segment header.
+
 v.4.94 [May 19, 2024]
     (*) Fix bugs in logic of processing Read-Only file system's state.
 
