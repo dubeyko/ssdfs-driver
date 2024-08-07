@@ -4999,19 +4999,15 @@ int ssdfs_account_user_data_pages_as_pending(struct ssdfs_peb_container *pebc,
 	spin_unlock(&fsi->volume_state_lock);
 
 	if (err) {
-		SSDFS_WARN("count %u is bigger than updated %llu\n",
+		SSDFS_DBG("count %u is bigger than updated %llu\n",
 			  count, updated);
-
-		spin_lock(&pebc->pending_lock);
-		pebc->pending_updated_user_data_pages += updated;
-		pending = pebc->pending_updated_user_data_pages;
-		spin_unlock(&pebc->pending_lock);
-	} else {
-		spin_lock(&pebc->pending_lock);
-		pebc->pending_updated_user_data_pages += count;
-		pending = pebc->pending_updated_user_data_pages;
-		spin_unlock(&pebc->pending_lock);
 	}
+
+	spin_lock(&pebc->pending_lock);
+	pebc->pending_updated_user_data_pages += count;
+	pending = pebc->pending_updated_user_data_pages;
+	spin_unlock(&pebc->pending_lock);
+
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg_id %llu, peb_index %u, "

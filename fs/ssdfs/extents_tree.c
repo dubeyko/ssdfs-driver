@@ -1917,7 +1917,12 @@ int __ssdfs_prepare_volume_extent(struct ssdfs_fs_info *fsi,
 	ssdfs_btree_search_init(search);
 
 	err = ssdfs_extents_tree_find_fork(tree, requested_blk, search);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+		SSDFS_DBG("unable to find the fork: "
+			  "blk %llu, err %d\n",
+			  requested_blk, err);
+		goto finish_prepare_volume_extent;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the fork: "
 			  "blk %llu, err %d\n",
 			  requested_blk, err);
@@ -2343,7 +2348,7 @@ bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode)
 	ssdfs_btree_search_init(search);
 
 	err = ssdfs_extents_tree_find_fork(tree, blk_offset, search);
-	if (err == -ENODATA)
+	if (err == -ENODATA || err == -ENOENT)
 		is_found = false;
 	else if (unlikely(err)) {
 		is_found = false;
@@ -2815,7 +2820,7 @@ int ssdfs_extents_tree_find_fork(struct ssdfs_extents_btree_info *tree,
 		err = ssdfs_btree_find_item(tree->generic_tree, search);
 		up_read(&tree->lock);
 
-		if (err == -ENODATA) {
+		if (err == -ENODATA || err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the fork: "
 				  "blk %llu\n",

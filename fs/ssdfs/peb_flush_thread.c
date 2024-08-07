@@ -3717,7 +3717,22 @@ bool can_ssdfs_batch_be_compressed(struct ssdfs_fs_info *fsi,
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(tested_bytes % fsi->pagesize);
+		if (tested_bytes % fsi->pagesize) {
+			SSDFS_ERR("start_block %u, blocks_count %u, "
+				  "bytes_count %u, tested_bytes %u, "
+				  "pagesize %u\n",
+				  start_block, blocks_count, bytes_count,
+				  tested_bytes, fsi->pagesize);
+
+			for (j = 0;
+			     j < folio_batch_count(&blk_state->batch); j++) {
+				folio = blk_state->batch.folios[j];
+				SSDFS_ERR("BLOCK[%d] FOLIO[%d] folio_size %zu\n",
+					  i, j, folio_size(folio));
+			}
+
+			BUG();
+		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		processed_blocks = tested_bytes / fsi->pagesize;

@@ -833,8 +833,8 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !reserved_blks);
 
-	SSDFS_DBG("seg_id %llu\n",
-		  ptr->parent_si->seg_id);
+	SSDFS_DBG("seg_id %llu, count %u\n",
+		  ptr->parent_si->seg_id, count);
 	SSDFS_DBG("BEFORE: free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
@@ -946,12 +946,15 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		spin_unlock(&si->pending_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("seg_id %llu, pending %u\n",
-			  si->seg_id, pending);
+		SSDFS_DBG("seg_id %llu, reserved_blks %u, "
+			  "reserved_pages %llu, pending %u\n",
+			  si->seg_id, *reserved_blks, reserved, pending);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, count %u, reserved_blks %u\n",
+		  ptr->parent_si->seg_id, count, *reserved_blks);
 	SSDFS_DBG("AFTER: free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
