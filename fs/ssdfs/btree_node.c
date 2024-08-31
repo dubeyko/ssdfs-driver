@@ -1271,7 +1271,14 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 		blk_state = &block->new_state;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(i >= content->count);
+		if (i >= content->count) {
+			SSDFS_ERR("i %d, req->result.content.count %d, "
+				  "content->count %d\n",
+				  i,
+				  req->result.content.count,
+				  content->count);
+			BUG();
+		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		batch = &content->blocks[i].batch;

@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.97 [August 31, 2024]
+    (*) Fix issue of reading 8K logical block splitted on several
+        4K folios.
+
 v.4.96 [August 07, 2024]
     (*) Fix issue of managing 8K logical block splitted on several
         4K folios.

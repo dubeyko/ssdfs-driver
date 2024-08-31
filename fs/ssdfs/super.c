@@ -3276,8 +3276,12 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	atomic_set(&fs_info->global_fs_state, SSDFS_REGULAR_FS_OPERATIONS);
 
-	SSDFS_INFO("%s has been mounted on device %s\n",
-		   SSDFS_VERSION, fs_info->devops->device_name(sb));
+	SSDFS_INFO("%s (page %s, erase block %s, segment %s) has been mounted on device %s\n",
+		   SSDFS_VERSION,
+		   GRANULARITY2STRING(fs_info->pagesize),
+		   GRANULARITY2STRING(fs_info->erasesize),
+		   GRANULARITY2STRING(fs_info->segsize),
+		   fs_info->devops->device_name(sb));
 
 	return 0;
 

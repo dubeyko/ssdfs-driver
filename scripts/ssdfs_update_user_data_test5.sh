@@ -37,7 +37,7 @@ l="0"
 while [ $k -lt $6 ]
 do
 
-md5sum $2/$i".txt"
+#md5sum $2/$i".txt"
 
 dd if=./pattern2.bin of=$2/$i".txt" conv=notrunc seek=$l bs=4096 count=1
 #dd if=./pattern1.bin of=$2/$i".txt" bs=4096 count=1

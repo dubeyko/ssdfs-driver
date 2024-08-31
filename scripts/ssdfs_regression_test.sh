@@ -34,31 +34,37 @@ do
   do
     mkfs.ssdfs -p ${block_size[$j]} -e ${erase_block_size[$i]} -s ${segment_size[$i]} -L testing $1
     ./ssdfs_add_user_data_test4.sh $1 $2 0 10 1000 16384
+    ./ssdfs_read_md5_user_data.sh $1 $2 0 10 1000
     ./ssdfs_update_user_data_test5.sh $1 $2 0 10 1000 16384
     ./ssdfs_delete_file_test2.sh $1 $2 0 10 1000
 
     mkfs.ssdfs -p ${block_size[$j]} -e ${erase_block_size[$i]} -s ${segment_size[$i]} -L testing $1
     ./ssdfs_add_user_data_test4.sh $1 $2 0 100 1000 16384
+    ./ssdfs_read_md5_user_data.sh $1 $2 0 100 1000
     ./ssdfs_update_user_data_test5.sh $1 $2 0 100 1000 16384
     ./ssdfs_delete_file_test2.sh $1 $2 0 100 1000
 
     mkfs.ssdfs -p ${block_size[$j]} -e ${erase_block_size[$i]} -s ${segment_size[$i]} -L testing $1
     ./ssdfs_add_user_data_test4.sh $1 $2 0 1000 1000 16384
+    ./ssdfs_read_md5_user_data.sh $1 $2 0 1000 1000
     ./ssdfs_update_user_data_test5.sh $1 $2 0 1000 1000 16384
     ./ssdfs_delete_file_test2.sh $1 $2 0 1000 1000
 
     mkfs.ssdfs -p ${block_size[$j]} -e ${erase_block_size[$i]} -s ${segment_size[$i]} -L testing $1
     ./ssdfs_add_user_data_test4.sh $1 $2 0 10 1000 102400
+    ./ssdfs_read_md5_user_data.sh $1 $2 0 10 1000
     ./ssdfs_update_user_data_test5.sh $1 $2 0 10 1000 102400
     ./ssdfs_delete_file_test2.sh $1 $2 0 10 1000
 
     mkfs.ssdfs -p ${block_size[$j]} -e ${erase_block_size[$i]} -s ${segment_size[$i]} -L testing $1
     ./ssdfs_add_user_data_test4.sh $1 $2 0 100 1000 102400
+    ./ssdfs_read_md5_user_data.sh $1 $2 0 100 1000
     ./ssdfs_update_user_data_test5.sh $1 $2 0 100 1000 102400
     ./ssdfs_delete_file_test2.sh $1 $2 0 100 1000
 
     mkfs.ssdfs -p ${block_size[$j]} -e ${erase_block_size[$i]} -s ${segment_size[$i]} -L testing $1
     ./ssdfs_add_user_data_test4.sh $1 $2 0 1000 1000 102400
+    ./ssdfs_read_md5_user_data.sh $1 $2 0 1000 1000
     ./ssdfs_update_user_data_test5.sh $1 $2 0 1000 1000 102400
     ./ssdfs_delete_file_test2.sh $1 $2 0 1000 1000
   done
