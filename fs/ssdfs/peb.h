@@ -409,6 +409,18 @@ enum {
 };
 
 /*
+ * struct ssdfs_peb_prev_log - previous log's details
+ * @bmap_bytes: bytes count in block bitmap of previous log
+ * @blk2off_bytes: bytes count in blk2off table of previous log
+ * @blk_desc_bytes: bytes count in blk desc table of previous log
+ */
+struct ssdfs_peb_prev_log {
+	u32 bmap_bytes;
+	u32 blk2off_bytes;
+	u32 blk_desc_bytes;
+};
+
+/*
  * struct ssdfs_peb_log - current log
  * @lock: exclusive lock of current log
  * @state: current log's state
@@ -417,7 +429,7 @@ enum {
  * @reserved_blocks: metadata blocks in the log
  * @free_data_blocks: free data blocks capacity
  * @seg_flags: segment header's flags for the log
- * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
+ * @prev_log: previous log's details
  * @last_log_time: creation timestamp of last log
  * @last_log_cno: last log checkpoint
  * @bmap_snapshot: snapshot of block bitmap
@@ -432,7 +444,7 @@ struct ssdfs_peb_log {
 	u32 reserved_blocks; /* metadata blocks in the log */
 	u32 free_data_blocks; /* free data blocks capacity */
 	u32 seg_flags;
-	u32 prev_log_bmap_bytes;
+	struct ssdfs_peb_prev_log prev_log;
 	u64 last_log_time;
 	u64 last_log_cno;
 	struct ssdfs_folio_vector bmap_snapshot;
@@ -1924,30 +1936,35 @@ void ssdfs_peb_set_current_log_state(struct ssdfs_peb_info *pebi,
  * @free_blocks: free blocks in the current log
  * @start_block: start block of the current log
  * @sequence_id: index of partial log in the sequence
- * @prev_log_bmap_bytes: bytes count in block bitmap of previous log
+ * @prev_log: previous log's details
  */
 static inline
 void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
 				u32 free_blocks,
 				u32 start_block,
 				int sequence_id,
-				u32 prev_log_bmap_bytes)
+				struct ssdfs_peb_prev_log *prev_log)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
+	BUG_ON(!pebi || !prev_log);
 
 	SSDFS_DBG("peb_id %llu, "
 		  "pebi->current_log.start_block %u, "
 		  "free_blocks %u, sequence_id %d, "
-		  "prev_log_bmap_bytes %u\n",
+		  "prev_log (bmap_bytes %u, blk2off_bytes %u, "
+		  "blk_desc_bytes %u)\n",
 		  pebi->peb_id, start_block, free_blocks,
-		  sequence_id, prev_log_bmap_bytes);
+		  sequence_id, prev_log->bmap_bytes,
+		  prev_log->blk2off_bytes,
+		  prev_log->blk_desc_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_peb_current_log_lock(pebi);
 	pebi->current_log.start_block = start_block;
 	pebi->current_log.free_data_blocks = free_blocks;
-	pebi->current_log.prev_log_bmap_bytes = prev_log_bmap_bytes;
+	pebi->current_log.prev_log.bmap_bytes = prev_log->bmap_bytes;
+	pebi->current_log.prev_log.blk2off_bytes = prev_log->blk2off_bytes;
+	pebi->current_log.prev_log.blk_desc_bytes = prev_log->blk_desc_bytes;
 	atomic_set(&pebi->current_log.sequence_id, sequence_id);
 	atomic_set(&pebi->current_log.state, SSDFS_LOG_INITIALIZED);
 	ssdfs_peb_current_log_unlock(pebi);

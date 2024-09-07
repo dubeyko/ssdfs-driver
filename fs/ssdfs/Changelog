@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.98 [September 07, 2024]
+    (*) Fix multiple issues of processing 16MB erase block.
+
 v.4.97 [August 31, 2024]
     (*) Fix issue of reading 8K logical block splitted on several
         4K folios.

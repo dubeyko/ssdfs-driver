@@ -480,7 +480,7 @@ int ssdfs_peb_blk_bmap_reserved_bytes(struct ssdfs_peb_info *pebi)
 		break;
 	}
 
-	prev_log_bmap_bytes = pebi->current_log.prev_log_bmap_bytes;
+	prev_log_bmap_bytes = pebi->current_log.prev_log.bmap_bytes;
 
 	return ssdfs_peb_estimate_blk_bmap_bytes(pages_per_peb, is_migrating,
 						 prev_log_bmap_bytes);
@@ -596,19 +596,28 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 	struct ssdfs_peb_container *pebc = pebi->pebc;
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct ssdfs_fs_info *fsi = si->fsi;
-	u32 reserved_bytes = 0;
-	u32 reserved_pages = 0;
+	struct ssdfs_peb_prev_log *prev_log;
 	size_t seg_hdr_size = sizeof(struct ssdfs_segment_header);
 	u32 page_size = fsi->pagesize;
-	u32 offset;
-	u32 blk_desc_reserved;
+	u32 bytes_count;
+	u32 reserved_bytes = 0;
+	u32 reserved_pages = 0;
+
+	prev_log = &pebi->current_log.prev_log;
 
 	/* segment header */
 	reserved_bytes += seg_hdr_size;
 
 	/* block bitmap */
-	atomic_set(&pebi->reserved_bytes.blk_bmap,
-		   ssdfs_peb_blk_bmap_reserved_bytes(pebi));
+	if (prev_log->bmap_bytes < S32_MAX) {
+		bytes_count = max_t(u32, prev_log->bmap_bytes,
+				ssdfs_peb_blk_bmap_reserved_bytes(pebi));
+		atomic_set(&pebi->reserved_bytes.blk_bmap, bytes_count);
+	} else {
+		atomic_set(&pebi->reserved_bytes.blk_bmap,
+			   ssdfs_peb_blk_bmap_reserved_bytes(pebi));
+	}
+
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_bmap);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -617,8 +626,15 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	/* blk2off table */
-	atomic_set(&pebi->reserved_bytes.blk2off_tbl,
-		   ssdfs_peb_blk2off_reserved_bytes(pebi));
+	if (prev_log->blk2off_bytes < S32_MAX) {
+		bytes_count = max_t(u32, prev_log->blk2off_bytes,
+				ssdfs_peb_blk2off_reserved_bytes(pebi));
+		atomic_set(&pebi->reserved_bytes.blk2off_tbl, bytes_count);
+	} else {
+		atomic_set(&pebi->reserved_bytes.blk2off_tbl,
+			   ssdfs_peb_blk2off_reserved_bytes(pebi));
+	}
+
 	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk2off_tbl);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -627,24 +643,29 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	/* block descriptor table */
-	offset = reserved_bytes;
-	blk_desc_reserved = ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi);
-	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, blk_desc_reserved);
+	if (prev_log->blk_desc_bytes < S32_MAX) {
+		bytes_count = max_t(u32, prev_log->blk_desc_bytes,
+				ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi));
+		atomic_set(&pebi->reserved_bytes.blk_desc_tbl, bytes_count);
+	} else {
+		atomic_set(&pebi->reserved_bytes.blk_desc_tbl,
+			   ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi));
+	}
+
+	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("pebi->reserved_bytes.blk_desc_tbl %d\n",
 		  atomic_read(&pebi->reserved_bytes.blk_desc_tbl));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	reserved_bytes += atomic_read(&pebi->reserved_bytes.blk_desc_tbl);
-
 	reserved_bytes += page_size - 1;
 	reserved_bytes /= page_size;
 	reserved_bytes *= page_size;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("reserved_bytes %u, offset %u\n",
-		  reserved_bytes, offset);
+	SSDFS_DBG("reserved_bytes %u\n",
+		  reserved_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	reserved_bytes += ssdfs_peb_log_footer_reserved_bytes(pebi);
@@ -804,6 +825,82 @@ u16 ssdfs_peb_estimate_min_partial_log_pages(struct ssdfs_peb_info *pebi)
 	return reserved_pages;
 }
 
+/*
+ * ssdfs_peb_prev_log_metadata_pages() - calculate prev log metadata pages
+ * @pebi: pointer on PEB object
+ *
+ * This function tries to calculate the number of metadata pages
+ * in the previous log.
+ */
+static inline
+u16 ssdfs_peb_prev_log_metadata_pages(struct ssdfs_peb_info *pebi)
+{
+	struct ssdfs_peb_container *pebc = pebi->pebc;
+	struct ssdfs_segment_info *si = pebc->parent_si;
+	struct ssdfs_fs_info *fsi = si->fsi;
+	struct ssdfs_peb_prev_log *prev_log;
+	size_t pl_hdr_size = sizeof(struct ssdfs_partial_log_header);
+	u32 page_size = fsi->pagesize;
+	size_t lf_hdr_size = sizeof(struct ssdfs_log_footer);
+	u32 calculated_bytes = 0;
+	u32 calculated_pages = 0;
+
+	prev_log = &pebi->current_log.prev_log;
+
+	/* partial log header */
+	calculated_bytes += pl_hdr_size;
+
+	/* block bitmap */
+	if (prev_log->bmap_bytes < S32_MAX) {
+		calculated_bytes += prev_log->bmap_bytes * 2;
+	} else {
+		calculated_bytes += ssdfs_peb_blk_bmap_reserved_bytes(pebi);
+	}
+
+	/* blk2off table */
+	if (prev_log->blk2off_bytes < S32_MAX) {
+		calculated_bytes += prev_log->blk2off_bytes;
+	} else {
+		calculated_bytes += ssdfs_peb_blk2off_reserved_bytes(pebi);
+	}
+
+	/* block descriptor table */
+	if (prev_log->blk_desc_bytes < S32_MAX) {
+		calculated_bytes += prev_log->blk_desc_bytes;
+	} else {
+		calculated_bytes += ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi);
+	}
+
+	calculated_bytes += page_size - 1;
+	calculated_bytes /= page_size;
+	calculated_bytes *= page_size;
+
+	/* log footer header */
+	calculated_bytes += lf_hdr_size;
+
+	calculated_pages = calculated_bytes / page_size;
+	BUG_ON(calculated_pages == 0);
+	BUG_ON(calculated_pages >= U16_MAX);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("calculated_pages %u, calculated_bytes %u, "
+		  "blk_bmap_reserved_bytes %d, "
+		  "blk2off_reserved_bytes %d, "
+		  "blk_desc_tbl_reserved_bytes %d, "
+		  "prev_log (bmap_bytes %u, blk2off_bytes %u, "
+		  "blk_desc_bytes %u)\n",
+		  calculated_pages, calculated_bytes,
+		  ssdfs_peb_blk_bmap_reserved_bytes(pebi),
+		  ssdfs_peb_blk2off_reserved_bytes(pebi),
+		  ssdfs_peb_blk_desc_tbl_reserved_bytes(pebi),
+		  prev_log->bmap_bytes,
+		  prev_log->blk2off_bytes,
+		  prev_log->blk_desc_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return calculated_pages;
+}
+
 enum {
 	SSDFS_START_FULL_LOG,
 	SSDFS_START_PARTIAL_LOG,
@@ -823,6 +920,8 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 	u16 free_data_blocks;
 	u16 reserved_blocks;
 	u16 min_partial_log_blocks;
+	u16 prev_log_metadata_blocks;
+	u16 expected_log_blocks;
 	int sequence_id;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -853,14 +952,23 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 		return SSDFS_START_FULL_LOG;
 
 	min_partial_log_blocks = ssdfs_peb_estimate_min_partial_log_pages(pebi);
+	prev_log_metadata_blocks = ssdfs_peb_prev_log_metadata_pages(pebi);
+	expected_log_blocks = max_t(u16, min_partial_log_blocks,
+					prev_log_metadata_blocks);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("min_partial_log_blocks %u, reserved_blocks %u\n",
-		  min_partial_log_blocks, reserved_blocks);
+	SSDFS_DBG("min_partial_log_blocks %u, "
+		  "prev_log_metadata_blocks %u, "
+		  "expected_log_blocks %u, "
+		  "reserved_blocks %u\n",
+		  min_partial_log_blocks,
+		  prev_log_metadata_blocks,
+		  expected_log_blocks,
+		  reserved_blocks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (reserved_blocks == 0) {
-		if (free_data_blocks <= min_partial_log_blocks) {
+		if (free_data_blocks <= expected_log_blocks) {
 			if (sequence_id > 0)
 				return SSDFS_FINISH_PARTIAL_LOG;
 			else
@@ -869,12 +977,12 @@ int is_log_partial(struct ssdfs_peb_info *pebi)
 	} else {
 		u32 available_blocks = free_data_blocks + reserved_blocks;
 
-		if (available_blocks <= min_partial_log_blocks) {
+		if (available_blocks <= expected_log_blocks) {
 			if (sequence_id > 0)
 				return SSDFS_FINISH_PARTIAL_LOG;
 			else
 				return SSDFS_FINISH_FULL_LOG;
-		} else if (free_data_blocks < min_partial_log_blocks) {
+		} else if (free_data_blocks < expected_log_blocks) {
 			/*
 			 * Next partial log cannot be created
 			 */
@@ -4360,9 +4468,11 @@ int ssdfs_prepare_regular_block_descriptor(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(data->state != SSDFS_PHYS_OFFSET_REGULAR_OFFSET);
 
-	SSDFS_DBG("ino %llu, logical_offset %llu, processed_blks %d\n",
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "processed_blks %d, peb_page %u\n",
 		  req->extent.ino, req->extent.logical_offset,
-		  req->result.processed_blks);
+		  req->result.processed_blks,
+		  data->peb_page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	pagesize = pebi->pebc->parent_si->fsi->pagesize;
@@ -4496,9 +4606,11 @@ int ssdfs_peb_prepare_block_descriptor(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 
-	SSDFS_DBG("ino %llu, logical_offset %llu, processed_blks %d\n",
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "processed_blks %d, peb_page %u\n",
 		  req->extent.ino, req->extent.logical_offset,
-		  req->result.processed_blks);
+		  req->result.processed_blks,
+		  data->peb_page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (data->state) {
@@ -11108,7 +11220,7 @@ int ssdfs_peb_store_block_bmap(struct ssdfs_peb_info *pebi,
 	ssdfs_prepare_block_bitmap_header(bmap_hdr,
 					  le32_to_cpu(desc->size), frag_id,
 					  flags, compression);
-	pebi->current_log.prev_log_bmap_bytes = le32_to_cpu(desc->size);
+	pebi->current_log.prev_log.bmap_bytes = le32_to_cpu(desc->size);
 
 	desc->check.bytes = cpu_to_le16(bmap_hdr_size);
 
@@ -12032,6 +12144,7 @@ store_area_block_table:
 		return err;
 	}
 
+	pebi->current_log.prev_log.blk_desc_bytes = le32_to_cpu(desc->size);
 	return 0;
 }
 
@@ -12164,6 +12277,9 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	u32 area_offset, area_size;
 	u64 last_log_time;
 	u64 last_log_cno;
+#ifdef CONFIG_SSDFS_DEBUG
+	u16 prev_log_metadata_blocks;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int i;
 	int err;
 
@@ -12221,17 +12337,24 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 		  log_blocks, padding,
 		  start_block, lf_folio_index);
 
-	if (padding > 1) {
+	prev_log_metadata_blocks = ssdfs_peb_prev_log_metadata_pages(pebi);
+
+	if (padding > prev_log_metadata_blocks) {
 		SSDFS_WARN("padding is big: "
 			   "seg %llu, peb %llu, current_log.start_block %u, "
 			   "folio_index %lu, write_offset %u, "
+			   "prev_log (bmap_bytes %u, blk2off_bytes %u, "
+			   "blk_desc_bytes %u), prev_log_metadata_blocks %u, "
 			   "padding %d\n",
 			   pebi->pebc->parent_si->seg_id,
 			   pebi->peb_id,
 			   pebi->current_log.start_block,
 			   lf_folio_index,
 			   SSDFS_LOCAL_LOG_OFFSET(log_offset),
-			   padding);
+			   pebi->current_log.prev_log.bmap_bytes,
+			   pebi->current_log.prev_log.blk2off_bytes,
+			   pebi->current_log.prev_log.blk_desc_bytes,
+			   prev_log_metadata_blocks, padding);
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -13247,6 +13370,7 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 	u16 blocks_diff;
 	u16 rest_free_blocks = 0;
 	u32 blocks_per_peb;
+	u32 old_start_block;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !log_offset);
@@ -13268,6 +13392,7 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
+	old_start_block = pebi->current_log.start_block;
 
 	blocks_per_peb = min_t(u32, fsi->leb_pages_capacity,
 				   fsi->peb_pages_capacity);
@@ -13321,6 +13446,17 @@ void ssdfs_peb_define_next_log_start(struct ssdfs_peb_info *pebi,
 		  pebi->current_log.free_data_blocks,
 		  atomic_read(&pebi->current_log.sequence_id));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (old_start_block >= pebi->current_log.start_block) {
+		SSDFS_ERR("old_start_block %u >= current_log.start_block %u, "
+			  "seg %llu, peb %llu, log_strategy %#x\n",
+			  old_start_block,
+			  pebi->current_log.start_block,
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  log_strategy);
+		BUG();
+	}
 }
 
 /*
@@ -14108,6 +14244,8 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 	size_t desc_size = sizeof(struct ssdfs_metadata_descriptor);
 	struct ssdfs_peb_log_offset log_offset;
 	pgoff_t cur_block_offset;
+	u16 prev_log_metadata_blocks;
+	int threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
 	bool log_has_data = false;
 	int log_strategy = SSDFS_FINISH_PARTIAL_LOG;
 	int err = 0;
@@ -14126,6 +14264,9 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 
 	memset(plh_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 	memset(lf_desc, 0, desc_size * SSDFS_LOG_FOOTER_DESC_MAX);
+
+	prev_log_metadata_blocks = ssdfs_peb_prev_log_metadata_pages(pebi);
+	threshold = max_t(int, threshold, (int)prev_log_metadata_blocks);
 
 	SSDFS_LOG_OFFSET_INIT(&log_offset, fsi->pagesize,
 			      pebi->log_blocks,
@@ -14190,7 +14331,7 @@ int ssdfs_peb_commit_last_partial_log(struct ssdfs_peb_info *pebi,
 		flags = SSDFS_LOG_IS_PARTIAL |
 			SSDFS_LOG_HAS_PARTIAL_HEADER;
 		log_strategy = SSDFS_FINISH_PARTIAL_LOG;
-	} else if ((pebi->log_blocks - cur_block_offset) == 1) {
+	} else if ((pebi->log_blocks - cur_block_offset) <= threshold) {
 		cur_hdr_desc = &plh_desc[SSDFS_LOG_FOOTER_INDEX];
 		flags = SSDFS_PARTIAL_LOG_FOOTER | SSDFS_ENDING_LOG_FOOTER;
 		err = ssdfs_peb_store_log_footer(pebi, flags, cur_hdr_desc,
@@ -14321,6 +14462,8 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 	size_t desc_size = sizeof(struct ssdfs_metadata_descriptor);
 	struct ssdfs_peb_log_offset log_offset;
 	pgoff_t cur_block_offset;
+	u16 prev_log_metadata_blocks;
+	int threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
 	bool log_has_data = false;
 	int err = 0;
 
@@ -14338,6 +14481,9 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 
 	memset(hdr_desc, 0, desc_size * SSDFS_SEG_HDR_DESC_MAX);
 	memset(lf_desc, 0, desc_size * SSDFS_LOG_FOOTER_DESC_MAX);
+
+	prev_log_metadata_blocks = ssdfs_peb_prev_log_metadata_pages(pebi);
+	threshold = max_t(int, threshold, (int)prev_log_metadata_blocks);
 
 	SSDFS_LOG_OFFSET_INIT(&log_offset, fsi->pagesize,
 			      pebi->log_blocks,
@@ -14396,7 +14542,7 @@ int ssdfs_peb_commit_full_log(struct ssdfs_peb_info *pebi,
 		SSDFS_WARN("There is no space for log footer.\n");
 	}
 
-	if ((pebi->log_blocks - cur_block_offset) > 1) {
+	if ((pebi->log_blocks - cur_block_offset) > threshold) {
 		log_strategy = SSDFS_START_PARTIAL_LOG;
 
 #ifdef CONFIG_SSDFS_DEBUG

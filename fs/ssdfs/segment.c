@@ -1422,7 +1422,10 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 	if (IS_ERR_OR_NULL(po_desc)) {
 		err = (po_desc == NULL ? -ERANGE : PTR_ERR(po_desc));
 		SSDFS_ERR("fail to convert: "
+			  "seg %llu, ino %llu, logical_offset %llu, "
 			  "logical_blk %u, err %d\n",
+			  si->seg_id, req->extent.ino,
+			  req->extent.logical_offset,
 			  logical_blk, err);
 		return err;
 	}

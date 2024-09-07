@@ -9668,6 +9668,8 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (new_log_start_block < fsi->pages_per_peb) {
+		struct ssdfs_peb_prev_log prev_log;
+		struct ssdfs_metadata_descriptor *meta_desc;
 		u16 free_blocks;
 		u16 min_log_blocks;
 
@@ -9722,21 +9724,61 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 			  "new_log_start_block %u\n",
 			  free_blocks, min_log_blocks,
 			  new_log_start_block);
+
+		SSDFS_DBG("HEADER DUMP\n");
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     env->log.header.ptr,
+				     sizeof(struct ssdfs_segment_header));
+		SSDFS_DBG("\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		bytes_count =
 			le32_to_cpu(env->log.blk_bmap.header.ptr->bytes_count);
+		prev_log.bmap_bytes = bytes_count;
+
+		if (env->log.header.of_full_log) {
+			seg_hdr = SSDFS_SEG_HDR(env->log.header.ptr);
+
+			meta_desc =
+			    &seg_hdr->desc_array[SSDFS_OFF_TABLE_INDEX];
+			bytes_count = le32_to_cpu(meta_desc->size);
+			prev_log.blk2off_bytes = bytes_count;
+
+			meta_desc =
+			    &seg_hdr->desc_array[SSDFS_BLK_DESC_AREA_INDEX];
+			bytes_count = le32_to_cpu(meta_desc->size);
+			prev_log.blk_desc_bytes = bytes_count;
+		} else {
+			pl_hdr = SSDFS_PLH(env->log.header.ptr);
+
+			meta_desc =
+			    &pl_hdr->desc_array[SSDFS_OFF_TABLE_INDEX];
+			bytes_count = le32_to_cpu(meta_desc->size);
+			prev_log.blk2off_bytes = bytes_count;
+
+			meta_desc =
+			    &pl_hdr->desc_array[SSDFS_BLK_DESC_AREA_INDEX];
+			bytes_count = le32_to_cpu(meta_desc->size);
+			prev_log.blk_desc_bytes = bytes_count;
+		}
+
 		ssdfs_peb_current_log_init(pebi, free_blocks,
 					   new_log_start_block,
 					   sequence_id,
-					   bytes_count);
+					   &prev_log);
 	} else {
+		struct ssdfs_peb_prev_log prev_log = {
+			.bmap_bytes = U32_MAX,
+			.blk2off_bytes = U32_MAX,
+			.blk_desc_bytes = U32_MAX,
+		};
+
 		sequence_id = 0;
 		ssdfs_peb_current_log_init(pebi,
 					   0,
 					   new_log_start_block,
 					   sequence_id,
-					   U32_MAX);
+					   &prev_log);
 	}
 
 fail_init_using_blk_bmap:
@@ -9817,6 +9859,11 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_header *seg_hdr = NULL;
 	struct ssdfs_partial_log_header *pl_hdr = NULL;
+	struct ssdfs_peb_prev_log prev_log = {
+		.bmap_bytes = U32_MAX,
+		.blk2off_bytes = U32_MAX,
+		.blk_desc_bytes = U32_MAX,
+	};
 	u16 fragments_count;
 	u32 bytes_count;
 	u16 new_log_start_block;
@@ -9926,7 +9973,7 @@ int ssdfs_peb_init_used_metadata_state(struct ssdfs_peb_info *pebi,
 		}
 	}
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, &prev_log);
 
 fail_init_used_blk_bmap:
 	if (unlikely(err))

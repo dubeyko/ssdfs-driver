@@ -7871,6 +7871,7 @@ get_next_sequence_id:
 	BUG_ON(SSDFS_LOCAL_LOG_OFFSET(log_offset) <= table_start_offset);
 	desc->size = cpu_to_le32(SSDFS_LOCAL_LOG_OFFSET(log_offset) -
 							table_start_offset);
+	pebi->current_log.prev_log.blk2off_bytes = le32_to_cpu(desc->size);
 
 	compression = fsi->metadata_options.blk2off_tbl.compression;
 

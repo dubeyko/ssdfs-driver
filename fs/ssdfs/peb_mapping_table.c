@@ -1205,7 +1205,7 @@ void ssdfs_maptbl_fragment_desc_init(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 	fdesc->lebtbl_pages = (u16)(aligned_lebs_count / lebs_per_page);
 
-	fdesc->lebs_per_page = lebs_per_page;
+	fdesc->lebs_per_page = min_t(u32, lebs_per_page, fdesc->lebs_count);
 
 	pebs_count = fdesc->lebs_count;
 	pebs_per_page = SSDFS_PEB_DESC_PER_FRAGMENT(PAGE_SIZE);
@@ -1221,7 +1221,7 @@ void ssdfs_maptbl_fragment_desc_init(struct ssdfs_peb_mapping_table *tbl,
 	fdesc->stripe_pages = (aligned_stripe_pebs + pebs_per_page - 1) /
 				pebs_per_page;
 
-	fdesc->pebs_per_page = pebs_per_page;
+	fdesc->pebs_per_page = min_t(u32, pebs_per_page, aligned_stripe_pebs);
 }
 
 /*
@@ -4533,8 +4533,28 @@ pgoff_t ssdfs_maptbl_define_pebtbl_folio(struct ssdfs_peb_mapping_table *tbl,
 		folio_index = div_u64(folio_index, desc->pebs_per_page);
 		folio_index += stripe_index * desc->stripe_pages;
 		folio_index += desc->lebtbl_pages;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("leb_id %llu, desc->start_leb %llu, "
+			  "leb_id_diff %llu, tbl->pebs_per_stripe %u, "
+			  "stripe_index %llu, desc->pebs_per_page %u, "
+			  "desc->stripe_pages %u, desc->lebtbl_pages %u, "
+			  "folio_index %llu\n",
+			  leb_id, desc->start_leb,
+			  leb_id_diff, tbl->pebs_per_stripe,
+			  stripe_index, desc->pebs_per_page,
+			  desc->stripe_pages, desc->lebtbl_pages,
+			  folio_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	} else {
 		folio_index = PEBTBL_FOLIO_INDEX(desc, peb_desc_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("leb_id %llu, peb_desc_index %u, "
+			  "folio_index %llu\n",
+			  leb_id, peb_desc_index,
+			  folio_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6108,11 +6128,6 @@ bool can_be_mapped_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  fdesc->stripe_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if ((reserved_pool + 1) >= unused_lebs) {
-		is_mapping_possible = false;
-		goto finish_check;
-	}
-
 	if (need_try2reserve_peb(tbl->fsi)) {
 		threshold = max_t(u32, threshold,
 				  (u32)tbl->stripes_per_fragment);
@@ -6183,8 +6198,10 @@ bool has_fragment_unused_pebs(struct ssdfs_peb_table_fragment_header *hdr)
 	unused_pebs -= reserved_pebs;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("hdr %p, unused_pebs %d, reserved_pebs %u\n",
-		  hdr, unused_pebs, reserved_pebs);
+	SSDFS_DBG("hdr %p, unused_pebs %d, reserved_pebs %u, "
+		  "pebs_count %u, used_pebs %u\n",
+		  hdr, unused_pebs, reserved_pebs,
+		  pebs_count, used_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return unused_pebs > 0;
@@ -7319,8 +7336,11 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	struct ssdfs_fs_info *fsi;
 	struct folio *folio;
 	void *kaddr;
-	pgoff_t folio_index;
 	struct ssdfs_peb_table_fragment_header *hdr;
+	pgoff_t folio_index;
+	int stripe_id = 0;
+	u16 pebs_count;
+	u32 stripe_pebs_count;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7340,7 +7360,9 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = tbl->fsi;
+	stripe_pebs_count = (u32)fdesc->pebs_per_page * fdesc->stripe_pages;
 
+try_next_stripe:
 	folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
 							start_peb_id,
 							U16_MAX);
@@ -7362,6 +7384,35 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	kaddr = kmap_local_folio(folio, 0);
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
+
+	if (stripe_id != le16_to_cpu(hdr->stripe_id)) {
+		err = -EIO;
+		SSDFS_ERR("corrupted fragment: "
+			  "stripe_id %u != hdr->stripe_id %u\n",
+			  stripe_id,
+			  le16_to_cpu(hdr->stripe_id));
+		goto finish_folio_processing;
+	}
+
+	if (start_peb_id != le64_to_cpu(hdr->start_peb)) {
+		err = -EIO;
+		SSDFS_ERR("corrupted fragment: "
+			  "start_peb %llu != hdr->start_peb %llu\n",
+			  start_peb_id,
+			  le64_to_cpu(hdr->start_peb));
+		goto finish_folio_processing;
+	}
+
+	pebs_count = le32_to_cpu(hdr->pebs_count);
+
+	if (pebs_count == 0 || pebs_count > stripe_pebs_count) {
+		err = -EIO;
+		SSDFS_ERR("corrupted fragment: "
+			  "pebs_count %u, stripe_pebs_count %u\n",
+			  pebs_count,
+			  stripe_pebs_count);
+		goto finish_folio_processing;
+	}
 
 	if (is_pebtbl_stripe_recovering(hdr)) {
 		err = -EACCES;
@@ -7514,6 +7565,28 @@ finish_folio_processing:
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (err == -EACCES || err == -ENOENT) {
+		if (stripe_id < tbl->stripes_per_fragment) {
+			err = 0;
+			stripe_id++;
+			start_peb_id += pebs_count;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to map: "
+				  "try next stripe: stripe_id %u, "
+				  "start_peb_id %llu\n",
+				  stripe_id, start_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto try_next_stripe;
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to map: "
+				  "no more stripes: stripe_id %u, "
+				  "start_peb_id %llu\n",
+				  stripe_id, start_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+	}
 
 finish_fragment_change:
 	return err;

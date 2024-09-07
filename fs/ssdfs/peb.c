@@ -117,6 +117,12 @@ void ssdfs_peb_check_memory_leaks(void)
 static
 int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 {
+	struct ssdfs_peb_prev_log prev_log = {
+		.bmap_bytes = U32_MAX,
+		.blk2off_bytes = U32_MAX,
+		.blk_desc_bytes = U32_MAX,
+	};
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(pebi->peb_id == U64_MAX);
@@ -125,7 +131,7 @@ int ssdfs_create_clean_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_current_log_init(pebi, pebi->log_blocks, 0, 0, U32_MAX);
+	ssdfs_peb_current_log_init(pebi, pebi->log_blocks, 0, 0, &prev_log);
 
 	return 0;
 }
@@ -193,6 +199,11 @@ static
 int ssdfs_create_used_peb_object(struct ssdfs_peb_info *pebi)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_prev_log prev_log = {
+		.bmap_bytes = U32_MAX,
+		.blk2off_bytes = U32_MAX,
+		.blk_desc_bytes = U32_MAX,
+	};
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc);
@@ -206,7 +217,7 @@ int ssdfs_create_used_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, &prev_log);
 
 	return 0;
 }
@@ -228,6 +239,11 @@ static
 int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_prev_log prev_log = {
+		.bmap_bytes = U32_MAX,
+		.blk2off_bytes = U32_MAX,
+		.blk_desc_bytes = U32_MAX,
+	};
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -242,7 +258,7 @@ int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 		  pebi, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, U32_MAX);
+	ssdfs_peb_current_log_init(pebi, 0, fsi->pages_per_peb, 0, &prev_log);
 
 	return 0;
 }
@@ -389,7 +405,9 @@ int ssdfs_peb_current_log_prepare(struct ssdfs_peb_info *pebi)
 	pebi->current_log.reserved_blocks = 0;
 	pebi->current_log.free_data_blocks = pebi->log_blocks;
 	pebi->current_log.seg_flags = 0;
-	pebi->current_log.prev_log_bmap_bytes = U32_MAX;
+	pebi->current_log.prev_log.bmap_bytes = U32_MAX;
+	pebi->current_log.prev_log.blk2off_bytes = U32_MAX;
+	pebi->current_log.prev_log.blk_desc_bytes = U32_MAX;
 	pebi->current_log.last_log_time = U64_MAX;
 	pebi->current_log.last_log_cno = U64_MAX;
 
