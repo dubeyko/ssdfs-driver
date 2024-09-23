@@ -352,13 +352,28 @@ int ssdfs_check_maptbl_sb_header(struct ssdfs_fs_info *fsi)
 
 	calculated = (u64)ptr->pebs_per_stripe * ptr->stripes_per_fragment;
 	if (ptr->pebs_per_fragment != calculated) {
-		SSDFS_CRIT("mapping table has corrupted state: "
-			   "pebs_per_stripe %u, stripes_per_fragment %u, "
-			   "pebs_per_fragment %u\n",
-			   ptr->pebs_per_stripe,
-			   ptr->stripes_per_fragment,
-			   ptr->pebs_per_fragment);
-		return -EIO;
+		u64 pebs_per_fragment;
+		u32 pebs_per_stripe;
+
+		if (ptr->pebs_per_fragment % ptr->stripes_per_fragment) {
+			pebs_per_stripe = ptr->pebs_per_fragment /
+						ptr->stripes_per_fragment;
+			pebs_per_stripe++;
+
+			pebs_per_fragment = pebs_per_stripe *
+						ptr->stripes_per_fragment;
+		} else
+			pebs_per_fragment = calculated;
+
+		if (pebs_per_fragment != calculated) {
+			SSDFS_CRIT("mapping table has corrupted state: "
+				   "pebs_per_stripe %u, stripes_per_fragment %u, "
+				   "pebs_per_fragment %u\n",
+				   ptr->pebs_per_stripe,
+				   ptr->stripes_per_fragment,
+				   ptr->pebs_per_fragment);
+			return -EIO;
+		}
 	}
 
 	return 0;

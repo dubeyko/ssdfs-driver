@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.4.99 [September 23, 2024]
+    (*) Fix incorrect logic of checking erase blocks per fragment
+        in mapping table layout.
+
 v.4.98 [September 07, 2024]
     (*) Fix multiple issues of processing 16MB erase block.
 
