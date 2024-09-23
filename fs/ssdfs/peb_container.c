@@ -121,10 +121,8 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 				   "folio %d is not locked\n",
 				   i);
 		} else {
-			if (!folio_test_error(folio)) {
-				folio_clear_dirty(folio);
-				folio_mark_uptodate(folio);
-			}
+			folio_clear_dirty(folio);
+			folio_mark_uptodate(folio);
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG

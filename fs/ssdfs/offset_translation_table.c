@@ -860,7 +860,6 @@ int ssdfs_blk2off_table_resize_bitmap_array(struct ssdfs_bitmap_array *lbmap,
 
 	for (i = 0; i < SSDFS_LBMAP_ARRAY_MAX; i++) {
 		bmap_ptr = kvrealloc(lbmap->array[i],
-				     lbmap->bytes_count,
 				     new_bytes_count,
 				     GFP_KERNEL | __GFP_ZERO);
 		if (!bmap_ptr) {

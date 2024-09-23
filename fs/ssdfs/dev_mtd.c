@@ -214,7 +214,6 @@ static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 		if (err) {
 			folio_clear_uptodate(folio);
 			ssdfs_clear_folio_private(folio, 0);
-			folio_set_error(folio);
 			break;
 		}
 
@@ -223,7 +222,6 @@ static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 
 	if (!err) {
 		folio_mark_uptodate(folio);
-		folio_clear_error(folio);
 		flush_dcache_folio(folio);
 	}
 
@@ -399,7 +397,6 @@ static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
 		kunmap_local(kaddr);
 
 		if (ret || (retlen != PAGE_SIZE)) {
-			folio_set_error(folio);
 			SSDFS_ERR("failed to write (err %d): offset %llu, "
 				  "len %zu, retlen %zu\n",
 				  ret, (unsigned long long)offset,
@@ -414,7 +411,6 @@ static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
 	if (!err) {
 		ssdfs_clear_dirty_folio(folio);
 		folio_mark_uptodate(folio);
-		folio_clear_error(folio);
 	}
 
 	ssdfs_folio_unlock(folio);

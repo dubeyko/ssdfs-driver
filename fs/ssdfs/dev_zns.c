@@ -1049,13 +1049,11 @@ int ssdfs_zns_write_block(struct super_block *sb, loff_t offset,
 	err = ssdfs_zns_sync_folio_request(sb, folio, zone_start, offset,
 					   REQ_OP_WRITE, REQ_SYNC);
 	if (err) {
-		folio_set_error(folio);
 		SSDFS_ERR("failed to write (err %d): offset %llu\n",
 			  err, (unsigned long long)offset);
 	} else {
 		ssdfs_clear_dirty_folio(folio);
 		folio_mark_uptodate(folio);
-		folio_clear_error(folio);
 	}
 
 	ssdfs_folio_unlock(folio);
@@ -1170,7 +1168,6 @@ int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 		folio = batch->folios[i];
 
 		if (err) {
-			folio_set_error(folio);
 			SSDFS_ERR("failed to write (err %d): "
 				  "folio_index %llu\n",
 				  err,
@@ -1178,7 +1175,6 @@ int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 		} else {
 			ssdfs_clear_dirty_folio(folio);
 			folio_mark_uptodate(folio);
-			folio_clear_error(folio);
 		}
 
 		ssdfs_folio_unlock(folio);

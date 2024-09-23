@@ -366,10 +366,8 @@ int ssdfs_bdev_read_block(struct super_block *sb, struct folio *folio,
 	if (err) {
 		folio_clear_uptodate(folio);
 		ssdfs_clear_folio_private(folio, 0);
-		folio_set_error(folio);
 	} else {
 		folio_mark_uptodate(folio);
-		folio_clear_error(folio);
 		flush_dcache_folio(folio);
 	}
 
@@ -412,10 +410,8 @@ int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
 		if (err) {
 			folio_clear_uptodate(folio);
 			ssdfs_clear_folio_private(folio, 0);
-			folio_set_error(folio);
 		} else {
 			folio_mark_uptodate(folio);
-			folio_clear_error(folio);
 			flush_dcache_folio(folio);
 		}
 
@@ -755,13 +751,11 @@ int ssdfs_bdev_write_block(struct super_block *sb, loff_t offset,
 	err = ssdfs_bdev_sync_folio_request(sb, folio, offset,
 					    REQ_OP_WRITE, REQ_SYNC);
 	if (err) {
-		folio_set_error(folio);
 		SSDFS_ERR("failed to write (err %d): offset %llu\n",
 			  err, (unsigned long long)offset);
 	} else {
 		ssdfs_clear_dirty_folio(folio);
 		folio_mark_uptodate(folio);
-		folio_clear_error(folio);
 	}
 
 	ssdfs_folio_unlock(folio);
@@ -857,7 +851,6 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 		folio = batch->folios[i];
 
 		if (err) {
-			folio_set_error(folio);
 			SSDFS_ERR("failed to write (err %d): "
 				  "folio_index %llu\n",
 				  err,
@@ -865,7 +858,6 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 		} else {
 			ssdfs_clear_dirty_folio(folio);
 			folio_mark_uptodate(folio);
-			folio_clear_error(folio);
 		}
 
 		ssdfs_folio_unlock(folio);

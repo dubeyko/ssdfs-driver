@@ -450,7 +450,6 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			folio_mark_uptodate(folio);
-			folio_clear_error(folio);
 			flush_dcache_folio(folio);
 		}
 
@@ -508,7 +507,6 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 			}
 
 			folio_mark_uptodate(folio);
-			folio_clear_error(folio);
 			flush_dcache_folio(folio);
 
 			byte_offset += folio_size(folio);
@@ -563,7 +561,6 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				folio_mark_uptodate(folio);
-				folio_clear_error(folio);
 				flush_dcache_folio(folio);
 			}
 
@@ -624,7 +621,6 @@ fail_read_block:
 
 		folio_clear_uptodate(folio);
 		ssdfs_clear_folio_private(folio, 0);
-		folio_set_error(folio);
 	}
 
 	if (req) {
@@ -1107,7 +1103,6 @@ fail_readahead_block:
 		__ssdfs_memzero_folio(folio, 0, folio_size(folio),
 					folio_size(folio));
 
-		folio_set_error(folio);
 		folio_clear_uptodate(folio);
 		ssdfs_clear_folio_private(folio, 0);
 		ssdfs_folio_unlock(folio);
@@ -1207,7 +1202,6 @@ void ssdfs_readahead(struct readahead_control *rac)
 					  logical_offset, file_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 				folio_mark_uptodate(folio);
-				folio_clear_error(folio);
 				flush_dcache_folio(folio);
 
 				if (processed_bytes > 0)
@@ -3800,13 +3794,11 @@ int ssdfs_process_whole_block(struct file *file,
 			folio_zero_segments(cur_folio, 0, start, end,
 					    folio_size(cur_folio));
 			folio_mark_uptodate(cur_folio);
-			folio_clear_error(cur_folio);
 			flush_dcache_folio(cur_folio);
 		} else if (len >= (folio_size(cur_folio) + processed_bytes)) {
 			folio_zero_segments(cur_folio, 0, start, end,
 					    folio_size(cur_folio));
 			folio_mark_uptodate(cur_folio);
-			folio_clear_error(cur_folio);
 			flush_dcache_folio(cur_folio);
 		} else {
 			need_read_block = true;
@@ -3848,7 +3840,7 @@ static
 int ssdfs_write_begin_inline_file(struct file *file,
 				  struct address_space *mapping,
 				  loff_t pos, unsigned len,
-				  struct page **pagep, void **fsdata)
+				  struct folio **foliop, void **fsdata)
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
@@ -3903,8 +3895,7 @@ int ssdfs_write_begin_inline_file(struct file *file,
 		  first_folio, folio_ref_count(first_folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*pagep = folio_page(first_folio,
-			    offset_in_folio(first_folio, pos) >> PAGE_SHIFT);
+	*foliop = first_folio;
 
 	if ((len == fsi->pagesize) || folio_test_uptodate(first_folio))
 		return 0;
@@ -4064,7 +4055,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 static
 int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 		      loff_t pos, unsigned len,
-		      struct page **pagep, void **fsdata)
+		      struct folio **foliop, void **fsdata)
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
@@ -4096,7 +4087,7 @@ int ssdfs_write_begin(struct file *file, struct address_space *mapping,
 	} else if (can_file_be_inline(inode, pos + len)) {
 		err = ssdfs_write_begin_inline_file(file, mapping,
 						    pos, len,
-						    pagep, fsdata);
+						    foliop, fsdata);
 		if (err == -EAGAIN) {
 			/*
 			 * Process as regular file
@@ -4157,8 +4148,7 @@ try_regular_write:
 			  folio_ref_count(first_folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		*pagep = folio_page(first_folio,
-			    offset_in_folio(first_folio, pos) >> PAGE_SHIFT);
+		*foliop = first_folio;
 	}
 
 finish_write_begin:
@@ -4172,11 +4162,10 @@ finish_write_begin:
 static
 int ssdfs_write_end(struct file *file, struct address_space *mapping,
 		    loff_t pos, unsigned len, unsigned copied,
-		    struct page *page, void *fsdata)
+		    struct folio *folio, void *fsdata)
 {
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	struct folio *folio = page_folio(page);
 	pgoff_t index = folio_index(folio);
 	unsigned start = offset_in_folio(folio, pos);
 	unsigned end = start + copied;

@@ -3383,7 +3383,6 @@ fail_prepare_flush_request:
 			if (!folio)
 				continue;
 
-			folio_set_error(folio);
 			folio_end_writeback(folio);
 		}
 	}
@@ -3553,7 +3552,6 @@ fail_flush_node:
 			if (!folio)
 				continue;
 
-			folio_set_error(folio);
 			folio_end_writeback(folio);
 		}
 	}
