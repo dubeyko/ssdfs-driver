@@ -347,7 +347,6 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 {
 	struct ssdfs_folio_vector *array;
 	struct folio *folio;
-	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -376,7 +375,7 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 		folio = ssdfs_folio_vector_allocate(array);
 		if (IS_ERR_OR_NULL(folio)) {
 			err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-			SSDFS_ERR("unable to allocate #%d folio\n", i);
+			SSDFS_ERR("unable to allocate folio\n");
 			return err;
 		}
 
@@ -1652,11 +1651,14 @@ int ssdfs_cache_block_state(struct ssdfs_block_bmap *blk_bmap,
 			return -EOPNOTSUPP;
 		}
 
-		if (folio_index >= ssdfs_folio_vector_count(array)) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("absent folio index %d\n", folio_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-			return -ENOENT;
+		while (folio_index >= ssdfs_folio_vector_count(array)) {
+			struct folio *folio = ssdfs_folio_vector_allocate(array);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("unable to allocate #%d folio\n",
+					  folio_index);
+				return -ENOENT;
+			}
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
