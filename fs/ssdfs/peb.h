@@ -1625,7 +1625,7 @@ bool IS_SSDFS_LOG_OFFSET_VALID(struct ssdfs_peb_log_offset *log)
 		return false;
 	}
 
-	if ((log->cur_block - log->start_block) >= log->log_blocks) {
+	if ((log->cur_block - log->start_block) > log->log_blocks) {
 		SSDFS_ERR("inconsistent log offset: "
 			  "start_block %lu, cur_block %lu, "
 			  "log_pages %u\n",

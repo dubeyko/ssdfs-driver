@@ -19,16 +19,16 @@
 #include <linux/swap.h>
 
 #define SSDFS_CRIT(fmt, ...) \
-	pr_crit("pid %d:%s:%d %s(): " fmt, \
+	pr_crit_ratelimited("pid %d:%s:%d %s(): " fmt, \
 		 current->pid, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define SSDFS_ERR(fmt, ...) \
-	pr_err("pid %d:%s:%d %s(): " fmt, \
+	pr_err_ratelimited("pid %d:%s:%d %s(): " fmt, \
 		 current->pid, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define SSDFS_WARN(fmt, ...) \
 	do { \
-		pr_warn("pid %d:%s:%d %s(): " fmt, \
+		pr_warn_ratelimited("pid %d:%s:%d %s(): " fmt, \
 			current->pid, __FILE__, __LINE__, \
 			__func__, ##__VA_ARGS__); \
 		dump_stack(); \

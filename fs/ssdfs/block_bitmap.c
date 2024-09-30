@@ -2241,6 +2241,10 @@ int ssdfs_block_bmap_define_start_item(int folio_index,
 	u32 items;
 	u32 offset;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(aligned_start > aligned_end);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if ((folio_index * items_per_page) <= aligned_start)
 		offset = aligned_start % items_per_page;
 	else
@@ -2261,11 +2265,10 @@ int ssdfs_block_bmap_define_start_item(int folio_index,
 			   aligned_end, start);
 		return -ERANGE;
 	} else
-		items = min_t(u32, items, aligned_end);
+		items = min_t(u32, items, aligned_end - aligned_start);
 
 	*rest_bytes = items + items_per_byte - 1;
 	*rest_bytes /= items_per_byte;
-	*rest_bytes -= *start_byte;
 
 	*item_offset = (u8)(start - aligned_start);
 
@@ -2888,13 +2891,13 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 						     blk_state, found_blk);
 	if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find block in folio vector: "
+		SSDFS_DBG("unable to find block in storage: "
 			  "start %u, max_blk %u, state %#x\n",
 			  start, max_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find block in folio vector: "
+		SSDFS_ERR("fail to find block in storage: "
 			  "start %u, max_blk %u, state %#x, err %d\n",
 			  start, max_blk, blk_state, err);
 		goto fail_find;

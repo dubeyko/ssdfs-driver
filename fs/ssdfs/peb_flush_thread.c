@@ -685,6 +685,86 @@ u16 ssdfs_peb_define_reserved_metapages(struct ssdfs_peb_info *pebi)
 	return reserved_pages;
 }
 
+static
+int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
+			    u32 fragment_size);
+
+/*
+ * ssdfs_peb_grab_area_folio() - get area's folio
+ * @pebi: pointer on PEB object
+ * @area_folios: folio array of area
+ * @area_type: area type
+ * @index: folio index
+ * @fragment_size: size of data for storing into area
+ *
+ * This function tries to grab locked folio from area's
+ * folio array. If there is no folio for the requested
+ * index, then area tries to grow.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-ENOMEM     - fail to allocate the memory.
+ */
+static inline
+struct folio *ssdfs_peb_grab_area_folio(struct ssdfs_peb_info *pebi,
+					struct ssdfs_folio_array *area_folios,
+					int area_type,
+					pgoff_t index,
+					u32 fragment_size)
+{
+	struct folio *folio = NULL;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !area_folios);
+
+	SSDFS_DBG("area_type %#x, index %lu, "
+		  "fragment_size %u\n",
+		  area_type, index, fragment_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	folio = ssdfs_folio_array_get_folio_locked(area_folios, index);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+
+		if (err == -ENOENT) {
+			err = ssdfs_peb_grow_log_area(pebi, area_type,
+							fragment_size);
+			if (err == -ENOSPC) {
+				err = -EAGAIN;
+				SSDFS_DBG("log is full\n");
+				return ERR_PTR(err);
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to grow log area: "
+					  "type %#x, err %d\n",
+					  area_type, err);
+				return ERR_PTR(err);
+			}
+		} else {
+			SSDFS_ERR("fail to get page: "
+				  "index %lu for area %#x\n",
+				  index, area_type);
+			return ERR_PTR(err);
+		}
+
+		/* try to get folio again */
+		folio = ssdfs_folio_array_get_folio_locked(area_folios,
+							   index);
+		if (IS_ERR_OR_NULL(folio)) {
+			err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+			SSDFS_ERR("fail to get folio: "
+				  "index %lu for area %#x\n",
+				  index, area_type);
+			return folio;
+		}
+	}
+
+	return folio;
+}
+
 /*
  * ssdfs_peb_reserve_blk_desc_space() - reserve space for block descriptors
  * @pebi: pointer on PEB object
@@ -703,12 +783,15 @@ static
 int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 				     struct ssdfs_peb_area_metadata *metadata)
 {
+	struct ssdfs_peb_area *area;
 	struct ssdfs_folio_array *area_folios;
 	struct folio *folio;
 	size_t blk_desc_tbl_hdr_size = sizeof(struct ssdfs_area_block_table);
 	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
 	size_t count;
 	int buf_size;
+	int area_type = SSDFS_LOG_BLK_DESC_AREA;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("peb %llu, current_log.start_block %u\n",
@@ -738,12 +821,15 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 		  buf_size, blk_desc_size, count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	area_folios = &pebi->current_log.area[SSDFS_LOG_BLK_DESC_AREA].array;
-
-	folio = ssdfs_folio_array_grab_folio(area_folios, 0);
+	area = &pebi->current_log.area[area_type];
+	area_folios = &area->array;
+	folio = ssdfs_peb_grab_area_folio(pebi, area_folios, area_type,
+					  0, blk_desc_tbl_hdr_size);
 	if (IS_ERR_OR_NULL(folio)) {
-		SSDFS_ERR("fail to add folio into area space\n");
-		return -ENOMEM;
+		err = (folio == NULL ? -ERANGE : PTR_ERR(folio));
+		SSDFS_ERR("fail to get folio for area %#x\n",
+			  area_type);
+		return err;
 	}
 
 	__ssdfs_memzero_folio(folio, 0, folio_size(folio), folio_size(folio));
@@ -1151,10 +1237,8 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 
 	if (log->free_data_blocks < log->reserved_blocks) {
 		err = -ENOSPC;
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("log->free_data_blocks %u < log->reserved_blocks %u\n",
+		SSDFS_ERR("log->free_data_blocks %u < log->reserved_blocks %u\n",
 			  log->free_data_blocks, log->reserved_blocks);
-#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_log_create;
 	}
 
@@ -1350,10 +1434,12 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_peb_area *area;
 	struct ssdfs_folio_array *area_folios;
 	struct folio *folio;
 	u32 write_offset;
 	pgoff_t folio_start, folio_end;
+	pgoff_t logical_blk_start, logical_blk_end;
 	u16 metadata_blocks = 0;
 	u16 free_data_blocks;
 	u16 reserved_blocks;
@@ -1361,6 +1447,11 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 	int log_strategy;
 	u32 min_log_blocks;
 	u32 footer_blocks;
+	bool is_compressed;
+	bool need_decrease_free_data_blocks = true;
+#ifdef CONFIG_SSDFS_DEBUG
+	int i;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1381,14 +1472,29 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 
 	fsi = pebi->pebc->parent_si->fsi;
 	si = pebi->pebc->parent_si;
-	area_folios = &pebi->current_log.area[area_type].array;
+	area = &pebi->current_log.area[area_type];
+	area_folios = &area->array;
 
-	write_offset = pebi->current_log.area[area_type].write_offset;
+	if (area_type == SSDFS_LOG_BLK_DESC_AREA) {
+		is_compressed = fsi->metadata_options.blk2off_tbl.flags &
+					SSDFS_BLK2OFF_TBL_MAKE_COMPRESSION;
+		if (is_compressed)
+			write_offset = area->compressed_offset;
+		else
+			write_offset = area->write_offset;
+	} else {
+		write_offset = area->write_offset;
+	}
 
 	BUG_ON(fragment_size > (2 * fsi->pagesize));
 
-	folio_start = write_offset / area_folios->folio_size;
-	folio_end = write_offset + fragment_size + fsi->pagesize - 1;
+	logical_blk_start = write_offset >> fsi->log_pagesize;
+	logical_blk_end = write_offset + fragment_size + fsi->pagesize - 1;
+	logical_blk_end >>= fsi->log_pagesize;
+
+	folio_start = logical_blk_start << fsi->log_pagesize;
+	folio_start /= area_folios->folio_size;
+	folio_end = logical_blk_end << fsi->log_pagesize;
 	folio_end /= area_folios->folio_size;
 
 	do {
@@ -1411,11 +1517,33 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		return 0;
 	}
 
-	logical_blks = (fragment_size + fsi->pagesize - 1) >> fsi->log_pagesize;
+	logical_blks = logical_blk_end - logical_blk_start;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("area_folios->folio_size %zu, fsi->pagesize %u, "
+		  "folio_start %lu, folio_end %lu, "
+		  "logical_blk_start %lu, logical_blk_end %lu, "
+		  "logical_blks %u\n",
+		  area_folios->folio_size, fsi->pagesize,
+		  folio_start, folio_end,
+		  logical_blk_start, logical_blk_end,
+		  logical_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	reserved_blocks = pebi->current_log.reserved_blocks;
+
+	if (area_type == SSDFS_LOG_BLK_DESC_AREA) {
+		unsigned long allocated_folios =
+			ssdfs_folio_array_get_folios_count(area_folios);
+
+		if ((reserved_blocks/2) > allocated_folios) {
+			need_decrease_free_data_blocks = false;
+			goto allocate_folio;
+		}
+	}
 
 	log_strategy = is_log_partial(pebi);
 	free_data_blocks = pebi->current_log.free_data_blocks;
-	reserved_blocks = pebi->current_log.reserved_blocks;
 	min_log_blocks = ssdfs_peb_estimate_min_partial_log_pages(pebi);
 	footer_blocks = ssdfs_peb_log_footer_metapages(pebi);
 
@@ -1477,6 +1605,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 		return -ENOSPC;
 	}
 
+allocate_folio:
 	for (; folio_start < folio_end; folio_start++) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("folio_index %lu, current_log.free_data_blocks %u\n",
@@ -1503,7 +1632,18 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
-	pebi->current_log.free_data_blocks -= logical_blks;
+	if (!need_decrease_free_data_blocks) {
+		if (area_type == SSDFS_LOG_BLK_DESC_AREA) {
+			/*
+			 * We already reserved logical blocks
+			 * for metadata. Skip subtraction of
+			 * calculated metadata logical blocks
+			 * from free data blocks.
+			 */
+		} else
+			BUG();
+	} else
+		pebi->current_log.free_data_blocks -= logical_blks;
 
 	if (area_type == SSDFS_LOG_BLK_DESC_AREA)
 		metadata_blocks = logical_blks;
@@ -1538,6 +1678,25 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
 			return err;
 		}
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb %llu, current_log.free_data_blocks %u, "
+		  "area_type %#x, area.write_offset %u, "
+		  "fragment_size %u\n",
+		  pebi->peb_id,
+		  pebi->current_log.free_data_blocks,
+		  area_type,
+		  pebi->current_log.area[area_type].write_offset,
+		  fragment_size);
+
+	for (i = 0; i < SSDFS_LOG_AREA_MAX; i++) {
+		SSDFS_DBG("AREA[%d]: write_offset %u, "
+			  "folios_count %lu\n",
+			  i,
+			  pebi->current_log.area[i].write_offset,
+			  pebi->current_log.area[i].array.folios_count);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -1796,47 +1955,19 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 
 		area_folios = &pebi->current_log.area[type].array;
 
-		index = to.write_offset + written_bytes;
-		index /= area_folios->folio_size;
+		offset = to.write_offset + written_bytes;
+		size = from->data_bytes - written_bytes;
+		index = offset / area_folios->folio_size;
 
-		folio = ssdfs_folio_array_get_folio_locked(area_folios,
-							   index);
+		folio = ssdfs_peb_grab_area_folio(pebi, area_folios, type,
+						  index, size);
 		if (IS_ERR_OR_NULL(folio)) {
-			err = folio == NULL ? -ERANGE : PTR_ERR(folio);
-
-			if (err == -ENOENT) {
-				err = ssdfs_peb_grow_log_area(pebi, type,
-							from->data_bytes);
-				if (err == -ENOSPC) {
-					err = -EAGAIN;
-					SSDFS_DBG("log is full\n");
-					goto free_compr_buffer;
-				} else if (unlikely(err)) {
-					SSDFS_ERR("fail to grow log area: "
-						  "type %#x, err %d\n",
-						  type, err);
-					goto free_compr_buffer;
-				}
-			} else {
-				SSDFS_ERR("fail to get page: "
-					  "index %lu for area %#x\n",
-					  index, type);
-				goto free_compr_buffer;
-			}
-
-			/* try to get folio again */
-			folio = ssdfs_folio_array_get_folio_locked(area_folios,
-								   index);
-			if (IS_ERR_OR_NULL(folio)) {
-				err = folio == NULL ? -ERANGE : PTR_ERR(folio);
-				SSDFS_ERR("fail to get folio: "
-					  "index %lu for area %#x\n",
-					  index, type);
-				goto free_compr_buffer;
-			}
+			err = (folio == NULL ? -ERANGE : PTR_ERR(folio));
+			SSDFS_ERR("fail to get folio %lu for area %#x\n",
+				  index, type);
+			goto free_compr_buffer;
 		}
 
-		offset = to.write_offset + written_bytes;
 		offset %= folio_size(folio);
 		size = folio_size(folio) - offset;
 		size = min_t(u32, size, to.compr_size - written_bytes);
@@ -4787,11 +4918,13 @@ int ssdfs_peb_write_block_descriptor(struct ssdfs_peb_info *pebi,
 			  *write_offset, folio_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		folio = ssdfs_folio_array_grab_folio(&area->array, folio_index);
+		folio = ssdfs_peb_grab_area_folio(pebi, &area->array, area_type,
+						  folio_index, blk_desc_size);
 		if (IS_ERR_OR_NULL(folio)) {
+			err = (folio == NULL ? -ERANGE : PTR_ERR(folio));
 			SSDFS_ERR("fail to get folio %lu for area %#x\n",
 				  folio_index, area_type);
-			return -ERANGE;
+			return err;
 		}
 
 		offset_inside_folio = *write_offset % folio_size(folio);
@@ -4967,12 +5100,14 @@ int ssdfs_peb_compress_blk_desc_fragment_in_place(struct ssdfs_peb_info *pebi,
 	BUG_ON(!IS_SSDFS_OFF2FOLIO_VALID(&folio.desc));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	folio.ptr = ssdfs_folio_array_grab_folio(&area->array,
-						 folio.desc.folio_index);
+	folio.ptr = ssdfs_peb_grab_area_folio(pebi, &area->array, area_type,
+					      folio.desc.folio_index,
+					      uncompr_size);
 	if (IS_ERR_OR_NULL(folio.ptr)) {
+		err = (folio.ptr == NULL ? -ERANGE : PTR_ERR(folio.ptr));
 		SSDFS_ERR("fail to get folio %u for area %#x\n",
 			  folio.desc.folio_index, area_type);
-		return -ERANGE;
+		return err;
 	}
 
 	*compr_size = PAGE_SIZE - folio.desc.offset_inside_page;
@@ -5085,11 +5220,13 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 	offset = area->compressed_offset + *copied_len;
 	folio_index = offset / area->array.folio_size;
 
-	folio = ssdfs_folio_array_grab_folio(&area->array, folio_index);
+	folio = ssdfs_peb_grab_area_folio(pebi, &area->array, area_type,
+					  folio_index, blob_size);
 	if (IS_ERR_OR_NULL(folio)) {
+		err = (folio == NULL ? -ERANGE : PTR_ERR(folio));
 		SSDFS_ERR("fail to get folio %lu for area %#x\n",
 			  folio_index, area_type);
-		return -ERANGE;
+		return err;
 	}
 
 	offset_inside_folio = offset % folio_size(folio);
@@ -13324,6 +13461,12 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 		SSDFS_ALIGN_LOG_OFFSET(log_offset);
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("0006-payload: cur_block %lu, write_offset %u\n",
+		  log_offset->cur_block,
+		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	area_type = SSDFS_LOG_MAIN_AREA;
 	cur_hdr_desc = &hdr_desc[SSDFS_AREA_TYPE2INDEX(area_type)];
 	err = ssdfs_peb_move_area_pages_into_cache(pebi,
@@ -13346,7 +13489,7 @@ int ssdfs_peb_commit_log_payload(struct ssdfs_peb_info *pebi,
 		*log_has_data = true;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("0006-payload: cur_block %lu, write_offset %u\n",
+	SSDFS_DBG("0007-payload: cur_block %lu, write_offset %u\n",
 		  log_offset->cur_block,
 		  SSDFS_LOCAL_LOG_OFFSET(log_offset));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -18057,6 +18200,9 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 				  thread_state->req->result.number_of_tries,
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			ssdfs_requests_queue_add_head(&pebc->update_rq,
 							thread_state->req);

@@ -1309,8 +1309,11 @@ int ssdfs_peb_find_blk_desc_portion(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_compressed_area area;
 	struct ssdfs_compressed_portion *portion_desc;
+	struct ssdfs_fragment_desc *next_portion_desc;
 	size_t tbl_size = sizeof(struct ssdfs_area_block_table);
+	u16 fragments;
 	u32 cur_offset;
+	u32 next_portion_offset;
 	u16 flags;
 	int err = 0;
 
@@ -1419,6 +1422,61 @@ int ssdfs_peb_find_blk_desc_portion(struct ssdfs_peb_info *pebi,
 
 			cur_offset =
 			    SSDFS_COMPRESSED_PORTION_UPPER_BOUND(portion_desc);
+
+			fragments =
+			    le16_to_cpu(table->chain_hdr.fragments_count);
+			if (fragments <= SSDFS_NEXT_BLK_TABLE_INDEX) {
+				SSDFS_ERR("corrupted area block table: "
+					  "fragments_count %u\n",
+					  fragments);
+				return -EIO;
+			}
+
+			next_portion_desc =
+				&table->blk[SSDFS_NEXT_BLK_TABLE_INDEX];
+
+			if (next_portion_desc->magic !=
+						SSDFS_FRAGMENT_DESC_MAGIC) {
+				SSDFS_ERR("corrupted fragment descriptor: "
+					  "magic (expected %#x, found %#x)\n",
+					  SSDFS_FRAGMENT_DESC_MAGIC,
+					  next_portion_desc->magic);
+				return -EIO;
+			}
+
+			if (next_portion_desc->type != SSDFS_NEXT_TABLE_DESC) {
+				SSDFS_ERR("corrupted fragment descriptor: "
+					  "type (expected %#x, found %#x)\n",
+					  SSDFS_NEXT_TABLE_DESC,
+					  next_portion_desc->type);
+				return -EIO;
+			}
+
+			next_portion_offset = area.compressed.offset +
+					le32_to_cpu(next_portion_desc->offset);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("cur_offset %u, area.compressed.offset %u, "
+				  "frag offset %u, next_portion_offset %u\n",
+				  cur_offset, area.compressed.offset,
+				  le32_to_cpu(next_portion_desc->offset),
+				  next_portion_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			if (next_portion_offset < cur_offset ||
+			    next_portion_offset >=
+				    SSDFS_COMPRESSED_AREA_UPPER_BOUND(&area)) {
+				SSDFS_ERR("corrupted fragment descriptor: "
+					  "offset %u\n",
+					  next_portion_offset);
+				return -EIO;
+			}
+
+			/*
+			 * Next portion offset can be aligned.
+			 * Fragment offset keeps accurate value.
+			 */
+			cur_offset = next_portion_offset;
 		}
 	}
 
@@ -1477,7 +1535,7 @@ int ssdfs_peb_decompress_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 	err = ssdfs_peb_find_blk_desc_portion(pebi, req, meta_desc,
 					      offset, &table, frag_desc);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail ot find block descriptor portion: "
+		SSDFS_ERR("fail to find block descriptor portion: "
 			  "offset %u, err %d\n",
 			  offset, err);
 		return err;

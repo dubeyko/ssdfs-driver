@@ -81,6 +81,26 @@ enum {
 };
 
 /*
+ * Inline methods
+ */
+
+static inline
+unsigned long ssdfs_folio_array_get_folios_count(struct ssdfs_folio_array *array)
+{
+	unsigned long folios_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_read(&array->lock);
+	folios_count = array->folios_count;
+	up_read(&array->lock);
+
+	return folios_count;
+}
+
+/*
  * Folio array's API
  */
 int ssdfs_create_folio_array(struct ssdfs_folio_array *array,
