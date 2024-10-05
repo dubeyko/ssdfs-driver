@@ -263,113 +263,6 @@ int ssdfs_create_dirty_peb_object(struct ssdfs_peb_info *pebi)
 	return 0;
 }
 
-static inline
-size_t ssdfs_peb_temp_buffer_default_size(u32 pagesize)
-{
-	size_t blk_desc_size = sizeof(struct ssdfs_block_descriptor);
-	size_t size;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(pagesize > SSDFS_128KB);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	size = (SSDFS_128KB / pagesize) * blk_desc_size;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("page_size %u, default_size %zu\n",
-		  pagesize, size);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return size;
-}
-
-/*
- * ssdfs_peb_realloc_read_buffer() - realloc temporary read buffer
- * @buf: pointer on read buffer
- */
-int ssdfs_peb_realloc_read_buffer(struct ssdfs_peb_read_buffer *buf,
-				  size_t new_size)
-{
-	unsigned int nofs_flags;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (buf->buf_size >= PAGE_SIZE) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to realloc buffer: "
-			  "old_size %zu\n",
-			  buf->buf_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -E2BIG;
-	}
-
-	if (buf->buf_size == new_size) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("do nothing: old_size %zu, new_size %zu\n",
-			  buf->buf_size, new_size);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
-	}
-
-	if (buf->buf_size > new_size) {
-		SSDFS_ERR("shrink not supported\n");
-		return -EOPNOTSUPP;
-	}
-
-	nofs_flags = memalloc_nofs_save();
-	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
-	memalloc_nofs_restore(nofs_flags);
-
-	if (!buf->ptr) {
-		SSDFS_ERR("fail to allocate buffer\n");
-		return -ENOMEM;
-	}
-
-	buf->buf_size = new_size;
-
-	return 0;
-}
-
-/*
- * ssdfs_peb_realloc_write_buffer() - realloc temporary write buffer
- * @buf: pointer on write buffer
- */
-int ssdfs_peb_realloc_write_buffer(struct ssdfs_peb_temp_buffer *buf)
-{
-	size_t new_size;
-	unsigned int nofs_flags;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (buf->size >= PAGE_SIZE) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to realloc buffer: "
-			  "old_size %zu\n",
-			  buf->size);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -E2BIG;
-	}
-
-	new_size = min_t(size_t, buf->size * 2, (size_t)PAGE_SIZE);
-
-	nofs_flags = memalloc_nofs_save();
-	buf->ptr = krealloc(buf->ptr, new_size, GFP_KERNEL);
-	memalloc_nofs_restore(nofs_flags);
-
-	if (!buf->ptr) {
-		SSDFS_ERR("fail to allocate buffer\n");
-		return -ENOMEM;
-	}
-
-	buf->size = new_size;
-
-	return 0;
-}
-
 /*
  * ssdfs_peb_current_log_prepare() - prepare current log object
  * @pebi: pointer on PEB object
@@ -589,6 +482,45 @@ int ssdfs_peb_current_log_destroy(struct ssdfs_peb_info *pebi)
 	ssdfs_peb_current_log_unlock(pebi);
 
 	return err;
+}
+
+/*
+ * ssdfs_peb_current_log_init() - initialize current log object
+ * @pebi: pointer on PEB object
+ * @free_blocks: free blocks in the current log
+ * @start_block: start block of the current log
+ * @sequence_id: index of partial log in the sequence
+ * @prev_log: previous log's details
+ */
+void ssdfs_peb_current_log_init(struct ssdfs_peb_info *pebi,
+				u32 free_blocks,
+				u32 start_block,
+				int sequence_id,
+				struct ssdfs_peb_prev_log *prev_log)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi || !prev_log);
+
+	SSDFS_DBG("peb_id %llu, "
+		  "pebi->current_log.start_block %u, "
+		  "free_blocks %u, sequence_id %d, "
+		  "prev_log (bmap_bytes %u, blk2off_bytes %u, "
+		  "blk_desc_bytes %u)\n",
+		  pebi->peb_id, start_block, free_blocks,
+		  sequence_id, prev_log->bmap_bytes,
+		  prev_log->blk2off_bytes,
+		  prev_log->blk_desc_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	ssdfs_peb_current_log_lock(pebi);
+	pebi->current_log.start_block = start_block;
+	pebi->current_log.free_data_blocks = free_blocks;
+	pebi->current_log.prev_log.bmap_bytes = prev_log->bmap_bytes;
+	pebi->current_log.prev_log.blk2off_bytes = prev_log->blk2off_bytes;
+	pebi->current_log.prev_log.blk_desc_bytes = prev_log->blk_desc_bytes;
+	atomic_set(&pebi->current_log.sequence_id, sequence_id);
+	atomic_set(&pebi->current_log.state, SSDFS_LOG_INITIALIZED);
+	ssdfs_peb_current_log_unlock(pebi);
 }
 
 /*
@@ -924,4 +856,261 @@ int ssdfs_peb_object_destroy(struct ssdfs_peb_info *pebi)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return err;
+}
+
+/*
+ * ssdfs_get_leb_id_for_peb_index() - convert PEB's index into LEB's ID
+ * @fsi: pointer on shared file system object
+ * @seg: segment number
+ * @peb_index: index of PEB object in array
+ *
+ * This function converts PEB's index into LEB's identification
+ * number.
+ *
+ * RETURN:
+ * [success] - LEB's identification number.
+ * [failure] - U64_MAX.
+ */
+u64 ssdfs_get_leb_id_for_peb_index(struct ssdfs_fs_info *fsi,
+				   u64 seg, u32 peb_index)
+{
+	u64 leb_id = U64_MAX;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	if (peb_index >= fsi->pebs_per_seg) {
+		SSDFS_ERR("requested peb_index %u >= pebs_per_seg %u\n",
+			  peb_index, fsi->pebs_per_seg);
+		return U64_MAX;
+	}
+
+	SSDFS_DBG("fsi %p, seg %llu, peb_index %u\n",
+		  fsi, seg, peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->lebs_per_peb_index == SSDFS_LEBS_PER_PEB_INDEX_DEFAULT)
+		leb_id = (seg * fsi->pebs_per_seg) + peb_index;
+	else
+		leb_id = seg + (peb_index * fsi->lebs_per_peb_index);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %u, leb_id %llu\n",
+		  seg, peb_index, leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return leb_id;
+}
+
+/*
+ * ssdfs_get_seg_id_for_leb_id() - convert LEB's into segment's ID
+ * @fsi: pointer on shared file system object
+ * @leb_id: LEB ID
+ *
+ * This function converts LEB's ID into segment's identification
+ * number.
+ *
+ * RETURN:
+ * [success] - LEB's identification number.
+ * [failure] - U64_MAX.
+ */
+u64 ssdfs_get_seg_id_for_leb_id(struct ssdfs_fs_info *fsi,
+				u64 leb_id)
+{
+	u64 seg_id = U64_MAX;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p, leb_id %llu\n",
+		  fsi, leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->lebs_per_peb_index == SSDFS_LEBS_PER_PEB_INDEX_DEFAULT)
+		seg_id = div_u64(leb_id, fsi->pebs_per_seg);
+	else
+		seg_id = div_u64(leb_id, fsi->lebs_per_peb_index);
+
+	return seg_id;
+}
+
+/*
+ * ssdfs_get_peb_migration_id() - get PEB's migration ID
+ * @pebi: pointer on PEB object
+ */
+int ssdfs_get_peb_migration_id(struct ssdfs_peb_info *pebi)
+{
+	int id;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	id = atomic_read(&pebi->peb_migration_id);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(id >= U8_MAX);
+	BUG_ON(id < 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return id;
+}
+
+/*
+ * is_peb_migration_id_valid() - check PEB's migration_id
+ * @peb_migration_id: PEB's migration ID value
+ */
+bool is_peb_migration_id_valid(int peb_migration_id)
+{
+	if (peb_migration_id < 0 ||
+	    peb_migration_id > SSDFS_PEB_MIGRATION_ID_MAX) {
+		/* preliminary check */
+		return false;
+	}
+
+	switch (peb_migration_id) {
+	case SSDFS_PEB_MIGRATION_ID_MAX:
+	case SSDFS_PEB_UNKNOWN_MIGRATION_ID:
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * ssdfs_get_peb_migration_id_checked() - get checked PEB's migration ID
+ * @pebi: pointer on PEB object
+ */
+int ssdfs_get_peb_migration_id_checked(struct ssdfs_peb_info *pebi)
+{
+	int res, err;
+
+	switch (atomic_read(&pebi->state)) {
+	case SSDFS_PEB_OBJECT_CREATED:
+		err = SSDFS_WAIT_COMPLETION(&pebi->init_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("PEB init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		if (atomic_read(&pebi->state) != SSDFS_PEB_OBJECT_INITIALIZED) {
+			SSDFS_ERR("PEB %llu is not initialized\n",
+				  pebi->peb_id);
+			return -ERANGE;
+		}
+		break;
+
+	case SSDFS_PEB_OBJECT_INITIALIZED:
+		/* expected state */
+		break;
+
+	default:
+		SSDFS_ERR("invalid PEB state %#x\n",
+			  atomic_read(&pebi->state));
+		return -ERANGE;
+	}
+
+	res = ssdfs_get_peb_migration_id(pebi);
+
+	if (!is_peb_migration_id_valid(res)) {
+		res = -ERANGE;
+		SSDFS_WARN("invalid peb_migration_id: "
+			   "peb %llu, peb_index %u, id %d\n",
+			   pebi->peb_id, pebi->peb_index, res);
+	}
+
+	return res;
+}
+
+/*
+ * ssdfs_set_peb_migration_id() - set PEB's migration ID
+ * @pebi: pointer on PEB object
+ * @id: new PEB's migration_id
+ */
+void ssdfs_set_peb_migration_id(struct ssdfs_peb_info *pebi,
+				int id)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+
+	SSDFS_DBG("peb_id %llu, peb_migration_id %d\n",
+		  pebi->peb_id, id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	atomic_set(&pebi->peb_migration_id, id);
+}
+
+int __ssdfs_define_next_peb_migration_id(int prev_id)
+{
+	int id = prev_id;
+
+	if (id < 0)
+		return SSDFS_PEB_MIGRATION_ID_START;
+
+	id += 1;
+
+	if (id >= SSDFS_PEB_MIGRATION_ID_MAX)
+		id = SSDFS_PEB_MIGRATION_ID_START;
+
+	return id;
+}
+
+/*
+ * ssdfs_define_next_peb_migration_id() - define next PEB's migration_id
+ * @pebi: pointer on source PEB object
+ */
+int ssdfs_define_next_peb_migration_id(struct ssdfs_peb_info *src_peb)
+{
+	int id;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!src_peb);
+
+	SSDFS_DBG("peb %llu, peb_index %u\n",
+		  src_peb->peb_id, src_peb->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	id = ssdfs_get_peb_migration_id_checked(src_peb);
+	if (id < 0) {
+		SSDFS_ERR("fail to get peb_migration_id: "
+			  "peb %llu, peb_index %u, err %d\n",
+			  src_peb->peb_id, src_peb->peb_index,
+			  id);
+		return SSDFS_PEB_MIGRATION_ID_MAX;
+	}
+
+	return __ssdfs_define_next_peb_migration_id(id);
+}
+
+/*
+ * ssdfs_define_prev_peb_migration_id() - define prev PEB's migration_id
+ * @pebi: pointer on source PEB object
+ */
+int ssdfs_define_prev_peb_migration_id(struct ssdfs_peb_info *pebi)
+{
+	int id;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebi);
+
+	SSDFS_DBG("peb %llu, peb_index %u\n",
+		  pebi->peb_id, pebi->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	id = ssdfs_get_peb_migration_id_checked(pebi);
+	if (id < 0) {
+		SSDFS_ERR("fail to get peb_migration_id: "
+			  "peb %llu, peb_index %u, err %d\n",
+			  pebi->peb_id, pebi->peb_index,
+			  id);
+		return SSDFS_PEB_MIGRATION_ID_MAX;
+	}
+
+	id--;
+
+	if (id == SSDFS_PEB_UNKNOWN_MIGRATION_ID)
+		id = SSDFS_PEB_MIGRATION_ID_MAX - 1;
+
+	return id;
 }
