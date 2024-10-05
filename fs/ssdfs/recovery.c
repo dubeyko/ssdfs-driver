@@ -477,10 +477,20 @@ try_seg_size:
 
 				case SSDFS_512KB:
 					offset = start_offset;
+					seg_size = SSDFS_1MB;
+					goto try_seg_size;
+
+				case SSDFS_1MB:
+					offset = start_offset;
 					seg_size = SSDFS_2MB;
 					goto try_seg_size;
 
 				case SSDFS_2MB:
+					offset = start_offset;
+					seg_size = SSDFS_4MB;
+					goto try_seg_size;
+
+				case SSDFS_4MB:
 					offset = start_offset;
 					seg_size = SSDFS_8MB;
 					goto try_seg_size;
@@ -514,10 +524,20 @@ try_seg_size:
 
 		case SSDFS_512KB:
 			offset = start_offset;
+			seg_size = SSDFS_1MB;
+			goto try_seg_size;
+
+		case SSDFS_1MB:
+			offset = start_offset;
 			seg_size = SSDFS_2MB;
 			goto try_seg_size;
 
 		case SSDFS_2MB:
+			offset = start_offset;
+			seg_size = SSDFS_4MB;
+			goto try_seg_size;
+
+		case SSDFS_4MB:
 			offset = start_offset;
 			seg_size = SSDFS_8MB;
 			goto try_seg_size;

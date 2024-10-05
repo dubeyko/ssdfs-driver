@@ -181,7 +181,9 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 	case SSDFS_128KB:
 	case SSDFS_256KB:
 	case SSDFS_512KB:
+	case SSDFS_1MB:
 	case SSDFS_2MB:
+	case SSDFS_4MB:
 	case SSDFS_8MB:
 	case SSDFS_16MB:
 	case SSDFS_32MB:
@@ -191,6 +193,7 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
 	case SSDFS_512MB:
 	case SSDFS_1GB:
 	case SSDFS_2GB:
+	case SSDFS_4GB:
 	case SSDFS_8GB:
 	case SSDFS_16GB:
 	case SSDFS_32GB:
@@ -505,7 +508,9 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 	case SSDFS_128KB:
 	case SSDFS_256KB:
 	case SSDFS_512KB:
+	case SSDFS_1MB:
 	case SSDFS_2MB:
+	case SSDFS_4MB:
 	case SSDFS_8MB:
 	case SSDFS_16MB:
 	case SSDFS_32MB:
@@ -515,6 +520,7 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
 	case SSDFS_512MB:
 	case SSDFS_1GB:
 	case SSDFS_2GB:
+	case SSDFS_4GB:
 	case SSDFS_8GB:
 	case SSDFS_16GB:
 	case SSDFS_32GB:

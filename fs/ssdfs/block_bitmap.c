@@ -250,8 +250,7 @@ int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
-		SSDFS_WARN("block bitmap hasn't been initialized\n");
-		err = -EFAULT;
+		SSDFS_DBG("block bitmap hasn't been initialized\n");
 	}
 
 	if (is_block_bmap_dirty(blk_bmap)) {

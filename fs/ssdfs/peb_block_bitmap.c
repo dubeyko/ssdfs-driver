@@ -244,7 +244,7 @@ int ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (!is_peb_block_bmap_initialized(ptr))
-		SSDFS_WARN("PEB's block bitmap hasn't been initialized\n");
+		SSDFS_DBG("PEB's block bitmap hasn't been initialized\n");
 
 	atomic_set(&ptr->peb_valid_blks, 0);
 	atomic_set(&ptr->peb_invalid_blks, 0);

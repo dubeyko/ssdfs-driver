@@ -728,6 +728,55 @@ free_segbmap_object:
 }
 
 /*
+ * ssdfs_segbmap_check_fragment_validity() - check fragment validity
+ * @segbmap: pointer on segment bitmap object
+ * @fragment_index: fragment index
+ *
+ * This method checks that fragment is ready for operations.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EAGAIN     - fragment is under initialization yet.
+ * %-EFAULT     - fragment initialization has failed.
+ */
+static
+int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
+					  pgoff_t fragment_index)
+{
+	struct ssdfs_segbmap_fragment_desc *fragment;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!segbmap);
+	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
+
+	SSDFS_DBG("segbmap %p, fragment_index %lu\n",
+		  segbmap, fragment_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fragment = &segbmap->desc_array[fragment_index];
+
+	switch (fragment->state) {
+	case SSDFS_SEGBMAP_FRAG_CREATED:
+		return -EAGAIN;
+
+	case SSDFS_SEGBMAP_FRAG_INIT_FAILED:
+		return -EFAULT;
+
+	case SSDFS_SEGBMAP_FRAG_INITIALIZED:
+	case SSDFS_SEGBMAP_FRAG_DIRTY:
+		/* do nothing */
+		break;
+
+	default:
+		BUG();
+	}
+
+	return 0;
+}
+
+/*
  * ssdfs_segbmap_destroy() - destroy segment bitmap object
  * @fsi: file system info object
  *
@@ -735,6 +784,11 @@ free_segbmap_object:
  */
 void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 {
+	struct completion *end;
+	u16 fragments_count;
+	int i;
+	int err;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -748,6 +802,32 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	if (!fsi->segbmap)
 		return;
 
+	/*
+	 * Check that all fragments have been initialized
+	 */
+	down_read(&fsi->segbmap->resize_lock);
+	down_read(&fsi->segbmap->search_lock);
+
+	fragments_count = fsi->segbmap->fragments_count;
+	for (i = 0; i < fragments_count; i++) {
+		end = &fsi->segbmap->desc_array[i].init_end;
+
+		err = ssdfs_segbmap_check_fragment_validity(fsi->segbmap, i);
+		if (err == -EAGAIN) {
+			up_read(&fsi->segbmap->search_lock);
+			up_read(&fsi->segbmap->resize_lock);
+			SSDFS_WAIT_COMPLETION(end);
+			down_read(&fsi->segbmap->resize_lock);
+			down_read(&fsi->segbmap->search_lock);
+		}
+	}
+
+	up_read(&fsi->segbmap->search_lock);
+	up_read(&fsi->segbmap->resize_lock);
+
+	/*
+	 * Start destruction
+	 */
 	down_write(&fsi->segbmap->resize_lock);
 	down_write(&fsi->segbmap->search_lock);
 
@@ -916,8 +996,12 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 	if (fragment_bytes != (SEG_BMAP_BYTES(total_segs) + hdr_size)) {
 		err = -EIO;
 		SSDFS_ERR("segbmap header is corrupted: "
-			  "invalid fragment's items count %u\n",
-			  total_segs);
+			  "invalid fragment's items count %u, "
+			  "fragment_bytes %u, bmap_bytes %u, "
+			  "hdr_size %zu\n",
+			  total_segs, fragment_bytes,
+			  SEG_BMAP_BYTES(total_segs),
+			  hdr_size);
 		goto fragment_hdr_corrupted;
 	}
 
@@ -1426,7 +1510,6 @@ int ssdfs_segbmap_define_volume_extent(struct ssdfs_segment_bmap *segbmap,
 {
 	u16 sequence_id;
 	u16 fragment_index;
-	u32 pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!segbmap || !req || !hdr || !seg_index);
@@ -1447,27 +1530,8 @@ int ssdfs_segbmap_define_volume_extent(struct ssdfs_segment_bmap *segbmap,
 	}
 
 	fragment_index = sequence_id % segbmap->fragments_per_seg;
-	pagesize = segbmap->fsi->pagesize;
-
-	if (pagesize < segbmap->fragment_size) {
-		u32 pages_per_item;
-
-		pages_per_item = segbmap->fragment_size + pagesize - 1;
-		pages_per_item /= pagesize;
-		req->place.start.blk_index = fragment_index * pages_per_item;
-		req->place.len = fragments_count * pages_per_item;
-	} else if (pagesize > segbmap->fragment_size) {
-		u32 items_per_page;
-
-		items_per_page = pagesize + segbmap->fragment_size - 1;
-		items_per_page /= segbmap->fragment_size;
-		req->place.start.blk_index = fragment_index / items_per_page;
-		req->place.len = fragments_count + items_per_page - 1;
-		req->place.len /= items_per_page;
-	} else {
-		req->place.start.blk_index = fragment_index;
-		req->place.len = fragments_count;
-	}
+	req->place.start.blk_index = fragment_index;
+	req->place.len = fragments_count;
 
 	return 0;
 }
@@ -2287,7 +2351,7 @@ int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap)
 	}
 
 	fragments_count = segbmap->fragments_count;
-	fragment_size = segbmap->fragment_size;
+	fragment_size = segbmap->fsi->pagesize;
 
 	ssdfs_sb_segbmap_header_correct_state(segbmap);
 
@@ -2377,55 +2441,6 @@ int ssdfs_segbmap_resize(struct ssdfs_segment_bmap *segbmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return -ENOSYS;
-}
-
-/*
- * ssdfs_segbmap_check_fragment_validity() - check fragment validity
- * @segbmap: pointer on segment bitmap object
- * @fragment_index: fragment index
- *
- * This method checks that fragment is ready for operations.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EAGAIN     - fragment is under initialization yet.
- * %-EFAULT     - fragment initialization has failed.
- */
-static
-int ssdfs_segbmap_check_fragment_validity(struct ssdfs_segment_bmap *segbmap,
-					  pgoff_t fragment_index)
-{
-	struct ssdfs_segbmap_fragment_desc *fragment;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!segbmap);
-	BUG_ON(!rwsem_is_locked(&segbmap->search_lock));
-
-	SSDFS_DBG("segbmap %p, fragment_index %lu\n",
-		  segbmap, fragment_index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fragment = &segbmap->desc_array[fragment_index];
-
-	switch (fragment->state) {
-	case SSDFS_SEGBMAP_FRAG_CREATED:
-		return -EAGAIN;
-
-	case SSDFS_SEGBMAP_FRAG_INIT_FAILED:
-		return -EFAULT;
-
-	case SSDFS_SEGBMAP_FRAG_INITIALIZED:
-	case SSDFS_SEGBMAP_FRAG_DIRTY:
-		/* do nothing */
-		break;
-
-	default:
-		BUG();
-	}
-
-	return 0;
 }
 
 /*

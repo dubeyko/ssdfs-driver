@@ -12117,7 +12117,7 @@ u16 ssdfs_peb_define_segbmap_sequence_id(struct ssdfs_peb_container *pebc,
 
 	down_read(&segbmap->resize_lock);
 	fragments_per_seg = segbmap->fragments_per_seg;
-	fragment_size = segbmap->fragment_size;
+	fragment_size = pebc->parent_si->fsi->pagesize;
 	fragments_bytes_per_seg =
 		(u32)segbmap->fragments_per_seg * fragment_size;
 	up_read(&segbmap->resize_lock);
@@ -12167,6 +12167,9 @@ void ssdfs_peb_define_segbmap_logical_extent(struct ssdfs_peb_container *pebc,
 	u16 peb_index;
 	u32 fragments_bytes_per_seg;
 	u32 fragments_bytes_per_peb;
+	u16 fragment_id;
+	u16 fragments_count;
+	u16 fragments_per_peb;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
@@ -12182,15 +12185,31 @@ void ssdfs_peb_define_segbmap_logical_extent(struct ssdfs_peb_container *pebc,
 	peb_index = pebc->peb_index;
 
 	down_read(&segbmap->resize_lock);
-	ptr->fragment_size = segbmap->fragment_size;
+	ptr->fragment_size = pebc->parent_si->fsi->pagesize;
 	fragments_bytes_per_seg =
 		(u32)segbmap->fragments_per_seg * ptr->fragment_size;
-	fragments_bytes_per_peb =
-		(u32)segbmap->fragments_per_peb * ptr->fragment_size;
+	fragments_per_peb = segbmap->fragments_per_peb;
+	fragments_bytes_per_peb = (u32)fragments_per_peb * ptr->fragment_size;
 	ptr->logical_offset = fragments_bytes_per_seg * seg_index;
 	ptr->logical_offset += fragments_bytes_per_peb * peb_index;
-	ptr->data_size = segbmap->fragments_per_peb * ptr->fragment_size;
+	ptr->data_size = fragments_per_peb * ptr->fragment_size;
+	fragments_count = segbmap->fragments_count;
 	up_read(&segbmap->resize_lock);
+
+	fragment_id = ssdfs_peb_define_segbmap_sequence_id(pebc, seg_index,
+							   ptr->logical_offset);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(fragment_id >= U16_MAX);
+	BUG_ON(fragment_id >= fragments_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fragment_id < fragments_count) {
+		fragments_per_peb = min_t(u16, fragments_per_peb,
+						fragments_count - fragment_id);
+		ptr->data_size = min_t(u32, ptr->data_size,
+					fragments_per_peb * ptr->fragment_size);
+	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fragment_size %u, fragments_bytes_per_seg %u, "
@@ -12246,9 +12265,9 @@ u16 ssdfs_peb_define_segbmap_logical_block(struct ssdfs_peb_container *pebc,
 
 	down_read(&segbmap->resize_lock);
 	fragments_bytes_per_seg =
-		(u32)segbmap->fragments_per_seg * segbmap->fragment_size;
+		(u32)segbmap->fragments_per_seg * fsi->pagesize;
 	fragments_bytes_per_peb =
-		(u32)segbmap->fragments_per_peb * segbmap->fragment_size;
+		(u32)segbmap->fragments_per_peb * fsi->pagesize;
 	blks_per_peb = fragments_bytes_per_peb + fsi->pagesize - 1;
 	blks_per_peb >>= fsi->log_pagesize;
 	up_read(&segbmap->resize_lock);
@@ -12336,7 +12355,7 @@ int ssdfs_peb_read_segbmap_first_folio(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
-	BUG_ON(extent->fragment_size != PAGE_SIZE);
+	BUG_ON(extent->fragment_size != pebc->parent_si->fsi->pagesize);
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "
@@ -12500,7 +12519,7 @@ int ssdfs_peb_read_segbmap_folios(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
-	BUG_ON(extent->fragment_size != PAGE_SIZE);
+	BUG_ON(extent->fragment_size != pebc->parent_si->fsi->pagesize);
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "
@@ -12572,6 +12591,42 @@ int ssdfs_peb_read_segbmap_folios(struct ssdfs_peb_container *pebc,
 
 	for (i = 0; i < req->result.processed_blks; i++)
 		ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	for (i = 0; i < req->result.content.count; i++) {
+		int j;
+
+		block = &req->result.content.blocks[i];
+		blk_state = &block->new_state;
+
+		BUG_ON(folio_batch_count(&blk_state->batch) == 0);
+
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			struct folio *folio;
+			void *kaddr;
+			u32 processed_bytes = 0;
+			u32 page_index = 0;
+
+			folio = blk_state->batch.folios[j];
+
+			do {
+				kaddr = kmap_local_folio(folio,
+							 processed_bytes);
+				SSDFS_DBG("PAGE DUMP: blk_index %d, "
+					  "folio_index %d, page_index %u\n",
+					  i, j, page_index);
+				print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+						     kaddr,
+						     PAGE_SIZE);
+				SSDFS_DBG("\n");
+				kunmap_local(kaddr);
+
+				processed_bytes += PAGE_SIZE;
+				page_index++;
+			} while (processed_bytes < folio_size(folio));
+		}
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	sequence_id = ssdfs_peb_define_segbmap_sequence_id(pebc, seg_index,
 							extent->logical_offset);
@@ -12653,7 +12708,7 @@ int ssdfs_peb_read_segbmap_rest_folios(struct ssdfs_peb_container *pebc,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!extent);
-	BUG_ON(extent->fragment_size != PAGE_SIZE);
+	BUG_ON(extent->fragment_size != pebc->parent_si->fsi->pagesize);
 
 	SSDFS_DBG("seg %llu, peb_index %u, "
 		  "logical_offset %llu, data_size %u, "

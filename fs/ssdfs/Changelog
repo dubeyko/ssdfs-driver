@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.01 [October 05, 2024]
+    (*) Fix issue of wrong distribution of segment bitmap's fragments
+        among segments and erase blocks.
+
 v.5.00 [September 30, 2024]
     (*) Fix multiple issues of processing 64MB erase block.
 

@@ -521,6 +521,8 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		struct ssdfs_current_segment *object = NULL;
 		int seg_state, seg_type;
 		u16 log_pages;
+		int cur_seg_state;
+		struct completion *init_end;
 
 		object = (struct ssdfs_current_segment *)(start_ptr + offset);
 		fsi->cur_segs->objects[i] = object;
@@ -561,6 +563,36 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 			BUG();
 		};
 
+		cur_seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
+							seg, &init_end);
+		if (cur_seg_state == -EAGAIN) {
+			err = SSDFS_WAIT_COMPLETION(init_end);
+			if (unlikely(err)) {
+				SSDFS_ERR("segbmap init failed: "
+					  "err %d\n", err);
+				goto destroy_cur_segs;
+			}
+
+			cur_seg_state = ssdfs_segbmap_get_state(fsi->segbmap,
+								seg, &init_end);
+			if (cur_seg_state < 0)
+				goto fail_define_seg_state;
+		} else if (cur_seg_state < 0) {
+fail_define_seg_state:
+			err = cur_seg_state;
+			SSDFS_ERR("fail to define segment state: "
+				  "seg %llu, err %d\n",
+				  seg, err);
+			goto destroy_cur_segs;
+		}
+
+		if (cur_seg_state != seg_state) {
+			SSDFS_DBG("seg %llu, cur_seg_state %#x, "
+				  "seg_state %#x\n",
+				  seg, cur_seg_state, seg_state);
+			continue;
+		}
+
 		si = __ssdfs_create_new_segment(fsi, seg,
 						seg_state, seg_type,
 						log_pages,
@@ -572,6 +604,11 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 				 * Ignore this error.
 				 */
 				goto destroy_cur_segs;
+			} else if (err == -ENOSPC) {
+				SSDFS_DBG("unable to create segment object: "
+					   "seg %llu, err %d\n",
+					   seg, err);
+				continue;
 			} else {
 				SSDFS_WARN("fail to create segment object: "
 					   "seg %llu, err %d\n",

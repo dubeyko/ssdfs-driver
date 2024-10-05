@@ -331,6 +331,32 @@ int SEG_TYPE2MASK(int seg_type)
 	return mask;
 }
 
+/*
+ * SEG_TYPE_TO_CUR_SEG_TYPE() - convert segment type to current segment type
+ * @seg_type: segment type
+ */
+static inline
+int SEG_TYPE_TO_CUR_SEG_TYPE(u16 seg_type)
+{
+	int cur_seg_type = SSDFS_CUR_SEGS_COUNT;
+
+	switch (seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		return SSDFS_CUR_DATA_SEG;
+
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+		return SSDFS_CUR_LNODE_SEG;
+
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+		return SSDFS_CUR_HNODE_SEG;
+
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		return SSDFS_CUR_IDXNODE_SEG;
+	}
+
+	return cur_seg_type;
+}
+
 static inline
 void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si)
 {
