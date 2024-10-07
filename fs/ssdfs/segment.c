@@ -6408,6 +6408,7 @@ int ssdfs_segment_commit_log_sync(struct ssdfs_segment_info *si,
 					    SSDFS_REQ_SYNC,
 					    req);
 	ssdfs_request_define_segment(si->seg_id, req);
+	ssdfs_account_commit_log_request(si);
 
 	return __ssdfs_segment_update_extent(si, req);
 }
@@ -6458,6 +6459,7 @@ int ssdfs_segment_commit_log_async(struct ssdfs_segment_info *si,
 					    SSDFS_COMMIT_LOG_NOW,
 					    req_type, req);
 	ssdfs_request_define_segment(si->seg_id, req);
+	ssdfs_account_commit_log_request(si);
 
 	return __ssdfs_segment_update_extent(si, req);
 }
@@ -6561,6 +6563,7 @@ int ssdfs_segment_commit_log_sync2(struct ssdfs_segment_info *si,
 					    SSDFS_REQ_SYNC,
 					    req);
 	ssdfs_request_define_segment(si->seg_id, req);
+	ssdfs_account_commit_log_request(si);
 
 	return __ssdfs_segment_commit_log2(si, peb_index, req);
 }
@@ -6613,6 +6616,7 @@ int ssdfs_segment_commit_log_async2(struct ssdfs_segment_info *si,
 					    SSDFS_COMMIT_LOG_NOW,
 					    req_type, req);
 	ssdfs_request_define_segment(si->seg_id, req);
+	ssdfs_account_commit_log_request(si);
 
 	return __ssdfs_segment_commit_log2(si, peb_index, req);
 }

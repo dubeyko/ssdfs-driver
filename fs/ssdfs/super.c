@@ -2930,6 +2930,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	atomic64_set(&fs_info->flush_reqs, 0);
 	init_waitqueue_head(&fs_info->pending_wq);
 	init_waitqueue_head(&fs_info->finish_user_data_flush_wq);
+	init_waitqueue_head(&fs_info->finish_commit_log_flush_wq);
 	atomic_set(&fs_info->global_fs_state, SSDFS_UNKNOWN_GLOBAL_FS_STATE);
 
 	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
@@ -3350,6 +3351,18 @@ free_erase_folio:
 	return err;
 }
 
+static inline
+bool unfinished_commit_log_requests_exist(struct ssdfs_fs_info *fsi)
+{
+	u64 commit_log_requests = 0;
+
+	spin_lock(&fsi->volume_state_lock);
+	commit_log_requests = fsi->commit_log_requests;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return commit_log_requests > 0;
+}
+
 static void ssdfs_put_super(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
@@ -3601,6 +3614,25 @@ static void ssdfs_put_super(struct super_block *sb)
 				SSDFS_ERR("fail to flush segbmap: "
 					  "err %d\n", err);
 			}
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("Wait unfinished commit log requests...\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (unfinished_commit_log_requests_exist(fsi)) {
+			wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
+
+			err = wait_event_killable_timeout(*wq,
+				    !unfinished_commit_log_requests_exist(fsi),
+				    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+
+			if (unfinished_commit_log_requests_exist(fsi))
+				BUG();
 		}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL

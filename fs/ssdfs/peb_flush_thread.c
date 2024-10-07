@@ -15779,6 +15779,16 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 		BUG();
 	};
 
+	switch (req->private.cmd) {
+	case SSDFS_COMMIT_LOG_NOW:
+		ssdfs_forget_commit_log_request(pebc->parent_si);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	};
+
 	ssdfs_forget_user_data_flush_request(pebc->parent_si);
 	ssdfs_segment_finish_request_cno(pebc->parent_si);
 
@@ -19366,6 +19376,9 @@ make_log_commit:
 				   pebc->peb_type,
 				   thread_state->req->private.class,
 				   thread_state->req->private.cmd);
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 		}
 
 		ssdfs_forget_invalidated_user_data_pages(si);

@@ -3819,6 +3819,7 @@ int ssdfs_btree_deleted_node_commit_log(struct ssdfs_btree_node *node)
 						    SSDFS_COMMIT_LOG_NOW,
 						    SSDFS_REQ_ASYNC, req);
 		ssdfs_request_define_segment(si->seg_id, req);
+		ssdfs_account_commit_log_request(si);
 
 		ssdfs_segment_create_request_cno(si);
 

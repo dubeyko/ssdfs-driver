@@ -1911,6 +1911,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	fsi->reserved_new_user_data_pages = 0;
 	fsi->updated_user_data_pages = 0;
 	fsi->flushing_user_data_requests = 0;
+	fsi->commit_log_requests = 0;
 	fsi->fs_mount_time = ssdfs_current_timestamp();
 	fsi->fs_mod_time = le64_to_cpu(fsi->vs->timestamp);
 	ssdfs_init_boot_vs_mount_timediff(fsi);

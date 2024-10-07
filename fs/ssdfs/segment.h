@@ -481,6 +481,57 @@ void ssdfs_forget_invalidated_user_data_pages(struct ssdfs_segment_info *si)
 }
 
 static inline
+void ssdfs_account_commit_log_request(struct ssdfs_segment_info *si)
+{
+	u64 commit_log_requests = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&si->fsi->volume_state_lock);
+	si->fsi->commit_log_requests++;
+	commit_log_requests = si->fsi->commit_log_requests;
+	spin_unlock(&si->fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, commit_log_requests %llu\n",
+		  si->seg_id, commit_log_requests);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
+void ssdfs_forget_commit_log_request(struct ssdfs_segment_info *si)
+{
+	u64 commit_log_requests = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	spin_lock(&si->fsi->volume_state_lock);
+	commit_log_requests = si->fsi->commit_log_requests;
+	if (commit_log_requests > 0) {
+		si->fsi->commit_log_requests--;
+		commit_log_requests = si->fsi->commit_log_requests;
+	} else
+		err = -ERANGE;
+	spin_unlock(&si->fsi->volume_state_lock);
+
+	if (unlikely(err))
+		SSDFS_WARN("fail to decrement\n");
+
+	if (commit_log_requests == 0)
+		wake_up_all(&si->fsi->finish_commit_log_flush_wq);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, commit_log_requests %llu\n",
+		  si->seg_id, commit_log_requests);
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
 void ssdfs_protection_account_request(struct ssdfs_protection_window *ptr,
 				      u64 current_cno)
 {
