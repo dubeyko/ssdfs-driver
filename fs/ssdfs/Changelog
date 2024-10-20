@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.03 [October 20, 2024]
+    (*) Fix multiple issues in global GC thread's logic.
+
 v.5.02 [October 07, 2024]
     (*) Fix issue of commit logs during mapping table destruction
         in the case of unmount operation.

@@ -1364,6 +1364,13 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 					     node->node_size,
 					     0, 0, req);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, node_id %u, "
+		  "node_size %u, logical_offset %llu\n",
+		  ino, node->node_id,
+		  node->node_size, logical_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	switch (node_type) {
 	case SSDFS_BTREE_INDEX_NODE:
 		err = ssdfs_segment_pre_alloc_index_node_extent_async(fsi, req,
@@ -3330,6 +3337,46 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 		} else if (!node) {
 			err = -ERANGE;
 			SSDFS_WARN("empty node pointer\n");
+			goto finish_search_leaf_node;
+		}
+
+		switch (atomic_read(&node->state)) {
+		case SSDFS_BTREE_NODE_CREATED:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("node %u is under initialization\n",
+				  node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = SSDFS_WAIT_COMPLETION(&node->init_end);
+			if (unlikely(err)) {
+				SSDFS_ERR("node init failed: "
+					  "err %d\n", err);
+				goto finish_search_leaf_node;
+			}
+
+			switch (atomic_read(&node->state)) {
+			case SSDFS_BTREE_NODE_INITIALIZED:
+			case SSDFS_BTREE_NODE_DIRTY:
+				/* expected state */
+				break;
+
+			default:
+				err = -ERANGE;
+				SSDFS_ERR("invalid node state %#x\n",
+					  atomic_read(&node->state));
+				goto finish_search_leaf_node;
+			}
+			break;
+
+		case SSDFS_BTREE_NODE_INITIALIZED:
+		case SSDFS_BTREE_NODE_DIRTY:
+			/* expected state */
+			break;
+
+		default:
+			err = -ERANGE;
+			SSDFS_ERR("invalid node state %#x\n",
+				  atomic_read(&node->state));
 			goto finish_search_leaf_node;
 		}
 
