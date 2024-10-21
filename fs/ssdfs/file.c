@@ -1450,7 +1450,8 @@ check_req_state:
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_check_sync_write_request(struct ssdfs_segment_request *req)
+int ssdfs_check_sync_write_request(struct ssdfs_fs_info *fsi,
+				   struct ssdfs_segment_request *req)
 {
 	int i, j;
 	int err;
@@ -1523,7 +1524,8 @@ int ssdfs_check_sync_write_request(struct ssdfs_segment_request *req)
 			ssdfs_clear_dirty_folio(folio);
 
 			ssdfs_folio_unlock(folio);
-			folio_end_writeback(folio);
+			ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+			ssdfs_request_writeback_folios_dec(req);
 		}
 	}
 
@@ -1593,7 +1595,7 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 				continue;
 			}
 
-			err = ssdfs_check_sync_write_request(req);
+			err = ssdfs_check_sync_write_request(fsi, req);
 			if (unlikely(err)) {
 				SSDFS_ERR("request %d is failed: err %d\n",
 					  i, err);
@@ -2389,7 +2391,7 @@ int ssdfs_issue_sync_write_request(struct ssdfs_fs_info *fsi,
 				folio_clear_dirty(folio);
 
 				ssdfs_folio_unlock(folio);
-				folio_end_writeback(folio);
+				ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
 			}
 		}
 	}
@@ -2472,7 +2474,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 				  (u64)folio_index(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			folio_start_writeback(folio);
+			ssdfs_folio_start_writeback(fsi, U64_MAX,
+						    logical_offset, folio);
 			ssdfs_clear_dirty_folio(folio);
 
 			block_bytes += folio_size(folio);
@@ -2560,7 +2563,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 					ssdfs_account_locked_folio(folio);
 					folio_mark_uptodate(folio);
 					folio_mark_dirty(folio);
-					folio_start_writeback(folio);
+					ssdfs_folio_start_writeback(fsi, U64_MAX,
+								    logical_offset, folio);
 					ssdfs_clear_dirty_folio(folio);
 					folio_batch_add(&blk_state->batch,
 							folio);
@@ -2578,7 +2582,8 @@ int ssdfs_issue_write_request(struct writeback_control *wbc,
 
 					folio_mark_uptodate(folio);
 					folio_mark_dirty(folio);
-					folio_start_writeback(folio);
+					ssdfs_folio_start_writeback(fsi, U64_MAX,
+								    logical_offset, folio);
 					ssdfs_clear_dirty_folio(folio);
 					folio_batch_add(&blk_state->batch,
 							folio);
@@ -2702,7 +2707,8 @@ int __ssdfs_writepage(struct folio *folio, u32 len,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			folio_mark_dirty(cur_folio);
-			folio_start_writeback(cur_folio);
+			ssdfs_folio_start_writeback(fsi, U64_MAX,
+						    logical_offset, cur_folio);
 			ssdfs_clear_dirty_folio(cur_folio);
 
 			err = ssdfs_dirty_folios_batch_add_folio(cur_folio,
@@ -2815,7 +2821,8 @@ try_add_folio_into_request:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				folio_mark_dirty(cur_folio);
-				folio_start_writeback(cur_folio);
+				ssdfs_folio_start_writeback(fsi, U64_MAX,
+						    logical_offset, cur_folio);
 				ssdfs_clear_dirty_folio(cur_folio);
 
 				err =
@@ -3061,7 +3068,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 			goto discard_folio;
 		}
 
-		folio_start_writeback(folio);
+		ssdfs_folio_start_writeback(fsi, U64_MAX, 0, folio);
 
 		err = __ssdfs_memcpy_from_folio(ii->inline_file,
 						0, inline_capacity,
@@ -3081,7 +3088,7 @@ int ssdfs_writepage_wrapper(struct folio *folio,
 		folio_clear_dirty(folio);
 
 		ssdfs_folio_unlock(folio);
-		folio_end_writeback(folio);
+		ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
 
 		return 0;
 	}

@@ -1729,7 +1729,9 @@ finish_copy:
 				  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			folio_start_writeback(folio);
+			ssdfs_folio_start_writeback(fsi, U64_MAX,
+						    processed_bytes, folio);
+			ssdfs_request_writeback_folios_inc(req);
 
 			processed_bytes += folio_size(folio);
 		}
@@ -1772,7 +1774,8 @@ finish_save_external_blob:
 			if (!folio)
 				continue;
 
-			folio_end_writeback(folio);
+			ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+			ssdfs_request_writeback_folios_dec(req);
 			ssdfs_folio_unlock(folio);
 		}
 

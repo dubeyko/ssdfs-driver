@@ -2164,7 +2164,8 @@ int ssdfs_maptbl_copy_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
 	folio_mark_uptodate(dfolio);
 	if (!folio_test_dirty(dfolio))
 		folio_set_dirty(dfolio);
-	folio_start_writeback(dfolio);
+	ssdfs_folio_start_writeback(tbl->fsi, U64_MAX, 0, dfolio);
+	ssdfs_request_writeback_folios_inc(req);
 
 end_copy_dirty_folio:
 	flush_dcache_folio(sfolio);
@@ -2181,7 +2182,8 @@ end_copy_dirty_folio:
  * @req2: destination request
  */
 static
-void ssdfs_maptbl_replicate_dirty_folio(struct ssdfs_segment_request *req1,
+void ssdfs_maptbl_replicate_dirty_folio(struct ssdfs_peb_mapping_table *tbl,
+					struct ssdfs_segment_request *req1,
 					int folio_index,
 					struct ssdfs_segment_request *req2)
 {
@@ -2190,7 +2192,7 @@ void ssdfs_maptbl_replicate_dirty_folio(struct ssdfs_segment_request *req1,
 	struct folio *sfolio, *dfolio;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!req1 || !req2);
+	BUG_ON(!tbl || !req1 || !req2);
 	BUG_ON(folio_index >= req1->result.content.count);
 	BUG_ON(folio_index >= req2->result.content.count);
 
@@ -2219,7 +2221,8 @@ void ssdfs_maptbl_replicate_dirty_folio(struct ssdfs_segment_request *req1,
 	folio_mark_uptodate(dfolio);
 	if (!folio_test_dirty(dfolio))
 		folio_set_dirty(dfolio);
-	folio_start_writeback(dfolio);
+	ssdfs_folio_start_writeback(tbl->fsi, U64_MAX, 0, dfolio);
+	ssdfs_request_writeback_folios_inc(req2);
 }
 
 /*
@@ -2675,7 +2678,7 @@ define_update_area:
 		}
 
 		if (has_backup)
-			ssdfs_maptbl_replicate_dirty_folio(req1, j, req2);
+			ssdfs_maptbl_replicate_dirty_folio(tbl, req1, j, req2);
 	}
 
 	offset = area_start * tbl->fsi->pagesize;
@@ -10452,6 +10455,12 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 
 		need_erase = false;
 
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("set snapshot state: "
+			  "leb_id %llu\n",
+			  leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_get_peb_relation(fdesc, &leb_desc, &pebr);
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10592,6 +10601,12 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 			break;
 		}
 	} else {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("set pre_erase state: "
+			  "leb_id %llu\n",
+			  leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to move PEB into pre-erase state: "

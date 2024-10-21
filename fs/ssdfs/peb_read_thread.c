@@ -2020,6 +2020,17 @@ bool is_ssdfs_block_descriptor_valid(struct ssdfs_fs_info *fsi,
 	calculated += (u64)req->result.processed_blks * fsi->pagesize;
 	calculated = div_u64(calculated, fsi->pagesize);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("req->extent.logical_offset %llu, "
+		  "req->result.processed_blks %d, "
+		  "calculated %llu, "
+		  "blk_desc->logical_offset %u\n",
+		  req->extent.logical_offset,
+		  req->result.processed_blks,
+		  calculated,
+		  le32_to_cpu(blk_desc->logical_offset));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	if (calculated != le32_to_cpu(blk_desc->logical_offset)) {
 		SSDFS_WARN("requested logical_offset %llu "
 			   "differs from found logical_offset %u\n",
@@ -3827,7 +3838,14 @@ int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,
 
 		err = ssdfs_blk2off_table_blk_desc_init(table, logical_blk,
 							pos);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to init blk desc: "
+				  "logical_blk %u, err %d\n",
+				  logical_blk, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_blk_desc_buffer_init;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to init blk desc: "
 				  "logical_blk %u, err %d\n",
 				  logical_blk, err);
@@ -4358,6 +4376,10 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 				  le32_to_cpu(blk_state->byte_offset),
 				  blk_state->peb_migration_id);
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		goto finish_read_page;
 	}
@@ -13229,7 +13251,7 @@ end_init:
  * @pebi: pointer on PEB object
  * @block_index: block index of footer's placement
  * @peb_create_time: PEB's create timestamp [out]
- * @last_log_time: PEB's last log timestamp
+ * @last_log_time: PEB's last log timestamp [out]
  *
  * This method tries to read the last log footer of PEB
  * and retrieve peb_create_time and last_log_time.
@@ -13324,6 +13346,11 @@ int ssdfs_peb_get_last_log_time(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 		goto fail_read_footer;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_log_time %llx\n",
+		  *last_log_time);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 fail_read_footer:
 	kunmap_local(kaddr);

@@ -469,6 +469,11 @@ finish_define_bmap_state:
 	if (unlikely(err))
 		return false;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %u, src_valid_blks %u\n",
+		  si->seg_id, pebc->peb_index, valid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return valid_blks == 0 ? true : false;
 }
 
@@ -543,10 +548,25 @@ repeat_valid_blocks_processing:
 					    req);
 	ssdfs_request_define_segment(si->seg_id, req);
 
-	err = ssdfs_peb_copy_blocks_range(pebc, &copy_range, req);
+	sub_range.start = copy_range.start;
+	sub_range.len = copy_range.len;
+
+	err = ssdfs_peb_copy_blocks_range(pebc, &sub_range, req);
 	if (err == -EAGAIN) {
 		err = 0;
-		need_repeat = true;
+
+		if (req->result.processed_blks == 0) {
+			need_repeat = false;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("nothing has been copied: "
+				  "seg_id %llu, peb_index %u, "
+				  "range (start %u, len %u)\n",
+				  si->seg_id, pebc->peb_index,
+				  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto invalidate_sub_range;
+		} else
+			need_repeat = true;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to copy range: err %d\n",
 			  err);
@@ -580,7 +600,9 @@ repeat_valid_blocks_processing:
 			BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			folio_start_writeback(folio);
+			ssdfs_folio_start_writeback(si->fsi, si->seg_id,
+						    0, folio);
+			ssdfs_request_writeback_folios_inc(req);
 		}
 	}
 
@@ -595,9 +617,7 @@ repeat_valid_blocks_processing:
 		goto fail_process_valid_blocks;
 	}
 
-	sub_range.start = copy_range.start;
-	sub_range.len = processed_blks;
-
+invalidate_sub_range:
 	err = ssdfs_peb_blk_bmap_invalidate(peb_blkbmap,
 					    SSDFS_PEB_BLK_BMAP_SOURCE,
 					    &sub_range);
@@ -609,8 +629,8 @@ repeat_valid_blocks_processing:
 	}
 
 	if (need_repeat) {
-		copy_range.start += processed_blks;
-		copy_range.len -= processed_blks;
+		copy_range.start += sub_range.len;
+		copy_range.len -= sub_range.len;
 		goto repeat_valid_blocks_processing;
 	}
 
@@ -620,6 +640,19 @@ fail_process_valid_blocks:
 	for (i = 0; i < req->result.content.count; i++) {
 		block = &req->result.content.blocks[i];
 		blk_state = &block->new_state;
+
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			folio = blk_state->batch.folios[j];
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			ssdfs_folio_end_writeback(si->fsi, si->seg_id, 0, folio);
+			ssdfs_request_writeback_folios_dec(req);
+			ssdfs_folio_unlock(folio);
+		}
+
 		ssdfs_migration_folio_batch_release(&blk_state->batch);
 	}
 
@@ -704,6 +737,16 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 			/* pre-allocated page hasn't content */
 			err = 0;
 			has_data = false;
+		} else if (err == -EAGAIN) {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("nothing has been copied: "
+				  "seg_id %llu, peb_index %u, "
+				  "range (start %u, len %u)\n",
+				  si->seg_id, pebc->peb_index,
+				  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto invalidate_sub_range;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy pre-alloc page: "
 				  "logical_blk %u, err %d\n",
@@ -731,7 +774,11 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 					BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-					folio_start_writeback(folio);
+					ssdfs_folio_start_writeback(si->fsi,
+								    si->seg_id,
+								    0,
+								    folio);
+					ssdfs_request_writeback_folios_inc(req);
 				}
 			}
 
@@ -756,6 +803,7 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 			goto fail_process_pre_alloc_blocks;
 		}
 
+invalidate_sub_range:
 		sub_range.start = logical_blk;
 		sub_range.len = 1;
 

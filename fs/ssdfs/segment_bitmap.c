@@ -1419,7 +1419,8 @@ int ssdfs_segbmap_copy_dirty_fragment(struct ssdfs_segment_bmap *segbmap,
 	folio_mark_uptodate(dfolio);
 	if (!folio_test_dirty(dfolio))
 		ssdfs_set_folio_dirty(dfolio);
-	folio_start_writeback(dfolio);
+	ssdfs_folio_start_writeback(segbmap->fsi, U64_MAX, 0, dfolio);
+	ssdfs_request_writeback_folios_inc(req);
 
 	ssdfs_folio_array_clear_dirty_folio(&segbmap->folios,
 					    fragment_index);
@@ -1446,7 +1447,8 @@ fail_copy_fragment:
  * @req2: destination request
  */
 static
-void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_request *req1,
+void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_bmap *segbmap,
+				     struct ssdfs_segment_request *req1,
 				     u16 folio_index,
 				     struct ssdfs_segment_request *req2)
 {
@@ -1458,7 +1460,7 @@ void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_request *req1,
 	u16 fragment_bytes;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!req1 || !req2);
+	BUG_ON(!segbmap || !req1 || !req2);
 	BUG_ON(folio_index >= req1->result.content.count);
 	BUG_ON(folio_index >= req2->result.content.count);
 
@@ -1490,7 +1492,8 @@ void ssdfs_segbmap_replicate_fragment(struct ssdfs_segment_request *req1,
 	folio_mark_uptodate(dfolio);
 	if (!folio_test_dirty(dfolio))
 		ssdfs_set_folio_dirty(dfolio);
-	folio_start_writeback(dfolio);
+	ssdfs_folio_start_writeback(segbmap->fsi, U64_MAX, 0, dfolio);
+	ssdfs_request_writeback_folios_inc(req2);
 }
 
 /*
@@ -1645,8 +1648,10 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 			goto fail_issue_fragment_updates;
 		}
 
-		if (has_backup)
-			ssdfs_segbmap_replicate_fragment(req1, blk_index, req2);
+		if (has_backup) {
+			ssdfs_segbmap_replicate_fragment(segbmap, req1,
+							 blk_index, req2);
+		}
 
 		offset = (u64)blk_index;
 		offset *= fragment_size;
@@ -4275,7 +4280,7 @@ check_search_result:
 	} else if (found == U64_MAX) {
 		if (found_for_mask == U64_MAX) {
 			err = -ENODATA;
-			SSDFS_DBG("fail to find segment\n");
+			SSDFS_DBG("unable to find segment\n");
 		} else {
 			*seg = found_for_mask;
 			err = found_state_for_mask;

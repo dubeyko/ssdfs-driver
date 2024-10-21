@@ -3194,7 +3194,7 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 	struct folio *folio;
 	u64 logical_offset;
 	u32 data_bytes;
-	u64 seg_id;
+	u64 seg_id = U64_MAX;
 	u32 logical_blk;
 	u32 len;
 	u32 blks_count;
@@ -3250,41 +3250,8 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 					     (u32)data_bytes,
 					     0, 0, &node->flush_req);
 
-	for (i = 0; i < blks_count; i++) {
-		struct ssdfs_request_content_block *block;
-		struct ssdfs_content_block *blk_state;
-
-		err = ssdfs_request_add_allocated_folio_locked(i,
-							&node->flush_req);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to add folio into request: "
-				  "err %d\n",
-				  err);
-			goto fail_prepare_flush_request;
-		}
-
-		block = &node->flush_req.result.content.blocks[i];
-		blk_state = &block->new_state;
-
-		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
-			folio = blk_state->batch.folios[j];
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			folio_start_writeback(folio);
-		}
-	}
-
 	down_write(&node->full_lock);
 	down_write(&node->header_lock);
-
-	folio = node->content.blocks[0].batch.folios[0];
-
-	ssdfs_folio_lock(folio);
-	ssdfs_btree_node_copy_header_nolock(node, folio, &write_offset);
-	ssdfs_folio_unlock(folio);
 
 	spin_lock(&node->descriptor_lock);
 	si = node->seg;
@@ -3303,6 +3270,42 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 		  atomic_read(&node->type),
 		  seg_id, logical_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	for (i = 0; i < blks_count; i++) {
+		struct ssdfs_request_content_block *block;
+		struct ssdfs_content_block *blk_state;
+
+		err = ssdfs_request_add_allocated_folio_locked(i,
+							&node->flush_req);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add folio into request: "
+				  "err %d\n",
+				  err);
+			goto unlock_node;
+		}
+
+		block = &node->flush_req.result.content.blocks[i];
+		blk_state = &block->new_state;
+
+		for (j = 0; j < folio_batch_count(&blk_state->batch); j++) {
+			folio = blk_state->batch.folios[j];
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			ssdfs_folio_start_writeback(fsi, seg_id,
+						    logical_offset, folio);
+			ssdfs_request_writeback_folios_inc(&node->flush_req);
+			logical_offset += folio_size(folio);
+		}
+	}
+
+	folio = node->content.blocks[0].batch.folios[0];
+
+	ssdfs_folio_lock(folio);
+	ssdfs_btree_node_copy_header_nolock(node, folio, &write_offset);
+	ssdfs_folio_unlock(folio);
 
 	ssdfs_request_define_segment(seg_id, &node->flush_req);
 
@@ -3366,6 +3369,8 @@ unlock_node:
 	return 0;
 
 fail_prepare_flush_request:
+	logical_offset = (u64)node->node_id * node->node_size;
+
 	for (i = 0; i < node->flush_req.result.content.count; i++) {
 		struct ssdfs_request_content_block *block;
 		struct ssdfs_content_block *blk_state;
@@ -3383,7 +3388,10 @@ fail_prepare_flush_request:
 			if (!folio)
 				continue;
 
-			folio_end_writeback(folio);
+			ssdfs_folio_end_writeback(fsi, seg_id,
+						  logical_offset, folio);
+			ssdfs_request_writeback_folios_dec(&node->flush_req);
+			logical_offset += folio_size(folio);
 		}
 	}
 
@@ -3552,7 +3560,8 @@ fail_flush_node:
 			if (!folio)
 				continue;
 
-			folio_end_writeback(folio);
+			ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+			ssdfs_request_writeback_folios_dec(&node->flush_req);
 		}
 	}
 

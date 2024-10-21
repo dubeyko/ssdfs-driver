@@ -1970,7 +1970,14 @@ int ssdfs_btree_node_prepare_logical_block_diff(struct ssdfs_btree_node *node,
 		return err;
 	}
 
-	folio_start_writeback(folio);
+	spin_lock(&node->descriptor_lock);
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!node->seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+	ssdfs_folio_start_writeback(node->tree->fsi, node->seg->seg_id,
+				    0, folio);
+	ssdfs_request_writeback_folios_inc(&node->flush_req);
+	spin_unlock(&node->descriptor_lock);
 
 	err = ssdfs_btree_node_save_diff_blob_metadata(node,
 							blk_index,

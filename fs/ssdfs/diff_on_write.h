@@ -103,5 +103,4 @@ int ssdfs_user_data_apply_diffs(struct ssdfs_peb_info *pebi,
 		return 0;
 }
 #endif /* CONFIG_SSDFS_DIFF_ON_WRITE_USER_DATA */
-
 #endif /* _SSDFS_DIFF_ON_WRITE_H */

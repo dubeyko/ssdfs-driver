@@ -106,15 +106,16 @@ enum {
 	SSDFS_PAGES_TYPE_MAX
 };
 
-#define SSDFS_INVALID_CNO	U64_MAX
-#define SSDFS_SECTOR_SHIFT	9
-#define SSDFS_DEFAULT_TIMEOUT	(msecs_to_jiffies(120000))
-#define SSDFS_NANOSECS_PER_SEC	(1000000000)
-#define SSDFS_SECS_PER_HOUR	(60 * 60)
-#define SSDFS_HOURS_PER_DAY	(24)
-#define SSDFS_DAYS_PER_WEEK	(7)
-#define SSDFS_WEEKS_PER_MONTH	(4)
-#define SSDFS_EXTENT_LEN_MAX	(8)
+#define SSDFS_INVALID_CNO		U64_MAX
+#define SSDFS_SECTOR_SHIFT		(9)
+#define SSDFS_DEFAULT_TIMEOUT		(msecs_to_jiffies(120000))
+#define SSDFS_NANOSECS_PER_SEC		(1000000000)
+#define SSDFS_SECS_PER_HOUR		(60 * 60)
+#define SSDFS_HOURS_PER_DAY		(24)
+#define SSDFS_DAYS_PER_WEEK		(7)
+#define SSDFS_WEEKS_PER_MONTH		(4)
+#define SSDFS_EXTENT_LEN_MAX		(8)
+#define SSDFS_MAX_NUMBER_OF_TRIES	(10)
 
 /*
  * Every PEB contains a sequence of logs. Log starts from

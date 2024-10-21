@@ -183,6 +183,10 @@ struct ssdfs_segment_info *ssdfs_segment_allocate_object(u64 seg_id)
 	atomic_set(&ptr->refs_count, 0);
 	init_waitqueue_head(&ptr->object_queue);
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&ptr->writeback_folios, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment object %p, seg_id %llu\n",
 		  ptr, seg_id);
@@ -336,7 +340,8 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 
 	if (!is_ssdfs_requests_queue_empty(&si->create_rq)) {
 		SSDFS_WARN("create queue is not empty\n");
-		ssdfs_requests_queue_remove_all(&si->create_rq, -ENOSPC);
+		ssdfs_requests_queue_remove_all(si->fsi, &si->create_rq,
+						-ENOSPC);
 	}
 
 	ssdfs_segment_free_object(si);
@@ -1361,9 +1366,9 @@ create_segment_object:
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("finished\n");
+	SSDFS_ERR("finished: seg_id %llu\n", seg_id);
 #else
-	SSDFS_DBG("finished\n");
+	SSDFS_DBG("finished: seg_id %llu\n", seg_id);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return si;
@@ -1410,7 +1415,8 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 		err = SSDFS_WAIT_COMPLETION(end);
 		if (unlikely(err)) {
 			SSDFS_ERR("blk2off init failed: "
-				  "err %d\n", err);
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
 			return err;
 		}
 
@@ -2215,6 +2221,9 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 					  batch->requested_extent.ino, j, err);
 				goto fail_add_request_into_create_queue;
 			}
+
+			WARN_ON(!folio_test_writeback(block->batch.folios[j]));
+			ssdfs_request_writeback_folios_inc(req);
 		}
 	}
 
@@ -5170,6 +5179,14 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 	BUG_ON(not_proccessed == 0);
 	BUG_ON((batch->processed_blks + batch->place.len) >
 						batch->content.count);
+
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, blk_index %u, len %u\n",
+		  batch->requested_extent.ino,
+		  (u64)batch->requested_extent.logical_offset,
+		  data_bytes,
+		  batch->place.start.blk_index,
+		  batch->place.len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < batch->place.len; i++) {
@@ -5179,6 +5196,9 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(folio_batch_count(&block->batch) == 0);
+
+		SSDFS_DBG("batch->processed_blks %u, blk_index %u\n",
+			  batch->processed_blks, blk_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		for (j = 0; j < folio_batch_count(&block->batch); j++) {
@@ -5186,6 +5206,11 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 
 #ifdef CONFIG_SSDFS_DEBUG
 			BUG_ON(!folio);
+
+			SSDFS_DBG("ino %llu, blk_index %d, folio_index %lu\n",
+				  batch->requested_extent.ino,
+				  blk_index,
+				  folio_index(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_request_add_folio(folio, i, req);
@@ -5195,6 +5220,9 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 					  batch->requested_extent.ino, i, err);
 				goto fail_add_request_into_update_queue;
 			}
+
+			WARN_ON(!folio_test_writeback(folio));
+			ssdfs_request_writeback_folios_inc(req);
 		}
 	}
 

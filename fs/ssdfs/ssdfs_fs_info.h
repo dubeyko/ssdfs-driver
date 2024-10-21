@@ -385,6 +385,10 @@ struct ssdfs_fs_info {
 	struct kobject segments_kobj;
 	struct completion segments_kobj_unregister;
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_t ssdfs_writeback_folios;
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
 #ifdef CONFIG_SSDFS_TESTING
 	struct address_space testing_pages;
 	struct inode *testing_inode;

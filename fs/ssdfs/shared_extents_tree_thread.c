@@ -406,6 +406,11 @@ try_invalidate_queue:
 				le32_to_cpu(ei->raw.extent.len),
 				err);
 			ssdfs_extent_info_free(ei);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			goto repeat;
 		} else
 			ssdfs_extent_info_free(ei);

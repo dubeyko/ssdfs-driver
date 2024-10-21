@@ -255,6 +255,77 @@ void ssdfs_folio_unlock(struct folio *folio)
 }
 
 static inline
+void ssdfs_folio_start_writeback(struct ssdfs_fs_info *fsi,
+				 u64 seg_id, u64 logical_offset,
+				 struct folio *folio)
+{
+	folio_start_writeback(folio);
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&fsi->ssdfs_writeback_folios) < 0) {
+		SSDFS_WARN("ssdfs_writeback_folios %lld\n",
+			   atomic64_read(&fsi->ssdfs_writeback_folios));
+	}
+
+	atomic64_inc(&fsi->ssdfs_writeback_folios);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (folio->mapping && folio->mapping->host) {
+		SSDFS_DBG("ino %llu, folio_index %lu, "
+			   "seg_id %llu, logical_offset %llu, "
+			   "ssdfs_writeback_folios %lld\n",
+			   (u64)folio->mapping->host->i_ino,
+			   folio_index(folio),
+			   seg_id, logical_offset,
+			   atomic64_read(&fsi->ssdfs_writeback_folios));
+	} else {
+		SSDFS_DBG("seg_id %llu, logical_offset %llu, "
+			  "folio_index %lu, ssdfs_writeback_folios %lld\n",
+			  seg_id, logical_offset,
+			  folio_index(folio),
+			  atomic64_read(&fsi->ssdfs_writeback_folios));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static inline
+void ssdfs_folio_end_writeback(struct ssdfs_fs_info *fsi,
+				u64 seg_id, u64 logical_offset,
+				struct folio *folio)
+{
+	folio_end_writeback(folio);
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_dec(&fsi->ssdfs_writeback_folios);
+
+	if (atomic64_read(&fsi->ssdfs_writeback_folios) < 0) {
+		SSDFS_WARN("ssdfs_writeback_folios %lld\n",
+			   atomic64_read(&fsi->ssdfs_writeback_folios));
+	}
+
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (folio->mapping && folio->mapping->host) {
+		SSDFS_DBG("ino %llu, folio_index %lu, "
+			  "seg_id %llu, logical_offset %llu, "
+			  "ssdfs_writeback_folios %lld\n",
+			  (u64)folio->mapping->host->i_ino,
+			  folio_index(folio),
+			  seg_id, logical_offset,
+			  atomic64_read(&fsi->ssdfs_writeback_folios));
+	} else {
+		SSDFS_DBG("seg_id %llu, logical_offset %llu, "
+			  "folio_index %lu, ssdfs_writeback_folios %lld\n",
+			  seg_id, logical_offset,
+			  folio_index(folio),
+			  atomic64_read(&fsi->ssdfs_writeback_folios));
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static inline
 struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 {
 	struct folio *folio;

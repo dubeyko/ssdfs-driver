@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.04 [October 21, 2024]
+    (*) Introduce writeback folios counter and logic of checking
+        number of writebacked folios in debug mode.
+
 v.5.03 [October 20, 2024]
     (*) Fix multiple issues in global GC thread's logic.
 

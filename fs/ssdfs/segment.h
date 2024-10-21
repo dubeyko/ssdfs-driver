@@ -146,6 +146,10 @@ struct ssdfs_segment_info {
 	/* /sys/fs/<ssdfs>/<device>/segments/<segN>/pebs */
 	struct kobject pebs_kobj;
 	struct completion pebs_kobj_unregister;
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_t writeback_folios;
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 };
 
 /* Segment object states */
@@ -164,6 +168,7 @@ enum {
 	SSDFS_SEG_OBJECT_REGULAR_ACTIVITY,
 	SSDFS_SEG_UNDER_GC_ACTIVITY,
 	SSDFS_SEG_UNDER_INVALIDATION,
+	SSDFS_SEG_UNDER_FINISHING_MIGRATION,
 	SSDFS_SEG_OBJECT_ACTIVITY_TYPE_MAX
 };
 

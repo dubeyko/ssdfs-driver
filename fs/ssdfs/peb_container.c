@@ -494,6 +494,11 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
 
+	SSDFS_DBG("seg %llu, peb_index %u, peb_type %#x, "
+		  "selected_peb %u\n",
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index, pebc->peb_type,
+		  selected_peb);
 	SSDFS_DBG("peb_index %u, peb_type %#x, "
 		  "selected_peb %d\n",
 		  pebc->peb_index, pebc->peb_type,
@@ -614,7 +619,8 @@ stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 
 stop_read_thread:
-	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+					&pebc->read_rq, -ERANGE);
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
@@ -705,7 +711,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		req2 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_using_peb_obj;
 	}
 
@@ -728,7 +735,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 			req1 = NULL;
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			ssdfs_requests_queue_remove_all(&pebc->read_rq,
+			ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+							&pebc->read_rq,
 							-ERANGE);
 			goto fail_create_using_peb_obj;
 		}
@@ -751,7 +759,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 			req4 = NULL;
 			SSDFS_ERR("fail to allocate segment request: err %d\n",
 				  err);
-			ssdfs_requests_queue_remove_all(&pebc->read_rq,
+			ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+							&pebc->read_rq,
 							-ERANGE);
 			goto fail_create_using_peb_obj;
 		}
@@ -782,7 +791,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 		req5 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_using_peb_obj;
 	}
 
@@ -808,7 +818,8 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 				  pebc->peb_index, err);
 		}
 
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_using_peb_obj;
 	}
 
@@ -889,7 +900,8 @@ stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 
 stop_read_thread:
-	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+					&pebc->read_rq, -ERANGE);
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
@@ -975,7 +987,8 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		req2 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_used_peb_obj;
 	}
 
@@ -1002,7 +1015,8 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 		req3 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_used_peb_obj;
 	}
 
@@ -1028,7 +1042,8 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 				  pebc->peb_index, err);
 		}
 
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_used_peb_obj;
 	}
 
@@ -1109,7 +1124,8 @@ stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 
 stop_read_thread:
-	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+					&pebc->read_rq, -ERANGE);
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
@@ -1189,7 +1205,7 @@ int ssdfs_create_dirty_peb_container(struct ssdfs_peb_container *pebc,
  * @pebc: pointer on PEB container
  * @selected_peb: source or destination PEB?
  *
- * This function tries to initialize PEB conatiner for "dirty" + "using"
+ * This function tries to initialize PEB container for "dirty" + "using"
  * state of the PEBs.
  *
  * RETURN:
@@ -1282,7 +1298,8 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		req3 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_dirty_using_peb_obj;
 	}
 
@@ -1307,7 +1324,8 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 		req4 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_dirty_using_peb_obj;
 	}
 
@@ -1333,7 +1351,8 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 				  pebc->peb_index, err);
 		}
 
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_dirty_using_peb_obj;
 	}
 
@@ -1414,7 +1433,8 @@ stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 
 stop_read_thread:
-	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+					&pebc->read_rq, -ERANGE);
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
@@ -1520,7 +1540,8 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		req3 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_dirty_used_peb_obj;
 	}
 
@@ -1545,7 +1566,8 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 		req4 = NULL;
 		SSDFS_ERR("fail to allocate segment request: err %d\n",
 			  err);
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_dirty_used_peb_obj;
 	}
 
@@ -1571,7 +1593,8 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 				  pebc->peb_index, err);
 		}
 
-		ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->read_rq, -ERANGE);
 		goto fail_create_dirty_used_peb_obj;
 	}
 
@@ -1652,7 +1675,8 @@ stop_flush_thread:
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_FLUSH_THREAD);
 
 stop_read_thread:
-	ssdfs_requests_queue_remove_all(&pebc->read_rq, -ERANGE);
+	ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+					&pebc->read_rq, -ERANGE);
 	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
 	ssdfs_peb_stop_thread(pebc, SSDFS_PEB_READ_THREAD);
 
@@ -2267,6 +2291,10 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	init_rwsem(&pebc->lock);
 	atomic_set(&pebc->dst_peb_refs, 0);
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&pebc->writeback_folios, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
 		SSDFS_THREAD_STATE_INIT(&pebc->thread_state[i]);
 	}
@@ -2625,7 +2653,8 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 				__FILE__, __func__, __LINE__,
 				"read requests queue isn't empty\n");
 		err = -EIO;
-		ssdfs_requests_queue_remove_all(&ptr->read_rq, err);
+		ssdfs_requests_queue_remove_all(ptr->parent_si->fsi,
+						&ptr->read_rq, err);
 	}
 
 	if (!is_ssdfs_requests_queue_empty(&ptr->update_rq)) {
@@ -2633,7 +2662,8 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 				__FILE__, __func__, __LINE__,
 				"flush requests queue isn't empty\n");
 		err = -EIO;
-		ssdfs_requests_queue_remove_all(&ptr->update_rq, err);
+		ssdfs_requests_queue_remove_all(ptr->parent_si->fsi,
+						&ptr->update_rq, err);
 	}
 
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
@@ -2642,7 +2672,8 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 				__FILE__, __func__, __LINE__,
 				"FSCK requests queue isn't empty\n");
 		err = -EIO;
-		ssdfs_requests_queue_remove_all(&ptr->fsck_rq, err);
+		ssdfs_requests_queue_remove_all(ptr->parent_si->fsi,
+						&ptr->fsck_rq, err);
 	}
 #endif /* CONFIG_SSDFS_ONLINE_FSCK */
 
@@ -4742,7 +4773,15 @@ try_get_current_peb:
 		break;
 
 	default:
-		SSDFS_WARN("invalid state: %#x\n",
+		SSDFS_WARN("invalid migration_state: "
+			   "seg %llu, peb %llu, "
+			   "segment (seg_state %#x, obj_state %#x, "
+			   "activity_type %#x), migration_state %#x\n",
+			   pebc->parent_si->seg_id,
+			   pebi->peb_id,
+			   atomic_read(&pebc->parent_si->seg_state),
+			   atomic_read(&pebc->parent_si->obj_state),
+			   atomic_read(&pebc->parent_si->activity_type),
 			   atomic_read(&pebc->migration_state));
 		return ERR_PTR(-ERANGE);
 	}

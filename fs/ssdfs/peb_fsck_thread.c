@@ -162,7 +162,7 @@ int ssdfs_peb_fsck_thread_func(void *data)
 repeat:
 	if (kthread_should_stop()) {
 		if (!is_ssdfs_requests_queue_empty(&pebc->fsck_rq))
-			ssdfs_requests_queue_remove_all(&pebc->fsck_rq, 0);
+			ssdfs_requests_queue_remove_all(fsi, &pebc->fsck_rq, 0);
 
 		complete_all(&pebc->thread[SSDFS_PEB_FSCK_THREAD].full_stop);
 		return err;

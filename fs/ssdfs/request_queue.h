@@ -250,6 +250,10 @@ struct ssdfs_segment_request {
 	struct ssdfs_volume_extent place;
 	struct ssdfs_request_internal_data private;
 	struct ssdfs_request_result result;
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_t writeback_folios;
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 };
 
 /*
@@ -579,6 +583,84 @@ bool has_request_been_executed(struct ssdfs_segment_request *req)
 	return has_been_executed;
 }
 
+static inline
+void ssdfs_request_writeback_folios_inc(struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&req->writeback_folios) < 0) {
+		SSDFS_WARN("invalid state: writeback_folios %lld, "
+			   "class %#x, cmd %#x, type %#x, "
+			   "seg %llu, extent (start %u, len %u), "
+			   "ino %llu, logical_offset %llu, "
+			   "data_bytes %u\n",
+			   atomic64_read(&req->writeback_folios),
+			   req->private.class, req->private.cmd,
+			   req->private.type,
+			   req->place.start.seg_id,
+			   req->place.start.blk_index,
+			   req->place.len,
+			   req->extent.ino,
+			   req->extent.logical_offset,
+			   req->extent.data_bytes);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	atomic64_inc(&req->writeback_folios);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		   "class %#x, cmd %#x, type %#x, "
+		   "writeback_folios %lld\n",
+		   req->extent.ino,
+		   req->extent.logical_offset,
+		   req->private.class, req->private.cmd,
+		   req->private.type,
+		   atomic64_read(&req->writeback_folios));
+#endif /* CONFIG_SSDFS_DEBUG */
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
+static inline
+void ssdfs_request_writeback_folios_dec(struct ssdfs_segment_request *req)
+{
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_dec(&req->writeback_folios);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		   "class %#x, cmd %#x, type %#x, "
+		   "writeback_folios %lld\n",
+		   req->extent.ino,
+		   req->extent.logical_offset,
+		   req->private.class, req->private.cmd,
+		   req->private.type,
+		   atomic64_read(&req->writeback_folios));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic64_read(&req->writeback_folios) < 0) {
+		SSDFS_WARN("invalid state: writeback_folios %lld, "
+			   "class %#x, cmd %#x, type %#x, "
+			   "seg %llu, extent (start %u, len %u), "
+			   "ino %llu, logical_offset %llu, "
+			   "data_bytes %u\n",
+			   atomic64_read(&req->writeback_folios),
+			   req->private.class, req->private.cmd,
+			   req->private.type,
+			   req->place.start.seg_id,
+			   req->place.start.blk_index,
+			   req->place.len,
+			   req->extent.ino,
+			   req->extent.logical_offset,
+			   req->extent.data_bytes);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+}
+
 /*
  * Request queue's API
  */
@@ -596,7 +678,8 @@ void ssdfs_requests_queue_add_head_inc(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req);
 int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
 				      struct ssdfs_segment_request **req);
-void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
+void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_requests_queue *rq,
 				     int err);
 
 /*
@@ -653,7 +736,8 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req);
 void ssdfs_request_unlock_and_forget_block(int block_index,
 					   struct ssdfs_segment_request *req);
-void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req);
+void ssdfs_free_flush_request_folios(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_segment_request *req);
 void ssdfs_reinit_request_content(struct ssdfs_segment_request *req);
 
 #endif /* _SSDFS_REQUEST_QUEUE_H */

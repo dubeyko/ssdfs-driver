@@ -442,7 +442,8 @@ int ssdfs_requests_queue_remove_first(struct ssdfs_requests_queue *rq,
  * @block: memory folios of the logical block
  */
 static inline
-void ssdfs_requests_queue_remove_block(struct ssdfs_content_block *block)
+void ssdfs_requests_queue_remove_block(struct ssdfs_fs_info *fsi,
+					struct ssdfs_content_block *block)
 {
 	int i;
 
@@ -467,7 +468,7 @@ void ssdfs_requests_queue_remove_block(struct ssdfs_content_block *block)
 		folio_clear_mappedtodisk(folio);
 		ssdfs_clear_dirty_folio(folio);
 		ssdfs_folio_unlock(folio);
-		folio_end_writeback(folio);
+		ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
 	}
 }
 
@@ -478,7 +479,8 @@ void ssdfs_requests_queue_remove_block(struct ssdfs_content_block *block)
  *
  * This function removes all requests from the queue.
  */
-void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
+void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_requests_queue *rq,
 				     int err)
 {
 	bool is_empty;
@@ -487,7 +489,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 	struct ssdfs_content_block *block;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!rq);
+	BUG_ON(!fsi || !rq);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rq->lock);
@@ -537,7 +539,8 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 
 			for (i = 0; i < req->result.content.count; i++) {
 				block = &req->result.content.blocks[i].new_state;
-				ssdfs_requests_queue_remove_block(block);
+				ssdfs_requests_queue_remove_block(fsi, block);
+				ssdfs_request_writeback_folios_dec(req);
 			}
 
 			ssdfs_put_request(req);
@@ -550,7 +553,8 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_requests_queue *rq,
 
 			for (i = 0; i < req->result.content.count; i++) {
 				block = &req->result.content.blocks[i].new_state;
-				ssdfs_requests_queue_remove_block(block);
+				ssdfs_requests_queue_remove_block(fsi, block);
+				ssdfs_request_writeback_folios_dec(req);
 			}
 
 			ssdfs_put_request(req);
@@ -585,6 +589,10 @@ struct ssdfs_segment_request *ssdfs_request_alloc(void)
 
 	ssdfs_req_queue_cache_leaks_increment(ptr);
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&ptr->writeback_folios, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
 	return ptr;
 }
 
@@ -599,6 +607,28 @@ void ssdfs_request_free(struct ssdfs_segment_request *req)
 
 	if (!req)
 		return;
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	if (atomic64_read(&req->writeback_folios) != 0) {
+		SSDFS_WARN("invalid state: writeback_folios %lld, "
+			   "class %#x, cmd %#x, type %#x, "
+			   "seg %llu, extent (start %u, len %u), "
+			   "ino %llu, logical_offset %llu, "
+			   "data_bytes %u\n",
+			   atomic64_read(&req->writeback_folios),
+			   req->private.class, req->private.cmd,
+			   req->private.type,
+			   req->place.start.seg_id,
+			   req->place.start.blk_index,
+			   req->place.len,
+			   req->extent.ino,
+			   req->extent.logical_offset,
+			   req->extent.data_bytes);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
 	req->private.block_size = U32_MAX;
 	ssdfs_req_queue_cache_leaks_decrement(req);
@@ -1452,7 +1482,8 @@ int ssdfs_request_switch_update_on_diff(struct ssdfs_fs_info *fsi,
 		ssdfs_clear_dirty_folio(folio);
 
 		ssdfs_folio_unlock(folio);
-		folio_end_writeback(folio);
+		ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+		ssdfs_request_writeback_folios_dec(req);
 
 		if (!(req->private.flags & SSDFS_REQ_DONT_FREE_FOLIOS))
 			ssdfs_req_queue_forget_folio(folio);
@@ -1533,7 +1564,8 @@ void ssdfs_request_unlock_and_forget_block(int block_index,
  * ssdfs_free_flush_request_folios() - unlock and remove flush request's folios
  * @req: segment request [out]
  */
-void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
+void ssdfs_free_flush_request_folios(struct ssdfs_fs_info *fsi,
+				     struct ssdfs_segment_request *req)
 {
 	struct ssdfs_request_content_block *block;
 	struct ssdfs_content_block *state;
@@ -1573,9 +1605,10 @@ void ssdfs_free_flush_request_folios(struct ssdfs_segment_request *req)
 					need_free_folio = true;
 			}
 
-			if (folio_test_writeback(folio))
-				folio_end_writeback(folio);
-			else {
+			if (folio_test_writeback(folio)) {
+				ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);
+				ssdfs_request_writeback_folios_dec(req);
+			} else {
 				SSDFS_WARN("folio %d is not under writeback: "
 					   "cmd %#x, type %#x\n",
 					   j, req->private.cmd,

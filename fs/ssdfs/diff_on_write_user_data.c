@@ -254,7 +254,11 @@ int ssdfs_user_data_prepare_diff(struct ssdfs_peb_container *pebc,
 		return err;
 	}
 
-	folio_start_writeback(diff_folio);
+	ssdfs_folio_start_writeback(pebc->parent_si->fsi,
+				    req->place.start.seg_id,
+				    req->extent.logical_offset,
+				    diff_folio);
+	ssdfs_request_writeback_folios_inc(req);
 
 	bmap = ssdfs_diff_kzalloc(PAGE_SIZE, GFP_KERNEL);
 	if (unlikely(!bmap)) {

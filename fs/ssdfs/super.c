@@ -2860,6 +2860,10 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!fs_info)
 		return -ENOMEM;
 
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_set(&fs_info->ssdfs_writeback_folios, 0);
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
+
 	/* set initial block size value for valid log search */
 	fs_info->log_pagesize = ilog2(SSDFS_4KB);
 	fs_info->pagesize = SSDFS_4KB;

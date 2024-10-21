@@ -172,6 +172,10 @@ struct ssdfs_peb_container {
 	/* /sys/fs/ssdfs/<device>/<segN>/<pebN> */
 	struct kobject peb_kobj;
 	struct completion peb_kobj_unregister;
+
+#ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
+	atomic64_t writeback_folios;
+#endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 };
 
 #define PEBI_PTR(pebi) \
@@ -278,6 +282,7 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 int ssdfs_peb_get_free_pages(struct ssdfs_peb_container *pebc);
 int ssdfs_peb_get_used_data_pages(struct ssdfs_peb_container *pebc);
 int ssdfs_peb_get_invalid_pages(struct ssdfs_peb_container *pebc);
+int ssdfs_peb_get_pages_capacity(struct ssdfs_peb_container *pebc);
 
 int ssdfs_peb_join_create_requests_queue(struct ssdfs_peb_container *pebc,
 					 struct ssdfs_requests_queue *create_rq);

@@ -471,6 +471,8 @@ int ssdfs_revert_invalidation_to_regular_activity(struct ssdfs_segment_info *si)
 		return -EFAULT;
 	}
 
+	wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("segment %llu has been reverted from invalidation\n",
 		  si->seg_id);
