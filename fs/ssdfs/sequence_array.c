@@ -398,6 +398,8 @@ int ssdfs_sequence_array_delete_item(struct ssdfs_sequence_array *array,
 
 	rcu_read_lock();
 	spin_lock(&array->lock);
+	radix_tree_tag_clear(&array->map, id,
+				SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
 	item_ptr = radix_tree_delete(&array->map, id);
 	spin_unlock(&array->lock);
 	rcu_read_unlock();
@@ -742,7 +744,13 @@ int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
 		err = -ENOENT;
 	spin_unlock(&array->lock);
 
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find item id %llu\n",
+			  (u64)id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_change_state;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find item id %llu\n",
 			  (u64)id);
 		goto finish_change_state;
@@ -754,7 +762,22 @@ int ssdfs_sequence_array_change_state(struct ssdfs_sequence_array *array,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = change_state(item_ptr, old_state, new_state);
-	if (unlikely(err)) {
+	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to change state: "
+			  "id %llu, old_state %#x, "
+			  "new_state %#x\n",
+			  (u64)id, old_state,
+			  new_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = 0;
+		spin_lock(&array->lock);
+		radix_tree_tag_clear(&array->map, id,
+				SSDFS_SEQUENCE_ITEM_DIRTY_TAG);
+		spin_unlock(&array->lock);
+		goto finish_change_state;
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to change state: "
 			  "id %llu, old_state %#x, "
 			  "new_state %#x, err %d\n",
@@ -976,20 +999,31 @@ int __ssdfs_sequence_array_change_all_states(struct ssdfs_sequence_array *ptr,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = change_state(item_ptr, old_state, new_state);
-		if (unlikely(err)) {
+		if (err == -ENOENT) {
+			SSDFS_DBG("unable to change state: "
+				  "id %llu, old_state %#x, "
+				  "new_state %#x\n",
+				  (u64)iter.index, old_state,
+				  new_state);
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to change state: "
 				  "id %llu, old_state %#x, "
 				  "new_state %#x, err %d\n",
 				  (u64)iter.index, old_state,
 				  new_state, err);
 			goto finish_change_all_states;
-		}
-
-		(*found_items)++;
+		} else
+			(*found_items)++;
 
 		rcu_read_lock();
 
 		spin_lock(&ptr->lock);
+
+		if (err == -ENOENT) {
+			err = 0;
+			continue;
+		}
+
 		if (new_tag >= SSDFS_SEQUENCE_MAX_TAGS)
 			radix_tree_tag_clear(&ptr->map, iter.index, tag);
 		else

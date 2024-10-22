@@ -40,6 +40,8 @@
  * @id_count: count of id numbers in sequence
  * @state: fragment state
  * @peb_id: PEB ID containing the fragment
+ * @migrating_blocks: number of logical blocks under migration
+ * @actual_records: number of actual records in fragment
  * @hdr: pointer on fragment's header
  * @phys_offs: array of physical offsets in fragment
  * @buf: buffer of fragment
@@ -56,6 +58,8 @@ struct ssdfs_phys_offset_table_fragment {
 	atomic_t id_count;
 	atomic_t state;
 	u64 peb_id;
+	atomic_t migrating_blocks;
+	atomic_t actual_records;
 
 	struct ssdfs_phys_offset_table_header *hdr;
 	struct ssdfs_phys_offset_descriptor *phys_offs;
@@ -74,8 +78,10 @@ enum {
 	SSDFS_BLK2OFF_FRAG_STATE_MAX,
 };
 
-#define SSDFS_INVALID_FRAG_ID			U16_MAX
-#define SSDFS_BLK2OFF_TBL_REVERT_THRESHOLD	(U16_MAX - 1)
+#define SSDFS_INVALID_FRAG_ID				U16_MAX
+#define SSDFS_BLK2OFF_TBL_REVERT_THRESHOLD		(U16_MAX - 1)
+#define SSDFS_BLK2OFF_TBL_REVERT_PIVOT			(U16_MAX / 2)
+#define SSDFS_BLK2OFF_TBL_LBLK2OFF_CAPACITY_MAX		U16_MAX
 
 /*
  * struct ssdfs_phys_offset_table_array - array of log's fragments in PEB
@@ -144,11 +150,13 @@ struct ssdfs_offset_position {
  * struct ssdfs_migrating_block - migrating block state
  * @state: logical block's state
  * @peb_index: PEB's index
+ * @sequence_id: fragment's sequence_id in PEB
  * @batch: copy of logical block's content (under migration only)
  */
 struct ssdfs_migrating_block {
 	int state;
 	u16 peb_index;
+	u16 sequence_id;
 	struct folio_batch batch;
 };
 
@@ -302,7 +310,8 @@ size_t ssdfs_blk2off_table_bmap_bytes(size_t items_count)
 {
 	size_t bytes;
 
-	bytes = (items_count + BITS_PER_LONG - 1) / BITS_PER_BYTE;
+	bytes = (items_count + BITS_PER_LONG - 1) / BITS_PER_LONG;
+	bytes *= sizeof(unsigned long);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("items_count %zu, bmap_bytes %zu\n",
