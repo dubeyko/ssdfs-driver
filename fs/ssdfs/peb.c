@@ -606,6 +606,7 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 	pebi->peb_create_time = ssdfs_current_timestamp();
 	ssdfs_set_peb_migration_id(pebi, peb_migration_id);
 	init_completion(&pebi->init_end);
+	atomic_set(&pebi->peb_state, peb_state);
 	atomic_set(&pebi->reserved_bytes.blk_bmap, 0);
 	atomic_set(&pebi->reserved_bytes.blk2off_tbl, 0);
 	atomic_set(&pebi->reserved_bytes.blk_desc_tbl, 0);

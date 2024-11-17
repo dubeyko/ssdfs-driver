@@ -631,7 +631,7 @@ fail_define_seg_state:
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("current segment is absent\n");
+			SSDFS_DBG("current segment %d is absent\n", i);
 #endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_segment_put_object(si);
 		} else if (unlikely(err)) {

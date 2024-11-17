@@ -26,9 +26,21 @@
 	pr_err_ratelimited("pid %d:%s:%d %s(): " fmt, \
 		 current->pid, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
+#define SSDFS_ERR_DBG(fmt, ...) \
+	pr_err("pid %d:%s:%d %s(): " fmt, \
+		 current->pid, __FILE__, __LINE__, __func__, ##__VA_ARGS__)
+
 #define SSDFS_WARN(fmt, ...) \
 	do { \
 		pr_warn_ratelimited("pid %d:%s:%d %s(): " fmt, \
+			current->pid, __FILE__, __LINE__, \
+			__func__, ##__VA_ARGS__); \
+		dump_stack(); \
+	} while (0)
+
+#define SSDFS_WARN_DBG(fmt, ...) \
+	do { \
+		pr_warn("pid %d:%s:%d %s(): " fmt, \
 			current->pid, __FILE__, __LINE__, \
 			__func__, ##__VA_ARGS__); \
 		dump_stack(); \

@@ -222,6 +222,7 @@ struct ssdfs_peb_deduplication {
  * @peb_migration_id: identification number of PEB in migration sequence
  * @state: PEB object state
  * @init_end: wait of full init ending
+ * @peb_state: current PEB state
  * @reserved_bytes.blk_bmap: reserved bytes for block bitmap
  * @reserved_bytes.blk2off_tbl: reserved bytes for blk2off table
  * @reserved_bytes.blk_desc_tbl: reserved bytes for block descriptor table
@@ -267,6 +268,8 @@ struct ssdfs_peb_info {
 
 	atomic_t state;
 	struct completion init_end;
+
+	atomic_t peb_state;
 
 	/* Reserved bytes */
 	struct {

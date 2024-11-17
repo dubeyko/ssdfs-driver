@@ -524,8 +524,11 @@ void ssdfs_forget_commit_log_request(struct ssdfs_segment_info *si)
 		err = -ERANGE;
 	spin_unlock(&si->fsi->volume_state_lock);
 
-	if (unlikely(err))
-		SSDFS_WARN("fail to decrement\n");
+	if (unlikely(err)) {
+		SSDFS_WARN("fail to decrement: "
+			   "seg_id %llu\n",
+			   si->seg_id);
+	}
 
 	if (commit_log_requests == 0)
 		wake_up_all(&si->fsi->finish_commit_log_flush_wq);

@@ -97,6 +97,7 @@ struct ssdfs_thread_state {
  * @peb_type: type of PEB
  * @peb_index: index of PEB in the array
  * @log_blocks: count of logical blocks in full log
+ * @peb_state: aggregated PEB container state
  * @thread_state: threads state
  * @threads: PEB container's threads array
  * @read_rq: read requests queue
@@ -125,6 +126,8 @@ struct ssdfs_peb_container {
 	u8 peb_type;
 	u16 peb_index;
 	u32 log_blocks;
+
+	atomic_t peb_state;
 
 	/* PEB container's threads */
 	struct ssdfs_thread_state thread_state[SSDFS_PEB_THREAD_TYPE_MAX];

@@ -2283,6 +2283,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 
 	memset(pebc, 0, sizeof(struct ssdfs_peb_container));
 	mutex_init(&pebc->migration_lock);
+	atomic_set(&pebc->peb_state, SSDFS_MAPTBL_UNKNOWN_PEB_STATE);
 	atomic_set(&pebc->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
 	atomic_set(&pebc->migration_phase, SSDFS_PEB_MIGRATION_STATUS_UNKNOWN);
 	atomic_set(&pebc->items_state, SSDFS_PEB_CONTAINER_EMPTY);
@@ -2449,6 +2450,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
 		/* PEB container has been created */
+		atomic_set(&pebc->peb_state, mtblpd->state);
 		goto start_container_threads;
 		break;
 
@@ -2492,6 +2494,7 @@ try_process_relation:
 		 * Do nothing here.
 		 * Follow to create second PEB object.
 		 */
+		atomic_set(&pebc->peb_state, mtblpd->state);
 		break;
 
 	default:
@@ -5487,6 +5490,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				  pebi->peb_id, new_peb_state, err);
 			return err;
 		}
+
+		atomic_set(&pebi->peb_state, new_peb_state);
+		atomic_set(&pebc->peb_state, new_peb_state);
 		break;
 
 	case SSDFS_PEB1_DST_CONTAINER:
@@ -5621,6 +5627,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				  pebi->peb_id, new_peb_state, err);
 			return err;
 		}
+
+		atomic_set(&pebi->peb_state, new_peb_state);
+		atomic_set(&pebc->peb_state, new_peb_state);
 		break;
 
 	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
@@ -5766,6 +5775,8 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
+		atomic_set(&pebi->peb_state, new_peb_state);
+
 		pebi = pebc->dst_peb;
 		if (!pebi) {
 			SSDFS_ERR("PEB pointer is NULL: "
@@ -5897,6 +5908,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				  pebi->peb_id, new_peb_state, err);
 			return err;
 		}
+
+		atomic_set(&pebi->peb_state, new_peb_state);
+		atomic_set(&pebc->peb_state, new_peb_state);
 		break;
 
 	default:

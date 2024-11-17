@@ -102,6 +102,7 @@ static
 bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 			  unsigned long found_item)
 {
+#ifndef CONFIG_SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET
 	unsigned long *used_bmap;
 	unsigned long *dirty_bmap;
 	u16 pebs_count;
@@ -166,6 +167,17 @@ bool is_time_to_erase_peb(struct ssdfs_peb_table_fragment_header *hdr,
 	}
 
 	return true;
+#else
+	/*
+	 * This method is designed to protect segments
+	 * in special positions from erasing with the goal
+	 * to guarantee reliable and fast search of latest
+	 * actual superblock segment. In the case of using
+	 * the fixed set of superblock segments, this
+	 * techique of protection is useless.
+	 */
+	return true;
+#endif /* CONFIG_SSDFS_FIXED_SUPERBLOCK_SEGMENTS_SET */
 }
 
 /*
@@ -435,6 +447,10 @@ int ssdfs_maptbl_collect_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	if (fdesc->pre_erase_pebs == 0) {
 		/* no dirty PEBs */
 		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("no dirty PEBs: fdesc->pre_erase_pebs %u\n",
+			  fdesc->pre_erase_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 		goto finish_gathering;
 	}
 

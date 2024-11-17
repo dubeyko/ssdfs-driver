@@ -2266,7 +2266,7 @@ int ssdfs_account_pre_allocated_range(struct ssdfs_peb_blk_bmap *bmap,
 
 			seg_invalid_blks =
 				atomic_read(&bmap->parent->seg_invalid_blks);
-			if (seg_invalid_blks <= 0) {
+			if (seg_invalid_blks < 0) {
 				err = -ERANGE;
 				SSDFS_ERR("invalid_logical_blks %d\n",
 					  seg_invalid_blks);
@@ -2669,7 +2669,7 @@ int ssdfs_account_allocated_range(struct ssdfs_peb_blk_bmap *bmap,
 
 			seg_invalid_blks =
 				atomic_read(&bmap->parent->seg_invalid_blks);
-			if (seg_invalid_blks <= 0) {
+			if (seg_invalid_blks < 0) {
 				err = -ERANGE;
 				SSDFS_ERR("invalid_logical_blks %d\n",
 					  seg_invalid_blks);

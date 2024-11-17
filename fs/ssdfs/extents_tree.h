@@ -104,6 +104,18 @@ enum {
 };
 
 /*
+ * struct ssdfs_file_fragment - file's fragment
+ * @start_blk: offset inside of file in logical blocks
+ * @len: fragment's length in logical blocks
+ * @extent: raw extent in segment
+ */
+struct ssdfs_file_fragment {
+	u64 start_blk;
+	u32 len;
+	struct ssdfs_raw_extent extent;
+};
+
+/*
  * Extents tree API
  */
 int ssdfs_extents_tree_create(struct ssdfs_fs_info *fsi,
@@ -129,8 +141,7 @@ bool ssdfs_extents_tree_has_logical_block(u64 blk_offset, struct inode *inode);
 int ssdfs_extents_tree_add_extent(struct inode *inode,
 				  struct ssdfs_segment_request *req);
 int ssdfs_extents_tree_move_extent(struct ssdfs_extents_btree_info *tree,
-				   u64 blk,
-				   struct ssdfs_raw_extent *old_extent,
+				   u64 blk, u32 len,
 				   struct ssdfs_raw_extent *new_extent,
 				   struct ssdfs_btree_search *search);
 int ssdfs_extents_tree_truncate(struct inode *inode);

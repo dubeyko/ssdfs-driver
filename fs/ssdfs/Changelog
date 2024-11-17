@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.06 [November 17, 2024]
+    (*) Fix multiple issues in functionality of extents b-tree.
+
 v.5.05 [October 22, 2024]
     (*) Fix multiple issues in offsets translation table.
 

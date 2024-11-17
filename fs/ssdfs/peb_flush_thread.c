@@ -6303,9 +6303,35 @@ int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
 	}
 
 	if (unlikely(err)) {
+		struct ssdfs_segment_info *si;
+		struct completion *end;
+		struct ssdfs_maptbl_peb_relation pebr;
+		u64 leb_id;
+
 		SSDFS_ERR("fail to change offset: "
 			  "logical_blk %u, err %d\n",
 			  logical_blk, err);
+
+		si = pebi->pebc->parent_si;
+		leb_id = ssdfs_get_leb_id_for_peb_index(fsi, si->seg_id,
+							pebi->peb_index);
+		ssdfs_maptbl_convert_leb2peb(fsi, leb_id,
+					     pebi->pebc->peb_type,
+					     &pebr, &end);
+
+		SSDFS_ERR("MAIN_INDEX: peb_id %llu, type %#x, "
+			  "state %#x, consistency %#x; "
+			  "RELATION_INDEX: peb_id %llu, type %#x, "
+			  "state %#x, consistency %#x\n",
+			  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+			  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+			  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+			  pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+			  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+			  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+			  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+			  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+
 		return err;
 	}
 
@@ -7456,7 +7482,9 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_peb_phys_offset data_off = {0};
 	struct ssdfs_peb_phys_offset desc_off = {0};
 	u16 blk;
+	u16 old_blk;
 	u64 logical_offset;
+	u32 old_logical_offset;
 	struct ssdfs_block_bmap_range range;
 	int range_state;
 	u32 written_bytes = 0;
@@ -7580,6 +7608,28 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  "logical_blk %u, err %d\n",
 			  blk, err);
 		return err;
+	}
+
+	old_logical_offset = le32_to_cpu(blk_desc_off->page_desc.logical_offset);
+	old_blk = le16_to_cpu(blk_desc_off->page_desc.logical_blk);
+
+	if (old_logical_offset != logical_offset || old_blk != blk) {
+		SSDFS_ERR("invalid request: "
+			  "seg %llu, peb %llu, "
+			  "old_logical_offset %u, "
+			  "logical_offset %llu, "
+			  "old_blk %u, blk %u\n",
+			  req->place.start.seg_id,
+			  pebi->peb_id,
+			  old_logical_offset,
+			  logical_offset,
+			  old_blk, blk);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		return -ERANGE;
 	}
 
 	if (req->private.class == SSDFS_PEB_DIFF_ON_WRITE_REQ) {
@@ -8245,7 +8295,6 @@ int __ssdfs_zone_issue_move_request(struct ssdfs_peb_info *pebi,
 	struct ssdfs_extents_btree_info *etree;
 	struct ssdfs_btree_search *search;
 	struct ssdfs_blk2off_range new_extent;
-	struct ssdfs_raw_extent old_raw_extent;
 	struct ssdfs_raw_extent new_raw_extent;
 	struct ssdfs_request_content_block *block;
 	struct ssdfs_content_block *blk_state;
@@ -8368,10 +8417,6 @@ int __ssdfs_zone_issue_move_request(struct ssdfs_peb_info *pebi,
 	BUG_ON(seg_id >= U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	old_raw_extent.seg_id = fragment->extent.seg_id;
-	old_raw_extent.logical_blk = fragment->extent.logical_blk;
-	old_raw_extent.len = fragment->extent.len;
-
 	new_raw_extent.seg_id = cpu_to_le64(seg_id);
 	new_raw_extent.logical_blk = cpu_to_le32(new_extent.start_lblk);
 	new_raw_extent.len = cpu_to_le32(new_extent.len);
@@ -8403,20 +8448,14 @@ int __ssdfs_zone_issue_move_request(struct ssdfs_peb_info *pebi,
 
 	ssdfs_btree_search_init(search);
 	err = ssdfs_extents_tree_move_extent(etree,
-					     fragment->logical_blk_offset,
-					     &old_raw_extent,
-					     &new_raw_extent,
-					     search);
+					     fragment->logical_blk_offset, len,
+					     &new_raw_extent, search);
 	ssdfs_btree_search_free(search);
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to move extent: "
-			  "old_extent (seg_id %llu, logical_blk %u, len %u), "
 			  "new_extent (seg_id %llu, logical_blk %u, len %u), "
 			  "err %d\n",
-			  le64_to_cpu(old_raw_extent.seg_id),
-			  le32_to_cpu(old_raw_extent.logical_blk),
-			  le32_to_cpu(old_raw_extent.len),
 			  le64_to_cpu(new_raw_extent.seg_id),
 			  le32_to_cpu(new_raw_extent.logical_blk),
 			  le32_to_cpu(new_raw_extent.len),
@@ -8687,6 +8726,7 @@ int ssdfs_zone_prepare_move_flush_request(struct ssdfs_peb_info *pebi,
 	u32 logical_blk;
 	u32 len;
 	u64 logical_offset;
+	u64 requested_blk;
 	int i, j;
 	int err = 0;
 
@@ -8802,6 +8842,8 @@ int ssdfs_zone_prepare_move_flush_request(struct ssdfs_peb_info *pebi,
 	BUG_ON(seg_id >= U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	requested_blk = logical_offset >> fsi->log_pagesize;
+
 	old_raw_extent.seg_id = cpu_to_le64(src->place.start.seg_id);
 	old_raw_extent.logical_blk = cpu_to_le32(src->place.start.blk_index);
 	old_raw_extent.len = cpu_to_le32(src->place.len);
@@ -8818,8 +8860,8 @@ int ssdfs_zone_prepare_move_flush_request(struct ssdfs_peb_info *pebi,
 
 	ssdfs_btree_search_init(search);
 	err = ssdfs_extents_tree_move_extent(etree,
-					     src->extent.logical_offset,
-					     &old_raw_extent,
+					     requested_blk,
+					     len,
 					     &new_raw_extent,
 					     search);
 	ssdfs_btree_search_free(search);
@@ -15783,6 +15825,16 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 		  req, req->private.cmd, req->private.type, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	switch (req->private.cmd) {
+	case SSDFS_COMMIT_LOG_NOW:
+		ssdfs_forget_commit_log_request(pebc->parent_si);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	};
+
 	switch (req->private.class) {
 	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
 	case SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ:
@@ -15808,16 +15860,6 @@ void ssdfs_finish_flush_request(struct ssdfs_peb_container *pebc,
 
 	default:
 		BUG();
-	};
-
-	switch (req->private.cmd) {
-	case SSDFS_COMMIT_LOG_NOW:
-		ssdfs_forget_commit_log_request(pebc->parent_si);
-		break;
-
-	default:
-		/* do nothing */
-		break;
 	};
 
 	ssdfs_forget_user_data_flush_request(pebc->parent_si);
