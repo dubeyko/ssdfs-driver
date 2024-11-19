@@ -8192,8 +8192,6 @@ void ssdfs_check_btree_consistency(struct ssdfs_btree *tree)
 
 			rcu_read_lock();
 		}
-
-		rcu_read_lock();
 	}
 	rcu_read_unlock();
 
