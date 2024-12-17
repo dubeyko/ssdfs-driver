@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.07 [December 16, 2024]
+    (*) Retrieve and initialize PEB's and last log's creation time.
+
 v.5.06 [November 17, 2024]
     (*) Fix multiple issues in functionality of extents b-tree.
 
