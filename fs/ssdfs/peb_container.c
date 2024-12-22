@@ -5069,6 +5069,10 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	int id;
 	int items_state;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 old_free_pages;
+	u64 new_free_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5168,10 +5172,11 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	seg_blkbmap = &si->blk_bmap;
 
 	if (pebc->peb_index >= seg_blkbmap->pebs_count) {
+		err = -ERANGE;
 		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
 			  pebc->peb_index,
 			  seg_blkbmap->pebs_count);
-		return -ERANGE;
+		goto finish_invalidate_block;
 	}
 
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
@@ -5193,6 +5198,23 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 
 finish_invalidate_block:
 	up_read(&pebc->lock);
+
+	if (!err) {
+		spin_lock(&si->fsi->volume_state_lock);
+#ifdef CONFIG_SSDFS_DEBUG
+		old_free_pages = si->fsi->free_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
+		si->fsi->free_pages++;
+#ifdef CONFIG_SSDFS_DEBUG
+		new_free_pages = si->fsi->free_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
+		spin_unlock(&si->fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("old_free_pages %llu, new_free_pages %llu\n",
+			  old_free_pages, new_free_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
 
 	return err;
 }

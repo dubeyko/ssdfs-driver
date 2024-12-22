@@ -597,6 +597,7 @@ int ssdfs_maptbl_erase_pebs_array(struct ssdfs_fs_info *fsi,
 
 /*
  * ssdfs_maptbl_correct_peb_state() - correct state of erased PEB
+ * @tbl: mapping table object
  * @fdesc: fragment descriptor
  * @res: result of erase operation
  *
@@ -610,7 +611,8 @@ int ssdfs_maptbl_erase_pebs_array(struct ssdfs_fs_info *fsi,
  * %-ERANGE  - internal error.
  */
 static
-int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
+int ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
 				   struct ssdfs_erase_result *res)
 {
 	struct ssdfs_peb_table_fragment_header *hdr;
@@ -620,6 +622,10 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	struct folio *folio;
 	void *kaddr;
 	unsigned long *dirty_bmap, *used_bmap, *recover_bmap, *bad_bmap;
+#ifdef CONFIG_SSDFS_DEBUG
+	u64 old_free_pages;
+	u64 new_free_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -716,6 +722,21 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("fdesc->pre_erase_pebs %u\n",
 			  fdesc->pre_erase_pebs);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		spin_lock(&tbl->fsi->volume_state_lock);
+#ifdef CONFIG_SSDFS_DEBUG
+		old_free_pages = tbl->fsi->free_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
+		tbl->fsi->free_pages += tbl->fsi->pages_per_peb;
+#ifdef CONFIG_SSDFS_DEBUG
+		new_free_pages = tbl->fsi->free_pages;
+#endif /* CONFIG_SSDFS_DEBUG */
+		spin_unlock(&tbl->fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("old_free_pages %llu, new_free_pages %llu\n",
+			  old_free_pages, new_free_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
@@ -844,7 +865,7 @@ ssdfs_maptbl_correct_fragment_dirty_pebs(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	do {
-		err = ssdfs_maptbl_correct_peb_state(fdesc,
+		err = ssdfs_maptbl_correct_peb_state(tbl, fdesc,
 						     &array->ptr[*item_index]);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to correct PEB state: "
@@ -1001,7 +1022,7 @@ int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
-	err = ssdfs_maptbl_correct_peb_state(fdesc, result);
+	err = ssdfs_maptbl_correct_peb_state(tbl, fdesc, result);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to correct PEB state: "
 			  "peb_id %llu, err %d\n",
