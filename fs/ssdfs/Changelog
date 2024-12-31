@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.08 [December 30, 2024]
+    (*) Implement function of getting volume configuration by
+        tunefs tool.
+
 v.5.07 [December 16, 2024]
     (*) Retrieve and initialize PEB's and last log's creation time.
 

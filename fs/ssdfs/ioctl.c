@@ -369,6 +369,52 @@ finish_list_snapshot_rules:
 	return err;
 }
 
+static int ssdfs_ioctl_tunefs_get_fs_config(struct file *file, void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_tunefs_options config;
+	size_t options_size = sizeof(struct ssdfs_tunefs_options);
+
+	memset(&config, 0, options_size);
+
+	ssdfs_tunefs_get_current_volume_config(fsi, &config.old_config);
+	ssdfs_tunefs_get_new_config_request(fsi, &config.new_config);
+
+	if (copy_to_user((struct ssdfs_tunefs_options __user *)arg,
+			 &config, options_size)) {
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+static int ssdfs_ioctl_tunefs_set_fs_config(struct file *file, void __user *arg)
+{
+	struct inode *inode = file_inode(file);
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
+	struct ssdfs_tunefs_options config;
+	size_t options_size = sizeof(struct ssdfs_tunefs_options);
+	int err = 0;
+
+	if (copy_from_user(&config, arg, options_size)) {
+		return -EFAULT;
+	}
+
+	ssdfs_tunefs_get_current_volume_config(fsi, &config.old_config);
+
+	err = ssdfs_tunefs_check_requested_volume_config(fsi, &config);
+	if (!err)
+		ssdfs_tunefs_save_new_config_request(fsi, &config);
+
+	if (copy_to_user((struct ssdfs_tunefs_options __user *)arg,
+			 &config, options_size)) {
+		return -EFAULT;
+	}
+
+	return err;
+}
+
 /*
  * The ssdfs_ioctl() is called by the ioctl(2) system call.
  */
@@ -397,6 +443,10 @@ long ssdfs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return ssdfs_ioctl_show_snapshot_details(file, argp);
 	case SSDFS_IOC_LIST_SNAPSHOT_RULES:
 		return ssdfs_ioctl_list_snapshot_rules(file, argp);
+	case SSDFS_IOC_TUNEFS_GET_CONFIG:
+		return ssdfs_ioctl_tunefs_get_fs_config(file, argp);
+	case SSDFS_IOC_TUNEFS_SET_CONFIG:
+		return ssdfs_ioctl_tunefs_set_fs_config(file, argp);
 	}
 
 	return -ENOTTY;

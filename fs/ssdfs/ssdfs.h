@@ -299,6 +299,20 @@ void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si);
 int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc);
 void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc);
 
+/* tunefs.c */
+bool IS_TUNEFS_REQUESTED(struct ssdfs_tunefs_request_copy *request);
+bool IS_OPTION_ENABLE_REQUESTED(struct ssdfs_tunefs_option *option);
+bool IS_OPTION_DISABLE_REQUESTED(struct ssdfs_tunefs_option *option);
+bool IS_VOLUME_LABEL_NEED2CHANGE(struct ssdfs_tunefs_volume_label_option *option);
+void ssdfs_tunefs_get_current_volume_config(struct ssdfs_fs_info *fsi,
+				struct ssdfs_current_volume_config *config);
+int ssdfs_tunefs_check_requested_volume_config(struct ssdfs_fs_info *fsi,
+					struct ssdfs_tunefs_options *options);
+void ssdfs_tunefs_get_new_config_request(struct ssdfs_fs_info *fsi,
+				struct ssdfs_tunefs_config_request *new_config);
+void ssdfs_tunefs_save_new_config_request(struct ssdfs_fs_info *fsi,
+					struct ssdfs_tunefs_options *options);
+
 /* volume_header.c */
 bool __is_ssdfs_segment_header_magic_valid(struct ssdfs_signature *magic);
 bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr);

@@ -47,4 +47,12 @@
 #define SSDFS_IOC_LIST_SNAPSHOT_RULES	_IOWR(SSDFS_IOCTL_MAGIC, 8, \
 					     struct ssdfs_snapshot_info)
 
+/*
+ * The tunefs related IOCTLs
+ */
+#define SSDFS_IOC_TUNEFS_GET_CONFIG	_IOR(SSDFS_IOCTL_MAGIC, 9, \
+					     struct ssdfs_tunefs_options)
+#define SSDFS_IOC_TUNEFS_SET_CONFIG	_IOWR(SSDFS_IOCTL_MAGIC, 10, \
+					     struct ssdfs_tunefs_options)
+
 #endif /* _SSDFS_IOCTL_H */

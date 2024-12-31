@@ -2551,6 +2551,8 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 		return 0;
 	}
 
+	mutex_lock(&fsi->tunefs_request.lock);
+
 	err = ssdfs_prepare_volume_header_for_commit(fsi, fsi->vh);
 	if (unlikely(err)) {
 		SSDFS_CRIT("volume header is inconsistent: err %d\n", err);
@@ -2603,6 +2605,8 @@ int ssdfs_commit_super(struct super_block *sb, u16 fs_state,
 		     sizeof(struct ssdfs_peb_extent));
 
 finish_commit_super:
+	mutex_unlock(&fsi->tunefs_request.lock);
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
 #else
@@ -2881,6 +2885,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 	atomic_set(&fs_info->fsck_priority, 0);
 #endif /* CONFIG_SSDFS_ONLINE_FSCK */
+
+	mutex_init(&fs_info->tunefs_request.lock);
+	fs_info->tunefs_request.state = SSDFS_IGNORE_OPTION;
+	memset(&fs_info->tunefs_request.new_config, 0,
+		sizeof(struct ssdfs_tunefs_config_request));
 
 #ifdef CONFIG_SSDFS_MTD_DEVICE
 	fs_info->mtd = sb->s_mtd;
