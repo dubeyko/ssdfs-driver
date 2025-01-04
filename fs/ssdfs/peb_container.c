@@ -587,6 +587,12 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 
 	ssdfs_put_request(req);
 
+	/*
+	 * Wake up read request if it waits zeroing
+	 * of reference counter.
+	 */
+	wake_up_all(&pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD]);
+
 	if (selected_peb == SSDFS_SRC_PEB) {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(!pebc->src_peb);
