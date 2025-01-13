@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/dymanic_array.c - dynamic array implementation.
  *
- * Copyright (c) 2022-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2022-2025 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
  *              https://www.bytedance.com/

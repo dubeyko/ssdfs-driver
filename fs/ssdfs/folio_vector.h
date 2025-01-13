@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/folio_vector.h - folio vector's declarations.
  *
- * Copyright (c) 2023-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2023-2025 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

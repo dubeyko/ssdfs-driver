@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/recovery_slow_search.c - slow superblock search.
  *
- * Copyright (c) 2020-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2020-2025 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

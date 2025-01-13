@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/ssdfs_constants.h - SSDFS constant declarations.
  *
- * Copyright (c) 2019-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2025 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

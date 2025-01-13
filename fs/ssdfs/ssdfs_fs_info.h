@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/ssdfs_fs_info.h - in-core fs information.
  *
- * Copyright (c) 2019-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2025 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

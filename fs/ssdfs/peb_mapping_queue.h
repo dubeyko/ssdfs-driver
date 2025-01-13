@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/peb_mapping_queue.h - PEB mappings queue declarations.
  *
- * Copyright (c) 2019-2024 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2025 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *
