@@ -6072,10 +6072,9 @@ int ssdfs_extents_tree_delete_fork(struct ssdfs_extents_btree_info *tree,
 
 	blks_count = le64_to_cpu(search->raw.fork.blks_count);
 	if (blks_count == 0 || blks_count >= U64_MAX) {
-		SSDFS_ERR("fork is empty: "
+		SSDFS_DBG("fork is empty: "
 			  "blks_count %llu\n",
 			  blks_count);
-		return -ERANGE;
 	}
 
 	err = ssdfs_btree_delete_item(tree->generic_tree,

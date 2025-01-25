@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.09 [January 25, 2025]
+    (*) Fix issue of not preparing node's content before b-tree
+        invalidation.
+
 v.5.08 [December 30, 2024]
     (*) Implement function of getting volume configuration by
         tunefs tool.

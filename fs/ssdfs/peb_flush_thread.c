@@ -20466,7 +20466,7 @@ sleep_flush_thread:
 					fsi->flushing_user_data_requests;
 				spin_unlock(&fsi->volume_state_lock);
 
-				SSDFS_WARN("seg %llu, peb %llu, peb_type %#x, "
+				SSDFS_DBG("seg %llu, peb %llu, peb_type %#x, "
 					  "global_fs_state %#x, "
 					  "reserved_new_user_data_pages %llu, "
 					  "updated_user_data_pages %llu, "
