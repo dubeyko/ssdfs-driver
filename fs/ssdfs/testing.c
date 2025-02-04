@@ -1920,8 +1920,11 @@ int ssdfs_testing_dentries_tree_check_file(struct ssdfs_fs_info *fsi,
 					 qstr_dname.name,
 					 qstr_dname.len);
 
+	down_read(&SSDFS_I(root_i)->lock);
 	err = ssdfs_inode_by_name(root_i,
 				  &qstr_dname, &ino);
+	up_read(&SSDFS_I(root_i)->lock);
+
 	if (err) {
 		SSDFS_ERR("fail to find file: "
 			  "file_index %llu\n",
@@ -1974,8 +1977,11 @@ int ssdfs_testing_dentries_tree_delete_file(struct ssdfs_fs_info *fsi,
 		return -ERANGE;
 	}
 
+	down_read(&SSDFS_I(root_i)->lock);
 	err = ssdfs_inode_by_name(root_i,
 				  &qstr_dname, &ino);
+	up_read(&SSDFS_I(root_i)->lock);
+
 	if (err) {
 		SSDFS_ERR("fail to find file: "
 			  "file_index %llu\n",

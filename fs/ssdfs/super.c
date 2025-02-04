@@ -614,7 +614,10 @@ static struct dentry *ssdfs_get_parent(struct dentry *child)
 	ino_t ino;
 	int err;
 
+	down_read(&SSDFS_I(d_inode(child))->lock);
 	err = ssdfs_inode_by_name(d_inode(child), &dotdot, &ino);
+	up_read(&SSDFS_I(d_inode(child))->lock);
+
 	if (unlikely(err))
 		return ERR_PTR(err);
 
