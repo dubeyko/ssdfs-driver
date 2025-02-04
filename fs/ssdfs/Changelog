@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.11 [February 03, 2025]
+    (*) Fix issue of incorrect processing the deleted node of inodes b-tree.
+
 v.5.10 [February 03, 2025]
     (*) Fix inode deadlock during rename operation.
 

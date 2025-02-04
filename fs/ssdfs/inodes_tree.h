@@ -88,23 +88,23 @@ struct ssdfs_inodes_btree_info {
 	u32 nodes_count;
 	u16 raw_inode_size;
 
-/*
- * Inodes btree should have special allocation queue.
- * If a btree nodes has free (not allocated) inodes
- * items then the information about such btree node
- * should be added into queue. Moreover, queue should
- * contain as so many node's descriptors as free items
- * in the node.
- *
- * If some btree node has deleted inodes (free items)
- * then all node's descriptors should be added into
- * the head of allocation queue. Descriptors of the last
- * btree's node should be added into tail of the queue.
- * Information about node's descriptors should be added
- * into the allocation queue during btree node creation
- * or reading from the volume. Otherwise, allocation of
- * new items should be done from last leaf btree's node.
- */
+	/*
+	 * Inodes btree should have special allocation queue.
+	 * If a btree nodes has free (not allocated) inodes
+	 * items then the information about such btree node
+	 * should be added into queue. Moreover, queue should
+	 * contain as so many node's descriptors as free items
+	 * in the node.
+	 *
+	 * If some btree node has deleted inodes (free items)
+	 * then all node's descriptors should be added into
+	 * the head of allocation queue. Descriptors of the last
+	 * btree's node should be added into tail of the queue.
+	 * Information about node's descriptors should be added
+	 * into the allocation queue during btree node creation
+	 * or reading from the volume. Otherwise, allocation of
+	 * new items should be done from last leaf btree's node.
+	 */
 	struct ssdfs_free_inode_range_queue free_inodes_queue;
 };
 
