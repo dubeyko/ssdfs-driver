@@ -2275,6 +2275,11 @@ int __ssdfs_memmove_folio(struct folio *dst_ptr, u32 dst_off, u32 dst_size,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!dst_ptr || !src_ptr);
+
+	SSDFS_DBG("src_off %u, src_size %u, "
+		  "dst_off %u, dst_size %u\n",
+		  src_off, src_size,
+		  dst_off, dst_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = SSDFS_OFF2FOLIO(folio_size(src_ptr), src_off, &src_folio.desc);

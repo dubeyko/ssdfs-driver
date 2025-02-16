@@ -322,9 +322,10 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 	BUG_ON(!array);
 
 	SSDFS_DBG("array %p, index %u, capacity %u, "
-		  "item_size %zu, bytes_count %u\n",
+		  "item_size %zu, items_count %u, bytes_count %u\n",
 		  array, index, array->capacity,
-		  array->item_size, array->bytes_count);
+		  array->item_size, array->items_count,
+		  array->bytes_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
@@ -478,6 +479,10 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 
 	if (index >= array->items_count)
 		array->items_count = index + 1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_count %u\n", array->items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ptr;
 }
@@ -777,9 +782,10 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 	BUG_ON(!array || !item);
 
 	SSDFS_DBG("array %p, index %u, capacity %u, "
-		  "item_size %zu, bytes_count %u\n",
+		  "item_size %zu, items_count %u, bytes_count %u\n",
 		  array, index, array->capacity,
-		  array->item_size, array->bytes_count);
+		  array->item_size, array->items_count,
+		  array->bytes_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
@@ -932,6 +938,10 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 			  index, err);
 	} else if (index >= array->items_count)
 		array->items_count = index + 1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_count %u\n", array->items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1316,6 +1326,8 @@ int ssdfs_shift_folio_vector_content_right(struct ssdfs_dynamic_array *array,
 			folio2 = array->batch.folios[folio_index2];
 			ssdfs_folio_lock(folio1);
 			ssdfs_folio_lock(folio2);
+			item_offset1 += (u32)folio_index1 * PAGE_SIZE;
+			item_offset2 += (u32)folio_index2 * PAGE_SIZE;
 			err = __ssdfs_memmove_folio(folio2,
 						    item_offset2, PAGE_SIZE,
 						    folio1,
@@ -1466,9 +1478,11 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 	BUG_ON(!array);
 
 	SSDFS_DBG("array %p, start_index %u, shift %u, "
-		  "capacity %u, item_size %zu, bytes_count %u\n",
+		  "capacity %u, item_size %zu, "
+		  "items_count %u, bytes_count %u\n",
 		  array, start_index, shift, array->capacity,
-		  array->item_size, array->bytes_count);
+		  array->item_size, array->items_count,
+		  array->bytes_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (array->state) {
@@ -1505,13 +1519,6 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 			  "items_count %u > capacity %u\n",
 			  array->items_count,
 			  array->capacity);
-		return -ERANGE;
-	}
-
-	if ((array->items_count + shift) > array->capacity) {
-		SSDFS_ERR("invalid shift: items_count %u, "
-			  "shift %u, capacity %u\n",
-			  array->items_count, shift, array->capacity);
 		return -ERANGE;
 	}
 
@@ -1565,7 +1572,13 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 		break;
 	}
 
-	array->items_count += shift;
+	if ((array->items_count + shift) < array->capacity)
+		array->items_count += shift;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_count %u\n",
+		  array->items_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }

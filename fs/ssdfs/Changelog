@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.12 [February 15, 2025]
+    (*) Fix incorrect logic of right shift in dynamic array.
+
 v.5.11 [February 03, 2025]
     (*) Fix issue of incorrect processing the deleted node of inodes b-tree.
 

@@ -344,6 +344,40 @@ count=$[$count+1]
 
 done
 
+# BLOCK BITMAP TESTING
+
+i=1
+iterations=10
+capacity=1000000
+count=32
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+while [ $count -lt $capacity ]
+do
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $count"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$count,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+count=$[$count+1]
+
+done
+
 # NEXT TEST HERE
 
 sudo rm $image
