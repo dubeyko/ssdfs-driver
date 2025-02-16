@@ -949,7 +949,14 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		return err;
 	}
 
-	err = ssdfs_cache_block_state(blk_bmap, last_free_blk, SSDFS_BLK_FREE);
+	if (last_free_blk == blk_bmap->items_capacity) {
+		err = ssdfs_cache_block_state(blk_bmap, last_free_blk - 1,
+						SSDFS_BLK_FREE);
+	} else {
+		err = ssdfs_cache_block_state(blk_bmap, last_free_blk,
+						SSDFS_BLK_FREE);
+	}
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to cache last free page %u, err %d\n",
 			  last_free_blk, err);
@@ -1301,7 +1308,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 		  *last_free_page);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (*last_free_page >= blk_bmap->items_capacity) {
+	if (*last_free_page > blk_bmap->items_capacity) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid last_free_page: "
 			  "bytes_count %zu, items_capacity %zu, "
@@ -1338,58 +1345,20 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 	*invalid_blks = blk_bmap->invalid_blks;
 	*bytes_count = blk_bmap->bytes_count;
 
-	if (blk_bmap->invalid_blks == 0) {
-		used_pages = blk_bmap->used_blks + blk_bmap->metadata_items;
+	used_pages = blk_bmap->used_blks + blk_bmap->invalid_blks;
 
-		if (blk_bmap->used_blks > blk_bmap->allocation_pool) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid values: "
-				  "bytes_count %zu, allocation_pool %zu, "
-				  "metadata_items %u, used_blks %u, "
-				  "invalid_blks %u, "
-				  "last_free_page %u\n",
-				  blk_bmap->bytes_count,
-				  blk_bmap->allocation_pool,
-				  blk_bmap->metadata_items,
-				  blk_bmap->used_blks,
-				  blk_bmap->invalid_blks,
-				  *last_free_page);
-			goto cleanup_snapshot_folio_vector;
-		}
-
-		if (used_pages > blk_bmap->items_capacity) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid values: "
-				  "bytes_count %zu, items_capacity %zu, "
-				  "metadata_items %u, used_blks %u, "
-				  "invalid_blks %u, "
-				  "last_free_page %u\n",
-				  blk_bmap->bytes_count,
-				  blk_bmap->items_capacity,
-				  blk_bmap->metadata_items,
-				  blk_bmap->used_blks,
-				  blk_bmap->invalid_blks,
-				  *last_free_page);
-			goto cleanup_snapshot_folio_vector;
-		}
-	} else {
-		used_pages = blk_bmap->used_blks + blk_bmap->invalid_blks;
-
-		if (used_pages > blk_bmap->allocation_pool) {
-			err = -ERANGE;
-			SSDFS_ERR("invalid values: "
-				  "bytes_count %zu, allocation_pool %zu, "
-				  "metadata_items %u, used_blks %u, "
-				  "invalid_blks %u, "
-				  "last_free_page %u\n",
-				  blk_bmap->bytes_count,
-				  blk_bmap->allocation_pool,
-				  blk_bmap->metadata_items,
-				  blk_bmap->used_blks,
-				  blk_bmap->invalid_blks,
-				  *last_free_page);
-			goto cleanup_snapshot_folio_vector;
-		}
+	if (used_pages > blk_bmap->allocation_pool) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid values: "
+			  "bytes_count %zu, items_capacity %zu, "
+			  "allocation_pool %zu, "
+			  "metadata_items %u, used_blks %u, invalid_blks %u, "
+			  "last_free_page %u\n",
+			  blk_bmap->bytes_count, blk_bmap->items_capacity,
+			  blk_bmap->allocation_pool,
+			  blk_bmap->metadata_items, blk_bmap->used_blks,
+			  blk_bmap->invalid_blks, *last_free_page);
+		goto cleanup_snapshot_folio_vector;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2136,7 +2105,7 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -2403,7 +2372,7 @@ int ssdfs_block_bmap_find_block_in_buffer(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -2522,7 +2491,7 @@ ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -2727,7 +2696,7 @@ int ssdfs_block_bmap_find_block_in_storage(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -2804,7 +2773,7 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -2818,6 +2787,26 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 		  "state %#x, found_blk %p\n",
 		  blk_bmap, start, max_blk, blk_state, found_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (start == blk_bmap->items_capacity) {
+		*found_blk = blk_bmap->items_capacity;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find block in storage: "
+			  "start %u, items_capacity %zu, state %#x\n",
+			  start, blk_bmap->items_capacity, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
+
+	if (start == max_blk) {
+		*found_blk = max_blk;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find block in storage: "
+			  "start %u, max_blk %u, state %#x\n",
+			  start, max_blk, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
 
 	if (blk_state == SSDFS_BLK_STATE_MAX) {
 		err = ssdfs_cache_block_state(blk_bmap, start, blk_state);
@@ -3153,7 +3142,7 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 
 	BUG_ON(!bmap || !found_end);
 
-	if (start >= bmap->items_capacity) {
+	if (start > bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -3275,7 +3264,7 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 
 	BUG_ON(!bmap || !found_end);
 
-	if (start >= bmap->items_capacity) {
+	if (start > bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -3421,7 +3410,7 @@ int ssdfs_block_bmap_find_state_area_end(struct ssdfs_block_bmap *blk_bmap,
 
 	BUG_ON(!blk_bmap || !found_end);
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
@@ -3977,7 +3966,7 @@ int ssdfs_block_bmap_find_range(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (start >= blk_bmap->items_capacity) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid start block %u\n", start);
 		return -EINVAL;
 	}
