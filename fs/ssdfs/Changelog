@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.14 [February 15, 2025]
+    (*) Fix unit-tests logic.
+
 v.5.13 [February 15, 2025]
     (*) Fix incorrect logic of accounting items capacity in block bitmap.
 

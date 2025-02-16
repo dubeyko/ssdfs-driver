@@ -355,6 +355,16 @@ config SSDFS_TESTING
 	  If you are going to test SSDFS driver then choose Y here.
 	  If unsure, say N.
 
+config SSDFS_TESTING_PANIC_ON_FAILURE
+	bool "SSDFS testing panic on failure"
+	depends on SSDFS_TESTING
+	help
+	  This option enables panic if test failed.
+
+	  If you are going to test SSDFS driver and would like to stop
+	  testing flow after particular test failure then choose Y here.
+	  If unsure, say N.
+
 config SSDFS_UNDER_DEVELOPMENT_FUNC
 	bool "SSDFS under development functionality"
 	depends on SSDFS
