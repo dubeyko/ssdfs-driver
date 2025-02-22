@@ -2247,6 +2247,7 @@ finish_testing:
 
 static
 int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_folio_vector *snapshot,
 					struct ssdfs_testing_environment *env,
 					struct ssdfs_block_bmap_range *range,
 					int blk_state)
@@ -2256,7 +2257,11 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	int invalid_blks;
 	int reserved_metadata_blks;
 	int calculated;
-	int err;
+	u32 last_free_blk;
+	u32 metadata_blks;
+	u32 invalid_blks_snapshot;
+	size_t bytes_count;
+	int err = 0;
 
 	if (!ssdfs_block_bmap_test_range(bmap, range, blk_state)) {
 		SSDFS_ERR("invalid state: "
@@ -2303,7 +2308,6 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	}
 
 	reserved_metadata_blks = bmap->metadata_items;
-
 	calculated = free_blks + used_blks + invalid_blks;
 
 	if (calculated > env->block_bitmap.capacity) {
@@ -2334,11 +2338,54 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 		return -ERANGE;
 	}
 
-	return 0;
+	err = ssdfs_folio_vector_reinit(snapshot);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to reinit folio vector: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	err = ssdfs_block_bmap_snapshot(bmap,
+					snapshot,
+					&last_free_blk,
+					&metadata_blks,
+					&invalid_blks_snapshot,
+					&bytes_count);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to snapshot block bitmap: "
+			  "err %d\n", err);
+		goto finish_get_snapshot;
+	}
+
+	if (ssdfs_folio_vector_count(snapshot) == 0) {
+		err = -ERANGE;
+		SSDFS_ERR("empty block bitmap\n");
+		goto finish_get_snapshot;
+	}
+
+	if (reserved_metadata_blks != metadata_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("reserved_metadata_blks %d != metadata_blks %u\n",
+			  reserved_metadata_blks, metadata_blks);
+		goto finish_get_snapshot;
+	}
+
+	if (invalid_blks != invalid_blks_snapshot) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid_blks %d != invalid_blks_snapshot %u\n",
+			  invalid_blks, invalid_blks_snapshot);
+		goto finish_get_snapshot;
+	}
+
+finish_get_snapshot:
+	ssdfs_block_bmap_forget_snapshot(snapshot);
+
+	return err;
 }
 
 static
 int ssdfs_testing_block_bmap_pre_allocation(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_folio_vector *snapshot,
 					struct ssdfs_testing_environment *env)
 {
 	struct ssdfs_block_bmap_range range;
@@ -2366,7 +2413,8 @@ int ssdfs_testing_block_bmap_pre_allocation(struct ssdfs_block_bmap *bmap,
 		goto finish_check;
 	}
 
-	err = ssdfs_testing_check_block_bitmap_nolock(bmap, env, &range,
+	err = ssdfs_testing_check_block_bitmap_nolock(bmap, snapshot,
+						      env, &range,
 						      SSDFS_BLK_PRE_ALLOCATED);
 	if (unlikely(err)) {
 		SSDFS_ERR("pre_allocation check failed: err %d\n", err);
@@ -2383,6 +2431,7 @@ finish_check:
 
 static
 int ssdfs_testing_block_bmap_allocation(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_folio_vector *snapshot,
 					struct ssdfs_testing_environment *env)
 {
 	struct ssdfs_block_bmap_range range;
@@ -2410,7 +2459,8 @@ int ssdfs_testing_block_bmap_allocation(struct ssdfs_block_bmap *bmap,
 		goto finish_check;
 	}
 
-	err = ssdfs_testing_check_block_bitmap_nolock(bmap, env, &range,
+	err = ssdfs_testing_check_block_bitmap_nolock(bmap, snapshot,
+						      env, &range,
 						      SSDFS_BLK_VALID);
 	if (unlikely(err)) {
 		SSDFS_ERR("allocation check failed: err %d\n", err);
@@ -2427,6 +2477,7 @@ finish_check:
 
 static
 int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
+					struct ssdfs_folio_vector *snapshot,
 					struct ssdfs_testing_environment *env)
 {
 	struct ssdfs_block_bmap_range range;
@@ -2485,8 +2536,8 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 			goto finish_check;
 		}
 
-		err = ssdfs_testing_check_block_bitmap_nolock(bmap, env,
-							    &range,
+		err = ssdfs_testing_check_block_bitmap_nolock(bmap, snapshot,
+							    env, &range,
 							    SSDFS_BLK_INVALID);
 		if (unlikely(err)) {
 			SSDFS_ERR("invalidation check failed: err %d\n", err);
@@ -2655,6 +2706,7 @@ finish_check:
 static
 int ssdfs_do_block_bitmap_testing_iteration(struct ssdfs_fs_info *fsi,
 					struct ssdfs_block_bmap *bmap,
+					struct ssdfs_folio_vector *snapshot,
 					struct ssdfs_testing_environment *env)
 {
 	int err = 0;
@@ -2679,19 +2731,19 @@ int ssdfs_do_block_bitmap_testing_iteration(struct ssdfs_fs_info *fsi,
 		goto unlock_block_bitmap;
 	}
 
-	err = ssdfs_testing_block_bmap_pre_allocation(bmap, env);
+	err = ssdfs_testing_block_bmap_pre_allocation(bmap, snapshot, env);
 	if (unlikely(err)) {
 		SSDFS_ERR("pre_allocation check failed: err %d\n", err);
 		goto unlock_block_bitmap;
 	}
 
-	err = ssdfs_testing_block_bmap_allocation(bmap, env);
+	err = ssdfs_testing_block_bmap_allocation(bmap, snapshot, env);
 	if (unlikely(err)) {
 		SSDFS_ERR("allocation check failed: err %d\n", err);
 		goto unlock_block_bitmap;
 	}
 
-	err = ssdfs_testing_block_bmap_invalidation(bmap, env);
+	err = ssdfs_testing_block_bmap_invalidation(bmap, snapshot, env);
 	if (unlikely(err)) {
 		SSDFS_ERR("invalidation check failed: err %d\n", err);
 		goto unlock_block_bitmap;
@@ -2715,7 +2767,11 @@ int ssdfs_do_block_bitmap_testing(struct ssdfs_fs_info *fsi,
 				  struct ssdfs_testing_environment *env)
 {
 	struct ssdfs_block_bmap bmap;
+	struct ssdfs_folio_vector snapshot;
 	int free_blks = 0;
+	u32 capacity = env->block_bitmap.capacity;
+	size_t bmap_bytes;
+	size_t bmap_folios;
 	int err = 0;
 
 	err = ssdfs_block_bmap_create(fsi, &bmap,
@@ -2729,11 +2785,24 @@ int ssdfs_do_block_bitmap_testing(struct ssdfs_fs_info *fsi,
 		goto finish_block_bitmap_testing;
 	}
 
+	bmap_bytes = BLK_BMAP_BYTES(capacity);
+	bmap_folios = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	err = ssdfs_folio_vector_create(&snapshot,
+					get_order(PAGE_SIZE),
+					bmap_folios);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create folio vector: "
+			  "bmap_folios %zu, err %d\n",
+			  bmap_folios, err);
+		goto destroy_block_bitmap;
+	}
+
 	do {
 		err = ssdfs_block_bmap_lock(&bmap);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to lock bitmap: err %d\n", err);
-			goto destroy_block_bitmap;
+			goto destroy_snapshot;
 		}
 
 		err = ssdfs_block_bmap_get_free_pages(&bmap);
@@ -2755,24 +2824,25 @@ fail_define_free_pages_count:
 		ssdfs_block_bmap_unlock(&bmap);
 
 		if (unlikely(err))
-			goto destroy_block_bitmap;
+			goto destroy_snapshot;
 
 		if (free_blks <= 0)
 			break;
 
-		err = ssdfs_do_block_bitmap_testing_iteration(fsi, &bmap, env);
+		err = ssdfs_do_block_bitmap_testing_iteration(fsi, &bmap,
+							      &snapshot, env);
 		if (unlikely(err)) {
 			SSDFS_ERR("block bitmap testing iteration failed: "
 				  "free_blks %d, err %d\n",
 				  free_blks, err);
-			goto destroy_block_bitmap;
+			goto destroy_snapshot;
 		}
 	} while (free_blks > 0);
 
 	err = ssdfs_block_bmap_lock(&bmap);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to lock bitmap: err %d\n", err);
-		goto destroy_block_bitmap;
+		goto destroy_snapshot;
 	}
 
 	err = ssdfs_block_bmap_clean(&bmap);
@@ -2782,8 +2852,11 @@ fail_define_free_pages_count:
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to clean block bitmap: err %d\n",
 			  err);
-		goto destroy_block_bitmap;
+		goto destroy_snapshot;
 	}
+
+destroy_snapshot:
+	ssdfs_folio_vector_destroy(&snapshot);
 
 destroy_block_bitmap:
 	ssdfs_block_bmap_destroy(&bmap);

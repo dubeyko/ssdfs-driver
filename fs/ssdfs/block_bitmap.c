@@ -2221,6 +2221,8 @@ int ssdfs_block_bmap_define_start_item(int folio_index,
 		offset = aligned_start;
 
 	*start_byte = offset / items_per_byte;
+	*rest_bytes = 0;
+	*item_offset = U8_MAX;
 
 	items = items_per_page - offset;
 
@@ -2625,16 +2627,44 @@ ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
 		kunmap_local(kaddr);
 
 		if (err == -ENODATA) {
+			u32 upper_bound =
+				((u32)folio_index + 1) * items_per_page;
+
+			if (aligned_end < upper_bound) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("no item has been found: "
-				  "folio_index %d, "
-				  "folio_vector_count %u, "
-				  "folio_vector_capacity %u\n",
-				  folio_index,
-				  ssdfs_folio_vector_count(array),
-				  ssdfs_folio_vector_capacity(array));
+				SSDFS_DBG("nothing has been found: "
+					  "aligned_end %u < upper_bound %u\n",
+					  aligned_end, upper_bound);
 #endif /* CONFIG_SSDFS_DEBUG */
-			continue;
+			} else {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("start %u, max_blk %u, blk_state %#x, "
+				          "aligned_start %u, aligned_end %u, "
+					  "folio_index %d, byte_index %u, "
+					  "rest_bytes %u, search_bytes %u, "
+					  "start_off %u\n",
+					  start, max_blk, blk_state,
+					  aligned_start, aligned_end,
+					  folio_index, byte_index,
+					  rest_bytes, search_bytes,
+					  start_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				start = aligned_start + items_per_byte;
+				aligned_start = ALIGNED_START_BLK(start);
+
+				if (aligned_start < aligned_end) {
+					/* continue search */
+					continue;
+				} else {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("nothing has been found: "
+						  "aligned_start %u, "
+						  "aligned_end %u\n",
+						  aligned_start, aligned_end);
+#endif /* CONFIG_SSDFS_DEBUG */
+				}
+			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find block: "
 				  "start_off %u, blk_state %#x, "
@@ -3013,7 +3043,11 @@ int ssdfs_find_state_area_end_in_byte(u8 *value, int blk_state,
 		  value, blk_state, start_off, found_off);
 
 	BUG_ON(!value || !found_off);
-	BUG_ON(start_off >= (BITS_PER_BYTE / SSDFS_BLK_STATE_BITS));
+
+	if (start_off >= (BITS_PER_BYTE / SSDFS_BLK_STATE_BITS)) {
+		SSDFS_ERR("start_off %u\n", start_off);
+		return -EINVAL;
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*found_off = BITS_PER_BYTE;
@@ -3073,6 +3107,9 @@ int ssdfs_block_bmap_find_state_area_end_in_memory(void *kaddr,
 		SSDFS_ERR("invalid block state %#x\n", blk_state);
 		return -EINVAL;
 	}
+
+	SSDFS_DBG("byte_index %u, search_bytes %u, start_off %u\n",
+		  *byte_index, search_bytes, start_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	for (; *byte_index < search_bytes; ++(*byte_index)) {
@@ -3199,8 +3236,13 @@ ssdfs_block_bmap_find_state_area_end_in_buffer(struct ssdfs_block_bmap *bmap,
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find state area's end: "
 			  "start_off %u, blk_state %#x, "
+			  "start %u, max_blk %u, "
+			  "aligned_start %u, aligned_end %u, "
 			  "err %d\n",
-			  start_off, blk_state, err);
+			  start_off, blk_state,
+			  start, max_blk,
+			  aligned_start, aligned_end,
+			  err);
 		return err;
 	}
 
@@ -3314,10 +3356,11 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 							 &start_off);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to define start item: "
-				  "blk_state %#x, start %u, max_blk %u, "
-				  "aligned_start %u, aligned_end %u\n",
-				  blk_state, start, max_blk,
-				  aligned_start, aligned_end);
+				  "folio_index %d, blk_state %#x, "
+				  "start %u, max_blk %u, "
+				  "aligned_start %u, aligned_end %u, err %d\n",
+				  folio_index, blk_state, start, max_blk,
+				  aligned_start, aligned_end, err);
 			return err;
 		}
 
@@ -3333,8 +3376,44 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 		kunmap_local(kaddr);
 
 		if (err == -ENODATA) {
-			/* nothing has been found */
-			continue;
+			u32 upper_bound =
+				((u32)folio_index + 1) * items_per_page;
+
+			if (aligned_end < upper_bound) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("nothing has been found: "
+					  "aligned_end %u < upper_bound %u\n",
+					  aligned_end, upper_bound);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("start %u, max_blk %u, blk_state %#x, "
+				          "aligned_start %u, aligned_end %u, "
+				          "folio_index %d, byte_index %u, "
+				          "rest_bytes %u, search_bytes %u, "
+				          "start_off %u\n",
+					  start, max_blk, blk_state,
+					  aligned_start, aligned_end,
+					  folio_index, byte_index,
+					  rest_bytes, search_bytes,
+					  start_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+				start = aligned_start + items_per_byte;
+				aligned_start = ALIGNED_START_BLK(start);
+
+				if (aligned_start < aligned_end) {
+					/* continue search */
+					continue;
+				} else {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("nothing has been found: "
+						  "aligned_start %u, "
+						  "aligned_end %u\n",
+						  aligned_start, aligned_end);
+#endif /* CONFIG_SSDFS_DEBUG */
+				}
+			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find state area's end: "
 				  "start_off %u, blk_state %#x, "
@@ -5456,6 +5535,7 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 				     int blk_state,
 				     struct ssdfs_block_bmap_range *range)
 {
+	u32 upper_bound;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5501,8 +5581,20 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	};
 
-	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len, max_len,
-					  blk_state, range);
+	if (start > blk_bmap->allocation_pool) {
+		SSDFS_ERR("invalid request: "
+			  "start %u > allocation_pool %zu\n",
+			  start, blk_bmap->allocation_pool);
+		return -EINVAL;
+	}
+
+	upper_bound = min_t(u32, (u32)blk_bmap->allocation_pool,
+				start + max_len);
+	max_len = min_t(u32, max_len,
+				(u32)blk_bmap->allocation_pool - start);
+
+	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len,
+					  upper_bound, blk_state, range);
 	if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("range (start %u, len %u) hasn't valid blocks\n",
