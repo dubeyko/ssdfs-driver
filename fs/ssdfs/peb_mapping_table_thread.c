@@ -622,10 +622,6 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	struct folio *folio;
 	void *kaddr;
 	unsigned long *dirty_bmap, *used_bmap, *recover_bmap, *bad_bmap;
-#ifdef CONFIG_SSDFS_DEBUG
-	u64 old_free_pages;
-	u64 new_free_pages;
-#endif /* CONFIG_SSDFS_DEBUG */
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -724,20 +720,8 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
 			  fdesc->pre_erase_pebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		spin_lock(&tbl->fsi->volume_state_lock);
-#ifdef CONFIG_SSDFS_DEBUG
-		old_free_pages = tbl->fsi->free_pages;
-#endif /* CONFIG_SSDFS_DEBUG */
-		tbl->fsi->free_pages += tbl->fsi->pages_per_peb;
-#ifdef CONFIG_SSDFS_DEBUG
-		new_free_pages = tbl->fsi->free_pages;
-#endif /* CONFIG_SSDFS_DEBUG */
-		spin_unlock(&tbl->fsi->volume_state_lock);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("old_free_pages %llu, new_free_pages %llu\n",
-			  old_free_pages, new_free_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
+		ssdfs_increase_volume_free_pages(tbl->fsi,
+						 tbl->fsi->pages_per_peb);
 		break;
 
 	case SSDFS_ERASE_SB_PEB_DONE:
@@ -2426,8 +2410,8 @@ finish_inconsistent_case:
 		up_write(&cache->lock);
 
 		if (!err) {
-			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
-							pmi->leb_id);
+			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, pmi->leb_id,
+						SSDFS_MAPTBL_UNKNOWN_PEB_TYPE);
 		}
 		break;
 
@@ -2471,8 +2455,8 @@ finish_pre_deleted_case:
 		up_write(&cache->lock);
 
 		if (!err) {
-			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
-							pmi->leb_id);
+			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, pmi->leb_id,
+						SSDFS_MAPTBL_UNKNOWN_PEB_TYPE);
 		}
 		break;
 
@@ -2834,6 +2818,8 @@ int ssdfs_maptbl_stop_thread(struct ssdfs_peb_mapping_table *tbl)
 
 	if (!tbl->thread.task)
 		return 0;
+
+	wake_up(&tbl->wait_queue);
 
 	err = kthread_stop(tbl->thread.task);
 	if (err == -EINTR) {

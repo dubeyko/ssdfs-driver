@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.16 [March 01, 2025]
+    (*) Fix multiple issues and preparing code for inflation model adoption.
+
 v.5.15 [February 22, 2025]
     (*) Fix issue of processing items on memory page's boundary
         in block bitmap.

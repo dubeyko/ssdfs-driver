@@ -1702,7 +1702,7 @@ int ssdfs_testing_extents_tree_add_block(struct ssdfs_fs_info *fsi,
 
 free_request:
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, NULL);
 
 finish_add_block:
 	return err;

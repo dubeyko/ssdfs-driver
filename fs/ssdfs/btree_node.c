@@ -1063,6 +1063,7 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	struct ssdfs_request_content_block *block;
 	struct ssdfs_content_block *blk_state;
 	struct ssdfs_offset_position pos;
+	struct ssdfs_segment_search_state seg_search;
 	struct folio_batch *batch;
 	u32 node_id;
 	u8 node_type;
@@ -1113,8 +1114,11 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	BUG_ON(seg_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	*si = ssdfs_grab_segment(fsi, NODE2SEG_TYPE(node_type),
-				seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					NODE2SEG_TYPE(node_type),
+					seg_id, U64_MAX);
+
+	*si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(*si))) {
 		err = !*si ? -ENOMEM : PTR_ERR(*si);
 		if (err == -EINTR) {
@@ -1310,14 +1314,14 @@ int __ssdfs_btree_node_prepare_content(struct ssdfs_fs_info *fsi,
 	ssdfs_request_unlock_and_remove_diffs(req);
 
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, *si);
 
 	return 0;
 
 fail_read_node:
 	ssdfs_request_unlock_and_remove_folios(req);
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, *si);
 
 finish_prepare_content:
 	ssdfs_segment_put_object(*si);
@@ -3330,6 +3334,16 @@ int ssdfs_btree_node_prepare_flush_request(struct ssdfs_btree_node *node)
 
 	node_flags = atomic_read(&node->flags);
 
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			goto unlock_node;
+		}
+	}
+
 	if (node_flags & SSDFS_BTREE_NODE_PRE_ALLOCATED) {
 		/* update pre-allocated extent */
 		err = ssdfs_segment_update_pre_alloc_extent_async(si,
@@ -3733,6 +3747,16 @@ int ssdfs_btree_node_commit_log(struct ssdfs_btree_node *node)
 	ssdfs_request_define_volume_extent((u16)logical_blk, (u16)len,
 					   &node->flush_req);
 
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			goto finish_commit_log;
+		}
+	}
+
 	err = ssdfs_segment_commit_log_async(si, SSDFS_REQ_ASYNC_NO_FREE,
 					     &node->flush_req);
 	if (unlikely(err)) {
@@ -3741,8 +3765,12 @@ int ssdfs_btree_node_commit_log(struct ssdfs_btree_node *node)
 			  node->flush_req.extent.ino,
 			  node->flush_req.extent.logical_offset,
 			  err);
-		ssdfs_put_request(&node->flush_req);
+		goto finish_commit_log;
 	}
+
+finish_commit_log:
+	if (err)
+		ssdfs_put_request(&node->flush_req);
 
 	return err;
 }

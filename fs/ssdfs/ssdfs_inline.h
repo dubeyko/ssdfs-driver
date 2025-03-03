@@ -820,6 +820,8 @@ bool is_csum_valid(struct ssdfs_metadata_check *check,
 		SSDFS_ERR("old_csum %#x != calc_csum %#x\n",
 			  __le32_to_cpu(old_csum),
 			  __le32_to_cpu(calc_csum));
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     buf, buf_size);
 		return false;
 	}
 
@@ -2725,6 +2727,34 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return name_hash;
+}
+
+static inline
+void ssdfs_increase_volume_free_pages(struct ssdfs_fs_info *fsi,
+				      u64 new_free_pages)
+{
+	u64 free_pages;
+	u64 volume_capacity;
+
+	mutex_lock(&fsi->resize_mutex);
+	volume_capacity = fsi->nsegs * fsi->pages_per_seg;
+	mutex_unlock(&fsi->resize_mutex);
+
+	spin_lock(&fsi->volume_state_lock);
+	free_pages = fsi->free_pages;
+	if ((fsi->free_pages + new_free_pages) < volume_capacity)
+		fsi->free_pages += new_free_pages;
+	else
+		fsi->free_pages = volume_capacity;
+	new_free_pages = fsi->free_pages;
+	spin_unlock(&fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("free_pages %llu, new_free_pages %llu, "
+		  "volume_capacity %llu\n",
+		  free_pages, new_free_pages,
+		  volume_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 #define SSDFS_LOG_FOOTER_OFF(seg_hdr)({ \

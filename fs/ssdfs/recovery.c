@@ -1453,15 +1453,13 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 							 peb_pages_off, true);
 			cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 			cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
-			if (!err) {
-				peb = copy_peb;
-				leb = copy_leb;
-				fsi->sbi.last_log.leb_id = leb;
-				fsi->sbi.last_log.peb_id = peb;
-				fsi->sbi.last_log.page_offset = cur_off;
-				fsi->sbi.last_log.pages_count =
+			peb = copy_peb;
+			leb = copy_leb;
+			fsi->sbi.last_log.leb_id = leb;
+			fsi->sbi.last_log.peb_id = peb;
+			fsi->sbi.last_log.page_offset = cur_off;
+			fsi->sbi.last_log.pages_count =
 					SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
-			}
 		} else {
 			fsi->sbi.last_log.leb_id = leb;
 			fsi->sbi.last_log.peb_id = peb;
@@ -1487,19 +1485,24 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	} while (cur_off > low_off && cur_off < high_off);
 
 	if (err) {
-		if (err == -ENODATA || err == -EIO) {
+		if (err == -ENODATA) {
 			/* previous read log was valid */
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 				  cur_off, low_off, high_off);
 #endif /* CONFIG_SSDFS_DEBUG */
+			ssdfs_restore_sb_info(fsi);
+		} else if (err == -EIO) {
+			err = 0;
+			SSDFS_NOTICE("unable to mount in RW mode: "
+				     "log is corrupted. Please, run FSCK tool.\n");
+			fsi->sb->s_flags |= SB_RDONLY;
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
+			ssdfs_restore_sb_info(fsi);
 		}
-
-		ssdfs_restore_sb_info(fsi);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1697,15 +1700,13 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 						  &found_log_off);
 		cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 		cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
-		if (!err) {
-			peb = copy_peb;
-			leb = copy_leb;
-			fsi->sbi.last_log.leb_id = leb;
-			fsi->sbi.last_log.peb_id = peb;
-			fsi->sbi.last_log.page_offset = found_log_off;
-			fsi->sbi.last_log.pages_count =
+		peb = copy_peb;
+		leb = copy_leb;
+		fsi->sbi.last_log.leb_id = leb;
+		fsi->sbi.last_log.peb_id = peb;
+		fsi->sbi.last_log.page_offset = found_log_off;
+		fsi->sbi.last_log.pages_count =
 				SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
-		}
 	} else {
 		fsi->sbi.last_log.leb_id = leb;
 		fsi->sbi.last_log.peb_id = peb;
@@ -1716,19 +1717,24 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 
 finish_find_latest_sb_info:
 	if (err) {
-		if (err == -ENODATA || err == -EIO) {
+		if (err == -ENODATA) {
 			/* previous read log was valid */
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 				  cur_off, low_off, high_off);
 #endif /* CONFIG_SSDFS_DEBUG */
+			ssdfs_restore_sb_info(fsi);
+		} else if (err == -EIO) {
+			err = 0;
+			SSDFS_NOTICE("unable to mount in RW mode: "
+				     "log is corrupted. Please, run FSCK tool.\n");
+			fsi->sb->s_flags |= SB_RDONLY;
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
+			ssdfs_restore_sb_info(fsi);
 		}
-
-		ssdfs_restore_sb_info(fsi);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1907,7 +1913,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 
 	spin_lock_init(&fsi->volume_state_lock);
 
-	fsi->free_pages = 0;
+	fsi->free_pages = le64_to_cpu(fsi->vs->free_pages);
 	fsi->reserved_new_user_data_pages = 0;
 	fsi->updated_user_data_pages = 0;
 	fsi->flushing_user_data_requests = 0;

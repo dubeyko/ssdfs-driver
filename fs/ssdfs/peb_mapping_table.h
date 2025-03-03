@@ -23,12 +23,24 @@
 #ifndef _SSDFS_PEB_MAPPING_TABLE_H
 #define _SSDFS_PEB_MAPPING_TABLE_H
 
+#include "request_queue.h"
+
 #define SSDFS_MAPTBL_FIRST_PROTECTED_INDEX	0
 #define SSDFS_MAPTBL_PROTECTION_STEP		50
 #define SSDFS_MAPTBL_PROTECTION_RANGE		3
 
 #define SSDFS_PRE_ERASE_PEB_THRESHOLD_PCT	(3)
 #define SSDFS_UNUSED_LEB_THRESHOLD_PCT		(1)
+
+/*
+ * struct ssdfs_maptbl_flush_pair - segment/request pair
+ * @si: pointer on segment object
+ * @req: request object
+ */
+struct ssdfs_maptbl_flush_pair {
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_request req;
+};
 
 /*
  * struct ssdfs_maptbl_fragment_desc - fragment descriptor
@@ -79,8 +91,8 @@ struct ssdfs_maptbl_fragment_desc {
 	struct ssdfs_folio_array array;
 	struct completion init_end;
 
-	struct ssdfs_segment_request *flush_req1;
-	struct ssdfs_segment_request *flush_req2;
+	struct ssdfs_maptbl_flush_pair *flush_pair1;
+	struct ssdfs_maptbl_flush_pair *flush_pair2;
 	u32 flush_req_count;
 	u32 flush_seq_size;
 };
@@ -663,7 +675,7 @@ ssdfs_maptbl_get_fragment_descriptor(struct ssdfs_peb_mapping_table *tbl,
 				     u64 leb_id);
 void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
-				     u64 leb_id);
+				     u64 leb_id, u8 peb_type);
 int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u64 leb_id,

@@ -74,9 +74,10 @@ struct ssdfs_segment_migration_info {
  * @create_threads: number of flush PEB's threads for new page requests
  * @seg_type: segment type
  * @protection: segment's protection window
- * @seg_state: current state of segment
  * @obj_state: segment object's state
  * @activity_type: type of activity with segment object
+ * @modification_lock: lock protecting modificaiton of segment's state
+ * @seg_state: current state of segment
  * @peb_array: array of PEB's descriptors
  * @pebs_count: count of items in PEBS array
  * @migration: migration info
@@ -106,9 +107,11 @@ struct ssdfs_segment_info {
 	struct ssdfs_protection_window protection;
 
 	/* Mutable data */
-	atomic_t seg_state;
 	atomic_t obj_state;
 	atomic_t activity_type;
+
+	struct rw_semaphore modification_lock;
+	atomic_t seg_state;
 
 	/* Segment's PEB's containers array */
 	struct ssdfs_peb_container *peb_array;
@@ -173,8 +176,61 @@ enum {
 };
 
 /*
+ * struct ssdfs_segment_search_state - state of segment search
+ * @request.seg_type: type of segment
+ * @request.start_search_id: starting segment ID for search
+ * @request.need_find_new_segment: does it need to find a new segment?
+ * @result.seg_state: segment state
+ * @result.seg_id: requested or found segment ID
+ * @result.free_pages: number of free pages in found segment
+ * @result.used_pages: number of used pages in found segment
+ * @result.invalid_pages: number of invalid_pages pages in found segment
+ * @result.number_of_tries: number of tries to find segment
+ */
+struct ssdfs_segment_search_state {
+	struct {
+		int seg_type;
+		u64 start_search_id;
+		bool need_find_new_segment;
+	} request;
+
+	struct {
+		int seg_state;
+		u64 seg_id;
+		int free_pages;
+		int used_pages;
+		int invalid_pages;
+		int number_of_tries;
+	} result;
+};
+
+/*
  * Inline functions
  */
+
+/*
+ * ssdfs_segment_search_state_init() - initialize segment search state
+ */
+static inline
+void ssdfs_segment_search_state_init(struct ssdfs_segment_search_state *state,
+				     int seg_type, u64 seg_id,
+				     u64 start_search_id)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	state->request.seg_type = seg_type;
+	state->request.start_search_id = start_search_id;
+	state->request.need_find_new_segment = false;
+
+	state->result.seg_state = SSDFS_SEG_STATE_MAX;
+	state->result.seg_id = seg_id;
+	state->result.free_pages = -1;
+	state->result.used_pages = -1;
+	state->result.invalid_pages = -1;
+	state->result.number_of_tries = 0;
+}
 
 /*
  * is_ssdfs_segment_created() - check that segment object is created
@@ -363,29 +419,98 @@ int SEG_TYPE_TO_CUR_SEG_TYPE(u16 seg_type)
 }
 
 static inline
-void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si)
+bool is_regular_fs_operations(struct ssdfs_segment_info *si)
+{
+	int state;
+
+	state = atomic_read(&si->fsi->global_fs_state);
+	return state == SSDFS_REGULAR_FS_OPERATIONS;
+}
+
+static inline
+bool is_metadata_under_flush(struct ssdfs_segment_info *si)
+{
+	switch (atomic_read(&si->fsi->global_fs_state)) {
+	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
+		return true;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	return false;
+}
+
+static inline
+bool is_metadata_going_flushing(struct ssdfs_segment_info *si)
+{
+	switch (atomic_read(&si->fsi->global_fs_state)) {
+	case SSDFS_METADATA_GOING_FLUSHING:
+	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
+		return true;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	return false;
+}
+
+static inline
+void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
+					   struct ssdfs_segment_request *req)
 {
 	u64 flush_requests = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!si);
+	BUG_ON(!si || !req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		switch (atomic_read(&si->fsi->global_fs_state)) {
+		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+		case SSDFS_UNMOUNT_DESTROY_METADATA:
+			/*
+			 * Unexpected state.
+			 */
+			BUG();
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
 		spin_lock(&si->fsi->volume_state_lock);
 		si->fsi->flushing_user_data_requests++;
 		flush_requests = si->fsi->flushing_user_data_requests;
+#ifdef CONFIG_SSDFS_DEBUG
+		spin_lock(&si->fsi->requests_lock);
+		list_add_tail(&req->user_data_requests_list,
+				&si->fsi->user_data_requests_list);
+		spin_unlock(&si->fsi->requests_lock);
+#endif /* CONFIG_SSDFS_DEBUG */
 		spin_unlock(&si->fsi->volume_state_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("seg_id %llu, flush_requests %llu\n",
-			  si->seg_id, flush_requests);
+		SSDFS_DBG("seg_id %llu, flush_requests %llu, "
+			  "req->private.class %#x, req->private.cmd %#x\n",
+			  si->seg_id, flush_requests,
+			  req->private.class,
+			  req->private.cmd);
+		BUG_ON(!is_request_command_valid(req->private.class,
+						 req->private.cmd));
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 }
 
 static inline
-void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si)
+void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si,
+					  struct ssdfs_segment_request *req)
 {
 	u64 flush_requests = 0;
 	int err = 0;
@@ -400,6 +525,13 @@ void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si)
 		if (flush_requests > 0) {
 			si->fsi->flushing_user_data_requests--;
 			flush_requests = si->fsi->flushing_user_data_requests;
+#ifdef CONFIG_SSDFS_DEBUG
+			if (req) {
+				spin_lock(&si->fsi->requests_lock);
+				list_del(&req->user_data_requests_list);
+				spin_unlock(&si->fsi->requests_lock);
+			}
+#endif /* CONFIG_SSDFS_DEBUG */
 		} else
 			err = -ERANGE;
 		spin_unlock(&si->fsi->volume_state_lock);
@@ -407,13 +539,24 @@ void ssdfs_forget_user_data_flush_request(struct ssdfs_segment_info *si)
 		if (unlikely(err))
 			SSDFS_WARN("fail to decrement\n");
 
+#ifdef CONFIG_SSDFS_DEBUG
+		if (req == NULL) {
+			SSDFS_DBG("seg_id %llu, flush_requests %llu\n",
+				  si->seg_id, flush_requests);
+		} else {
+			SSDFS_DBG("seg_id %llu, flush_requests %llu, "
+				  "req->private.class %#x, "
+				  "req->private.cmd %#x\n",
+				  si->seg_id, flush_requests,
+				  req->private.class,
+				  req->private.cmd);
+			BUG_ON(!is_request_command_valid(req->private.class,
+							 req->private.cmd));
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (flush_requests == 0)
 			wake_up_all(&si->fsi->finish_user_data_flush_wq);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("seg_id %llu, flush_requests %llu\n",
-			  si->seg_id, flush_requests);
-#endif /* CONFIG_SSDFS_DEBUG */
 	}
 }
 
@@ -451,6 +594,21 @@ void ssdfs_account_invalidated_user_data_pages(struct ssdfs_segment_info *si,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		switch (atomic_read(&si->fsi->global_fs_state)) {
+		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+		case SSDFS_UNMOUNT_DESTROY_METADATA:
+			/*
+			 * Unexpected state.
+			 */
+			BUG();
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
 		spin_lock(&si->pending_lock);
 		si->invalidated_user_data_pages += count;
 		invalidated = si->invalidated_user_data_pages;
@@ -493,6 +651,23 @@ void ssdfs_account_commit_log_request(struct ssdfs_segment_info *si)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		switch (atomic_read(&si->fsi->global_fs_state)) {
+		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+		case SSDFS_UNMOUNT_DESTROY_METADATA:
+			/*
+			 * Unexpected state.
+			 */
+			BUG();
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+	}
 
 	spin_lock(&si->fsi->volume_state_lock);
 	si->fsi->commit_log_requests++;
@@ -806,8 +981,10 @@ void ssdfs_segment_get_object(struct ssdfs_segment_info *si);
 void ssdfs_segment_put_object(struct ssdfs_segment_info *si);
 
 struct ssdfs_segment_info *
-ssdfs_grab_segment(struct ssdfs_fs_info *fsi, int seg_type, u64 seg_id,
-		   u64 start_search_id);
+ssdfs_grab_segment(struct ssdfs_fs_info *fsi,
+		   struct ssdfs_segment_search_state *state);
+bool is_ssdfs_segment_ready_for_requests(struct ssdfs_segment_info *si);
+int ssdfs_wait_segment_init_end(struct ssdfs_segment_info *si);
 
 int ssdfs_segment_read_block_sync(struct ssdfs_segment_info *si,
 				  struct ssdfs_segment_request *req);

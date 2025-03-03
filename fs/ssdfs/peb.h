@@ -354,48 +354,6 @@ enum {
  */
 
 /*
- * ssdfs_peb_current_log_lock() - lock current log object
- * @pebi: pointer on PEB object
- */
-static inline
-void ssdfs_peb_current_log_lock(struct ssdfs_peb_info *pebi)
-{
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	err = mutex_lock_killable(&pebi->current_log.lock);
-	WARN_ON(err);
-}
-
-/*
- * ssdfs_peb_current_log_unlock() - unlock current log object
- * @pebi: pointer on PEB object
- */
-static inline
-void ssdfs_peb_current_log_unlock(struct ssdfs_peb_info *pebi)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-	WARN_ON(!mutex_is_locked(&pebi->current_log.lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	mutex_unlock(&pebi->current_log.lock);
-}
-
-static inline
-bool is_ssdfs_peb_current_log_locked(struct ssdfs_peb_info *pebi)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return mutex_is_locked(&pebi->current_log.lock);
-}
-
-/*
  * ssdfs_peb_current_log_state() - check current log's state
  * @pebi: pointer on PEB object
  * @state: checked state

@@ -1312,6 +1312,21 @@ int ssdfs_maptbl_cache_find_leb(struct ssdfs_maptbl_cache *cache,
 		}
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("MAIN_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x; "
+		  "RELATION_INDEX: peb_id %llu, type %#x, "
+		  "state %#x, consistency %#x\n",
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_MAIN_INDEX].consistency,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].peb_id,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].type,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].state,
+		  pebr->pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_leb_id_search:
 	return err;
 }

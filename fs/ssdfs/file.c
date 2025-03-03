@@ -202,6 +202,7 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 			   struct ssdfs_segment_request *req)
 {
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -231,14 +232,27 @@ int ssdfs_read_block_async(struct ssdfs_fs_info *fsi,
 
 	req->place.len = 1;
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					SSDFS_USER_DATA_SEG_TYPE,
+					req->place.start.seg_id, U64_MAX);
+
+	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %ld\n",
 			  req->place.start.seg_id,
 			  PTR_ERR(si));
 		return PTR_ERR(si);
+	}
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, ino %llu, err %d\n",
+				  si->seg_id, req->extent.ino, err);
+			return err;
+		}
 	}
 
 	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC, req);
@@ -268,6 +282,7 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	struct ssdfs_peb_container *pebc;
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_offset_position pos;
+	struct ssdfs_segment_search_state seg_search;
 	u16 logical_blk;
 	struct completion *end;
 	int i;
@@ -312,13 +327,26 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 
 	req->place.len = 1;
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					SSDFS_USER_DATA_SEG_TYPE,
+					req->place.start.seg_id, U64_MAX);
+
+	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
 			  req->place.start.seg_id, err);
 		return PTR_ERR(si);
+	}
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			goto finish_read_block;
+		}
 	}
 
 	ssdfs_request_prepare_internal_data(SSDFS_PEB_READ_REQ,
@@ -331,21 +359,6 @@ int ssdfs_read_block_by_current_thread(struct ssdfs_fs_info *fsi,
 	logical_blk = req->place.start.blk_index;
 
 	err = ssdfs_blk2off_table_get_offset_position(table, logical_blk, &pos);
-	if (err == -EAGAIN) {
-		end = &table->full_init_end;
-
-		err = SSDFS_WAIT_COMPLETION(end);
-		if (unlikely(err)) {
-			SSDFS_ERR("blk2off init failed: "
-				  "err %d\n", err);
-			goto finish_read_block;
-		}
-
-		err = ssdfs_blk2off_table_get_offset_position(table,
-							      logical_blk,
-							      &pos);
-	}
-
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to convert: "
 			  "logical_blk %u, err %d\n",
@@ -565,7 +578,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 			}
 
 			ssdfs_put_request(req);
-			ssdfs_request_free(req);
+			ssdfs_request_free(req, NULL);
 			goto finish_read_block;
 		} else if (err) {
 			SSDFS_ERR("fail to read block: err %d\n", err);
@@ -593,7 +606,7 @@ int ssdfs_read_block_nolock(struct file *file, struct folio_batch *batch,
 		}
 
 		ssdfs_put_request(req);
-		ssdfs_request_free(req);
+		ssdfs_request_free(req, NULL);
 		break;
 
 	case SSDFS_DELEGATE_TO_READ_THREAD:
@@ -625,7 +638,7 @@ fail_read_block:
 
 	if (req) {
 		ssdfs_put_request(req);
-		ssdfs_request_free(req);
+		ssdfs_request_free(req, NULL);
 	}
 
 	return err;
@@ -724,7 +737,8 @@ static
 int ssdfs_check_read_request(struct ssdfs_segment_request *req)
 {
 	wait_queue_head_t *wq = NULL;
-	int err;
+	int res;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
@@ -738,15 +752,22 @@ check_req_state:
 	case SSDFS_REQ_STARTED:
 		wq = &req->private.wait_queue;
 
-		err = wait_event_killable_timeout(*wq,
+		res = wait_event_killable_timeout(*wq,
 					has_request_been_executed(req),
 					SSDFS_DEFAULT_TIMEOUT);
-		if (err < 0)
-			WARN_ON(err < 0);
-		else
-			err = 0;
-
-		goto check_req_state;
+		if (res < 0) {
+			err = res;
+			WARN_ON(1);
+		} else if (res > 1) {
+			/*
+			 * Condition changed before timeout
+			 */
+			goto check_req_state;
+		} else {
+			/* timeout is elapsed */
+			err = -ERANGE;
+			WARN_ON(1);
+		}
 		break;
 
 	case SSDFS_REQ_FINISHED:
@@ -765,15 +786,17 @@ check_req_state:
 
 		SSDFS_ERR("read request is failed: "
 			  "err %d\n", err);
-		return err;
+		goto finish_check;
 
 	default:
+		err = -ERANGE;
 		SSDFS_ERR("invalid result's state %#x\n",
-		    atomic_read(&req->result.state));
-		return -ERANGE;
+			  atomic_read(&req->result.state));
+		goto finish_check;
 	}
 
-	return 0;
+finish_check:
+	return err;
 }
 
 static
@@ -781,7 +804,9 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_request *req)
 {
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	wait_queue_head_t *wait;
+	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -798,8 +823,11 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 		goto free_request;
 	}
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					SSDFS_USER_DATA_SEG_TYPE,
+					req->place.start.seg_id, U64_MAX);
+
+	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 		SSDFS_ERR("fail to grab segment object: "
@@ -817,19 +845,27 @@ int ssdfs_wait_read_request_end(struct ssdfs_fs_info *fsi,
 			   atomic_read(&req->private.refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = wait_event_killable_timeout(*wait,
+		res = wait_event_killable_timeout(*wait,
 			    atomic_read(&req->private.refs_count) == 0,
 			    SSDFS_DEFAULT_TIMEOUT);
-		if (err < 0)
-			WARN_ON(err < 0);
-		else
-			err = 0;
+		if (res < 0) {
+			err = res;
+			WARN_ON(1);
+		} else if (res > 1) {
+			/*
+			 * Condition changed before timeout
+			 */
+		} else {
+			/* timeout is elapsed */
+			err = -ERANGE;
+			WARN_ON(1);
+		}
 	}
 
 	ssdfs_segment_put_object(si);
 
 free_request:
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, si);
 
 finish_wait:
 #ifdef CONFIG_SSDFS_DEBUG
@@ -857,6 +893,7 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_request *req = NULL;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	loff_t data_bytes = 0;
 	int i;
 	int err;
@@ -940,8 +977,11 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 		}
 	}
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				req->place.start.seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					SSDFS_USER_DATA_SEG_TYPE,
+					req->place.start.seg_id, U64_MAX);
+
+	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 		SSDFS_ERR("fail to grab segment object: "
@@ -949,6 +989,16 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 			  req->place.start.seg_id,
 			  err);
 		goto fail_issue_read_request;
+	}
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, ino %llu, err %d\n",
+				  si->seg_id, req->extent.ino, err);
+			goto fail_issue_read_request;
+		}
 	}
 
 	err = ssdfs_segment_read_block_async(si, SSDFS_REQ_ASYNC_NO_FREE, req);
@@ -970,7 +1020,7 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 
 fail_issue_read_request:
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, si);
 
 	return ERR_PTR(err);
 }
@@ -1385,7 +1435,8 @@ static
 int ssdfs_check_async_write_request(struct ssdfs_segment_request *req)
 {
 	wait_queue_head_t *wq = NULL;
-	int err;
+	int res;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
@@ -1399,15 +1450,22 @@ check_req_state:
 	case SSDFS_REQ_STARTED:
 		wq = &req->private.wait_queue;
 
-		err = wait_event_killable_timeout(*wq,
+		res = wait_event_killable_timeout(*wq,
 					has_request_been_executed(req),
 					SSDFS_DEFAULT_TIMEOUT);
-		if (err < 0)
-			WARN_ON(err < 0);
-		else
-			err = 0;
-
-		goto check_req_state;
+		if (res < 0) {
+			err = res;
+			WARN_ON(1);
+		} else if (res > 1) {
+			/*
+			 * Condition changed before timeout
+			 */
+			goto check_req_state;
+		} else {
+			/* timeout is elapsed */
+			err = -ERANGE;
+			WARN_ON(1);
+		}
 		break;
 
 	case SSDFS_REQ_FINISHED:
@@ -1426,15 +1484,17 @@ check_req_state:
 
 		SSDFS_ERR("write request is failed: "
 			  "err %d\n", err);
-		return err;
+		goto finish_check;
 
 	default:
+		err = -ERANGE;
 		SSDFS_ERR("invalid result's state %#x\n",
-		    atomic_read(&req->result.state));
-		return -ERANGE;
+			  atomic_read(&req->result.state));
+		goto finish_check;
 	}
 
-	return 0;
+finish_check:
+	return err;
 }
 
 /*
@@ -1538,9 +1598,11 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_segment_request *req;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	wait_queue_head_t *wait;
 	bool has_request_failed = false;
 	int i;
+	int res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1603,7 +1665,7 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 			}
 
 			ssdfs_put_request(req);
-			ssdfs_request_free(req);
+			ssdfs_request_free(req, NULL);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("request %d is freed\n", i);
@@ -1633,10 +1695,12 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 
 			ssdfs_put_request(req);
 
-			si = ssdfs_grab_segment(fsi,
+			ssdfs_segment_search_state_init(&seg_search,
 						SSDFS_USER_DATA_SEG_TYPE,
 						req->place.start.seg_id,
 						U64_MAX);
+
+			si = ssdfs_grab_segment(fsi, &seg_search);
 			if (unlikely(IS_ERR_OR_NULL(si))) {
 				err = (si == NULL ? -ENOMEM : PTR_ERR(si));
 				SSDFS_ERR("fail to grab segment object: "
@@ -1654,18 +1718,26 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 					   atomic_read(&req->private.refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-				err = wait_event_killable_timeout(*wait,
+				res = wait_event_killable_timeout(*wait,
 				    atomic_read(&req->private.refs_count) == 0,
 				    SSDFS_DEFAULT_TIMEOUT);
-				if (err < 0)
-					WARN_ON(err < 0);
-				else
-					err = 0;
+				if (res < 0) {
+					err = res;
+					WARN_ON(1);
+				} else if (res > 1) {
+					/*
+					 * Condition changed before timeout
+					 */
+				} else {
+					/* timeout is elapsed */
+					err = -ERANGE;
+					WARN_ON(1);
+				}
 			}
 
 			ssdfs_segment_put_object(si);
 
-			ssdfs_request_free(req);
+			ssdfs_request_free(req, si);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("request %d is freed\n", i);
@@ -1724,7 +1796,7 @@ void ssdfs_clean_failed_request_pool(struct ssdfs_segment_request_pool *pool)
 				continue;
 			}
 
-			ssdfs_request_free(req);
+			ssdfs_request_free(req, NULL);
 		}
 		break;
 
@@ -1751,6 +1823,7 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 		       struct writeback_control *wbc)
 {
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	struct folio *folio;
 	struct inode *inode;
 	int err = 0;
@@ -1802,13 +1875,27 @@ int ssdfs_update_block(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				batch->place.start.seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					SSDFS_USER_DATA_SEG_TYPE,
+					batch->place.start.seg_id,
+					U64_MAX);
+
+	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
 			  batch->place.start.seg_id, err);
 		return PTR_ERR(si);
+	}
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			return err;
+		}
 	}
 
 	if (wbc->sync_mode == WB_SYNC_NONE) {
@@ -1849,6 +1936,7 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 			struct writeback_control *wbc)
 {
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	struct folio *folio;
 	struct inode *inode;
 	u32 batch_size;
@@ -1909,13 +1997,27 @@ int ssdfs_update_extent(struct ssdfs_fs_info *fsi,
 			return err;
 		}
 
-		si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-					batch->place.start.seg_id, U64_MAX);
+		ssdfs_segment_search_state_init(&seg_search,
+						SSDFS_USER_DATA_SEG_TYPE,
+						batch->place.start.seg_id,
+						U64_MAX);
+
+		si = ssdfs_grab_segment(fsi, &seg_search);
 		if (unlikely(IS_ERR_OR_NULL(si))) {
 			SSDFS_ERR("fail to grab segment object: "
 				  "seg %llu, err %d\n",
 				  batch->place.start.seg_id, err);
 			return PTR_ERR(si);
+		}
+
+		if (!is_ssdfs_segment_ready_for_requests(si)) {
+			err = ssdfs_wait_segment_init_end(si);
+			if (unlikely(err)) {
+				SSDFS_ERR("segment initialization failed: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				return err;
+			}
 		}
 
 		if (wbc->sync_mode == WB_SYNC_NONE) {
@@ -4021,9 +4123,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (err) {
-			spin_lock(&fsi->volume_state_lock);
-			fsi->free_pages++;
-			spin_unlock(&fsi->volume_state_lock);
+			ssdfs_increase_volume_free_pages(fsi, 1);
 
 			ssdfs_folio_unlock(first_folio);
 			ssdfs_folio_put(first_folio);

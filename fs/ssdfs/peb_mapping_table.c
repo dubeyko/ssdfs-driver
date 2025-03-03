@@ -426,16 +426,16 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 
 	init_completion(&ptr->init_end);
 
-	ptr->flush_req1 = NULL;
-	ptr->flush_req2 = NULL;
+	ptr->flush_pair1 = NULL;
+	ptr->flush_pair2 = NULL;
 	ptr->flush_req_count = 0;
 
 	ptr->flush_seq_size = min_t(u32, ptr->fragment_folios,
 				    SSDFS_EXTENT_LEN_MAX);
-	ptr->flush_req1 = ssdfs_map_tbl_kcalloc(ptr->flush_seq_size,
-					sizeof(struct ssdfs_segment_request),
+	ptr->flush_pair1 = ssdfs_map_tbl_kcalloc(ptr->flush_seq_size,
+					sizeof(struct ssdfs_maptbl_flush_pair),
 					GFP_KERNEL);
-	if (!ptr->flush_req1) {
+	if (!ptr->flush_pair1) {
 		ssdfs_destroy_folio_array(&ptr->array);
 		SSDFS_ERR("fail to allocate flush requests array: "
 			  "array_size %u\n",
@@ -443,13 +443,13 @@ int ssdfs_maptbl_create_fragment(struct ssdfs_fs_info *fsi, u32 index)
 		return -ENODATA;
 	}
 
-	ptr->flush_req2 = ssdfs_map_tbl_kcalloc(ptr->flush_seq_size,
-					sizeof(struct ssdfs_segment_request),
+	ptr->flush_pair2 = ssdfs_map_tbl_kcalloc(ptr->flush_seq_size,
+					sizeof(struct ssdfs_maptbl_flush_pair),
 					GFP_KERNEL);
-	if (!ptr->flush_req2) {
+	if (!ptr->flush_pair2) {
 		ssdfs_destroy_folio_array(&ptr->array);
-		ssdfs_map_tbl_kfree(ptr->flush_req1);
-		ptr->flush_req1 = NULL;
+		ssdfs_map_tbl_kfree(ptr->flush_pair1);
+		ptr->flush_pair1 = NULL;
 		SSDFS_ERR("fail to allocate flush requests array: "
 			  "array_size %u\n",
 			  ptr->flush_seq_size);
@@ -775,14 +775,14 @@ void ssdfs_maptbl_destroy_fragment(struct ssdfs_fs_info *fsi, u32 index)
 	} else if (state >= SSDFS_MAPTBL_FRAG_STATE_MAX)
 		BUG();
 
-	if (ptr->flush_req1) {
-		ssdfs_map_tbl_kfree(ptr->flush_req1);
-		ptr->flush_req1 = NULL;
+	if (ptr->flush_pair1) {
+		ssdfs_map_tbl_kfree(ptr->flush_pair1);
+		ptr->flush_pair1 = NULL;
 	}
 
-	if (ptr->flush_req2) {
-		ssdfs_map_tbl_kfree(ptr->flush_req2);
-		ptr->flush_req2 = NULL;
+	if (ptr->flush_pair2) {
+		ssdfs_map_tbl_kfree(ptr->flush_pair2);
+		ptr->flush_pair2 = NULL;
 	}
 
 	ssdfs_destroy_folio_array(&ptr->array);
@@ -1597,43 +1597,6 @@ int ssdfs_maptbl_check_pebtbl_folio(struct ssdfs_peb_container *pebc,
 finish_pebtbl_check:
 	kunmap_local(kaddr);
 	ssdfs_folio_unlock(folio);
-
-	if (!err) {
-		u32 unused_lebs;
-		u64 free_pages;
-		u64 unused_pages = 0;
-		u32 threshold;
-
-		unused_lebs = ssdfs_unused_lebs_in_fragment(fdesc);
-		threshold = ssdfs_lebs_reservation_threshold(fdesc);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unused_pebs %u, unused_lebs %u, threshold %u\n",
-			  unused_pebs, unused_lebs, threshold);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (unused_lebs > threshold) {
-			unused_pages = (u64)unused_pebs * fsi->pages_per_peb;
-
-			spin_lock(&fsi->volume_state_lock);
-			fsi->free_pages += unused_pages;
-			free_pages = fsi->free_pages;
-			spin_unlock(&fsi->volume_state_lock);
-		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			spin_lock(&fsi->volume_state_lock);
-			free_pages = fsi->free_pages;
-			spin_unlock(&fsi->volume_state_lock);
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("seg %llu, peb_index %u, "
-			  "free_pages %llu, unused_pages %llu\n",
-			  pebc->parent_si->seg_id,
-			  pebc->peb_index, free_pages, unused_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-	}
 
 	return err;
 }
@@ -2479,28 +2442,28 @@ int ssdfs_realloc_flush_reqs_array(struct ssdfs_maptbl_fragment_desc *fdesc)
 			  fdesc->flush_req_count, fdesc->flush_seq_size);
 		return -ERANGE;
 	} else if (fdesc->flush_req_count == fdesc->flush_seq_size) {
-		size_t seg_req_size = sizeof(struct ssdfs_segment_request);
+		size_t pair_size = sizeof(struct ssdfs_maptbl_flush_pair);
 
 		fdesc->flush_seq_size *= 2;
 
 		nofs_flags = memalloc_nofs_save();
-		fdesc->flush_req1 = krealloc(fdesc->flush_req1,
-					fdesc->flush_seq_size * seg_req_size,
-					GFP_KERNEL | __GFP_ZERO);
+		fdesc->flush_pair1 = krealloc(fdesc->flush_pair1,
+					fdesc->flush_seq_size * pair_size,
+					GFP_KERNEL);
 		memalloc_nofs_restore(nofs_flags);
 
-		if (!fdesc->flush_req1) {
+		if (!fdesc->flush_pair1) {
 			SSDFS_ERR("fail to reallocate buffer\n");
 			return -ENOMEM;
 		}
 
 		nofs_flags = memalloc_nofs_save();
-		fdesc->flush_req2 = krealloc(fdesc->flush_req2,
-					fdesc->flush_seq_size * seg_req_size,
-					GFP_KERNEL | __GFP_ZERO);
+		fdesc->flush_pair2 = krealloc(fdesc->flush_pair2,
+					fdesc->flush_seq_size * pair_size,
+					GFP_KERNEL);
 		memalloc_nofs_restore(nofs_flags);
 
-		if (!fdesc->flush_req2) {
+		if (!fdesc->flush_pair2) {
 			SSDFS_ERR("fail to reallocate buffer\n");
 			return -ENOMEM;
 		}
@@ -2528,7 +2491,7 @@ int ssdfs_maptbl_update_fragment(struct ssdfs_peb_mapping_table *tbl,
 				 u32 fragment_index)
 {
 	struct ssdfs_maptbl_fragment_desc *fdesc;
-	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_maptbl_flush_pair *pair1 = NULL, *pair2 = NULL;
 	struct ssdfs_segment_info *si;
 	struct folio_batch batch;
 	struct ssdfs_request_content_block *block;
@@ -2647,21 +2610,24 @@ define_update_area:
 		goto finish_fragment_update;
 	}
 
-	req1 = &fdesc->flush_req1[fdesc->flush_req_count];
-	req2 = &fdesc->flush_req2[fdesc->flush_req_count];
+	pair1 = &fdesc->flush_pair1[fdesc->flush_req_count];
+	pair2 = &fdesc->flush_pair2[fdesc->flush_req_count];
 	fdesc->flush_req_count++;
 
-	ssdfs_request_init(req1, tbl->fsi->pagesize);
-	ssdfs_get_request(req1);
+	ssdfs_request_init(&pair1->req, tbl->fsi->pagesize);
+	ssdfs_get_request(&pair1->req);
 	if (has_backup) {
-		ssdfs_request_init(req2, tbl->fsi->pagesize);
-		ssdfs_get_request(req2);
+		ssdfs_request_init(&pair2->req, tbl->fsi->pagesize);
+		ssdfs_get_request(&pair2->req);
 	}
 
 	for (j = 0; j < area_size; j++) {
-		err = ssdfs_request_add_allocated_folio_locked(j, req1);
-		if (!err && has_backup)
-			err = ssdfs_request_add_allocated_folio_locked(j, req2);
+		err = ssdfs_request_add_allocated_folio_locked(j, &pair1->req);
+		if (!err && has_backup) {
+			err = ssdfs_request_add_allocated_folio_locked(j,
+								&pair2->req);
+		}
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail allocate memory folio: err %d\n", err);
 			goto fail_issue_fragment_updates;
@@ -2669,7 +2635,7 @@ define_update_area:
 
 		err = ssdfs_maptbl_copy_dirty_folio(tbl, &batch,
 						    (i - area_size) + j,
-						    j, req1);
+						    j, &pair1->req);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to copy dirty folio: "
 				  "sfolio_index %d, dfolio_index %d, err %d\n",
@@ -2677,21 +2643,24 @@ define_update_area:
 			goto fail_issue_fragment_updates;
 		}
 
-		if (has_backup)
-			ssdfs_maptbl_replicate_dirty_folio(tbl, req1, j, req2);
+		if (has_backup) {
+			ssdfs_maptbl_replicate_dirty_folio(tbl, &pair1->req,
+							   j, &pair2->req);
+		}
 	}
 
 	offset = area_start * tbl->fsi->pagesize;
 	offset += fragment_index * tbl->fragment_bytes;
 	size = area_size * tbl->fsi->pagesize;
 
-	ssdfs_request_prepare_logical_extent(ino, offset, size, 0, 0, req1);
+	ssdfs_request_prepare_logical_extent(ino, offset, size,
+					     0, 0, &pair1->req);
 	if (has_backup) {
 		ssdfs_request_prepare_logical_extent(ino, offset, size,
-						     0, 0, req2);
+						     0, 0, &pair2->req);
 	}
 
-	err = ssdfs_check_portion_id(&req1->result.content);
+	err = ssdfs_check_portion_id(&pair1->req.result.content);
 	if (unlikely(err)) {
 		SSDFS_ERR("corrupted maptbl's folio was found: "
 			  "err %d\n", err);
@@ -2699,10 +2668,10 @@ define_update_area:
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(req1->result.content.count == 0);
+	BUG_ON(pair1->req.result.content.count == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	block = &req1->result.content.blocks[0];
+	block = &pair1->req.result.content.blocks[0];
 	blk_state = &block->new_state;
 	folio = blk_state->batch.folios[0];
 
@@ -2711,7 +2680,7 @@ define_update_area:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	kaddr = kmap_local_folio(folio, 0);
-	err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
+	err = ssdfs_maptbl_define_volume_extent(tbl, &pair1->req, kaddr,
 						area_start, area_size,
 						&seg_index);
 	kunmap_local(kaddr);
@@ -2724,22 +2693,29 @@ define_update_area:
 	}
 
 	if (has_backup) {
-		ssdfs_memcpy(&req2->place,
+		ssdfs_memcpy(&pair2->req.place,
 			     0, sizeof(struct ssdfs_volume_extent),
-			     &req1->place,
+			     &pair1->req.place,
 			     0, sizeof(struct ssdfs_volume_extent),
 			     sizeof(struct ssdfs_volume_extent));
 	}
 
 	si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+	pair1->si = si;
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			goto fail_issue_fragment_updates;
+		}
+	}
+
 	err = ssdfs_segment_update_extent_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
-						req1);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("update extent async: seg %llu\n", si->seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
+						&pair1->req);
 	if (!err && has_backup) {
 		if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
 			err = -ERANGE;
@@ -2748,25 +2724,34 @@ define_update_area:
 		}
 
 		si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
+		pair2->si = si;
+
+		if (!is_ssdfs_segment_ready_for_requests(si)) {
+			err = ssdfs_wait_segment_init_end(si);
+			if (unlikely(err)) {
+				SSDFS_ERR("segment initialization failed: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto fail_issue_fragment_updates;
+			}
+		}
+
 		err = ssdfs_segment_update_extent_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
-						req2);
+						&pair2->req);
 	}
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to update extent: "
 			  "seg_index %u, err %d\n",
 			  seg_index, err);
-		goto fail_issue_fragment_updates;
-	}
 
-	if (err) {
 fail_issue_fragment_updates:
-		ssdfs_request_unlock_and_remove_folios(req1);
-		ssdfs_put_request(req1);
+		ssdfs_request_unlock_and_remove_folios(&pair1->req);
+		ssdfs_put_request(&pair1->req);
 		if (has_backup) {
-			ssdfs_request_unlock_and_remove_folios(req2);
-			ssdfs_put_request(req2);
+			ssdfs_request_unlock_and_remove_folios(&pair2->req);
+			ssdfs_put_request(&pair2->req);
 		}
 		goto finish_fragment_update;
 	}
@@ -3024,7 +3009,7 @@ finish_flush_dirty_fragments:
 /*
  * ssdfs_maptbl_check_request() - check request
  * @fdesc: pointer on fragment descriptor
- * @req: segment request
+ * @pair: segment and request objects pair
  *
  * This method tries to check the state of request.
  *
@@ -3036,63 +3021,127 @@ finish_flush_dirty_fragments:
  */
 static
 int ssdfs_maptbl_check_request(struct ssdfs_maptbl_fragment_desc *fdesc,
-				struct ssdfs_segment_request *req)
+				struct ssdfs_maptbl_flush_pair *pair)
 {
 	wait_queue_head_t *wq = NULL;
-	int err;
+	int res;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fdesc || !req);
+	BUG_ON(!fdesc || !pair);
 	BUG_ON(!rwsem_is_locked(&fdesc->lock));
 
-	SSDFS_DBG("fdesc %p, req %p\n", fdesc, req);
+	SSDFS_DBG("fdesc %p, req %p\n", fdesc, &pair->req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 check_req_state:
-	switch (atomic_read(&req->result.state)) {
+	switch (atomic_read(&pair->req.result.state)) {
 	case SSDFS_REQ_CREATED:
 	case SSDFS_REQ_STARTED:
-		wq = &req->private.wait_queue;
+		wq = &pair->req.private.wait_queue;
 
 		up_write(&fdesc->lock);
-		err = wait_event_killable_timeout(*wq,
-					has_request_been_executed(req),
+		res = wait_event_killable_timeout(*wq,
+					has_request_been_executed(&pair->req),
 					SSDFS_DEFAULT_TIMEOUT);
 		down_write(&fdesc->lock);
 
-		if (err < 0)
-			WARN_ON(err < 0);
-		else
-			err = 0;
+		if (res < 0) {
+			err = res;
+			WARN_ON(1);
+		} else if (res > 1) {
+			/*
+			 * Condition changed before timeout
+			 */
+			goto check_req_state;
+		} else {
+			struct ssdfs_request_internal_data *ptr;
 
-		goto check_req_state;
+			/* timeout is elapsed */
+			err = -ERANGE;
+			ptr = &pair->req.private;
+
+			SSDFS_ERR("seg %llu, ino %llu, "
+				  "logical_offset %llu, "
+				  "cmd %#x, type %#x, "
+				  "result.state %#x, "
+				  "refs_count %#x\n",
+				pair->si->seg_id,
+				pair->req.extent.ino,
+				pair->req.extent.logical_offset,
+				pair->req.private.cmd,
+				pair->req.private.type,
+				atomic_read(&pair->req.result.state),
+				atomic_read(&ptr->refs_count));
+			WARN_ON(1);
+		}
 		break;
 
 	case SSDFS_REQ_FINISHED:
-		/* do nothing */
+		wq = &pair->si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+
+		if (request_not_referenced(&pair->req))
+			goto finish_check;
+
+		up_write(&fdesc->lock);
+		res = wait_event_killable_timeout(*wq,
+					    request_not_referenced(&pair->req),
+					    SSDFS_DEFAULT_TIMEOUT);
+		down_write(&fdesc->lock);
+
+		if (res < 0) {
+			err = res;
+			WARN_ON(1);
+		} else if (res > 1) {
+			/*
+			 * Condition changed before timeout
+			 */
+		} else {
+			struct ssdfs_request_internal_data *ptr;
+
+			/* timeout is elapsed */
+			err = -ERANGE;
+			ptr = &pair->req.private;
+
+			SSDFS_ERR("seg %llu, ino %llu, "
+				  "logical_offset %llu, "
+				  "cmd %#x, type %#x, "
+				  "result.state %#x, "
+				  "refs_count %#x\n",
+				pair->si->seg_id,
+				pair->req.extent.ino,
+				pair->req.extent.logical_offset,
+				pair->req.private.cmd,
+				pair->req.private.type,
+				atomic_read(&pair->req.result.state),
+				atomic_read(&ptr->refs_count));
+			WARN_ON(1);
+		}
 		break;
 
 	case SSDFS_REQ_FAILED:
-		err = req->result.err;
+		err = pair->req.result.err;
 
 		if (!err) {
 			SSDFS_ERR("error code is absent: "
 				  "req %p, err %d\n",
-				  req, err);
+				  &pair->req, err);
 			err = -ERANGE;
 		}
 
 		SSDFS_ERR("flush request is failed: "
 			  "err %d\n", err);
-		return err;
+		goto finish_check;
 
 	default:
+		err = -ERANGE;
 		SSDFS_ERR("invalid result's state %#x\n",
-		    atomic_read(&req->result.state));
-		return -ERANGE;
+			  atomic_read(&pair->req.result.state));
+		goto finish_check;
 	}
 
-	return 0;
+finish_check:
+	return err;
 }
 
 /*
@@ -3111,7 +3160,7 @@ static
 int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_fragment_desc *fdesc;
-	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_maptbl_flush_pair *pair1 = NULL, *pair2 = NULL;
 	bool has_backup;
 	u32 fragments_count;
 	u32 i, j;
@@ -3142,10 +3191,10 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 
 		case SSDFS_MAPTBL_FRAG_TOWRITE:
 			for (j = 0; j < fdesc->flush_req_count; j++) {
-				req1 = &fdesc->flush_req1[j];
-				req2 = &fdesc->flush_req2[j];
+				pair1 = &fdesc->flush_pair1[j];
+				pair2 = &fdesc->flush_pair2[j];
 
-				err = ssdfs_maptbl_check_request(fdesc, req1);
+				err = ssdfs_maptbl_check_request(fdesc, pair1);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -3155,7 +3204,7 @@ int ssdfs_maptbl_wait_flush_end(struct ssdfs_peb_mapping_table *tbl)
 				if (!has_backup)
 					continue;
 
-				err = ssdfs_maptbl_check_request(fdesc, req2);
+				err = ssdfs_maptbl_check_request(fdesc, pair2);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -3198,7 +3247,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 				struct ssdfs_maptbl_fragment_desc *fdesc,
 				u32 fragment_index)
 {
-	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_maptbl_flush_pair *pair1 = NULL, *pair2 = NULL;
 	struct ssdfs_segment_info *si;
 	struct folio *folio;
 	void *kaddr;
@@ -3248,27 +3297,27 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_issue_commit_request;
 		}
 
-		req1 = &fdesc->flush_req1[fdesc->flush_req_count];
-		req2 = &fdesc->flush_req2[fdesc->flush_req_count];
+		pair1 = &fdesc->flush_pair1[fdesc->flush_req_count];
+		pair2 = &fdesc->flush_pair2[fdesc->flush_req_count];
 		fdesc->flush_req_count++;
 
-		ssdfs_request_init(req1, tbl->fsi->pagesize);
-		ssdfs_get_request(req1);
+		ssdfs_request_init(&pair1->req, tbl->fsi->pagesize);
+		ssdfs_get_request(&pair1->req);
 		if (has_backup) {
-			ssdfs_request_init(req2, tbl->fsi->pagesize);
-			ssdfs_get_request(req2);
+			ssdfs_request_init(&pair2->req, tbl->fsi->pagesize);
+			ssdfs_get_request(&pair2->req);
 		}
 
 		offset = area_start * tbl->fsi->pagesize;
 		offset += fragment_index * tbl->fragment_bytes;
 
 		ssdfs_request_prepare_logical_extent(ino, offset,
-						     0, 0, 0, req1);
+						     0, 0, 0, &pair1->req);
 		if (has_backup) {
 			ssdfs_request_prepare_logical_extent(ino,
 							     offset,
 							     0, 0, 0,
-							     req2);
+							     &pair2->req);
 		}
 
 		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array,
@@ -3282,7 +3331,7 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		kaddr = kmap_local_folio(folio, 0);
-		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
+		err = ssdfs_maptbl_define_volume_extent(tbl, &pair1->req, kaddr,
 							area_start, area_size,
 							&seg_index);
 		kunmap_local(kaddr);
@@ -3303,22 +3352,33 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		if (has_backup) {
-			ssdfs_memcpy(&req2->place,
+			ssdfs_memcpy(&pair2->req.place,
 				     0, sizeof(struct ssdfs_volume_extent),
-				     &req1->place,
+				     &pair1->req.place,
 				     0, sizeof(struct ssdfs_volume_extent),
 				     sizeof(struct ssdfs_volume_extent));
 		}
 
 		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+		pair1->si = si;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("commit logs: seg %llu\n", si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		if (!is_ssdfs_segment_ready_for_requests(si)) {
+			err = ssdfs_wait_segment_init_end(si);
+			if (unlikely(err)) {
+				SSDFS_ERR("segment initialization failed: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_issue_commit_request;
+			}
+		}
+
 		err = ssdfs_segment_commit_log_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
-						req1);
+						&pair1->req);
 
 		if (!err && has_backup) {
 			if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
@@ -3328,9 +3388,21 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 			}
 
 			si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
+			pair2->si = si;
+
+			if (!is_ssdfs_segment_ready_for_requests(si)) {
+				err = ssdfs_wait_segment_init_end(si);
+				if (unlikely(err)) {
+					SSDFS_ERR("segment initialization failed: "
+						  "seg %llu, err %d\n",
+						  si->seg_id, err);
+					goto finish_issue_commit_request;
+				}
+			}
+
 			err = ssdfs_segment_commit_log_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
-						req2);
+						&pair2->req);
 		}
 
 		if (unlikely(err)) {
@@ -3350,9 +3422,9 @@ int __ssdfs_maptbl_commit_logs(struct ssdfs_peb_mapping_table *tbl,
 
 finish_issue_commit_request:
 	if (err) {
-		ssdfs_put_request(req1);
+		ssdfs_put_request(&pair1->req);
 		if (has_backup)
-			ssdfs_put_request(req2);
+			ssdfs_put_request(&pair2->req);
 	}
 
 	return err;
@@ -3443,7 +3515,7 @@ static
 int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_fragment_desc *fdesc;
-	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_maptbl_flush_pair *pair1 = NULL, *pair2 = NULL;
 	bool has_backup;
 	u32 fragments_count;
 	int state;
@@ -3475,10 +3547,10 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 
 		case SSDFS_MAPTBL_FRAG_TOWRITE:
 			for (j = 0; j < fdesc->flush_req_count; j++) {
-				req1 = &fdesc->flush_req1[j];
-				req2 = &fdesc->flush_req2[j];
+				pair1 = &fdesc->flush_pair1[j];
+				pair2 = &fdesc->flush_pair2[j];
 
-				err = ssdfs_maptbl_check_request(fdesc, req1);
+				err = ssdfs_maptbl_check_request(fdesc, pair1);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -3488,7 +3560,7 @@ int ssdfs_maptbl_wait_commit_logs_end(struct ssdfs_peb_mapping_table *tbl)
 				if (!has_backup)
 					continue;
 
-				err = ssdfs_maptbl_check_request(fdesc, req2);
+				err = ssdfs_maptbl_check_request(fdesc, pair2);
 				if (unlikely(err)) {
 					SSDFS_ERR("flush request failed: "
 						  "err %d\n", err);
@@ -3547,7 +3619,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
 				     u32 fragment_index)
 {
-	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_maptbl_flush_pair *pair1 = NULL, *pair2 = NULL;
 	struct ssdfs_segment_info *si;
 	struct folio *folio;
 	void *kaddr;
@@ -3589,27 +3661,27 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 			goto finish_issue_prepare_migration_request;
 		}
 
-		req1 = &fdesc->flush_req1[fdesc->flush_req_count];
-		req2 = &fdesc->flush_req2[fdesc->flush_req_count];
+		pair1 = &fdesc->flush_pair1[fdesc->flush_req_count];
+		pair2 = &fdesc->flush_pair2[fdesc->flush_req_count];
 		fdesc->flush_req_count++;
 
-		ssdfs_request_init(req1, tbl->fsi->pagesize);
-		ssdfs_get_request(req1);
+		ssdfs_request_init(&pair1->req, tbl->fsi->pagesize);
+		ssdfs_get_request(&pair1->req);
 		if (has_backup) {
-			ssdfs_request_init(req2, tbl->fsi->pagesize);
-			ssdfs_get_request(req2);
+			ssdfs_request_init(&pair2->req, tbl->fsi->pagesize);
+			ssdfs_get_request(&pair2->req);
 		}
 
 		offset = area_start * tbl->fsi->pagesize;
 		offset += fragment_index * tbl->fragment_bytes;
 
 		ssdfs_request_prepare_logical_extent(ino, offset,
-						     0, 0, 0, req1);
+						     0, 0, 0, &pair1->req);
 		if (has_backup) {
 			ssdfs_request_prepare_logical_extent(ino,
 							     offset,
 							     0, 0, 0,
-							     req2);
+							     &pair2->req);
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3630,7 +3702,7 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		kaddr = kmap_local_folio(folio, 0);
-		err = ssdfs_maptbl_define_volume_extent(tbl, req1, kaddr,
+		err = ssdfs_maptbl_define_volume_extent(tbl, &pair1->req, kaddr,
 							area_start, area_size,
 							&seg_index);
 		kunmap_local(kaddr);
@@ -3651,22 +3723,33 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		if (has_backup) {
-			ssdfs_memcpy(&req2->place,
+			ssdfs_memcpy(&pair2->req.place,
 				     0, sizeof(struct ssdfs_volume_extent),
-				     &req1->place,
+				     &pair1->req.place,
 				     0, sizeof(struct ssdfs_volume_extent),
 				     sizeof(struct ssdfs_volume_extent));
 		}
 
 		si = tbl->segs[SSDFS_MAIN_MAPTBL_SEG][seg_index];
+		pair1->si = si;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("start migration now: seg %llu\n", si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		if (!is_ssdfs_segment_ready_for_requests(si)) {
+			err = ssdfs_wait_segment_init_end(si);
+			if (unlikely(err)) {
+				SSDFS_ERR("segment initialization failed: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_issue_prepare_migration_request;
+			}
+		}
+
 		err = ssdfs_segment_prepare_migration_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
-						req1);
+						&pair1->req);
 		if (!err && has_backup) {
 			if (!tbl->segs[SSDFS_COPY_MAPTBL_SEG]) {
 				err = -ERANGE;
@@ -3675,9 +3758,21 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 			}
 
 			si = tbl->segs[SSDFS_COPY_MAPTBL_SEG][seg_index];
+			pair2->si = si;
+
+			if (!is_ssdfs_segment_ready_for_requests(si)) {
+				err = ssdfs_wait_segment_init_end(si);
+				if (unlikely(err)) {
+					SSDFS_ERR("segment initialization failed: "
+						  "seg %llu, err %d\n",
+						  si->seg_id, err);
+					goto finish_issue_prepare_migration_request;
+				}
+			}
+
 			err = ssdfs_segment_prepare_migration_async(si,
 						SSDFS_REQ_ASYNC_NO_FREE,
-						req2);
+						&pair2->req);
 		}
 
 		if (unlikely(err)) {
@@ -3697,9 +3792,9 @@ int __ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl,
 
 finish_issue_prepare_migration_request:
 	if (err) {
-		ssdfs_put_request(req1);
+		ssdfs_put_request(&pair1->req);
 		if (has_backup)
-			ssdfs_put_request(req2);
+			ssdfs_put_request(&pair2->req);
 	}
 
 	return err;
@@ -3814,7 +3909,7 @@ static
 int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_fragment_desc *fdesc;
-	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
+	struct ssdfs_maptbl_flush_pair *pair1 = NULL, *pair2 = NULL;
 	bool has_backup;
 	u32 fragments_count;
 	u32 i, j;
@@ -3837,10 +3932,10 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 		down_write(&fdesc->lock);
 
 		for (j = 0; j < fdesc->flush_req_count; j++) {
-			req1 = &fdesc->flush_req1[j];
-			req2 = &fdesc->flush_req2[j];
+			pair1 = &fdesc->flush_pair1[j];
+			pair2 = &fdesc->flush_pair2[j];
 
-			err = ssdfs_maptbl_check_request(fdesc, req1);
+			err = ssdfs_maptbl_check_request(fdesc, pair1);
 			if (unlikely(err)) {
 				SSDFS_ERR("flush request failed: "
 					  "err %d\n", err);
@@ -3850,7 +3945,7 @@ int ssdfs_maptbl_wait_prepare_migration_end(struct ssdfs_peb_mapping_table *tbl)
 			if (!has_backup)
 				continue;
 
-			err = ssdfs_maptbl_check_request(fdesc, req2);
+			err = ssdfs_maptbl_check_request(fdesc, pair2);
 			if (unlikely(err)) {
 				SSDFS_ERR("flush request failed: "
 					  "err %d\n", err);
@@ -4501,6 +4596,56 @@ bool should_cache_peb_info(u8 peb_type)
 }
 
 /*
+ * MAPTBL_PEBS_PER_STRIPE() - calculate PEBs per stripe
+ * @tbl: pointer on mapping table object
+ * @desc: fragment descriptor
+ */
+static inline
+u64 MAPTBL_PEBS_PER_STRIPE(struct ssdfs_peb_mapping_table *tbl,
+			   struct ssdfs_maptbl_fragment_desc *desc)
+{
+	u64 pebs_per_fragment;
+	u64 pebs_per_stripe;
+
+	pebs_per_fragment = min_t(u64, (u64)tbl->pebs_per_fragment,
+					tbl->pebs_count - desc->start_leb);
+	pebs_per_stripe = min_t(u64, (u64)tbl->pebs_per_stripe,
+					div_u64(pebs_per_fragment,
+						tbl->stripes_per_fragment));
+
+	return pebs_per_stripe;
+}
+
+/*
+ * ssdfs_maptbl_calculate_stripe_index() - calculate stripe index
+ * @tbl: pointer on mapping table object
+ * @desc: fragment descriptor
+ * @leb_id: LEB ID number
+ */
+static inline
+u64 ssdfs_maptbl_calculate_stripe_index(struct ssdfs_peb_mapping_table *tbl,
+					struct ssdfs_maptbl_fragment_desc *desc,
+					u64 leb_id)
+{
+	u64 leb_id_diff;
+	u64 pebs_per_stripe;
+	u64 stripe_index;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !desc);
+	BUG_ON(desc->start_leb >= tbl->pebs_count);
+
+	SSDFS_DBG("leb_id %llu\n", leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	leb_id_diff = leb_id - desc->start_leb;
+	pebs_per_stripe = MAPTBL_PEBS_PER_STRIPE(tbl, desc);
+	stripe_index = div_u64(leb_id_diff, pebs_per_stripe);
+
+	return stripe_index;
+}
+
+/*
  * ssdfs_maptbl_define_pebtbl_folio() - define PEB table's folio index
  * @tbl: pointer on mapping table object
  * @desc: fragment descriptor
@@ -4545,10 +4690,13 @@ pgoff_t ssdfs_maptbl_define_pebtbl_folio(struct ssdfs_peb_mapping_table *tbl,
 
 	if (peb_desc_index >= U16_MAX) {
 		leb_id_diff = leb_id - desc->start_leb;
-		stripe_index = div_u64(leb_id_diff, tbl->pebs_per_stripe);
+		stripe_index = ssdfs_maptbl_calculate_stripe_index(tbl,
+								   desc,
+								   leb_id);
 		folio_index = leb_id_diff -
-				(stripe_index * tbl->pebs_per_stripe);
-		folio_index = div_u64(folio_index, desc->pebs_per_page);
+			(stripe_index * MAPTBL_PEBS_PER_STRIPE(tbl, desc));
+		folio_index = div_u64(folio_index,
+					MAPTBL_PEBS_PER_STRIPE(tbl, desc));
 		folio_index += stripe_index * desc->stripe_pages;
 		folio_index += desc->lebtbl_pages;
 
@@ -5539,10 +5687,11 @@ ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
  * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
+ * @peb_type: PEB type
  */
 void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 				     struct ssdfs_maptbl_fragment_desc *fdesc,
-				     u64 leb_id)
+				     u64 leb_id, u8 peb_type)
 {
 	u32 fragment_index;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5577,6 +5726,43 @@ void ssdfs_maptbl_set_fragment_dirty(struct ssdfs_peb_mapping_table *tbl,
 	BUG_ON(fragment_index == U32_MAX);
 	BUG_ON(fragment_index >= tbl->fragments_count);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (atomic_read(&tbl->fsi->global_fs_state)) {
+	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
+	case SSDFS_REGULAR_FS_OPERATIONS:
+	case SSDFS_METADATA_GOING_FLUSHING:
+	case SSDFS_METADATA_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
+	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
+		/* continue logic */
+		break;
+
+	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+		if (peb_type != SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
+			/*
+			 * Unexpected state.
+			 */
+			SSDFS_WARN("unexpected global FS state: "
+				   "state %#x\n",
+				   atomic_read(&tbl->fsi->global_fs_state));
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+		break;
+
+	default:
+		/*
+		 * Unexpected state.
+		 */
+		SSDFS_WARN("unexpected global FS state: "
+			   "state %#x\n",
+			   atomic_read(&tbl->fsi->global_fs_state));
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		break;
+	}
 
 	mutex_lock(&tbl->bmap_lock);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5903,7 +6089,7 @@ finish_inconsistent_case:
 
 		if (!err) {
 			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
-							leb_id);
+							leb_id, peb_type);
 		}
 		break;
 
@@ -5970,7 +6156,7 @@ finish_pre_deleted_case:
 
 		if (!err) {
 			ssdfs_maptbl_set_fragment_dirty(tbl, fdesc,
-							leb_id);
+							leb_id, peb_type);
 		}
 		break;
 
@@ -6303,26 +6489,20 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_fs_info *fsi,
 				(unused_pebs * 20) / 100);
 
 	if (reserved_pebs > new_reservation) {
-		u64 free_pages;
 		u64 new_free_pages;
 		u16 new_unused_pebs = reserved_pebs - new_reservation;
 
 		hdr->reserved_pebs = cpu_to_le16(new_reservation);
 		desc->reserved_pebs -= new_unused_pebs;
 
-		spin_lock(&fsi->volume_state_lock);
 		new_free_pages = (u64)new_unused_pebs * fsi->pages_per_peb;
-		fsi->free_pages += new_free_pages;
-		free_pages = fsi->free_pages;
-		spin_unlock(&fsi->volume_state_lock);
+		ssdfs_increase_volume_free_pages(fsi, new_free_pages);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("free_pages %llu, new_free_pages %llu\n",
-			  free_pages, new_free_pages);
 		SSDFS_DBG("reserved_pebs %u, new_reservation %u, "
-			  "desc->reserved_pebs %u\n",
+			  "desc->reserved_pebs %u, new_free_pages %llu\n",
 			  reserved_pebs, new_reservation,
-			  desc->reserved_pebs);
+			  desc->reserved_pebs, new_free_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		return 0;
@@ -7235,26 +7415,14 @@ int ssdfs_maptbl_reserve_free_pages(struct ssdfs_fs_info *fsi)
 	return err;
 }
 
-static
+static inline
 void ssdfs_maptbl_free_reserved_pages(struct ssdfs_fs_info *fsi)
 {
-	u64 free_pages = 0;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	spin_lock(&fsi->volume_state_lock);
-	fsi->free_pages += fsi->pages_per_peb;
-	free_pages = fsi->free_pages;
-	spin_unlock(&fsi->volume_state_lock);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("free_pages %llu\n",
-		  free_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return;
+	ssdfs_increase_volume_free_pages(fsi, fsi->pages_per_peb);
 }
 
 static inline
@@ -7330,6 +7498,7 @@ bool can_peb_be_reserved(struct ssdfs_fs_info *fsi,
  * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
  * @leb_id: LEB ID number
+ * @start_peb_id: fragment's starting PEB ID number
  * @peb_type: type of the PEB
  * @pebr: description of PEBs relation [out]
  *
@@ -7356,7 +7525,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	void *kaddr;
 	struct ssdfs_peb_table_fragment_header *hdr;
 	pgoff_t folio_index;
-	int stripe_id = 0;
+	u32 stripe_id;
 	u16 pebs_count;
 	u32 stripe_pebs_count;
 	int err = 0;
@@ -7380,7 +7549,12 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	fsi = tbl->fsi;
 	stripe_pebs_count = (u32)fdesc->pebs_per_page * fdesc->stripe_pages;
 
-try_next_stripe:
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(fdesc->start_leb > start_peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	stripe_id = ssdfs_maptbl_calculate_stripe_index(tbl, fdesc,
+							start_peb_id);
 	folio_index = ssdfs_maptbl_define_pebtbl_folio(tbl, fdesc,
 							start_peb_id,
 							U16_MAX);
@@ -7390,6 +7564,15 @@ try_next_stripe:
 			  "start_peb_id %llu\n", start_peb_id);
 		goto finish_fragment_change;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("start_peb_id %llu, fdesc->start_leb %llu, "
+		  "tbl->pebs_per_stripe %u, stripe_id %u, "
+		  "folio_index %lu\n",
+		  start_peb_id, fdesc->start_leb,
+		  tbl->pebs_per_stripe, stripe_id,
+		  folio_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
 	if (IS_ERR_OR_NULL(folio)) {
@@ -7409,6 +7592,12 @@ try_next_stripe:
 			  "stripe_id %u != hdr->stripe_id %u\n",
 			  stripe_id,
 			  le16_to_cpu(hdr->stripe_id));
+		SSDFS_ERR("start_peb_id %llu, fdesc->start_leb %llu, "
+			  "tbl->pebs_per_stripe %u, stripe_id %u, "
+			  "folio_index %lu\n",
+			  start_peb_id, fdesc->start_leb,
+			  tbl->pebs_per_stripe, stripe_id,
+			  folio_index);
 		goto finish_folio_processing;
 	}
 
@@ -7585,23 +7774,25 @@ finish_folio_processing:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err == -EACCES || err == -ENOENT) {
-		if (stripe_id < tbl->stripes_per_fragment) {
-			err = 0;
-			stripe_id++;
-			start_peb_id += pebs_count;
+		err = -ENOENT;
+
+		if ((stripe_id + 1) < tbl->stripes_per_fragment) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to map: "
 				  "try next stripe: stripe_id %u, "
-				  "start_peb_id %llu\n",
-				  stripe_id, start_peb_id);
+				  "start_peb_id %llu, "
+				  "stripes_per_fragment %u\n",
+				  stripe_id, start_peb_id,
+				  tbl->stripes_per_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto try_next_stripe;
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to map: "
 				  "no more stripes: stripe_id %u, "
-				  "start_peb_id %llu\n",
-				  stripe_id, start_peb_id);
+				  "start_peb_id %llu, "
+				  "stripes_per_fragment %u\n",
+				  stripe_id, start_peb_id,
+				  tbl->stripes_per_fragment);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}
@@ -7825,7 +8016,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 finish_mapping:
 	up_read(&tbl->tbl_lock);
@@ -8657,7 +8848,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 finish_change_state:
 	up_read(&tbl->tbl_lock);
@@ -9036,7 +9227,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	if (should_cache_peb_info(peb_type)) {
 		err = ssdfs_maptbl_cache_forget_leb2peb(cache, leb_id,
@@ -9218,8 +9409,10 @@ int ssdfs_maptbl_set_pre_erased_snapshot_peb(struct ssdfs_fs_info *fsi,
 finish_fragment_change:
 	up_write(&fdesc->lock);
 
-	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, peb_id);
+	if (!err) {
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, peb_id,
+					SSDFS_MAPTBL_UNKNOWN_PEB_TYPE);
+	}
 
 finish_change_state:
 	wake_up(&tbl->wait_queue);
@@ -9855,7 +10048,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 finish_add_migrating_peb:
 	up_read(&tbl->tbl_lock);
@@ -10124,7 +10317,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 finish_erase_reserved_peb:
 	up_read(&tbl->tbl_lock);
@@ -10664,7 +10857,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 finish_exclude_migrating_peb:
 	up_read(&tbl->tbl_lock);
@@ -10904,7 +11097,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	return err;
 }
@@ -11132,7 +11325,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	return err;
 }
@@ -11456,7 +11649,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	return err;
 }
@@ -11759,7 +11952,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	return err;
 }
@@ -12007,7 +12200,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	return err;
 }
@@ -12374,7 +12567,7 @@ finish_fragment_change:
 	up_write(&fdesc->lock);
 
 	if (!err)
-		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id);
+		ssdfs_maptbl_set_fragment_dirty(tbl, fdesc, leb_id, peb_type);
 
 	return err;
 }
@@ -12708,7 +12901,6 @@ int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count, int type)
 			goto finish_reserve_free_pages;
 		}
 	} else if (err == -ENOSPC) {
-		DEFINE_WAIT(wait);
 		err = 0;
 
 		wake_up_all(&fsi->shextree->wait_queue);
@@ -12718,10 +12910,21 @@ int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count, int type)
 			wake_up_all(&fsi->gc_wait_queue[i]);
 		}
 
-		prepare_to_wait(&fsi->maptbl->erase_ops_end_wq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
-		finish_wait(&fsi->maptbl->erase_ops_end_wq, &wait);
+		if (atomic_read(&fsi->maptbl->pre_erase_pebs) > 0) {
+			wait_queue_head_t *erase_ops_end_wq =
+					&fsi->maptbl->erase_ops_end_wq;
+			atomic_t *pre_erase_pebs =
+					&fsi->maptbl->pre_erase_pebs;
+			int old_pre_erase_pebs = atomic_read(pre_erase_pebs);
+
+			while (old_pre_erase_pebs >=
+						atomic_read(pre_erase_pebs)) {
+				wait_event_killable_timeout(*erase_ops_end_wq,
+					old_pre_erase_pebs >=
+						atomic_read(pre_erase_pebs),
+					HZ);
+			}
+		}
 
 		err = ssdfs_try2increase_free_pages(fsi);
 		if (err == -ENOSPC) {

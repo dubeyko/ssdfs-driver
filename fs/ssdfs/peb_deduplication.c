@@ -58,6 +58,7 @@ int ssdfs_calculate_fingerprint(struct ssdfs_peb_info *pebi,
 	BUG_ON(!req || !hash);
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
+	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
 
 	SSDFS_DBG("ino %llu, seg_id %llu, logical_offset %llu, "
 		  "processed_blks %d, logical_block %u, data_bytes %u, "
@@ -158,6 +159,7 @@ bool is_data_size_fingerprint_ready(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
+	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
 
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, "
 		  "peb_index %u, logical_offset %llu, "
@@ -219,6 +221,7 @@ bool is_ssdfs_block_duplicated(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
+	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
 
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, "
 		  "peb_index %u, logical_offset %llu, "
@@ -355,6 +358,7 @@ int ssdfs_peb_deduplicate_logical_block(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
+	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
 
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, "
 		  "peb_index %u, logical_offset %llu, "
@@ -436,6 +440,7 @@ int ssdfs_peb_save_fingerprint(struct ssdfs_peb_info *pebi,
 	BUG_ON(!pebi->pebc->parent_si || !pebi->pebc->parent_si->fsi);
 	BUG_ON(req->place.len >= U16_MAX);
 	BUG_ON(req->result.processed_blks > req->place.len);
+	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
 
 	SSDFS_DBG("ino %llu, seg %llu, peb %llu, "
 		  "peb_index %u, logical_offset %llu, "

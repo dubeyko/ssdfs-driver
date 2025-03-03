@@ -224,6 +224,7 @@ void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
 
 		if (si) {
 			wait_queue_head_t *wq = &si->object_queue;
+			int res;
 			int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -233,13 +234,21 @@ void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
 			if (atomic_read(&si->refs_count) > 0) {
 				ssdfs_folio_unlock(folio);
 
-				err = wait_event_killable_timeout(*wq,
+				res = wait_event_killable_timeout(*wq,
 					atomic_read(&si->refs_count) <= 0,
 					SSDFS_DEFAULT_TIMEOUT);
-				if (err < 0)
-					WARN_ON(err < 0);
-				else
-					err = 0;
+				if (res < 0) {
+					err = res;
+					WARN_ON(1);
+				} else if (res > 1) {
+					/*
+					 * Condition changed before timeout
+					 */
+				} else {
+					/* timeout is elapsed */
+					err = -ERANGE;
+					WARN_ON(1);
+				}
 
 				ssdfs_folio_lock(folio);
 			}

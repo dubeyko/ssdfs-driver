@@ -71,7 +71,8 @@ void ssdfs_current_segment_lock(struct ssdfs_current_segment *cur_seg);
 void ssdfs_current_segment_unlock(struct ssdfs_current_segment *cur_seg);
 
 int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
-			      struct ssdfs_segment_info *si);
+			      struct ssdfs_segment_info *si,
+			      struct ssdfs_segment_search_state *state);
 void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg);
 
 #endif /* _SSDFS_CURRENT_SEGMENT_H */

@@ -21,6 +21,11 @@ enum {
 	SSDFS_REGULAR_FS_OPERATIONS,
 	SSDFS_METADATA_GOING_FLUSHING,
 	SSDFS_METADATA_UNDER_FLUSH,
+	SSDFS_UNMOUNT_METADATA_GOING_FLUSHING,
+	SSDFS_UNMOUNT_METADATA_UNDER_FLUSH,
+	SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH,
+	SSDFS_UNMOUNT_COMMIT_SUPERBLOCK,
+	SSDFS_UNMOUNT_DESTROY_METADATA,
 	SSDFS_GLOBAL_FS_STATE_MAX
 };
 
@@ -462,8 +467,12 @@ struct ssdfs_tunefs_request_copy {
  * @sb_lebs: array of LEB ID numbers
  * @sb_pebs: array of PEB ID numbers
  * @segbmap: segment bitmap object
+ * @segbmap_users: current number of segment bitmap's users
+ * @segbmap_users_wq: waiting queue of finishing segbmap operations before umount
  * @maptbl: PEB mapping table object
  * @maptbl_cache: maptbl cache
+ * @maptbl_users: current number of mapping table's users
+ * @maptbl_users_wq: waiting queue of finishing maptbl operations before umount
  * @segs_tree: tree of segment objects
  * @cur_segs: array of current segments
  * @shextree: shared extents tree
@@ -533,6 +542,7 @@ struct ssdfs_fs_info {
 	u16 user_data_log_pages;
 
 	atomic_t global_fs_state;
+	struct completion mount_end;
 
 	spinlock_t volume_state_lock;
 	u64 free_pages;
@@ -565,8 +575,14 @@ struct ssdfs_fs_info {
 	u64 sb_pebs[SSDFS_SB_CHAIN_MAX][SSDFS_SB_SEG_COPY_MAX];
 
 	struct ssdfs_segment_bmap *segbmap;
+	atomic_t segbmap_users;
+	wait_queue_head_t segbmap_users_wq;
+
 	struct ssdfs_peb_mapping_table *maptbl;
 	struct ssdfs_maptbl_cache maptbl_cache;
+	atomic_t maptbl_users;
+	wait_queue_head_t maptbl_users_wq;
+
 	struct ssdfs_segment_tree *segs_tree;
 	struct ssdfs_current_segs_array *cur_segs;
 
@@ -616,6 +632,11 @@ struct ssdfs_fs_info {
 	/* /sys/fs/<ssdfs>/<device>/segments */
 	struct kobject segments_kobj;
 	struct completion segments_kobj_unregister;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	spinlock_t requests_lock;
+	struct list_head user_data_requests_list;
+#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_t ssdfs_writeback_folios;

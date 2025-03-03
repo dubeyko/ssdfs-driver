@@ -79,8 +79,7 @@ enum {
  * @used_or_dirty_segs: count of used, pre-dirty, dirty or reserved segments
  * @bad_segs: count of bad segments in fragment
  * @init_end: wait of init ending
- * @flush_req1: main flush request
- * @flush_req2: backup flush request
+ * @flush_pairs: array of flush requests
  */
 struct ssdfs_segbmap_fragment_desc {
 	int state;
@@ -89,8 +88,12 @@ struct ssdfs_segbmap_fragment_desc {
 	u16 used_or_dirty_segs;
 	u16 bad_segs;
 	struct completion init_end;
-	struct ssdfs_segment_request flush_req1;
-	struct ssdfs_segment_request flush_req2;
+
+#define SSDFS_SEGBMAP_FLUSH_REQS_MAX		(2)
+	struct {
+		struct ssdfs_segment_info *si;
+		struct ssdfs_segment_request req;
+	} flush_pairs[SSDFS_SEGBMAP_FLUSH_REQS_MAX];
 };
 
 /* Fragment's state */

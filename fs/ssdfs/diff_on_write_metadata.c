@@ -1550,6 +1550,16 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 
 	table = si->blk2off_table;
 
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			return err;
+		}
+	}
+
 	for (i = 0; i < len; i++) {
 		u32 cur_blk = logical_blk + i;
 
@@ -1558,23 +1568,6 @@ int ssdfs_btree_node_ready_for_diff(struct ssdfs_btree_node *node)
 							   &peb_index,
 							   &migration_state,
 							   &pos);
-		if (IS_ERR(blk_desc_off) && PTR_ERR(blk_desc_off) == -EAGAIN) {
-			struct completion *end = &table->full_init_end;
-
-			err = SSDFS_WAIT_COMPLETION(end);
-			if (unlikely(err)) {
-				SSDFS_ERR("blk2off init failed: "
-					  "err %d\n", err);
-				return err;
-			}
-
-			blk_desc_off = ssdfs_blk2off_table_convert(table,
-							    cur_blk,
-							    &peb_index,
-							    &migration_state,
-							    &pos);
-		}
-
 		if (IS_ERR_OR_NULL(blk_desc_off)) {
 			err = (blk_desc_off ==
 				    NULL ? -ERANGE : PTR_ERR(blk_desc_off));
@@ -2206,6 +2199,16 @@ int ssdfs_btree_node_prepare_diff(struct ssdfs_btree_node *node)
 
 	ssdfs_request_define_volume_extent((u16)logical_blk, (u16)len,
 					   &node->flush_req);
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			return err;
+		}
+	}
 
 	err = ssdfs_segment_node_diff_on_write_async(si,
 						     SSDFS_REQ_ASYNC_NO_FREE,

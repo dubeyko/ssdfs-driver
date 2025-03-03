@@ -227,6 +227,9 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 	int start_pos;
 	u8 found_flush_threads = 0;
 	int peb_free_pages;
+	int peb_invalid_pages;
+	int available_free_pages;
+	int seg_state;
 	int i;
 	int err;
 
@@ -240,8 +243,14 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 		  si->seg_id, max_free_pages->value, max_free_pages->pos);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!need_select_flush_threads(atomic_read(&si->seg_state)) ||
-	    atomic_read(&si->blk_bmap.seg_free_blks) == 0) {
+	available_free_pages = atomic_read(&si->blk_bmap.seg_free_blks);
+	available_free_pages += atomic_read(&si->blk_bmap.seg_invalid_blks);
+
+	down_read(&si->modification_lock);
+	seg_state = atomic_read(&si->seg_state);
+	up_read(&si->modification_lock);
+
+	if (!need_select_flush_threads(seg_state) || available_free_pages == 0) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu can't be used as current: \n",
 			  si->seg_id);
@@ -271,7 +280,18 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		if (peb_free_pages == 0 ||
+		peb_invalid_pages = ssdfs_peb_get_invalid_pages(pebc);
+		if (unlikely(peb_invalid_pages < 0)) {
+			err = peb_invalid_pages;
+			SSDFS_ERR("fail to calculate PEB's invalid pages: "
+				  "pebc %p, seg %llu, peb index %d, err %d\n",
+				  pebc, si->seg_id, i, err);
+			return err;
+		}
+
+		available_free_pages = peb_free_pages + peb_invalid_pages;
+
+		if (available_free_pages == 0 ||
 		    is_peb_joined_into_create_requests_queue(pebc))
 			continue;
 
@@ -301,7 +321,18 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		if (peb_free_pages == 0 ||
+		peb_invalid_pages = ssdfs_peb_get_invalid_pages(pebc);
+		if (unlikely(peb_invalid_pages < 0)) {
+			err = peb_invalid_pages;
+			SSDFS_ERR("fail to calculate PEB's invalid pages: "
+				  "pebc %p, seg %llu, peb index %d, err %d\n",
+				  pebc, si->seg_id, i, err);
+			return err;
+		}
+
+		available_free_pages = peb_free_pages + peb_invalid_pages;
+
+		if (available_free_pages == 0 ||
 		    is_peb_joined_into_create_requests_queue(pebc))
 			continue;
 
@@ -323,6 +354,7 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
  * ssdfs_current_segment_add() - prepare current segment
  * @cur_seg: pointer on current segment container
  * @si: pointer on segment object
+ * @search_state: segment search state [in|out]
  *
  * This function tries to make segment object @si as current.
  * If segment is "clean" or "using" then it can be a current
@@ -345,15 +377,17 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
  * %-EINVAL     - invalid input.
  */
 int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
-			      struct ssdfs_segment_info *si)
+			      struct ssdfs_segment_info *si,
+			      struct ssdfs_segment_search_state *search_state)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_value_pair max_free_pages;
 	int state;
 	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg || !si);
+	BUG_ON(!cur_seg || !si || !search_state);
 
 	if (!mutex_is_locked(&cur_seg->lock)) {
 		SSDFS_WARN("current segment container should be locked\n");
@@ -367,12 +401,21 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 
 	BUG_ON(!is_ssdfs_current_segment_empty(cur_seg));
 
+	fsi = cur_seg->fsi;
+
 	max_free_pages.value = 0;
 	max_free_pages.pos = -1;
 
+	search_state->result.free_pages = 0;
+	search_state->result.used_pages = 0;
+	search_state->result.invalid_pages = 0;
+
 	for (i = 0; i < si->pebs_count; i++) {
-		int peb_free_pages;
 		struct ssdfs_peb_container *pebc = &si->peb_array[i];
+		int peb_used_pages;
+		int peb_free_pages;
+		int peb_invalid_pages;
+		int available_free_pages;
 
 		peb_free_pages = ssdfs_peb_get_free_pages(pebc);
 		if (unlikely(peb_free_pages < 0)) {
@@ -389,8 +432,77 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 
-		if (max_free_pages.value < peb_free_pages) {
-			max_free_pages.value = peb_free_pages;
+		search_state->result.free_pages += peb_free_pages;
+
+		peb_used_pages = ssdfs_peb_get_used_data_pages(pebc);
+		if (unlikely(peb_used_pages < 0)) {
+			err = peb_used_pages;
+			SSDFS_ERR("fail to calculate PEB's used pages: "
+				  "pebc %p, seg %llu, peb index %d, err %d\n",
+				  pebc, si->seg_id, i, err);
+			return err;
+		} else if (peb_used_pages == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("seg %llu, peb_index %u, used_pages %d\n",
+				  si->seg_id, pebc->peb_index,
+				  peb_used_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
+		search_state->result.used_pages += peb_used_pages;
+
+		peb_invalid_pages = ssdfs_peb_get_invalid_pages(pebc);
+		if (unlikely(peb_invalid_pages < 0)) {
+			err = peb_invalid_pages;
+			SSDFS_ERR("fail to calculate PEB's invalid pages: "
+				  "pebc %p, seg %llu, peb index %d, err %d\n",
+				  pebc, si->seg_id, i, err);
+			return err;
+		} else if (peb_invalid_pages == 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("seg %llu, peb_index %u, invalid_pages %d\n",
+				  si->seg_id, pebc->peb_index,
+				  peb_invalid_pages);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+
+		search_state->result.invalid_pages += peb_invalid_pages;
+		available_free_pages = peb_free_pages + peb_invalid_pages;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg %llu, peb_index %u, free_pages %d, "
+			  "invalid_pages %d, available_free_pages %d\n",
+			  si->seg_id, pebc->peb_index,
+			  peb_free_pages, peb_invalid_pages,
+			  available_free_pages);
+
+		{
+			struct ssdfs_segment_blk_bmap *seg_blkbmap;
+			struct ssdfs_peb_blk_bmap *peb_blkbmap;
+			u32 metapages;
+			int peb_free_blks;
+
+			metapages =
+			    ssdfs_peb_estimate_reserved_metapages(fsi->pagesize,
+							     fsi->pages_per_peb,
+							     si->log_pages,
+							     fsi->pebs_per_seg,
+							     true);
+
+			seg_blkbmap = &si->blk_bmap;
+			peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+			peb_free_blks =
+				atomic_read(&peb_blkbmap->peb_free_blks);
+
+			SSDFS_DBG("metapages %u, peb_free_blks %d, "
+				  "log_pages %u\n",
+				  metapages, peb_free_blks,
+				  si->log_pages);
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (max_free_pages.value < available_free_pages) {
+			max_free_pages.value = available_free_pages;
 			max_free_pages.pos = i;
 		}
 	}
@@ -438,6 +550,11 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 
 	cur_seg->real_seg = si;
 	cur_seg->seg_id = si->seg_id;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("segment %llu added as current segment: seg_type %#x\n",
+		  si->seg_id, si->seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
@@ -515,6 +632,7 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 	init_rwsem(&fsi->cur_segs->lock);
 
 	for (i = 0; i < SSDFS_CUR_SEGS_COUNT; i++) {
+		struct ssdfs_segment_search_state search_state;
 		u64 seg;
 		size_t offset = i * sizeof(struct ssdfs_current_segment);
 		u8 *start_ptr = fsi->cur_segs->buffer;
@@ -617,11 +735,24 @@ fail_define_seg_state:
 			}
 		}
 
+		ssdfs_segment_search_state_init(&search_state,
+						seg_type, seg, U64_MAX);
+
 		ssdfs_current_segment_lock(object);
-		err = ssdfs_current_segment_add(object, si);
+		err = ssdfs_current_segment_add(object, si, &search_state);
 		ssdfs_current_segment_unlock(object);
 
 		if (err == -ENOSPC) {
+			if (!is_ssdfs_segment_ready_for_requests(si)) {
+				err = ssdfs_wait_segment_init_end(si);
+				if (unlikely(err)) {
+					SSDFS_ERR("segment initialization failed: "
+						  "seg %llu, err %d\n",
+						  si->seg_id, err);
+					goto destroy_cur_segs;
+				}
+			}
+
 			err = ssdfs_segment_change_state(si);
 			if (unlikely(err)) {
 				SSDFS_ERR("fail to change segment's state: "

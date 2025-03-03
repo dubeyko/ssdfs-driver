@@ -1196,6 +1196,11 @@ finish_write_inode:
 free_search_object:
 	ssdfs_btree_search_free(search);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: ino %lu, err %d\n",
+		  (unsigned long)inode->i_ino, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 

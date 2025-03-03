@@ -1012,6 +1012,7 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	struct ssdfs_blk2off_table *table;
 	struct ssdfs_offset_position pos;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
 	struct ssdfs_request_content_block *block;
 	struct ssdfs_content_block *blk_state;
 	struct folio *folio;
@@ -1042,8 +1043,11 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	BUG_ON(seg_id == U64_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
-				seg_id, U64_MAX);
+	ssdfs_segment_search_state_init(&seg_search,
+					SSDFS_USER_DATA_SEG_TYPE,
+					seg_id, U64_MAX);
+
+	si = ssdfs_grab_segment(fsi, &seg_search);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		err = !si ? -ENOMEM : PTR_ERR(si);
 		if (err == -EINTR) {
@@ -1058,13 +1062,23 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 		goto fail_get_segment;
 	}
 
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			goto finish_prepare_request;
+		}
+	}
+
 	blob_size = le16_to_cpu(xattr->blob_len);
 
 	if (blob_size > size) {
 		err = -EINVAL;
 		SSDFS_ERR("invalid request: blob_size %u > size %zu\n",
 			  blob_size, size);
-		goto fail_get_segment;
+		goto finish_prepare_request;
 	}
 
 	batch_size = blob_size >> fsi->log_pagesize;
@@ -1124,23 +1138,6 @@ int ssdfs_xattr_read_external_blob(struct ssdfs_fs_info *fsi,
 	table = si->blk2off_table;
 
 	err = ssdfs_blk2off_table_get_offset_position(table, logical_blk, &pos);
-	if (err == -EAGAIN) {
-		end = &table->full_init_end;
-
-		err = SSDFS_WAIT_COMPLETION(end);
-		if (unlikely(err)) {
-			SSDFS_ERR("blk2off init failed: "
-				  "seg_id %llu, logical_blk %u, "
-				  "len %u, err %d\n",
-				  seg_id, logical_blk, len, err);
-			goto fail_read_blob;
-		}
-
-		err = ssdfs_blk2off_table_get_offset_position(table,
-							      logical_blk,
-							      &pos);
-	}
-
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to convert: "
 			  "seg_id %llu, logical_blk %u, len %u, err %d\n",
@@ -1243,7 +1240,7 @@ finish_copy_operation:
 	ssdfs_request_unlock_and_remove_folios(req);
 
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, si);
 
 	ssdfs_segment_put_object(si);
 
@@ -1252,7 +1249,7 @@ finish_copy_operation:
 fail_read_blob:
 	ssdfs_request_unlock_and_remove_folios(req);
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, si);
 
 finish_prepare_request:
 	ssdfs_segment_put_object(si);

@@ -1784,7 +1784,7 @@ finish_save_external_blob:
 
 	ssdfs_reinit_request_content(req);
 	ssdfs_put_request(req);
-	ssdfs_request_free(req);
+	ssdfs_request_free(req, NULL);
 
 free_reserved_page:
 	spin_lock(&fsi->volume_state_lock);

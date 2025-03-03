@@ -486,7 +486,13 @@ static ssize_t ssdfs_seg_seg_state_show(struct ssdfs_seg_attr *attr,
 					struct ssdfs_segment_info *si,
 					char *buf)
 {
-	switch(atomic_read(&si->seg_state)) {
+	int seg_state;
+
+	down_read(&si->modification_lock);
+	seg_state = atomic_read(&si->seg_state);
+	up_read(&si->modification_lock);
+
+	switch(seg_state) {
 	case SSDFS_SEG_CLEAN:
 		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_CLEAN\n");
 
