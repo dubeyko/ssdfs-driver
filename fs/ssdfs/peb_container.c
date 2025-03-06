@@ -2791,7 +2791,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 		  pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX].consistency);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	down_write(&pebc->lock);
+	ssdfs_peb_container_lock(pebc);
 
 	mtblpd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
 
@@ -2973,7 +2973,7 @@ try_process_relation:
 	atomic_inc(&si->migration.migrating_pebs);
 
 start_container_threads:
-	up_write(&pebc->lock);
+	ssdfs_peb_container_unlock(pebc);
 
 	err = ssdfs_peb_container_start_threads(pebc, src_peb_state,
 						dst_peb_state,
@@ -3105,7 +3105,7 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 		}
 	}
 
-	down_write(&ptr->lock);
+	ssdfs_peb_container_lock(ptr);
 
 	switch (atomic_read(&ptr->items_state)) {
 	case SSDFS_PEB_CONTAINER_EMPTY:
@@ -3195,7 +3195,7 @@ void ssdfs_peb_container_destroy(struct ssdfs_peb_container *ptr)
 	memset(ptr->items, 0,
 		sizeof(struct ssdfs_peb_info) * SSDFS_SEG_PEB_ITEMS_MAX);
 
-	up_write(&ptr->lock);
+	ssdfs_peb_container_unlock(ptr);
 
 	atomic_set(&ptr->migration_state, SSDFS_PEB_UNKNOWN_MIGRATION_STATE);
 	atomic_set(&ptr->items_state, SSDFS_PEB_CONTAINER_EMPTY);
