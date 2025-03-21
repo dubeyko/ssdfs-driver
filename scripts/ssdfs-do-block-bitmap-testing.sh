@@ -40,9 +40,251 @@ modprobe ssdfs || exit 1
 
 # BLOCK BITMAP TESTING
 
+capacity=32
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=100
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=500
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=1000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=10000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=50000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=100000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=250000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=500000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=750000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
+capacity=1000000
+pre_alloc=1
+alloc=1
+invalidate=1
+reserve=1
+
+mount -t ssdfs $loop_device $mount_point || exit 1
+
+echo "Successfully mounted $image on $mount_point"
+
+sudo touch $mount_point/$test_file || exit 1
+
+echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $capacity"
+
+sudo test.ssdfs -s block_bitmap -b capacity=$capacity,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
+
+sudo rm $mount_point/$test_file
+
+sudo umount $mount_point
+
+echo "Unmounted $mount_point"
+
 i=1
 iterations=10
-capacity=1000000
+capacity=1000
 count=32
 pre_alloc=1
 alloc=1
@@ -60,7 +302,7 @@ sudo touch $mount_point/$test_file || exit 1
 
 echo "BLOCK BITMAP: PRE_ALLOC $pre_alloc ALLOC $alloc INVALIDATE $invalidate RESERVE $reserve CAPACITY $count"
 
-sudo test.ssdfs -s block_bitmap -b capacity=$count,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file
+sudo test.ssdfs -s block_bitmap -b capacity=$count,pre-alloc=$pre_alloc,alloc=$alloc,invalidate=$invalidate,reserve=$reserve  $mount_point/$test_file || exit 1
 
 sudo rm $mount_point/$test_file
 

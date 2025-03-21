@@ -1439,7 +1439,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 						 peb_pages_off, true);
 		cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 		cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
-		if (err == -EIO || cno1 >= cno2) {
+		if (err == -EIO || err == -ENOENT || cno1 >= cno2) {
 			void *buf = fsi->sbi_backup.vh_buf;
 
 			copy_peb = ssdfs_swap_current_sb_peb(buf, peb);
@@ -1468,7 +1468,8 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 				SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
 		}
 
-		if (err == -ENODATA || err == -EIO || cno1 >= cno2) {
+		if (err == -ENODATA || err == -ENOENT ||
+		    err == -EIO || cno1 >= cno2) {
 			err = !err ? -EIO : err;
 			high_off = cur_off;
 		} else if (err) {
@@ -1485,7 +1486,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	} while (cur_off > low_off && cur_off < high_off);
 
 	if (err) {
-		if (err == -ENODATA) {
+		if (err == -ENODATA || err == -ENOENT) {
 			/* previous read log was valid */
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1684,7 +1685,7 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 	cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 	cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
 
-	if (err == -EIO || cno1 >= cno2) {
+	if (err == -EIO || err == -ENOENT || cno1 >= cno2) {
 		void *buf = fsi->sbi_backup.vh_buf;
 
 		copy_peb = ssdfs_swap_current_sb_peb(buf, peb);
@@ -1717,7 +1718,7 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 
 finish_find_latest_sb_info:
 	if (err) {
-		if (err == -ENODATA) {
+		if (err == -ENODATA || err == -ENOENT) {
 			/* previous read log was valid */
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG

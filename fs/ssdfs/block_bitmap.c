@@ -754,6 +754,10 @@ int ssdfs_calculate_items_for_state(struct ssdfs_block_bmap *blk_bmap,
 	} while (start_item < blk_bmap->items_capacity);
 
 finish_search:
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("calculated_items %d, blk_state %#x\n",
+		  calculated_items, blk_state);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return calculated_items;
 }
 
@@ -2512,6 +2516,14 @@ ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
 
 	array = &blk_bmap->storage.array;
 
+	if (ssdfs_folio_vector_count(array) > 0) {
+		u32 items_per_folio_vector;
+
+		items_per_folio_vector =
+			ssdfs_folio_vector_count(array) * items_per_page;
+		max_blk = min_t(u32, max_blk, items_per_folio_vector);
+	}
+
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
@@ -2639,7 +2651,7 @@ ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("start %u, max_blk %u, blk_state %#x, "
-				          "aligned_start %u, aligned_end %u, "
+					  "aligned_start %u, aligned_end %u, "
 					  "folio_index %d, byte_index %u, "
 					  "rest_bytes %u, search_bytes %u, "
 					  "start_off %u\n",
@@ -2650,10 +2662,23 @@ ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
 					  start_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-				start = aligned_start + items_per_byte;
+				start = upper_bound;
 				aligned_start = ALIGNED_START_BLK(start);
 
 				if (aligned_start < aligned_end) {
+#ifdef CONFIG_SSDFS_DEBUG
+					u32 folios_count =
+						ssdfs_folio_vector_count(array);
+
+					SSDFS_DBG("aligned_start %u, "
+						  "aligned_end %u, "
+						  "folio_index %d, "
+						  "folios_count %u\n",
+						  aligned_start,
+						  aligned_end,
+						  folio_index,
+						  folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 					/* continue search */
 					continue;
 				} else {
@@ -3321,6 +3346,14 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 
 	array = &bmap->storage.array;
 
+	if (ssdfs_folio_vector_count(array) > 0) {
+		u32 items_per_folio_vector;
+
+		items_per_folio_vector =
+			ssdfs_folio_vector_count(array) * items_per_page;
+		max_blk = min_t(u32, max_blk, items_per_folio_vector);
+	}
+
 	aligned_start = ALIGNED_START_BLK(start);
 	aligned_end = ALIGNED_END_BLK(max_blk);
 
@@ -3388,10 +3421,10 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("start %u, max_blk %u, blk_state %#x, "
-				          "aligned_start %u, aligned_end %u, "
-				          "folio_index %d, byte_index %u, "
-				          "rest_bytes %u, search_bytes %u, "
-				          "start_off %u\n",
+					  "aligned_start %u, aligned_end %u, "
+					  "folio_index %d, byte_index %u, "
+					  "rest_bytes %u, search_bytes %u, "
+					  "start_off %u\n",
 					  start, max_blk, blk_state,
 					  aligned_start, aligned_end,
 					  folio_index, byte_index,
@@ -3399,10 +3432,23 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 					  start_off);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-				start = aligned_start + items_per_byte;
+				start = upper_bound;
 				aligned_start = ALIGNED_START_BLK(start);
 
 				if (aligned_start < aligned_end) {
+#ifdef CONFIG_SSDFS_DEBUG
+					u32 folios_count =
+						ssdfs_folio_vector_count(array);
+
+					SSDFS_DBG("aligned_start %u, "
+						  "aligned_end %u, "
+						  "folio_index %d, "
+						  "folios_count %u\n",
+						  aligned_start,
+						  aligned_end,
+						  folio_index,
+						  folios_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 					/* continue search */
 					continue;
 				} else {
@@ -5003,6 +5049,9 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 	int free_pages;
 	u32 used_blks = 0;
 	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	int calculated;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5175,6 +5224,27 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		return err;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -5213,6 +5283,9 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 	int free_pages;
 	u32 used_blks = 0;
 	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	int calculated;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5391,6 +5464,27 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+#ifdef CONFIG_SSDFS_DEBUG
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		return err;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -5415,6 +5509,9 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 				struct ssdfs_block_bmap_range *range)
 {
+#ifdef CONFIG_SSDFS_DEBUG
+	int calculated;
+#endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5507,6 +5604,27 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_DBG("range (start %u, len %u) has been invalidated\n",
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+#ifdef CONFIG_SSDFS_DEBUG
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		return err;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }
