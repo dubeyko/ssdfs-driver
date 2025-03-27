@@ -649,12 +649,8 @@ finish_make_empty_dir:
 	return err;
 }
 
-/*
- * Create subdirectory.
- * The ssdfs_mkdir() is called by the mkdir(2) system call.
- */
-static int ssdfs_mkdir(struct mnt_idmap *idmap,
-			struct inode *dir, struct dentry *dentry, umode_t mode)
+static int __ssdfs_mkdir(struct mnt_idmap *idmap,
+			 struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
 	struct ssdfs_inode_info *dir_ii = SSDFS_I(dir);
@@ -710,6 +706,16 @@ out_fail:
 out_dir:
 	inode_dec_link_count(dir);
 	return err;
+}
+
+/*
+ * Create subdirectory.
+ * The ssdfs_mkdir() is called by the mkdir(2) system call.
+ */
+static struct dentry *ssdfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+				  struct dentry *dentry, umode_t mode)
+{
+	return ERR_PTR(__ssdfs_mkdir(idmap, dir, dentry, mode));
 }
 
 /*
