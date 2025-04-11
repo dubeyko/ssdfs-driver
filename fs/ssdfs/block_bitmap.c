@@ -3819,13 +3819,6 @@ int __ssdfs_set_range_in_memory(struct ssdfs_block_bmap *blk_bmap,
 	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
 		array = &blk_bmap->storage.array;
 
-		if (folio_index >= ssdfs_folio_vector_count(array)) {
-			SSDFS_ERR("invalid folio index %d, folio vec size %d\n",
-				  folio_index,
-				  ssdfs_folio_vector_count(array));
-			return -EINVAL;
-		}
-
 		if (folio_index >= ssdfs_folio_vector_capacity(array)) {
 			SSDFS_ERR("invalid folio index %d, "
 				  "folio vec capacity %d\n",
