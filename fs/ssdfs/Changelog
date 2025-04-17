@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.18 [April 16, 2025]
+    (*) Implement functionality of supporting not erasing the whole
+        volume during mkfs phase.
+
 v.5.17 [March 20, 2025]
     (*) Fix incorrect logic of calculation the starting item in
         next folio of block bitmap.

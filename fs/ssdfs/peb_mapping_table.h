@@ -141,7 +141,8 @@ struct ssdfs_maptbl_area {
  * @segs_count: count of segment objects are used for mapping table
  * @state: mapping table's state
  * @erase_op_state: state of erase operation
- * @pre_erase_pebs: count of PEBs in pre-erase state
+ * @min_pre_erase_pebs: minimum number of PEBs in pre-erase state
+ * @total_pre_erase_pebs: total number of PEBs in pre-erase state
  * @max_erase_ops: upper bound of erase operations for one iteration
  * @erase_ops_end_wq: wait queue of threads are waiting end of erase operation
  * @bmap_lock: dirty bitmap's lock
@@ -172,7 +173,8 @@ struct ssdfs_peb_mapping_table {
 	atomic_t state;
 
 	atomic_t erase_op_state;
-	atomic_t pre_erase_pebs;
+	atomic_t min_pre_erase_pebs;
+	atomic_t total_pre_erase_pebs;
 	atomic_t max_erase_ops;
 	wait_queue_head_t erase_ops_end_wq;
 
@@ -692,20 +694,14 @@ int ssdfs_maptbl_erase_peb(struct ssdfs_fs_info *fsi,
 int ssdfs_maptbl_correct_dirty_peb(struct ssdfs_peb_mapping_table *tbl,
 				   struct ssdfs_maptbl_fragment_desc *fdesc,
 				   struct ssdfs_erase_result *result);
+int __ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     struct ssdfs_peb_table_fragment_header *hdr,
+				     struct ssdfs_erase_result *res);
 int ssdfs_maptbl_erase_reserved_peb_now(struct ssdfs_fs_info *fsi,
 					u64 leb_id, u8 peb_type,
 					struct completion **end);
-
-#ifdef CONFIG_SSDFS_TESTING
 int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl);
-#else
-static inline
-int ssdfs_maptbl_erase_dirty_pebs_now(struct ssdfs_peb_mapping_table *tbl)
-{
-	SSDFS_ERR("function is not supported\n");
-	return -EOPNOTSUPP;
-}
-#endif /* CONFIG_SSDFS_TESTING */
 
 void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl);
 

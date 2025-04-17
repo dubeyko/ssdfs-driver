@@ -647,6 +647,14 @@ try_again:
 	fsi->pages_per_peb = fsi->erasesize / fsi->pagesize;
 	fsi->pebs_per_seg = 1 << vh->log_pebs_per_seg;
 
+	if (fsi->fs_ctime >= U64_MAX) {
+		fsi->fs_ctime = le64_to_cpu(vh->create_time);
+		ssdfs_memcpy(fsi->fs_uuid, 0, sizeof(fsi->fs_uuid),
+			     vh->uuid, 0, sizeof(vh->uuid),
+			     sizeof(vh->uuid));
+	} else if (fsi->fs_ctime > le64_to_cpu(vh->create_time))
+		goto try_again;
+
 	return 0;
 }
 
@@ -665,7 +673,14 @@ static int ssdfs_read_checked_sb_info(struct ssdfs_fs_info *fsi, u64 peb_id,
 
 	err = ssdfs_read_checked_segment_header(fsi, peb_id, PAGE_SIZE, pages_off,
 						fsi->sbi.vh_buf, silent);
-	if (err) {
+	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("header has older FS creation time: "
+			  "peb_id %llu, pages_off %u, err %d\n",
+			  peb_id, pages_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err) {
 		if (!silent) {
 			SSDFS_ERR("volume header is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
@@ -757,7 +772,14 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 	err = ssdfs_read_checked_segment_header(fsi, peb_id, PAGE_SIZE,
 						pages_off,
 						fsi->sbi.vh_buf, silent);
-	if (err) {
+	if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("header has older FS creation time: "
+			  "peb_id %llu, pages_off %u, err %d\n",
+			  peb_id, pages_off, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err) {
 		if (!silent) {
 			SSDFS_ERR("volume header is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
@@ -893,7 +915,14 @@ try_again:
 
 		err = ssdfs_read_checked_sb_info(fsi, peb_id,
 						 0, true);
-		if (err) {
+		if (err == -ENOENT) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("header has older FS creation time: "
+				  "peb_id %llu, err %d\n",
+				  peb_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			continue;
+		} else if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb_id %llu is corrupted: err %d\n",
 				  peb_id, err);
@@ -1648,6 +1677,13 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 
 		do {
 			u32 diff_pages;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("peb %llu, pages_per_peb %llu, "
+				  "log_pages %u, cur_off %u\n",
+				  peb, pages_per_peb,
+				  log_pages, cur_off);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			checking_page.leb_id = leb;
 			checking_page.peb_id = peb;
@@ -2501,6 +2537,10 @@ static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 	env->err = 0;
 	env->fsi = fsi;
 	env->pebs_per_volume = pebs_per_volume;
+	env->create_time = le64_to_cpu(vh->create_time);
+	ssdfs_memcpy(env->uuid, 0, sizeof(env->uuid),
+		     vh->uuid, 0, sizeof(vh->uuid),
+		     sizeof(env->uuid));
 
 	atomic_set(&env->state, SSDFS_RECOVERY_UNKNOWN_STATE);
 

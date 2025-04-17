@@ -5692,6 +5692,7 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	struct completion *end;
 	int items_state;
 	int used_pages, free_pages, invalid_pages;
+	int metadata_pages, pages_capacity;
 	int new_peb_state = SSDFS_MAPTBL_UNKNOWN_PEB_STATE;
 	u64 leb_id;
 	bool is_peb_exhausted = false;
@@ -5782,11 +5783,31 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
+		metadata_pages =
+			ssdfs_peb_blk_bmap_get_metadata_pages(peb_blkbmap);
+		if (metadata_pages < 0) {
+			err = metadata_pages;
+			SSDFS_ERR("fail to get metadata pages: err %d\n",
+				  err);
+			return err;
+		}
+
+		pages_capacity =
+			ssdfs_peb_blk_bmap_get_pages_capacity(peb_blkbmap);
+		if (pages_capacity < 0) {
+			err = pages_capacity;
+			SSDFS_ERR("fail to get pages capacity: err %d\n",
+				  err);
+			return err;
+		}
+
 		SSDFS_DBG("free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x, "
+			  "invalid_pages %d, metadata_pages %d, "
+			  "pages_capacity %d, is_peb_exhausted %#x, "
 			  "is_first_log_created %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted,
+			  invalid_pages, metadata_pages,
+			  pages_capacity, is_peb_exhausted,
 			  is_first_log_created);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -5797,9 +5818,11 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
@@ -5811,9 +5834,11 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (used_pages == 0) {
 				if (invalid_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
@@ -5920,11 +5945,31 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
+		metadata_pages =
+			ssdfs_peb_blk_bmap_get_metadata_pages(peb_blkbmap);
+		if (metadata_pages < 0) {
+			err = metadata_pages;
+			SSDFS_ERR("fail to get metadata pages: err %d\n",
+				  err);
+			return err;
+		}
+
+		pages_capacity =
+			ssdfs_peb_blk_bmap_get_pages_capacity(peb_blkbmap);
+		if (pages_capacity < 0) {
+			err = pages_capacity;
+			SSDFS_ERR("fail to get pages capacity: err %d\n",
+				  err);
+			return err;
+		}
+
 		SSDFS_DBG("free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x, "
+			  "invalid_pages %d, metadata_pages %d, "
+			  "pages_capacity %d, is_peb_exhausted %#x, "
 			  "is_first_log_created %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted,
+			  invalid_pages, metadata_pages,
+			  pages_capacity, is_peb_exhausted,
 			  is_first_log_created);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -5935,9 +5980,11 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
@@ -5949,9 +5996,11 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (used_pages == 0) {
 				if (invalid_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
@@ -6053,15 +6102,35 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
+		metadata_pages =
+			ssdfs_src_blk_bmap_get_metadata_pages(peb_blkbmap);
+		if (metadata_pages < 0) {
+			err = metadata_pages;
+			SSDFS_ERR("fail to get metadata pages: err %d\n",
+				  err);
+			return err;
+		}
+
+		pages_capacity =
+			ssdfs_src_blk_bmap_get_pages_capacity(peb_blkbmap);
+		if (pages_capacity < 0) {
+			err = pages_capacity;
+			SSDFS_ERR("fail to get pages capacity: err %d\n",
+				  err);
+			return err;
+		}
+
 		ssdfs_peb_current_log_lock(pebi);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("source PEB: free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x\n",
+			  "invalid_pages %d, metadata_pages %d, "
+			  "pages_capacity %d, is_peb_exhausted %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted);
+			  invalid_pages, metadata_pages,
+			  pages_capacity, is_peb_exhausted);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (free_pages == 0) {
@@ -6071,12 +6140,17 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
+					SSDFS_WARN("SRC PEB %llu, DST PEB %llu\n",
+						   pebc->src_peb->peb_id,
+						   pebc->dst_peb->peb_id);
 					return -ERANGE;
 				}
 
@@ -6085,12 +6159,17 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (used_pages == 0) {
 				if (invalid_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
+					SSDFS_WARN("SRC PEB %llu, DST PEB %llu\n",
+						   pebc->src_peb->peb_id,
+						   pebc->dst_peb->peb_id);
 					return -ERANGE;
 				}
 
@@ -6100,22 +6179,59 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				new_peb_state =
 				    SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
 			}
+		} else if (free_pages >= pages_capacity) {
+			SSDFS_ERR("invalid state: "
+				  "peb_id %llu, "
+				  "free_pages %d, "
+				  "used_pages %d, "
+				  "invalid_pages %d\n",
+				  pebi->peb_id,
+				  free_pages,
+				  used_pages,
+				  invalid_pages);
+			SSDFS_WARN("SRC PEB %llu, DST PEB %llu\n",
+				   pebc->src_peb->peb_id,
+				   pebc->dst_peb->peb_id);
+			return -ERANGE;
 		} else if (used_pages == 0) {
-			if (invalid_pages == 0) {
-				SSDFS_ERR("invalid state: "
-					  "free_pages %d, "
-					  "used_pages %d, "
-					  "invalid_pages %d\n",
-					  free_pages,
-					  used_pages,
-					  invalid_pages);
-				return -ERANGE;
-			}
-
 			if (is_peb_exhausted) {
+				if (invalid_pages == 0 && metadata_pages == 0) {
+					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
+						  "free_pages %d, "
+						  "used_pages %d, "
+						  "invalid_pages %d\n",
+						  pebi->peb_id,
+						  free_pages,
+						  used_pages,
+						  invalid_pages);
+					SSDFS_WARN("SRC PEB %llu, "
+						   "DST PEB %llu\n",
+						   pebc->src_peb->peb_id,
+						   pebc->dst_peb->peb_id);
+					return -ERANGE;
+				}
+
 				new_peb_state =
 					SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE;
 			} else {
+				if (invalid_pages == 0) {
+					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
+						  "free_pages %d, "
+						  "used_pages %d, "
+						  "invalid_pages %d\n",
+						  pebi->peb_id,
+						  free_pages,
+						  used_pages,
+						  invalid_pages);
+					SSDFS_WARN("SRC PEB %llu, "
+						   "DST PEB %llu\n",
+						   pebc->src_peb->peb_id,
+						   pebc->dst_peb->peb_id);
+					return -ERANGE;
+				}
+
 				new_peb_state =
 					SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
 			}
@@ -6201,11 +6317,31 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		ssdfs_peb_current_log_unlock(pebi);
 
 #ifdef CONFIG_SSDFS_DEBUG
+		metadata_pages =
+			ssdfs_dst_blk_bmap_get_metadata_pages(peb_blkbmap);
+		if (metadata_pages < 0) {
+			err = metadata_pages;
+			SSDFS_ERR("fail to get metadata pages: err %d\n",
+				  err);
+			return err;
+		}
+
+		pages_capacity =
+			ssdfs_dst_blk_bmap_get_pages_capacity(peb_blkbmap);
+		if (pages_capacity < 0) {
+			err = pages_capacity;
+			SSDFS_ERR("fail to get pages capacity: err %d\n",
+				  err);
+			return err;
+		}
+
 		SSDFS_DBG("destination PEB: free_pages %d, used_pages %d, "
-			  "invalid_pages %d, is_peb_exhausted %#x, "
+			  "invalid_pages %d, metadata_pages %d, "
+			  "pages_capacity %d, is_peb_exhausted %#x, "
 			  "is_first_log_created %#x\n",
 			  free_pages, used_pages,
-			  invalid_pages, is_peb_exhausted,
+			  invalid_pages, metadata_pages,
+			  pages_capacity, is_peb_exhausted,
 			  is_first_log_created);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6216,12 +6352,17 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (invalid_pages == 0) {
 				if (used_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
+					SSDFS_WARN("SRC PEB %llu, DST PEB %llu\n",
+						   pebc->src_peb->peb_id,
+						   pebc->dst_peb->peb_id);
 					return -ERANGE;
 				}
 
@@ -6230,12 +6371,17 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			} else if (used_pages == 0) {
 				if (invalid_pages == 0) {
 					SSDFS_ERR("invalid state: "
+						  "peb_id %llu, "
 						  "free_pages %d, "
 						  "used_pages %d, "
 						  "invalid_pages %d\n",
+						  pebi->peb_id,
 						  free_pages,
 						  used_pages,
 						  invalid_pages);
+					SSDFS_WARN("SRC PEB %llu, DST PEB %llu\n",
+						   pebc->src_peb->peb_id,
+						   pebc->dst_peb->peb_id);
 					return -ERANGE;
 				}
 

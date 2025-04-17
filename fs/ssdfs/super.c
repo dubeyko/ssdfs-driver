@@ -2948,6 +2948,8 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	atomic64_set(&fs_info->ssdfs_writeback_folios, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
+	fs_info->fs_ctime = U64_MAX;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	spin_lock_init(&fs_info->requests_lock);
 	INIT_LIST_HEAD(&fs_info->user_data_requests_list);
@@ -3642,6 +3644,12 @@ static void ssdfs_put_super(struct super_block *sb)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	wait_unfinished_user_data_requests(fsi);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("Wait unfinished commit log requests...\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	wait_unfinished_commit_log_requests(fsi);
 
 	if (!(sb->s_flags & SB_RDONLY)) {
 		atomic_set(&fsi->global_fs_state,

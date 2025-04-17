@@ -121,6 +121,8 @@ bool is_ssdfs_peb_blk_bmap_dirty(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_peb_blk_bmap_get_metadata_pages(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_peb_blk_bmap_get_pages_capacity(struct ssdfs_peb_blk_bmap *ptr);
 
 int ssdfs_peb_define_reserved_pages_per_log(struct ssdfs_peb_blk_bmap *bmap);
 int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
@@ -161,8 +163,12 @@ int ssdfs_peb_blk_bmap_finish_migration(struct ssdfs_peb_blk_bmap *bmap);
 int ssdfs_src_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_src_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_src_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_src_blk_bmap_get_metadata_pages(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_src_blk_bmap_get_pages_capacity(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_dst_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_dst_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_dst_blk_bmap_get_invalid_pages(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_dst_blk_bmap_get_metadata_pages(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_dst_blk_bmap_get_pages_capacity(struct ssdfs_peb_blk_bmap *ptr);
 
 #endif /* _SSDFS_PEB_BLOCK_BITMAP_H */

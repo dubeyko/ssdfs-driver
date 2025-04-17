@@ -1577,8 +1577,10 @@ finish_define_bmap_index:
 		  si->seg_id, migration_state, items_state,
 		  peb_migration_id, src_migration_id,
 		  dst_migration_id, migration_phase);
-	SSDFS_DBG("seg_id %llu, need_migrate %#x, need_move %#x\n",
-		  si->seg_id, need_migrate, need_move);
+	SSDFS_DBG("seg_id %llu, need_migrate %#x, "
+		  "need_move %#x, bmap_index %#x\n",
+		  si->seg_id, need_migrate,
+		  need_move, bmap_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_migrate) {

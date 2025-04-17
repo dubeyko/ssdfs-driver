@@ -102,6 +102,8 @@ struct ssdfs_found_protected_pebs {
  * @err: result of the search
  * @state: recovery thread's state
  * @pebs_per_volume: PEBs number per volume
+ * @create_time: volume creation time
+ * @uuid: volume's UUID
  * @last_vh: buffer for last valid volume header
  * @sbi: superblock info
  * @sbi_backup: backup copy of superblock info
@@ -116,6 +118,8 @@ struct ssdfs_recovery_env {
 	int err;
 	atomic_t state;
 	u64 pebs_per_volume;
+	u64 create_time;
+	u8 uuid[SSDFS_UUID_SIZE];
 
 	struct ssdfs_volume_header last_vh;
 	struct ssdfs_sb_info sbi;

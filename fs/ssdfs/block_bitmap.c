@@ -2651,7 +2651,7 @@ ssdfs_block_bmap_find_block_in_folio_vector(struct ssdfs_block_bmap *blk_bmap,
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("start %u, max_blk %u, blk_state %#x, "
-					  "aligned_start %u, aligned_end %u, "
+				          "aligned_start %u, aligned_end %u, "
 					  "folio_index %d, byte_index %u, "
 					  "rest_bytes %u, search_bytes %u, "
 					  "start_off %u\n",
@@ -3421,10 +3421,10 @@ ssdfs_block_bmap_find_state_area_end_in_foliovec(struct ssdfs_block_bmap *bmap,
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("start %u, max_blk %u, blk_state %#x, "
-					  "aligned_start %u, aligned_end %u, "
-					  "folio_index %d, byte_index %u, "
-					  "rest_bytes %u, search_bytes %u, "
-					  "start_off %u\n",
+				          "aligned_start %u, aligned_end %u, "
+				          "folio_index %d, byte_index %u, "
+				          "rest_bytes %u, search_bytes %u, "
+				          "start_off %u\n",
 					  start, max_blk, blk_state,
 					  aligned_start, aligned_end,
 					  folio_index, byte_index,
@@ -5006,6 +5006,86 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
 	}
 
 	return blk_bmap->invalid_blks;
+}
+
+/*
+ * ssdfs_block_bmap_get_pages_capacity() - get pages capacity
+ * @blk_bmap: pointer on block bitmap
+ *
+ * This function tries to get pages capacity in block bitmap.
+ *
+ * RETURN:
+ * [success] - pages capacity.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ENOENT     - block bitmap doesn't initialized.
+ */
+int ssdfs_block_bmap_get_pages_capacity(struct ssdfs_block_bmap *blk_bmap)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
+	}
+
+	return blk_bmap->items_capacity;
+}
+
+/*
+ * ssdfs_block_bmap_get_metadata_pages() - get metadata pages
+ * @blk_bmap: pointer on block bitmap
+ *
+ * This function tries to get metadata pages count in block bitmap.
+ *
+ * RETURN:
+ * [success] - count of metadata pages.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ENOENT     - block bitmap doesn't initialized.
+ */
+int ssdfs_block_bmap_get_metadata_pages(struct ssdfs_block_bmap *blk_bmap)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
+	}
+
+	return blk_bmap->metadata_items;
 }
 
 /*

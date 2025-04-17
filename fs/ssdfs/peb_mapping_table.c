@@ -109,20 +109,76 @@ void ssdfs_map_tbl_check_memory_leaks(void)
 }
 
 /*
+ * ssdfs_get_not_guaranted_migration() - calculate NOT guaranted migration
+ * @fdesc: fragment descriptor
+ */
+static inline
+u32 ssdfs_get_not_guaranted_migration(struct ssdfs_maptbl_fragment_desc *fdesc)
+{
+	u32 expected2migrate = 0;
+	u32 migration_NOT_guaranted = 0;
+
+	expected2migrate = fdesc->mapped_lebs - fdesc->migrating_lebs;
+
+	if (expected2migrate > fdesc->reserved_pebs)
+		migration_NOT_guaranted = expected2migrate - fdesc->reserved_pebs;
+	else
+		migration_NOT_guaranted = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
+		  "migrating_lebs %u, reserved_pebs %u, "
+		  "pre_erase_pebs %u, expected2migrate %u, "
+		  "migration_NOT_guaranted %u\n",
+		  fdesc->lebs_count, fdesc->mapped_lebs,
+		  fdesc->migrating_lebs, fdesc->reserved_pebs,
+		  fdesc->pre_erase_pebs, expected2migrate,
+		  migration_NOT_guaranted);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return migration_NOT_guaranted;
+}
+
+/*
  * ssdfs_unused_lebs_in_fragment() - calculate unused LEBs in fragment
  * @fdesc: fragment descriptor
  */
 static inline
 u32 ssdfs_unused_lebs_in_fragment(struct ssdfs_maptbl_fragment_desc *fdesc)
 {
+	u32 migration_NOT_guaranted;
 	u32 unused_lebs;
-	u32 reserved_pool;
-
-	reserved_pool = fdesc->reserved_pebs + fdesc->pre_erase_pebs;
 
 	unused_lebs = fdesc->lebs_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(unused_lebs < (fdesc->mapped_lebs + fdesc->migrating_lebs));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	unused_lebs -= fdesc->mapped_lebs + fdesc->migrating_lebs;
-	unused_lebs -= reserved_pool;
+
+	if (unused_lebs >= fdesc->reserved_pebs)
+		unused_lebs -= fdesc->reserved_pebs;
+	else
+		unused_lebs = 0;
+
+	migration_NOT_guaranted = ssdfs_get_not_guaranted_migration(fdesc);
+
+	if (unused_lebs >= migration_NOT_guaranted)
+		unused_lebs -= migration_NOT_guaranted;
+	else
+		unused_lebs = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
+		  "migrating_lebs %u, reserved_pebs %u, "
+		  "pre_erase_pebs %u, migration_NOT_guaranted %u, "
+		  "unused_lebs %u\n",
+		  fdesc->lebs_count, fdesc->mapped_lebs,
+		  fdesc->migrating_lebs, fdesc->reserved_pebs,
+		  fdesc->pre_erase_pebs, migration_NOT_guaranted,
+		  unused_lebs);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return unused_lebs;
 }
@@ -130,31 +186,20 @@ u32 ssdfs_unused_lebs_in_fragment(struct ssdfs_maptbl_fragment_desc *fdesc)
 static inline
 u32 ssdfs_lebs_reservation_threshold(struct ssdfs_maptbl_fragment_desc *fdesc)
 {
-	u32 expected2migrate = 0;
-	u32 reserved_pool = 0;
-	u32 migration_NOT_guaranted = 0;
+	u32 migration_NOT_guaranted;
 	u32 threshold;
 
-	expected2migrate = fdesc->mapped_lebs - fdesc->migrating_lebs;
-	reserved_pool = fdesc->reserved_pebs + fdesc->pre_erase_pebs;
-
-	if (expected2migrate > reserved_pool)
-		migration_NOT_guaranted = expected2migrate - reserved_pool;
-	else
-		migration_NOT_guaranted = 0;
-
+	migration_NOT_guaranted = ssdfs_get_not_guaranted_migration(fdesc);
 	threshold = migration_NOT_guaranted / 10;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
 		  "migrating_lebs %u, reserved_pebs %u, "
-		  "pre_erase_pebs %u, expected2migrate %u, "
-		  "reserved_pool %u, migration_NOT_guaranted %u, "
+		  "pre_erase_pebs %u, migration_NOT_guaranted %u, "
 		  "threshold %u\n",
 		  fdesc->lebs_count, fdesc->mapped_lebs,
 		  fdesc->migrating_lebs, fdesc->reserved_pebs,
-		  fdesc->pre_erase_pebs, expected2migrate,
-		  reserved_pool, migration_NOT_guaranted,
+		  fdesc->pre_erase_pebs, migration_NOT_guaranted,
 		  threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -989,8 +1034,9 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 		le16_to_cpu(fsi->vh->maptbl.stripes_per_fragment);
 
 	atomic_set(&ptr->erase_op_state, SSDFS_MAPTBL_NO_ERASE);
-	atomic_set(&ptr->pre_erase_pebs,
+	atomic_set(&ptr->min_pre_erase_pebs,
 		   le16_to_cpu(fsi->vh->maptbl.pre_erase_pebs));
+	atomic_set(&ptr->total_pre_erase_pebs, 0);
 	/*
 	 * TODO: the max_erase_ops field should be used by GC or
 	 *       special management thread for determination of
@@ -1099,6 +1145,8 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 		goto destroy_seg_objects;
 	}
 
+	atomic_set(&ptr->state, SSDFS_MAPTBL_CREATED);
+
 	err = ssdfs_maptbl_start_thread(ptr);
 	if (err == -EINTR) {
 		/*
@@ -1110,8 +1158,6 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 			  "err %d\n", err);
 		goto destroy_seg_objects;
 	}
-
-	atomic_set(&ptr->state, SSDFS_MAPTBL_CREATED);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("DONE: create mapping table\n");
@@ -1424,6 +1470,7 @@ int ssdfs_maptbl_check_pebtbl_folio(struct ssdfs_peb_container *pebc,
 				   u16 *pebs_per_fragment)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_mapping_table *tbl;
 	void *kaddr;
 	struct ssdfs_peb_table_fragment_header *hdr;
 	u32 bytes_count;
@@ -1458,6 +1505,7 @@ int ssdfs_maptbl_check_pebtbl_folio(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebc->parent_si->fsi;
+	tbl = fsi->maptbl;
 
 	ssdfs_folio_lock(folio);
 	kaddr = kmap_local_folio(folio, 0);
@@ -1557,6 +1605,7 @@ int ssdfs_maptbl_check_pebtbl_folio(struct ssdfs_peb_container *pebc,
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
 	pre_erase_pebs = bitmap_weight(bmap, pebs_count);
 	fdesc->pre_erase_pebs += pre_erase_pebs;
+	atomic_add(pre_erase_pebs, &tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("fragment_id %u, stripe_id %u, pre_erase_pebs %u\n",
@@ -1974,6 +2023,7 @@ static
 void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 {
 	struct ssdfs_maptbl_sb_header *hdr;
+	int pre_erase_pebs;
 	size_t bytes_count;
 	u32 flags = 0;
 
@@ -2001,10 +2051,11 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 	flags &= ~SSDFS_MAPTBL_UNDER_FLUSH;
 	hdr->flags = cpu_to_le16(flags);
 
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(atomic_read(&tbl->pre_erase_pebs) >= U16_MAX);
-#endif /* CONFIG_SSDFS_DEBUG */
-	hdr->pre_erase_pebs = cpu_to_le16((u16)atomic_read(&tbl->pre_erase_pebs));
+	pre_erase_pebs = atomic_read(&tbl->total_pre_erase_pebs);
+	if (pre_erase_pebs >= U16_MAX)
+		hdr->pre_erase_pebs = cpu_to_le16(U16_MAX);
+	else
+		hdr->pre_erase_pebs = cpu_to_le16(pre_erase_pebs);
 
 	hdr->lebs_per_fragment = cpu_to_le16(tbl->lebs_per_fragment);
 	hdr->pebs_per_fragment = cpu_to_le16(tbl->pebs_per_fragment);
@@ -4898,6 +4949,11 @@ int ssdfs_maptbl_solve_inconsistency(struct ssdfs_peb_mapping_table *tbl,
 	peb_desc->flags = cached->flags;
 	peb_desc->shared_peb_index = cached->shared_peb_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  peb_id, peb_desc->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_physical_index_processing:
 	kunmap_local(kaddr);
 
@@ -5021,6 +5077,11 @@ finish_physical_index_processing:
 	peb_desc->flags = cached->flags;
 	peb_desc->shared_peb_index = cached->shared_peb_index;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  peb_id, peb_desc->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_relation_index_processing:
 	kunmap_local(kaddr);
 
@@ -5135,6 +5196,11 @@ int ssdfs_maptbl_set_under_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 
 	ptr->state = SSDFS_MAPTBL_UNDER_ERASE_STATE;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  GET_PEB_ID(kaddr, item_index), ptr->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 finish_folio_processing:
 	kunmap_local(kaddr);
 
@@ -5214,6 +5280,11 @@ int ssdfs_maptbl_set_pre_erase_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 	}
 
 	ptr->state = SSDFS_MAPTBL_PRE_ERASE_STATE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  GET_PEB_ID(kaddr, item_index), ptr->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
@@ -5427,6 +5498,11 @@ int ssdfs_maptbl_set_source_state(struct ssdfs_maptbl_fragment_desc *fdesc,
 			goto finish_folio_processing;
 		}
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  GET_PEB_ID(kaddr, item_index), ptr->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 finish_folio_processing:
 	kunmap_local(kaddr);
@@ -5667,14 +5743,18 @@ ssdfs_maptbl_solve_pre_deleted_state(struct ssdfs_peb_mapping_table *tbl,
 
 	fdesc->migrating_lebs--;
 	fdesc->pre_erase_pebs++;
-	atomic_inc(&tbl->pre_erase_pebs);
+	atomic_inc(&tbl->min_pre_erase_pebs);
+	atomic_inc(&tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("mapped_lebs %u, migrating_lebs %u\n",
 		  fdesc->mapped_lebs, fdesc->migrating_lebs);
-	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, "
+		  "tbl->min_pre_erase_pebs %d, "
+		  "tbl->total_pre_erase_pebs %d\n",
 		  fdesc->pre_erase_pebs,
-		  atomic_read(&tbl->pre_erase_pebs));
+		  atomic_read(&tbl->min_pre_erase_pebs),
+		  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	wake_up(&tbl->wait_queue);
@@ -6284,9 +6364,7 @@ bool can_be_mapped_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 			   u64 leb_id)
 {
 	u32 unused_lebs;
-	u32 expected2migrate = 0;
-	u32 reserved_pool = 0;
-	u32 migration_NOT_guaranted = 0;
+	u32 migration_NOT_guaranted;
 	u32 threshold;
 	bool is_mapping_possible = false;
 
@@ -6298,26 +6376,17 @@ bool can_be_mapped_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  tbl, leb_id, fdesc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	expected2migrate = fdesc->mapped_lebs - fdesc->migrating_lebs;
-	reserved_pool = fdesc->reserved_pebs + fdesc->pre_erase_pebs;
-
-	if (expected2migrate > reserved_pool)
-		migration_NOT_guaranted = expected2migrate - reserved_pool;
-	else
-		migration_NOT_guaranted = 0;
-
+	migration_NOT_guaranted = ssdfs_get_not_guaranted_migration(fdesc);
 	unused_lebs = ssdfs_unused_lebs_in_fragment(fdesc);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
 		  "migrating_lebs %u, reserved_pebs %u, "
-		  "pre_erase_pebs %u, expected2migrate %u, "
-		  "reserved_pool %u, migration_NOT_guaranted %u, "
+		  "pre_erase_pebs %u, migration_NOT_guaranted %u, "
 		  "unused_lebs %u\n",
 		  fdesc->lebs_count, fdesc->mapped_lebs,
 		  fdesc->migrating_lebs, fdesc->reserved_pebs,
-		  fdesc->pre_erase_pebs, expected2migrate,
-		  reserved_pool, migration_NOT_guaranted,
+		  fdesc->pre_erase_pebs, migration_NOT_guaranted,
 		  unused_lebs);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6362,6 +6431,17 @@ finish_check:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("is_mapping_possible %#x\n",
 		  is_mapping_possible);
+
+	if (!is_mapping_possible) {
+		SSDFS_DBG("lebs_count %u, mapped_lebs %u, "
+			  "migrating_lebs %u, reserved_pebs %u, "
+			  "pre_erase_pebs %u, migration_NOT_guaranted %u, "
+			  "unused_lebs %u\n",
+			  fdesc->lebs_count, fdesc->mapped_lebs,
+			  fdesc->migrating_lebs, fdesc->reserved_pebs,
+			  fdesc->pre_erase_pebs, migration_NOT_guaranted,
+			  unused_lebs);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return is_mapping_possible;
@@ -6414,6 +6494,7 @@ bool has_fragment_unused_pebs(struct ssdfs_peb_table_fragment_header *hdr)
 /*
  * ssdfs_maptbl_decrease_reserved_pebs() - decrease amount of reserved PEBs
  * @fsi: file system info object
+ * @tbl: pointer on mapping table object
  * @desc: fragment descriptor
  * @hdr: PEB table fragment's header
  *
@@ -6428,6 +6509,7 @@ bool has_fragment_unused_pebs(struct ssdfs_peb_table_fragment_header *hdr)
  */
 static
 int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_fs_info *fsi,
+				    struct ssdfs_peb_mapping_table *tbl,
 				    struct ssdfs_maptbl_fragment_desc *desc,
 				    struct ssdfs_peb_table_fragment_header *hdr)
 {
@@ -6440,7 +6522,7 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_fs_info *fsi,
 	u16 new_reservation;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!desc || !hdr);
+	BUG_ON(!fsi || !tbl || !desc || !hdr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	pebs_count = le16_to_cpu(hdr->pebs_count);
@@ -6455,10 +6537,11 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	expected2migrate = (desc->mapped_lebs - desc->migrating_lebs);
-	expected2migrate /= desc->stripe_pages;
+	expected2migrate /= tbl->stripes_per_fragment;
 
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
 	used_pebs = bitmap_weight(bmap, pebs_count);
+	expected2migrate = max_t(u32, expected2migrate, used_pebs);
 	unused_pebs = pebs_count - used_pebs;
 
 	if (reserved_pebs > unused_pebs) {
@@ -6856,8 +6939,11 @@ finish_search:
 }
 
 /*
- * __ssdfs_maptbl_find_unused_peb() - find unused PEB
+ * ssdfs_maptbl_find_clean_unused_peb() - find clean unused PEB
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
  * @hdr: PEB table fragment's header
+ * @folio_index: folio index in the fragment
  * @start: start item for search
  * @max: upper bound for the search
  * @threshold: erase threshold for fragment
@@ -6874,13 +6960,17 @@ finish_search:
  * %-ENODATA    - unable to find unused PEB.
  */
 static
-int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
+int ssdfs_maptbl_find_clean_unused_peb(struct ssdfs_peb_mapping_table *tbl,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
+				   struct ssdfs_peb_table_fragment_header *hdr,
+				   pgoff_t folio_index,
 				   unsigned long start, unsigned long max,
 				   u32 threshold, unsigned long *found)
 {
 	struct ssdfs_peb_descriptor *desc;
-	unsigned long *bmap;
+	unsigned long *bmap, *dirty_bmap;
 	unsigned long index;
+	u32 found_cycles;
 	int err = -ENODATA;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6891,6 +6981,131 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
+	dirty_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
+
+	*found = ULONG_MAX;
+
+	if (start >= max) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("start %lu >= max %lu\n",
+			  start, max);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+	}
+
+	do {
+		index = bitmap_find_next_zero_area(bmap, max, start, 1, 0);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("start %lu, max %lu, index %lu\n",
+			  start, max, index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (index >= max) {
+			SSDFS_DBG("unable to find the clean unused peb\n");
+			return -ENODATA;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(index >= U16_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		desc = GET_PEB_DESCRIPTOR(hdr, (u16)index);
+		if (IS_ERR_OR_NULL(desc)) {
+			err = IS_ERR(desc) ? PTR_ERR(desc) : -ERANGE;
+			SSDFS_ERR("fail to get peb_descriptor: "
+				  "index %lu, err %d\n",
+				  index, err);
+			return err;
+		}
+
+		switch (desc->state) {
+		case SSDFS_MAPTBL_BAD_PEB_STATE:
+		case SSDFS_MAPTBL_RECOVERING_STATE:
+		case SSDFS_MAPTBL_UNDER_ERASE_STATE:
+		case SSDFS_MAPTBL_PRE_ERASE_STATE:
+			/* continue search */
+			break;
+
+		case SSDFS_MAPTBL_UNKNOWN_PEB_STATE:
+		case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			found_cycles = le32_to_cpu(desc->erase_cycles);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("index %lu, found_cycles %u, threshold %u\n",
+				  index, found_cycles, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			if (found_cycles <= threshold) {
+				*found = index;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("found: index %lu, "
+					  "found_cycles %u, threshold %u\n",
+					  *found, found_cycles, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+				return 0;
+			} else {
+				/* continue to search */
+				*found = ULONG_MAX;
+			}
+			break;
+
+		default:
+			SSDFS_WARN("unexpected state %#x\n",
+				   desc->state);
+			break;
+		}
+
+		start = index + 1;
+	} while (start < max);
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_find_pre_erased_unused_peb() - find pre-erased unused PEB
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
+ * @hdr: PEB table fragment's header
+ * @folio_index: folio index in the fragment
+ * @start: start item for search
+ * @max: upper bound for the search
+ * @threshold: erase threshold for fragment
+ * @found: found item index [out]
+ *
+ * This method tries to find unused PEB in the bitmap of
+ * PEB table's fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENODATA    - unable to find unused PEB.
+ */
+static
+int ssdfs_maptbl_find_pre_erased_unused_peb(struct ssdfs_peb_mapping_table *tbl,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
+				   struct ssdfs_peb_table_fragment_header *hdr,
+				   pgoff_t folio_index,
+				   unsigned long start, unsigned long max,
+				   u32 threshold, unsigned long *found)
+{
+	struct ssdfs_peb_descriptor *desc;
+	unsigned long *bmap, *dirty_bmap;
+	unsigned long index;
+	u32 found_cycles;
+	int err = -ENODATA;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr || !found);
+
+	SSDFS_DBG("hdr %p, start %lu, max %lu, threshold %u\n",
+		  hdr, start, max, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
+	dirty_bmap = (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_DIRTY_BMAP][0];
 
 	*found = ULONG_MAX;
 
@@ -6928,8 +7143,16 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 			return err;
 		}
 
-		if (desc->state != SSDFS_MAPTBL_BAD_PEB_STATE) {
-			u32 found_cycles = le32_to_cpu(desc->erase_cycles);
+		switch (desc->state) {
+		case SSDFS_MAPTBL_BAD_PEB_STATE:
+		case SSDFS_MAPTBL_RECOVERING_STATE:
+		case SSDFS_MAPTBL_UNDER_ERASE_STATE:
+			/* continue search */
+			break;
+
+		case SSDFS_MAPTBL_UNKNOWN_PEB_STATE:
+		case SSDFS_MAPTBL_CLEAN_PEB_STATE:
+			found_cycles = le32_to_cpu(desc->erase_cycles);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("index %lu, found_cycles %u, threshold %u\n",
@@ -6948,6 +7171,84 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 				/* continue to search */
 				*found = ULONG_MAX;
 			}
+			break;
+
+		case SSDFS_MAPTBL_PRE_ERASE_STATE:
+			found_cycles = le32_to_cpu(desc->erase_cycles);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("index %lu, found_cycles %u, threshold %u\n",
+				  index, found_cycles, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			if (is_peb_protected(index)) {
+				/* continue to search */
+				*found = ULONG_MAX;
+			} else if (found_cycles <= threshold) {
+				struct ssdfs_erase_result res;
+				u16 peb_index;
+
+				desc->state = SSDFS_MAPTBL_UNDER_ERASE_STATE;
+
+				peb_index = DEFINE_PEB_INDEX_IN_FRAGMENT(fdesc,
+								 folio_index,
+								 index);
+				SSDFS_ERASE_RESULT_INIT(fdesc->fragment_id,
+						peb_index,
+						GET_PEB_ID(hdr, index),
+						SSDFS_ERASE_RESULT_UNKNOWN,
+						&res);
+
+				err = ssdfs_maptbl_erase_peb(tbl->fsi, &res);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to erase: "
+						  "peb_id %llu, err %d\n",
+						  GET_PEB_ID(hdr, index),
+						  err);
+					desc->state = SSDFS_MAPTBL_PRE_ERASE_STATE;
+					return err;
+				}
+
+				switch (res.state) {
+				case SSDFS_ERASE_DONE:
+					res.state = SSDFS_ERASE_SB_PEB_DONE;
+					break;
+
+				default:
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("unable to erase: peb_id %llu\n",
+						  GET_PEB_ID(hdr, index));
+#endif /* CONFIG_SSDFS_DEBUG */
+					return -EFAULT;
+				}
+
+				err = __ssdfs_maptbl_correct_peb_state(tbl,
+									fdesc,
+									hdr,
+									&res);
+				if (unlikely(err)) {
+					SSDFS_ERR("fail to correct dirty PEB's state: "
+						  "err %d\n", err);
+					return err;
+				}
+
+				*found = index;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("found: index %lu, "
+					  "found_cycles %u, threshold %u\n",
+					  *found, found_cycles, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+				return 0;
+			} else {
+				/* continue to search */
+				*found = ULONG_MAX;
+			}
+			break;
+
+		default:
+			SSDFS_WARN("unexpected state %#x\n",
+				   desc->state);
+			break;
 		}
 
 		start = index + 1;
@@ -6957,8 +7258,71 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 }
 
 /*
- * ssdfs_maptbl_find_unused_peb() - find unused PEB
+ * __ssdfs_maptbl_find_unused_peb() - find unused PEB
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
  * @hdr: PEB table fragment's header
+ * @folio_index: folio index in the fragment
+ * @start: start item for search
+ * @max: upper bound for the search
+ * @threshold: erase threshold for fragment
+ * @found: found item index [out]
+ *
+ * This method tries to find unused PEB in the bitmap of
+ * PEB table's fragment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENODATA    - unable to find unused PEB.
+ */
+static
+int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
+				   struct ssdfs_peb_table_fragment_header *hdr,
+				   pgoff_t folio_index,
+				   unsigned long start, unsigned long max,
+				   u32 threshold, unsigned long *found)
+{
+	int err = -ENODATA;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tbl || !fdesc || !hdr || !found);
+
+	SSDFS_DBG("hdr %p, start %lu, max %lu, threshold %u\n",
+		  hdr, start, max, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_maptbl_find_clean_unused_peb(tbl, fdesc, hdr,
+						 folio_index,
+						 start, max,
+						 threshold,
+						 found);
+	if (err == -ENODATA) {
+		err = ssdfs_maptbl_find_pre_erased_unused_peb(tbl, fdesc, hdr,
+							      folio_index,
+							      start, max,
+							      threshold,
+							      found);
+	}
+
+	if (err == -ENODATA) {
+		SSDFS_DBG("unable to find the unused peb\n");
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find the unused peb: err %d\n", err);
+	}
+
+	return err;
+}
+
+/*
+ * ssdfs_maptbl_find_unused_peb() - find unused PEB
+ * @tbl: pointer on mapping table object
+ * @fdesc: fragment descriptor
+ * @hdr: PEB table fragment's header
+ * @folio_index: folio index in the fragment
  * @start: start item for search
  * @max: upper bound for the search
  * @used_pebs: number of used PEBs
@@ -6976,7 +7340,10 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
  * %-ENODATA    - unable to find unused PEB.
  */
 static
-int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
+int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
+				 struct ssdfs_maptbl_fragment_desc *fdesc,
+				 struct ssdfs_peb_table_fragment_header *hdr,
+				 pgoff_t folio_index,
 				 unsigned long start, unsigned long max,
 				 unsigned long used_pebs,
 				 unsigned long *found, u32 *erase_cycles)
@@ -7011,10 +7378,13 @@ int ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_table_fragment_header *hdr,
 	*erase_cycles = threshold;
 	found_for_threshold = *found;
 
-	err = __ssdfs_maptbl_find_unused_peb(hdr, start, max,
+	err = __ssdfs_maptbl_find_unused_peb(tbl, fdesc,
+					     hdr, folio_index,
+					     start, max,
 					     threshold, found);
 	if (err == -ENODATA) {
-		err = __ssdfs_maptbl_find_unused_peb(hdr,
+		err = __ssdfs_maptbl_find_unused_peb(tbl, fdesc,
+						     hdr, folio_index,
 						     0, start,
 						     threshold, found);
 	}
@@ -7077,8 +7447,10 @@ enum {
 
 /*
  * ssdfs_maptbl_select_unused_peb() - select unused PEB
+ * @tbl: pointer on mapping table object
  * @fdesc: fragment descriptor
  * @hdr: PEB table fragment's header
+ * @folio_index: folio index in the fragment
  * @pebs_per_volume: number of PEBs per whole volume
  * @peb_goal: PEB purpose
  *
@@ -7090,8 +7462,10 @@ enum {
  * [failure] - U16_MAX.
  */
 static
-u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_maptbl_fragment_desc *fdesc,
+u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
 				   struct ssdfs_peb_table_fragment_header *hdr,
+				   pgoff_t folio_index,
 				   u64 pebs_per_volume,
 				   int peb_goal)
 {
@@ -7172,7 +7546,9 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_maptbl_fragment_desc *fdesc,
 	if ((last_selected_peb + 1) >= pebs_count)
 		last_selected_peb = 0;
 
-	err = ssdfs_maptbl_find_unused_peb(hdr, last_selected_peb,
+	err = ssdfs_maptbl_find_unused_peb(tbl, fdesc,
+					   hdr, folio_index,
+					   last_selected_peb,
 					   pebs_count, used_pebs,
 					   &found, &erase_cycles);
 	if (err == -ENODATA) {
@@ -7272,7 +7648,8 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 		  fdesc, hdr, leb_id, peb_type, pebr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	item_index = ssdfs_maptbl_select_unused_peb(fdesc, hdr,
+	item_index = ssdfs_maptbl_select_unused_peb(tbl, fdesc, hdr,
+						    folio_index,
 						    tbl->pebs_count,
 						    SSDFS_MAPTBL_MAPPING_PEB);
 	if (item_index == U16_MAX) {
@@ -7293,6 +7670,11 @@ int __ssdfs_maptbl_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 
 	peb_desc->type = peb_type;
 	peb_desc->state = SSDFS_MAPTBL_CLEAN_PEB_STATE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  GET_PEB_ID(hdr, item_index), peb_desc->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	lebtbl_folio = LEBTBL_FOLIO_INDEX(fdesc, leb_id);
 	if (lebtbl_folio == ULONG_MAX) {
@@ -7633,7 +8015,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (!can_be_mapped_leb2peb(tbl, fdesc, leb_id)) {
-		err = ssdfs_maptbl_decrease_reserved_pebs(fsi, fdesc, hdr);
+		err = ssdfs_maptbl_decrease_reserved_pebs(fsi, tbl, fdesc, hdr);
 		if (err == -ENOSPC) {
 			err = -ENOENT;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7652,7 +8034,7 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (!has_fragment_unused_pebs(hdr)) {
-		err = ssdfs_maptbl_decrease_reserved_pebs(fsi, fdesc, hdr);
+		err = ssdfs_maptbl_decrease_reserved_pebs(fsi, tbl, fdesc, hdr);
 		if (err == -ENOSPC) {
 			err = -ENOENT;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7687,6 +8069,23 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 			SSDFS_ERR("fail to increase reserved PEBs: "
 				  "err %d\n", err);
 			goto finish_folio_processing;
+		}
+
+		if (has_fragment_unused_pebs(hdr) &&
+		    !can_peb_be_reserved(fsi, hdr)) {
+			err = ssdfs_maptbl_decrease_reserved_pebs(fsi, tbl,
+								  fdesc, hdr);
+			if (err == -ENOSPC) {
+				err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to decrease reserved_pebs %u\n",
+					  le16_to_cpu(hdr->reserved_pebs));
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to decrease reserved_pebs: "
+					  "err %d\n", err);
+				goto finish_folio_processing;
+			}
 		}
 
 		if (can_peb_be_reserved(fsi, hdr)) {
@@ -7741,13 +8140,18 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_try2reserve_peb(fsi)) {
-		le16_add_cpu(&hdr->reserved_pebs, 1);
-		fdesc->reserved_pebs++;
+		u16 reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
+
+		if (reserved_pebs < fdesc->pebs_per_page) {
+			le16_add_cpu(&hdr->reserved_pebs, 1);
+			fdesc->reserved_pebs++;
+		}
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_pebs %u\n",
 		  le16_to_cpu(hdr->reserved_pebs));
+	BUG_ON(fdesc->reserved_pebs > fdesc->lebs_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_folio_processing:
@@ -7973,6 +8377,20 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 	}
 
 	down_write(&fdesc->lock);
+
+	if (ssdfs_unused_lebs_in_fragment(fdesc) == 0 &&
+	    fdesc->pre_erase_pebs > 0) {
+		up_write(&fdesc->lock);
+
+		err = ssdfs_maptbl_erase_dirty_pebs_now(tbl);
+		if (unlikely(err)) {
+			err = 0;
+			SSDFS_ERR("fail to erase dirty PEBs: err %d\n", err);
+			/* continue logic */
+		}
+
+		down_write(&fdesc->lock);
+	}
 
 	err = ssdfs_maptbl_get_leb_descriptor(fdesc, leb_id, &leb_desc);
 	if (unlikely(err)) {
@@ -8236,7 +8654,7 @@ try_next_folio:
 		goto finish_folio_processing;
 	}
 
-	err = ssdfs_maptbl_decrease_reserved_pebs(fsi, fdesc, hdr);
+	err = ssdfs_maptbl_decrease_reserved_pebs(fsi, tbl, fdesc, hdr);
 	if (err == -ENOSPC) {
 		err = -ENOENT;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8536,9 +8954,10 @@ int __ssdfs_maptbl_change_peb_state(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("leb_id %llu, item_index %u, "
+	SSDFS_DBG("leb_id %llu, peb_id %llu, item_index %u, "
 		  "old_peb_state %#x, new_peb_state %#x\n",
-		  leb_id, item_index, peb_desc->state, new_peb_state);
+		  leb_id, GET_PEB_ID(kaddr, item_index),
+		  item_index, peb_desc->state, new_peb_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*old_peb_state = peb_desc->state;
@@ -9215,12 +9634,18 @@ int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
 
 	fdesc->mapped_lebs--;
 	fdesc->pre_erase_pebs++;
-	atomic_inc(&tbl->pre_erase_pebs);
+	atomic_inc(&tbl->min_pre_erase_pebs);
+	atomic_inc(&tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+	SSDFS_DBG("mapped_lebs %u, migrating_lebs %u\n",
+		  fdesc->mapped_lebs, fdesc->migrating_lebs);
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, "
+		  "tbl->min_pre_erase_pebs %d, "
+		  "tbl->total_pre_erase_pebs %d\n",
 		  fdesc->pre_erase_pebs,
-		  atomic_read(&tbl->pre_erase_pebs));
+		  atomic_read(&tbl->min_pre_erase_pebs),
+		  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_change:
@@ -9398,12 +9823,16 @@ int ssdfs_maptbl_set_pre_erased_snapshot_peb(struct ssdfs_fs_info *fsi,
 	}
 
 	fdesc->pre_erase_pebs++;
-	atomic_inc(&tbl->pre_erase_pebs);
+	atomic_inc(&tbl->min_pre_erase_pebs);
+	atomic_inc(&tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, "
+		  "tbl->min_pre_erase_pebs %d, "
+		  "tbl->total_pre_erase_pebs %d\n",
 		  fdesc->pre_erase_pebs,
-		  atomic_read(&tbl->pre_erase_pebs));
+		  atomic_read(&tbl->min_pre_erase_pebs),
+		  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_fragment_change:
@@ -9676,7 +10105,8 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 
 	hdr = (struct ssdfs_peb_table_fragment_header *)kaddr;
 
-	*item_index = ssdfs_maptbl_select_unused_peb(fdesc, hdr,
+	*item_index = ssdfs_maptbl_select_unused_peb(tbl, fdesc, hdr,
+						     pebtbl_folio,
 						     tbl->pebs_count,
 						     peb_goal);
 	if (*item_index >= U16_MAX) {
@@ -9696,6 +10126,12 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 
 	peb_desc->type = peb_type;
 	peb_desc->state = SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, state %#x\n",
+		  GET_PEB_ID(kaddr, *item_index),
+		  peb_desc->state);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
@@ -10172,9 +10608,9 @@ int ssdfs_maptbl_erase_reserved_peb_now(struct ssdfs_fs_info *fsi,
 	struct ssdfs_maptbl_fragment_desc *fdesc;
 	struct ssdfs_maptbl_peb_relation pebr;
 	struct ssdfs_maptbl_peb_descriptor *ptr;
+	struct ssdfs_leb_descriptor leb_desc;
 	struct ssdfs_erase_result res;
 	int state;
-	struct ssdfs_leb_descriptor leb_desc;
 	u16 physical_index;
 	u64 peb_id;
 	int err = 0;
@@ -10282,13 +10718,15 @@ int ssdfs_maptbl_erase_reserved_peb_now(struct ssdfs_fs_info *fsi,
 
 	up_write(&fdesc->lock);
 	err = ssdfs_maptbl_erase_peb(fsi, &res);
+	down_write(&fdesc->lock);
+
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to erase: "
 			  "peb_id %llu, err %d\n",
 			  peb_id, err);
-		goto finish_erase_reserved_peb;
+		ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
+		goto finish_fragment_change;
 	}
-	down_write(&fdesc->lock);
 
 	switch (res.state) {
 	case SSDFS_ERASE_DONE:
@@ -10304,7 +10742,8 @@ int ssdfs_maptbl_erase_reserved_peb_now(struct ssdfs_fs_info *fsi,
 	}
 
 	fdesc->pre_erase_pebs++;
-	atomic_inc(&tbl->pre_erase_pebs);
+	atomic_inc(&tbl->min_pre_erase_pebs);
+	atomic_inc(&tbl->total_pre_erase_pebs);
 
 	err = ssdfs_maptbl_correct_dirty_peb(tbl, fdesc, &res);
 	if (unlikely(err)) {
@@ -10734,14 +11173,6 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 			goto finish_fragment_change;
 		}
 
-		err = ssdfs_maptbl_set_under_erase_state(fdesc, physical_index);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to set PEB as under erase state: "
-				  "index %u, err %d\n",
-				  physical_index, err);
-			goto finish_fragment_change;
-		}
-
 		err = ssdfs_maptbl_set_source_state(fdesc, relation_index,
 					    SSDFS_MAPTBL_UNKNOWN_PEB_STATE);
 		if (unlikely(err)) {
@@ -10759,6 +11190,14 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 			goto finish_fragment_change;
 		}
 
+		err = ssdfs_maptbl_set_under_erase_state(fdesc, physical_index);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to set PEB as under erase state: "
+				  "index %u, err %d\n",
+				  physical_index, err);
+			goto finish_fragment_change;
+		}
+
 		ptr = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
 		peb_id = ptr->peb_id;
 
@@ -10773,13 +11212,15 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 
 		up_write(&fdesc->lock);
 		err = ssdfs_maptbl_erase_peb(fsi, &res);
+		down_write(&fdesc->lock);
+
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to erase: "
 				  "peb_id %llu, err %d\n",
 				  peb_id, err);
-			goto finish_exclude_migrating_peb;
+			ssdfs_maptbl_set_pre_erase_state(fdesc, physical_index);
+			goto finish_fragment_change;
 		}
-		down_write(&fdesc->lock);
 
 		switch (res.state) {
 		case SSDFS_ERASE_DONE:
@@ -10832,14 +11273,18 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 
 	fdesc->migrating_lebs--;
 	fdesc->pre_erase_pebs++;
-	atomic_inc(&tbl->pre_erase_pebs);
+	atomic_inc(&tbl->min_pre_erase_pebs);
+	atomic_inc(&tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("mapped_lebs %u, migrating_lebs %u\n",
 		  fdesc->mapped_lebs, fdesc->migrating_lebs);
-	SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+	SSDFS_DBG("fdesc->pre_erase_pebs %u, "
+		  "tbl->min_pre_erase_pebs %d, "
+		  "tbl->total_pre_erase_pebs %d\n",
 		  fdesc->pre_erase_pebs,
-		  atomic_read(&tbl->pre_erase_pebs));
+		  atomic_read(&tbl->min_pre_erase_pebs),
+		  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_erase) {
@@ -12185,12 +12630,16 @@ int __ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		fdesc->pre_erase_pebs++;
-		atomic_inc(&tbl->pre_erase_pebs);
+		atomic_inc(&tbl->min_pre_erase_pebs);
+		atomic_inc(&tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+		SSDFS_DBG("fdesc->pre_erase_pebs %u, "
+			  "tbl->min_pre_erase_pebs %d, "
+			  "tbl->total_pre_erase_pebs %d\n",
 			  fdesc->pre_erase_pebs,
-			  atomic_read(&tbl->pre_erase_pebs));
+			  atomic_read(&tbl->min_pre_erase_pebs),
+			  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		wake_up(&tbl->wait_queue);
@@ -12552,12 +13001,16 @@ __ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		}
 
 		fdesc->pre_erase_pebs++;
-		atomic_inc(&tbl->pre_erase_pebs);
+		atomic_inc(&tbl->min_pre_erase_pebs);
+		atomic_inc(&tbl->total_pre_erase_pebs);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fdesc->pre_erase_pebs %u, tbl->pre_erase_pebs %d\n",
+		SSDFS_DBG("fdesc->pre_erase_pebs %u, "
+			  "tbl->min_pre_erase_pebs %d, "
+			  "tbl->total_pre_erase_pebs %d\n",
 			  fdesc->pre_erase_pebs,
-			  atomic_read(&tbl->pre_erase_pebs));
+			  atomic_read(&tbl->min_pre_erase_pebs),
+			  atomic_read(&tbl->total_pre_erase_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		wake_up(&tbl->wait_queue);
@@ -12910,11 +13363,11 @@ int ssdfs_reserve_free_pages(struct ssdfs_fs_info *fsi, u32 count, int type)
 			wake_up_all(&fsi->gc_wait_queue[i]);
 		}
 
-		if (atomic_read(&fsi->maptbl->pre_erase_pebs) > 0) {
+		if (atomic_read(&fsi->maptbl->total_pre_erase_pebs) > 0) {
 			wait_queue_head_t *erase_ops_end_wq =
 					&fsi->maptbl->erase_ops_end_wq;
 			atomic_t *pre_erase_pebs =
-					&fsi->maptbl->pre_erase_pebs;
+					&fsi->maptbl->total_pre_erase_pebs;
 			int old_pre_erase_pebs = atomic_read(pre_erase_pebs);
 
 			while (old_pre_erase_pebs >=
@@ -13053,9 +13506,10 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 			SSDFS_DBG("seg[%d][%d] %p\n", i, j, tbl->segs[i][j]);
 	}
 
-	SSDFS_DBG("pre_erase_pebs %u, max_erase_ops %u, "
-		  "last_peb_recover_cno %llu\n",
-		  atomic_read(&tbl->pre_erase_pebs),
+	SSDFS_DBG("min_pre_erase_pebs %u, total_pre_erase_pebs %u, "
+		  "max_erase_ops %u, last_peb_recover_cno %llu\n",
+		  atomic_read(&tbl->min_pre_erase_pebs),
+		  atomic_read(&tbl->total_pre_erase_pebs),
 		  atomic_read(&tbl->max_erase_ops),
 		  (u64)atomic64_read(&tbl->last_peb_recover_cno));
 

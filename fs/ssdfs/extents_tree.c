@@ -6534,9 +6534,9 @@ int ssdfs_extents_tree_recreate_fork(struct ssdfs_extents_btree_info *tree,
 	BUG_ON(!processed_blks);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 
-SSDFS_ERR("tree %p, search %p, blk %llu, len %u\n",
+	SSDFS_DBG("tree %p, search %p, blk %llu, len %u\n",
 		  tree, search, blk, len);
-SSDFS_ERR("new extent (seg_id %llu, logical_blk %u, len %u)\n",
+	SSDFS_DBG("new extent (seg_id %llu, logical_blk %u, len %u)\n",
 		  le64_to_cpu(new_extent->seg_id),
 		  le32_to_cpu(new_extent->logical_blk),
 		  le32_to_cpu(new_extent->len));
@@ -6601,10 +6601,10 @@ SSDFS_ERR("new extent (seg_id %llu, logical_blk %u, len %u)\n",
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-SSDFS_ERR("fork (start_offset %llu, blks_count %llu)\n",
+		SSDFS_DBG("fork (start_offset %llu, blks_count %llu)\n",
 			  le64_to_cpu(fork.start_offset),
 			  le64_to_cpu(fork.blks_count));
-SSDFS_ERR("deleted_extent (seg_id %llu, logical_blk %u, len %u), "
+		SSDFS_DBG("deleted_extent (seg_id %llu, logical_blk %u, len %u), "
 			  "left_extent (seg_id %llu, logical_blk %u, len %u), "
 			  "old extent (seg_id %llu, logical_blk %u, len %u), "
 			  "right_extent (seg_id %llu, logical_blk %u, len %u)\n",
@@ -6709,7 +6709,7 @@ int ssdfs_extents_tree_move_extent(struct ssdfs_extents_btree_info *tree,
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
-SSDFS_ERR("blk %llu, len %u, "
+	SSDFS_DBG("blk %llu, len %u, "
 		  "new extent (seg_id %llu, logical_blk %u, len %u)\n",
 		  blk, len,
 		  le64_to_cpu(new_extent->seg_id),
