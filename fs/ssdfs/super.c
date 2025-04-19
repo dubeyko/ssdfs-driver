@@ -3036,6 +3036,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	atomic_set(&fs_info->segbmap_users, 0);
 	init_waitqueue_head(&fs_info->segbmap_users_wq);
 	atomic_set(&fs_info->global_fs_state, SSDFS_UNKNOWN_GLOBAL_FS_STATE);
+	spin_lock_init(&fs_info->volume_state_lock);
 	init_completion(&fs_info->mount_end);
 
 	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
