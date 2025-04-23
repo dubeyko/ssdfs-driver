@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.19 [April 22, 2025]
+    (*) Fix issue in block bitmap invalidation logic for the case of
+        range of blocks with mixed states.
+
 v.5.18 [April 16, 2025]
     (*) Implement functionality of supporting not erasing the whole
         volume during mkfs phase.

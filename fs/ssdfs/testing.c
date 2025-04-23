@@ -2496,6 +2496,10 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 
 	while (len > 0) {
 		for (i = 0; i < len; i++) {
+			if ((start + i) >= capacity) {
+				break;
+			}
+
 			if (ssdfs_block_bmap_test_block(bmap, start + i,
 						    SSDFS_BLK_PRE_ALLOCATED)) {
 				if (range.start >= U32_MAX) {
@@ -2517,8 +2521,12 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 		}
 
 		if (range.len == 0) {
-			start += len;
-			continue;
+			if ((start + len) >= capacity) {
+				goto finish_check;
+			} else {
+				start += len;
+				continue;
+			}
 		}
 
 		err = ssdfs_block_bmap_invalidate(bmap, &range);

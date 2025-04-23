@@ -2889,6 +2889,7 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 				  "start %u, max_blk %u, state %#x\n",
 				  0, max_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
+			*found_blk = max_blk;
 			return err;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find block in folio vector: "
@@ -2940,6 +2941,7 @@ int ssdfs_block_bmap_find_block(struct ssdfs_block_bmap *blk_bmap,
 			  "start %u, max_blk %u, state %#x\n",
 			  start, max_blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
+		*found_blk = max_blk;
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find block in storage: "
@@ -4349,7 +4351,7 @@ bool ssdfs_block_bmap_test_block(struct ssdfs_block_bmap *blk_bmap,
 	}
 
 	if (blk >= blk_bmap->items_capacity) {
-		SSDFS_ERR("invalid block %u\n", blk);
+		SSDFS_WARN("invalid block %u\n", blk);
 		return false;
 	}
 
@@ -5584,6 +5586,7 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	int calculated;
+	int i;
 #endif /* CONFIG_SSDFS_DEBUG */
 	int err;
 
@@ -5626,12 +5629,31 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 
-	if (!is_range_valid(blk_bmap, range) &&
-	    !is_range_pre_allocated(blk_bmap, range)) {
-		SSDFS_ERR("range (start %u, len %u) contains not valid blocks\n",
-			  range->start, range->len);
-		return -EINVAL;
+#ifdef CONFIG_SSDFS_DEBUG
+	for (i = 0; i < range->len; i++) {
+		u32 blk = range->start + i;
+		int blk_state;
+
+		blk_state = ssdfs_get_block_state(blk_bmap, blk);
+		if (blk_state < 0) {
+			SSDFS_ERR("fail to detect block %u state: "
+				  "err %d\n", blk, err);
+			return err;
+		}
+
+		switch (blk_state) {
+		case SSDFS_BLK_PRE_ALLOCATED:
+		case SSDFS_BLK_VALID:
+			/* continue check */
+			break;
+
+		default:
+			SSDFS_ERR("range (start %u, len %u) is not valid\n",
+				  range->start, range->len);
+			return -EINVAL;
+		}
 	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_block_bmap_set_range(blk_bmap, range,
 					 SSDFS_BLK_INVALID);
