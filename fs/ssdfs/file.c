@@ -2743,122 +2743,6 @@ finish_issue_write_request:
 }
 
 static
-int __ssdfs_writepage(struct folio *folio, u32 len,
-		      struct writeback_control *wbc,
-		      struct ssdfs_segment_request_pool *pool,
-		      struct ssdfs_dirty_folios_batch *batch)
-{
-	struct inode *inode = folio->mapping->host;
-	struct address_space *mapping = folio->mapping;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-	ino_t ino = inode->i_ino;
-	pgoff_t start_index;
-	pgoff_t index = folio_index(folio);
-	loff_t logical_offset;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, folio_index %llu, len %u, sync_mode %#x\n",
-		  ino, (u64)index, len, wbc->sync_mode);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	logical_offset = (loff_t)index << PAGE_SHIFT;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	if (logical_offset % fsi->pagesize) {
-		SSDFS_ERR("logical_offset %llu, pagesize %u\n",
-			  logical_offset, fsi->pagesize);
-		BUG();
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (logical_offset % fsi->pagesize) {
-		struct folio *cur_folio;
-		pgoff_t cur_index;
-		pgoff_t mem_pages_per_folio;
-		u32 processed_bytes = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("logical_offset %llu, pagesize %u\n",
-			  logical_offset, fsi->pagesize);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		start_index = logical_offset >> fsi->log_pagesize;
-		start_index <<= fsi->log_pagesize;
-		start_index >>= PAGE_SHIFT;
-
-		cur_index = start_index;
-		while (cur_index < index) {
-			cur_folio = filemap_get_folio(mapping, cur_index);
-			if (IS_ERR_OR_NULL(cur_folio)) {
-				err = IS_ERR(cur_folio) ?
-						PTR_ERR(cur_folio) : -ERANGE;
-				SSDFS_ERR("fail to get folio: "
-					  "folio_index %lu, err %d\n",
-					  cur_index, err);
-				goto fail_write_folio;
-			}
-
-			if (!folio_test_locked(cur_folio))
-				ssdfs_folio_lock(cur_folio);
-			else
-				ssdfs_account_locked_folio(cur_folio);
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio_test_uptodate(cur_folio));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			folio_mark_dirty(cur_folio);
-			ssdfs_folio_start_writeback(fsi, U64_MAX,
-						    logical_offset, cur_folio);
-			ssdfs_clear_dirty_folio(cur_folio);
-
-			err = ssdfs_dirty_folios_batch_add_folio(cur_folio,
-								 0, batch);
-			if (err) {
-				SSDFS_ERR("fail to add folio into batch: "
-					  "ino %lu, folio_index %lu, err %d\n",
-					  ino, index, err);
-				goto fail_write_folio;
-			}
-
-			mem_pages_per_folio =
-				folio_size(cur_folio) >> PAGE_SHIFT;
-			cur_index = folio_index(cur_folio);
-			cur_index += mem_pages_per_folio;
-
-			processed_bytes += folio_size(cur_folio);
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(cur_index > index);
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-
-		logical_offset = (loff_t)start_index << PAGE_SHIFT;
-		len += processed_bytes;
-	}
-
-	err = ssdfs_dirty_folios_batch_add_folio(folio, 0, batch);
-	if (err) {
-		SSDFS_ERR("fail to add folio into batch: "
-			  "ino %lu, folio_index %lu, err %d\n",
-			  ino, index, err);
-		goto fail_write_folio;
-	}
-
-	ssdfs_dirty_folios_batch_prepare_logical_extent(ino,
-							(u64)logical_offset,
-							len, 0, 0,
-							batch);
-
-	return ssdfs_issue_write_request(wbc, pool, batch,
-					 SSDFS_BLOCK_BASED_REQUEST);
-
-fail_write_folio:
-	return err;
-}
-
-static
 int __ssdfs_writepages(struct folio *folio, u32 len,
 			struct writeback_control *wbc,
 			struct ssdfs_segment_request_pool *pool,
@@ -3297,62 +3181,6 @@ finish_write_folio:
 	ssdfs_folio_unlock(folio);
 
 discard_folio:
-	return err;
-}
-
-/*
- * The ssdfs_writepage() is called by the VM to write
- * a dirty page to backing store. This may happen for data
- * integrity reasons (i.e. 'sync'), or to free up memory
- * (flush). The difference can be seen in wbc->sync_mode.
- */
-static
-int ssdfs_writepage(struct page *page, struct writeback_control *wbc)
-{
-	struct ssdfs_segment_request_pool pool;
-	struct ssdfs_dirty_folios_batch *batch;
-	struct folio *folio = page_folio(page);
-	struct inode *inode = folio->mapping->host;
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
-#ifdef CONFIG_SSDFS_DEBUG
-	ino_t ino = inode->i_ino;
-	pgoff_t index = folio_index(folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %lu, page_index %llu\n",
-		  ino, (u64)index);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	batch = ssdfs_dirty_folios_batch_alloc();
-	if (IS_ERR_OR_NULL(batch)) {
-		err = (batch == NULL ? -ENOMEM : PTR_ERR(batch));
-		SSDFS_ERR("unable to allocate dirty folios batch\n");
-		return err;
-	}
-
-	ssdfs_segment_request_pool_init(&pool);
-	ssdfs_dirty_folios_batch_init(batch);
-
-	err = ssdfs_writepage_wrapper(folio, wbc,
-					&pool, batch,
-					__ssdfs_writepage);
-	if (unlikely(err)) {
-		SSDFS_ERR("writepage is failed: err %d\n",
-			  err);
-
-		ssdfs_clean_failed_request_pool(&pool);
-	} else {
-		err = ssdfs_wait_write_pool_requests_end(fsi, &pool);
-		if (unlikely(err)) {
-			SSDFS_ERR("finish write request failed: "
-				  "err %d\n", err);
-		}
-	}
-
-	ssdfs_dirty_folios_batch_free(batch);
-
 	return err;
 }
 
@@ -4438,7 +4266,6 @@ const struct inode_operations ssdfs_symlink_inode_operations = {
 const struct address_space_operations ssdfs_aops = {
 	.read_folio		= ssdfs_read_block,
 	.readahead		= ssdfs_readahead,
-	.writepage		= ssdfs_writepage,
 	.writepages		= ssdfs_writepages,
 	.write_begin		= ssdfs_write_begin,
 	.write_end		= ssdfs_write_end,
