@@ -2976,7 +2976,7 @@ void ssdfs_increase_volume_free_pages(struct ssdfs_fs_info *fsi,
 	offset; \
 })
 
-#define SSDFS_WAITED_TOO_LONG_MSECS		(1000)
+#define SSDFS_WAITED_TOO_LONG_MSECS		(SSDFS_DEFAULT_TIMEOUT / 2)
 
 static inline
 void ssdfs_check_jiffies_left_till_timeout(unsigned long value)
