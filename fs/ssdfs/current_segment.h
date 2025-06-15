@@ -69,7 +69,6 @@ void ssdfs_current_segment_array_destroy(struct ssdfs_fs_info *fsi);
 
 void ssdfs_current_segment_lock(struct ssdfs_current_segment *cur_seg);
 void ssdfs_current_segment_unlock(struct ssdfs_current_segment *cur_seg);
-bool is_ssdfs_current_segment_locked(struct ssdfs_current_segment *cur_seg);
 
 int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 			      struct ssdfs_segment_info *si,

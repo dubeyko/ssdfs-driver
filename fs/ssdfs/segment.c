@@ -699,13 +699,7 @@ free_peb_array:
 	ssdfs_seg_obj_kfree(si->peb_array);
 
 fail_construct_seg_obj:
-	if (err == -ENOSPC || err == -EINTR) {
-		/*
-		 * Don't change segment object state
-		 */
-	} else
-		atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_FAILURE);
-
+	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_FAILURE);
 	wake_up_all(&si->object_queue);
 	ssdfs_segment_free_object(si);
 
@@ -1546,6 +1540,7 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 						  log_pages,
 						  create_threads,
 						  si);
+
 		if (unlikely(err)) {
 			int res;
 
@@ -1554,6 +1549,13 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 				SSDFS_WARN("fail to remove segment: "
 					   "seg %llu, err %d\n",
 					   si->seg_id, res);
+			} else {
+				res = ssdfs_segment_destroy_object(si);
+				if (res) {
+					SSDFS_WARN("fail to destroy: "
+						   "seg %llu, err %d\n",
+						   si->seg_id, res);
+				}
 			}
 		}
 
@@ -1583,260 +1585,6 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 }
 
 /*
- * ssdfs_create_segment_in_tree() - create segment in the segment tree
- * @fsi: pointer on shared file system object
- * @state: segment search state [in|out]
- *
- * This function tries to create segment object in the segment tree.
- *
- * RETURN:
- * [success] - pointer on created segment object
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ENOMEM     - unable to allocate memory.
- * %-ENOSPC     - unable to create segment.
- * %-ERANGE     - internal error.
- */
-static
-struct ssdfs_segment_info *
-ssdfs_create_segment_in_tree(struct ssdfs_fs_info *fsi,
-			     struct ssdfs_segment_search_state *state)
-{
-	struct ssdfs_segment_info *si = NULL;
-	struct completion *init_end;
-	u16 log_pages;
-	u8 create_threads;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !state);
-	BUG_ON(state->request.seg_type != SSDFS_LEAF_NODE_SEG_TYPE &&
-		state->request.seg_type != SSDFS_HYBRID_NODE_SEG_TYPE &&
-		state->request.seg_type != SSDFS_INDEX_NODE_SEG_TYPE &&
-		state->request.seg_type != SSDFS_USER_DATA_SEG_TYPE);
-
-	SSDFS_DBG("fsi %p, seg_type %#x, "
-		  "seg_id %llu, start_search_id %llu\n",
-		  fsi, state->request.seg_type,
-		  state->result.seg_id,
-		  state->request.start_search_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (state->result.seg_state >= SSDFS_SEG_STATE_MAX) {
-		state->result.seg_state =
-				ssdfs_segbmap_get_state(fsi->segbmap,
-							state->result.seg_id,
-							&init_end);
-		if (state->result.seg_state == -EAGAIN) {
-			err = SSDFS_WAIT_COMPLETION(init_end);
-			if (unlikely(err)) {
-				SSDFS_ERR("segbmap init failed: "
-					  "err %d\n", err);
-				goto unable_create_segment;
-			}
-
-			state->result.seg_state =
-					ssdfs_segbmap_get_state(fsi->segbmap,
-							state->result.seg_id,
-							&init_end);
-			if (state->result.seg_state < 0)
-				goto fail_define_seg_state;
-		} else if (state->result.seg_state < 0) {
-fail_define_seg_state:
-			err = state->result.seg_state;
-			SSDFS_ERR("fail to define segment state: "
-				  "seg %llu\n",
-				  state->result.seg_id);
-			goto unable_create_segment;
-		}
-	}
-
-	switch (state->result.seg_state) {
-	case SSDFS_SEG_CLEAN:
-	case SSDFS_SEG_DATA_USING:
-	case SSDFS_SEG_LEAF_NODE_USING:
-	case SSDFS_SEG_HYBRID_NODE_USING:
-	case SSDFS_SEG_INDEX_NODE_USING:
-	case SSDFS_SEG_USED:
-	case SSDFS_SEG_PRE_DIRTY:
-		/* expected state */
-		break;
-
-	default:
-		err = -ERANGE;
-		SSDFS_ERR("seg %llu has unexpected state %#x\n",
-			  state->result.seg_id,
-			  state->result.seg_state);
-		goto unable_create_segment;
-	};
-
-	switch (state->request.seg_type) {
-	case SSDFS_USER_DATA_SEG_TYPE:
-		log_pages = fsi->segs_tree->user_data_log_pages;
-		break;
-
-	case SSDFS_LEAF_NODE_SEG_TYPE:
-		log_pages = fsi->segs_tree->lnodes_seg_log_pages;
-		break;
-
-	case SSDFS_HYBRID_NODE_SEG_TYPE:
-		log_pages = fsi->segs_tree->hnodes_seg_log_pages;
-		break;
-
-	case SSDFS_INDEX_NODE_SEG_TYPE:
-		log_pages = fsi->segs_tree->inodes_seg_log_pages;
-		break;
-
-	default:
-		log_pages = fsi->segs_tree->default_log_pages;
-		break;
-	};
-
-	create_threads = fsi->create_threads_per_seg;
-	si = __ssdfs_create_new_segment(fsi,
-					state->result.seg_id,
-					state->result.seg_state,
-					state->request.seg_type,
-					log_pages,
-					create_threads);
-	if (IS_ERR_OR_NULL(si)) {
-		err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-		if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("NO FREE SPACE: "
-				  "unable to create segment: "
-				  "seg %llu\n",
-				  state->result.seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto unable_create_segment;
-		} else if (err == -EINTR) {
-			/*
-			 * Ignore this error.
-			 */
-			goto unable_create_segment;
-		} else {
-			SSDFS_ERR("fail to add new segment: "
-				  "seg %llu, err %d\n",
-				  state->result.seg_id, err);
-			goto unable_create_segment;
-		}
-	} else {
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-		SSDFS_ERR("finished: seg_id %llu\n",
-			  state->result.seg_id);
-#else
-		SSDFS_DBG("finished: seg_id %llu\n",
-			  state->result.seg_id);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-	}
-
-	return si;
-
-unable_create_segment:
-	return ERR_PTR(err);
-}
-
-/*
- * ssdfs_find_and_create_new_segment() - find and create a new segment
- * @fsi: pointer on shared file system object
- * @state: segment search state [in|out]
- *
- * This function tries to find and create a new segment.
- *
- * RETURN:
- * [success] - pointer on created segment object
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ENOMEM     - unable to allocate memory.
- * %-ENOSPC     - no free space for a new segment.
- * %-ERANGE     - internal error.
- */
-static
-struct ssdfs_segment_info *
-ssdfs_find_and_create_new_segment(struct ssdfs_fs_info *fsi,
-				  struct ssdfs_segment_search_state *state)
-{
-	struct ssdfs_segment_info *si = NULL;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !state);
-	BUG_ON(state->request.seg_type != SSDFS_LEAF_NODE_SEG_TYPE &&
-		state->request.seg_type != SSDFS_HYBRID_NODE_SEG_TYPE &&
-		state->request.seg_type != SSDFS_INDEX_NODE_SEG_TYPE &&
-		state->request.seg_type != SSDFS_USER_DATA_SEG_TYPE);
-
-	SSDFS_DBG("fsi %p, seg_type %#x, "
-		  "seg_id %llu, start_search_id %llu\n",
-		  fsi, state->request.seg_type,
-		  state->result.seg_id,
-		  state->request.start_search_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (!state->request.need_find_new_segment) {
-		err = -EINVAL;
-		SSDFS_ERR("unexpected request state\n");
-		goto unable_create_new_segment;
-	}
-
-	do {
-		err = ssdfs_find_new_segment(fsi, state);
-		if (err == -ENOSPC) {
-			SSDFS_DBG("no free space for a new segment\n");
-			goto unable_create_new_segment;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find a new segment: "
-				  "start_search_id %llu, "
-				  "seg_type %#x, err %d\n",
-				  state->request.start_search_id,
-				  state->request.seg_type, err);
-			goto unable_create_new_segment;
-		}
-
-		si = ssdfs_create_segment_in_tree(fsi, state);
-		if (IS_ERR_OR_NULL(si)) {
-			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("NO FREE SPACE: "
-					  "unable to create segment: "
-					  "seg %llu\n",
-					  state->result.seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-				/* try to find another segment */
-				err = -EAGAIN;
-			} else if (err == -EINTR) {
-				/*
-				 * Ignore this error.
-				 */
-				goto unable_create_new_segment;
-			} else {
-				SSDFS_ERR("fail to add new segment: "
-					  "seg %llu, err %d\n",
-					  state->result.seg_id, err);
-				goto unable_create_new_segment;
-			}
-		} else {
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-			SSDFS_ERR("finished: seg_id %llu\n",
-				  state->result.seg_id);
-#else
-			SSDFS_DBG("finished: seg_id %llu\n",
-				  state->result.seg_id);
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-		}
-	} while (err == -EAGAIN);
-
-	return si;
-
-unable_create_new_segment:
-	return ERR_PTR(err);
-}
-
-/*
  * ssdfs_grab_segment() - get or create segment object
  * @fsi: pointer on shared file system object
  * @state: segment search state [in|out]
@@ -1859,7 +1607,6 @@ unable_create_new_segment:
  * [success] - pointer on segment object.
  * [failure] - error code:
  *
- * %-ENOSPC     - no free space for a new segment.
  * %-ERANGE     - internal error.
  */
 struct ssdfs_segment_info *
@@ -1867,6 +1614,7 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi,
 		   struct ssdfs_segment_search_state *state)
 {
 	struct ssdfs_segment_info *si;
+	struct completion *init_end;
 	wait_queue_head_t *wq;
 	int err;
 
@@ -1893,75 +1641,169 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (state->request.need_find_new_segment) {
-		si = ssdfs_find_and_create_new_segment(fsi, state);
-		if (IS_ERR_OR_NULL(si)) {
-			err = PTR_ERR(si);
-
-			if (err == -ENOSPC) {
-				SSDFS_DBG("no free space for a new segment\n");
-				return ERR_PTR(err);
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to find a new segment: "
-					  "start_search_id %llu, "
-					  "seg_type %#x, err %d\n",
-					  state->request.start_search_id,
-					  state->request.seg_type, err);
-				return ERR_PTR(err);
-			}
+		err = ssdfs_find_new_segment(fsi, state);
+		if (err == -ENOSPC) {
+			SSDFS_DBG("no free space for a new segment\n");
+			return ERR_PTR(err);
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a new segment: "
+				  "start_search_id %llu, "
+				  "seg_type %#x, err %d\n",
+				  state->request.start_search_id,
+				  state->request.seg_type, err);
+			return ERR_PTR(err);
 		}
-	} else {
-		si = ssdfs_segment_tree_find(fsi, state->result.seg_id);
-		if (IS_ERR_OR_NULL(si)) {
-			err = PTR_ERR(si);
+	}
 
-			if (err == -ENODATA) {
-				si = ssdfs_create_segment_in_tree(fsi, state);
-				if (IS_ERR_OR_NULL(si)) {
-					err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-					if (err == -EINTR) {
-						/*
-						 * Ignore this error.
-						 */
-						return ERR_PTR(err);
-					} else {
-						SSDFS_ERR("fail to create segment: "
-							  "seg %llu, err %d\n",
-							  state->result.seg_id,
-							  err);
-						return ERR_PTR(err);
-					}
+	si = ssdfs_segment_tree_find(fsi, state->result.seg_id);
+	if (IS_ERR_OR_NULL(si)) {
+		err = PTR_ERR(si);
+
+		if (err == -ENODATA) {
+			u16 log_pages;
+			u8 create_threads;
+
+			if (state->result.seg_state != SSDFS_SEG_STATE_MAX)
+				goto create_segment_object;
+
+			state->result.seg_state =
+				ssdfs_segbmap_get_state(fsi->segbmap,
+							state->result.seg_id,
+							&init_end);
+			if (state->result.seg_state == -EAGAIN) {
+				err = SSDFS_WAIT_COMPLETION(init_end);
+				if (unlikely(err)) {
+					SSDFS_ERR("segbmap init failed: "
+						  "err %d\n", err);
+					return ERR_PTR(err);
 				}
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to find segment: "
-					  "seg %llu, err %d\n",
-					  state->result.seg_id, err);
-				return ERR_PTR(err);
-			} else {
-				SSDFS_ERR("segment tree returns NULL\n");
-				return ERR_PTR(-ERANGE);
-			}
-		} else {
-			wq = &si->object_queue;
-			ssdfs_segment_get_object(si);
 
-			switch (atomic_read(&si->obj_state)) {
-			case SSDFS_SEG_OBJECT_CREATED:
-			case SSDFS_CURRENT_SEG_OBJECT:
-				/* do nothing */
+				state->result.seg_state =
+					ssdfs_segbmap_get_state(fsi->segbmap,
+							state->result.seg_id,
+							&init_end);
+				if (state->result.seg_state < 0)
+					goto fail_define_seg_state;
+			} else if (state->result.seg_state < 0) {
+fail_define_seg_state:
+				SSDFS_ERR("fail to define segment state: "
+					  "seg %llu\n",
+					  state->result.seg_id);
+				return ERR_PTR(state->result.seg_state);
+			}
+
+			switch (state->result.seg_state) {
+			case SSDFS_SEG_DATA_USING:
+			case SSDFS_SEG_LEAF_NODE_USING:
+			case SSDFS_SEG_HYBRID_NODE_USING:
+			case SSDFS_SEG_INDEX_NODE_USING:
+			case SSDFS_SEG_USED:
+			case SSDFS_SEG_PRE_DIRTY:
+				/* expected state */
 				break;
 
 			default:
-				err = wait_event_killable_timeout(*wq,
-						is_ssdfs_segment_created(si),
-						SSDFS_DEFAULT_TIMEOUT);
-				if (err < 0) {
-					ssdfs_segment_put_object(si);
-					SSDFS_WARN("fail to grab segment: "
-						   "seg %llu\n",
-						   state->result.seg_id);
-					return ERR_PTR(-ERANGE);
+				err = -ERANGE;
+				SSDFS_ERR("seg %llu has unexpected state %#x\n",
+					  state->result.seg_id,
+					  state->result.seg_state);
+				return ERR_PTR(err);
+			};
+
+create_segment_object:
+			switch (state->request.seg_type) {
+			case SSDFS_USER_DATA_SEG_TYPE:
+				log_pages =
+					fsi->segs_tree->user_data_log_pages;
+				break;
+
+			case SSDFS_LEAF_NODE_SEG_TYPE:
+				log_pages =
+					fsi->segs_tree->lnodes_seg_log_pages;
+				break;
+
+			case SSDFS_HYBRID_NODE_SEG_TYPE:
+				log_pages =
+					fsi->segs_tree->hnodes_seg_log_pages;
+				break;
+
+			case SSDFS_INDEX_NODE_SEG_TYPE:
+				log_pages =
+					fsi->segs_tree->inodes_seg_log_pages;
+				break;
+
+			default:
+				log_pages =
+					fsi->segs_tree->default_log_pages;
+				break;
+			};
+
+			create_threads = fsi->create_threads_per_seg;
+			si = __ssdfs_create_new_segment(fsi,
+							state->result.seg_id,
+							state->result.seg_state,
+							state->request.seg_type,
+							log_pages,
+							create_threads);
+			if (IS_ERR_OR_NULL(si)) {
+				err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+				if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+					SSDFS_DBG("NO FREE SPACE: "
+						  "unable to create segment: "
+						  "seg %llu\n",
+						  state->result.seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				} else if (err == -EINTR) {
+					/*
+					 * Ignore this error.
+					 */
+				} else {
+					SSDFS_ERR("fail to add new segment: "
+						  "seg %llu, err %d\n",
+						  state->result.seg_id, err);
 				}
 			}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+			SSDFS_ERR("finished: seg_id %llu\n",
+				  state->result.seg_id);
+#else
+			SSDFS_DBG("finished: seg_id %llu\n",
+				  state->result.seg_id);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+			return si;
+		} else if (err == 0) {
+			SSDFS_ERR("segment tree returns NULL\n");
+			return ERR_PTR(-ERANGE);
+		} else {
+			SSDFS_ERR("segment tree fail to find segment: "
+				  "seg %llu, err %d\n",
+				  state->result.seg_id, err);
+			return ERR_PTR(err);
+		}
+	}
+
+	wq = &si->object_queue;
+	ssdfs_segment_get_object(si);
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_CREATED:
+	case SSDFS_CURRENT_SEG_OBJECT:
+		/* do nothing */
+		break;
+
+	default:
+		err = wait_event_killable_timeout(*wq,
+				is_ssdfs_segment_created(si),
+				SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0) {
+			ssdfs_segment_put_object(si);
+			SSDFS_WARN("fail to grab segment: "
+				   "seg %llu\n",
+				   state->result.seg_id);
+			return ERR_PTR(-ERANGE);
 		}
 	}
 
@@ -3409,124 +3251,12 @@ finish_allocate_extent:
 }
 
 /*
- * ssdfs_add_new_current_segment() - add new current segment
- * @cur_seg: current segment container
- * @seg_search: segment search state
- * @seg_type: requested segment type
- *
- * This function tries to add new current segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - there is no more clean segments.
- * %-ERANGE     - internal error.
- */
-static
-int ssdfs_add_new_current_segment(struct ssdfs_current_segment *cur_seg,
-				  struct ssdfs_segment_search_state *seg_search,
-				  int seg_type)
-{
-	struct ssdfs_fs_info *fsi;
-	struct ssdfs_segment_info *si;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg || !seg_search);
-	BUG_ON(!is_ssdfs_current_segment_locked(cur_seg));
-
-	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
-		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	fsi = cur_seg->fsi;
-
-	if (!is_ssdfs_current_segment_empty(cur_seg)) {
-		err = ssdfs_remove_current_segment(cur_seg);
-		if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add current segment: "
-				  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			return err;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to remove current segment: "
-				  "err %d\n", err);
-			return err;
-		}
-	}
-
-	do {
-		err = 0;
-
-		seg_search->request.start_search_id = cur_seg->seg_id;
-		seg_search->request.need_find_new_segment = true;
-
-		si = ssdfs_grab_segment(fsi, seg_search);
-		if (IS_ERR_OR_NULL(si)) {
-			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
-			if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to create segment object: "
-					  "err %d\n", err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			} else {
-				SSDFS_ERR("fail to create segment object: "
-					  "err %d\n", err);
-			}
-
-			return err;
-		}
-
-		if (cur_seg->seg_id == si->seg_id) {
-			/*
-			 * ssdfs_grab_segment() has got object already.
-			 */
-			ssdfs_segment_put_object(si);
-			err = -ENOSPC;
-			SSDFS_DBG("there is no more clean segments\n");
-			return err;
-		}
-
-		err = ssdfs_current_segment_add(cur_seg, si, seg_search);
-		/*
-		 * ssdfs_grab_segment() has got object already.
-		 */
-		ssdfs_segment_put_object(si);
-
-		if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			cur_seg->seg_id = si->seg_id;
-			/* continue search */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to add segment %llu as current: "
-				  "err %d\n",
-				  si->seg_id, err);
-			return err;
-		}
-	} while (err == -ENOSPC);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("current segment has been added: "
-		  "type %#x, seg_id %llu, real_seg %px\n",
-		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return 0;
-}
-
-/*
- * __ssdfs_segment_add_data_extent() - add new data extent into segment
+ * __ssdfs_segment_add_data_block() - add new data block into segment
  * @cur_seg: current segment container
  * @pool: pool of segment requests [in|out]
  * @batch: dirty pages batch [in|out]
  *
- * This function tries to add new extent into segment.
+ * This function tries to add new data block into segment.
  *
  * RETURN:
  * [success]
@@ -3537,11 +3267,12 @@ int ssdfs_add_new_current_segment(struct ssdfs_current_segment *cur_seg,
  * %-ERANGE     - internal error.
  */
 static
-int __ssdfs_segment_add_data_extent(struct ssdfs_current_segment *cur_seg,
-				    struct ssdfs_segment_request_pool *pool,
-				    struct ssdfs_dirty_folios_batch *batch)
+int __ssdfs_segment_add_data_block(struct ssdfs_current_segment *cur_seg,
+				   struct ssdfs_segment_request_pool *pool,
+				   struct ssdfs_dirty_folios_batch *batch)
 {
 	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_search_state seg_search;
 	int seg_type;
 	int err = 0;
@@ -3580,65 +3311,115 @@ int __ssdfs_segment_add_data_extent(struct ssdfs_current_segment *cur_seg,
 	ssdfs_segment_search_state_init(&seg_search, seg_type,
 					U64_MAX, U64_MAX);
 
+try_current_segment:
 	if (is_ssdfs_current_segment_empty(cur_seg)) {
-		err = ssdfs_add_new_current_segment(cur_seg,
-						    &seg_search,
-						    seg_type);
+add_new_current_segment:
+		seg_search.request.start_search_id = cur_seg->seg_id;
+		seg_search.request.need_find_new_segment = true;
+		si = ssdfs_grab_segment(fsi, &seg_search);
+		if (IS_ERR_OR_NULL(si)) {
+			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
+			goto finish_add_block;
+		}
+
+		if (cur_seg->seg_id == si->seg_id) {
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			err = -ENOSPC;
+			SSDFS_DBG("there is no more clean segments\n");
+			goto finish_add_block;
+		}
+
+		err = ssdfs_current_segment_add(cur_seg, si, &seg_search);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
 		if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to add current segment: "
-				  "err %d\n", err);
+			SSDFS_DBG("unable to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_add_extent;
+			cur_seg->seg_id = si->seg_id;
+			goto add_new_current_segment;
 		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to add current segment: "
-				  "err %d\n", err);
-			goto finish_add_extent;
+			SSDFS_ERR("fail to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+			goto finish_add_block;
 		}
-	}
 
-	do {
-		err = 0;
-
+		goto try_current_segment;
+	} else {
 		err = ssdfs_segment_allocate_data_extent(cur_seg, pool, batch);
-		if (err == -E2BIG || err == -EAGAIN) {
+		if (err == -E2BIG) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("segment %llu hasn't enough free pages\n",
 				  cur_seg->real_seg->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			err = ssdfs_add_new_current_segment(cur_seg,
-							    &seg_search,
-							    seg_type);
+			err = ssdfs_remove_current_segment(cur_seg);
 			if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("unable to add current segment: "
 					  "err %d\n", err);
 #endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_add_extent;
+				goto finish_add_block;
 			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to add current segment: "
-					  "err %d\n", err);
-				goto finish_add_extent;
-			} else {
-				/* try next current segment */
-				err = -EAGAIN;
-			}
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_block;
+			} else
+				goto add_new_current_segment;
 		} else if (err == -ENOSPC) {
 			err = -EAGAIN;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("request pool is full\n");
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_add_extent;
+			goto finish_add_block;
+		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_block;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_block;
+			} else
+				goto add_new_current_segment;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to reserve logical extent: "
 				  "seg %llu, err %d\n",
 				  cur_seg->real_seg->seg_id, err);
-			goto finish_add_extent;
+			goto finish_add_block;
 		}
-	} while (err == -EAGAIN);
+	}
 
-finish_add_extent:
+finish_add_block:
 	ssdfs_current_segment_unlock(cur_seg);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3655,16 +3436,10 @@ finish_add_extent:
 
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to add extent: "
-			  "ino %llu, "
-			  "requested (logical_offset %llu, data_bytes %u), "
-			  "allocated (start_blk %u, len %u), "
-			  "err %d\n",
+		SSDFS_DBG("unable to add block: "
+			  "ino %llu, logical_offset %llu, err %d\n",
 			  batch->requested_extent.ino,
 			  batch->requested_extent.logical_offset,
-			  batch->requested_extent.data_bytes,
-			  batch->allocated_extent.start_lblk,
-			  batch->allocated_extent.len,
 			  err);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return err;
@@ -3674,45 +3449,15 @@ finish_add_extent:
 #endif /* CONFIG_SSDFS_DEBUG */
 		return err;
 	} else if (err) {
-		SSDFS_ERR("fail to add extent: "
-			  "ino %llu, "
-			  "requested (logical_offset %llu, data_bytes %u), "
-			  "allocated (start_blk %u, len %u), "
-			  "err %d\n",
+		SSDFS_ERR("fail to add block: "
+			  "ino %llu, logical_offset %llu, err %d\n",
 			  batch->requested_extent.ino,
 			  batch->requested_extent.logical_offset,
-			  batch->requested_extent.data_bytes,
-			  batch->allocated_extent.start_lblk,
-			  batch->allocated_extent.len,
 			  err);
 		return err;
 	}
 
 	return 0;
-}
-
-/*
- * __ssdfs_segment_add_data_block() - add new data block into segment
- * @cur_seg: current segment container
- * @pool: pool of segment requests [in|out]
- * @batch: dirty pages batch [in|out]
- *
- * This function tries to add new data block into segment.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ENOSPC     - segment hasn't free pages.
- * %-EAGAIN     - request pool is full.
- * %-ERANGE     - internal error.
- */
-static
-int __ssdfs_segment_add_data_block(struct ssdfs_current_segment *cur_seg,
-				   struct ssdfs_segment_request_pool *pool,
-				   struct ssdfs_dirty_folios_batch *batch)
-{
-	return __ssdfs_segment_add_data_extent(cur_seg, pool, batch);
 }
 
 /*
@@ -4748,6 +4493,217 @@ int ssdfs_segment_add_index_node_block_async(struct ssdfs_fs_info *fsi,
 						SSDFS_PEB_CREATE_IDXNODE_REQ,
 						SSDFS_REQ_ASYNC,
 						req, seg_id, extent);
+}
+
+/*
+ * __ssdfs_segment_add_data_extent() - add new data extent into segment
+ * @cur_seg: current segment container
+ * @pool: pool of segment requests [in|out]
+ * @batch: dirty pages batch [in|out]
+ *
+ * This function tries to add new extent into segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ENOSPC     - segment hasn't free pages.
+ * %-EAGAIN     - request pool is full.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_segment_add_data_extent(struct ssdfs_current_segment *cur_seg,
+				    struct ssdfs_segment_request_pool *pool,
+				    struct ssdfs_dirty_folios_batch *batch)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_search_state seg_search;
+	int seg_type;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!cur_seg || !pool || !batch);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+	SSDFS_ERR("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#else
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, cno %llu, parent_snapshot %llu\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  batch->requested_extent.data_bytes,
+		  batch->requested_extent.cno,
+		  batch->requested_extent.parent_snapshot);
+	SSDFS_DBG("current segment: type %#x, seg_id %llu, real_seg %px\n",
+		  cur_seg->type, cur_seg->seg_id, cur_seg->real_seg);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	fsi = cur_seg->fsi;
+
+	ssdfs_current_segment_lock(cur_seg);
+
+	seg_type = CHECKED_SEG_TYPE(fsi, SEG_TYPE(pool->req_class));
+	ssdfs_segment_search_state_init(&seg_search, seg_type,
+					U64_MAX, U64_MAX);
+
+try_current_segment:
+	if (is_ssdfs_current_segment_empty(cur_seg)) {
+add_new_current_segment:
+		seg_search.request.start_search_id = cur_seg->seg_id;
+		seg_search.request.need_find_new_segment = true;
+		si = ssdfs_grab_segment(fsi, &seg_search);
+		if (IS_ERR_OR_NULL(si)) {
+			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to create segment object: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+				SSDFS_ERR("fail to create segment object: "
+					  "err %d\n", err);
+			}
+
+			goto finish_add_extent;
+		}
+
+		if (cur_seg->seg_id == si->seg_id) {
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			err = -ENOSPC;
+			SSDFS_DBG("there is no more clean segments\n");
+			goto finish_add_extent;
+		}
+
+		err = ssdfs_current_segment_add(cur_seg, si, &seg_search);
+		/*
+		 * ssdfs_grab_segment() has got object already.
+		 */
+		ssdfs_segment_put_object(si);
+
+		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			cur_seg->seg_id = si->seg_id;
+			goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+			goto finish_add_extent;
+		}
+
+		goto try_current_segment;
+	} else {
+		err = ssdfs_segment_allocate_data_extent(cur_seg, pool, batch);
+		if (err == -E2BIG) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_extent;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_extent;
+			} else
+				goto add_new_current_segment;
+		} else if (err == -ENOSPC) {
+			err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("request pool is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_add_extent;
+		} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu hasn't enough free pages\n",
+				  cur_seg->real_seg->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_remove_current_segment(cur_seg);
+			if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to add current segment: "
+					  "err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_add_extent;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to remove current segment: "
+					  "seg %llu, err %d\n",
+					  si->seg_id, err);
+				goto finish_add_extent;
+			} else
+				goto add_new_current_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to reserve logical extent: "
+				  "seg %llu, err %d\n",
+				  cur_seg->real_seg->seg_id, err);
+			goto finish_add_extent;
+		}
+	}
+
+finish_add_extent:
+	ssdfs_current_segment_unlock(cur_seg);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	if (cur_seg->real_seg) {
+		SSDFS_ERR("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#else
+	if (cur_seg->real_seg) {
+		SSDFS_DBG("finished: seg %llu\n",
+			  cur_seg->real_seg->seg_id);
+	}
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("request pool is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
+	} else if (err) {
+		SSDFS_ERR("fail to add extent: "
+			  "ino %llu, logical_offset %llu, err %d\n",
+			  batch->requested_extent.ino,
+			  batch->requested_extent.logical_offset,
+			  err);
+		return err;
+	}
+
+	return 0;
 }
 
 /*

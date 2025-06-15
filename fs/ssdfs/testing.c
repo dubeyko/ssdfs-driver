@@ -2275,6 +2275,9 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get free pages: err %d\n", err);
 		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get free pages: err %d\n", err);
+		return -ERANGE;
 	} else {
 		free_blks = err;
 		err = 0;
@@ -2284,6 +2287,9 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get used pages: err %d\n", err);
 		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		return -ERANGE;
 	} else {
 		used_blks = err;
 		err = 0;
@@ -2293,6 +2299,9 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
 		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get invalid pages: err %d\n", err);
+		return -ERANGE;
 	} else {
 		invalid_blks = err;
 		err = 0;
@@ -2496,10 +2505,6 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 
 	while (len > 0) {
 		for (i = 0; i < len; i++) {
-			if ((start + i) >= capacity) {
-				break;
-			}
-
 			if (ssdfs_block_bmap_test_block(bmap, start + i,
 						    SSDFS_BLK_PRE_ALLOCATED)) {
 				if (range.start >= U32_MAX) {
@@ -2521,12 +2526,8 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 		}
 
 		if (range.len == 0) {
-			if ((start + len) >= capacity) {
-				goto finish_check;
-			} else {
-				start += len;
-				continue;
-			}
+			start += len;
+			continue;
 		}
 
 		err = ssdfs_block_bmap_invalidate(bmap, &range);
@@ -2574,6 +2575,9 @@ int ssdfs_testing_block_bmap_collect_garbage(struct ssdfs_block_bmap *bmap,
 	if (unlikely(err < 0)) {
 		SSDFS_ERR("fail to get used pages: err %d\n", err);
 		return err;
+	} else if (unlikely(err >= U16_MAX)) {
+		SSDFS_ERR("fail to get used pages: err %d\n", err);
+		return -ERANGE;
 	} else {
 		used_blks = err;
 		err = 0;
@@ -2803,6 +2807,10 @@ int ssdfs_do_block_bitmap_testing(struct ssdfs_fs_info *fsi,
 
 		err = ssdfs_block_bmap_get_free_pages(&bmap);
 		if (unlikely(err < 0)) {
+			SSDFS_ERR("fail to get free pages: err %d\n", err);
+			goto fail_define_free_pages_count;
+		} else if (unlikely(err >= U16_MAX)) {
+			err = -ERANGE;
 			SSDFS_ERR("fail to get free pages: err %d\n", err);
 			goto fail_define_free_pages_count;
 		} else {

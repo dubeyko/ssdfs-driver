@@ -260,6 +260,35 @@ config SSDFS_ONLINE_FSCK
 
 	  If unsure, say N.
 
+config SSDFS_DONT_AUTO_ERASE_SB_SNAPSHOT_SEGMENT
+	bool "Prevent superblock snapshots segment from auto erase"
+	depends on SSDFS
+	default n
+	help
+	  This option enables protection from auto erase of superblock
+	  snapshots segment. The first segment of SSDFS file system
+	  volume is reserved for snapshoting of superblock state when
+	  file system logic changes the current superblock segments.
+	  Every time when it is happened the file system logic stores
+	  new state of superblock into the first segment (superblock
+	  snaphots segment). The frequency of this operation depends on
+	  the size of erase block but, anyway, the first segment can be
+	  exhausted after some number of such operations. It means that
+	  if the first segment is exhausted, then it needs to erase and
+	  re-write the first segment during mount or unmount operation.
+	  However, potentially, the erase or/and re-write operation can be
+	  interupted and not finished that could be resulted into
+	  the corrupted state of the first segment. And if file system
+	  works as rootfs, then booting code could be lost during
+	  the erase and re-write operation. Enabling this option prevents
+	  from the auto erase of exhausted superblock snaphots segment.
+	  In this configuration, file system logic will emit the message
+	  about exhaustion of the first segment into the system log and
+	  no snapshots will be stored until the first segment will be
+	  erased and re-written by SSDFS utilities.
+
+	  If unsure, say N.
+
 endmenu
 
 menu "Development"

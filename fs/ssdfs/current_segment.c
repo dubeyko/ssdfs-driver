@@ -178,19 +178,6 @@ void ssdfs_current_segment_unlock(struct ssdfs_current_segment *cur_seg)
 }
 
 /*
- * is_ssdfs_current_segment_locked() - is current segment locked?
- * @cur_seg: pointer on current segment container
- */
-bool is_ssdfs_current_segment_locked(struct ssdfs_current_segment *cur_seg)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return mutex_is_locked(&cur_seg->lock);
-}
-
-/*
  * need_select_flush_threads() - check necessity to select flush threads
  * @seg_state: segment state
  */

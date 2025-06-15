@@ -276,6 +276,9 @@ int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
 void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi);
 void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi);
 void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi);
+int ssdfs_init_sb_snap_info(struct ssdfs_fs_info *fsi,
+			    struct ssdfs_sb_snapshot_seg_info *sb_snapi);
+void ssdfs_destruct_sb_snap_info(struct ssdfs_sb_snapshot_seg_info *sb_snapi);
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent);
 
 /* segment.c */

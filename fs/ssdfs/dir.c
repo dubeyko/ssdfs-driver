@@ -215,9 +215,6 @@ dentry_is_not_available:
 	}
 
 finish_search_dentry:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -261,10 +258,6 @@ static struct dentry *ssdfs_lookup(struct inode *dir, struct dentry *target,
 			return ERR_PTR(-EIO);
 		}
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	return d_splice_alias(inode, target);
 }
@@ -346,9 +339,6 @@ finish_create_dentries_tree:
 	ssdfs_btree_search_free(search);
 
 finish_add_link:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -381,21 +371,11 @@ static int ssdfs_add_nondir(struct inode *dir, struct dentry *dentry,
 	if (err) {
 		inode_dec_link_count(inode);
 		iget_failed(inode);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		return err;
 	}
 
 	unlock_new_inode(inode);
 	d_instantiate(dentry, inode);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return 0;
 }
 
@@ -408,7 +388,7 @@ int ssdfs_create(struct mnt_idmap *idmap,
 		 umode_t mode, bool excl)
 {
 	struct inode *inode;
-	int err = 0;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir %lu, mode %o\n", (unsigned long)dir->i_ino, mode);
@@ -421,12 +401,9 @@ int ssdfs_create(struct mnt_idmap *idmap,
 	}
 
 	mark_inode_dirty(inode);
-	err = ssdfs_add_nondir(dir, dentry, inode);
+	return ssdfs_add_nondir(dir, dentry, inode);
 
 failed_create:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -440,7 +417,6 @@ static int ssdfs_mknod(struct mnt_idmap *idmap,
 			umode_t mode, dev_t rdev)
 {
 	struct inode *inode;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dir %lu, mode %o, rdev %#x\n",
@@ -457,13 +433,7 @@ static int ssdfs_mknod(struct mnt_idmap *idmap,
 	init_special_inode(inode, mode, rdev);
 
 	mark_inode_dirty(inode);
-	err = ssdfs_add_nondir(dir, dentry, inode);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
+	return ssdfs_add_nondir(dir, dentry, inode);
 }
 
 /*
@@ -526,13 +496,7 @@ static int ssdfs_symlink(struct mnt_idmap *idmap,
 	}
 
 	mark_inode_dirty(inode);
-	err = ssdfs_add_nondir(dir, dentry, inode);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
+	return ssdfs_add_nondir(dir, dentry, inode);
 
 out_fail:
 	inode_dec_link_count(inode);
@@ -587,11 +551,6 @@ static int ssdfs_link(struct dentry *old_dentry, struct inode *dir,
 	}
 
 	d_instantiate(dentry, inode);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return 0;
 }
 
@@ -687,15 +646,15 @@ free_search_object:
 finish_make_empty_dir:
 	up_read(&ii->lock);
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return err;
 }
 
-static int __ssdfs_mkdir(struct mnt_idmap *idmap,
-			 struct inode *dir, struct dentry *dentry, umode_t mode)
+/*
+ * Create subdirectory.
+ * The ssdfs_mkdir() is called by the mkdir(2) system call.
+ */
+static int ssdfs_mkdir(struct mnt_idmap *idmap,
+			struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	struct inode *inode;
 	struct ssdfs_inode_info *dir_ii = SSDFS_I(dir);
@@ -750,22 +709,7 @@ out_fail:
 	iput(inode);
 out_dir:
 	inode_dec_link_count(dir);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return err;
-}
-
-/*
- * Create subdirectory.
- * The ssdfs_mkdir() is called by the mkdir(2) system call.
- */
-static struct dentry *ssdfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
-				  struct dentry *dentry, umode_t mode)
-{
-	return ERR_PTR(__ssdfs_mkdir(idmap, dir, dentry, mode));
 }
 
 /*
@@ -854,11 +798,6 @@ finish_delete_dentry:
 
 finish_unlink:
 	trace_ssdfs_unlink_exit(inode, err);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return err;
 }
 
@@ -925,10 +864,6 @@ static int ssdfs_rmdir(struct inode *dir, struct dentry *dentry)
 			inode_dec_link_count(dir);
 		}
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1382,10 +1317,6 @@ finish_cross_rename:
 	ssdfs_btree_search_free(search);
 
 out:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return err;
 }
 
@@ -1511,10 +1442,6 @@ finish_get_start_hash:
 		break;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return err;
 }
 
@@ -1555,10 +1482,6 @@ int ssdfs_dentries_tree_get_next_hash(struct ssdfs_dentries_btree_info *tree,
 	down_read(&tree->lock);
 	err = ssdfs_btree_get_next_hash(tree->generic_tree, search, next_hash);
 	up_read(&tree->lock);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }

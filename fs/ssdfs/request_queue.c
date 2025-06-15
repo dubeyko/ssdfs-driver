@@ -603,10 +603,12 @@ void ssdfs_request_free(struct ssdfs_segment_request *req,
 		return;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("class %#x, cmd %#x, type %#x, "
+	SSDFS_DBG("writeback_folios %lld, "
+		"class %#x, cmd %#x, type %#x, "
 		"seg %llu, extent (start %u, len %u), "
 		"ino %llu, logical_offset %llu, "
 		"data_bytes %u\n",
+		atomic64_read(&req->writeback_folios),
 		req->private.class, req->private.cmd,
 		req->private.type,
 		req->place.start.seg_id,

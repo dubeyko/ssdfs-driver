@@ -17606,35 +17606,16 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 			return err;
 		}
 
-		pebi = ssdfs_get_current_peb_locked(pebc);
-		if (IS_ERR_OR_NULL(pebi)) {
-			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
+		err = ssdfs_peb_start_migration(pebc);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to start migration: "
+				  "seg %llu, peb_index %u, "
+				  "err %d\n",
 				  pebc->parent_si->seg_id,
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
 			return err;
-		}
-
-		ssdfs_peb_current_log_lock(pebi);
-		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
-		ssdfs_peb_current_log_unlock(pebi);
-		ssdfs_unlock_current_peb(pebc);
-
-		if (is_peb_exhausted) {
-			err = ssdfs_peb_start_migration(pebc);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to start migration: "
-					  "seg %llu, peb_index %u, "
-					  "err %d\n",
-					  pebc->parent_si->seg_id,
-					  pebc->peb_index, err);
-				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-				thread_state->err = err;
-				return err;
-			}
 		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
@@ -18821,15 +18802,8 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 			ssdfs_finish_flush_request(pebc, thread_state->req,
 						   wait_queue, err);
-
-			state = atomic_read(&pebi->current_log.state);
-			if (state == SSDFS_LOG_COMMITTED) {
-				thread_state->state =
-				  SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-			} else {
-				thread_state->state =
-				  SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-			}
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
 		} else if (have_flush_requests(pebc)) {
 			ssdfs_requests_queue_add_tail(&pebc->update_rq,
 							thread_state->req);

@@ -542,14 +542,11 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
-		  "free_inodes %llu, inodes_capacity %llu, "
-		  "timestamp %llu, cno %llu\n",
+		  "free_inodes %llu, inodes_capacity %llu\n",
 		  ptr->upper_allocated_ino,
 		  ptr->allocated_inodes,
 		  ptr->free_inodes,
-		  ptr->inodes_capacity,
-		  le64_to_cpu(fsi->vs->timestamp),
-		  le64_to_cpu(fsi->vs->cno));
+		  ptr->inodes_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(&ptr->root_folder, 0, raw_inode_size,
@@ -842,9 +839,8 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("allocated_inodes %llu, free_inodes %llu, "
-		  "inodes_capacity %llu, upper_allocated_ino %llu\n",
-		  allocated_inodes, free_inodes,
-		  inodes_capacity, upper_allocated_ino);
+		  "inodes_capacity %llu\n",
+		  allocated_inodes, free_inodes, inodes_capacity);
 	WARN_ON((allocated_inodes + free_inodes) != inodes_capacity);
 
 	SSDFS_DBG("leaf_nodes %u, nodes_count %u\n",
@@ -965,17 +961,15 @@ int ssdfs_extend_free_inodes_queue(struct ssdfs_inodes_btree_info *tree,
 	search->request.count = 1;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("start_hash %llx, end_hash %llx, "
-		  "upper_allocated_ino %llx\n",
-		  search->request.start.hash,
-		  search->request.end.hash,
-		  tree->upper_allocated_ino);
+	SSDFS_DBG("start_hash %llx, end_hash %llx\n",
+	          search->request.start.hash,
+	          search->request.end.hash);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_btree_add_node(&tree->generic_tree, search);
-	if (err == -EEXIST) {
+	if (err == -EEXIST)
 		err = 0;
-	} else if (err == -ENOSPC) {
+	else if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("unable to add the node: err %d\n",
 			  err);
@@ -1087,7 +1081,6 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 {
 	struct ssdfs_free_inode_range_queue *queue;
 	struct ssdfs_inodes_btree_range *range = NULL;
-	int number_of_tries = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1106,13 +1099,6 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 	queue = &tree->free_inodes_queue;
 
 	do {
-		if (number_of_tries > SSDFS_MAX_NUMBER_OF_TRIES) {
-			SSDFS_ERR("fail to get free inode hash from the queue: "
-				  "number_of_tries %d\n",
-				  number_of_tries);
-			return -ERANGE;
-		}
-
 		err = ssdfs_free_inodes_queue_get_first(queue, &range);
 		if (err == -ENODATA) {
 			err = ssdfs_extend_free_inodes_queue(tree, search);
@@ -1161,8 +1147,6 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 				goto finish_inode_allocation;
 			}
 		}
-
-		number_of_tries++;
 	} while (err == -ENOENT);
 
 	if (unlikely(err)) {

@@ -1041,6 +1041,7 @@ struct ssdfs_inode {
 	__le32 checksum;		/* inode checksum */
 
 /* 0x0068 */
+/* TODO: maybe use the hash code of file name as inode number */
 	__le64 ino;			/* Inode number */
 	__le64 hash_code;		/* hash code of file name */
 	__le16 name_len;		/* lengh of file name */
@@ -1106,8 +1107,7 @@ struct ssdfs_inode {
  * @dentries_btree: descriptor of all dentries btrees
  * @extents_btree: descriptor of all extents btrees
  * @xattr_btree: descriptor of all extended attributes btrees
- * @invextree: b-tree of invalidated extents (ZNS SSD)
- * @uuid: 128-bit uuid for volume
+ * @invalidated_extents_btree: b-tree of invalidated extents (ZNS SSD)
  */
 struct ssdfs_volume_header {
 /* 0x0000 */
@@ -1167,10 +1167,7 @@ struct ssdfs_volume_header {
 	struct ssdfs_invalidated_extents_btree invextree;
 
 /* 0x02C0 */
-	__le8 uuid[SSDFS_UUID_SIZE];
-
-/* 0x02D0 */
-	__le8 reserved4[0x130];
+	__le8 reserved4[0x140];
 
 /* 0x0400 */
 } __packed;
@@ -1416,7 +1413,6 @@ struct ssdfs_segment_header {
 #define SSDFS_PARTIAL_LOG_BIT			(8)
 #define SSDFS_PARTIAL_LOG_HEADER_BIT		(9)
 #define SSDFS_PLH_INSTEAD_FOOTER_BIT		(10)
-
 
 /* Segment flags */
 #define SSDFS_SEG_HDR_HAS_BLK_BMAP		(1 << SSDFS_BLK_BMAP_BIT)
@@ -1669,8 +1665,6 @@ SSDFS_LOG_FOOTER_FNS(SNAPSHOT_RULE_AREA_BIT, log_footer_has_snapshot_rules)
  * @leb_id: LEB ID that mapped with this PEB
  * @peb_id: PEB ID
  * @relation_peb_id: source PEB ID during migration
- * @uuid: 128-bit uuid for volume
- * @volume_create_time: volume create timestamp (mkfs phase)
  *
  * This header is used when the full log needs to be built from several
  * partial logs. The header represents the combination of the most
@@ -1747,13 +1741,7 @@ struct ssdfs_partial_log_header {
 	__le64 relation_peb_id;
 
 /* 0x04A0 */
-	__le8 uuid[SSDFS_UUID_SIZE];
-
-/* 0x04B0 */
-	__le64 volume_create_time;
-
-/* 0x04B8 */
-	__le8 payload[0x348];
+	__le8 payload[0x360];
 
 /* 0x0800 */
 } __packed;

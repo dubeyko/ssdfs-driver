@@ -31,6 +31,69 @@
 
 #include <trace/events/ssdfs.h>
 
+/*
+ * __is_ssdfs_segment_header_magic_valid() - check segment header's magic
+ * @magic: pointer on magic value
+ */
+bool __is_ssdfs_segment_header_magic_valid(struct ssdfs_signature *magic)
+{
+	return le16_to_cpu(magic->key) == SSDFS_SEGMENT_HDR_MAGIC;
+}
+
+/*
+ * is_ssdfs_segment_header_magic_valid() - check segment header's magic
+ * @hdr: segment header
+ */
+bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!hdr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __is_ssdfs_segment_header_magic_valid(&hdr->volume_hdr.magic);
+}
+
+/*
+ * is_ssdfs_partial_log_header_magic_valid() - check partial log header's magic
+ * @magic: pointer on magic value
+ */
+bool is_ssdfs_partial_log_header_magic_valid(struct ssdfs_signature *magic)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!magic);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return le16_to_cpu(magic->key) == SSDFS_PARTIAL_LOG_HDR_MAGIC;
+}
+
+/*
+ * is_ssdfs_volume_header_csum_valid() - check volume header checksum
+ * @vh_buf: volume header buffer
+ * @buf_size: size of buffer in bytes
+ */
+bool is_ssdfs_volume_header_csum_valid(void *vh_buf, size_t buf_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!vh_buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return is_csum_valid(&SSDFS_VH(vh_buf)->check, vh_buf, buf_size);
+}
+
+/*
+ * is_ssdfs_partial_log_header_csum_valid() - check partial log header checksum
+ * @plh_buf: partial log header buffer
+ * @buf_size: size of buffer in bytes
+ */
+bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!plh_buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return is_csum_valid(&SSDFS_PLH(plh_buf)->check, plh_buf, buf_size);
+}
+
 static inline
 void ssdfs_show_volume_header(struct ssdfs_volume_header *hdr)
 {
@@ -265,7 +328,6 @@ bool is_ssdfs_volume_header_consistent(struct ssdfs_fs_info *fsi,
  *
  * %-ENODATA     - valid magic doesn't detected.
  * %-EIO         - segment header is corrupted.
- * %-ENOENT      - header has older FS creation time.
  */
 int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 				struct ssdfs_segment_header *hdr,
@@ -275,7 +337,6 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	bool major_magic_valid, minor_magic_valid;
 	u64 dev_size;
-	int res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !hdr);
@@ -430,27 +491,6 @@ int ssdfs_check_segment_header(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
-	}
-
-	res = ssdfs_compare_fs_ctime(fsi, hdr);
-	if (res < 0) {
-		/* header has younger FS creation time */
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("valid magic is not detected\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ENODATA;
-	} else if (res > 0) {
-		/* header has older FS creation time */
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("header has older FS creation time\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		fsi->fs_ctime = le64_to_cpu(vh->create_time);
-		spin_lock(&fsi->volume_state_lock);
-		ssdfs_memcpy(fsi->fs_uuid, 0, sizeof(fsi->fs_uuid),
-			     vh->uuid, 0, sizeof(vh->uuid),
-			     sizeof(vh->uuid));
-		spin_unlock(&fsi->volume_state_lock);
-		return -ENOENT;
 	}
 
 	return 0;
@@ -638,7 +678,6 @@ bool is_ssdfs_partial_log_header_consistent(struct ssdfs_fs_info *fsi,
  *
  * %-ENODATA     - valid magic doesn't detected.
  * %-EIO         - partial log header is corrupted.
- * %-ENOENT      - header has older FS creation time.
  */
 int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 				   struct ssdfs_partial_log_header *hdr,
@@ -648,7 +687,6 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 	bool major_magic_valid, minor_magic_valid;
 	u64 dev_size;
 	u32 log_bytes;
-	int res;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !hdr);
@@ -793,28 +831,6 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
 		return -EIO;
 	}
 
-	res = ssdfs_compare_fs_ctime(fsi, hdr);
-	if (res < 0) {
-		/* header has younger FS creation time */
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("valid magic is not detected\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		return -ENODATA;
-	} else if (res > 0) {
-		/* header has older FS creation time */
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("header has older FS creation time\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		fsi->fs_ctime = le64_to_cpu(hdr->volume_create_time);
-		spin_lock(&fsi->volume_state_lock);
-		ssdfs_memcpy(fsi->fs_uuid, 0, sizeof(fsi->fs_uuid),
-			     hdr->uuid, 0, sizeof(hdr->uuid),
-			     sizeof(hdr->uuid));
-		spin_unlock(&fsi->volume_state_lock);
-		return -ENOENT;
-	}
-
 	return 0;
 }
 
@@ -835,7 +851,6 @@ int ssdfs_check_partial_log_header(struct ssdfs_fs_info *fsi,
  *
  * %-ENODATA     - valid magic doesn't detected.
  * %-EIO         - segment header is corrupted.
- * %-ENOENT      - header has older FS creation time.
  */
 int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 					u64 peb_id, u32 block_size,
@@ -933,13 +948,7 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 		hdr = SSDFS_SEG_HDR(buf);
 
 		err = ssdfs_check_segment_header(fsi, hdr, silent);
-		if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("header has older FS creation time: "
-				  "peb_id %llu, pages_off %u, err %d\n",
-				  peb_id, pages_off, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		} else if (unlikely(err)) {
+		if (unlikely(err)) {
 			if (!silent) {
 				SSDFS_ERR("segment header is corrupted: "
 					  "peb_id %llu, pages_off %u, err %d\n",
@@ -962,13 +971,7 @@ int ssdfs_read_checked_segment_header(struct ssdfs_fs_info *fsi,
 		pl_hdr = SSDFS_PLH(buf);
 
 		err = ssdfs_check_partial_log_header(fsi, pl_hdr, silent);
-		if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("header has older FS creation time: "
-				  "peb_id %llu, pages_off %u, err %d\n",
-				  peb_id, pages_off, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		} else if (unlikely(err)) {
+		if (unlikely(err)) {
 			if (!silent) {
 				SSDFS_ERR("partial log header is corrupted: "
 					  "peb_id %llu, pages_off %u\n",
@@ -1057,9 +1060,6 @@ void ssdfs_create_volume_header(struct ssdfs_fs_info *fsi,
 
 	vh->create_time = cpu_to_le64(fsi->fs_ctime);
 	vh->create_cno = cpu_to_le64(fsi->fs_cno);
-	ssdfs_memcpy(vh->uuid, 0, SSDFS_UUID_SIZE,
-		     fsi->fs_uuid, 0, SSDFS_UUID_SIZE,
-		     SSDFS_UUID_SIZE);
 
 	vh->lebs_per_peb_index = cpu_to_le32(fsi->lebs_per_peb_index);
 	vh->create_threads_per_seg = cpu_to_le16(fsi->create_threads_per_seg);
@@ -1411,11 +1411,6 @@ int ssdfs_prepare_partial_log_header_for_commit(struct ssdfs_fs_info *fsi,
 	hdr->leb_id = cpu_to_le64(leb_id);
 	hdr->peb_id = cpu_to_le64(peb_id);
 	hdr->relation_peb_id = cpu_to_le64(relation_peb_id);
-
-	hdr->volume_create_time = cpu_to_le64(fsi->fs_ctime);
-	ssdfs_memcpy(hdr->uuid, 0, SSDFS_UUID_SIZE,
-		     fsi->fs_uuid, 0, SSDFS_UUID_SIZE,
-		     SSDFS_UUID_SIZE);
 
 	hdr->check.bytes = cpu_to_le16(data_size);
 	hdr->check.flags = cpu_to_le16(SSDFS_CRC32);

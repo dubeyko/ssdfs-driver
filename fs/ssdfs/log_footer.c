@@ -39,6 +39,42 @@
 #include <trace/events/ssdfs.h>
 
 /*
+ * __is_ssdfs_log_footer_magic_valid() - check log footer's magic
+ * @magic: pointer on magic value
+ */
+bool __is_ssdfs_log_footer_magic_valid(struct ssdfs_signature *magic)
+{
+	return le16_to_cpu(magic->key) == SSDFS_LOG_FOOTER_MAGIC;
+}
+
+/*
+ * is_ssdfs_log_footer_magic_valid() - check log footer's magic
+ * @footer: log footer
+ */
+bool is_ssdfs_log_footer_magic_valid(struct ssdfs_log_footer *footer)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!footer);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __is_ssdfs_log_footer_magic_valid(&footer->volume_state.magic);
+}
+
+/*
+ * is_ssdfs_log_footer_csum_valid() - check log footer's checksum
+ * @buf: buffer with log footer
+ * @size: size of buffer in bytes
+ */
+bool is_ssdfs_log_footer_csum_valid(void *buf, size_t buf_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return is_csum_valid(&SSDFS_LF(buf)->volume_state.check, buf, buf_size);
+}
+
+/*
  * is_ssdfs_volume_state_info_consistent() - check volume state consistency
  * @fsi: pointer on shared file system object
  * @buf: log header

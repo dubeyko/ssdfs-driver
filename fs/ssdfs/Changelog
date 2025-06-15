@@ -3,21 +3,6 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
-v.5.20 [May 31, 2025]
-    (*) Fix small issues in b-tree functionality.
-
-v.5.19 [April 22, 2025]
-    (*) Fix issue in block bitmap invalidation logic for the case of
-        range of blocks with mixed states.
-
-v.5.18 [April 16, 2025]
-    (*) Implement functionality of supporting not erasing the whole
-        volume during mkfs phase.
-
-v.5.17 [March 20, 2025]
-    (*) Fix incorrect logic of calculation the starting item in
-        next folio of block bitmap.
-
 v.5.16 [March 01, 2025]
     (*) Fix multiple issues and preparing code for inflation model adoption.
 

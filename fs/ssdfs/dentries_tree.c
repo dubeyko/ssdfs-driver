@@ -234,12 +234,10 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 		break;
 
 	case SSDFS_DENTRIES_BTREE_DIRTY:
-		if (atomic64_read(&tree->dentries_count) >
-				SSDFS_FOLDER_DEFAULT_SHORTCUTS_COUNT) {
+		if (atomic64_read(&tree->dentries_count) > 0) {
 			SSDFS_WARN("dentries tree is dirty: "
-				   "ino %lu, dentries_count %llx\n",
-				   ii->vfs_inode.i_ino,
-				   atomic64_read(&tree->dentries_count));
+				   "ino %lu\n",
+				   ii->vfs_inode.i_ino);
 		} else {
 			/* regular destroy */
 			atomic_set(&tree->state,

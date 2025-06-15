@@ -122,6 +122,20 @@ struct ssdfs_sb_info {
 };
 
 /*
+ * struct ssdfs_sb_snapshot_seg_info - superblock snapshot segment info
+ * @hdr_buf: header buffer
+ * @buf_size: size of buffer in bytes
+ * @sequence_id: index of partial log in the sequence
+ * @last_log: latest segment log
+ */
+struct ssdfs_sb_snapshot_seg_info {
+	void *hdr_buf;
+	size_t buf_size;
+	int sequence_id;
+	struct ssdfs_peb_extent last_log;
+};
+
+/*
  * struct ssdfs_device_ops - device operations
  * @device_name: get device name
  * @device_size: get device size in bytes
@@ -432,6 +446,7 @@ struct ssdfs_tunefs_request_copy {
  * @vs: volume state
  * @sbi: superblock info
  * @sbi_backup: backup copy of superblock info
+ * @sb_snapi: superblock snapshot segment info
  * @sb_seg_log_pages: full log size in sb segment (pages count)
  * @segbmap_log_pages: full log size in segbmap segment (pages count)
  * @maptbl_log_pages: full log size in maptbl segment (pages count)
@@ -533,6 +548,7 @@ struct ssdfs_fs_info {
 	struct ssdfs_volume_state *vs;
 	struct ssdfs_sb_info sbi;
 	struct ssdfs_sb_info sbi_backup;
+	struct ssdfs_sb_snapshot_seg_info sb_snapi;
 	u16 sb_seg_log_pages;
 	u16 segbmap_log_pages;
 	u16 maptbl_log_pages;

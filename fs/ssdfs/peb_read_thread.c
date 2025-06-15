@@ -4264,8 +4264,6 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 		  logical_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_container_lock(pebc);
-
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
 						&peb_index,
 						&migration_state,
@@ -4275,7 +4273,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 		SSDFS_ERR("fail to convert: "
 			  "logical_blk %u, err %d\n",
 			  logical_blk, err);
-		goto finish_read_page;
+		return err;
 	}
 
 	peb_migration_id = desc_off->blk_state.peb_migration_id;
@@ -4309,16 +4307,18 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 				SSDFS_ERR("fail to convert: "
 					  "logical_blk %u, err %d\n",
 					  logical_blk, err);
-				goto finish_read_page;
+				return err;
 			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to get migrating block state: "
 				  "logical_blk %u, peb_index %u, err %d\n",
 				  logical_blk, pebc->peb_index, err);
-			goto finish_read_page;
+			return err;
 		} else
-			goto finish_read_page;
+			return 0;
 	}
+
+	ssdfs_peb_container_lock(pebc);
 
 	blk_state = &desc_off->blk_state;
 	log_start_page = le16_to_cpu(blk_state->log_start_page);
@@ -4483,7 +4483,7 @@ int __ssdfs_peb_read_log_footer(struct ssdfs_fs_info *fsi,
 	void *kaddr;
 	u32 bytes_off;
 	pgoff_t folio_index;
-	int err = 0, err1;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -4568,9 +4568,6 @@ fail_read_footer:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err == -ENODATA) {
-		pgoff_t start = folio_index;
-		pgoff_t end = start;
-
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("valid footer is not detected: "
 			  "seg_id %llu, peb_id %llu, "
@@ -4579,18 +4576,6 @@ fail_read_footer:
 			  pebi->peb_id,
 			  footer_block);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		err1 = ssdfs_folio_array_release_folios(&pebi->cache,
-							&start, end);
-		if (unlikely(err1)) {
-			SSDFS_ERR("fail to release folio: "
-				  "seg_id %llu, peb_id %llu, "
-				  "start %lu, end %lu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, start, end, err1);
-			return err1;
-		}
-
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read footer: "
@@ -4691,7 +4676,7 @@ int ssdfs_peb_read_log_header(struct ssdfs_fs_info *fsi,
 	struct folio *folio;
 	void *kaddr;
 	pgoff_t folio_index;
-	int err = 0, err1;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -4770,7 +4755,7 @@ check_header_magic:
 						last_log_time, log_bytes);
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to read footer: "
+			SSDFS_DBG("fail to read footer: "
 				  "seg %llu, peb %llu, block_index %u, "
 				  "err %d\n",
 				  pebi->pebc->parent_si->seg_id,
@@ -4817,7 +4802,7 @@ check_header_magic:
 							log_bytes);
 			if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to read footer: "
+				SSDFS_DBG("fail to read footer: "
 					  "seg %llu, peb %llu, block_index %u, "
 					  "err %d\n",
 					  pebi->pebc->parent_si->seg_id,
@@ -4864,9 +4849,6 @@ fail_read_log_header:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err == -ENODATA) {
-		pgoff_t start = folio_index;
-		pgoff_t end = start;
-
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("valid header is not detected: "
 			  "seg_id %llu, peb_id %llu, block_index %u\n",
@@ -4874,18 +4856,6 @@ fail_read_log_header:
 			  pebi->peb_id,
 			  block_index);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		err1 = ssdfs_folio_array_release_folios(&pebi->cache,
-							&start, end);
-		if (unlikely(err1)) {
-			SSDFS_ERR("fail to release folio: "
-				  "seg_id %llu, peb_id %llu, "
-				  "start %lu, end %lu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, start, end, err1);
-			return err1;
-		}
-
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read checked log header: "
@@ -5618,15 +5588,13 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 							&log_pages,
 							log_bytes);
 			if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to read log header: "
+				SSDFS_ERR("fail to read log header: "
 					  "seg %llu, peb %llu, cur_page %u, "
 					  "err %d\n",
 					  pebi->pebc->parent_si->seg_id,
 					  pebi->peb_id,
 					  cur_page,
 					  err);
-#endif /* CONFIG_SSDFS_DEBUG */
 				/* correct upper bound */
 				high_page = cur_page;
 			} else if (unlikely(err)) {
