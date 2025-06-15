@@ -1990,7 +1990,7 @@ ssdfs_btree_read_node(struct ssdfs_btree *tree,
 	BUG_ON(!tree || !search);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 
-	SSDFS_DBG("tree %p, id %u, node_id %u, "
+SSDFS_ERR_DBG("tree %p, id %u, node_id %u, "
 		  "hash %llx, "
 		  "extent (seg %u, logical_blk %u, len %u)\n",
 		tree,
@@ -3930,8 +3930,10 @@ int ssdfs_segment_invalidate_node(struct ssdfs_btree_node *node)
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *seg;
 	struct ssdfs_raw_extent extent;
+	wait_queue_head_t *wait_queue;
 	u32 start_blk;
 	u32 len;
+	int number_of_tries = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3957,13 +3959,30 @@ int ssdfs_segment_invalidate_node(struct ssdfs_btree_node *node)
 		  node->node_id, seg->seg_id, start_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+try_invalidate_extent:
 	err = ssdfs_invalidate_extent(fsi, &extent);
+	if (err == -EBUSY) {
+		if (number_of_tries > SSDFS_MAX_NUMBER_OF_TRIES) {
+			SSDFS_ERR("fail to invalidate node: "
+				  "number_of_tries %d\n",
+				  number_of_tries);
+			return -ERANGE;
+		}
+
+		wait_queue = &seg->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+		wait_event_interruptible_timeout(*wait_queue,
+				is_ssdfs_segment_under_invalidation(seg),
+				HZ);
+		number_of_tries++;
+		goto try_invalidate_extent;
+	}
+
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to invalidate node: "
+		SSDFS_WARN("fail to invalidate node: "
 			  "node_id %u, seg_id %llu, "
-			  "start_blk %u, len %u\n",
+			  "start_blk %u, len %u, err %d\n",
 			  node->node_id, seg->seg_id,
-			  start_blk, len);
+			  start_blk, len, err);
 	}
 
 	return 0;

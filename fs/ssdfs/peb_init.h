@@ -206,6 +206,7 @@ struct ssdfs_blk_desc_table_init_env {
  * struct ssdfs_read_init_env - read operation init environment
  * @peb.cur_migration_id: current PEB's migration ID
  * @peb.prev_migration_id: previous PEB's migration ID
+ * @peb.free_pages: PEB's free pages
  * @log.offset: offset in pages of the requested log
  * @log.blocks: blocks count in every log of segment
  * @log.bytes: number of bytes in the requested log
@@ -221,6 +222,7 @@ struct ssdfs_read_init_env {
 	struct {
 		int cur_migration_id;
 		int prev_migration_id;
+		int free_pages;
 	} peb;
 
 	struct {

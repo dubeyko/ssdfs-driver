@@ -240,6 +240,7 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 	int start_pos;
 	u8 found_flush_threads = 0;
 	int peb_free_pages;
+	int peb_used_pages;
 	int peb_invalid_pages;
 	int available_free_pages;
 	int seg_state;
@@ -293,6 +294,15 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 			return err;
 		}
 
+		peb_used_pages = ssdfs_peb_get_used_data_pages(pebc);
+		if (unlikely(peb_used_pages < 0)) {
+			err = peb_used_pages;
+			SSDFS_ERR("fail to calculate PEB's used pages: "
+				  "pebc %p, seg %llu, peb index %d, err %d\n",
+				  pebc, si->seg_id, i, err);
+			return err;
+		}
+
 		peb_invalid_pages = ssdfs_peb_get_invalid_pages(pebc);
 		if (unlikely(peb_invalid_pages < 0)) {
 			err = peb_invalid_pages;
@@ -302,7 +312,13 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		available_free_pages = peb_free_pages + peb_invalid_pages;
+		if (can_peb_receive_new_blocks(si->fsi, pebc, peb_used_pages)) {
+			available_free_pages =
+				peb_free_pages + peb_invalid_pages;
+		} else {
+			/* PEB cannot receive new blocks */
+			available_free_pages = 0;
+		}
 
 		if (available_free_pages == 0 ||
 		    is_peb_joined_into_create_requests_queue(pebc))
@@ -334,6 +350,15 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 			return err;
 		}
 
+		peb_used_pages = ssdfs_peb_get_used_data_pages(pebc);
+		if (unlikely(peb_used_pages < 0)) {
+			err = peb_used_pages;
+			SSDFS_ERR("fail to calculate PEB's used pages: "
+				  "pebc %p, seg %llu, peb index %d, err %d\n",
+				  pebc, si->seg_id, i, err);
+			return err;
+		}
+
 		peb_invalid_pages = ssdfs_peb_get_invalid_pages(pebc);
 		if (unlikely(peb_invalid_pages < 0)) {
 			err = peb_invalid_pages;
@@ -343,7 +368,13 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
 			return err;
 		}
 
-		available_free_pages = peb_free_pages + peb_invalid_pages;
+		if (can_peb_receive_new_blocks(si->fsi, pebc, peb_used_pages)) {
+			available_free_pages =
+				peb_free_pages + peb_invalid_pages;
+		} else {
+			/* PEB cannot receive new blocks */
+			available_free_pages = 0;
+		}
 
 		if (available_free_pages == 0 ||
 		    is_peb_joined_into_create_requests_queue(pebc))
@@ -480,7 +511,14 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 		}
 
 		search_state->result.invalid_pages += peb_invalid_pages;
-		available_free_pages = peb_free_pages + peb_invalid_pages;
+
+		if (can_peb_receive_new_blocks(fsi, pebc, peb_used_pages)) {
+			available_free_pages =
+				peb_free_pages + peb_invalid_pages;
+		} else {
+			/* PEB cannot receive new blocks */
+			available_free_pages = 0;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg %llu, peb_index %u, free_pages %d, "

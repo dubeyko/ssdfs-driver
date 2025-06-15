@@ -95,7 +95,8 @@ struct ssdfs_btree_search_request {
 #define SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM	(1 << 9)
 #define SSDFS_BTREE_SEARCH_DONT_EXTRACT_RECORD		(1 << 10)
 #define SSDFS_BTREE_SEARCH_HAS_PEB2TIME_PAIR		(1 << 11)
-#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0xFFF
+#define SSDFS_BTREE_SEARCH_DONT_DELETE_BTREE_NODE	(1 << 12)
+#define SSDFS_BTREE_SEARCH_REQUEST_FLAGS_MASK		0x1FFF
 	u32 flags;
 
 	struct ssdfs_btree_search_hash start;

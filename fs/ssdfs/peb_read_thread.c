@@ -336,6 +336,7 @@ int ssdfs_prepare_read_init_env(struct ssdfs_read_init_env *env,
 
 	env->peb.cur_migration_id = -1;
 	env->peb.prev_migration_id = -1;
+	env->peb.free_pages = 0;
 
 	env->log.offset = 0;
 	env->log.blocks = U32_MAX;
@@ -380,6 +381,7 @@ void ssdfs_destroy_init_env(struct ssdfs_read_init_env *env)
 
 	env->peb.cur_migration_id = -1;
 	env->peb.prev_migration_id = -1;
+	env->peb.free_pages = 0;
 
 	env->log.offset = 0;
 	env->log.blocks = U32_MAX;
@@ -3799,11 +3801,29 @@ int ssdfs_blk_desc_buffer_init(struct ssdfs_peb_container *pebc,
 
 		pebi = ssdfs_get_peb_for_migration_id(pebc, peb_migration_id);
 		if (IS_ERR_OR_NULL(pebi)) {
+			struct ssdfs_peb_page_descriptor *page_desc;
+			struct ssdfs_blk_state_offset *blk_state;
+
+			page_desc = &desc_off->page_desc;
+			blk_state = &desc_off->blk_state;
+
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
 			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
+				  "seg %llu, peb_index %u, "
+				  "logical_offset %u, logical_blk %u, "
+				  "peb_page %u, log_start_page %u, "
+				  "log_area %u, peb_migration_id %u, "
+				  "byte_offset %u, err %d\n",
 				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
+				  pebc->peb_index,
+				  le32_to_cpu(page_desc->logical_offset),
+				  le16_to_cpu(page_desc->logical_blk),
+				  le16_to_cpu(page_desc->peb_page),
+				  le16_to_cpu(blk_state->log_start_page),
+				  blk_state->log_area,
+				  peb_migration_id,
+				  le32_to_cpu(blk_state->byte_offset),
+				  err);
 			goto finish_blk_desc_buffer_init;
 		}
 
@@ -7236,10 +7256,8 @@ int ssdfs_get_segment_header_blk2off_tbl_desc(struct ssdfs_peb_info *pebi,
 
 	if (!ssdfs_seg_hdr_has_offset_table(seg_hdr)) {
 		if (!env->log.footer.is_present) {
-			ssdfs_fs_error(fsi->sb, __FILE__,
-					__func__, __LINE__,
-					"log hasn't footer\n");
-			return -EIO;
+			SSDFS_DBG("log hasn't block descriptor table\n");
+			return -ENOENT;
 		}
 
 		if (!ssdfs_log_footer_has_offset_table(env->log.footer.ptr)) {
@@ -9314,21 +9332,28 @@ int ssdfs_check_block_bitmap_fragment_header(struct ssdfs_fs_info *fsi,
 
 	last_free_blk = le32_to_cpu(frag_hdr->last_free_blk);
 
-	if (last_free_blk > fsi->pages_per_seg) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"block bitmap is corrupted: "
-				"last_free_blk %u, pages_per_seg %u\n",
-				last_free_blk,
-				fsi->pages_per_seg);
-		return -EIO;
-	}
+	if (frag_hdr->flags & SSDFS_INFLATED_BLK_BMAP) {
+		/*
+		 * The last_free_blk and metadata_blks can be bigger
+		 * than pages_per_peb. Skip the check here.
+		 */
+	} else {
+		if (last_free_blk > fsi->pages_per_seg) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"block bitmap is corrupted: "
+					"last_free_blk %u, pages_per_seg %u\n",
+					last_free_blk,
+					fsi->pages_per_seg);
+			return -EIO;
+		}
 
-	if (le32_to_cpu(frag_hdr->metadata_blks) > fsi->pages_per_peb) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"block bitmap is corrupted: "
-				"metadata_blks %u is invalid\n",
-				le32_to_cpu(frag_hdr->metadata_blks));
-		return -EIO;
+		if (le32_to_cpu(frag_hdr->metadata_blks) > fsi->pages_per_peb) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"block bitmap is corrupted: "
+					"metadata_blks %u is invalid\n",
+					le32_to_cpu(frag_hdr->metadata_blks));
+			return -EIO;
+		}
 	}
 
 	if (desc_size != le16_to_cpu(frag_hdr->chain_hdr.desc_size)) {
@@ -9694,12 +9719,15 @@ int ssdfs_init_block_bitmap_fragment(struct ssdfs_peb_info *pebi,
 					pebi->peb_index,
 					content,
 					env->log.blk_bmap.fragment.header,
+					env->peb.free_pages,
 					cno);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to initialize block bitmap: "
-			  "seg %llu, peb %llu, cno %llu, err %d\n",
+			  "seg %llu, peb %llu, free_pages %u, "
+			  "cno %llu, err %d\n",
 			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id, cno, err);
+			  pebi->peb_id, env->peb.free_pages,
+			  cno, err);
 		goto fail_init_blk_bmap_fragment;
 	}
 
@@ -9860,6 +9888,7 @@ finish_correct_zone_block_bmap:
  *
  * %-ENOMEM     - fail to allocate memory.
  * %-EIO        - I/O error.
+ * %-ERANGE     - internal error.
  */
 static
 int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
@@ -9868,14 +9897,19 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_segment_header *seg_hdr = NULL;
 	struct ssdfs_partial_log_header *pl_hdr = NULL;
 	u16 fragments_count;
 	u32 bytes_count;
 	u16 new_log_start_block;
-	u32 default_threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
+	int peb_free_pages;
+	u16 free_blocks;
 	u64 cno;
+	int items_state;
+	bool is_migrating = false;
 	int sequence_id = 0;
+	u32 default_threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
 	int i;
 	int err = 0;
 
@@ -9945,6 +9979,14 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 	bytes_count =
 		le32_to_cpu(env->log.blk_bmap.header.ptr->bytes_count);
 
+	BUG_ON(new_log_start_block > fsi->pages_per_peb);
+	env->peb.free_pages = fsi->pages_per_peb - new_log_start_block;
+
+	if (env->peb.free_pages <= default_threshold)
+		env->peb.free_pages = 0;
+	else
+		env->peb.free_pages -= default_threshold;
+
 	for (i = 0; i < fragments_count; i++) {
 		env->log.blk_bmap.fragment.index = i;
 		err = ssdfs_init_block_bitmap_fragment(pebi, req, env);
@@ -9996,6 +10038,8 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("new_log_start_block %u\n", new_log_start_block);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	free_blocks = 0;
 
 	if (new_log_start_block < fsi->pages_per_peb) {
 		struct ssdfs_peb_prev_log prev_log;
@@ -10114,6 +10158,132 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 fail_init_using_blk_bmap:
 	if (unlikely(err))
 		goto fail_init_using_peb;
+
+	peb_free_pages = ssdfs_peb_get_free_pages(pebi->pebc);
+	if (unlikely(peb_free_pages < 0)) {
+		err = peb_free_pages;
+		SSDFS_ERR("fail to calculate PEB's free pages: "
+			  "seg %llu, peb %llu, err %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, err);
+		goto fail_init_using_peb;
+	}
+
+	items_state = atomic_read(&pebi->pebc->items_state);
+	switch(items_state) {
+	case SSDFS_PEB1_SRC_PEB2_DST_CONTAINER:
+	case SSDFS_PEB2_SRC_PEB1_DST_CONTAINER:
+	case SSDFS_PEB1_SRC_EXT_PTR_DST_CONTAINER:
+	case SSDFS_PEB2_SRC_EXT_PTR_DST_CONTAINER:
+		is_migrating = true;
+		break;
+
+	default:
+		is_migrating = false;
+		break;
+	};
+
+	free_blocks = fsi->pages_per_peb - new_log_start_block;
+
+	if (!is_ssdfs_peb_containing_user_data(pebi->pebc)) {
+		int pages_per_peb;
+		u32 threshold;
+		int peb_used_blocks;
+
+		pages_per_peb = ssdfs_peb_get_pages_capacity(pebi->pebc);
+		if (unlikely(pages_per_peb < 0)) {
+			err = -ERANGE;
+			SSDFS_ERR("fail to get PEB's capacity: "
+				  "seg %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
+			goto fail_init_using_peb;
+		} else if (pages_per_peb < default_threshold) {
+			pages_per_peb = fsi->pages_per_peb;
+		}
+
+		threshold = pages_per_peb - default_threshold;
+
+		peb_used_blocks = ssdfs_peb_get_used_data_pages(pebi->pebc);
+		if (unlikely(peb_used_blocks < 0)) {
+			err = peb_used_blocks;
+			SSDFS_ERR("fail to calculate PEB's used blocks: "
+				  "seg %llu, peb %llu, err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, err);
+			goto fail_init_using_peb;
+		}
+
+		if (peb_used_blocks > threshold) {
+			err = -ERANGE;
+			SSDFS_ERR("peb_used_blocks %d > threshold %u\n",
+				  peb_used_blocks, threshold);
+			goto fail_init_using_peb;
+		}
+
+		if (free_blocks < default_threshold)
+			free_blocks = 0;
+		else if (peb_used_blocks == threshold)
+			free_blocks = 0;
+		else {
+			free_blocks = min_t(u32, free_blocks,
+					    threshold - peb_used_blocks);
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_free_pages %d, is_migrating %#x, "
+		  "free_blocks %u\n",
+		  peb_free_pages, is_migrating, free_blocks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (peb_free_pages < free_blocks && !is_migrating) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("pages_per_peb %u, new_log_start_block %u, "
+			  "free_blocks %u\n",
+			  fsi->pages_per_peb, new_log_start_block,
+			  free_blocks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (free_blocks > 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("INFLATE: seg %llu, peb %llu, peb_index %u, "
+				  "class %#x, cmd %#x, type %#x, "
+				  "new_log_start_block %u, free_blocks %u, "
+				  "peb_free_pages %d, is_migrating %#x\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, pebi->peb_index,
+				  req->private.class, req->private.cmd,
+				  req->private.type, new_log_start_block,
+				  free_blocks, peb_free_pages, is_migrating);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			seg_blkbmap = &pebi->pebc->parent_si->blk_bmap;
+			err = ssdfs_segment_blk_bmap_partial_inflate(seg_blkbmap,
+								pebi->peb_index,
+								free_blocks);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to inflate block bitmap: "
+					  "seg %llu, peb %llu, "
+					  "free_blocks %u, err %d\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id, free_blocks, err);
+				goto fail_init_using_peb;
+			}
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("DON'T INFLATE: seg %llu, peb %llu, peb_index %u, "
+				  "class %#x, cmd %#x, type %#x, "
+				  "new_log_start_block %u, free_blocks %u, "
+				  "peb_free_pages %d, is_migrating %#x\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id, pebi->peb_index,
+				  req->private.class, req->private.cmd,
+				  req->private.type, new_log_start_block,
+				  free_blocks, peb_free_pages, is_migrating);
+#endif /* CONFIG_SSDFS_DEBUG */
+		}
+	}
 
 	err = ssdfs_pre_fetch_blk2off_table_area(pebi, req, env);
 	if (err == -ENOENT) {

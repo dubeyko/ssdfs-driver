@@ -100,6 +100,17 @@ int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
 	array->capacity = 0;
 	array->order = order;
 
+	if (capacity > ssdfs_folio_vector_max_threshold())
+		capacity = ssdfs_folio_vector_max_threshold();
+	else {
+		capacity = capacity + SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR - 1;
+		capacity /= SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR;
+		capacity *= SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR;
+
+		if (capacity > ssdfs_folio_vector_max_threshold())
+			capacity = ssdfs_folio_vector_max_threshold();
+	}
+
 	size *= capacity;
 	array->folios = ssdfs_folio_vector_kzalloc(size, GFP_KERNEL);
 	if (!array->folios) {
@@ -216,6 +227,55 @@ int ssdfs_folio_vector_reinit(struct ssdfs_folio_vector *array)
 		memset(array->folios, 0,
 			sizeof(struct folio *) * array->capacity);
 	}
+
+	return 0;
+}
+
+/*
+ * ssdfs_folio_vector_inflate() - increase capacity of folio vector
+ * @array: pointer on folio vector
+ * @new_capacity: new capacity of folio vector
+ */
+int ssdfs_folio_vector_inflate(struct ssdfs_folio_vector *array,
+			       u32 new_capacity)
+{
+	size_t ptr_size = sizeof(struct folio *);
+	size_t old_size;
+	size_t new_size;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!array);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (new_capacity <= array->capacity) {
+		/* do nothing */
+		return 0;
+	}
+
+	if (new_capacity > ssdfs_folio_vector_max_threshold())
+		new_capacity = ssdfs_folio_vector_max_threshold();
+	else {
+		new_capacity = new_capacity +
+				SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR - 1;
+		new_capacity /= SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR;
+		new_capacity *= SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR;
+
+		if (new_capacity > ssdfs_folio_vector_max_threshold())
+			new_capacity = ssdfs_folio_vector_max_threshold();
+	}
+
+	old_size = ptr_size * array->capacity;
+	new_size = ptr_size * new_capacity;
+
+	array->folios = krealloc(array->folios, new_size, GFP_KERNEL);
+	if (!array->folios) {
+		SSDFS_ERR("fail to re-allocate folio vector\n");
+		return -ENOMEM;
+	}
+
+	memset((u8 *)array->folios + old_size, 0, new_size - old_size);
+
+	array->capacity = new_capacity;
 
 	return 0;
 }

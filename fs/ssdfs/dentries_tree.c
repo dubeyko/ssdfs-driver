@@ -234,12 +234,10 @@ void ssdfs_dentries_tree_destroy(struct ssdfs_inode_info *ii)
 		break;
 
 	case SSDFS_DENTRIES_BTREE_DIRTY:
-		if (atomic64_read(&tree->dentries_count) >
-				SSDFS_FOLDER_DEFAULT_SHORTCUTS_COUNT) {
+		if (atomic64_read(&tree->dentries_count) > 0) {
 			SSDFS_WARN("dentries tree is dirty: "
-				   "ino %lu, dentries_count %llx\n",
-				   ii->vfs_inode.i_ino,
-				   atomic64_read(&tree->dentries_count));
+				   "ino %lu\n",
+				   ii->vfs_inode.i_ino);
 		} else {
 			/* regular destroy */
 			atomic_set(&tree->state,
@@ -1522,12 +1520,11 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	};
 
+	down_read(&tree->lock);
+
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
-		down_read(&tree->lock);
 		err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
-		up_read(&tree->lock);
-
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the inline dentry: "
@@ -1542,10 +1539,7 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 		break;
 
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
-		down_read(&tree->lock);
 		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		up_read(&tree->lock);
-
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to find the dentry: "
@@ -1565,6 +1559,8 @@ int __ssdfs_dentries_tree_find(struct ssdfs_dentries_btree_info *tree,
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	up_read(&tree->lock);
 
 	ssdfs_debug_dentries_btree_object(tree);
 
@@ -2221,6 +2217,288 @@ int ssdfs_dentries_tree_add_dentry(struct ssdfs_dentries_btree_info *tree,
 }
 
 /*
+ * __ssdfs_inline_dentries_tree_add() - add dentry into the tree
+ * @tree: dentries tree
+ * @name_hash: hash of the name
+ * @str: name of the file/folder
+ * @ii: inode info
+ * @search: search object
+ *
+ * This method tries to add dentry into the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EEXIST     - dentry exists in the tree.
+ * %-EAGAIN     - tree type has been changed.
+ */
+static
+int __ssdfs_inline_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
+				     const struct qstr *str,
+				     u64 name_hash,
+				     struct ssdfs_inode_info *ii,
+				     struct ssdfs_btree_search *search)
+{
+	struct ssdfs_shared_dict_btree_info *dict;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !str || !ii || !search);
+
+	SSDFS_DBG("tree %p, ii %p, ino %lu, name_hash %llx\n",
+		  tree, ii, ii->vfs_inode.i_ino, name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dict = tree->fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
+
+	down_write(&tree->lock);
+
+	/* check that tree type is not changed */
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		/* continue logic */
+		break;
+
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("TRY AGAIN: tree type has been changed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_add_inline_dentry;
+
+	default:
+		BUG();
+	}
+
+	err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
+	if (err == -ENODATA) {
+		/*
+		 * Dentry doesn't exist for requested name hash.
+		 * It needs to create a new dentry.
+		 */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find the inline dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_add_inline_dentry;
+	}
+
+	if (err == -ENODATA) {
+		err = ssdfs_prepare_dentry(str, ii,
+					   SSDFS_INLINE_DENTRY,
+					   search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare the dentry: "
+				  "name_hash %llx, ino %lu, "
+				  "err %d\n",\
+				  name_hash,
+				  ii->vfs_inode.i_ino,
+				  err);
+			goto finish_add_inline_dentry;
+		}
+
+		search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
+		err = ssdfs_dentries_tree_add_inline_dentry(tree, search);
+		if (err == -ENOSPC) {
+			err = ssdfs_migrate_inline2generic_tree(tree);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to migrate the tree: "
+					  "err %d\n",
+					  err);
+				goto finish_add_inline_dentry;
+			} else {
+				err = -EAGAIN;
+				search->request.type =
+						SSDFS_BTREE_SEARCH_ADD_ITEM;
+				goto finish_add_inline_dentry;
+			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to add the dentry: "
+				  "name_hash %llx, ino %lu, "
+				  "err %d\n",
+				  name_hash,
+				  ii->vfs_inode.i_ino,
+				  err);
+			goto finish_add_inline_dentry;
+		}
+
+		if (!can_name_be_inline(str)) {
+			err = ssdfs_shared_dict_save_name(dict,
+							  name_hash,
+							  str);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to store name: "
+					  "hash %llx, err %d\n",
+					  name_hash, err);
+				goto finish_add_inline_dentry;
+			}
+		}
+	} else {
+		err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("dentry exists in the tree: "
+			  "name_hash %llx, ino %lu\n",
+			  name_hash, ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_add_inline_dentry;
+	}
+
+finish_add_inline_dentry:
+	up_write(&tree->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * __ssdfs_regular_dentries_tree_add() - add dentry into the tree
+ * @tree: dentries tree
+ * @name_hash: hash of the name
+ * @str: name of the file/folder
+ * @ii: inode info
+ * @search: search object
+ *
+ * This method tries to add dentry into the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-EEXIST     - dentry exists in the tree.
+ * %-EAGAIN     - tree type has been changed.
+ */
+static
+int __ssdfs_regular_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
+				      const struct qstr *str,
+				      u64 name_hash,
+				      struct ssdfs_inode_info *ii,
+				      struct ssdfs_btree_search *search)
+{
+	struct ssdfs_shared_dict_btree_info *dict;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !str || !ii || !search);
+
+	SSDFS_DBG("tree %p, ii %p, ino %lu, name_hash %llx\n",
+		  tree, ii, ii->vfs_inode.i_ino, name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dict = tree->fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
+
+	down_read(&tree->lock);
+
+	/* check that tree type is not changed */
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		/* continue logic */
+		break;
+
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("TRY AGAIN: tree type has been changed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_add_generic_dentry;
+
+	default:
+		BUG();
+	}
+
+	err = ssdfs_btree_find_item(tree->generic_tree, search);
+	if (err == -ENODATA) {
+		/*
+		 * Dentry doesn't exist for requested name.
+		 * It needs to create a new dentry.
+		 */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find the dentry: "
+			  "name_hash %llx, ino %lu, "
+			  "err %d\n",
+			  name_hash,
+			  ii->vfs_inode.i_ino,
+			  err);
+		goto finish_add_generic_dentry;
+	}
+
+	if (err == -ENODATA) {
+		err = ssdfs_prepare_dentry(str, ii,
+					   SSDFS_REGULAR_DENTRY,
+					   search);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to prepare the dentry: "
+				  "name_hash %llx, ino %lu, "
+				  "err %d\n",
+				  name_hash,
+				  ii->vfs_inode.i_ino,
+				  err);
+			goto finish_add_generic_dentry;
+		}
+
+		search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
+		err = ssdfs_dentries_tree_add_dentry(tree, search);
+
+		ssdfs_btree_search_forget_parent_node(search);
+		ssdfs_btree_search_forget_child_node(search);
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add the dentry: "
+				  "name_hash %llx, ino %lu, "
+				  "err %d\n",
+				  name_hash,
+				  ii->vfs_inode.i_ino,
+				  err);
+			goto finish_add_generic_dentry;
+		}
+
+		if (!can_name_be_inline(str)) {
+			err = ssdfs_shared_dict_save_name(dict,
+							  name_hash,
+							  str);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to store name: "
+					  "hash %llx, err %d\n",
+					  name_hash, err);
+				goto finish_add_generic_dentry;
+			}
+		}
+	} else {
+		err = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("dentry exists in the tree: "
+			  "name_hash %llx, ino %lu\n",
+			  name_hash, ii->vfs_inode.i_ino);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_add_generic_dentry;
+	}
+
+finish_add_generic_dentry:
+	up_read(&tree->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
  * ssdfs_dentries_tree_add() - add dentry into the tree
  * @tree: dentries tree
  * @str: name of the file/folder
@@ -2242,8 +2520,8 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 			    struct ssdfs_inode_info *ii,
 			    struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_dict_btree_info *dict;
 	u64 name_hash;
+	int number_of_tries = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2257,12 +2535,6 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 	SSDFS_DBG("tree %p, ii %p, ino %lu\n",
 		  tree, ii, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	dict = tree->fsi->shdictree;
-	if (!dict) {
-		SSDFS_ERR("shared dictionary is absent\n");
-		return -ERANGE;
-	}
 
 	search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
 
@@ -2304,166 +2576,53 @@ int ssdfs_dentries_tree_add(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	};
 
-	switch (atomic_read(&tree->type)) {
-	case SSDFS_INLINE_DENTRIES_ARRAY:
-		down_write(&tree->lock);
-
-		err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
-		if (err == -ENODATA) {
-			/*
-			 * Dentry doesn't exist for requested name hash.
-			 * It needs to create a new dentry.
-			 */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find the inline dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_add_inline_dentry;
+	do {
+		if (number_of_tries > SSDFS_MAX_NUMBER_OF_TRIES) {
+			SSDFS_ERR("fail to add dentry into the tree: "
+				  "number_of_tries %d\n",
+				  number_of_tries);
+			return -ERANGE;
 		}
 
-		if (err == -ENODATA) {
-			err = ssdfs_prepare_dentry(str, ii,
-						   SSDFS_INLINE_DENTRY,
-						   search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare the dentry: "
-					  "name_hash %llx, ino %lu, "
-					  "err %d\n",
-					  name_hash,
-					  ii->vfs_inode.i_ino,
-					  err);
-				goto finish_add_inline_dentry;
-			}
+		switch (atomic_read(&tree->type)) {
+		case SSDFS_INLINE_DENTRIES_ARRAY:
+			err = __ssdfs_inline_dentries_tree_add(tree,
+								str,
+								name_hash,
+								ii,
+								search);
+			break;
 
-			search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
-			err = ssdfs_dentries_tree_add_inline_dentry(tree,
-								    search);
-			if (err == -ENOSPC) {
-				err = ssdfs_migrate_inline2generic_tree(tree);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to migrate the tree: "
-						  "err %d\n",
-						  err);
-					goto finish_add_inline_dentry;
-				} else {
-					search->request.type =
-						SSDFS_BTREE_SEARCH_ADD_ITEM;
-					downgrade_write(&tree->lock);
-					goto try_to_add_into_generic_tree;
-				}
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to add the dentry: "
-					  "name_hash %llx, ino %lu, "
-					  "err %d\n",
-					  name_hash,
-					  ii->vfs_inode.i_ino,
-					  err);
-				goto finish_add_inline_dentry;
-			}
+		case SSDFS_PRIVATE_DENTRIES_BTREE:
+			err = __ssdfs_regular_dentries_tree_add(tree,
+								str,
+								name_hash,
+								ii,
+								search);
+			break;
 
-			if (!can_name_be_inline(str)) {
-				err = ssdfs_shared_dict_save_name(dict,
-								  name_hash,
-								  str);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to store name: "
-						  "hash %llx, err %d\n",
-						  name_hash, err);
-					goto finish_add_inline_dentry;
-				}
-			}
-		} else {
-			err = -EEXIST;
+		default:
+			SSDFS_ERR("invalid dentries tree type %#x\n",
+				  atomic_read(&tree->type));
+			return -ERANGE;
+		}
+
+		number_of_tries++;
+	} while (err == -EAGAIN);
+
+	if (err == -EEXIST) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("dentry exists in the tree: "
-				  "name_hash %llx, ino %lu\n",
-				  name_hash, ii->vfs_inode.i_ino);
+		SSDFS_DBG("dentry exists in the tree: "
+			  "name_hash %llx, ino %lu\n",
+			  name_hash, ii->vfs_inode.i_ino);
 #endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_add_inline_dentry;
-		}
-
-finish_add_inline_dentry:
-		up_write(&tree->lock);
-		break;
-
-	case SSDFS_PRIVATE_DENTRIES_BTREE:
-		down_read(&tree->lock);
-try_to_add_into_generic_tree:
-		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (err == -ENODATA) {
-			/*
-			 * Dentry doesn't exist for requested name.
-			 * It needs to create a new dentry.
-			 */
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find the dentry: "
-				  "name_hash %llx, ino %lu, "
-				  "err %d\n",
-				  name_hash,
-				  ii->vfs_inode.i_ino,
-				  err);
-			goto finish_add_generic_dentry;
-		}
-
-		if (err == -ENODATA) {
-			err = ssdfs_prepare_dentry(str, ii,
-						   SSDFS_REGULAR_DENTRY,
-						   search);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare the dentry: "
-					  "name_hash %llx, ino %lu, "
-					  "err %d\n",
-					  name_hash,
-					  ii->vfs_inode.i_ino,
-					  err);
-				goto finish_add_generic_dentry;
-			}
-
-			search->request.type = SSDFS_BTREE_SEARCH_ADD_ITEM;
-			err = ssdfs_dentries_tree_add_dentry(tree, search);
-
-			ssdfs_btree_search_forget_parent_node(search);
-			ssdfs_btree_search_forget_child_node(search);
-
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to add the dentry: "
-					  "name_hash %llx, ino %lu, "
-					  "err %d\n",
-					  name_hash,
-					  ii->vfs_inode.i_ino,
-					  err);
-				goto finish_add_generic_dentry;
-			}
-
-			if (!can_name_be_inline(str)) {
-				err = ssdfs_shared_dict_save_name(dict,
-								  name_hash,
-								  str);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to store name: "
-						  "hash %llx, err %d\n",
-						  name_hash, err);
-					goto finish_add_generic_dentry;
-				}
-			}
-		} else {
-			err = -EEXIST;
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("dentry exists in the tree: "
-				  "name_hash %llx, ino %lu\n",
-				  name_hash, ii->vfs_inode.i_ino);
-#endif /* CONFIG_SSDFS_DEBUG */
-			goto finish_add_generic_dentry;
-		}
-
-finish_add_generic_dentry:
-		up_read(&tree->lock);
-		break;
-
-	default:
-		SSDFS_ERR("invalid dentries tree type %#x\n",
-			  atomic_read(&tree->type));
-		return -ERANGE;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to add the dentry: "
+			  "name_hash %llx, ino %lu, "
+			  "err %d\n",
+			  name_hash,
+			  ii->vfs_inode.i_ino,
+			  err);
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -2823,11 +2982,239 @@ int ssdfs_dentries_tree_change_dentry(struct ssdfs_dentries_btree_info *tree,
 }
 
 /*
+ * __ssdfs_inline_dentries_tree_change() - change dentry in the tree
+ * @tree: dentries tree
+ * @name_hash: hash of the name
+ * @old_ino: old inode ID
+ * @str: new name of the file/folder
+ * @new_name_hash: hash of the new name
+ * @new_ii: new inode info
+ * @search: search object
+ *
+ * This method tries to change dentry in the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - dentry doesn't exist in the tree.
+ * %-EAGAIN     - tree type has been changed.
+ */
+static
+int __ssdfs_inline_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
+					u64 name_hash, ino_t old_ino,
+					const struct qstr *str,
+					u64 new_name_hash,
+					struct ssdfs_inode_info *new_ii,
+					struct ssdfs_btree_search *search)
+{
+	struct ssdfs_shared_dict_btree_info *dict;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+
+	SSDFS_DBG("tree %p, search %p, new_name_hash %llx\n",
+		  tree, search, new_name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dict = tree->fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
+
+	down_write(&tree->lock);
+
+	/* check that tree type is not changed */
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		/* continue logic */
+		break;
+
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("TRY AGAIN: tree type has been changed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_change_inline_dentry;
+
+	default:
+		BUG();
+	}
+
+	err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the inline dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_change_inline_dentry;
+	}
+
+	err = ssdfs_change_dentry(str, new_ii,
+				  SSDFS_INLINE_DENTRY, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change dentry: err %d\n",
+			  err);
+		goto finish_change_inline_dentry;
+	}
+
+	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+
+	err = ssdfs_dentries_tree_change_inline_dentry(tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change inline dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_change_inline_dentry;
+	}
+
+	if (!can_name_be_inline(str)) {
+		err = ssdfs_shared_dict_save_name(dict,
+						  new_name_hash,
+						  str);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to store name: "
+				  "hash %llx, err %d\n",
+				  new_name_hash, err);
+			goto finish_change_inline_dentry;
+		}
+	}
+
+finish_change_inline_dentry:
+	up_write(&tree->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * __ssdfs_regular_dentries_tree_change() - change dentry in the tree
+ * @tree: dentries tree
+ * @name_hash: hash of the name
+ * @old_ino: old inode ID
+ * @str: new name of the file/folder
+ * @new_name_hash: hash of the new name
+ * @new_ii: new inode info
+ * @search: search object
+ *
+ * This method tries to change dentry in the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - dentry doesn't exist in the tree.
+ * %-EAGAIN     - tree type has been changed.
+ */
+static
+int __ssdfs_regular_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
+					 u64 name_hash, ino_t old_ino,
+					 const struct qstr *str,
+					 u64 new_name_hash,
+					 struct ssdfs_inode_info *new_ii,
+					 struct ssdfs_btree_search *search)
+{
+	struct ssdfs_shared_dict_btree_info *dict;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+
+	SSDFS_DBG("tree %p, search %p, new_name_hash %llx\n",
+		  tree, search, new_name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	dict = tree->fsi->shdictree;
+	if (!dict) {
+		SSDFS_ERR("shared dictionary is absent\n");
+		return -ERANGE;
+	}
+
+	down_read(&tree->lock);
+
+	/* check that tree type is not changed */
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		/* continue logic */
+		break;
+
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("TRY AGAIN: tree type has been changed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_change_generic_dentry;
+
+	default:
+		BUG();
+	}
+
+	err = ssdfs_btree_find_item(tree->generic_tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_change_generic_dentry;
+	}
+
+	err = ssdfs_change_dentry(str, new_ii,
+				  SSDFS_REGULAR_DENTRY, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change dentry: err %d\n",
+			  err);
+		goto finish_change_generic_dentry;
+	}
+
+	search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+
+	err = ssdfs_dentries_tree_change_dentry(tree, search);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_change_generic_dentry;
+	}
+
+	if (!can_name_be_inline(str)) {
+		err = ssdfs_shared_dict_save_name(dict,
+						  new_name_hash,
+						  str);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to store name: "
+				  "hash %llx, err %d\n",
+				  new_name_hash, err);
+			goto finish_change_generic_dentry;
+		}
+	}
+
+finish_change_generic_dentry:
+	up_read(&tree->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
  * ssdfs_dentries_tree_change() - change dentry in the tree
  * @tree: dentries tree
  * @name_hash: hash of the name
  * @old_ino: old inode ID
- * @new_str: new name of the file/folder
+ * @str: new name of the file/folder
  * @new_ii: new inode info
  * @search: search object
  *
@@ -2847,8 +3234,8 @@ int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 				struct ssdfs_inode_info *new_ii,
 				struct ssdfs_btree_search *search)
 {
-	struct ssdfs_shared_dict_btree_info *dict;
 	u64 new_name_hash;
+	int number_of_tries = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2876,12 +3263,6 @@ int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	};
 
-	dict = tree->fsi->shdictree;
-	if (!dict) {
-		SSDFS_ERR("shared dictionary is absent\n");
-		return -ERANGE;
-	}
-
 	search->request.type = SSDFS_BTREE_SEARCH_FIND_ITEM;
 
 	if (need_initialize_dentries_btree_search(name_hash, search)) {
@@ -2908,106 +3289,49 @@ int ssdfs_dentries_tree_change(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
-	switch (atomic_read(&tree->type)) {
-	case SSDFS_INLINE_DENTRIES_ARRAY:
-		down_write(&tree->lock);
-
-		err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to find the inline dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_change_inline_dentry;
+	do {
+		if (number_of_tries > SSDFS_MAX_NUMBER_OF_TRIES) {
+			SSDFS_ERR("fail to change dentry in the tree: "
+				  "number_of_tries %d\n",
+				  number_of_tries);
+			return -ERANGE;
 		}
 
-		err = ssdfs_change_dentry(str, new_ii,
-					  SSDFS_INLINE_DENTRY, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change dentry: err %d\n",
-				  err);
-			goto finish_change_inline_dentry;
+		switch (atomic_read(&tree->type)) {
+		case SSDFS_INLINE_DENTRIES_ARRAY:
+			err = __ssdfs_inline_dentries_tree_change(tree,
+								  name_hash,
+								  old_ino,
+								  str,
+								  new_name_hash,
+								  new_ii,
+								  search);
+			break;
+
+		case SSDFS_PRIVATE_DENTRIES_BTREE:
+			err = __ssdfs_regular_dentries_tree_change(tree,
+								   name_hash,
+								   old_ino,
+								   str,
+								   new_name_hash,
+								   new_ii,
+								   search);
+			break;
+
+		default:
+			SSDFS_ERR("invalid dentries tree type %#x\n",
+				  atomic_read(&tree->type));
+			return -ERANGE;
 		}
 
-		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
+		number_of_tries++;
+	} while (err == -EAGAIN);
 
-		err = ssdfs_dentries_tree_change_inline_dentry(tree, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change inline dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_change_inline_dentry;
-		}
-
-		if (!can_name_be_inline(str)) {
-			err = ssdfs_shared_dict_save_name(dict,
-							  new_name_hash,
-							  str);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to store name: "
-					  "hash %llx, err %d\n",
-					  new_name_hash, err);
-				goto finish_change_inline_dentry;
-			}
-		}
-
-finish_change_inline_dentry:
-		up_write(&tree->lock);
-		break;
-
-	case SSDFS_PRIVATE_DENTRIES_BTREE:
-		down_read(&tree->lock);
-
-		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to find the dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_change_generic_dentry;
-		}
-
-		err = ssdfs_change_dentry(str, new_ii,
-					  SSDFS_REGULAR_DENTRY, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change dentry: err %d\n",
-				  err);
-			goto finish_change_generic_dentry;
-		}
-
-		search->request.type = SSDFS_BTREE_SEARCH_CHANGE_ITEM;
-
-		err = ssdfs_dentries_tree_change_dentry(tree, search);
-
-		ssdfs_btree_search_forget_parent_node(search);
-		ssdfs_btree_search_forget_child_node(search);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_change_generic_dentry;
-		}
-
-		if (!can_name_be_inline(str)) {
-			err = ssdfs_shared_dict_save_name(dict,
-							  new_name_hash,
-							  str);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to store name: "
-					  "hash %llx, err %d\n",
-					  new_name_hash, err);
-				goto finish_change_generic_dentry;
-			}
-		}
-
-finish_change_generic_dentry:
-		up_read(&tree->lock);
-		break;
-
-	default:
-		err = -ERANGE;
-		SSDFS_ERR("invalid dentries tree type %#x\n",
-			  atomic_read(&tree->type));
-		break;
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change the dentry: "
+			  "name_hash %llx, ino %lu, "
+			  "err %d\n",
+			  name_hash, old_ino, err);
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3734,6 +4058,186 @@ finish_process_range:
 }
 
 /*
+ * __ssdfs_inline_dentries_tree_delete() - delete dentry from the tree
+ * @tree: dentries tree
+ * @name_hash: hash of the name
+ * @ino: inode ID
+ * @search: search object
+ *
+ * This method tries to delete dentry from the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - dentry doesn't exist in the tree.
+ * %-EAGAIN     - tree type has been changed.
+ */
+static
+int __ssdfs_inline_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
+					u64 name_hash, ino_t ino,
+					struct ssdfs_btree_search *search)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+
+	SSDFS_DBG("tree %p, search %p, name_hash %llx\n",
+		  tree, search, name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_write(&tree->lock);
+
+	/* check that tree type is not changed */
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		/* continue logic */
+		break;
+
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("TRY AGAIN: tree type has been changed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_delete_inline_dentry;
+
+	default:
+		BUG();
+	}
+
+	err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the inline dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_delete_inline_dentry;
+	}
+
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+
+	err = ssdfs_dentries_tree_delete_inline_dentry(tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_delete_inline_dentry;
+	}
+
+finish_delete_inline_dentry:
+	up_write(&tree->lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
+ * __ssdfs_regular_dentries_tree_delete() - delete dentry from the tree
+ * @tree: dentries tree
+ * @name_hash: hash of the name
+ * @ino: inode ID
+ * @search: search object
+ *
+ * This method tries to delete dentry from the tree.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENODATA    - dentry doesn't exist in the tree.
+ * %-EAGAIN     - tree type has been changed.
+ */
+static
+int __ssdfs_regular_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
+					 u64 name_hash, ino_t ino,
+					 struct ssdfs_btree_search *search)
+{
+	int threshold = SSDFS_INLINE_DENTRIES_PER_AREA;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!tree || !search);
+
+	SSDFS_DBG("tree %p, search %p, name_hash %llx\n",
+		  tree, search, name_hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	down_read(&tree->lock);
+
+	/* check that tree type is not changed */
+	switch (atomic_read(&tree->type)) {
+	case SSDFS_PRIVATE_DENTRIES_BTREE:
+		/* continue logic */
+		break;
+
+	case SSDFS_INLINE_DENTRIES_ARRAY:
+		err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("TRY AGAIN: tree type has been changed\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_delete_generic_dentry;
+
+	default:
+		BUG();
+	}
+
+	err = ssdfs_btree_find_item(tree->generic_tree, search);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to find the dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_delete_generic_dentry;
+	}
+
+	search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+
+	err = ssdfs_dentries_tree_delete_dentry(tree, search);
+
+	ssdfs_btree_search_forget_parent_node(search);
+	ssdfs_btree_search_forget_child_node(search);
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete dentry: "
+			  "name_hash %llx, err %d\n",
+			  name_hash, err);
+		goto finish_delete_generic_dentry;
+	}
+
+finish_delete_generic_dentry:
+	up_read(&tree->lock);
+
+	if (!err && need_migrate_generic2inline_btree(tree->generic_tree,
+							threshold)) {
+		down_write(&tree->lock);
+		err = ssdfs_migrate_generic2inline_tree(tree);
+		up_write(&tree->lock);
+
+		if (err == -ENOSPC) {
+			/* continue to use the generic tree */
+			err = 0;
+			SSDFS_DBG("unable to re-create inline tree\n");
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to re-create inline tree: "
+				  "err %d\n",
+				  err);
+		}
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
  * ssdfs_dentries_tree_delete() - delete dentry from the tree
  * @tree: dentries tree
  * @name_hash: hash of the name
@@ -3754,7 +4258,7 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 				u64 name_hash, ino_t ino,
 				struct ssdfs_btree_search *search)
 {
-	int threshold = SSDFS_INLINE_DENTRIES_PER_AREA;
+	int number_of_tries = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3802,86 +4306,47 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 		search->request.count = 1;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_dentries_btree_object(tree);
+#endif /* CONFIG_SSDFS_DEBUG */
 
-	switch (atomic_read(&tree->type)) {
-	case SSDFS_INLINE_DENTRIES_ARRAY:
-		down_write(&tree->lock);
-
-		err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to find the inline dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_delete_inline_dentry;
+	do {
+		if (number_of_tries > SSDFS_MAX_NUMBER_OF_TRIES) {
+			SSDFS_ERR("fail to delete dentry in the tree: "
+				  "number_of_tries %d\n",
+				  number_of_tries);
+			return -ERANGE;
 		}
 
-		search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
+		switch (atomic_read(&tree->type)) {
+		case SSDFS_INLINE_DENTRIES_ARRAY:
+			err = __ssdfs_inline_dentries_tree_delete(tree,
+								  name_hash,
+								  ino,
+								  search);
+			break;
 
-		err = ssdfs_dentries_tree_delete_inline_dentry(tree, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to delete dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_delete_inline_dentry;
+		case SSDFS_PRIVATE_DENTRIES_BTREE:
+			err = __ssdfs_regular_dentries_tree_delete(tree,
+								   name_hash,
+								   ino,
+								   search);
+			break;
+
+		default:
+			SSDFS_ERR("invalid dentries tree type %#x\n",
+				  atomic_read(&tree->type));
+			return -ERANGE;
 		}
 
-finish_delete_inline_dentry:
-		up_write(&tree->lock);
-		break;
+		number_of_tries++;
+	} while (err == -EAGAIN);
 
-	case SSDFS_PRIVATE_DENTRIES_BTREE:
-		down_read(&tree->lock);
-
-		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to find the dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_delete_generic_dentry;
-		}
-
-		search->request.type = SSDFS_BTREE_SEARCH_DELETE_ITEM;
-
-		err = ssdfs_dentries_tree_delete_dentry(tree, search);
-
-		ssdfs_btree_search_forget_parent_node(search);
-		ssdfs_btree_search_forget_child_node(search);
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to delete dentry: "
-				  "name_hash %llx, err %d\n",
-				  name_hash, err);
-			goto finish_delete_generic_dentry;
-		}
-
-finish_delete_generic_dentry:
-		up_read(&tree->lock);
-
-		if (!err &&
-		    need_migrate_generic2inline_btree(tree->generic_tree,
-							threshold)) {
-			down_write(&tree->lock);
-			err = ssdfs_migrate_generic2inline_tree(tree);
-			up_write(&tree->lock);
-
-			if (err == -ENOSPC) {
-				/* continue to use the generic tree */
-				err = 0;
-				SSDFS_DBG("unable to re-create inline tree\n");
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to re-create inline tree: "
-					  "err %d\n",
-					  err);
-			}
-		}
-		break;
-
-	default:
-		err = -ERANGE;
-		SSDFS_ERR("invalid dentries tree type %#x\n",
-			  atomic_read(&tree->type));
-		break;
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to delete the dentry: "
+			  "name_hash %llx, ino %lu, "
+			  "err %d\n",
+			  name_hash, ino, err);
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -4009,13 +4474,13 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree)
 		return -ERANGE;
 	};
 
+	down_write(&tree->lock);
+
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
-		down_write(&tree->lock);
 		err = ssdfs_delete_all_inline_dentries(tree);
 		if (!err)
 			atomic64_set(&tree->dentries_count, 0);
-		up_write(&tree->lock);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete all inline dentries: "
@@ -4025,12 +4490,10 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree)
 		break;
 
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
-		down_write(&tree->lock);
 		err = ssdfs_btree_delete_all(tree->generic_tree);
 		if (!err) {
 			atomic64_set(&tree->dentries_count, 0);
 		}
-		up_write(&tree->lock);
 
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to delete the all dentries: "
@@ -4045,6 +4508,8 @@ int ssdfs_dentries_tree_delete_all(struct ssdfs_dentries_btree_info *tree)
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	up_write(&tree->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("dentries_count %llu\n",
@@ -4235,15 +4700,14 @@ int ssdfs_dentries_tree_extract_range(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	};
 
+	down_read(&tree->lock);
+
 	switch (atomic_read(&tree->type)) {
 	case SSDFS_INLINE_DENTRIES_ARRAY:
-		down_read(&tree->lock);
 		err = ssdfs_dentries_tree_extract_inline_range(tree,
 								start_index,
 								count,
 								search);
-		up_read(&tree->lock);
-
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to extract the inline range: "
 				  "start_index %u, count %u, err %d\n",
@@ -4252,12 +4716,9 @@ int ssdfs_dentries_tree_extract_range(struct ssdfs_dentries_btree_info *tree,
 		break;
 
 	case SSDFS_PRIVATE_DENTRIES_BTREE:
-		down_read(&tree->lock);
 		err = ssdfs_btree_extract_range(tree->generic_tree,
 						start_index, count,
 						search);
-		up_read(&tree->lock);
-
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to extract the range: "
 				  "start_index %u, count %u, err %d\n",
@@ -4271,6 +4732,8 @@ int ssdfs_dentries_tree_extract_range(struct ssdfs_dentries_btree_info *tree,
 			  atomic_read(&tree->type));
 		break;
 	}
+
+	up_read(&tree->lock);
 
 	return err;
 }

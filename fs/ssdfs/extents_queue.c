@@ -538,6 +538,8 @@ void ssdfs_destroy_btree_node_content(struct ssdfs_btree_node_content *content)
 		BUG_ON(folio_batch_count(&blk->batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
 		ssdfs_ext_queue_folio_batch_release(&blk->batch);
 	}
 }

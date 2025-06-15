@@ -373,6 +373,49 @@ bool is_ssdfs_peb_current_log_locked(struct ssdfs_peb_info *pebi)
 }
 
 /*
+ * can_peb_receive_new_blocks() - check that PEB can receive new blocks
+ * @fsi: shared file system information
+ * @pebc: PEB container object
+ * @peb_used_pages: number of used pages in PEB
+ */
+static inline
+bool can_peb_receive_new_blocks(struct ssdfs_fs_info *fsi,
+				struct ssdfs_peb_container *pebc,
+				int peb_used_pages)
+{
+	bool is_peb_under_migration = false;
+	bool is_peb_inflated = false;
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_UNDER_MIGRATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
+		is_peb_under_migration = true;
+		break;
+
+	default:
+		is_peb_under_migration = false;
+		break;
+	}
+
+	is_peb_inflated = peb_used_pages > fsi->pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("is_peb_under_migration %#x, "
+		  "is_peb_inflated %#x\n",
+		  is_peb_under_migration,
+		  is_peb_inflated);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (is_peb_under_migration && is_peb_inflated) {
+		return false;
+	}
+
+	return true;
+}
+
+/*
  * PEB container's API
  */
 int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
@@ -454,5 +497,6 @@ int ssdfs_peb_read_block_state(struct ssdfs_peb_container *pebc,
 				size_t array_size);
 bool ssdfs_peb_has_dirty_folios(struct ssdfs_peb_info *pebi);
 int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi);
+bool can_peb_process_create_requests(struct ssdfs_peb_container *pebc);
 
 #endif /* _SSDFS_PEB_CONTAINER_H */

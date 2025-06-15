@@ -263,13 +263,14 @@ void ssdfs_segment_blk_bmap_destroy(struct ssdfs_segment_blk_bmap *ptr)
  * @peb_index: PEB's index
  * @source: pointer on folio vector with bitmap state
  * @hdr: header of block bitmap fragment
+ * @peb_free_pages: number of available clean/unused pages in the PEB
  * @cno: log's checkpoint
  */
 int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 					u16 peb_index,
 					struct ssdfs_folio_vector *source,
 					struct ssdfs_block_bitmap_fragment *hdr,
-					u64 cno)
+					u32 peb_free_pages, u64 cno)
 {
 	int err = 0;
 
@@ -280,11 +281,15 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("seg_id %llu, peb_index %u, cno %llu\n",
-		  bmap->parent_si->seg_id, peb_index, cno);
+	SSDFS_ERR("seg_id %llu, peb_index %u, "
+		  "peb_free_pages %u, cno %llu\n",
+		  bmap->parent_si->seg_id, peb_index,
+		  peb_free_pages, cno);
 #else
-	SSDFS_DBG("seg_id %llu, peb_index %u, cno %llu\n",
-		  bmap->parent_si->seg_id, peb_index, cno);
+	SSDFS_DBG("seg_id %llu, peb_index %u, "
+		  "peb_free_pages %u, cno %llu\n",
+		  bmap->parent_si->seg_id, peb_index,
+		  peb_free_pages, cno);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	if (atomic_read(&bmap->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -300,7 +305,62 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 	}
 
 	err = ssdfs_peb_blk_bmap_init(&bmap->peb[peb_index],
-					source, hdr, cno);
+					source, hdr,
+					peb_free_pages, cno);
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("finished: err %d\n", err);
+#else
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	return err;
+}
+
+/*
+ * ssdfs_segment_blk_bmap_partial_inflate() - partial inflate of segment bitmap
+ * @bmap: pointer on segment block bitmap
+ * @peb_index: PEB's index
+ * @free_items: free items for inflation of block bitmap
+ */
+int ssdfs_segment_blk_bmap_partial_inflate(struct ssdfs_segment_blk_bmap *bmap,
+					   u16 peb_index, u32 free_items)
+{
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("seg_id %llu, peb_index %u, free_items %u\n",
+		  bmap->parent_si->seg_id, peb_index, free_items);
+#else
+	SSDFS_DBG("seg_id %llu, peb_index %u, free_items %u\n",
+		  bmap->parent_si->seg_id, peb_index, free_items);
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (atomic_read(&bmap->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&bmap->state));
+		return -ERANGE;
+	}
+
+	if (peb_index >= bmap->pebs_count) {
+		SSDFS_ERR("peb_index %u >= seg_blkbmap->pebs_count %u\n",
+			  peb_index, bmap->pebs_count);
+		return -ERANGE;
+	}
+
+	err = ssdfs_peb_blk_bmap_inflate(&bmap->peb[peb_index],
+					 free_items);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to inflate PEB block bitmap: "
+			  "seg_id %llu, peb_index %u, "
+			  "free_items %u, err %d\n",
+			  bmap->parent_si->seg_id, peb_index,
+			  free_items, err);
+	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -1013,8 +1073,9 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 		if (err1) {
 			err = err1;
-			SSDFS_ERR("count %u is bigger than reserved %llu\n",
-				  mem_pages, reserved);
+			SSDFS_WARN("count %u is bigger than reserved %llu, "
+				   "seg_id %llu\n",
+				   mem_pages, reserved, si->seg_id);
 			goto finish_reserve_extent;
 		}
 
@@ -1025,8 +1086,10 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg_id %llu, reserved_blks %u, "
-			  "reserved_pages %llu, pending %u\n",
-			  si->seg_id, *reserved_blks, reserved, pending);
+			  "reserved_pages %llu, mem_pages %u, "
+			  "pending %u\n",
+			  si->seg_id, *reserved_blks, reserved,
+			  mem_pages, pending);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -1067,6 +1130,110 @@ int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
 	u32 reserved_blks;
 
 	return ssdfs_segment_blk_bmap_reserve_extent(ptr, 1, &reserved_blks);
+}
+
+/*
+ * ssdfs_segment_blk_bmap_release_extent() - release the reserved extent
+ * @ptr: segment block bitmap object
+ * @count: number of logical blocks
+ *
+ * This function tries to release the reserved extent.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_segment_blk_bmap_release_extent(struct ssdfs_segment_blk_bmap *ptr,
+					  u32 count)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_info *si;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si);
+
+	SSDFS_DBG("seg_id %llu, count %u\n",
+		  ptr->parent_si->seg_id, count);
+	SSDFS_DBG("BEFORE: free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
+		  ptr->pages_per_seg);
+
+	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
+	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
+		SSDFS_ERR("invalid segment block bitmap state %#x\n",
+			  atomic_read(&ptr->state));
+		return -ERANGE;
+	}
+
+	down_write(&ptr->modification_lock);
+	atomic_add(count, &ptr->seg_free_blks);
+	up_write(&ptr->modification_lock);
+
+	si = ptr->parent_si;
+	fsi = si->fsi;
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		u64 reserved = 0;
+		u32 pending = 0;
+		u32 mem_pages;
+
+		mem_pages = SSDFS_MEM_PAGES_PER_LOGICAL_BLOCK(fsi);
+		mem_pages *= count;
+
+		spin_lock(&fsi->volume_state_lock);
+		reserved = fsi->reserved_new_user_data_pages;
+		fsi->reserved_new_user_data_pages += mem_pages;
+		spin_unlock(&fsi->volume_state_lock);
+
+		spin_lock(&si->pending_lock);
+		pending = si->pending_new_user_data_pages;
+		if (si->pending_new_user_data_pages >= mem_pages) {
+			si->pending_new_user_data_pages -= mem_pages;
+		} else
+			err = -ERANGE;
+		spin_unlock(&si->pending_lock);
+
+		if (err) {
+			SSDFS_WARN("count %u is bigger than pending %u, "
+				   "seg_id %llu\n",
+				   mem_pages, pending, si->seg_id);
+			goto finish_release_extent;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, count %u, "
+			  "reserved_pages %llu, mem_pages %u, "
+			  "pending %u\n",
+			  si->seg_id, count, reserved,
+			  mem_pages, pending);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, count %u\n",
+		  ptr->parent_si->seg_id, count);
+	SSDFS_DBG("AFTER: free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  atomic_read(&ptr->seg_free_blks),
+		  atomic_read(&ptr->seg_valid_blks),
+		  atomic_read(&ptr->seg_invalid_blks),
+		  ptr->pages_per_seg);
+
+	WARN_ON(!is_pages_balance_correct(ptr));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+finish_release_extent:
+	return err;
 }
 
 /*
@@ -1253,6 +1420,7 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 	bool need_migrate = false;
 	bool need_move = false;
 	int src_migration_id = -1, dst_migration_id = -1;
+	int next_id = -1;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1297,13 +1465,6 @@ try_define_bmap_index:
 			goto finish_define_bmap_index;
 		}
 
-		if (peb_migration_id > src_migration_id) {
-			err = -ERANGE;
-			SSDFS_ERR("migration_id %u > src_migration_id %u\n",
-				  peb_migration_id,
-				  src_migration_id);
-			goto finish_define_bmap_index;
-		}
 		peb_index = pebc->src_peb->peb_index;
 		break;
 
@@ -1455,6 +1616,21 @@ try_define_bmap_index:
 				goto finish_define_bmap_index;
 			}
 
+			if (!is_peb_migration_id_valid(peb_migration_id)) {
+				err = -ERANGE;
+				SSDFS_ERR("fail to select PEB: "
+					  "peb_migration_id %u, "
+					  "src_migration_id %u, "
+					  "dst_migration_id %u\n",
+					  peb_migration_id,
+					  src_migration_id,
+					  dst_migration_id);
+				goto finish_define_bmap_index;
+			}
+
+			next_id = peb_migration_id;
+			next_id = __ssdfs_define_next_peb_migration_id(next_id);
+
 			if (peb_migration_id == src_migration_id) {
 				switch (migration_phase) {
 				case SSDFS_SRC_PEB_NOT_EXHAUSTED:
@@ -1478,7 +1654,7 @@ try_define_bmap_index:
 				need_move = false;
 				bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
 				peb_index = pebc->dst_peb->peb_index;
-			} else if ((peb_migration_id + 1) == src_migration_id) {
+			} else if (next_id == src_migration_id) {
 				switch (migration_phase) {
 				case SSDFS_SRC_PEB_NOT_EXHAUSTED:
 					need_migrate = false;
@@ -1497,15 +1673,10 @@ try_define_bmap_index:
 					break;
 				}
 			} else {
-				err = -ERANGE;
-				SSDFS_ERR("fail to select PEB: "
-					  "peb_migration_id %u, "
-					  "src_migration_id %u, "
-					  "dst_migration_id %u\n",
-					  peb_migration_id,
-					  src_migration_id,
-					  dst_migration_id);
-				goto finish_define_bmap_index;
+				need_migrate = false;
+				need_move = true;
+				bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
+				peb_index = pebc->dst_peb->peb_index;
 			}
 			break;
 

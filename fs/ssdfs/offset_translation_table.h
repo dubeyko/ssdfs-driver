@@ -406,9 +406,10 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 			    int *migration_state,
 			    struct ssdfs_offset_position *pos);
 int ssdfs_blk2off_table_allocate_block(struct ssdfs_blk2off_table *table,
+					u32 max_blk,
 					u16 *logical_blk);
 int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
-					u16 len,
+					u16 len, u32 max_blk,
 					struct ssdfs_blk2off_range *extent);
 int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 				      u16 logical_blk,

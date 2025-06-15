@@ -3593,7 +3593,7 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("shared dictionary thread has been stoped\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	for (i = 0; i < SSDFS_INVALIDATION_QUEUE_NUMBER; i++) {
+	for (i = SSDFS_INVALIDATION_QUEUE_NUMBER - 1; i >= 0; i--) {
 		err = ssdfs_shextree_stop_thread(fsi->shextree, i);
 		if (err == -EIO) {
 			ssdfs_fs_error(fsi->sb,

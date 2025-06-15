@@ -11032,7 +11032,33 @@ int ssdfs_btree_node_find_item(struct ssdfs_btree_search *search)
 
 	node = search->node.child;
 	if (!node) {
-		SSDFS_WARN("child node is NULL\n");
+		int err1;
+
+		SSDFS_WARN("child node is NULL: "
+			   "type %#x, flags %#x, "
+			   "start_hash %llx, end_hash %llx, "
+			   "state %#x, node_id %u, height %u, "
+			   "parent %p, child %p\n",
+			   search->request.type, search->request.flags,
+			   search->request.start.hash, search->request.end.hash,
+			   search->node.state, search->node.id,
+			   search->node.height, search->node.parent,
+			   search->node.child);
+//		if (!search->node.parent) {
+SSDFS_ERR_DBG("node_id %u, type %#x\n",
+				  search->node.parent->node_id,
+				  atomic_read(&search->node.parent->type));
+//		}
+
+SSDFS_ERR_DBG("tree->height %d\n",
+		atomic_read(&node->tree->height));
+
+search->node.child = search->node.parent;
+search->node.parent = NULL;
+
+err1 = ssdfs_btree_node_find_index(search);
+SSDFS_ERR("btree_node_find_index: err %d\n", err1);
+
 		return -ERANGE;
 	}
 

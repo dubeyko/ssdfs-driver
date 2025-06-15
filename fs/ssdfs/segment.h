@@ -293,6 +293,10 @@ int CUR_SEG_TYPE(int req_class)
 		cur_seg_type = SSDFS_CUR_DATA_UPDATE_SEG;
 		break;
 
+	case SSDFS_PEB_USER_DATA_MOVE_REQ:
+		cur_seg_type = SSDFS_CUR_DATA_SEG;
+		break;
+
 	default:
 		BUG();
 	}
@@ -311,6 +315,8 @@ int SEG_TYPE(int req_class)
 	switch (req_class) {
 	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
 	case SSDFS_PEB_CREATE_DATA_REQ:
+	case SSDFS_ZONE_USER_DATA_MIGRATE_REQ:
+	case SSDFS_PEB_USER_DATA_MOVE_REQ:
 		seg_type = SSDFS_USER_DATA_SEG_TYPE;
 		break;
 
@@ -964,6 +970,12 @@ bool is_it_time_free_peb_cache_memory(struct ssdfs_peb_container *pebc)
 	return !dont_touch;
 }
 
+static inline
+bool is_ssdfs_segment_under_invalidation(struct ssdfs_segment_info *si)
+{
+	return atomic_read(&si->activity_type) == SSDFS_SEG_UNDER_INVALIDATION;
+}
+
 /*
  * Segment object's API
  */
@@ -1111,6 +1123,16 @@ int ssdfs_segment_migrate_zone_extent_async(struct ssdfs_fs_info *fsi,
 					    struct ssdfs_segment_request *req,
 					    u64 *seg_id,
 					    struct ssdfs_blk2off_range *extent);
+int ssdfs_segment_move_peb_extent_sync(struct ssdfs_fs_info *fsi,
+					int req_type,
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
+int ssdfs_segment_move_peb_extent_async(struct ssdfs_fs_info *fsi,
+					int req_type,
+					struct ssdfs_segment_request *req,
+					u64 *seg_id,
+					struct ssdfs_blk2off_range *extent);
 int ssdfs_segment_add_xattr_blob_sync(struct ssdfs_fs_info *fsi,
 					struct ssdfs_segment_request *req,
 					u64 *seg_id,

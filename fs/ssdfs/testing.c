@@ -2260,6 +2260,7 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	u32 last_free_blk;
 	u32 metadata_blks;
 	u32 invalid_blks_snapshot;
+	size_t items_capacity;
 	size_t bytes_count;
 	int err = 0;
 
@@ -2341,6 +2342,7 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 					&last_free_blk,
 					&metadata_blks,
 					&invalid_blks_snapshot,
+					&items_capacity,
 					&bytes_count);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to snapshot block bitmap: "
@@ -2496,10 +2498,6 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 
 	while (len > 0) {
 		for (i = 0; i < len; i++) {
-			if ((start + i) >= capacity) {
-				break;
-			}
-
 			if (ssdfs_block_bmap_test_block(bmap, start + i,
 						    SSDFS_BLK_PRE_ALLOCATED)) {
 				if (range.start >= U32_MAX) {
@@ -2521,12 +2519,8 @@ int ssdfs_testing_block_bmap_invalidation(struct ssdfs_block_bmap *bmap,
 		}
 
 		if (range.len == 0) {
-			if ((start + len) >= capacity) {
-				goto finish_check;
-			} else {
-				start += len;
-				continue;
-			}
+			start += len;
+			continue;
 		}
 
 		err = ssdfs_block_bmap_invalidate(bmap, &range);
@@ -2837,7 +2831,7 @@ fail_define_free_pages_count:
 		goto destroy_snapshot;
 	}
 
-	err = ssdfs_block_bmap_clean(&bmap);
+	err = ssdfs_block_bmap_clean(&bmap, capacity);
 	ssdfs_block_bmap_clear_dirty_state(&bmap);
 	ssdfs_block_bmap_unlock(&bmap);
 
@@ -2884,6 +2878,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 	logical_blk = 0;
 	while ((logical_blk + 1) < capacity) {
 		err = ssdfs_blk2off_table_allocate_block(blk2off_tbl,
+							 capacity,
 							 &logical_blk);
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->partial_init_end;
@@ -2896,6 +2891,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 			}
 
 			err = ssdfs_blk2off_table_allocate_block(blk2off_tbl,
+								 capacity,
 								 &logical_blk);
 		}
 

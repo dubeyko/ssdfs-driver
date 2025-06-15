@@ -661,7 +661,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 	int peb_free_blks;
 	int peb_used_blks;
 	int peb_invalid_blks;
-	int default_threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
+	u32 default_threshold = SSDFS_RESERVED_FREE_PAGE_THRESHOLD_PER_PEB;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -963,10 +963,18 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 				err = -ERANGE;
 				SSDFS_ERR("invalid state: "
 					  "seg %llu, peb index %d, "
-					  "peb_invalid_blks %d\n",
+					  "peb_used_blks %d, "
+					  "peb_free_blks %d, "
+					  "peb_invalid_blks %d, "
+					  "available_free_blks %d, "
+					  "default_threshold %d\n",
 					  pebc->parent_si->seg_id,
 					  pebc->peb_index,
-					  peb_invalid_blks);
+					  peb_used_blks,
+					  peb_free_blks,
+					  peb_invalid_blks,
+					  available_free_blks,
+					  default_threshold);
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 				goto stop_fsck_thread;
 #else
@@ -2500,6 +2508,26 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
 		switch (dst_peb_state) {
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+			peb_blkbmap =
+			    &pebc->parent_si->blk_bmap.peb[pebc->peb_index];
+			atomic_set(&peb_blkbmap->state,
+					SSDFS_PEB_BLK_BMAP_HAS_CLEAN_DST);
+
+			err = ssdfs_create_dirty_peb_container(pebc,
+								SSDFS_SRC_PEB);
+			if (err == -EINTR) {
+				/*
+				 * Ignore this error.
+				 */
+				goto fail_start_threads;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to create dirty PEB "
+					  "container: err %d\n", err);
+				goto fail_start_threads;
+			}
+			break;
+
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
 			if (peb_has_ext_ptr) {
 				err = ssdfs_create_dirty_peb_container(pebc,
@@ -5413,6 +5441,41 @@ int ssdfs_peb_get_invalid_pages(struct ssdfs_peb_container *pebc)
 }
 
 /*
+ * ssdfs_peb_get_pages_capacity() - get PEB's pages capacity
+ * @ptr: pointer on PEB container
+ */
+int ssdfs_peb_get_pages_capacity(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si || !pebc->parent_si->fsi);
+	BUG_ON(!pebc->parent_si->blk_bmap.peb);
+
+	SSDFS_DBG("pebc %p, peb_index %u, "
+		  "peb_type %#x, log_blocks %u\n",
+		  pebc, pebc->peb_index,
+		  pebc->peb_type, pebc->log_blocks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	si = pebc->parent_si;
+	seg_blkbmap = &si->blk_bmap;
+
+	if (pebc->peb_index >= seg_blkbmap->pebs_count) {
+		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
+			  pebc->peb_index,
+			  seg_blkbmap->pebs_count);
+		return -ERANGE;
+	}
+
+	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+
+	return atomic_read(&peb_blkbmap->peb_blks_capacity);
+}
+
+/*
  * ssdfs_peb_container_invalidate_block() - invalidate PEB's block
  * @pebc: pointer on PEB container
  * @desc: physical offset descriptor
@@ -5445,6 +5508,7 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	BUG_ON(!pebc || !desc);
 	BUG_ON(!pebc->parent_si || !pebc->parent_si->fsi);
 	BUG_ON(!pebc->parent_si->blk_bmap.peb);
+	BUG_ON(!is_ssdfs_peb_container_locked(pebc));
 
 	SSDFS_DBG("seg %llu, peb_index %u, peb_migration_id %u, "
 		  "logical_offset %u, logical_blk %u, peb_page %u\n",
@@ -5459,8 +5523,6 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 	peb_index = pebc->peb_index;
 	peb_page = le16_to_cpu(desc->page_desc.peb_page);
 	peb_migration_id = desc->blk_state.peb_migration_id;
-
-	ssdfs_peb_container_lock(pebc);
 
 	items_state = atomic_read(&pebc->items_state);
 	switch (items_state) {
@@ -5571,13 +5633,12 @@ int ssdfs_peb_container_invalidate_block(struct ssdfs_peb_container *pebc,
 
 finish_invalidate_block:
 	ssdfs_peb_current_log_unlock(pebi);
-fail_invalidate_block:
-	ssdfs_peb_container_unlock(pebc);
 
 	if (!err) {
 		ssdfs_increase_volume_free_pages(si->fsi, 1);
 	}
 
+fail_invalidate_block:
 	return err;
 }
 
@@ -6489,4 +6550,78 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
+}
+
+/*
+ * can_peb_process_create_requests() - check that PEB can process create requests
+ * @pebc: PEB container
+ */
+bool can_peb_process_create_requests(struct ssdfs_peb_container *pebc)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	u64 seg_id;
+	int peb_pages_capacity;
+	int peb_used_pages;
+	bool under_migration;
+	bool is_inflated;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!pebc || !pebc->parent_si);
+	BUG_ON(!pebc->parent_si->fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = pebc->parent_si->fsi;
+	seg_id = pebc->parent_si->seg_id;
+	seg_blkbmap = &pebc->parent_si->blk_bmap;
+	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+
+	if (atomic_read(&pebc->items_state) == SSDFS_PEB_CONTAINER_EMPTY) {
+		/* skip empty container */
+		return false;
+	}
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_UNDER_MIGRATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
+		under_migration = true;
+		break;
+
+	default:
+		under_migration = false;
+		break;
+	}
+
+	peb_pages_capacity = atomic_read(&peb_blkbmap->peb_blks_capacity);
+	is_inflated = peb_pages_capacity > fsi->pages_per_peb;
+
+	peb_used_pages = ssdfs_peb_blk_bmap_get_used_pages(peb_blkbmap);
+	if (peb_used_pages < 0) {
+		/* ignore error */
+		SSDFS_ERR("fail to get peb's used pages: "
+			  "seg_id %llu, err %d\n",
+			  seg_id, peb_used_pages);
+		peb_used_pages = fsi->pages_per_peb;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg_id %llu, under_migration %#x, "
+		  "is_inflated %#x, peb_pages_capacity %d, "
+		  "peb_used_pages %d, pages_per_peb %u\n",
+		  seg_id, under_migration, is_inflated,
+		  peb_pages_capacity, peb_used_pages,
+		  fsi->pages_per_peb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (under_migration && is_inflated) {
+		if (peb_used_pages > (fsi->pages_per_peb / 2)) {
+			/* too many used pages yet */
+			return false;
+		}
+	}
+
+	return true;
 }

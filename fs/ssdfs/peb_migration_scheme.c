@@ -1114,7 +1114,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int used_pages;
-	u32 pages_per_seg;
+	int peb_blks_capacity;
 	int old_migration_state;
 	bool is_peb_exhausted = false;
 	u32 mem_pages;
@@ -1144,7 +1144,6 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	fsi = pebc->parent_si->fsi;
 	seg_blkbmap = &si->blk_bmap;
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
-	pages_per_seg = fsi->pages_per_seg;
 
 	ssdfs_peb_container_lock(pebc);
 
@@ -1159,9 +1158,28 @@ check_migration_state:
 		goto finish_migration_done;
 	}
 
+	down_read(&peb_blkbmap->modification_lock);
+	peb_blks_capacity = atomic_read(&peb_blkbmap->peb_blks_capacity);
+	up_read(&peb_blkbmap->modification_lock);
+
+	if (peb_blks_capacity < 1) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid peb_blks_capacity %d\n",
+			  peb_blks_capacity);
+		goto finish_migration_done;
+	}
+
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("used_pages %d\n", used_pages);
+	SSDFS_DBG("used_pages %d, peb_blks_capacity %d\n",
+		  used_pages, peb_blks_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (used_pages > peb_blks_capacity) {
+		err = -ERANGE;
+		SSDFS_ERR("used_pages %d > peb_blks_capacity %d\n",
+			  used_pages, peb_blks_capacity);
+		goto finish_migration_done;
+	}
 
 	switch (old_migration_state) {
 	case SSDFS_PEB_NOT_MIGRATING:
@@ -1251,7 +1269,7 @@ try_finish_migration_now:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							 0, pages_per_seg,
+							 0, peb_blks_capacity,
 							 SSDFS_BLK_VALID,
 							 &range1);
 
@@ -1271,7 +1289,7 @@ try_finish_migration_now:
 		}
 
 		err = ssdfs_peb_blk_bmap_collect_garbage(peb_blkbmap,
-							0, pages_per_seg,
+							0, peb_blks_capacity,
 							SSDFS_BLK_PRE_ALLOCATED,
 							&range2);
 
