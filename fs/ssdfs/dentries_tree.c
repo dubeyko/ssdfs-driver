@@ -2601,7 +2601,6 @@ ssdfs_dentries_tree_change_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 {
 	struct ssdfs_dir_entry *cur;
 	size_t dentry_size = sizeof(struct ssdfs_dir_entry);
-	u64 hash1, hash2;
 	u64 ino1, ino2;
 	int private_flags;
 	s64 dentries_count, dentries_capacity;
@@ -2657,17 +2656,14 @@ ssdfs_dentries_tree_change_inline_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
-	hash1 = search->request.start.hash;
-	ino1 = search->request.start.ino;
 
+	ino1 = search->request.start.ino;
 	cur = &search->raw.dentry.header;
-	hash2 = le64_to_cpu(cur->hash_code);
 	ino2 = le64_to_cpu(cur->ino);
 
-	if (hash1 != hash2 || ino1 != ino2) {
-		SSDFS_ERR("hash1 %llx, hash2 %llx, "
-			  "ino1 %llu, ino2 %llu\n",
-			  hash1, hash2, ino1, ino2);
+	if (ino1 != ino2) {
+		SSDFS_ERR("ino1 %llu, ino2 %llu\n",
+			  ino1, ino2);
 		return -ERANGE;
 	}
 
@@ -2735,7 +2731,6 @@ int ssdfs_dentries_tree_change_dentry(struct ssdfs_dentries_btree_info *tree,
 				      struct ssdfs_btree_search *search)
 {
 	struct ssdfs_raw_dentry *cur;
-	u64 hash1, hash2;
 	u64 ino1, ino2;
 	int err;
 
@@ -2789,17 +2784,13 @@ int ssdfs_dentries_tree_change_dentry(struct ssdfs_dentries_btree_info *tree,
 		return -ERANGE;
 	}
 
-	hash1 = search->request.start.hash;
 	ino1 = search->request.start.ino;
-
 	cur = &search->raw.dentry;
-	hash2 = le64_to_cpu(cur->header.hash_code);
 	ino2 = le64_to_cpu(cur->header.ino);
 
-	if (hash1 != hash2 || ino1 != ino2) {
-		SSDFS_ERR("hash1 %llx, hash2 %llx, "
-			  "ino1 %llu, ino2 %llu\n",
-			  hash1, hash2, ino1, ino2);
+	if (ino1 != ino2) {
+		SSDFS_ERR("ino1 %llu, ino2 %llu\n",
+			  ino1, ino2);
 		return -ERANGE;
 	}
 
@@ -3762,11 +3753,11 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("tree %p, search %p, name_hash %llx\n",
-		  tree, search, name_hash);
+	SSDFS_ERR("tree %p, search %p, name_hash %llx, ino %llu\n",
+		  tree, search, name_hash, (u64)ino);
 #else
-	SSDFS_DBG("tree %p, search %p, name_hash %llx\n",
-		  tree, search, name_hash);
+	SSDFS_DBG("tree %p, search %p, name_hash %llx, ino %llu\n",
+		  tree, search, name_hash, (u64)ino);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	switch (atomic_read(&tree->state)) {
@@ -3809,7 +3800,14 @@ int ssdfs_dentries_tree_delete(struct ssdfs_dentries_btree_info *tree,
 		down_write(&tree->lock);
 
 		err = ssdfs_dentries_tree_find_inline_dentry(tree, search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the inline dentry: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_delete_inline_dentry;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the inline dentry: "
 				  "name_hash %llx, err %d\n",
 				  name_hash, err);
@@ -3834,7 +3832,14 @@ finish_delete_inline_dentry:
 		down_read(&tree->lock);
 
 		err = ssdfs_btree_find_item(tree->generic_tree, search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the dentry: "
+				  "name_hash %llx, err %d\n",
+				  name_hash, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_delete_generic_dentry;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to find the dentry: "
 				  "name_hash %llx, err %d\n",
 				  name_hash, err);
@@ -6518,6 +6523,16 @@ int ssdfs_dentries_btree_node_find_range(struct ssdfs_btree_node *node,
 	end_hash = node->items_area.end_hash;
 	up_read(&node->header_lock);
 
+
+SSDFS_DBG("node_id %u, "
+	      "node (start_hash %llx, end_hash %llx), "
+	      "request (start_hash %llx, end_hash %llx)\n",
+	      node->node_id,
+	      start_hash, end_hash,
+	      search->request.start.hash,
+	      search->request.end.hash);
+
+
 	if (state != SSDFS_BTREE_NODE_ITEMS_AREA_EXIST) {
 		SSDFS_ERR("invalid area state %#x\n",
 			  state);
@@ -7146,6 +7161,15 @@ int ssdfs_find_correct_position_from_right(struct ssdfs_btree_node *node,
 		ino = le64_to_cpu(dentry.ino);
 		hash = le64_to_cpu(dentry.hash_code);
 
+#ifdef CONFIG_SSDFS_DEBUG
+SSDFS_DBG("current (item_index %d, ino %llu, hash %llx), "
+	      "search (start_index %u, ino %llu, hash %llx)\n",
+	      item_index, ino, hash,
+	      search->result.start_index,
+	      search->request.start.ino,
+	      search->request.start.hash);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		if (search->request.start.hash == hash) {
 			if (req_flags & SSDFS_BTREE_SEARCH_HAS_VALID_INO) {
 				if (ino == search->request.start.ino) {
@@ -7404,6 +7428,7 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 	u64 end_hash = U64_MAX;
 	u64 cur_hash;
 	u64 old_hash;
+	u64 cur_ino;
 	u16 inline_names = 0;
 	int i;
 	int err = 0;
@@ -7598,12 +7623,21 @@ int __ssdfs_dentries_btree_node_insert_range(struct ssdfs_btree_node *node,
 		}
 
 		cur_hash = le64_to_cpu(dentry.hash_code);
+		cur_ino = le64_to_cpu(dentry.ino);
 
 		if (cur_hash < start_hash) {
 			/*
 			 * expected state
 			 */
+		} else if (cur_hash == start_hash) {
+			if (cur_ino < search->request.start.ino) {
+				/*
+				 * expected state
+				 */
+			} else
+				goto invalid_range_detected;
 		} else {
+invalid_range_detected:
 			SSDFS_ERR("invalid range: item_index %u, "
 				  "cur_hash %llx, "
 				  "start_hash %llx, end_hash %llx\n",

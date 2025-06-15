@@ -821,7 +821,14 @@ static int ssdfs_unlink(struct inode *dir, struct dentry *dentry)
 						 name_hash,
 						 inode->i_ino,
 						 search);
-		if (unlikely(err)) {
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to delete the dentry: "
+				  "name_hash %llx, ino %lu, err %d\n",
+				  name_hash, inode->i_ino, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto dentry_is_not_available;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to delete the dentry: "
 				  "name_hash %llx, ino %lu, err %d\n",
 				  name_hash, inode->i_ino, err);
@@ -1084,18 +1091,63 @@ static int ssdfs_rename_target(struct inode *old_dir,
 			goto finish_target_rename;
 		}
 
-		name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("old_dir_ino %lu, new_dir_ino %lu, "
+			  "new_inode->i_ino %llu, "
+			  "new_name %s, new_name_hash %llx, "
+			  "old_inode->i_ino %llu, "
+			  "old_name %s, old_name_hash %llx\n",
+			  (unsigned long)old_dir->i_ino,
+			  (unsigned long)new_dir->i_ino,
+			  (u64)new_inode->i_ino,
+			  new_dentry->d_name.name,
+			  ssdfs_generate_name_hash(&new_dentry->d_name),
+			  (u64)old_inode->i_ino,
+			  old_dentry->d_name.name,
+			  ssdfs_generate_name_hash(&old_dentry->d_name));
+#endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_dentries_tree_change(new_dir_ii->dentries_tree,
+		name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+
+		err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
 						 name_hash,
-						 new_inode->i_ino,
-						 &old_dentry->d_name,
-						 old_ii,
+						 old_inode->i_ino,
 						 search);
 		if (unlikely(err)) {
 			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-					"fail to update dentry: err %d\n",
-					err);
+					"fail to delete the dentry: "
+					"name_hash %llx, ino %lu, err %d\n",
+					name_hash, new_inode->i_ino, err);
+			goto finish_target_rename;
+		}
+
+		name_hash = ssdfs_generate_name_hash(&new_dentry->d_name);
+
+		err = ssdfs_dentries_tree_add(old_dir_ii->dentries_tree,
+					      &new_dentry->d_name,
+					      old_ii, search);
+		if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to add the dentry: "
+					"name_hash %llx, ino %lu, err %d\n",
+					name_hash, new_inode->i_ino, err);
+		}
+
+		err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
+						 name_hash,
+						 new_inode->i_ino,
+						 search);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to delete the dentry: "
+				  "name_hash %llx, ino %lu, err %d\n",
+				  name_hash, new_inode->i_ino, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to delete the dentry: "
+					"name_hash %llx, ino %lu, err %d\n",
+					name_hash, new_inode->i_ino, err);
 			goto finish_target_rename;
 		}
 	} else {
@@ -1106,20 +1158,26 @@ static int ssdfs_rename_target(struct inode *old_dir,
 					err);
 			goto finish_target_rename;
 		}
-	}
 
-	name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
+		name_hash = ssdfs_generate_name_hash(&old_dentry->d_name);
 
-	err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
-					 name_hash,
-					 old_inode->i_ino,
-					 search);
-	if (unlikely(err)) {
-		ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
-				"fail to delete the dentry: "
-				"name_hash %llx, ino %lu, err %d\n",
-				name_hash, old_inode->i_ino, err);
-		goto finish_target_rename;
+		err = ssdfs_dentries_tree_delete(old_dir_ii->dentries_tree,
+						 name_hash,
+						 old_inode->i_ino,
+						 search);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to delete the dentry: "
+				  "name_hash %llx, ino %lu, err %d\n",
+				  name_hash, old_inode->i_ino, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else if (unlikely(err)) {
+			ssdfs_fs_error(fsi->sb, __FILE__, __func__, __LINE__,
+					"fail to delete the dentry: "
+					"name_hash %llx, ino %lu, err %d\n",
+					name_hash, old_inode->i_ino, err);
+			goto finish_target_rename;
+		}
 	}
 
 	if (is_dir && move) {
