@@ -739,7 +739,7 @@ static int ssdfs_truncate(struct inode *inode)
 			SSDFS_DBG("newsize %llu == inline_capacity %zu\n",
 				  (u64)newsize, inline_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
-		} else if (newsize > 0) {
+		} else {
 			loff_t size = inline_capacity - newsize;
 
 #ifdef CONFIG_SSDFS_DEBUG
