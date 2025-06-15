@@ -401,7 +401,7 @@ bool is_ssdfs_segment_blk_bmap_dirty(struct ssdfs_segment_blk_bmap *bmap,
 
 /*
  * ssdfs_define_bmap_index() - define block bitmap for operation
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @bmap_index: pointer on block bitmap index value [out]
  * @peb_index: pointer on PEB's index [out]
  *
@@ -415,27 +415,25 @@ bool is_ssdfs_segment_blk_bmap_dirty(struct ssdfs_segment_blk_bmap *bmap,
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_define_bmap_index(struct ssdfs_peb_info *pebi,
+int ssdfs_define_bmap_index(struct ssdfs_peb_container *pebc,
 			    int *bmap_index, u16 *peb_index)
 {
 	struct ssdfs_segment_info *si;
-	struct ssdfs_peb_container *pebc;
 	int migration_state, items_state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi || !pebi->pebc || !pebi->pebc->parent_si);
+	BUG_ON(!pebc || !pebc->parent_si);
 	BUG_ON(!bmap_index || !peb_index);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
-		  pebi->pebc->parent_si->seg_id,
-		  pebi->pebc->peb_index);
+		  pebc->parent_si->seg_id,
+		  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	si = pebi->pebc->parent_si;
-	pebc = pebi->pebc;
+	si = pebc->parent_si;
 	*bmap_index = -1;
 	*peb_index = U16_MAX;
 
@@ -510,24 +508,14 @@ finish_define_bmap_index:
 
 		err = 0;
 
-		ssdfs_peb_current_log_unlock(pebi);
-		ssdfs_peb_container_unlock(pebc);
-
+		mutex_unlock(&pebc->migration_lock);
+		up_read(&pebc->lock);
 		prepare_to_wait(&pebc->migration_wq, &wait,
 				TASK_UNINTERRUPTIBLE);
 		schedule();
 		finish_wait(&pebc->migration_wq, &wait);
-
-		pebi = ssdfs_get_current_peb_locked(pebc);
-		if (IS_ERR_OR_NULL(pebi)) {
-			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
-			return err;
-		}
-		ssdfs_peb_current_log_lock(pebi);
+		down_read(&pebc->lock);
+		mutex_lock(&pebc->migration_lock);
 		goto try_define_bmap_index;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
@@ -560,12 +548,12 @@ bool has_ssdfs_segment_blk_bmap_initialized(struct ssdfs_segment_blk_bmap *ptr,
 		return false;
 	}
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 	if (pebc->dst_peb)
 		peb_index = pebc->dst_peb->peb_index;
 	else
 		peb_index = pebc->src_peb->peb_index;
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 	if (peb_index >= ptr->pebs_count) {
 		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
@@ -598,12 +586,12 @@ int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 	if (pebc->dst_peb)
 		peb_index = pebc->dst_peb->peb_index;
 	else
 		peb_index = pebc->src_peb->peb_index;
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 	if (peb_index >= ptr->pebs_count) {
 		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
@@ -619,7 +607,7 @@ int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
 /*
  * ssdfs_segment_blk_bmap_get_block_state() - get logical block's state
  * @ptr: segment block bitmap object
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @blk: logical block index
  *
  * This method tries to detect the state of logical block.
@@ -631,7 +619,7 @@ int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
-					   struct ssdfs_peb_info *pebi,
+					   struct ssdfs_peb_container *pebc,
 					   u32 blk)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -640,23 +628,18 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebi);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, blk %u\n",
 		  ptr->parent_si->seg_id,
-		  pebi->pebc->peb_index, blk);
+		  pebc->peb_index, blk);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
-
-	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -665,12 +648,12 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	err = ssdfs_define_bmap_index(pebi, &bmap_index, &peb_index);
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  ptr->parent_si->seg_id,
-			  pebi->pebc->peb_index, err);
+			  pebc->peb_index, err);
 		return err;
 	}
 
@@ -690,7 +673,7 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
 /*
  * ssdfs_segment_blk_bmap_reserve_metapages() - reserve metapages
  * @ptr: segment block bitmap object
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @count: amount of metadata pages for reservation
  *
  * This method tries to reserve @count metadata pages into
@@ -703,7 +686,7 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
-					     struct ssdfs_peb_info *pebi,
+					     struct ssdfs_peb_container *pebc,
 					     u32 count)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -712,23 +695,18 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebi);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
 		  ptr->parent_si->seg_id,
-		  pebi->pebc->peb_index, count);
+		  pebc->peb_index, count);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
-
-	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -737,12 +715,12 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	err = ssdfs_define_bmap_index(pebi, &bmap_index, &peb_index);
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  ptr->parent_si->seg_id,
-			  pebi->pebc->peb_index, err);
+			  pebc->peb_index, err);
 		return err;
 	}
 
@@ -754,21 +732,15 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
 
 	peb_blkbmap = &ptr->peb[peb_index];
 
-	err = ssdfs_peb_blk_bmap_reserve_metapages(peb_blkbmap,
+	return ssdfs_peb_blk_bmap_reserve_metapages(peb_blkbmap,
 						    bmap_index,
 						    count);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
 }
 
 /*
  * ssdfs_segment_blk_bmap_free_metapages() - free metapages
  * @ptr: segment block bitmap object
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @count: amount of metadata pages for freeing
  *
  * This method tries to free @count metadata pages into
@@ -781,7 +753,7 @@ int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
-					  struct ssdfs_peb_info *pebi,
+					  struct ssdfs_peb_container *pebc,
 					  u32 count)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -790,23 +762,18 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebi);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, count %u\n",
 		  ptr->parent_si->seg_id,
-		  pebi->pebc->peb_index, count);
+		  pebc->peb_index, count);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
-
-	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -815,12 +782,12 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	err = ssdfs_define_bmap_index(pebi, &bmap_index, &peb_index);
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  ptr->parent_si->seg_id,
-			  pebi->pebc->peb_index, err);
+			  pebc->peb_index, err);
 		return err;
 	}
 
@@ -832,15 +799,9 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 
 	peb_blkbmap = &ptr->peb[peb_index];
 
-	err = ssdfs_peb_blk_bmap_free_metapages(peb_blkbmap,
+	return ssdfs_peb_blk_bmap_free_metapages(peb_blkbmap,
 						 bmap_index,
 						 count);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
 }
 
 /*
@@ -866,8 +827,6 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 	struct ssdfs_segment_info *si;
 	u32 reserved_threshold;
 	int free_blks = 0;
-	int invalid_blks = 0;
-	int vacant_blks = 0;
 	int reserved_metapages;
 	int err = 0, err1 = 0;
 
@@ -882,10 +841,6 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
-
-	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	*reserved_blks = 0;
@@ -904,8 +859,6 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 	down_write(&ptr->modification_lock);
 
 	free_blks = atomic_read(&ptr->seg_free_blks);
-	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
-	vacant_blks = free_blks + invalid_blks;
 	reserved_metapages = atomic_read(&ptr->seg_reserved_metapages);
 
 	if (reserved_threshold < reserved_metapages)
@@ -913,68 +866,39 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 	else
 		reserved_threshold -= reserved_metapages;
 
-	if (vacant_blks <= reserved_threshold) {
+	if (free_blks <= reserved_threshold) {
 		err = -E2BIG;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu hasn't enough free pages: "
-			  "free_pages %d, invalid_pages %d, "
-			  "vacant_pages %d, reserved_threshold %u\n",
+			  "free_pages %u, reserved_threshold %u\n",
 			  ptr->parent_si->seg_id, free_blks,
-			  invalid_blks, vacant_blks,
 			  reserved_threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else {
-		vacant_blks -= reserved_threshold;
+		free_blks -= reserved_threshold;
 
-		if (vacant_blks < count) {
+		if (free_blks < count) {
 			if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
 				err = -EAGAIN;
-				*reserved_blks = vacant_blks;
+				*reserved_blks = free_blks;
+				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
 			} else {
 				err = -E2BIG;
-				*reserved_blks = vacant_blks;
-			}
-
-			if (free_blks >= vacant_blks) {
+				*reserved_blks = free_blks;
 				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-			} else {
-				atomic_set(&ptr->seg_free_blks, 0);
-				atomic_sub(vacant_blks - free_blks,
-					   &ptr->seg_invalid_blks);
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
-#endif /* CONFIG_SSDFS_DEBUG */
 			}
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu hasn't enough free pages: "
-			  "free_pages %d, invalid_pages %d,"
-			  "vacant_pages %d, requested_pages %u, "
+			  "free_pages %u, requested_pages %u, "
 			  "reserved_blks %u\n",
 			  ptr->parent_si->seg_id, free_blks,
-			  invalid_blks, vacant_blks,
 			  count, *reserved_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else {
 			*reserved_blks = count;
-
-			if (free_blks >= count) {
-				atomic_sub(*reserved_blks, &ptr->seg_free_blks);
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-			} else {
-				atomic_set(&ptr->seg_free_blks, 0);
-				atomic_sub(count - free_blks,
-					   &ptr->seg_invalid_blks);
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
+			atomic_sub(*reserved_blks, &ptr->seg_free_blks);
 		}
 	}
 
@@ -986,11 +910,9 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 		 */
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("extent has been allocated partially: "
-			  "free_pages %d, invalid_pages %d, "
-			  "vacant_pages %d, requested_pages %u, "
+			  "free_pages %u, requested_pages %u, "
 			  "reserved_blks %u\n",
-			  free_blks, invalid_blks, vacant_blks,
-			  count, *reserved_blks);
+			  free_blks, count, *reserved_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 	} else if (err)
 		goto finish_reserve_extent;
@@ -1042,9 +964,6 @@ int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_reserve_extent:
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
-#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -1072,7 +991,7 @@ int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
 /*
  * ssdfs_segment_blk_bmap_pre_allocate() - pre-allocate range of blocks
  * @ptr: segment block bitmap object
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @range: pointer on blocks' range [in | out]
  *
  * This function tries to find contiguous range of free blocks and
@@ -1085,7 +1004,7 @@ int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr)
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
-					struct ssdfs_peb_info *pebi,
+					struct ssdfs_peb_container *pebc,
 					struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -1094,23 +1013,18 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebi);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  ptr->parent_si->seg_id,
-		  pebi->pebc->peb_index);
+		  pebc->peb_index);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
-
-	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -1119,12 +1033,12 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	err = ssdfs_define_bmap_index(pebi, &bmap_index, &peb_index);
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  ptr->parent_si->seg_id,
-			  pebi->pebc->peb_index, err);
+			  pebc->peb_index, err);
 		return err;
 	}
 
@@ -1136,19 +1050,13 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 
 	peb_blkbmap = &ptr->peb[peb_index];
 
-	err = ssdfs_peb_blk_bmap_pre_allocate(peb_blkbmap, bmap_index, range);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
+	return ssdfs_peb_blk_bmap_pre_allocate(peb_blkbmap, bmap_index, range);
 }
 
 /*
  * ssdfs_segment_blk_bmap_allocate() - allocate range of blocks
  * @ptr: segment block bitmap object
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @range: pointer on blocks' range [in | out]
  *
  * This function tries to find contiguous range of free blocks and
@@ -1161,7 +1069,7 @@ int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
-				    struct ssdfs_peb_info *pebi,
+				    struct ssdfs_peb_container *pebc,
 				    struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
@@ -1170,23 +1078,18 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebi);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebc);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u\n",
 		  ptr->parent_si->seg_id,
-		  pebi->pebc->peb_index);
+		  pebc->peb_index);
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  atomic_read(&ptr->seg_free_blks),
 		  atomic_read(&ptr->seg_valid_blks),
 		  atomic_read(&ptr->seg_invalid_blks),
 		  ptr->pages_per_seg);
-
-	BUG_ON(atomic_read(&ptr->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&ptr->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_read(&ptr->state) != SSDFS_SEG_BLK_BMAP_CREATED) {
@@ -1195,12 +1098,12 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	err = ssdfs_define_bmap_index(pebi, &bmap_index, &peb_index);
+	err = ssdfs_define_bmap_index(pebc, &bmap_index, &peb_index);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  ptr->parent_si->seg_id,
-			  pebi->pebc->peb_index, err);
+			  pebc->peb_index, err);
 		return err;
 	}
 
@@ -1212,19 +1115,13 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
 
 	peb_blkbmap = &ptr->peb[peb_index];
 
-	err = ssdfs_peb_blk_bmap_allocate(peb_blkbmap, bmap_index, range);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return err;
+	return ssdfs_peb_blk_bmap_allocate(peb_blkbmap, bmap_index, range);
 }
 
 /*
  * ssdfs_segment_blk_bmap_update_range() - update range of blocks' state
  * @ptr: segment block bitmap object
- * @pebi: pointer on PEB object
+ * @pebc: pointer on PEB container
  * @peb_migration_id: migration_id of PEB
  * @range_state: new state of range
  * @range: pointer on blocks' range [in | out]
@@ -1238,13 +1135,12 @@ int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
  * %-ERANGE     - internal error.
  */
 int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
-				    struct ssdfs_peb_info *pebi,
+				    struct ssdfs_peb_container *pebc,
 				    u8 peb_migration_id,
 				    int range_state,
 				    struct ssdfs_block_bmap_range *range)
 {
 	struct ssdfs_segment_info *si;
-	struct ssdfs_peb_container *pebc;
 	struct ssdfs_peb_container *dst_pebc;
 	struct ssdfs_peb_blk_bmap *dst_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
@@ -1257,21 +1153,16 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!bmap || !bmap->peb || !bmap->parent_si);
-	BUG_ON(!pebi || !range);
-	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
-	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
+	BUG_ON(!pebc || !range);
+	BUG_ON(!rwsem_is_locked(&pebc->lock));
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_migration_id %u, "
 		  "range (start %u, len %u)\n",
-		  bmap->parent_si->seg_id, pebi->pebc->peb_index,
+		  bmap->parent_si->seg_id, pebc->peb_index,
 		  peb_migration_id, range->start, range->len);
-
-	BUG_ON(atomic_read(&bmap->seg_free_blks) < 0);
-	BUG_ON(atomic_read(&bmap->seg_valid_blks) < 0);
-	BUG_ON(atomic_read(&bmap->seg_invalid_blks) < 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	pebc = pebi->pebc;
 	si = pebc->parent_si;
 
 try_define_bmap_index:
@@ -1540,25 +1431,14 @@ finish_define_bmap_index:
 		DEFINE_WAIT(wait);
 
 		err = 0;
-
-		ssdfs_peb_current_log_unlock(pebi);
-		ssdfs_peb_container_unlock(pebc);
-
+		mutex_unlock(&pebc->migration_lock);
+		up_read(&pebc->lock);
 		prepare_to_wait(&pebc->migration_wq, &wait,
 				TASK_UNINTERRUPTIBLE);
 		schedule();
 		finish_wait(&pebc->migration_wq, &wait);
-
-		pebi = ssdfs_get_current_peb_locked(pebc);
-		if (IS_ERR_OR_NULL(pebi)) {
-			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
-			SSDFS_ERR("fail to get PEB object: "
-				  "seg %llu, peb_index %u, err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index, err);
-			return err;
-		}
-		ssdfs_peb_current_log_lock(pebi);
+		down_read(&pebc->lock);
+		mutex_lock(&pebc->migration_lock);
 		goto try_define_bmap_index;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to define bmap_index: "
@@ -1577,10 +1457,8 @@ finish_define_bmap_index:
 		  si->seg_id, migration_state, items_state,
 		  peb_migration_id, src_migration_id,
 		  dst_migration_id, migration_phase);
-	SSDFS_DBG("seg_id %llu, need_migrate %#x, "
-		  "need_move %#x, bmap_index %#x\n",
-		  si->seg_id, need_migrate,
-		  need_move, bmap_index);
+	SSDFS_DBG("seg_id %llu, need_migrate %#x, need_move %#x\n",
+		  si->seg_id, need_migrate, need_move);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_migrate) {
@@ -1720,10 +1598,6 @@ finish_define_bmap_index:
 			return err;
 		}
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(bmap));
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
 }

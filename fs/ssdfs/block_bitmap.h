@@ -319,8 +319,6 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap);
-int ssdfs_block_bmap_get_pages_capacity(struct ssdfs_block_bmap *blk_bmap);
-int ssdfs_block_bmap_get_metadata_pages(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 				  u32 start, u32 *len,
 				  struct ssdfs_block_bmap_range *range);

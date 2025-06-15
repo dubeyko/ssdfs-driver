@@ -134,7 +134,7 @@ int ssdfs_peb_start_migration(struct ssdfs_peb_container *pebc)
 	fsi = pebc->parent_si->fsi;
 	si = pebc->parent_si;
 
-	ssdfs_peb_container_lock(pebc);
+	mutex_lock(&pebc->migration_lock);
 
 check_migration_state:
 	switch (atomic_read(&pebc->migration_state)) {
@@ -157,12 +157,12 @@ check_migration_state:
 	case SSDFS_PEB_FINISHING_MIGRATION: {
 			DEFINE_WAIT(wait);
 
-			ssdfs_peb_container_unlock(pebc);
+			mutex_unlock(&pebc->migration_lock);
 			prepare_to_wait(&pebc->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
 			finish_wait(&pebc->migration_wq, &wait);
-			ssdfs_peb_container_lock(pebc);
+			mutex_lock(&pebc->migration_lock);
 			goto check_migration_state;
 		}
 		break;
@@ -190,7 +190,7 @@ check_migration_state:
 	}
 
 start_migration_done:
-	ssdfs_peb_container_unlock(pebc);
+	mutex_unlock(&pebc->migration_lock);
 
 	wake_up_all(&pebc->migration_wq);
 
@@ -255,7 +255,6 @@ bool is_pebs_relation_alive(struct ssdfs_peb_container *pebc)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc || !pebc->parent_si);
-	BUG_ON(!rwsem_is_locked(&pebc->lock));
 	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -293,12 +292,12 @@ try_define_items_state:
 		case SSDFS_PEB_RELATION_PREPARATION: {
 				DEFINE_WAIT(wait);
 
-				ssdfs_peb_container_unlock(pebc);
+				mutex_unlock(&pebc->migration_lock);
 				prepare_to_wait(&pebc->migration_wq, &wait,
 						TASK_UNINTERRUPTIBLE);
 				schedule();
 				finish_wait(&pebc->migration_wq, &wait);
-				ssdfs_peb_container_lock(pebc);
+				mutex_lock(&pebc->migration_lock);
 				goto try_define_items_state;
 			}
 			break;
@@ -311,6 +310,8 @@ try_define_items_state:
 #endif /* CONFIG_SSDFS_DEBUG */
 			return false;
 		}
+
+		down_read(&pebc->lock);
 
 		if (!pebc->dst_peb) {
 			err = -ERANGE;
@@ -328,6 +329,8 @@ try_define_items_state:
 			atomic_read(&dst_pebc->shared_free_dst_blks);
 
 finish_relation_check:
+		up_read(&pebc->lock);
+
 		if (unlikely(err))
 			return false;
 
@@ -511,8 +514,8 @@ int ssdfs_peb_migrate_valid_blocks_range(struct ssdfs_segment_info *si,
 
 	SSDFS_DBG("seg_id %llu, peb_index %u, peb_type %#x, "
 		  "range (start %u, len %u)\n",
-		  si->seg_id, pebc->peb_index,
-		  pebc->peb_type, range->start, range->len);
+		  si->seg_id, pebc->peb_index, pebc->peb_type,
+		  range->start, range->len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range->len == 0) {
@@ -631,10 +634,6 @@ invalidate_sub_range:
 		goto repeat_valid_blocks_processing;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return 0;
 
 fail_process_valid_blocks:
@@ -658,7 +657,7 @@ fail_process_valid_blocks:
 	}
 
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, si);
+	ssdfs_request_free(req);
 
 finish_valid_blocks_processing:
 	return err;
@@ -757,8 +756,7 @@ int ssdfs_peb_migrate_pre_alloc_blocks_range(struct ssdfs_segment_info *si,
 			u32 blks_count = req->result.content.count;
 			struct folio *folio;
 
-			ssdfs_peb_mark_request_block_uptodate(pebc,
-								req, 0);
+			ssdfs_peb_mark_request_block_uptodate(pebc, req, 0);
 
 			for (i = 0; i < blks_count; i++) {
 				u32 folios_count;
@@ -822,10 +820,6 @@ invalidate_sub_range:
 		processed_blks++;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	return 0;
 
 fail_process_pre_alloc_blocks:
@@ -836,7 +830,7 @@ fail_process_pre_alloc_blocks:
 	}
 
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, si);
+	ssdfs_request_free(req);
 
 finish_pre_alloc_blocks_processing:
 	return err;
@@ -914,6 +908,7 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebc);
+	BUG_ON(!mutex_is_locked(&pebc->migration_lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -1091,10 +1086,6 @@ int ssdfs_peb_prepare_range_migration(struct ssdfs_peb_container *pebc,
 		return -ENODATA;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
@@ -1110,7 +1101,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
-	struct ssdfs_peb_info *pebi = NULL;
+	struct ssdfs_peb_info *pebi;
 	struct ssdfs_segment_blk_bmap *seg_blkbmap;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int used_pages;
@@ -1146,7 +1137,7 @@ int ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 	peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
 	pages_per_seg = fsi->pages_per_seg;
 
-	ssdfs_peb_container_lock(pebc);
+	mutex_lock(&pebc->migration_lock);
 
 check_migration_state:
 	old_migration_state = atomic_read(&pebc->migration_state);
@@ -1194,8 +1185,7 @@ check_migration_state:
 					  pebc->peb_index);
 				goto finish_migration_done;
 			}
-		} else
-			BUG();
+		}
 
 		ssdfs_peb_current_log_lock(pebi);
 		is_peb_exhausted = is_ssdfs_peb_exhausted(fsi, pebi);
@@ -1222,12 +1212,12 @@ check_migration_state:
 	case SSDFS_PEB_FINISHING_MIGRATION: {
 			DEFINE_WAIT(wait);
 
-			ssdfs_peb_container_unlock(pebc);
+			mutex_unlock(&pebc->migration_lock);
 			prepare_to_wait(&pebc->migration_wq, &wait,
 					TASK_UNINTERRUPTIBLE);
 			schedule();
 			finish_wait(&pebc->migration_wq, &wait);
-			ssdfs_peb_container_lock(pebc);
+			mutex_lock(&pebc->migration_lock);
 			goto check_migration_state;
 		}
 		break;
@@ -1399,7 +1389,7 @@ finish_migration_done:
 		}
 	}
 
-	ssdfs_peb_container_unlock(pebc);
+	mutex_unlock(&pebc->migration_lock);
 
 	wake_up_all(&pebc->migration_wq);
 

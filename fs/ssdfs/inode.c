@@ -739,7 +739,7 @@ static int ssdfs_truncate(struct inode *inode)
 			SSDFS_DBG("newsize %llu == inline_capacity %zu\n",
 				  (u64)newsize, inline_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
-		} else if (newsize > 0) {
+		} else {
 			loff_t size = inline_capacity - newsize;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1195,11 +1195,6 @@ finish_write_inode:
 
 free_search_object:
 	ssdfs_btree_search_free(search);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished: ino %lu, err %d\n",
-		  (unsigned long)inode->i_ino, err);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }

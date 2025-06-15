@@ -375,7 +375,6 @@ __ssdfs_commit_queue_issue_requests_async(struct ssdfs_fs_info *fsi,
 					  u64 seg_id)
 {
 	struct ssdfs_segment_info *si;
-	struct ssdfs_segment_search_state seg_search;
 	int i;
 	int err = 0;
 
@@ -385,27 +384,14 @@ __ssdfs_commit_queue_issue_requests_async(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("fsi %p, seg_id %llu\n", fsi, seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_segment_search_state_init(&seg_search,
-					SSDFS_USER_DATA_SEG_TYPE,
-					seg_id, U64_MAX);
-
-	si = ssdfs_grab_segment(fsi, &seg_search);
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		err = !si ? -ENOMEM : PTR_ERR(si);
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
 			  seg_id, err);
 		return err;
-	}
-
-	if (!is_ssdfs_segment_ready_for_requests(si)) {
-		err = ssdfs_wait_segment_init_end(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment initialization failed: "
-				  "seg %llu, err %d\n",
-				  si->seg_id, err);
-			goto finish_issue_requests_async;
-		}
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -429,7 +415,7 @@ __ssdfs_commit_queue_issue_requests_async(struct ssdfs_fs_info *fsi,
 				  "peb_index %d, err %d\n",
 				  i, err);
 			ssdfs_put_request(req);
-			ssdfs_request_free(req, si);
+			ssdfs_request_free(req);
 			goto finish_issue_requests_async;
 		}
 	}
@@ -538,7 +524,6 @@ __ssdfs_commit_queue_issue_requests_sync(struct ssdfs_fs_info *fsi,
 					 struct ssdfs_seg2req_pair *pair)
 {
 	struct ssdfs_segment_info *si;
-	struct ssdfs_segment_search_state seg_search;
 	struct ssdfs_seg2req_pair *cur_pair;
 	int i;
 	int err = 0;
@@ -550,27 +535,14 @@ __ssdfs_commit_queue_issue_requests_sync(struct ssdfs_fs_info *fsi,
 		  fsi, seg_id, pair);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_segment_search_state_init(&seg_search,
-					SSDFS_USER_DATA_SEG_TYPE,
-					seg_id, U64_MAX);
-
-	si = ssdfs_grab_segment(fsi, &seg_search);
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE,
+				seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		err = !si ? -ENOMEM : PTR_ERR(si);
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
 			  seg_id, err);
 		return err;
-	}
-
-	if (!is_ssdfs_segment_ready_for_requests(si)) {
-		err = ssdfs_wait_segment_init_end(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment initialization failed: "
-				  "seg %llu, err %d\n",
-				  si->seg_id, err);
-			goto finish_issue_requests_sync;
-		}
 	}
 
 	for (i = 0; i < si->pebs_count; i++) {
@@ -595,7 +567,7 @@ __ssdfs_commit_queue_issue_requests_sync(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("commit log request failed: "
 				  "err %d\n", err);
 			ssdfs_put_request(pair->req);
-			ssdfs_request_free(pair->req, si);
+			ssdfs_request_free(pair->req);
 			pair->req = NULL;
 			goto finish_issue_requests_sync;
 		}
@@ -612,7 +584,7 @@ finish_issue_requests_sync:
 
 /*
  * ssdfs_commit_queue_check_request() - check request
- * @pair: pointer on starting seg2req pair
+ * @req: segment request
  *
  * This method tries to check the state of request.
  *
@@ -623,122 +595,59 @@ finish_issue_requests_sync:
  * %-ERANGE     - internal error.
  */
 static
-int ssdfs_commit_queue_check_request(struct ssdfs_seg2req_pair *pair)
+int ssdfs_commit_queue_check_request(struct ssdfs_segment_request *req)
 {
 	wait_queue_head_t *wq = NULL;
-	int res;
-	int err = 0;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pair);
+	BUG_ON(!req);
 
-	SSDFS_DBG("pair %p\n", pair);
+	SSDFS_DBG("req %p\n", req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 check_req_state:
-	switch (atomic_read(&pair->req->result.state)) {
+	switch (atomic_read(&req->result.state)) {
 	case SSDFS_REQ_CREATED:
 	case SSDFS_REQ_STARTED:
-		wq = &pair->req->private.wait_queue;
+		wq = &req->private.wait_queue;
 
-		res = wait_event_killable_timeout(*wq,
-					has_request_been_executed(pair->req),
+		err = wait_event_killable_timeout(*wq,
+					has_request_been_executed(req),
 					SSDFS_DEFAULT_TIMEOUT);
-		if (res < 0) {
-			err = res;
-			WARN_ON(1);
-		} else if (res > 1) {
-			/*
-			 * Condition changed before timeout
-			 */
-			goto check_req_state;
-		} else {
-			struct ssdfs_request_internal_data *ptr;
+		if (err < 0)
+			WARN_ON(err < 0);
+		else
+			err = 0;
 
-			/* timeout is elapsed */
-			err = -ERANGE;
-			ptr = &pair->req->private;
-
-			SSDFS_ERR("seg %llu, ino %llu, "
-				  "logical_offset %llu, "
-				  "cmd %#x, type %#x, "
-				  "result.state %#x, "
-				  "refs_count %#x\n",
-				pair->si->seg_id,
-				pair->req->extent.ino,
-				pair->req->extent.logical_offset,
-				pair->req->private.cmd,
-				pair->req->private.type,
-				atomic_read(&pair->req->result.state),
-				atomic_read(&ptr->refs_count));
-			WARN_ON(1);
-		}
+		goto check_req_state;
 		break;
 
 	case SSDFS_REQ_FINISHED:
-		if (pair->si) {
-			wq = &pair->si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-			if (request_not_referenced(pair->req))
-				goto finish_check;
-
-			res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(pair->req),
-					    SSDFS_DEFAULT_TIMEOUT);
-			if (res < 0) {
-				err = res;
-				WARN_ON(1);
-			} else if (res > 1) {
-				/*
-				 * Condition changed before timeout
-				 */
-			} else {
-				struct ssdfs_request_internal_data *ptr;
-
-				/* timeout is elapsed */
-				err = -ERANGE;
-				ptr = &pair->req->private;
-
-				SSDFS_ERR("seg %llu, ino %llu, "
-					  "logical_offset %llu, "
-					  "cmd %#x, type %#x, "
-					  "result.state %#x, "
-					  "refs_count %#x\n",
-					pair->si->seg_id,
-					pair->req->extent.ino,
-					pair->req->extent.logical_offset,
-					pair->req->private.cmd,
-					pair->req->private.type,
-					atomic_read(&pair->req->result.state),
-					atomic_read(&ptr->refs_count));
-				WARN_ON(1);
-			}
-		}
+		/* do nothing */
 		break;
 
 	case SSDFS_REQ_FAILED:
-		err = pair->req->result.err;
+		err = req->result.err;
 
 		if (!err) {
 			SSDFS_ERR("error code is absent: "
 				  "req %p, err %d\n",
-				  pair->req, err);
+				  req, err);
 			err = -ERANGE;
 		}
 
 		SSDFS_ERR("flush request is failed: "
 			  "err %d\n", err);
-		goto finish_check;
+		return err;
 
 	default:
-		err = -ERANGE;
 		SSDFS_ERR("invalid result's state %#x\n",
-			  atomic_read(&pair->req->result.state));
-		goto finish_check;
+		    atomic_read(&req->result.state));
+		return -ERANGE;
 	}
 
-finish_check:
-	return err;
+	return 0;
 }
 
 /*
@@ -757,6 +666,7 @@ ssdfs_commit_queue_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_seg2req_pair *cur_pair;
 	struct ssdfs_segment_request *req;
+	wait_queue_head_t *wait;
 	int i;
 	int err = 0;
 
@@ -774,19 +684,40 @@ ssdfs_commit_queue_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 		if (req == NULL)
 			continue;
 
-		err = ssdfs_commit_queue_check_request(cur_pair);
+		err = ssdfs_commit_queue_check_request(req);
 		if (unlikely(err)) {
 			SSDFS_ERR("flush request failed: "
 				  "err %d\n", err);
 		}
 
-		ssdfs_request_free(req, cur_pair->si);
+		if (cur_pair->si == NULL) {
+			SSDFS_ERR("segment is NULL: "
+				  "item_index %d\n", i);
+			continue;
+		}
+
+		wait = &cur_pair->si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+
+		if (atomic_read(&req->private.refs_count) != 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("start waiting: refs_count %d\n",
+				   atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = wait_event_killable_timeout(*wait,
+				    atomic_read(&req->private.refs_count) == 0,
+				    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
+		}
+
+		ssdfs_request_free(req);
 		cur_pair->req = NULL;
 
-		if (cur_pair->si) {
-			ssdfs_segment_put_object(cur_pair->si);
-			cur_pair->si = NULL;
-		}
+		ssdfs_segment_put_object(cur_pair->si);
+		cur_pair->si = NULL;
 	}
 }
 
@@ -4065,9 +3996,7 @@ int ssdfs_invalidate_inline_tail_forks(struct ssdfs_extents_btree_info *tree,
 		break;
 
 	default:
-		SSDFS_DBG("nothing should be done: "
-			  "search->request.type %#x\n",
-			  search->request.type);
+		SSDFS_DBG("nothing should be done\n");
 		return 0;
 	}
 
@@ -6534,9 +6463,9 @@ int ssdfs_extents_tree_recreate_fork(struct ssdfs_extents_btree_info *tree,
 	BUG_ON(!processed_blks);
 	BUG_ON(!rwsem_is_locked(&tree->lock));
 
-	SSDFS_DBG("tree %p, search %p, blk %llu, len %u\n",
+SSDFS_ERR("tree %p, search %p, blk %llu, len %u\n",
 		  tree, search, blk, len);
-	SSDFS_DBG("new extent (seg_id %llu, logical_blk %u, len %u)\n",
+SSDFS_ERR("new extent (seg_id %llu, logical_blk %u, len %u)\n",
 		  le64_to_cpu(new_extent->seg_id),
 		  le32_to_cpu(new_extent->logical_blk),
 		  le32_to_cpu(new_extent->len));
@@ -6601,10 +6530,10 @@ int ssdfs_extents_tree_recreate_fork(struct ssdfs_extents_btree_info *tree,
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("fork (start_offset %llu, blks_count %llu)\n",
+SSDFS_ERR("fork (start_offset %llu, blks_count %llu)\n",
 			  le64_to_cpu(fork.start_offset),
 			  le64_to_cpu(fork.blks_count));
-		SSDFS_DBG("deleted_extent (seg_id %llu, logical_blk %u, len %u), "
+SSDFS_ERR("deleted_extent (seg_id %llu, logical_blk %u, len %u), "
 			  "left_extent (seg_id %llu, logical_blk %u, len %u), "
 			  "old extent (seg_id %llu, logical_blk %u, len %u), "
 			  "right_extent (seg_id %llu, logical_blk %u, len %u)\n",
@@ -6709,7 +6638,7 @@ int ssdfs_extents_tree_move_extent(struct ssdfs_extents_btree_info *tree,
 
 	SSDFS_DBG("tree %p, search %p\n",
 		  tree, search);
-	SSDFS_DBG("blk %llu, len %u, "
+SSDFS_ERR("blk %llu, len %u, "
 		  "new extent (seg_id %llu, logical_blk %u, len %u)\n",
 		  blk, len,
 		  le64_to_cpu(new_extent->seg_id),

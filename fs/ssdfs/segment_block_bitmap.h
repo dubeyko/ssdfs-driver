@@ -90,35 +90,68 @@ int ssdfs_segment_blk_bmap_wait_init_end(struct ssdfs_segment_blk_bmap *ptr,
 					 struct ssdfs_peb_container *pebc);
 
 int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
-					   struct ssdfs_peb_info *pebi,
+					   struct ssdfs_peb_container *pebc,
 					   u32 blk);
 int ssdfs_segment_blk_bmap_reserve_metapages(struct ssdfs_segment_blk_bmap *ptr,
-					     struct ssdfs_peb_info *pebi,
+					     struct ssdfs_peb_container *pebc,
 					     u32 count);
 int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
-					  struct ssdfs_peb_info *pebi,
+					  struct ssdfs_peb_container *pebc,
 					  u32 count);
 int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr);
 int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 					  u32 count, u32 *reserved_blks);
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
-					struct ssdfs_peb_info *pebi,
+					struct ssdfs_peb_container *pebc,
 					struct ssdfs_block_bmap_range *range);
 int ssdfs_segment_blk_bmap_allocate(struct ssdfs_segment_blk_bmap *ptr,
-				    struct ssdfs_peb_info *pebi,
+				    struct ssdfs_peb_container *pebc,
 				    struct ssdfs_block_bmap_range *range);
 int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *ptr,
-				    struct ssdfs_peb_info *pebi,
+				    struct ssdfs_peb_container *pebc,
 				    u8 peb_migration_id,
 				    int range_state,
 				    struct ssdfs_block_bmap_range *range);
 
 static inline
-bool is_pages_balance_correct(struct ssdfs_segment_blk_bmap *ptr)
+int ssdfs_segment_blk_bmap_get_free_pages(struct ssdfs_segment_blk_bmap *ptr)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	int free_blks;
 	int valid_blks;
+	int invalid_blks;
+	int calculated;
+
+	BUG_ON(!ptr);
+
+	free_blks = atomic_read(&ptr->seg_free_blks);
+	valid_blks = atomic_read(&ptr->seg_valid_blks);
+	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
+	calculated = free_blks + valid_blks + invalid_blks;
+
+	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  free_blks, valid_blks, invalid_blks,
+		  ptr->pages_per_seg);
+
+	if (calculated > ptr->pages_per_seg) {
+		SSDFS_WARN("free_logical_blks %d, valid_logical_blks %d, "
+			   "invalid_logical_blks %d, calculated %d, "
+			   "pages_per_seg %u\n",
+			   free_blks, valid_blks, invalid_blks,
+			   calculated, ptr->pages_per_seg);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+	return atomic_read(&ptr->seg_free_blks);
+}
+
+static inline
+int ssdfs_segment_blk_bmap_get_used_pages(struct ssdfs_segment_blk_bmap *ptr)
+{
+	int valid_blks;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	int free_blks;
 	int invalid_blks;
 	int calculated;
 
@@ -131,53 +164,18 @@ bool is_pages_balance_correct(struct ssdfs_segment_blk_bmap *ptr)
 	calculated = free_blks + valid_blks + invalid_blks;
 	up_read(&ptr->modification_lock);
 
-	BUG_ON(free_blks < 0);
-	BUG_ON(valid_blks < 0);
-	BUG_ON(invalid_blks < 0);
-
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
 		  "invalid_logical_blks %d, pages_per_seg %u\n",
 		  free_blks, valid_blks, invalid_blks,
 		  ptr->pages_per_seg);
 
 	if (calculated > ptr->pages_per_seg) {
-		SSDFS_ERR("free_logical_blks %d, valid_logical_blks %d, "
-			  "invalid_logical_blks %d, calculated %d, "
-			  "pages_per_seg %u\n",
-			  free_blks, valid_blks, invalid_blks,
-			  calculated, ptr->pages_per_seg);
-		return false;
+		SSDFS_WARN("free_logical_blks %d, valid_logical_blks %d, "
+			   "invalid_logical_blks %d, calculated %d, "
+			   "pages_per_seg %u\n",
+			   free_blks, valid_blks, invalid_blks,
+			   calculated, ptr->pages_per_seg);
 	}
-
-	return true;
-#else
-	return true;
-#endif /* CONFIG_SSDFS_DEBUG */
-}
-
-static inline
-int ssdfs_segment_blk_bmap_get_free_pages(struct ssdfs_segment_blk_bmap *ptr)
-{
-	int free_blks;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	down_read(&ptr->modification_lock);
-	free_blks = atomic_read(&ptr->seg_free_blks);
-	up_read(&ptr->modification_lock);
-
-	return free_blks;
-}
-
-static inline
-int ssdfs_segment_blk_bmap_get_used_pages(struct ssdfs_segment_blk_bmap *ptr)
-{
-	int valid_blks;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&ptr->modification_lock);
@@ -193,7 +191,31 @@ int ssdfs_segment_blk_bmap_get_invalid_pages(struct ssdfs_segment_blk_bmap *ptr)
 	int invalid_blks;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	WARN_ON(!is_pages_balance_correct(ptr));
+	int free_blks;
+	int valid_blks;
+	int calculated;
+
+	BUG_ON(!ptr);
+
+	down_read(&ptr->modification_lock);
+	free_blks = atomic_read(&ptr->seg_free_blks);
+	valid_blks = atomic_read(&ptr->seg_valid_blks);
+	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
+	calculated = free_blks + valid_blks + invalid_blks;
+	up_read(&ptr->modification_lock);
+
+	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
+		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  free_blks, valid_blks, invalid_blks,
+		  ptr->pages_per_seg);
+
+	if (calculated > ptr->pages_per_seg) {
+		SSDFS_WARN("free_logical_blks %d, valid_logical_blks %d, "
+			   "invalid_logical_blks %d, calculated %d, "
+			   "pages_per_seg %u\n",
+			   free_blks, valid_blks, invalid_blks,
+			   calculated, ptr->pages_per_seg);
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&ptr->modification_lock);

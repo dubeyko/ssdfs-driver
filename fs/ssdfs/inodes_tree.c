@@ -542,14 +542,11 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("upper_allocated_ino %llu, allocated_inodes %llu, "
-		  "free_inodes %llu, inodes_capacity %llu, "
-		  "timestamp %llu, cno %llu\n",
+		  "free_inodes %llu, inodes_capacity %llu\n",
 		  ptr->upper_allocated_ino,
 		  ptr->allocated_inodes,
 		  ptr->free_inodes,
-		  ptr->inodes_capacity,
-		  le64_to_cpu(fsi->vs->timestamp),
-		  le64_to_cpu(fsi->vs->cno));
+		  ptr->inodes_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_memcpy(&ptr->root_folder, 0, raw_inode_size,
@@ -842,9 +839,8 @@ int ssdfs_inodes_btree_flush(struct ssdfs_inodes_btree_info *tree)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("allocated_inodes %llu, free_inodes %llu, "
-		  "inodes_capacity %llu, upper_allocated_ino %llu\n",
-		  allocated_inodes, free_inodes,
-		  inodes_capacity, upper_allocated_ino);
+		  "inodes_capacity %llu\n",
+		  allocated_inodes, free_inodes, inodes_capacity);
 	WARN_ON((allocated_inodes + free_inodes) != inodes_capacity);
 
 	SSDFS_DBG("leaf_nodes %u, nodes_count %u\n",
@@ -922,149 +918,6 @@ int ssdfs_inodes_btree_find(struct ssdfs_inodes_btree_info *tree,
 }
 
 /*
- * ssdfs_extend_free_inodes_queue() - extend free inodes queue
- * @tree: pointer on inodes btree object
- * @search: pointer on search request object
- *
- * This method tries to extend the free inodes queue by means of
- * adding a new node into the b-tree.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ENOMEM     - unable to allocate memory.
- * %-ENOSPC     - unable to add the node.
- * %-ERANGE     - internal error.
- */
-static inline
-int ssdfs_extend_free_inodes_queue(struct ssdfs_inodes_btree_info *tree,
-				   struct ssdfs_btree_search *search)
-{
-	u64 start_hash;
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !search);
-
-	SSDFS_DBG("tree %p, search %p\n",
-		  tree, search);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	ssdfs_btree_search_init(search);
-	search->request.type = SSDFS_BTREE_SEARCH_ALLOCATE_ITEM;
-	search->request.flags =
-			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
-			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-	spin_lock(&tree->lock);
-	start_hash = tree->upper_allocated_ino + 1;
-	spin_unlock(&tree->lock);
-	search->request.start.hash = start_hash;
-	search->request.end.hash = start_hash;
-	search->request.count = 1;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("start_hash %llx, end_hash %llx, "
-		  "upper_allocated_ino %llx\n",
-		  search->request.start.hash,
-		  search->request.end.hash,
-		  tree->upper_allocated_ino);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	err = ssdfs_btree_add_node(&tree->generic_tree, search);
-	if (err == -EEXIST) {
-		err = 0;
-	} else if (err == -ENOSPC) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to add the node: err %d\n",
-			  err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return err;
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to add the node: err %d\n",
-			  err);
-		return err;
-	}
-
-	return 0;
-}
-
-/*
- * ssdfs_check_btree_node_availability() - check b-tree's node presence
- * @tree: pointer on inodes btree object
- * @range: pointer on free items range
- *
- * This method tries to check that node is available for the range.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-EINVAL     - invalid input.
- * %-ENOENT     - node is absent.
- * %-ERANGE     - internal error.
- */
-static inline
-int ssdfs_check_btree_node_availability(struct ssdfs_inodes_btree_info *tree,
-					struct ssdfs_inodes_btree_range *range)
-{
-	struct ssdfs_btree_node *node;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!tree || !range);
-
-	SSDFS_DBG("node_id %u, area (start_hash %llx, "
-		  "start_index %u, count %u)\n",
-		  range->node_id, range->area.start_hash,
-		  range->area.start_index, range->area.count);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	down_read(&tree->generic_tree.lock);
-
-	err = ssdfs_btree_radix_tree_find(&tree->generic_tree,
-					  range->node_id,
-					  &node);
-	if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("unable to find the node: id %u\n",
-			  range->node_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-	} else if (unlikely(err)) {
-		SSDFS_ERR("fail to find the node: "
-			  "node_id %u, err %d\n",
-			  range->node_id, err);
-	} else if (unlikely(!node)) {
-		err = -ERANGE;
-		SSDFS_WARN("empty node pointer\n");
-	} else {
-		switch (atomic_read(&node->state)) {
-		case SSDFS_BTREE_NODE_PRE_DELETED:
-		case SSDFS_BTREE_NODE_INVALID:
-		case SSDFS_BTREE_NODE_CORRUPTED:
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("node is invalid: id %u, state %#x\n",
-				  node->node_id,
-				  atomic_read(&node->state));
-#endif /* CONFIG_SSDFS_DEBUG */
-			err = -ENOENT;
-			break;
-
-		default:
-			/*
-			 * Node is valid. Do nothing.
-			 */
-			break;
-		}
-	}
-
-	up_read(&tree->generic_tree.lock);
-
-	return err;
-}
-
-/*
  * ssdfs_inodes_btree_allocate() - allocate a new raw inode
  * @tree: pointer on inodes btree object
  * @ino: pointer on inode ID value [out]
@@ -1085,9 +938,7 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 				ino_t *ino,
 				struct ssdfs_btree_search *search)
 {
-	struct ssdfs_free_inode_range_queue *queue;
 	struct ssdfs_inodes_btree_range *range = NULL;
-	int number_of_tries = 0;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1103,67 +954,40 @@ int ssdfs_inodes_btree_allocate(struct ssdfs_inodes_btree_info *tree,
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	*ino = ULONG_MAX;
-	queue = &tree->free_inodes_queue;
 
-	do {
-		if (number_of_tries > SSDFS_MAX_NUMBER_OF_TRIES) {
-			SSDFS_ERR("fail to get free inode hash from the queue: "
-				  "number_of_tries %d\n",
-				  number_of_tries);
-			return -ERANGE;
-		}
+	err = ssdfs_free_inodes_queue_get_first(&tree->free_inodes_queue,
+						&range);
+	if (err == -ENODATA) {
+		ssdfs_btree_search_init(search);
+		search->request.type = SSDFS_BTREE_SEARCH_ALLOCATE_ITEM;
+		search->request.flags =
+			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
+			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
+		spin_lock(&tree->lock);
+		search->request.start.hash = tree->upper_allocated_ino + 1;
+		search->request.end.hash = tree->upper_allocated_ino + 1;
+		spin_unlock(&tree->lock);
+		search->request.count = 1;
 
-		err = ssdfs_free_inodes_queue_get_first(queue, &range);
-		if (err == -ENODATA) {
-			err = ssdfs_extend_free_inodes_queue(tree, search);
-			if (err == -ENOSPC) {
+		err = ssdfs_btree_add_node(&tree->generic_tree, search);
+		if (err == -EEXIST)
+			err = 0;
+		else if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to add the node: err %d\n",
-					  err);
+			SSDFS_DBG("unable to add the node: err %d\n",
+				  err);
 #endif /* CONFIG_SSDFS_DEBUG */
-				return err;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to add the node: err %d\n",
-					  err);
-				return err;
-			} else {
-				/* continue loop */
-				err = -ENOENT;
-			}
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to get item from the queue: "
-				  "err %d\n", err);
 			return err;
-		} else {
-			if (is_free_inodes_range_invalid(range)) {
-				err = -ERANGE;
-				SSDFS_WARN("invalid free inodes range\n");
-				goto finish_inode_allocation;
-			}
-
-			if (range->area.start_hash >= ULONG_MAX) {
-				err = -EOPNOTSUPP;
-				SSDFS_WARN("start_hash %llx is too huge\n",
-					   range->area.start_hash);
-				goto finish_inode_allocation;
-			}
-
-			err = ssdfs_check_btree_node_availability(tree, range);
-			if (err == -ENOENT) {
-				ssdfs_free_inodes_range_free(range);
-
-				spin_lock(&tree->lock);
-				tree->free_inodes--;
-				spin_unlock(&tree->lock);
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to check b-tree node: "
-					  "err %d\n", err);
-				goto finish_inode_allocation;
-			}
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to add the node: err %d\n",
+				  err);
+			return err;
 		}
 
-		number_of_tries++;
-	} while (err == -ENOENT);
+		err =
+		    ssdfs_free_inodes_queue_get_first(&tree->free_inodes_queue,
+							&range);
+	}
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to get first free inode hash from the queue: "
@@ -2940,7 +2764,6 @@ int ssdfs_add_free_items_range(struct ssdfs_inodes_btree_info *itree,
 	BUG_ON(start_hash >= U64_MAX);
 	BUG_ON(items_capacity == 0);
 	BUG_ON(items_count > items_capacity);
-	BUG_ON(node_id >= SSDFS_BTREE_NODE_INVALID_ID);
 
 	SSDFS_DBG("node_id %u, start_hash %#llx, "
 		  "items_count %u, items_capacity %u\n",
@@ -3034,13 +2857,6 @@ ssdfs_inodes_btree_correct_leaf_node_hash_range(struct ssdfs_btree_node *node,
 	node->items_area.start_hash = start_hash;
 	node->items_area.end_hash = start_hash + items_capacity - 1;
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("node_id %u, start_hash %llx, end_hash %llx\n",
-		  node->node_id,
-		  node->items_area.start_hash,
-		  node->items_area.end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	items_area_flags = atomic_read(&node->items_area.flags);
 	atomic_set(&node->items_area.flags,
 		    items_area_flags & ~SSDFS_PLEASE_ADD_FREE_ITEMS_RANGE);
@@ -3057,11 +2873,6 @@ ssdfs_inodes_btree_correct_leaf_node_hash_range(struct ssdfs_btree_node *node,
 			  type, items_capacity);
 		return -ERANGE;
 	} else {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("start_hash %llx\n",
-			  start_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		err = ssdfs_add_free_items_range(itree, node->node_id,
 						 start_hash, items_count,
 						 items_capacity);
@@ -3209,15 +3020,6 @@ ssdfs_inodes_btree_correct_hybrid_node_hash_range(struct ssdfs_btree_node *node,
 		node->items_area.end_hash = end_hash;
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("node_id %u, start_hash %llx, end_hash %llx, "
-		  "old_start_hash %llx, old_end_hash %llx\n",
-		  node->node_id,
-		  node->items_area.start_hash,
-		  node->items_area.end_hash,
-		  old_start_hash, old_end_hash);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	up_write(&node->header_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3232,11 +3034,17 @@ ssdfs_inodes_btree_correct_hybrid_node_hash_range(struct ssdfs_btree_node *node,
 	}
 
 	if (old_start_hash > end_hash) {
-		/*
-		 * Leaf node has been added before
-		 * hybrid node's hash range.
-		 * It doesn't need to add free items range.
-		 */
+		err = ssdfs_add_free_items_range(itree, U32_MAX,
+						 start_hash, items_count,
+						 items_capacity);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to add free range: "
+				  "node_id %u, start_hash %#llx, "
+				  "items_count %u, items_capacity %u\n",
+				  node->node_id, start_hash,
+				  items_count, items_capacity);
+			return err;
+		}
 	} else if (old_start_hash == start_hash) {
 		if (index_area_flags & SSDFS_PLEASE_ADD_HYBRID_NODE_SELF_INDEX) {
 #ifdef CONFIG_SSDFS_DEBUG

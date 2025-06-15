@@ -149,14 +149,7 @@ int ssdfs_read_checked_sb_info3(struct ssdfs_recovery_env *env,
 	err = ssdfs_read_checked_segment_header(env->fsi, peb_id,
 						PAGE_SIZE, pages_off,
 						env->sbi.vh_buf, true);
-	if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("header has older FS creation time: "
-			  "peb_id %llu, pages_off %u, err %d\n",
-			  peb_id, pages_off, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return err;
-	} else if (err) {
+	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("volume header is corrupted: "
 			  "peb_id %llu, offset %d, err %d\n",
@@ -216,8 +209,7 @@ int ssdfs_read_and_check_volume_header(struct ssdfs_recovery_env *env,
 
 	vh = SSDFS_VH(env->sbi.vh_buf);
 	magic_valid = is_ssdfs_magic_valid(&vh->magic);
-	if (magic_valid &&
-	    is_ssdfs_uuid_and_fs_ctime_actual(env->fsi, vh)) {
+	if (magic_valid) {
 		crc_valid = is_ssdfs_volume_header_csum_valid(env->sbi.vh_buf,
 								hdr_size);
 		hdr_consistent = is_ssdfs_volume_header_consistent(env->fsi, vh,
@@ -454,14 +446,7 @@ try_again:
 		}
 
 		err = ssdfs_read_checked_sb_info3(env, peb_id, 0);
-		if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("header has older FS creation time: "
-				  "peb_id %llu, err %d\n",
-				  peb_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			continue;
-		} else if (err) {
+		if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb_id %llu is corrupted: err %d\n",
 				  peb_id, err);

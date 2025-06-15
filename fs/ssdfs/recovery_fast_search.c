@@ -303,8 +303,7 @@ int ssdfs_find_valid_protected_pebs(struct ssdfs_recovery_env *env)
 		magic_valid = is_ssdfs_magic_valid(&vh->magic);
 		cno = le64_to_cpu(SSDFS_SEG_HDR(env->sbi.vh_buf)->cno);
 
-		if (!err && magic_valid &&
-		    is_ssdfs_uuid_and_fs_ctime_actual(env->fsi, vh)) {
+		if (!err && magic_valid) {
 			found = &env->found->array[SSDFS_LOWER_PEB_INDEX];
 
 			if (found->peb.peb_id >= U64_MAX) {
@@ -447,8 +446,7 @@ int ssdfs_read_sb_peb_checked(struct ssdfs_recovery_env *env,
 	vh = SSDFS_VH(env->sbi.vh_buf);
 	magic_valid = is_ssdfs_magic_valid(&vh->magic);
 
-	if (err || !magic_valid ||
-	    !is_ssdfs_uuid_and_fs_ctime_actual(env->fsi, vh)) {
+	if (err || !magic_valid) {
 		err = -ENODATA;
 		ssdfs_restore_sb_info2(env);
 #ifdef CONFIG_SSDFS_DEBUG
@@ -879,8 +877,7 @@ int ssdfs_find_last_sb_seg_starting_from_peb(struct ssdfs_recovery_env *env,
 	vh = SSDFS_VH(env->sbi.vh_buf);
 	magic_valid = is_ssdfs_magic_valid(&vh->magic);
 
-	if (err || !magic_valid ||
-	    !is_ssdfs_uuid_and_fs_ctime_actual(env->fsi, vh)) {
+	if (err || !magic_valid) {
 		ssdfs_restore_sb_info2(env);
 		ptr->state = SSDFS_FOUND_PEB_INVALID;
 #ifdef CONFIG_SSDFS_DEBUG

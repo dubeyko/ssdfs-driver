@@ -39,6 +39,42 @@
 #include <trace/events/ssdfs.h>
 
 /*
+ * __is_ssdfs_log_footer_magic_valid() - check log footer's magic
+ * @magic: pointer on magic value
+ */
+bool __is_ssdfs_log_footer_magic_valid(struct ssdfs_signature *magic)
+{
+	return le16_to_cpu(magic->key) == SSDFS_LOG_FOOTER_MAGIC;
+}
+
+/*
+ * is_ssdfs_log_footer_magic_valid() - check log footer's magic
+ * @footer: log footer
+ */
+bool is_ssdfs_log_footer_magic_valid(struct ssdfs_log_footer *footer)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!footer);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return __is_ssdfs_log_footer_magic_valid(&footer->volume_state.magic);
+}
+
+/*
+ * is_ssdfs_log_footer_csum_valid() - check log footer's checksum
+ * @buf: buffer with log footer
+ * @size: size of buffer in bytes
+ */
+bool is_ssdfs_log_footer_csum_valid(void *buf, size_t buf_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return is_csum_valid(&SSDFS_LF(buf)->volume_state.check, buf, buf_size);
+}
+
+/*
  * is_ssdfs_volume_state_info_consistent() - check volume state consistency
  * @fsi: pointer on shared file system object
  * @buf: log header
@@ -80,7 +116,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 
 	if (!is_ssdfs_magic_valid(magic)) {
 		SSDFS_DBG("valid magic is not detected\n");
-		return false;
+		return -ERANGE;
 	}
 
 	if (__is_ssdfs_segment_header_magic_valid(magic)) {
@@ -107,7 +143,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 		log_pages = le16_to_cpu(pl_hdr->log_pages);
 	} else {
 		SSDFS_DBG("log header is corrupted\n");
-		return false;
+		return -EIO;
 	}
 
 	nsegs = le64_to_cpu(footer->volume_state.nsegs);
@@ -139,7 +175,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 	}
 
 	pages_per_seg = seg_size / page_size;
-	if (nsegs < div_u64(free_pages, pages_per_seg)) {
+	if (nsegs <= div_u64(free_pages, pages_per_seg)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("invalid nsegs %llu, free_pages %llu, "
 			  "pages_per_seg %u\n",
@@ -163,7 +199,7 @@ bool is_ssdfs_volume_state_info_consistent(struct ssdfs_fs_info *fsi,
 			  log_bytes,
 			  le32_to_cpu(footer->log_bytes));
 #endif /* CONFIG_SSDFS_DEBUG */
-		return false;
+		return -EIO;
 	}
 
 	fs_state = le16_to_cpu(footer->volume_state.state);
@@ -228,48 +264,28 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 	if (!major_magic_valid && !minor_magic_valid) {
 		if (!silent)
 			SSDFS_ERR("valid magic doesn't detected\n");
-		else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("valid magic doesn't detected\n");
-#else
+		else
 			SSDFS_DBG("valid magic doesn't detected\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
 		return -ENODATA;
 	} else if (!major_magic_valid) {
 		if (!silent)
 			SSDFS_ERR("invalid SSDFS magic signature\n");
-		else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("invalid SSDFS magic signature\n");
-#else
+		else
 			SSDFS_DBG("invalid SSDFS magic signature\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
 		return -EIO;
 	} else if (!minor_magic_valid) {
 		if (!silent)
 			SSDFS_ERR("invalid log footer magic signature\n");
-		else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("invalid log footer magic signature\n");
-#else
+		else
 			SSDFS_DBG("invalid log footer magic signature\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
 		return -EIO;
 	}
 
 	if (!is_ssdfs_log_footer_csum_valid(footer, footer_size)) {
 		if (!silent)
 			SSDFS_ERR("invalid checksum of log footer\n");
-		else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("invalid checksum of log footer\n");
-#else
+		else
 			SSDFS_DBG("invalid checksum of log footer\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
 		return -EIO;
 	}
 
@@ -278,13 +294,8 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 						   footer, dev_size)) {
 		if (!silent)
 			SSDFS_ERR("log footer is corrupted\n");
-		else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("log footer is corrupted\n");
-#else
+		else
 			SSDFS_DBG("log footer is corrupted\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
 		return -EIO;
 	}
 
@@ -293,13 +304,8 @@ int ssdfs_check_log_footer(struct ssdfs_fs_info *fsi,
 			SSDFS_ERR("corrupted log_flags %#x\n",
 				  le32_to_cpu(footer->log_flags));
 		} else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("corrupted log_flags %#x\n",
-				  le32_to_cpu(footer->log_flags));
-#else
 			SSDFS_DBG("corrupted log_flags %#x\n",
 				  le32_to_cpu(footer->log_flags));
-#endif /* CONFIG_SSDFS_DEBUG */
 		}
 		return -EIO;
 	}
@@ -394,48 +400,28 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		if (!major_magic_valid && !minor_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("valid magic doesn't detected\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("valid magic doesn't detected\n");
-#else
+			else
 				SSDFS_DBG("valid magic doesn't detected\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -ENODATA;
 		} else if (!major_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("invalid SSDFS magic signature\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid SSDFS magic signature\n");
-#else
+			else
 				SSDFS_DBG("invalid SSDFS magic signature\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		} else if (!minor_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("invalid log footer magic\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid log footer magic\n");
-#else
+			else
 				SSDFS_DBG("invalid log footer magic\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		}
 
 		if (!is_ssdfs_log_footer_csum_valid(footer, footer_size)) {
 			if (!silent)
 				SSDFS_ERR("invalid checksum of log footer\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid checksum of log footer\n");
-#else
+			else
 				SSDFS_DBG("invalid checksum of log footer\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		}
 
@@ -445,13 +431,8 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		if (*log_pages == 0 || *log_pages >= pages_per_peb) {
 			if (!silent)
 				SSDFS_ERR("invalid log pages %u\n", *log_pages);
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid log pages %u\n", *log_pages);
-#else
+			else
 				SSDFS_DBG("invalid log pages %u\n", *log_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		}
 	} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
@@ -464,48 +445,28 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		if (!major_magic_valid && !minor_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("valid magic doesn't detected\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("valid magic doesn't detected\n");
-#else
+			else
 				SSDFS_DBG("valid magic doesn't detected\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -ENODATA;
 		} else if (!major_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("invalid SSDFS magic signature\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid SSDFS magic signature\n");
-#else
+			else
 				SSDFS_DBG("invalid SSDFS magic signature\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		} else if (!minor_magic_valid) {
 			if (!silent)
 				SSDFS_ERR("invalid partial log header magic\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid partial log header magic\n");
-#else
+			else
 				SSDFS_DBG("invalid partial log header magic\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		}
 
 		if (!is_ssdfs_partial_log_header_csum_valid(pl_hdr, hdr_size)) {
 			if (!silent)
 				SSDFS_ERR("invalid checksum of footer\n");
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid checksum of footer\n");
-#else
+			else
 				SSDFS_DBG("invalid checksum of footer\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		}
 
@@ -515,13 +476,8 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 		if (*log_pages == 0 || *log_pages >= pages_per_peb) {
 			if (!silent)
 				SSDFS_ERR("invalid log pages %u\n", *log_pages);
-			else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("invalid log pages %u\n", *log_pages);
-#else
+			else
 				SSDFS_DBG("invalid log pages %u\n", *log_pages);
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
 			return -EIO;
 		}
 	} else {
@@ -531,10 +487,6 @@ int ssdfs_read_unchecked_log_footer(struct ssdfs_fs_info *fsi,
 				  peb_id, block_size, bytes_off);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("log footer is corrupted: "
-				  "peb_id %llu, block_size %u, bytes_off %u\n",
-				  peb_id, block_size, bytes_off);
-#else
 			SSDFS_DBG("log footer is corrupted: "
 				  "peb_id %llu, block_size %u, bytes_off %u\n",
 				  peb_id, block_size, bytes_off);
@@ -596,11 +548,6 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  peb_id, block_size, bytes_off, err);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("fail to read log footer: "
-				  "peb_id %llu, block_size %u, "
-				  "bytes_off %u, err %d\n",
-				  peb_id, block_size, bytes_off, err);
-#else
 			SSDFS_DBG("fail to read log footer: "
 				  "peb_id %llu, block_size %u, "
 				  "bytes_off %u, err %d\n",
@@ -615,13 +562,8 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 	if (!is_ssdfs_magic_valid(magic)) {
 		if (!silent)
 			SSDFS_ERR("valid magic is not detected\n");
-		else {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("valid magic is not detected\n");
-#else
+		else
 			SSDFS_DBG("valid magic is not detected\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
 
 		return -ENODATA;
 	}
@@ -637,10 +579,6 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 					  peb_id, bytes_off, err);
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("log footer is corrupted: "
-					  "peb_id %llu, bytes_off %u, err %d\n",
-					  peb_id, bytes_off, err);
-#else
 				SSDFS_DBG("log footer is corrupted: "
 					  "peb_id %llu, bytes_off %u, err %d\n",
 					  peb_id, bytes_off, err);
@@ -659,10 +597,6 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 					  peb_id, bytes_off);
 			} else {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_ERR("partial log header is corrupted: "
-					  "peb_id %llu, bytes_off %u\n",
-					  peb_id, bytes_off);
-#else
 				SSDFS_DBG("partial log header is corrupted: "
 					  "peb_id %llu, bytes_off %u\n",
 					  peb_id, bytes_off);
@@ -678,10 +612,6 @@ int ssdfs_read_checked_log_footer(struct ssdfs_fs_info *fsi, void *log_hdr,
 				  peb_id, bytes_off);
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_ERR("log footer is corrupted: "
-				  "peb_id %llu, bytes_off %u\n",
-				  peb_id, bytes_off);
-#else
 			SSDFS_DBG("log footer is corrupted: "
 				  "peb_id %llu, bytes_off %u\n",
 				  peb_id, bytes_off);

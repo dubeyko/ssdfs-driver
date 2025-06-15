@@ -552,11 +552,9 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 	void __rcu **slot;
 	struct ssdfs_btree_node *node;
 	int tree_height, cur_height;
-	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_request *req;
 	wait_queue_head_t *wq = NULL;
 	const atomic_t *state;
-	int res;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -683,90 +681,25 @@ int ssdfs_btree_flush_nolock(struct ssdfs_btree *tree)
 check_flush_result_state:
 			state = &node->flush_req.result.state;
 
-			spin_lock(&node->descriptor_lock);
-			si = node->seg;
-			spin_unlock(&node->descriptor_lock);
-
 			switch (atomic_read(state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
 				req = &node->flush_req;
 				wq = &req->private.wait_queue;
 
-				res = wait_event_killable_timeout(*wq,
+				err = wait_event_killable_timeout(*wq,
 					    has_request_been_executed(req),
 					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-					goto check_flush_result_state;
-				} else {
-					struct ssdfs_request_internal_data *ptr;
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req->private;
-
-					SSDFS_ERR("seg %llu, node_id %u, "
-						  "ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id, node->node_id,
-						req->extent.ino,
-						req->extent.logical_offset,
-						req->private.cmd,
-						req->private.type,
-						atomic_read(&req->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				goto check_flush_result_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
-				req = &node->flush_req;
-				wq = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-				if (request_not_referenced(req))
-					goto finish_check_update_req;
-
-				res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(req),
-					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-				} else {
-					struct ssdfs_request_internal_data *ptr;
-
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req->private;
-
-					SSDFS_ERR("seg %llu, node_id %u, "
-						  "ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id, node->node_id,
-						req->extent.ino,
-						req->extent.logical_offset,
-						req->private.cmd,
-						req->private.type,
-						atomic_read(&req->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				/* do nothing */
 				break;
 
 			case SSDFS_REQ_FAILED:
@@ -790,7 +723,6 @@ check_flush_result_state:
 				goto finish_flush_tree_nodes;
 			}
 
-finish_check_update_req:
 			rcu_read_lock();
 
 			spin_lock(&tree->nodes_lock);
@@ -917,90 +849,25 @@ finish_check_update_req:
 check_commit_log_result_state:
 			state = &node->flush_req.result.state;
 
-			spin_lock(&node->descriptor_lock);
-			si = node->seg;
-			spin_unlock(&node->descriptor_lock);
-
 			switch (atomic_read(state)) {
 			case SSDFS_REQ_CREATED:
 			case SSDFS_REQ_STARTED:
 				req = &node->flush_req;
 				wq = &req->private.wait_queue;
 
-				res = wait_event_killable_timeout(*wq,
+				err = wait_event_killable_timeout(*wq,
 					    has_request_been_executed(req),
 					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-					goto check_commit_log_result_state;
-				} else {
-					struct ssdfs_request_internal_data *ptr;
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req->private;
-
-					SSDFS_ERR("seg %llu, node_id %u, "
-						  "ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id, node->node_id,
-						req->extent.ino,
-						req->extent.logical_offset,
-						req->private.cmd,
-						req->private.type,
-						atomic_read(&req->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				goto check_commit_log_result_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
-				req = &node->flush_req;
-				wq = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-				if (request_not_referenced(req))
-					goto clear_towrite_tag;
-
-				res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(req),
-					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-				} else {
-					struct ssdfs_request_internal_data *ptr;
-
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req->private;
-
-					SSDFS_ERR("seg %llu, node_id %u, "
-						  "ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id, node->node_id,
-						req->extent.ino,
-						req->extent.logical_offset,
-						req->private.cmd,
-						req->private.type,
-						atomic_read(&req->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				/* do nothing */
 				break;
 
 			case SSDFS_REQ_FAILED:
@@ -1457,7 +1324,6 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_request *req;
 	struct ssdfs_segment_info *si;
-	struct ssdfs_segment_search_state seg_search;
 	u64 ino;
 	u64 logical_offset;
 	u64 seg_id;
@@ -1557,9 +1423,8 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	seg_type = NODE2SEG_TYPE(node_type);
-	ssdfs_segment_search_state_init(&seg_search, seg_type, seg_id, U64_MAX);
 
-	si = ssdfs_grab_segment(fsi, &seg_search);
+	si = ssdfs_grab_segment(fsi, seg_type, seg_id, U64_MAX);
 	if (IS_ERR_OR_NULL(si)) {
 		err = (si == NULL ? -ERANGE : PTR_ERR(si));
 		SSDFS_ERR("fail to grab segment object: "
@@ -1591,7 +1456,7 @@ int ssdfs_current_segment_pre_allocate_node(int node_type,
 
 free_segment_request:
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, NULL);
+	ssdfs_request_free(req);
 
 finish_pre_allocate_node:
 	return err;

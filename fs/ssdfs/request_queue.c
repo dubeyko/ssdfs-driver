@@ -236,17 +236,6 @@ void ssdfs_requests_queue_add_head(struct ssdfs_requests_queue *rq,
 		  req->place.start.seg_id,
 		  req->private.class,
 		  req->private.cmd);
-
-	if (atomic_read(&req->private.refs_count) <= 0) {
-		SSDFS_ERR("seg %llu, ino %llu, "
-			  "cmd %#x, type %#x\n",
-			  req->place.start.seg_id,
-			  req->extent.ino,
-			  req->private.cmd, req->private.type);
-		SSDFS_WARN("request's reference count %d\n",
-			   atomic_read(&req->private.refs_count));
-		BUG();
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rq->lock);
@@ -271,17 +260,6 @@ void ssdfs_requests_queue_add_head_inc(struct ssdfs_fs_info *fsi,
 		  req->place.start.seg_id,
 		  req->private.class,
 		  req->private.cmd);
-
-	if (atomic_read(&req->private.refs_count) <= 0) {
-		SSDFS_ERR("seg %llu, ino %llu, "
-			  "cmd %#x, type %#x\n",
-			  req->place.start.seg_id,
-			  req->extent.ino,
-			  req->private.cmd, req->private.type);
-		SSDFS_WARN("request's reference count %d\n",
-			   atomic_read(&req->private.refs_count));
-		BUG();
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_requests_queue_add_head(rq, req);
@@ -308,17 +286,6 @@ void ssdfs_requests_queue_add_tail(struct ssdfs_requests_queue *rq,
 		  req->place.start.seg_id,
 		  req->private.class,
 		  req->private.cmd);
-
-	if (atomic_read(&req->private.refs_count) <= 0) {
-		SSDFS_ERR("seg %llu, ino %llu, "
-			  "cmd %#x, type %#x\n",
-			  req->place.start.seg_id,
-			  req->extent.ino,
-			  req->private.cmd, req->private.type);
-		SSDFS_WARN("request's reference count %d\n",
-			   atomic_read(&req->private.refs_count));
-		BUG();
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	spin_lock(&rq->lock);
@@ -343,17 +310,6 @@ void ssdfs_requests_queue_add_tail_inc(struct ssdfs_fs_info *fsi,
 		  req->place.start.seg_id,
 		  req->private.class,
 		  req->private.cmd);
-
-	if (atomic_read(&req->private.refs_count) <= 0) {
-		SSDFS_ERR("seg %llu, ino %llu, "
-			  "cmd %#x, type %#x\n",
-			  req->place.start.seg_id,
-			  req->extent.ino,
-			  req->private.cmd, req->private.type);
-		SSDFS_WARN("request's reference count %d\n",
-			   atomic_read(&req->private.refs_count));
-		BUG();
-	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_requests_queue_add_tail(rq, req);
@@ -363,6 +319,63 @@ void ssdfs_requests_queue_add_tail_inc(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("flush_reqs %lld\n",
 		  atomic64_read(&fsi->flush_reqs));
 #endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
+ * is_request_command_valid() - check request's command validity
+ * @class: request's class
+ * @cmd: request's command
+ */
+static inline
+bool is_request_command_valid(int class, int cmd)
+{
+	bool is_valid = false;
+
+	switch (class) {
+	case SSDFS_PEB_READ_REQ:
+		is_valid = cmd > SSDFS_UNKNOWN_CMD &&
+				cmd < SSDFS_READ_CMD_MAX;
+		break;
+
+	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
+	case SSDFS_PEB_CREATE_DATA_REQ:
+	case SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ:
+	case SSDFS_PEB_CREATE_LNODE_REQ:
+	case SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ:
+	case SSDFS_PEB_CREATE_HNODE_REQ:
+	case SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ:
+	case SSDFS_PEB_CREATE_IDXNODE_REQ:
+	case SSDFS_ZONE_USER_DATA_MIGRATE_REQ:
+		is_valid = cmd > SSDFS_READ_CMD_MAX &&
+				cmd < SSDFS_CREATE_CMD_MAX;
+		break;
+
+	case SSDFS_PEB_UPDATE_REQ:
+	case SSDFS_PEB_PRE_ALLOC_UPDATE_REQ:
+		is_valid = cmd > SSDFS_CREATE_CMD_MAX &&
+				cmd < SSDFS_UPDATE_CMD_MAX;
+		break;
+
+	case SSDFS_PEB_DIFF_ON_WRITE_REQ:
+		is_valid = cmd > SSDFS_UPDATE_CMD_MAX &&
+				cmd < SSDFS_DIFF_ON_WRITE_MAX;
+		break;
+
+	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
+		is_valid = cmd > SSDFS_DIFF_ON_WRITE_MAX &&
+				cmd < SSDFS_COLLECT_GARBAGE_CMD_MAX;
+		break;
+
+	case SSDFS_PEB_FSCK_CHECK_REQ:
+		is_valid = cmd > SSDFS_COLLECT_GARBAGE_CMD_MAX &&
+				cmd < SSDFS_FSCK_CMD_MAX;
+		break;
+
+	default:
+		is_valid = false;
+	}
+
+	return is_valid;
 }
 
 /*
@@ -531,7 +544,7 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
 			}
 
 			ssdfs_put_request(req);
-			ssdfs_request_free(req, NULL);
+			ssdfs_request_free(req);
 			break;
 
 		case SSDFS_REQ_ASYNC_NO_FREE:
@@ -574,17 +587,11 @@ struct ssdfs_segment_request *ssdfs_request_alloc(void)
 		return ERR_PTR(-ENOMEM);
 	}
 
-	memset(ptr, 0, sizeof(struct ssdfs_segment_request));
-
 	ssdfs_req_queue_cache_leaks_increment(ptr);
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&ptr->writeback_folios, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-#ifdef CONFIG_SSDFS_DEBUG
-	INIT_LIST_HEAD(&ptr->user_data_requests_list);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	return ptr;
 }
@@ -592,8 +599,7 @@ struct ssdfs_segment_request *ssdfs_request_alloc(void)
 /*
  * ssdfs_request_free() - free memory for segment request object
  */
-void ssdfs_request_free(struct ssdfs_segment_request *req,
-			struct ssdfs_segment_info *si)
+void ssdfs_request_free(struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!ssdfs_seg_req_obj_cachep);
@@ -601,21 +607,6 @@ void ssdfs_request_free(struct ssdfs_segment_request *req,
 
 	if (!req)
 		return;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("class %#x, cmd %#x, type %#x, "
-		"seg %llu, extent (start %u, len %u), "
-		"ino %llu, logical_offset %llu, "
-		"data_bytes %u\n",
-		req->private.class, req->private.cmd,
-		req->private.type,
-		req->place.start.seg_id,
-		req->place.start.blk_index,
-		req->place.len,
-		req->extent.ino,
-		req->extent.logical_offset,
-		req->extent.data_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (atomic64_read(&req->writeback_folios) != 0) {
@@ -641,7 +632,6 @@ void ssdfs_request_free(struct ssdfs_segment_request *req,
 
 	req->private.block_size = U32_MAX;
 	ssdfs_req_queue_cache_leaks_decrement(req);
-	memset(req, 0xFF, sizeof(struct ssdfs_segment_request));
 	kmem_cache_free(ssdfs_seg_req_obj_cachep, req);
 }
 
@@ -699,12 +689,6 @@ void ssdfs_get_request(struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
-
-	SSDFS_DBG("seg %llu, ino %llu, "
-		  "cmd %#x, type %#x\n",
-		  req->place.start.seg_id,
-		  req->extent.ino,
-		  req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	WARN_ON(atomic_inc_return(&req->private.refs_count) <= 0);
@@ -718,24 +702,12 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!req);
-
-	SSDFS_DBG("seg %llu, ino %llu, "
-		  "cmd %#x, type %#x\n",
-		  req->place.start.seg_id,
-		  req->extent.ino,
-		  req->private.cmd, req->private.type);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (atomic_dec_return(&req->private.refs_count) < 0) {
-		SSDFS_ERR("seg %llu, ino %llu, "
-			  "cmd %#x, type %#x\n",
-			  req->place.start.seg_id,
-			  req->extent.ino,
-			  req->private.cmd, req->private.type);
-		SSDFS_WARN("request's reference count %d\n",
-			   atomic_read(&req->private.refs_count));
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG();
+		SSDFS_DBG("request's reference count %d\n",
+			  atomic_read(&req->private.refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 }

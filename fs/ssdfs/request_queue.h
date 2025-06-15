@@ -254,10 +254,6 @@ struct ssdfs_segment_request {
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_t writeback_folios;
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
-
-#ifdef CONFIG_SSDFS_DEBUG
-	struct list_head user_data_requests_list;
-#endif /* CONFIG_SSDFS_DEBUG */
 };
 
 /*
@@ -587,16 +583,6 @@ bool has_request_been_executed(struct ssdfs_segment_request *req)
 	return has_been_executed;
 }
 
-/*
- * request_not_referenced() - check that reqeust has no references
- * @req: segment request
- */
-static inline
-bool request_not_referenced(struct ssdfs_segment_request *req)
-{
-	return atomic_read(&req->private.refs_count) <= 0;
-}
-
 static inline
 void ssdfs_request_writeback_folios_inc(struct ssdfs_segment_request *req)
 {
@@ -676,63 +662,6 @@ void ssdfs_request_writeback_folios_dec(struct ssdfs_segment_request *req)
 }
 
 /*
- * is_request_command_valid() - check request's command validity
- * @class: request's class
- * @cmd: request's command
- */
-static inline
-bool is_request_command_valid(int class, int cmd)
-{
-	bool is_valid = false;
-
-	switch (class) {
-	case SSDFS_PEB_READ_REQ:
-		is_valid = cmd > SSDFS_UNKNOWN_CMD &&
-				cmd < SSDFS_READ_CMD_MAX;
-		break;
-
-	case SSDFS_PEB_PRE_ALLOCATE_DATA_REQ:
-	case SSDFS_PEB_CREATE_DATA_REQ:
-	case SSDFS_PEB_PRE_ALLOCATE_LNODE_REQ:
-	case SSDFS_PEB_CREATE_LNODE_REQ:
-	case SSDFS_PEB_PRE_ALLOCATE_HNODE_REQ:
-	case SSDFS_PEB_CREATE_HNODE_REQ:
-	case SSDFS_PEB_PRE_ALLOCATE_IDXNODE_REQ:
-	case SSDFS_PEB_CREATE_IDXNODE_REQ:
-	case SSDFS_ZONE_USER_DATA_MIGRATE_REQ:
-		is_valid = cmd > SSDFS_READ_CMD_MAX &&
-				cmd < SSDFS_CREATE_CMD_MAX;
-		break;
-
-	case SSDFS_PEB_UPDATE_REQ:
-	case SSDFS_PEB_PRE_ALLOC_UPDATE_REQ:
-		is_valid = cmd > SSDFS_CREATE_CMD_MAX &&
-				cmd < SSDFS_UPDATE_CMD_MAX;
-		break;
-
-	case SSDFS_PEB_DIFF_ON_WRITE_REQ:
-		is_valid = cmd > SSDFS_UPDATE_CMD_MAX &&
-				cmd < SSDFS_DIFF_ON_WRITE_MAX;
-		break;
-
-	case SSDFS_PEB_COLLECT_GARBAGE_REQ:
-		is_valid = cmd > SSDFS_DIFF_ON_WRITE_MAX &&
-				cmd < SSDFS_COLLECT_GARBAGE_CMD_MAX;
-		break;
-
-	case SSDFS_PEB_FSCK_CHECK_REQ:
-		is_valid = cmd > SSDFS_COLLECT_GARBAGE_CMD_MAX &&
-				cmd < SSDFS_FSCK_CMD_MAX;
-		break;
-
-	default:
-		is_valid = false;
-	}
-
-	return is_valid;
-}
-
-/*
  * Request queue's API
  */
 void ssdfs_requests_queue_init(struct ssdfs_requests_queue *rq);
@@ -773,8 +702,7 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 					struct ssdfs_dirty_folios_batch *batch);
 
 struct ssdfs_segment_request *ssdfs_request_alloc(void);
-void ssdfs_request_free(struct ssdfs_segment_request *req,
-			struct ssdfs_segment_info *si);
+void ssdfs_request_free(struct ssdfs_segment_request *req);
 void ssdfs_request_init(struct ssdfs_segment_request *req, u32 block_size);
 void ssdfs_get_request(struct ssdfs_segment_request *req);
 void ssdfs_put_request(struct ssdfs_segment_request *req);

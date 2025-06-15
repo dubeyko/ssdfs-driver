@@ -321,39 +321,10 @@ try_invalidate_queue:
 			}
 			break;
 
-		case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
-			/*
-			 * It needs to finish all requests before unmount.
-			 * Continue logic.
-			 */
-			break;
-
-		case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
-		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
-		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
-			/*
-			 * Completely unexpected state.
-			 * Thread should be stopped already.
-			 */
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG();
-#else
-			SSDFS_ERR("Shextree thread still alive during unmount\n");
-			err = -EFAULT;
-			ssdfs_extents_queue_remove_all(eq);
-			wake_up_all(&tree->wait_queue);
-			goto finish_thread;
-#endif /* CONFIG_SSDFS_DEBUG */
-			break;
-
 		default:
 			/* continue logic */
 			break;
 		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("get extent from queue\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_extents_queue_remove_first(eq, &ei);
 		if (err == -ENODATA) {
@@ -385,10 +356,6 @@ try_invalidate_queue:
 					ssdfs_extent_info_free(next_ei);
 			}
 		} while (err == 0);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("invalidate extent\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_shextree_invalidate_extent(tree, ei);
 		if (err == -ENODATA) {
@@ -453,17 +420,11 @@ try_invalidate_queue:
 		goto repeat;
 
 sleep_shextree_thread:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("shared extents tree thread: go to sleep...\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	wait_event_interruptible(*wait_queue,
 				 SHEXTREE_THREAD_WAKE_CONDITION(tree, id));
 	goto repeat;
 
 sleep_failed_shextree_thread:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("shared extents tree thread failed: go to sleep...\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	wait_event_interruptible(*wait_queue,
 		SHEXTREE_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
@@ -482,7 +443,6 @@ int ssdfs_shextree_index_thread_func(void *data)
 	struct ssdfs_btree_index *index;
 	struct ssdfs_raw_extent *extent;
 	int id = SSDFS_INDEX_INVALIDATION_QUEUE;
-	int state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -525,63 +485,6 @@ try_invalidate_queue:
 	do {
 		struct ssdfs_extent_info *ei = NULL;
 
-		state = atomic_read(&tree->fsi->global_fs_state);
-		switch (state) {
-		case SSDFS_METADATA_GOING_FLUSHING:
-		case SSDFS_METADATA_UNDER_FLUSH:
-			if (kthread_should_stop()) {
-				/*
-				 * continue logic
-				 */
-			} else {
-				/*
-				 * Thread that is trying to flush metadata
-				 * waits the end of user data flush requests.
-				 * So, it needs to wait before adding
-				 * the new invalidation requests.
-				 */
-				SSDFS_DBG("don't add request\n");
-				wait_event_interruptible_timeout(*wait_queue,
-							kthread_should_stop(),
-							HZ);
-				goto repeat;
-			}
-			break;
-
-		case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
-			/*
-			 * It needs to finish all requests before unmount.
-			 * Continue logic.
-			 */
-			break;
-
-		case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
-		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
-		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
-			/*
-			 * Completely unexpected state.
-			 * Thread should be stopped already.
-			 */
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG();
-#else
-			SSDFS_ERR("Shextree thread still alive during unmount\n");
-			err = -EFAULT;
-			ssdfs_extents_queue_remove_all(&ptr->queue);
-			wake_up_all(&tree->wait_queue);
-			goto finish_thread;
-#endif /* CONFIG_SSDFS_DEBUG */
-			break;
-
-		default:
-			/* continue logic */
-			break;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("get extent from queue\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		err = ssdfs_extents_queue_remove_first(&ptr->queue,
 							&ei);
 		if (err == -ENODATA) {
@@ -597,10 +500,6 @@ try_invalidate_queue:
 			SSDFS_ERR("invalid index info\n");
 			goto repeat;
 		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("invalidate index\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_shextree_invalidate_index(tree, &ptr->content, ei);
 		if (err == -ENODATA) {
@@ -676,17 +575,11 @@ try_invalidate_queue:
 		goto repeat;
 
 sleep_shextree_thread:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("shared extents tree thread: go to sleep...\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	wait_event_interruptible(*wait_queue,
 				 SHEXTREE_THREAD_WAKE_CONDITION(tree, id));
 	goto repeat;
 
 sleep_failed_shextree_thread:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("shared extents tree thread failed: go to sleep...\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 	wait_event_interruptible(*wait_queue,
 		SHEXTREE_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;

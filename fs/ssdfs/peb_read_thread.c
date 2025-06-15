@@ -519,7 +519,6 @@ int ssdfs_peb_release_folios(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_write(&pebc->lock);
-	mutex_lock(&pebc->migration_lock);
 
 	pebi = pebc->src_peb;
 	if (pebi) {
@@ -557,7 +556,6 @@ int ssdfs_peb_release_folios(struct ssdfs_peb_container *pebc)
 		}
 	}
 
-	mutex_unlock(&pebc->migration_lock);
 	up_write(&pebc->lock);
 
 	if (err1 || err2) {
@@ -1729,10 +1727,8 @@ int ssdfs_peb_read_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 							     offset,
 							     frag_desc);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to decompress: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			SSDFS_ERR("fail to decompress: err %d\n",
+				  err);
 			goto finish_decompress;
 		}
 	} else if (read_buffer_has_no_requested_data(buf, offset)) {
@@ -1742,10 +1738,8 @@ int ssdfs_peb_read_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 							     offset,
 							     frag_desc);
 		if (unlikely(err)) {
-			SSDFS_ERR("fail to decompress: "
-				  "seg %llu, peb %llu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, err);
+			SSDFS_ERR("fail to decompress: err %d\n",
+				  err);
 			goto finish_decompress;
 		}
 	} else {
@@ -1759,9 +1753,7 @@ finish_decompress:
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to decompress portion: "
-			  "seg %llu, peb %llu, err %d\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id, err);
+			  "err %d\n", err);
 		goto finish_read_compressed_blk_desc;
 	}
 
@@ -1780,11 +1772,8 @@ finish_decompress:
 			   blk_desc_size);
 	if (unlikely(err)) {
 		SSDFS_ERR("invalid buffer state: "
-			  "seg %llu, peb %llu, offset %u, "
-			  "buffer (offset %u, size %u)\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id, offset, frag_offset,
-			  frag_size);
+			  "offset %u, buffer (offset %u, size %u)\n",
+			  offset, frag_offset, frag_size);
 		goto finish_read_compressed_blk_desc;
 	}
 
@@ -1793,9 +1782,8 @@ finish_read_compressed_blk_desc:
 
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read compressed block descriptor: "
-			  "seg %llu, peb %llu, offset %u, err %d\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id, offset, err);
+			  "offset %u, err %d\n",
+			  offset, err);
 		return err;
 	}
 
@@ -4264,18 +4252,32 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 		  logical_blk);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_container_lock(pebc);
-
 	desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
 						&peb_index,
 						&migration_state,
 						&pos);
+	if (IS_ERR(desc_off) && PTR_ERR(desc_off) == -EAGAIN) {
+		struct completion *init_end = &table->full_init_end;
+
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("blk2off init failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		desc_off = ssdfs_blk2off_table_convert(table, logical_blk,
+							&peb_index,
+							&migration_state,
+							&pos);
+	}
+
 	if (IS_ERR_OR_NULL(desc_off)) {
 		err = (desc_off == NULL ? -ERANGE : PTR_ERR(desc_off));
 		SSDFS_ERR("fail to convert: "
 			  "logical_blk %u, err %d\n",
 			  logical_blk, err);
-		goto finish_read_page;
+		return err;
 	}
 
 	peb_migration_id = desc_off->blk_state.peb_migration_id;
@@ -4309,16 +4311,18 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 				SSDFS_ERR("fail to convert: "
 					  "logical_blk %u, err %d\n",
 					  logical_blk, err);
-				goto finish_read_page;
+				return err;
 			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to get migrating block state: "
 				  "logical_blk %u, peb_index %u, err %d\n",
 				  logical_blk, pebc->peb_index, err);
-			goto finish_read_page;
+			return err;
 		} else
-			goto finish_read_page;
+			return 0;
 	}
+
+	down_read(&pebc->lock);
 
 	blk_state = &desc_off->blk_state;
 	log_start_page = le16_to_cpu(blk_state->log_start_page);
@@ -4381,7 +4385,7 @@ int ssdfs_peb_read_page(struct ssdfs_peb_container *pebc,
 	}
 
 finish_read_page:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 	return err;
 }
@@ -4483,7 +4487,7 @@ int __ssdfs_peb_read_log_footer(struct ssdfs_fs_info *fsi,
 	void *kaddr;
 	u32 bytes_off;
 	pgoff_t folio_index;
-	int err = 0, err1;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -4568,9 +4572,6 @@ fail_read_footer:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err == -ENODATA) {
-		pgoff_t start = folio_index;
-		pgoff_t end = start;
-
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("valid footer is not detected: "
 			  "seg_id %llu, peb_id %llu, "
@@ -4579,18 +4580,6 @@ fail_read_footer:
 			  pebi->peb_id,
 			  footer_block);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		err1 = ssdfs_folio_array_release_folios(&pebi->cache,
-							&start, end);
-		if (unlikely(err1)) {
-			SSDFS_ERR("fail to release folio: "
-				  "seg_id %llu, peb_id %llu, "
-				  "start %lu, end %lu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, start, end, err1);
-			return err1;
-		}
-
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read footer: "
@@ -4691,7 +4680,7 @@ int ssdfs_peb_read_log_header(struct ssdfs_fs_info *fsi,
 	struct folio *folio;
 	void *kaddr;
 	pgoff_t folio_index;
-	int err = 0, err1;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!fsi || !pebi || !pebi->pebc || !pebi->pebc->parent_si);
@@ -4770,7 +4759,7 @@ check_header_magic:
 						last_log_time, log_bytes);
 		if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("unable to read footer: "
+			SSDFS_DBG("fail to read footer: "
 				  "seg %llu, peb %llu, block_index %u, "
 				  "err %d\n",
 				  pebi->pebc->parent_si->seg_id,
@@ -4817,7 +4806,7 @@ check_header_magic:
 							log_bytes);
 			if (err == -ENODATA) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to read footer: "
+				SSDFS_DBG("fail to read footer: "
 					  "seg %llu, peb %llu, block_index %u, "
 					  "err %d\n",
 					  pebi->pebc->parent_si->seg_id,
@@ -4864,9 +4853,6 @@ fail_read_log_header:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (err == -ENODATA) {
-		pgoff_t start = folio_index;
-		pgoff_t end = start;
-
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("valid header is not detected: "
 			  "seg_id %llu, peb_id %llu, block_index %u\n",
@@ -4874,18 +4860,6 @@ fail_read_log_header:
 			  pebi->peb_id,
 			  block_index);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-		err1 = ssdfs_folio_array_release_folios(&pebi->cache,
-							&start, end);
-		if (unlikely(err1)) {
-			SSDFS_ERR("fail to release folio: "
-				  "seg_id %llu, peb_id %llu, "
-				  "start %lu, end %lu, err %d\n",
-				  pebi->pebc->parent_si->seg_id,
-				  pebi->peb_id, start, end, err1);
-			return err1;
-		}
-
 		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to read checked log header: "
@@ -5618,15 +5592,13 @@ int ssdfs_peb_find_last_full_log(struct ssdfs_fs_info *fsi,
 							&log_pages,
 							log_bytes);
 			if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to read log header: "
+				SSDFS_ERR("fail to read log header: "
 					  "seg %llu, peb %llu, cur_page %u, "
 					  "err %d\n",
 					  pebi->pebc->parent_si->seg_id,
 					  pebi->peb_id,
 					  cur_page,
 					  err);
-#endif /* CONFIG_SSDFS_DEBUG */
 				/* correct upper bound */
 				high_page = cur_page;
 			} else if (unlikely(err)) {
@@ -6046,7 +6018,7 @@ int ssdfs_peb_read_src_all_log_headers(struct ssdfs_peb_container *pebc,
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
 	if (!pebi) {
@@ -6076,7 +6048,7 @@ int ssdfs_peb_read_src_all_log_headers(struct ssdfs_peb_container *pebc,
 	}
 
 finish_read_src_all_log_headers:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -6114,7 +6086,7 @@ int ssdfs_peb_read_dst_all_log_headers(struct ssdfs_peb_container *pebc,
 	BUG_ON(!req);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
 	if (!pebi) {
@@ -6144,7 +6116,7 @@ int ssdfs_peb_read_dst_all_log_headers(struct ssdfs_peb_container *pebc,
 	}
 
 finish_read_dst_all_log_headers:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -6375,66 +6347,26 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 		if (__is_ssdfs_segment_header_magic_valid(magic)) {
 			seg_hdr = SSDFS_SEG_HDR(env->log.header.ptr);
 
-			byte_offset = i * pebi->cache.folio_size;
-			byte_offset += env->log.bytes;
-			byte_offset += fsi->pagesize - 1;
-			block_index = byte_offset >> fsi->log_pagesize;
-
 			err = ssdfs_check_segment_header(fsi, seg_hdr,
 							 false);
 			if (unlikely(err)) {
-				ssdfs_folio_get(folio);
-				ssdfs_folio_lock(folio);
-
-				err = ssdfs_read_folio_from_volume(fsi,
-						pebi->peb_id,
-						block_index * fsi->pagesize,
-						folio);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to read from volume: "
-						  "seg %llu, peb %llu, "
-						  "index %u, err %d\n",
-						  pebi->pebc->parent_si->seg_id,
-						  pebi->peb_id,
-						  i, err);
-					return err;
-				}
-
-				/*
-				 * ->read_folio() unlock the folio
-				 */
-				ssdfs_folio_lock(folio);
-
-				kaddr = kmap_local_folio(folio, 0);
-				ssdfs_memcpy(env->log.header.ptr,
-					     0, hdr_buf_size,
-					     kaddr, 0, PAGE_SIZE,
-					     hdr_buf_size);
-				ssdfs_memcpy(env->log.footer.ptr,
-					     0, hdr_buf_size,
-					     kaddr, 0, PAGE_SIZE,
-					     hdr_buf_size);
-				kunmap_local(kaddr);
-				ssdfs_folio_unlock(folio);
-				ssdfs_folio_put(folio);
-
-				err = ssdfs_check_segment_header(fsi, seg_hdr,
-								 false);
-				if (unlikely(err)) {
-					SSDFS_WARN("log header is corrupted: "
-						  "seg %llu, peb %llu, "
-						  "index %u\n",
-						  pebi->pebc->parent_si->seg_id,
-						  pebi->peb_id,
-						  i);
-					return -EIO;
-				}
+				SSDFS_ERR("log header is corrupted: "
+					  "seg %llu, peb %llu, index %u\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  i);
+				return -EIO;
 			}
 
 			if (*new_log_start_block >= U16_MAX) {
 				SSDFS_ERR("invalid new_log_start_page\n");
 				return -EIO;
 			}
+
+			byte_offset = i * pebi->cache.folio_size;
+			byte_offset += env->log.bytes;
+			byte_offset += fsi->pagesize - 1;
+			block_index = byte_offset >> fsi->log_pagesize;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("byte_offset %u, block_index %u, "
@@ -6488,60 +6420,15 @@ int ssdfs_find_last_partial_log(struct ssdfs_fs_info *fsi,
 
 			pl_hdr = SSDFS_PLH(env->log.header.ptr);
 
-			byte_offset = i * pebi->cache.folio_size;
-			byte_offset += env->log.bytes;
-			byte_offset += fsi->pagesize - 1;
-			block_index = byte_offset >> fsi->log_pagesize;
-
 			err = ssdfs_check_partial_log_header(fsi, pl_hdr,
 							     false);
 			if (unlikely(err)) {
-				ssdfs_folio_get(folio);
-				ssdfs_folio_lock(folio);
-
-				err = ssdfs_read_folio_from_volume(fsi,
-						pebi->peb_id,
-						block_index * fsi->pagesize,
-						folio);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to read from volume: "
-						  "seg %llu, peb %llu, "
-						  "index %u, err %d\n",
-						  pebi->pebc->parent_si->seg_id,
-						  pebi->peb_id,
-						  i, err);
-					return err;
-				}
-
-				/*
-				 * ->read_folio() unlock the folio
-				 */
-				ssdfs_folio_lock(folio);
-
-				kaddr = kmap_local_folio(folio, 0);
-				ssdfs_memcpy(env->log.header.ptr,
-					     0, hdr_buf_size,
-					     kaddr, 0, PAGE_SIZE,
-					     hdr_buf_size);
-				ssdfs_memcpy(env->log.footer.ptr,
-					     0, hdr_buf_size,
-					     kaddr, 0, PAGE_SIZE,
-					     hdr_buf_size);
-				kunmap_local(kaddr);
-				ssdfs_folio_unlock(folio);
-				ssdfs_folio_put(folio);
-
-				err = ssdfs_check_partial_log_header(fsi,
-								     pl_hdr,
-								     false);
-				if (unlikely(err)) {
-					SSDFS_ERR("partial log header is corrupted: "
-						  "seg %llu, peb %llu, index %u\n",
-						  pebi->pebc->parent_si->seg_id,
-						  pebi->peb_id,
-						  i);
-					return -EIO;
-				}
+				SSDFS_ERR("partial log header is corrupted: "
+					  "seg %llu, peb %llu, index %u\n",
+					  pebi->pebc->parent_si->seg_id,
+					  pebi->peb_id,
+					  i);
+				return -EIO;
 			}
 
 			flags = le32_to_cpu(pl_hdr->pl_flags);
@@ -6785,8 +6672,7 @@ int ssdfs_check_log_header(struct ssdfs_fs_info *fsi,
 		}
 
 		env->log.header.of_full_log = true;
-		env->log.footer.is_present = ssdfs_log_has_footer(seg_hdr) ||
-				ssdfs_partial_header_instead_footer(seg_hdr);
+		env->log.footer.is_present = ssdfs_log_has_footer(seg_hdr);
 	} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
 		pl_hdr = SSDFS_PLH(env->log.header.ptr);
 
@@ -10410,7 +10296,7 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
 	if (!pebi) {
@@ -10529,7 +10415,7 @@ int ssdfs_src_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 finish_src_init_using_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -10592,7 +10478,7 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
 	if (!pebi) {
@@ -10692,7 +10578,7 @@ int ssdfs_dst_peb_init_using_metadata_state(struct ssdfs_peb_container *pebc,
 
 finish_dst_init_using_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -10757,7 +10643,7 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
 	if (!pebi) {
@@ -10875,7 +10761,7 @@ int ssdfs_src_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 
 finish_src_init_used_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -10938,7 +10824,7 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 		return -ERANGE;
 	};
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
 	if (!pebi) {
@@ -11058,7 +10944,7 @@ int ssdfs_dst_peb_init_used_metadata_state(struct ssdfs_peb_container *pebc,
 
 finish_dst_init_used_metadata_state:
 	ssdfs_destroy_init_env(&pebi->env);
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -12073,7 +11959,7 @@ int ssdfs_src_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
 	if (!pebi) {
@@ -12094,7 +11980,7 @@ int ssdfs_src_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 	}
 
 finish_src_peb_init_blk2off_table:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -12142,34 +12028,13 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	items_state = atomic_read(&pebc->items_state);
 	switch (items_state) {
 	case SSDFS_PEB1_DST_CONTAINER:
 	case SSDFS_PEB2_DST_CONTAINER:
 		/* do nothing */
-		break;
-
-	case SSDFS_PEB1_SRC_CONTAINER:
-	case SSDFS_PEB2_SRC_CONTAINER:
-		pebi = pebc->src_peb;
-		if (!pebi) {
-			SSDFS_WARN("source PEB is NULL\n");
-			err = -ERANGE;
-			goto finish_dst_peb_init_blk2off_table;
-		}
-
-		err = ssdfs_finish_complete_init_blk2off_table(pebi, req);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to complete blk2off table init: "
-				  "seg_id %llu, peb_index %u, "
-				  "err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index,
-				  err);
-			goto finish_dst_peb_init_blk2off_table;
-		}
 		break;
 
 	case SSDFS_PEB1_SRC_EXT_PTR_DST_CONTAINER:
@@ -12196,14 +12061,11 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 		break;
 
 	default:
-		SSDFS_ERR("seg_id %llu, peb_index %u, items_state %#x\n",
-			  pebc->parent_si->seg_id, pebc->peb_index,
-			  items_state);
 		BUG();
 	}
 
 finish_dst_peb_init_blk2off_table:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -12234,7 +12096,7 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 		  pebc->parent_si->seg_id, pebc->peb_index);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	items_state = atomic_read(&pebc->items_state);
 	switch (items_state) {
@@ -12248,27 +12110,6 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 		}
 
 		err = ssdfs_start_complete_init_blk2off_table(pebi, req);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to complete blk2off table init: "
-				  "seg_id %llu, peb_index %u, "
-				  "err %d\n",
-				  pebc->parent_si->seg_id,
-				  pebc->peb_index,
-				  err);
-			goto finish_dst_peb_init_blk2off_table;
-		}
-		break;
-
-	case SSDFS_PEB1_SRC_CONTAINER:
-	case SSDFS_PEB2_SRC_CONTAINER:
-		pebi = pebc->src_peb;
-		if (!pebi) {
-			SSDFS_WARN("source PEB is NULL\n");
-			err = -ERANGE;
-			goto finish_dst_peb_init_blk2off_table;
-		}
-
-		err = ssdfs_finish_complete_init_blk2off_table(pebi, req);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to complete blk2off table init: "
 				  "seg_id %llu, peb_index %u, "
@@ -12345,7 +12186,7 @@ int ssdfs_dst_peb_complete_init_blk2off_table(struct ssdfs_peb_container *pebc,
 	}
 
 finish_dst_peb_init_blk2off_table:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -12793,7 +12634,7 @@ int ssdfs_peb_read_segbmap_first_folio(struct ssdfs_peb_container *pebc,
 fail_read_segbmap_folio:
 	ssdfs_request_unlock_and_remove_folios(req);
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, pebc->parent_si);
+	ssdfs_request_free(req);
 
 	return err;
 }
@@ -12995,7 +12836,7 @@ int ssdfs_peb_read_segbmap_folios(struct ssdfs_peb_container *pebc,
 fail_read_segbmap_folios:
 	ssdfs_request_unlock_and_remove_folios(req);
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, pebc->parent_si);
+	ssdfs_request_free(req);
 
 	return err;
 }
@@ -13345,7 +13186,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 		ssdfs_maptbl_move_fragment_folios(req, area, blks_count);
 		ssdfs_request_unlock_and_remove_folios(req);
 		ssdfs_put_request(req);
-		ssdfs_request_free(req, pebc->parent_si);
+		ssdfs_request_free(req);
 
 		if (size > fragment_bytes)
 			fragment_bytes = 0;
@@ -13375,7 +13216,7 @@ int ssdfs_peb_read_maptbl_fragment(struct ssdfs_peb_container *pebc,
 fail_read_maptbl_folios:
 	ssdfs_request_unlock_and_remove_folios(req);
 	ssdfs_put_request(req);
-	ssdfs_request_free(req, pebc->parent_si);
+	ssdfs_request_free(req);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished: err %d\n", err);
@@ -13809,7 +13650,7 @@ int ssdfs_peb_read_src_last_log_footer(struct ssdfs_peb_container *pebc,
 
 	fsi = pebc->parent_si->fsi;
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->src_peb;
 	if (!pebi) {
@@ -13827,7 +13668,7 @@ int ssdfs_peb_read_src_last_log_footer(struct ssdfs_peb_container *pebc,
 	}
 
 finish_read_src_last_log_footer:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -13882,7 +13723,7 @@ int ssdfs_peb_read_dst_last_log_footer(struct ssdfs_peb_container *pebc,
 
 	fsi = pebc->parent_si->fsi;
 
-	ssdfs_peb_container_lock(pebc);
+	down_read(&pebc->lock);
 
 	pebi = pebc->dst_peb;
 	if (!pebi) {
@@ -13900,7 +13741,7 @@ int ssdfs_peb_read_dst_last_log_footer(struct ssdfs_peb_container *pebc,
 	}
 
 finish_read_dst_last_log_footer:
-	ssdfs_peb_container_unlock(pebc);
+	up_read(&pebc->lock);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished: err %d\n", err);
@@ -14247,7 +14088,6 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 				struct ssdfs_segment_request *req,
 				wait_queue_head_t *wait, int err)
 {
-	int res;
 	int i;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -14277,11 +14117,11 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 
 		complete(&req->result.wait);
 		wake_up_all(&req->private.wait_queue);
-		wake_up_all(wait);
 		break;
 
 	case SSDFS_REQ_ASYNC:
 		ssdfs_unlock_request_folios(req);
+		ssdfs_put_request(req);
 
 		if (err) {
 			SSDFS_DBG("failure: req %p, err %d\n", req, err);
@@ -14291,48 +14131,23 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 
 		complete(&req->result.wait);
 		wake_up_all(&req->private.wait_queue);
-		wake_up_all(wait);
 
-		ssdfs_put_request(req);
 		if (atomic_read(&req->private.refs_count) != 0) {
-			struct ssdfs_request_internal_data *ptr;
-
-			ptr = &req->private;
-
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("start waiting: refs_count %d\n",
-				   atomic_read(&ptr->refs_count));
+				   atomic_read(&req->private.refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			res = wait_event_killable_timeout(*wait,
-					atomic_read(&ptr->refs_count) == 0,
-					SSDFS_DEFAULT_TIMEOUT);
-			if (res < 0) {
-				WARN_ON(1);
-			} else if (res > 1) {
-				/*
-				 * Condition changed before timeout
-				 */
-			} else {
-				/* timeout is elapsed */
-				SSDFS_ERR("seg %llu, ino %llu, "
-					  "logical_offset %llu, "
-					  "class %#x, cmd %#x, type %#x, "
-					  "result.state %#x, "
-					  "refs_count %#x\n",
-					  pebc->parent_si->seg_id,
-					  req->extent.ino,
-					  req->extent.logical_offset,
-					  req->private.class,
-					  req->private.cmd,
-					  req->private.type,
-					  atomic_read(&req->result.state),
-					  atomic_read(&ptr->refs_count));
-				WARN_ON(1);
-			}
+			err = wait_event_killable_timeout(*wait,
+			    atomic_read(&req->private.refs_count) == 0,
+			    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 		}
 
-		ssdfs_request_free(req, pebc->parent_si);
+		ssdfs_request_free(req);
 		break;
 
 	case SSDFS_REQ_ASYNC_NO_FREE:
@@ -14435,7 +14250,6 @@ repeat:
 	} while (!is_ssdfs_requests_queue_empty(&pebc->read_rq));
 
 sleep_read_thread:
-	wake_up_all(wait_queue);
 	wait_event_interruptible_timeout(*wait_queue,
 					 READ_THREAD_WAKE_CONDITION(pebc),
 					 timeout);

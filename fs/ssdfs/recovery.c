@@ -647,14 +647,6 @@ try_again:
 	fsi->pages_per_peb = fsi->erasesize / fsi->pagesize;
 	fsi->pebs_per_seg = 1 << vh->log_pebs_per_seg;
 
-	if (fsi->fs_ctime >= U64_MAX) {
-		fsi->fs_ctime = le64_to_cpu(vh->create_time);
-		ssdfs_memcpy(fsi->fs_uuid, 0, sizeof(fsi->fs_uuid),
-			     vh->uuid, 0, sizeof(vh->uuid),
-			     sizeof(vh->uuid));
-	} else if (fsi->fs_ctime > le64_to_cpu(vh->create_time))
-		goto try_again;
-
 	return 0;
 }
 
@@ -673,14 +665,7 @@ static int ssdfs_read_checked_sb_info(struct ssdfs_fs_info *fsi, u64 peb_id,
 
 	err = ssdfs_read_checked_segment_header(fsi, peb_id, PAGE_SIZE, pages_off,
 						fsi->sbi.vh_buf, silent);
-	if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("header has older FS creation time: "
-			  "peb_id %llu, pages_off %u, err %d\n",
-			  peb_id, pages_off, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return err;
-	} else if (err) {
+	if (err) {
 		if (!silent) {
 			SSDFS_ERR("volume header is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
@@ -772,14 +757,7 @@ static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
 	err = ssdfs_read_checked_segment_header(fsi, peb_id, PAGE_SIZE,
 						pages_off,
 						fsi->sbi.vh_buf, silent);
-	if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("header has older FS creation time: "
-			  "peb_id %llu, pages_off %u, err %d\n",
-			  peb_id, pages_off, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-		return err;
-	} else if (err) {
+	if (err) {
 		if (!silent) {
 			SSDFS_ERR("volume header is corrupted: "
 				  "peb_id %llu, offset %d, err %d\n",
@@ -915,14 +893,7 @@ try_again:
 
 		err = ssdfs_read_checked_sb_info(fsi, peb_id,
 						 0, true);
-		if (err == -ENOENT) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("header has older FS creation time: "
-				  "peb_id %llu, err %d\n",
-				  peb_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-			continue;
-		} else if (err) {
+		if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("peb_id %llu is corrupted: err %d\n",
 				  peb_id, err);
@@ -1468,7 +1439,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 						 peb_pages_off, true);
 		cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 		cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
-		if (err == -EIO || err == -ENOENT || cno1 >= cno2) {
+		if (err == -EIO || cno1 >= cno2) {
 			void *buf = fsi->sbi_backup.vh_buf;
 
 			copy_peb = ssdfs_swap_current_sb_peb(buf, peb);
@@ -1482,13 +1453,15 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 							 peb_pages_off, true);
 			cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 			cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
-			peb = copy_peb;
-			leb = copy_leb;
-			fsi->sbi.last_log.leb_id = leb;
-			fsi->sbi.last_log.peb_id = peb;
-			fsi->sbi.last_log.page_offset = cur_off;
-			fsi->sbi.last_log.pages_count =
+			if (!err) {
+				peb = copy_peb;
+				leb = copy_leb;
+				fsi->sbi.last_log.leb_id = leb;
+				fsi->sbi.last_log.peb_id = peb;
+				fsi->sbi.last_log.page_offset = cur_off;
+				fsi->sbi.last_log.pages_count =
 					SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
+			}
 		} else {
 			fsi->sbi.last_log.leb_id = leb;
 			fsi->sbi.last_log.peb_id = peb;
@@ -1497,8 +1470,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 				SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
 		}
 
-		if (err == -ENODATA || err == -ENOENT ||
-		    err == -EIO || cno1 >= cno2) {
+		if (err == -ENODATA || err == -EIO || cno1 >= cno2) {
 			err = !err ? -EIO : err;
 			high_off = cur_off;
 		} else if (err) {
@@ -1515,24 +1487,19 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 	} while (cur_off > low_off && cur_off < high_off);
 
 	if (err) {
-		if (err == -ENODATA || err == -ENOENT) {
+		if (err == -ENODATA || err == -EIO) {
 			/* previous read log was valid */
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 				  cur_off, low_off, high_off);
 #endif /* CONFIG_SSDFS_DEBUG */
-			ssdfs_restore_sb_info(fsi);
-		} else if (err == -EIO) {
-			err = 0;
-			SSDFS_NOTICE("unable to mount in RW mode: "
-				     "log is corrupted. Please, run FSCK tool.\n");
-			fsi->sb->s_flags |= SB_RDONLY;
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
-			ssdfs_restore_sb_info(fsi);
 		}
+
+		ssdfs_restore_sb_info(fsi);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1678,13 +1645,6 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 		do {
 			u32 diff_pages;
 
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("peb %llu, pages_per_peb %llu, "
-				  "log_pages %u, cur_off %u\n",
-				  peb, pages_per_peb,
-				  log_pages, cur_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 			checking_page.leb_id = leb;
 			checking_page.peb_id = peb;
 			checking_page.page_offset = cur_off;
@@ -1721,7 +1681,7 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 	cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 	cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
 
-	if (err == -EIO || err == -ENOENT || cno1 >= cno2) {
+	if (err == -EIO || cno1 >= cno2) {
 		void *buf = fsi->sbi_backup.vh_buf;
 
 		copy_peb = ssdfs_swap_current_sb_peb(buf, peb);
@@ -1737,13 +1697,15 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 						  &found_log_off);
 		cno1 = SSDFS_SEG_CNO(fsi->sbi_backup.vh_buf);
 		cno2 = SSDFS_SEG_CNO(fsi->sbi.vh_buf);
-		peb = copy_peb;
-		leb = copy_leb;
-		fsi->sbi.last_log.leb_id = leb;
-		fsi->sbi.last_log.peb_id = peb;
-		fsi->sbi.last_log.page_offset = found_log_off;
-		fsi->sbi.last_log.pages_count =
+		if (!err) {
+			peb = copy_peb;
+			leb = copy_leb;
+			fsi->sbi.last_log.leb_id = leb;
+			fsi->sbi.last_log.peb_id = peb;
+			fsi->sbi.last_log.page_offset = found_log_off;
+			fsi->sbi.last_log.pages_count =
 				SSDFS_LOG_PAGES(fsi->sbi.vh_buf);
+		}
 	} else {
 		fsi->sbi.last_log.leb_id = leb;
 		fsi->sbi.last_log.peb_id = peb;
@@ -1754,24 +1716,19 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 
 finish_find_latest_sb_info:
 	if (err) {
-		if (err == -ENODATA || err == -ENOENT) {
+		if (err == -ENODATA || err == -EIO) {
 			/* previous read log was valid */
 			err = 0;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
 				  cur_off, low_off, high_off);
 #endif /* CONFIG_SSDFS_DEBUG */
-			ssdfs_restore_sb_info(fsi);
-		} else if (err == -EIO) {
-			err = 0;
-			SSDFS_NOTICE("unable to mount in RW mode: "
-				     "log is corrupted. Please, run FSCK tool.\n");
-			fsi->sb->s_flags |= SB_RDONLY;
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
-			ssdfs_restore_sb_info(fsi);
 		}
+
+		ssdfs_restore_sb_info(fsi);
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1950,7 +1907,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 
 	spin_lock_init(&fsi->volume_state_lock);
 
-	fsi->free_pages = le64_to_cpu(fsi->vs->free_pages);
+	fsi->free_pages = 0;
 	fsi->reserved_new_user_data_pages = 0;
 	fsi->updated_user_data_pages = 0;
 	fsi->flushing_user_data_requests = 0;
@@ -2537,10 +2494,6 @@ static int ssdfs_init_recovery_environment(struct ssdfs_fs_info *fsi,
 	env->err = 0;
 	env->fsi = fsi;
 	env->pebs_per_volume = pebs_per_volume;
-	env->create_time = le64_to_cpu(vh->create_time);
-	ssdfs_memcpy(env->uuid, 0, sizeof(env->uuid),
-		     vh->uuid, 0, sizeof(vh->uuid),
-		     sizeof(env->uuid));
 
 	atomic_set(&env->state, SSDFS_RECOVERY_UNKNOWN_STATE);
 

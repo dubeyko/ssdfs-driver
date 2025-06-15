@@ -1615,8 +1615,8 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 			return -ERANGE;
 		}
 
-		req1 = &fragment->flush_pairs[0].req;
-		req2 = &fragment->flush_pairs[1].req;
+		req1 = &fragment->flush_req1;
+		req2 = &fragment->flush_req2;
 
 		ssdfs_request_init(req1, segbmap->fsi->pagesize);
 		ssdfs_get_request(req1);
@@ -1698,38 +1698,14 @@ int ssdfs_segbmap_issue_fragments_update(struct ssdfs_segment_bmap *segbmap,
 		}
 
 		si = segbmap->segs[seg_index][SSDFS_MAIN_SEGBMAP_SEG];
-
-		if (!is_ssdfs_segment_ready_for_requests(si)) {
-			err = ssdfs_wait_segment_init_end(si);
-			if (unlikely(err)) {
-				SSDFS_ERR("segment initialization failed: "
-					  "seg %llu, err %d\n",
-					  si->seg_id, err);
-				goto fail_issue_fragment_updates;
-			}
-		}
-
 		err = ssdfs_segment_update_extent_async(si,
 							SSDFS_REQ_ASYNC_NO_FREE,
 							req1);
-		fragment->flush_pairs[0].si = si;
-
 		si = segbmap->segs[seg_index][SSDFS_COPY_SEGBMAP_SEG];
 		if (!err && has_backup) {
-			if (!is_ssdfs_segment_ready_for_requests(si)) {
-				err = ssdfs_wait_segment_init_end(si);
-				if (unlikely(err)) {
-					SSDFS_ERR("segment initialization failed: "
-						  "seg %llu, err %d\n",
-						  si->seg_id, err);
-					goto fail_issue_fragment_updates;
-				}
-			}
-
 			err = ssdfs_segment_update_extent_async(si,
 							SSDFS_REQ_ASYNC_NO_FREE,
 							req2);
-			fragment->flush_pairs[1].si = si;
 		}
 
 		if (unlikely(err)) {
@@ -1895,12 +1871,10 @@ int ssdfs_segbmap_wait_flush_end(struct ssdfs_segment_bmap *segbmap,
 				 u16 fragments_count)
 {
 	struct ssdfs_segbmap_fragment_desc *fragment;
-	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	bool has_backup;
 	wait_queue_head_t *wq = NULL;
 	int i;
-	int res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1923,8 +1897,8 @@ int ssdfs_segbmap_wait_flush_end(struct ssdfs_segment_bmap *segbmap,
 			return -ERANGE;
 
 		case SSDFS_SEGBMAP_FRAG_TOWRITE:
-			req1 = &fragment->flush_pairs[0].req;
-			req2 = &fragment->flush_pairs[1].req;
+			req1 = &fragment->flush_req1;
+			req2 = &fragment->flush_req2;
 
 check_req1_state:
 			switch (atomic_read(&req1->result.state)) {
@@ -1932,78 +1906,19 @@ check_req1_state:
 			case SSDFS_REQ_STARTED:
 				wq = &req1->private.wait_queue;
 
-				res = wait_event_killable_timeout(*wq,
+				err = wait_event_killable_timeout(*wq,
 					    has_request_been_executed(req1),
 					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-					goto check_req1_state;
-				} else {
-					struct ssdfs_request_internal_data *ptr;
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req1->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req1->extent.ino,
-						req1->extent.logical_offset,
-						req1->private.cmd,
-						req1->private.type,
-						atomic_read(&req1->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				goto check_req1_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
-				si = fragment->flush_pairs[0].si;
-				wq = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-				if (request_not_referenced(req1))
-					goto finish_check_req1;
-
-				res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(req1),
-					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-				} else {
-					struct ssdfs_request_internal_data *ptr;
-
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req1->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req1->extent.ino,
-						req1->extent.logical_offset,
-						req1->private.cmd,
-						req1->private.type,
-						atomic_read(&req1->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				/* do nothing */
 				break;
 
 			case SSDFS_REQ_FAILED:
@@ -2024,7 +1939,6 @@ check_req1_state:
 				return -ERANGE;
 			}
 
-finish_check_req1:
 			if (!has_backup)
 				goto finish_fragment_check;
 
@@ -2034,78 +1948,19 @@ check_req2_state:
 			case SSDFS_REQ_STARTED:
 				wq = &req2->private.wait_queue;
 
-				res = wait_event_killable_timeout(*wq,
+				err = wait_event_killable_timeout(*wq,
 					    has_request_been_executed(req2),
 					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-					goto check_req2_state;
-				} else {
-					struct ssdfs_request_internal_data *ptr;
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req2->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req2->extent.ino,
-						req2->extent.logical_offset,
-						req2->private.cmd,
-						req2->private.type,
-						atomic_read(&req2->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				goto check_req2_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
-				si = fragment->flush_pairs[1].si;
-				wq = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-				if (request_not_referenced(req2))
-					goto finish_fragment_check;
-
-				res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(req2),
-					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-				} else {
-					struct ssdfs_request_internal_data *ptr;
-
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req2->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req2->extent.ino,
-						req2->extent.logical_offset,
-						req2->private.cmd,
-						req2->private.type,
-						atomic_read(&req2->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				/* do nothing */
 				break;
 
 			case SSDFS_REQ_FAILED:
@@ -2192,8 +2047,8 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			return -ERANGE;
 
 		case SSDFS_SEGBMAP_FRAG_TOWRITE:
-			req1 = &fragment->flush_pairs[0].req;
-			req2 = &fragment->flush_pairs[1].req;
+			req1 = &fragment->flush_req1;
+			req2 = &fragment->flush_req2;
 
 			ssdfs_request_init(req1, segbmap->fsi->pagesize);
 			ssdfs_get_request(req1);
@@ -2248,17 +2103,6 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 
 			copy_id = SSDFS_MAIN_SEGBMAP_SEG;
 			si = segbmap->segs[seg_index][copy_id];
-			fragment->flush_pairs[0].si = si;
-
-			if (!is_ssdfs_segment_ready_for_requests(si)) {
-				err = ssdfs_wait_segment_init_end(si);
-				if (unlikely(err)) {
-					SSDFS_ERR("segment initialization failed: "
-						  "seg %llu, err %d\n",
-						  si->seg_id, err);
-					goto fail_issue_commit_logs;
-				}
-			}
 
 			err = ssdfs_segment_commit_log_async(si,
 							SSDFS_REQ_ASYNC_NO_FREE,
@@ -2285,17 +2129,6 @@ int ssdfs_segbmap_issue_commit_logs(struct ssdfs_segment_bmap *segbmap,
 
 				copy_id = SSDFS_COPY_SEGBMAP_SEG;
 				si = segbmap->segs[seg_index][copy_id];
-				fragment->flush_pairs[1].si = si;
-
-				if (!is_ssdfs_segment_ready_for_requests(si)) {
-					err = ssdfs_wait_segment_init_end(si);
-					if (unlikely(err)) {
-						SSDFS_ERR("segment initialization failed: "
-							  "seg %llu, err %d\n",
-							  si->seg_id, err);
-						goto fail_issue_commit_logs;
-					}
-				}
 
 				err = ssdfs_segment_commit_log_async(si,
 							SSDFS_REQ_ASYNC_NO_FREE,
@@ -2344,12 +2177,10 @@ int ssdfs_segbmap_wait_finish_commit_logs(struct ssdfs_segment_bmap *segbmap,
 					  u16 fragments_count)
 {
 	struct ssdfs_segbmap_fragment_desc *fragment;
-	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_request *req1 = NULL, *req2 = NULL;
 	bool has_backup;
 	wait_queue_head_t *wq = NULL;
 	int i;
-	int res;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2372,8 +2203,8 @@ int ssdfs_segbmap_wait_finish_commit_logs(struct ssdfs_segment_bmap *segbmap,
 			return -ERANGE;
 
 		case SSDFS_SEGBMAP_FRAG_TOWRITE:
-			req1 = &fragment->flush_pairs[0].req;
-			req2 = &fragment->flush_pairs[1].req;
+			req1 = &fragment->flush_req1;
+			req2 = &fragment->flush_req2;
 
 check_req1_state:
 			switch (atomic_read(&req1->result.state)) {
@@ -2381,78 +2212,19 @@ check_req1_state:
 			case SSDFS_REQ_STARTED:
 				wq = &req1->private.wait_queue;
 
-				res = wait_event_killable_timeout(*wq,
+				err = wait_event_killable_timeout(*wq,
 					    has_request_been_executed(req1),
 					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-					goto check_req1_state;
-				} else {
-					struct ssdfs_request_internal_data *ptr;
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req1->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req1->extent.ino,
-						req1->extent.logical_offset,
-						req1->private.cmd,
-						req1->private.type,
-						atomic_read(&req1->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				goto check_req1_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
-				si = fragment->flush_pairs[0].si;
-				wq = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-				if (request_not_referenced(req1))
-					goto finish_check_req1;
-
-				res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(req1),
-					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-				} else {
-					struct ssdfs_request_internal_data *ptr;
-
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req1->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req1->extent.ino,
-						req1->extent.logical_offset,
-						req1->private.cmd,
-						req1->private.type,
-						atomic_read(&req1->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				/* do nothing */
 				break;
 
 			case SSDFS_REQ_FAILED:
@@ -2473,7 +2245,6 @@ check_req1_state:
 				return -ERANGE;
 			}
 
-finish_check_req1:
 			if (!has_backup)
 				goto finish_fragment_check;
 
@@ -2483,78 +2254,19 @@ check_req2_state:
 			case SSDFS_REQ_STARTED:
 				wq = &req2->private.wait_queue;
 
-				res = wait_event_killable_timeout(*wq,
+				err = wait_event_killable_timeout(*wq,
 					    has_request_been_executed(req2),
 					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-					goto check_req2_state;
-				} else {
-					struct ssdfs_request_internal_data *ptr;
+				if (err < 0)
+					WARN_ON(err < 0);
+				else
+					err = 0;
 
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req2->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req2->extent.ino,
-						req2->extent.logical_offset,
-						req2->private.cmd,
-						req2->private.type,
-						atomic_read(&req2->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				goto check_req2_state;
 				break;
 
 			case SSDFS_REQ_FINISHED:
-				si = fragment->flush_pairs[1].si;
-				wq = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
-
-				if (request_not_referenced(req2))
-					goto finish_fragment_check;
-
-				res = wait_event_killable_timeout(*wq,
-					    request_not_referenced(req2),
-					    SSDFS_DEFAULT_TIMEOUT);
-				if (res < 0) {
-					err = res;
-					WARN_ON(1);
-				} else if (res > 1) {
-					/*
-					 * Condition changed before timeout
-					 */
-				} else {
-					struct ssdfs_request_internal_data *ptr;
-
-					/* timeout is elapsed */
-					err = -ERANGE;
-					ptr = &req2->private;
-
-					SSDFS_ERR("seg %llu, ino %llu, "
-						  "logical_offset %llu, "
-						  "cmd %#x, type %#x, "
-						  "result.state %#x, "
-						  "refs_count %#x\n",
-						si->seg_id,
-						req2->extent.ino,
-						req2->extent.logical_offset,
-						req2->private.cmd,
-						req2->private.type,
-						atomic_read(&req2->result.state),
-						atomic_read(&ptr->refs_count));
-					WARN_ON(1);
-				}
+				/* do nothing */
 				break;
 
 			case SSDFS_REQ_FAILED:
@@ -2699,53 +2411,6 @@ int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap)
 				err);
 		goto finish_segbmap_flush;
 	}
-
-#ifdef CONFIG_SSDFS_DEBUG
-	{
-		struct folio_batch fbatch;
-		pgoff_t index = 0;
-		pgoff_t end = segbmap->fragments_count;
-		int i;
-
-		folio_batch_init(&fbatch);
-
-		err = ssdfs_folio_array_lookup_range(&segbmap->folios,
-						     &index, end,
-						     SSDFS_DIRTY_FOLIO_TAG,
-						     segbmap->fragments_count,
-						     &fbatch);
-		if (err == -ENOENT) {
-			/*
-			 * Expected state.
-			 * We should not have dirty fragments.
-			 */
-			err = 0;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find dirty folios: "
-				  "start %lu, end %lu, err %d\n",
-				  index, end, err);
-			up_write(&segbmap->search_lock);
-			goto finish_segbmap_flush;
-		}
-
-		for (i = 0; i < folio_batch_count(&fbatch); i++) {
-			struct folio *folio = fbatch.folios[i];
-
-			if (!folio)
-				continue;
-
-			SSDFS_ERR("fragment %lu is dirty\n",
-				  folio_index(folio));
-		}
-
-		if (folio_batch_count(&fbatch) > 0) {
-			err = -ERANGE;
-			SSDFS_WARN("segment bitmap is dirty after flush\n");
-			folio_batch_reinit(&fbatch);
-			BUG();
-		}
-	}
-#endif /* CONFIG_SSDFS_DEBUG */
 
 	downgrade_write(&segbmap->search_lock);
 
@@ -3058,7 +2723,6 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 					   int old_state, int new_state,
 					   void *kaddr)
 {
-	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segbmap_fragment_desc *fragment;
 	struct ssdfs_segbmap_fragment_header *hdr;
 	unsigned long *fbmap;
@@ -3080,30 +2744,6 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 			  old_state, new_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return;
-	}
-
-	fsi = segbmap->fsi;
-	switch (atomic_read(&fsi->global_fs_state)) {
-	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
-	case SSDFS_REGULAR_FS_OPERATIONS:
-	case SSDFS_METADATA_GOING_FLUSHING:
-	case SSDFS_METADATA_UNDER_FLUSH:
-	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
-	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
-		/* continue logic */
-		break;
-
-	default:
-		/*
-		 * Unexpected state.
-		 */
-		SSDFS_WARN("unexpected global FS state: "
-			   "state %#x\n",
-			   atomic_read(&fsi->global_fs_state));
-#ifdef CONFIG_SSDFS_DEBUG
-		BUG();
-#endif /* CONFIG_SSDFS_DEBUG */
-		break;
 	}
 
 	fragment = &segbmap->desc_array[fragment_index];
@@ -3392,7 +3032,6 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 				 pgoff_t fragment_index,
 				 u16 fragment_size)
 {
-	struct ssdfs_segbmap_fragment_desc *fragment;
 	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS);
 	struct folio *folio;
 	u64 folio_item;
@@ -3401,7 +3040,6 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 	void *kaddr;
 	u8 *byte_ptr;
 	int old_state;
-	int fs_state;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3498,38 +3136,6 @@ int __ssdfs_segbmap_change_state(struct ssdfs_segment_bmap *segbmap,
 		if (!folio_test_dirty(folio)) {
 			ssdfs_folio_array_set_folio_dirty(&segbmap->folios,
 							  fragment_index);
-
-			fragment = &segbmap->desc_array[fragment_index];
-			if (fragment->state != SSDFS_SEGBMAP_FRAG_DIRTY) {
-				SSDFS_WARN("fragment %lu is not dirty!!!\n",
-					   fragment_index);
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG();
-#else
-				err = -ERANGE;
-				goto free_folio;
-#endif /* CONFIG_SSDFS_DEBUG */
-			}
-
-			fs_state = atomic_read(&segbmap->fsi->global_fs_state);
-			switch (fs_state) {
-			case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
-			case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
-			case SSDFS_UNMOUNT_DESTROY_METADATA:
-				SSDFS_WARN("unexpected global FS state %#x\n",
-					   fs_state);
-#ifdef CONFIG_SSDFS_DEBUG
-				BUG();
-#else
-				err = -ERANGE;
-				goto free_folio;
-#endif /* CONFIG_SSDFS_DEBUG */
-				break;
-
-			default:
-				/* continue logic */
-				break;
-			}
 		}
 	}
 
@@ -4541,8 +4147,6 @@ int __ssdfs_segbmap_find(struct ssdfs_segment_bmap *segbmap,
 		start_fragment -= 1;
 
 	max_fragment = SEG_BMAP_FRAGMENTS(max);
-	if (start_fragment >= max_fragment)
-		max_fragment = start_fragment + 1;
 
 	do {
 		u64 found_for_iter = U64_MAX;

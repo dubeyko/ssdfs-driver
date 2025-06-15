@@ -820,8 +820,6 @@ bool is_csum_valid(struct ssdfs_metadata_check *check,
 		SSDFS_ERR("old_csum %#x != calc_csum %#x\n",
 			  __le32_to_cpu(old_csum),
 			  __le32_to_cpu(calc_csum));
-		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-				     buf, buf_size);
 		return false;
 	}
 
@@ -2277,11 +2275,6 @@ int __ssdfs_memmove_folio(struct folio *dst_ptr, u32 dst_off, u32 dst_size,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!dst_ptr || !src_ptr);
-
-	SSDFS_DBG("src_off %u, src_size %u, "
-		  "dst_off %u, dst_size %u\n",
-		  src_off, src_size,
-		  dst_off, dst_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = SSDFS_OFF2FOLIO(folio_size(src_ptr), src_off, &src_folio.desc);
@@ -2729,243 +2722,6 @@ u64 __ssdfs_generate_name_hash(const char *name, size_t len,
 	return name_hash;
 }
 
-/*
- * __is_ssdfs_segment_header_magic_valid() - check segment header's magic
- * @magic: pointer on magic value
- */
-static inline
-bool __is_ssdfs_segment_header_magic_valid(struct ssdfs_signature *magic)
-{
-	return le16_to_cpu(magic->key) == SSDFS_SEGMENT_HDR_MAGIC;
-}
-
-/*
- * is_ssdfs_segment_header_magic_valid() - check segment header's magic
- * @hdr: segment header
- */
-static inline
-bool is_ssdfs_segment_header_magic_valid(struct ssdfs_segment_header *hdr)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!hdr);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return __is_ssdfs_segment_header_magic_valid(&hdr->volume_hdr.magic);
-}
-
-/*
- * is_ssdfs_partial_log_header_magic_valid() - check partial log header's magic
- * @magic: pointer on magic value
- */
-static inline
-bool is_ssdfs_partial_log_header_magic_valid(struct ssdfs_signature *magic)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!magic);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return le16_to_cpu(magic->key) == SSDFS_PARTIAL_LOG_HDR_MAGIC;
-}
-
-/*
- * is_ssdfs_volume_header_csum_valid() - check volume header checksum
- * @vh_buf: volume header buffer
- * @buf_size: size of buffer in bytes
- */
-static inline
-bool is_ssdfs_volume_header_csum_valid(void *vh_buf, size_t buf_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!vh_buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return is_csum_valid(&SSDFS_VH(vh_buf)->check, vh_buf, buf_size);
-}
-
-/*
- * is_ssdfs_partial_log_header_csum_valid() - check partial log header checksum
- * @plh_buf: partial log header buffer
- * @buf_size: size of buffer in bytes
- */
-static inline
-bool is_ssdfs_partial_log_header_csum_valid(void *plh_buf, size_t buf_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!plh_buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return is_csum_valid(&SSDFS_PLH(plh_buf)->check, plh_buf, buf_size);
-}
-
-/*
- * __is_ssdfs_log_footer_magic_valid() - check log footer's magic
- * @magic: pointer on magic value
- */
-static inline
-bool __is_ssdfs_log_footer_magic_valid(struct ssdfs_signature *magic)
-{
-	return le16_to_cpu(magic->key) == SSDFS_LOG_FOOTER_MAGIC;
-}
-
-/*
- * is_ssdfs_log_footer_magic_valid() - check log footer's magic
- * @footer: log footer
- */
-static inline
-bool is_ssdfs_log_footer_magic_valid(struct ssdfs_log_footer *footer)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!footer);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return __is_ssdfs_log_footer_magic_valid(&footer->volume_state.magic);
-}
-
-/*
- * is_ssdfs_log_footer_csum_valid() - check log footer's checksum
- * @buf: buffer with log footer
- * @size: size of buffer in bytes
- */
-static inline
-bool is_ssdfs_log_footer_csum_valid(void *buf, size_t buf_size)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!buf);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	return is_csum_valid(&SSDFS_LF(buf)->volume_state.check, buf, buf_size);
-}
-
-/*
- * is_ssdfs_uuid_and_fs_ctime_actual() - check that UUID and create time are equal
- * @fsi: shared file system info
- * @buf: logical block's buffer
- */
-static inline
-bool is_ssdfs_uuid_and_fs_ctime_actual(struct ssdfs_fs_info *fsi,
-					const void *buf)
-{
-	struct ssdfs_volume_header *vh;
-	struct ssdfs_signature *magic;
-	struct ssdfs_segment_header *seg_hdr = NULL;
-	struct ssdfs_partial_log_header *pl_hdr = NULL;
-	struct ssdfs_log_footer *footer = NULL;
-	__le8 *uuid = NULL;
-	u64 create_time = U64_MAX;
-	bool uuid_is_equal = false;
-	bool fs_ctime_is_equal = false;
-
-	vh = SSDFS_VH(buf);
-	magic = (struct ssdfs_signature *)buf;
-
-	if (is_ssdfs_magic_valid(&vh->magic)) {
-		if (__is_ssdfs_segment_header_magic_valid(magic)) {
-			seg_hdr = SSDFS_SEG_HDR(buf);
-			uuid = seg_hdr->volume_hdr.uuid;
-			create_time =
-				le64_to_cpu(seg_hdr->volume_hdr.create_time);
-		} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
-			pl_hdr = SSDFS_PLH(buf);
-			uuid = pl_hdr->uuid;
-			create_time = le64_to_cpu(pl_hdr->volume_create_time);
-		} else if (__is_ssdfs_log_footer_magic_valid(magic)) {
-			footer = SSDFS_LF(buf);
-			uuid = footer->volume_state.uuid;
-			create_time = U64_MAX;
-		} else
-			goto finish_check;
-
-		spin_lock(&fsi->volume_state_lock);
-		uuid_is_equal = is_uuids_identical((u8 *)uuid, fsi->fs_uuid);
-		spin_unlock(&fsi->volume_state_lock);
-
-		if (create_time != U64_MAX)
-			fs_ctime_is_equal = create_time == fsi->fs_ctime;
-		else
-			fs_ctime_is_equal = true;
-	}
-
-finish_check:
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("uuid_is_equal %#x, fs_ctime_is_equal %#x\n",
-		  uuid_is_equal, fs_ctime_is_equal);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	if (uuid_is_equal && fs_ctime_is_equal)
-		return true;
-	else
-		return false;
-}
-
-/*
- * ssdfs_compare_fs_ctime() - compare FS creation times
- * @fsi: shared file system info
- * @buf: log header buffer
- */
-static inline
-int ssdfs_compare_fs_ctime(struct ssdfs_fs_info *fsi,
-			   const void *buf)
-{
-	struct ssdfs_signature *magic;
-	struct ssdfs_segment_header *seg_hdr = NULL;
-	struct ssdfs_partial_log_header *pl_hdr = NULL;
-	u64 create_time = U64_MAX;
-
-	magic = (struct ssdfs_signature *)buf;
-	BUG_ON(!is_ssdfs_magic_valid(magic));
-
-	if (__is_ssdfs_segment_header_magic_valid(magic)) {
-		seg_hdr = SSDFS_SEG_HDR(buf);
-		create_time = le64_to_cpu(seg_hdr->volume_hdr.create_time);
-	} else if (is_ssdfs_partial_log_header_magic_valid(magic)) {
-		pl_hdr = SSDFS_PLH(buf);
-		create_time = le64_to_cpu(pl_hdr->volume_create_time);
-	} else
-		BUG();
-
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("fsi->fs_ctime %llu, create_time %llu\n",
-		  fsi->fs_ctime, create_time);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-
-	if (fsi->fs_ctime < create_time)
-		return 1;
-	else if (fsi->fs_ctime > create_time)
-		return -1;
-	else
-		return 0;
-}
-
-static inline
-void ssdfs_increase_volume_free_pages(struct ssdfs_fs_info *fsi,
-				      u64 new_free_pages)
-{
-	u64 free_pages;
-	u64 volume_capacity;
-
-	mutex_lock(&fsi->resize_mutex);
-	volume_capacity = fsi->nsegs * fsi->pages_per_seg;
-	mutex_unlock(&fsi->resize_mutex);
-
-	spin_lock(&fsi->volume_state_lock);
-	free_pages = fsi->free_pages;
-	if ((fsi->free_pages + new_free_pages) < volume_capacity)
-		fsi->free_pages += new_free_pages;
-	else
-		fsi->free_pages = volume_capacity;
-	new_free_pages = fsi->free_pages;
-	spin_unlock(&fsi->volume_state_lock);
-
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("free_pages %llu, new_free_pages %llu, "
-		  "volume_capacity %llu\n",
-		  free_pages, new_free_pages,
-		  volume_capacity);
-#endif /* CONFIG_SSDFS_DEBUG */
-}
-
 #define SSDFS_LOG_FOOTER_OFF(seg_hdr)({ \
 	u32 offset; \
 	int index; \
@@ -2976,7 +2732,7 @@ void ssdfs_increase_volume_free_pages(struct ssdfs_fs_info *fsi,
 	offset; \
 })
 
-#define SSDFS_WAITED_TOO_LONG_MSECS		(SSDFS_DEFAULT_TIMEOUT / 2)
+#define SSDFS_WAITED_TOO_LONG_MSECS		(1000)
 
 static inline
 void ssdfs_check_jiffies_left_till_timeout(unsigned long value)

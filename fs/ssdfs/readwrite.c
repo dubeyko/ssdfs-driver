@@ -318,14 +318,6 @@ int ssdfs_aligned_read_buffer(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-#ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("peb_id %llu, block_size %u, "
-		  "bytes_off %u, offset %llu, "
-		  "*read_bytes %zu\n",
-		  peb_id, block_size, bytes_off,
-		  (u64)offset, *read_bytes);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	err = fsi->devops->read(sb, block_size, offset, *read_bytes, buf);
 	if (unlikely(err)) {
 #ifdef CONFIG_SSDFS_DEBUG

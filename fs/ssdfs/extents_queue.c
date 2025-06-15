@@ -911,16 +911,6 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(index->index.extent.logical_blk);
 	len = le32_to_cpu(index->index.extent.len);
 
-	if (!is_ssdfs_segment_ready_for_requests(si)) {
-		err = ssdfs_wait_segment_init_end(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment initialization failed: "
-				  "seg %llu, err %d\n",
-				  si->seg_id, err);
-			goto finish_invalidate_index;
-		}
-	}
-
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -961,7 +951,7 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 				  "peb_index %d, err %d\n",
 				  i, err);
 			ssdfs_put_request(req);
-			ssdfs_request_free(req, si);
+			ssdfs_request_free(req);
 			goto revert_invalidation_state;
 		}
 	}
@@ -1382,16 +1372,6 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(index->index.extent.logical_blk);
 	len = le32_to_cpu(index->index.extent.len);
 
-	if (!is_ssdfs_segment_ready_for_requests(si)) {
-		err = ssdfs_wait_segment_init_end(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment initialization failed: "
-				  "seg %llu, err %d\n",
-				  si->seg_id, err);
-			goto finish_invalidate_index;
-		}
-	}
-
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1432,7 +1412,7 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 				  "peb_index %d, err %d\n",
 				  i, err);
 			ssdfs_put_request(req);
-			ssdfs_request_free(req, si);
+			ssdfs_request_free(req);
 			goto revert_invalidation_state;
 		}
 	}
@@ -1752,16 +1732,6 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 	start_blk = le32_to_cpu(index->index.extent.logical_blk);
 	len = le32_to_cpu(index->index.extent.len);
 
-	if (!is_ssdfs_segment_ready_for_requests(si)) {
-		err = ssdfs_wait_segment_init_end(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment initialization failed: "
-				  "seg %llu, err %d\n",
-				  si->seg_id, err);
-			goto finish_invalidate_index;
-		}
-	}
-
 	err = ssdfs_mark_segment_under_invalidation(si);
 	if (err) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1802,7 +1772,7 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 				  "peb_index %d, err %d\n",
 				  i, err);
 			ssdfs_put_request(req);
-			ssdfs_request_free(req, si);
+			ssdfs_request_free(req);
 			goto revert_invalidation_state;
 		}
 	}
@@ -1843,7 +1813,6 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_raw_extent *extent)
 {
 	struct ssdfs_segment_info *si;
-	struct ssdfs_segment_search_state seg_search;
 	u64 seg_id;
 	u32 start_blk;
 	u32 len;
@@ -1866,26 +1835,12 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 		  seg_id, start_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_segment_search_state_init(&seg_search,
-					SSDFS_USER_DATA_SEG_TYPE,
-					seg_id, U64_MAX);
-
-	si = ssdfs_grab_segment(fsi, &seg_search);
+	si = ssdfs_grab_segment(fsi, SSDFS_USER_DATA_SEG_TYPE, seg_id, U64_MAX);
 	if (unlikely(IS_ERR_OR_NULL(si))) {
 		SSDFS_ERR("fail to grab segment object: "
 			  "seg %llu, err %d\n",
 			  seg_id, err);
 		return PTR_ERR(si);
-	}
-
-	if (!is_ssdfs_segment_ready_for_requests(si)) {
-		err = ssdfs_wait_segment_init_end(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment initialization failed: "
-				  "seg %llu, err %d\n",
-				  si->seg_id, err);
-			goto finish_invalidate_extent;
-		}
 	}
 
 	err = ssdfs_mark_segment_under_invalidation(si);
@@ -1931,7 +1886,7 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 				  "peb_index %d, err %d\n",
 				  i, err);
 			ssdfs_put_request(req);
-			ssdfs_request_free(req, si);
+			ssdfs_request_free(req);
 			goto revert_invalidation_state;
 		}
 	}

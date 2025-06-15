@@ -657,10 +657,7 @@ int ssdfs_bdev_read(struct super_block *sb, u32 block_size,
 int ssdfs_bdev_can_write_block(struct super_block *sb, u32 block_size,
 				loff_t offset, bool need_check)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
-	struct ssdfs_signature *magic;
 	void *buf;
-	bool is_ssdfs_log_found;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -684,33 +681,17 @@ int ssdfs_bdev_can_write_block(struct super_block *sb, u32 block_size,
 
 	if (memchr_inv(buf, 0xff, block_size)) {
 		if (memchr_inv(buf, 0x00, block_size)) {
-			magic = (struct ssdfs_signature *)buf;
-
-			is_ssdfs_log_found =
-				__is_ssdfs_segment_header_magic_valid(magic) ||
-				is_ssdfs_partial_log_header_magic_valid(magic) ||
-				__is_ssdfs_log_footer_magic_valid(magic);
-
-			if (is_ssdfs_log_found &&
-			    is_ssdfs_uuid_and_fs_ctime_actual(fsi, buf)) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("area with offset %llu contains data\n",
-					  (unsigned long long)offset);
+			SSDFS_DBG("area with offset %llu contains data\n",
+				  (unsigned long long)offset);
 
-				SSDFS_DBG("PAGE DUMP:\n");
-				print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-						     buf,
-						     block_size);
-				SSDFS_DBG("\n");
+			SSDFS_DBG("PAGE DUMP:\n");
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     buf,
+					     PAGE_SIZE);
+			SSDFS_DBG("\n");
 #endif /* CONFIG_SSDFS_DEBUG */
-				err = -EIO;
-			} else {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("area with offset %llu contains data\n",
-					  (unsigned long long)offset);
-#endif /* CONFIG_SSDFS_DEBUG */
-				err = -EIO;
-			}
+			err = -EIO;
 		}
 	}
 

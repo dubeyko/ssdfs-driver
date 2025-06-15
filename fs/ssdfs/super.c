@@ -402,95 +402,6 @@ bool unfinished_user_data_requests_exist(struct ssdfs_fs_info *fsi)
 	return flush_requests > 0;
 }
 
-#ifdef CONFIG_SSDFS_DEBUG
-static inline
-void ssdfs_show_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
-{
-	bool is_empty;
-	struct list_head *this, *next;
-
-	spin_lock(&fsi->requests_lock);
-	is_empty = list_empty_careful(&fsi->user_data_requests_list);
-	if (!is_empty) {
-		list_for_each_safe(this, next, &fsi->user_data_requests_list) {
-			struct ssdfs_segment_request *req;
-
-			req = list_entry(this, struct ssdfs_segment_request,
-					 list);
-
-			if (!req) {
-				SSDFS_ERR_DBG("empty request ptr\n");
-				continue;
-			}
-
-			SSDFS_ERR_DBG("request: "
-				      "class %#x, cmd %#x, "
-				      "type %#x, refs_count %u, "
-				      "seg %llu, extent (start %u, len %u)\n",
-				      req->private.class, req->private.cmd,
-				      req->private.type,
-				      atomic_read(&req->private.refs_count),
-				      req->place.start.seg_id,
-				      req->place.start.blk_index,
-				      req->place.len);
-		}
-	}
-	spin_unlock(&fsi->requests_lock);
-
-	if (is_empty) {
-		SSDFS_ERR_DBG("list is empty\n");
-		return;
-	}
-}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-static inline
-void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
-{
-	if (unfinished_user_data_requests_exist(fsi)) {
-		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
-		u64 old_flush_requests, new_flush_requests;
-		int number_of_tries = 0;
-
-		while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
-			spin_lock(&fsi->volume_state_lock);
-			old_flush_requests =
-				fsi->flushing_user_data_requests;
-			spin_unlock(&fsi->volume_state_lock);
-
-			wait_event_killable_timeout(*wq,
-				!unfinished_user_data_requests_exist(fsi),
-				HZ);
-
-			if (!unfinished_user_data_requests_exist(fsi))
-				break;
-
-			spin_lock(&fsi->volume_state_lock);
-			new_flush_requests =
-				fsi->flushing_user_data_requests;
-			spin_unlock(&fsi->volume_state_lock);
-
-			if (old_flush_requests <= new_flush_requests)
-				number_of_tries++;
-		}
-
-		if (unfinished_user_data_requests_exist(fsi)) {
-			spin_lock(&fsi->volume_state_lock);
-			new_flush_requests =
-				fsi->flushing_user_data_requests;
-			spin_unlock(&fsi->volume_state_lock);
-
-			SSDFS_WARN("there are unfinished requests: "
-				   "unfinished_user_data_requests %llu\n",
-				   new_flush_requests);
-
-#ifdef CONFIG_SSDFS_DEBUG
-			ssdfs_show_unfinished_user_data_requests(fsi);
-#endif /* CONFIG_SSDFS_DEBUG */
-		}
-	}
-}
-
 static int ssdfs_sync_fs(struct super_block *sb, int wait)
 {
 	struct ssdfs_fs_info *fsi;
@@ -516,7 +427,21 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	wake_up_all(&fsi->pending_wq);
-	wait_unfinished_user_data_requests(fsi);
+
+	if (unfinished_user_data_requests_exist(fsi)) {
+		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
+
+		err = wait_event_killable_timeout(*wq,
+				!unfinished_user_data_requests_exist(fsi),
+				SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0)
+			WARN_ON(err < 0);
+		else
+			err = 0;
+
+		if (unfinished_user_data_requests_exist(fsi))
+			BUG();
+	}
 
 	atomic_set(&fsi->global_fs_state, SSDFS_METADATA_UNDER_FLUSH);
 
@@ -628,8 +553,6 @@ static int ssdfs_sync_fs(struct super_block *sb, int wait)
 	SSDFS_DBG("SSDFS_REGULAR_FS_OPERATIONS\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	wake_up_all(&fsi->pending_wq);
-
 #ifdef CONFIG_SSDFS_SHOW_CONSUMED_MEMORY
 	SSDFS_ERR("SYNCFS has been finished...\n");
 	ssdfs_check_memory_leaks();
@@ -691,10 +614,7 @@ static struct dentry *ssdfs_get_parent(struct dentry *child)
 	ino_t ino;
 	int err;
 
-	down_read(&SSDFS_I(d_inode(child))->lock);
 	err = ssdfs_inode_by_name(d_inode(child), &dotdot, &ino);
-	up_read(&SSDFS_I(d_inode(child))->lock);
-
 	if (unlikely(err))
 		return ERR_PTR(err);
 
@@ -968,13 +888,13 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 		last_sb_log->peb_id = fsi->sb_pebs[SSDFS_CUR_SB_SEG][i];
 		err = ssdfs_can_write_sb_log(sb, last_sb_log);
 		if (err) {
-			SSDFS_DBG("possibly logical block has data: "
-				  "PEB %llu: "
+			SSDFS_ERR("fail to write sb log into PEB %llu: "
 				  "last_sb_log->page_offset %u, "
 				  "last_sb_log->pages_count %u\n",
 				  last_sb_log->peb_id,
 				  last_sb_log->page_offset,
 				  last_sb_log->pages_count);
+			return err;
 		}
 	}
 
@@ -2948,13 +2868,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	atomic64_set(&fs_info->ssdfs_writeback_folios, 0);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
-	fs_info->fs_ctime = U64_MAX;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	spin_lock_init(&fs_info->requests_lock);
-	INIT_LIST_HEAD(&fs_info->user_data_requests_list);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 	/* set initial block size value for valid log search */
 	fs_info->log_pagesize = ilog2(SSDFS_4KB);
 	fs_info->pagesize = SSDFS_4KB;
@@ -3031,13 +2944,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	init_waitqueue_head(&fs_info->pending_wq);
 	init_waitqueue_head(&fs_info->finish_user_data_flush_wq);
 	init_waitqueue_head(&fs_info->finish_commit_log_flush_wq);
-	atomic_set(&fs_info->maptbl_users, 0);
-	init_waitqueue_head(&fs_info->maptbl_users_wq);
-	atomic_set(&fs_info->segbmap_users, 0);
-	init_waitqueue_head(&fs_info->segbmap_users_wq);
 	atomic_set(&fs_info->global_fs_state, SSDFS_UNKNOWN_GLOBAL_FS_STATE);
-	spin_lock_init(&fs_info->volume_state_lock);
-	init_completion(&fs_info->mount_end);
 
 	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
 		init_waitqueue_head(&fs_info->gc_wait_queue[i]);
@@ -3382,23 +3289,13 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	atomic_set(&fs_info->global_fs_state, SSDFS_REGULAR_FS_OPERATIONS);
-	complete_all(&fs_info->mount_end);
 
-	if (sb->s_flags & SB_RDONLY) {
-		SSDFS_INFO("%s (page %s, erase block %s, segment %s) has been mounted READ-ONLY on device %s\n",
-			   SSDFS_VERSION,
-			   GRANULARITY2STRING(fs_info->pagesize),
-			   GRANULARITY2STRING(fs_info->erasesize),
-			   GRANULARITY2STRING(fs_info->segsize),
-			   fs_info->devops->device_name(sb));
-	} else {
-		SSDFS_INFO("%s (page %s, erase block %s, segment %s) has been mounted on device %s\n",
-			   SSDFS_VERSION,
-			   GRANULARITY2STRING(fs_info->pagesize),
-			   GRANULARITY2STRING(fs_info->erasesize),
-			   GRANULARITY2STRING(fs_info->segsize),
-			   fs_info->devops->device_name(sb));
-	}
+	SSDFS_INFO("%s (page %s, erase block %s, segment %s) has been mounted on device %s\n",
+		   SSDFS_VERSION,
+		   GRANULARITY2STRING(fs_info->pagesize),
+		   GRANULARITY2STRING(fs_info->erasesize),
+		   GRANULARITY2STRING(fs_info->segsize),
+		   fs_info->devops->device_name(sb));
 
 	return 0;
 
@@ -3479,46 +3376,6 @@ bool unfinished_commit_log_requests_exist(struct ssdfs_fs_info *fsi)
 	return commit_log_requests > 0;
 }
 
-static inline
-void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
-{
-	if (unfinished_commit_log_requests_exist(fsi)) {
-		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
-		u64 old_commit_requests, new_commit_requests;
-		int number_of_tries = 0;
-
-		while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
-			spin_lock(&fsi->volume_state_lock);
-			old_commit_requests = fsi->commit_log_requests;
-			spin_unlock(&fsi->volume_state_lock);
-
-			wait_event_killable_timeout(*wq,
-				    !unfinished_commit_log_requests_exist(fsi),
-				    HZ);
-
-			if (!unfinished_commit_log_requests_exist(fsi))
-				break;
-
-			spin_lock(&fsi->volume_state_lock);
-			new_commit_requests = fsi->commit_log_requests;
-			spin_unlock(&fsi->volume_state_lock);
-
-			if (old_commit_requests <= new_commit_requests)
-				number_of_tries++;
-		}
-
-		if (unfinished_commit_log_requests_exist(fsi)) {
-			spin_lock(&fsi->volume_state_lock);
-			new_commit_requests = fsi->commit_log_requests;
-			spin_unlock(&fsi->volume_state_lock);
-
-			SSDFS_WARN("there are unfinished commit log requests: "
-				   "commit_log_requests %llu\n",
-				   new_commit_requests);
-		}
-	}
-}
-
 static void ssdfs_put_super(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
@@ -3528,7 +3385,6 @@ static void ssdfs_put_super(struct super_block *sb)
 	u16 fs_state;
 	bool can_commit_super = true;
 	int i;
-	int res;
 	int err;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3537,10 +3393,10 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("sb %p\n", sb);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-	atomic_set(&fsi->global_fs_state, SSDFS_UNMOUNT_METADATA_GOING_FLUSHING);
+	atomic_set(&fsi->global_fs_state, SSDFS_METADATA_GOING_FLUSHING);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("SSDFS_UNMOUNT_METADATA_GOING_FLUSHING\n");
+	SSDFS_DBG("SSDFS_METADATA_GOING_FLUSHING\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	wake_up_all(&fsi->pending_wq);
@@ -3644,22 +3500,28 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("Wait unfinished user data requests...\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	wait_unfinished_user_data_requests(fsi);
+	if (unfinished_user_data_requests_exist(fsi)) {
+		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
+
+		err = wait_event_killable_timeout(*wq,
+				!unfinished_user_data_requests_exist(fsi),
+				SSDFS_DEFAULT_TIMEOUT);
+		if (err < 0)
+			WARN_ON(err < 0);
+		else
+			err = 0;
+
+		if (unfinished_user_data_requests_exist(fsi))
+			BUG();
+	}
+
+	atomic_set(&fsi->global_fs_state, SSDFS_METADATA_UNDER_FLUSH);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("Wait unfinished commit log requests...\n");
+	SSDFS_DBG("SSDFS_METADATA_UNDER_FLUSH\n");
 #endif /* CONFIG_SSDFS_DEBUG */
-
-	wait_unfinished_commit_log_requests(fsi);
 
 	if (!(sb->s_flags & SB_RDONLY)) {
-		atomic_set(&fsi->global_fs_state,
-				SSDFS_UNMOUNT_METADATA_UNDER_FLUSH);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("SSDFS_UNMOUNT_METADATA_UNDER_FLUSH\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		down_write(&fsi->volume_sem);
 
 		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
@@ -3753,26 +3615,6 @@ static void ssdfs_put_super(struct super_block *sb)
 			}
 		}
 
-		if (atomic_read(&fsi->segbmap_users) > 0) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("Wait absence of segment bitmap's users...\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			res = wait_event_killable_timeout(fsi->segbmap_users_wq,
-					atomic_read(&fsi->segbmap_users) <= 0,
-					SSDFS_DEFAULT_TIMEOUT);
-			if (res < 0) {
-				WARN_ON(1);
-			} else if (res > 1) {
-				/*
-				 * Condition changed before timeout
-				 */
-			} else {
-				/* timeout is elapsed */
-				WARN_ON(1);
-			}
-		}
-
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 		SSDFS_ERR("Flush segment bitmap...\n");
 #else
@@ -3791,26 +3633,19 @@ static void ssdfs_put_super(struct super_block *sb)
 		SSDFS_DBG("Wait unfinished commit log requests...\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		wait_unfinished_commit_log_requests(fsi);
+		if (unfinished_commit_log_requests_exist(fsi)) {
+			wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
 
-		if (atomic_read(&fsi->maptbl_users) > 0) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("Wait absence of mapping table users...\n");
-#endif /* CONFIG_SSDFS_DEBUG */
+			err = wait_event_killable_timeout(*wq,
+				    !unfinished_commit_log_requests_exist(fsi),
+				    SSDFS_DEFAULT_TIMEOUT);
+			if (err < 0)
+				WARN_ON(err < 0);
+			else
+				err = 0;
 
-			res = wait_event_killable_timeout(fsi->maptbl_users_wq,
-					atomic_read(&fsi->maptbl_users) <= 0,
-					SSDFS_DEFAULT_TIMEOUT);
-			if (res < 0) {
-				WARN_ON(1);
-			} else if (res > 1) {
-				/*
-				 * Condition changed before timeout
-				 */
-			} else {
-				/* timeout is elapsed */
-				WARN_ON(1);
-			}
+			if (unfinished_commit_log_requests_exist(fsi))
+				BUG();
 		}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -3819,13 +3654,6 @@ static void ssdfs_put_super(struct super_block *sb)
 		SSDFS_DBG("Flush PEB mapping table...\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-		atomic_set(&fsi->global_fs_state,
-				SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 		if (fs_feature_compat & SSDFS_HAS_MAPTBL_COMPAT_FLAG) {
 			err = ssdfs_maptbl_flush(fsi->maptbl);
 			if (err) {
@@ -3833,7 +3661,6 @@ static void ssdfs_put_super(struct super_block *sb)
 					  "err %d\n", err);
 			}
 
-			wait_unfinished_commit_log_requests(fsi);
 			set_maptbl_going_to_be_destroyed(fsi);
 		}
 
@@ -3842,13 +3669,6 @@ static void ssdfs_put_super(struct super_block *sb)
 #else
 		SSDFS_DBG("Commit superblock...\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-		atomic_set(&fsi->global_fs_state,
-				SSDFS_UNMOUNT_COMMIT_SUPERBLOCK);
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("SSDFS_UNMOUNT_COMMIT_SUPERBLOCK\n");
-#endif /* CONFIG_SSDFS_DEBUG */
 
 		if (can_commit_super) {
 			err = ssdfs_snapshot_sb_log_payload(sb, &payload);
@@ -3893,13 +3713,6 @@ static void ssdfs_put_super(struct super_block *sb)
 			SSDFS_DBG("Commit superblock...\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
-			atomic_set(&fsi->global_fs_state,
-					SSDFS_UNMOUNT_COMMIT_SUPERBLOCK);
-
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("SSDFS_UNMOUNT_COMMIT_SUPERBLOCK\n");
-#endif /* CONFIG_SSDFS_DEBUG */
-
 			if (!err) {
 				err = ssdfs_commit_super(sb, SSDFS_ERROR_FS,
 							 &last_sb_log,
@@ -3915,10 +3728,10 @@ static void ssdfs_put_super(struct super_block *sb)
 		}
 	}
 
-	atomic_set(&fsi->global_fs_state, SSDFS_UNMOUNT_DESTROY_METADATA);
+	atomic_set(&fsi->global_fs_state, SSDFS_UNKNOWN_GLOBAL_FS_STATE);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("SSDFS_UNMOUNT_DESTROY_METADATA\n");
+	SSDFS_DBG("SSDFS_UNKNOWN_GLOBAL_FS_STATE\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_super_folio_batch_release(&payload.maptbl_cache.batch);
@@ -3974,8 +3787,6 @@ static void ssdfs_put_super(struct super_block *sb)
 #else
 	SSDFS_DBG("All metadata structures have been destroyed...\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	SSDFS_INFO("All metadata structures have been destroyed\n");
 }
 
 static struct dentry *ssdfs_mount(struct file_system_type *fs_type,

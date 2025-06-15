@@ -86,13 +86,10 @@ struct ssdfs_thread_state {
 	int state;
 	struct ssdfs_segment_request *req;
 	struct ssdfs_segment_request *postponed_req;
+	bool skip_finish_flush_request;
 	bool has_extent_been_invalidated;
 	bool has_migration_check_requested;
 	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	int unfinished_reqs;
-#endif /* CONFIG_SSDFS_DEBUG */
 };
 
 /*
@@ -267,109 +264,10 @@ void SSDFS_THREAD_STATE_INIT(struct ssdfs_thread_state *thread_state)
 	thread_state->state = SSDFS_THREAD_UNKNOWN_STATE;
 	thread_state->req = NULL;
 	thread_state->postponed_req = NULL;
+	thread_state->skip_finish_flush_request = false;
 	thread_state->has_extent_been_invalidated = false;
 	thread_state->has_migration_check_requested = false;
 	thread_state->err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	thread_state->unfinished_reqs = 0;
-#endif /* CONFIG_SSDFS_DEBUG */
-}
-
-/*
- * ssdfs_peb_container_lock() - lock PEB container
- * @pebc: pointer on PEB container object
- */
-static inline
-void ssdfs_peb_container_lock(struct ssdfs_peb_container *pebc)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebc);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	down_read(&pebc->lock);
-	mutex_lock(&pebc->migration_lock);
-}
-
-/*
- * ssdfs_peb_container_unlock() - unlock PEB container
- * @pebc: pointer on PEB container object
- */
-static inline
-void ssdfs_peb_container_unlock(struct ssdfs_peb_container *pebc)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebc);
-	WARN_ON(!mutex_is_locked(&pebc->migration_lock));
-	WARN_ON(!rwsem_is_locked(&pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	mutex_unlock(&pebc->migration_lock);
-	up_read(&pebc->lock);
-}
-
-/*
- * is_ssdfs_peb_container_locked() - is PEB container locked?
- * @pebc: pointer on PEB container object
- */
-static inline
-bool is_ssdfs_peb_container_locked(struct ssdfs_peb_container *pebc)
-{
-	return rwsem_is_locked(&pebc->lock) &&
-		mutex_is_locked(&pebc->migration_lock);
-}
-
-/*
- * ssdfs_peb_current_log_lock() - lock current log object
- * @pebi: pointer on PEB object
- */
-static inline
-void ssdfs_peb_current_log_lock(struct ssdfs_peb_info *pebi)
-{
-	int err;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-	BUG_ON(!rwsem_is_locked(&pebi->pebc->lock));
-	BUG_ON(!mutex_is_locked(&pebi->pebc->migration_lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	err = mutex_lock_killable(&pebi->current_log.lock);
-	WARN_ON(err);
-}
-
-/*
- * ssdfs_peb_current_log_unlock() - unlock current log object
- * @pebi: pointer on PEB object
- */
-static inline
-void ssdfs_peb_current_log_unlock(struct ssdfs_peb_info *pebi)
-{
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-	BUG_ON(!pebi->pebc);
-	WARN_ON(!mutex_is_locked(&pebi->current_log.lock));
-	WARN_ON(!mutex_is_locked(&pebi->pebc->migration_lock));
-	WARN_ON(!rwsem_is_locked(&pebi->pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	mutex_unlock(&pebi->current_log.lock);
-}
-
-static inline
-bool is_ssdfs_peb_current_log_locked(struct ssdfs_peb_info *pebi)
-{
-	bool is_locked;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!pebi);
-	WARN_ON(!mutex_is_locked(&pebi->pebc->migration_lock));
-	WARN_ON(!rwsem_is_locked(&pebi->pebc->lock));
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	is_locked = mutex_is_locked(&pebi->current_log.lock);
-
-	return is_locked;
 }
 
 /*

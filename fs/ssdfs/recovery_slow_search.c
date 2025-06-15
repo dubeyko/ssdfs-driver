@@ -534,8 +534,7 @@ int ssdfs_recovery_try_slow_search(struct ssdfs_recovery_env *env)
 	vh = SSDFS_VH(env->sbi.vh_buf);
 	magic_valid = is_ssdfs_magic_valid(&vh->magic);
 
-	if (err || !magic_valid ||
-	    !is_ssdfs_uuid_and_fs_ctime_actual(env->fsi, vh)) {
+	if (err || !magic_valid) {
 		err = -ENODATA;
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("peb %llu is corrupted\n",
