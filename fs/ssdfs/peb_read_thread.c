@@ -9776,6 +9776,8 @@ int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
 	}
 
 	do {
+		struct ssdfs_btree_search_buffer *buf;
+
 		extent.seg_id = cpu_to_le64(si->seg_id);
 		extent.logical_blk = cpu_to_le32(logical_blk);
 		extent.len = cpu_to_le32(len);
@@ -9796,16 +9798,17 @@ int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
 			goto finish_correct_zone_block_bmap;
 		}
 
-		count = search->result.items_in_buffer;
+		buf = &search->result.raw_buf;
+		count = buf->items_count;
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!search->result.buf);
+		BUG_ON(!buf->place.ptr);
 		BUG_ON(count == 0);
-		BUG_ON((count * item_size) != search->result.buf_size);
+		BUG_ON((count * item_size) != buf->size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		for (i = 0; i < count; i++) {
-			found = (struct ssdfs_raw_extent *)search->result.buf;
+			found = (struct ssdfs_raw_extent *)buf->place.ptr;
 			found += i;
 
 			err = ssdfs_shextree_add_pre_invalid_extent(shextree,
@@ -9823,7 +9826,7 @@ int ssdfs_correct_zone_block_bitmap(struct ssdfs_peb_info *pebi)
 			}
 		}
 
-		found = (struct ssdfs_raw_extent *)search->result.buf;
+		found = (struct ssdfs_raw_extent *)buf->place.ptr;
 		found += count - 1;
 
 		logical_blk = le32_to_cpu(found->logical_blk) +

@@ -5632,7 +5632,7 @@ finish_tree_processing:
 
 		for (j = 0; j < items_count; j++) {
 			struct ssdfs_snapshot *snapshot = NULL;
-			u8 *start_ptr = (u8 *)search->result.buf;
+			u8 *start_ptr = (u8 *)search->result.raw_buf.place.ptr;
 
 			snapshot = (struct ssdfs_snapshot *)(start_ptr +
 							(j * desc_size));

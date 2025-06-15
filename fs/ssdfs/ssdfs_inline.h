@@ -1978,6 +1978,13 @@ int ssdfs_memcpy_from_batch(void *dst, u32 dst_off, u32 dst_size,
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("index %d, batch_size %u, "
+		  "offset %u, src_off %u, "
+		  "folio_size %zu\n",
+		  index, batch_size,
+		  offset, src_off,
+		  folio_size(folio));
+
 	BUG_ON(index >= folio_batch_count(batch));
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -3018,6 +3025,8 @@ void ssdfs_check_jiffies_left_till_timeout(unsigned long value)
 	((struct ssdfs_snapshot_rules_header *)(ptr))
 #define SSDFS_SNRU_INFO(ptr) \
 	((struct ssdfs_snapshot_rule_info *)(ptr))
+#define SSDFS_RAW_FORK(ptr) \
+	((struct ssdfs_raw_fork *)(ptr))
 
 #define SSDFS_LEB2SEG(fsi, leb) \
 	((u64)ssdfs_get_seg_id_for_leb_id(fsi, leb))

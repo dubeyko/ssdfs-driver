@@ -1979,6 +1979,18 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 
 	BUG_ON(to.compr_size == 0);
 
+	err = ssdfs_peb_grow_log_area(pebi, type, from->data_bytes);
+	if (err == -ENOSPC || err == -EAGAIN) {
+		err = -EAGAIN;
+		SSDFS_DBG("log is full\n");
+		goto free_compr_buffer;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to grow log area: "
+			  "type %#x, err %d\n",
+			  type, err);
+		goto free_compr_buffer;
+	}
+
 	do {
 		struct ssdfs_folio_array *area_folios;
 		u32 size;

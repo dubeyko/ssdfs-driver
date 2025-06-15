@@ -168,7 +168,7 @@ int ssdfs_inode_by_name(struct inode *dir,
 			goto dentry_is_not_available;
 		}
 
-		switch (search->result.buf_state) {
+		switch (search->result.raw_buf.state) {
 		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 		case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 			/* expected state */
@@ -177,25 +177,26 @@ int ssdfs_inode_by_name(struct inode *dir,
 		default:
 			err = -ERANGE;
 			SSDFS_ERR("invalid buffer state %#x\n",
-				  search->result.buf_state);
+				  search->result.raw_buf.state);
 			goto dentry_is_not_available;
 		}
 
-		if (!search->result.buf) {
+		if (!search->result.raw_buf.place.ptr) {
 			err = -ERANGE;
 			SSDFS_ERR("buffer is absent\n");
 			goto dentry_is_not_available;
 		}
 
-		if (search->result.buf_size < dentry_size) {
+		if (search->result.raw_buf.size < dentry_size) {
 			err = -ERANGE;
 			SSDFS_ERR("buf_size %zu < dentry_size %zu\n",
-				  search->result.buf_size,
+				  search->result.raw_buf.size,
 				  dentry_size);
 			goto dentry_is_not_available;
 		}
 
-		raw_dentry = (struct ssdfs_dir_entry *)search->result.buf;
+		raw_dentry =
+		    (struct ssdfs_dir_entry *)search->result.raw_buf.place.ptr;
 
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(le64_to_cpu(raw_dentry->ino) >= U32_MAX);
@@ -1687,10 +1688,10 @@ int ssdfs_dentries_tree_check_search_result(struct ssdfs_btree_search *search)
 		return  -ERANGE;
 	}
 
-	switch (search->result.buf_state) {
+	switch (search->result.raw_buf.state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
-		if (!search->result.buf) {
+		if (!search->result.raw_buf.place.ptr) {
 			SSDFS_ERR("buffer pointer is NULL\n");
 			return -ERANGE;
 		}
@@ -1702,10 +1703,10 @@ int ssdfs_dentries_tree_check_search_result(struct ssdfs_btree_search *search)
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(search->result.items_in_buffer >= U16_MAX);
+	BUG_ON(search->result.raw_buf.items_count >= U16_MAX);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	items_count = (u16)search->result.items_in_buffer;
+	items_count = (u16)search->result.raw_buf.items_count;
 
 	if (items_count == 0) {
 		SSDFS_ERR("items_in_buffer %u\n",
@@ -1719,10 +1720,10 @@ int ssdfs_dentries_tree_check_search_result(struct ssdfs_btree_search *search)
 
 	buf_size = dentry_size * items_count;
 
-	if (buf_size != search->result.buf_size) {
-		SSDFS_ERR("buf_size %zu != search->result.buf_size %zu\n",
+	if (buf_size != search->result.raw_buf.size) {
+		SSDFS_ERR("buf_size %zu != search->result.raw_buf.size %zu\n",
 			  buf_size,
-			  search->result.buf_size);
+			  search->result.raw_buf.size);
 		return -ERANGE;
 	}
 
@@ -2040,7 +2041,7 @@ finish_tree_processing:
 		items_count = search->result.count;
 
 		for (i = 0; i < items_count; i++) {
-			u8 *start_ptr = (u8 *)search->result.buf;
+			u8 *start_ptr = (u8 *)search->result.raw_buf.place.ptr;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("start_pos %llu, ctx->pos %llu\n",
@@ -2072,9 +2073,10 @@ finish_tree_processing:
 				 * These items were created already.
 				 * Simply skip the case.
 				 */
-			} else if (dentry->flags & SSDFS_DENTRY_HAS_EXTERNAL_STRING) {
+			} else if (dentry->flags &
+					SSDFS_DENTRY_HAS_EXTERNAL_STRING) {
 				err = ssdfs_shared_dict_get_name(dict, hash,
-								 &search->name);
+							&search->name.string);
 				if (unlikely(err)) {
 					SSDFS_ERR("fail to extract the name: "
 						  "hash %llx, err %d\n",
@@ -2087,15 +2089,15 @@ finish_tree_processing:
 					  "name_len %zu, "
 					  "ino %llu, hash %llx\n",
 					  ctx->pos,
-					  search->name.str,
-					  search->name.len,
+					  search->name.string.str,
+					  search->name.string.len,
 					  le64_to_cpu(dentry->ino),
 					  hash);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 				if (!dir_emit(ctx,
-				    search->name.str,
-				    search->name.len,
+				    search->name.string.str,
+				    search->name.string.len,
 				    (ino_t)le64_to_cpu(dentry->ino),
 				    ssdfs_filetype_table[dentry->file_type])) {
 					/* stopped by some reason */

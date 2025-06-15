@@ -730,7 +730,8 @@ int ssdfs_execute_list_snapshots_request(struct ssdfs_snapshot_subsystem *ptr,
 
 			for (i = 0; i < items_count; i++) {
 				struct ssdfs_snapshot_details tmp = {0};
-				u8 *start_ptr = (u8 *)search->result.buf;
+				u8 *start_ptr =
+					(u8 *)search->result.raw_buf.place.ptr;
 
 				if ((written_bytes + desc_size) >
 							snr->info.buf_size) {

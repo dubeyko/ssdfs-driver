@@ -836,6 +836,9 @@ int ssdfs_btree_prepare_insert_item(struct ssdfs_btree_level *level,
 	u16 items_count;
 	u16 min_item_size, max_item_size;
 	u32 insert_size;
+	bool node_has_enough_free_space = false;
+	size_t lookup2_desc_size = sizeof(struct ssdfs_shdict_ltbl2_item);
+	size_t hash_desc_size = sizeof(struct ssdfs_shdict_htbl_item);
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1017,7 +1020,20 @@ finish_prepare_level:
 	BUG_ON(!parent);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (level->items_area.free_space < insert_size) {
+	switch (node->tree->type) {
+	case SSDFS_SHARED_DICTIONARY_BTREE:
+		insert_size += lookup2_desc_size + hash_desc_size;
+		node_has_enough_free_space =
+			level->items_area.free_space >= insert_size;
+		break;
+
+	default:
+		node_has_enough_free_space =
+			level->items_area.free_space >= insert_size;
+		break;
+	}
+
+	if (!node_has_enough_free_space) {
 		u16 moving_items;
 
 		if (can_add_new_index(parent))

@@ -821,6 +821,17 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 		goto finish_invalidate_index;
 	}
 
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
+	}
+
 	blk = &content->blocks[0];
 	folio = blk->batch.folios[0];
 
@@ -1175,6 +1186,17 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
+	}
+
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
 	}
 
 	blk = &content->blocks[0];
@@ -1546,6 +1568,17 @@ int ssdfs_invalidate_xattrs_btree_index(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("empty node's content: id %u\n",
 			  le32_to_cpu(index->node_id));
 		goto finish_invalidate_index;
+	}
+
+	for (i = 0; i < content->count; i++) {
+		blk = &content->blocks[i];
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(folio_batch_count(&blk->batch) == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
 	}
 
 	blk = &content->blocks[0];

@@ -4748,7 +4748,7 @@ try_find_item_again:
 	}
 
 	if (err == -EAGAIN) {
-		if (search->result.items_in_buffer > 0 &&
+		if (search->result.raw_buf.items_count > 0 &&
 		    search->result.state == SSDFS_BTREE_SEARCH_VALID_ITEM) {
 			/* finish search */
 			err = 0;
@@ -4998,7 +4998,7 @@ try_find_range_again:
 	}
 
 	if (err == -EAGAIN) {
-		if (search->result.items_in_buffer > 0 &&
+		if (search->result.raw_buf.items_count > 0 &&
 		    search->result.state == SSDFS_BTREE_SEARCH_VALID_ITEM) {
 			/* finish search */
 			err = 0;
@@ -5589,6 +5589,7 @@ try_find_item:
 		goto finish_add_item;
 	}
 
+try_add_node:
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE) {
 		up_read(&tree->lock);
 		err = ssdfs_btree_insert_node(tree, search);
@@ -5663,6 +5664,9 @@ try_insert_item:
 			goto finish_add_item;
 		} else
 			goto try_find_item;
+	} else if (err == -ENOSPC) {
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		goto try_add_node;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
 			  "start_hash %llx, end_hash %llx, "
@@ -5838,6 +5842,7 @@ try_find_range:
 		goto finish_add_range;
 	}
 
+try_add_node:
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE) {
 		up_read(&tree->lock);
 		err = ssdfs_btree_insert_node(tree, search);
@@ -5915,6 +5920,9 @@ try_insert_range:
 			goto finish_add_range;
 		} else
 			goto try_find_range;
+	} else if (err == -ENOSPC) {
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		goto try_add_node;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
 			  "start_hash %llx, end_hash %llx, "
