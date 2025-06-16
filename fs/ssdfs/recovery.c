@@ -179,6 +179,8 @@ int ssdfs_init_sb_snap_info(struct ssdfs_fs_info *fsi,
 	BUG_ON(!fsi || !sb_snapi);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	sb_snapi->need_snapshot_sb = false;
+
 	sb_snapi->hdr_buf = NULL;
 	memset(&sb_snapi->last_log, 0, sizeof(sb_snapi->last_log));
 
@@ -223,6 +225,7 @@ void ssdfs_destruct_sb_snap_info(struct ssdfs_sb_snapshot_seg_info *sb_snapi)
 	sb_snapi->hdr_buf = NULL;
 	sb_snapi->buf_size = 0;
 	memset(&sb_snapi->last_log, 0, sizeof(struct ssdfs_peb_extent));
+	sb_snapi->need_snapshot_sb = false;
 }
 
 void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)

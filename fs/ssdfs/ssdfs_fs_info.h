@@ -123,12 +123,14 @@ struct ssdfs_sb_info {
 
 /*
  * struct ssdfs_sb_snapshot_seg_info - superblock snapshot segment info
+ * @need_snapshot_sb: does it need to snapshot superblock state?
  * @hdr_buf: header buffer
  * @buf_size: size of buffer in bytes
  * @sequence_id: index of partial log in the sequence
  * @last_log: latest segment log
  */
 struct ssdfs_sb_snapshot_seg_info {
+	bool need_snapshot_sb;
 	void *hdr_buf;
 	size_t buf_size;
 	int sequence_id;

@@ -116,7 +116,7 @@ enum {
 #define SSDFS_WEEKS_PER_MONTH		(4)
 #define SSDFS_EXTENT_LEN_MAX		(8)
 #define SSDFS_MAX_NUMBER_OF_TRIES	(10)
-#define SSDFS_SB_SNAPSHOT_LOG_PAGES	(1)
+#define SSDFS_SB_SNAPSHOT_LOG_PAGES	(2)
 
 /*
  * Every PEB contains a sequence of logs. Log starts from
