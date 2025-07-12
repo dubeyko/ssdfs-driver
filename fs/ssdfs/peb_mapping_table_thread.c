@@ -2840,8 +2840,16 @@ check_next_step:
 	}
 
 sleep_maptbl_thread:
-	wait_event_interruptible(*wait_queue,
-				 MAPTBL_THREAD_WAKE_CONDITION(tbl, cache));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!MAPTBL_THREAD_WAKE_CONDITION(tbl, cache)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
 
 sleep_failed_maptbl_thread:

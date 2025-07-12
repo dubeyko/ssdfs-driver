@@ -522,8 +522,16 @@ finish_snapshots_tree_processing:
 	}
 
 sleep_snapshots_btree_thread:
-	wait_event_interruptible(*wait_queue,
-				 SNAPTREE_THREAD_WAKE_CONDITION(tree));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!SNAPTREE_THREAD_WAKE_CONDITION(tree)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
 
 sleep_failed_snapshots_btree_thread:

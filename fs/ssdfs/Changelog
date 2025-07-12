@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.21 [July 12, 2025]
+    (*) Fix several issues in multiple PEBs in segment functionality.
+
 v.5.20 [May 31, 2025]
     (*) Fix small issues in b-tree functionality.
 

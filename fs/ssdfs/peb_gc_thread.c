@@ -771,6 +771,7 @@ int ssdfs_peb_gc_thread_func(void *data)
 {
 	struct ssdfs_peb_container *pebc = data;
 	wait_queue_head_t *wait_queue;
+	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
@@ -796,7 +797,16 @@ repeat:
 	/*return -ENOSYS;*/
 
 sleep_gc_thread:
-	wait_event_interruptible(*wait_queue, GC_THREAD_WAKE_CONDITION(pebi));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!GC_THREAD_WAKE_CONDITION(pebi)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
 }
 
@@ -2545,8 +2555,16 @@ finish_seg_processing:
 		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
 	}
 
-	wait_event_interruptible(*wq,
-		GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wq, &wait);
+	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wq, &wait);
 	goto repeat;
 
 sleep_failed_gc_thread:
@@ -2915,8 +2933,16 @@ finish_seg_processing:
 		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
 	}
 
-	wait_event_interruptible(*wq,
-		GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wq, &wait);
+	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wq, &wait);
 	goto repeat;
 
 sleep_failed_gc_thread:

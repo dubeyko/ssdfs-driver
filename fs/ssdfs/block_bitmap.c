@@ -5051,6 +5051,46 @@ int ssdfs_block_bmap_get_pages_capacity(struct ssdfs_block_bmap *blk_bmap)
 }
 
 /*
+ * ssdfs_block_bmap_get_allocation_pool() - get allocation pool
+ * @blk_bmap: pointer on block bitmap
+ *
+ * This function tries to get allocation pool in block bitmap.
+ *
+ * RETURN:
+ * [success] - allocation pool number.
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input value.
+ * %-ENOENT     - block bitmap doesn't initialized.
+ */
+int ssdfs_block_bmap_get_allocation_pool(struct ssdfs_block_bmap *blk_bmap)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap mutex should be locked\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
+	}
+
+	return blk_bmap->allocation_pool;
+}
+
+/*
  * ssdfs_block_bmap_get_metadata_pages() - get metadata pages
  * @blk_bmap: pointer on block bitmap
  *
@@ -5760,8 +5800,9 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 
 	SSDFS_DBG("blk_bmap %p, start %u, max_len %u\n",
 		  blk_bmap, start, max_len);
-	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+	SSDFS_DBG("items_capacity %zu, allocation_pool %zu, used_blks %u, "
 		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->items_capacity,
 		  blk_bmap->allocation_pool,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
@@ -5794,17 +5835,17 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	};
 
-	if (start > blk_bmap->allocation_pool) {
+	if (start > blk_bmap->items_capacity) {
 		SSDFS_ERR("invalid request: "
-			  "start %u > allocation_pool %zu\n",
-			  start, blk_bmap->allocation_pool);
+			  "start %u > items_capacity %zu\n",
+			  start, blk_bmap->items_capacity);
 		return -EINVAL;
 	}
 
-	upper_bound = min_t(u32, (u32)blk_bmap->allocation_pool,
+	upper_bound = min_t(u32, (u32)blk_bmap->items_capacity,
 				start + max_len);
 	max_len = min_t(u32, max_len,
-				(u32)blk_bmap->allocation_pool - start);
+				(u32)blk_bmap->items_capacity - start);
 
 	err = ssdfs_block_bmap_find_range(blk_bmap, start, max_len,
 					  upper_bound, blk_state, range);

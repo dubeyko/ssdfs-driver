@@ -337,14 +337,22 @@ try_process_queue:
 
 sleep_shared_dict_thread:
 	wake_up_all(&tree->wait_queue);
-	wait_event_interruptible(*wait_queue,
-				 SHDICT_THREAD_WAKE_CONDITION(tree));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!SHDICT_THREAD_WAKE_CONDITION(tree)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
 
 sleep_failed_shared_dict_thread:
 	wake_up_all(&tree->wait_queue);
 	wait_event_interruptible(*wait_queue,
-		SHDICT_FAILED_THREAD_WAKE_CONDITION());
+			SHDICT_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
 }
 

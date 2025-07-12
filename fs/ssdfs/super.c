@@ -451,6 +451,7 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
 		u64 old_flush_requests, new_flush_requests;
 		int number_of_tries = 0;
+		int err;
 
 		while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
 			spin_lock(&fsi->volume_state_lock);
@@ -458,9 +459,19 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 				fsi->flushing_user_data_requests;
 			spin_unlock(&fsi->volume_state_lock);
 
-			wait_event_killable_timeout(*wq,
-				!unfinished_user_data_requests_exist(fsi),
-				HZ);
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
+			add_wait_queue(wq, &wait);
+			while (unfinished_user_data_requests_exist(fsi)) {
+				if (signal_pending(current)) {
+					err = -ERESTARTSYS;
+					break;
+				}
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
+			}
+			remove_wait_queue(wq, &wait);
+
+			if (unlikely(err))
+				break;
 
 			if (!unfinished_user_data_requests_exist(fsi))
 				break;
@@ -3486,15 +3497,26 @@ void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
 		wait_queue_head_t *wq = &fsi->finish_user_data_flush_wq;
 		u64 old_commit_requests, new_commit_requests;
 		int number_of_tries = 0;
+		int err;
 
 		while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
 			spin_lock(&fsi->volume_state_lock);
 			old_commit_requests = fsi->commit_log_requests;
 			spin_unlock(&fsi->volume_state_lock);
 
-			wait_event_killable_timeout(*wq,
-				    !unfinished_commit_log_requests_exist(fsi),
-				    HZ);
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
+			add_wait_queue(wq, &wait);
+			while (unfinished_commit_log_requests_exist(fsi)) {
+				if (signal_pending(current)) {
+					err = -ERESTARTSYS;
+					break;
+				}
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
+			}
+			remove_wait_queue(wq, &wait);
+
+			if (unlikely(err))
+				break;
 
 			if (!unfinished_commit_log_requests_exist(fsi))
 				break;

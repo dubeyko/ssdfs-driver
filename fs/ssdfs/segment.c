@@ -2425,7 +2425,10 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 				new_seg_state = SSDFS_SEG_CLEAN;
 			} else {
 				err = -ERANGE;
-				SSDFS_ERR("free_pages %d == pages_per_seg %u\n",
+				SSDFS_ERR("invalid state: "
+					  "invalid_pages %d, used_logical_blks %u, "
+					  "free_pages %d, pages_per_seg %u\n",
+					  invalid_pages, used_logical_blks,
 					  free_pages, pages_per_seg);
 				goto finish_segment_state_change;
 			}

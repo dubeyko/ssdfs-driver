@@ -8837,11 +8837,21 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		up_read(&table->translation_lock);
-		wait_event_interruptible_timeout(table->wait_queue,
-				has_logical_block_id_assigned(table,
-							logical_blk),
-				SSDFS_DEFAULT_TIMEOUT);
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+		add_wait_queue(&table->wait_queue, &wait);
+		while (!has_logical_block_id_assigned(table, logical_blk)) {
+			if (signal_pending(current)) {
+				err = -ERESTARTSYS;
+				break;
+			}
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+					SSDFS_DEFAULT_TIMEOUT);
+		}
+		remove_wait_queue(&table->wait_queue, &wait);
 		down_read(&table->translation_lock);
+
+		if (unlikely(err))
+			goto finish_translation;
 
 		err = ssdfs_blk2off_table_get_checked_position(table,
 								logical_blk,

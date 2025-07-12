@@ -221,8 +221,16 @@ do_fsck_check_now:
 /* TODO: add main logic */
 
 sleep_fsck_thread:
-	wait_event_interruptible(*wait_queue,
-				 FSCK_THREAD_WAKE_CONDITION(pebc));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(*wait_queue, &wait);
+	while (!FSCK_THREAD_WAKE_CONDITION(pebc)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(*wait_queue, &wait);
 	goto repeat;
 
 sleep_failed_fsck_thread:

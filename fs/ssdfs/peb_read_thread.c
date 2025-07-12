@@ -14436,9 +14436,18 @@ repeat:
 
 sleep_read_thread:
 	wake_up_all(wait_queue);
-	wait_event_interruptible_timeout(*wait_queue,
-					 READ_THREAD_WAKE_CONDITION(pebc),
-					 timeout);
+
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!READ_THREAD_WAKE_CONDITION(pebc)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, timeout);
+	}
+	remove_wait_queue(wait_queue, &wait);
+
 	if (!is_ssdfs_requests_queue_empty(&pebc->read_rq)) {
 		/* do requests processing */
 		goto repeat;

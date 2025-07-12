@@ -1292,7 +1292,9 @@ try_finish_migration_now:
 
 		if (range1.len == 0 && range2.len == 0) {
 			err = -ERANGE;
-			SSDFS_ERR("no valid blocks were found\n");
+			SSDFS_ERR("no valid blocks were found: "
+				  "seg_id %llu, used_pages %d\n",
+				  si->seg_id, used_pages);
 			goto finish_migration_done;
 		}
 

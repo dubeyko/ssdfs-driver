@@ -2115,6 +2115,7 @@ bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
 	int free_pages;
 	int invalid_pages;
 	int pages_capacity;
+	int allocation_pool;
 	int metadata_pages;
 	bool is_balance_correct = false;
 	int err;
@@ -2171,7 +2172,32 @@ bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
 		goto finish_check_block_bmap;
 	}
 
+	allocation_pool = ssdfs_block_bmap_get_allocation_pool(bmap);
+	if (allocation_pool < 0) {
+		err = allocation_pool;
+		SSDFS_ERR("fail to get allocation pool: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
 	ssdfs_block_bmap_unlock(bmap);
+
+	if (allocation_pool == 0 || allocation_pool > pages_capacity) {
+		SSDFS_ERR("invalid state: "
+			  "free_pages %d, "
+			  "used_pages %d, "
+			  "invalid_pages %d, "
+			  "metadata_pages %d, "
+			  "pages_capacity %d, "
+			  "allocation_pool %d\n",
+			  free_pages,
+			  used_pages,
+			  invalid_pages,
+			  metadata_pages,
+			  pages_capacity,
+			  allocation_pool);
+		goto finish_check_block_bmap;
+	}
 
 	if (free_pages == 0) {
 		if (invalid_pages == 0 && used_pages == 0) {
@@ -2180,15 +2206,17 @@ bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
 				  "used_pages %d, "
 				  "invalid_pages %d, "
 				  "metadata_pages %d, "
-				  "pages_capacity %d\n",
+				  "pages_capacity %d, "
+				  "allocation_pool %d\n",
 				  free_pages,
 				  used_pages,
 				  invalid_pages,
 				  metadata_pages,
-				  pages_capacity);
+				  pages_capacity,
+				  allocation_pool);
 			goto finish_check_block_bmap;
 		}
-	} else if (free_pages < pages_capacity) {
+	} else if (free_pages < allocation_pool) {
 		if (metadata_pages == 0 &&
 		    invalid_pages == 0 && used_pages == 0) {
 			SSDFS_ERR("invalid state: "
@@ -2196,12 +2224,14 @@ bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
 				  "used_pages %d, "
 				  "invalid_pages %d, "
 				  "metadata_pages %d, "
-				  "pages_capacity %d\n",
+				  "pages_capacity %d, "
+				  "allocation_pool %d\n",
 				  free_pages,
 				  used_pages,
 				  invalid_pages,
 				  metadata_pages,
-				  pages_capacity);
+				  pages_capacity,
+				  allocation_pool);
 			goto finish_check_block_bmap;
 		}
 	}

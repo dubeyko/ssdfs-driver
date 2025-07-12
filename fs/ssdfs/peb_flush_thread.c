@@ -15529,10 +15529,12 @@ int ssdfs_peb_delegate_log_creation_role(struct ssdfs_peb_container *pebc,
 		return -EAGAIN;
 
 	if (is_peb_joined_into_create_requests_queue(found_pebc)) {
-		SSDFS_WARN("PEB is creating log: "
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("PEB has joined create requests queue already: "
 			   "seg %llu, peb_index %d\n",
 			   found_pebc->parent_si->seg_id,
 			   found_pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return -EAGAIN;
 	}
 
@@ -18905,16 +18907,25 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 					SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			}
 		} else {
-			ssdfs_finish_flush_request(pebc, thread_state->req,
-						   wait_queue, err);
-
-			state = atomic_read(&pebi->current_log.state);
-			if (state == SSDFS_LOG_COMMITTED) {
+			if (is_ssdfs_segment_blk_bmap_dirty(&si->blk_bmap,
+							    pebc->peb_index)) {
+				err = -EAGAIN;
 				thread_state->state =
-					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+					SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			} else {
-				thread_state->state =
-					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+				ssdfs_finish_flush_request(pebc,
+							   thread_state->req,
+							   wait_queue,
+							   err);
+
+				state = atomic_read(&pebi->current_log.state);
+				if (state == SSDFS_LOG_COMMITTED) {
+					thread_state->state =
+					    SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+				} else {
+					thread_state->state =
+					    SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+				}
 			}
 		}
 		goto finish_update_request_processing;
@@ -20977,7 +20988,11 @@ next_partial_step:
 
 		if (err == -ENOENT) {
 			err = 0;
-			if (kthread_should_stop())
+			if (!is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
+				thread_state->state =
+					SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
+				goto next_partial_step;
+			} else if (kthread_should_stop())
 				goto repeat;
 			else
 				goto sleep_flush_thread;
@@ -21010,7 +21025,11 @@ next_partial_step:
 
 		if (err == -ENOENT) {
 			err = 0;
-			if (kthread_should_stop())
+			if (!is_create_requests_queue_empty(pebc)) {
+				thread_state->state =
+					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+				goto next_partial_step;
+			} else if (kthread_should_stop())
 				goto repeat;
 			else
 				goto sleep_flush_thread;
@@ -21535,29 +21554,70 @@ sleep_flush_thread:
 	}
 
 	wake_up_all(wait_queue);
-	wait_event_interruptible(*wait_queue,
-				 FLUSH_THREAD_WAKE_CONDITION(pebc));
+	{
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+		add_wait_queue(wait_queue, &wait);
+		while (!FLUSH_THREAD_WAKE_CONDITION(pebc)) {
+			if (signal_pending(current)) {
+				err = -ERESTARTSYS;
+				break;
+			}
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+						SSDFS_DEFAULT_TIMEOUT);
+		}
+		remove_wait_queue(wait_queue, &wait);
+	}
 	goto repeat;
 
 sleep_cur_seg_flush_thread:
 	wake_up_all(wait_queue);
-	wait_event_killable_timeout(fsi->pending_wq,
-			FLUSH_THREAD_CUR_SEG_WAKE_CONDITION(pebc),
-			SSDFS_DEFAULT_TIMEOUT);
+	{
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+		add_wait_queue(&fsi->pending_wq, &wait);
+		while (!FLUSH_THREAD_CUR_SEG_WAKE_CONDITION(pebc)) {
+			if (signal_pending(current)) {
+				err = -ERESTARTSYS;
+				break;
+			}
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+						SSDFS_DEFAULT_TIMEOUT);
+		}
+		remove_wait_queue(&fsi->pending_wq, &wait);
+	}
 	goto repeat;
 
 sleep_waiting_pending_updates:
 	wake_up_all(wait_queue);
-	wait_event_killable_timeout(fsi->pending_wq,
-			FLUSH_THREAD_UPDATE_WAKE_CONDITION(pebc),
-			SSDFS_DEFAULT_TIMEOUT);
+	{
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+		add_wait_queue(&fsi->pending_wq, &wait);
+		while (!FLUSH_THREAD_UPDATE_WAKE_CONDITION(pebc)) {
+			if (signal_pending(current)) {
+				err = -ERESTARTSYS;
+				break;
+			}
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+						SSDFS_DEFAULT_TIMEOUT);
+		}
+		remove_wait_queue(&fsi->pending_wq, &wait);
+	}
 	goto repeat;
 
 sleep_waiting_pending_invalidations:
 	wake_up_all(wait_queue);
-	wait_event_killable_timeout(fsi->pending_wq,
-			FLUSH_THREAD_INVALIDATE_WAKE_CONDITION(pebc),
-			SSDFS_DEFAULT_TIMEOUT);
+	{
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+		add_wait_queue(&fsi->pending_wq, &wait);
+		while (!FLUSH_THREAD_INVALIDATE_WAKE_CONDITION(pebc)) {
+			if (signal_pending(current)) {
+				err = -ERESTARTSYS;
+				break;
+			}
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+						SSDFS_DEFAULT_TIMEOUT);
+		}
+		remove_wait_queue(&fsi->pending_wq, &wait);
+	}
 	goto repeat;
 
 sleep_failed_flush_thread:

@@ -456,8 +456,16 @@ sleep_shextree_thread:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("shared extents tree thread: go to sleep...\n");
 #endif /* CONFIG_SSDFS_DEBUG */
-	wait_event_interruptible(*wait_queue,
-				 SHEXTREE_THREAD_WAKE_CONDITION(tree, id));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!SHEXTREE_THREAD_WAKE_CONDITION(tree, id)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
 
 sleep_failed_shextree_thread:
@@ -465,7 +473,7 @@ sleep_failed_shextree_thread:
 	SSDFS_DBG("shared extents tree thread failed: go to sleep...\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 	wait_event_interruptible(*wait_queue,
-		SHEXTREE_FAILED_THREAD_WAKE_CONDITION());
+			SHEXTREE_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
 }
 
@@ -679,8 +687,16 @@ sleep_shextree_thread:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("shared extents tree thread: go to sleep...\n");
 #endif /* CONFIG_SSDFS_DEBUG */
-	wait_event_interruptible(*wait_queue,
-				 SHEXTREE_THREAD_WAKE_CONDITION(tree, id));
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wait_queue, &wait);
+	while (!SHEXTREE_THREAD_WAKE_CONDITION(tree, id)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
 
 sleep_failed_shextree_thread:
