@@ -1382,6 +1382,11 @@ int ssdfs_shextree_add_pre_invalid_extent(struct ssdfs_shared_extents_tree *tree
 	ssdfs_extents_queue_add_tail(queue, ei);
 
 	wake_up_all(&tree->wait_queue);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 
@@ -1480,6 +1485,10 @@ int ssdfs_shextree_add_pre_invalid_fork(struct ssdfs_shared_extents_tree *tree,
 		if (processed_blks >= blks_count)
 			break;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (processed_blks != blks_count) {
 		SSDFS_WARN("processed_blks %llu != blks_count %llu\n",
@@ -1629,6 +1638,11 @@ int ssdfs_shextree_add_pre_invalid_index(struct ssdfs_shared_extents_tree *tree,
 	ssdfs_extents_queue_add_tail(queue, ei);
 
 	wake_up_all(&tree->wait_queue);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return 0;
 }
 

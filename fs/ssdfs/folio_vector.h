@@ -15,6 +15,8 @@
 #ifndef _SSDFS_FOLIO_VECTOR_H
 #define _SSDFS_FOLIO_VECTOR_H
 
+#define SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR	(8)
+
 /*
  * struct ssdfs_folio_vector - vector of memory folios
  * @count: current number of folios in vector
@@ -51,6 +53,8 @@ int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
 void ssdfs_folio_vector_destroy(struct ssdfs_folio_vector *array);
 int ssdfs_folio_vector_init(struct ssdfs_folio_vector *array);
 int ssdfs_folio_vector_reinit(struct ssdfs_folio_vector *array);
+int ssdfs_folio_vector_inflate(struct ssdfs_folio_vector *array,
+			       u32 new_capacity);
 u32 ssdfs_folio_vector_count(struct ssdfs_folio_vector *array);
 u32 ssdfs_folio_vector_space(struct ssdfs_folio_vector *array);
 u32 ssdfs_folio_vector_capacity(struct ssdfs_folio_vector *array);

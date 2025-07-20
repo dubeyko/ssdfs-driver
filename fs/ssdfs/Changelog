@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.22 [July 19, 2025]
+    (*) Introduce PEB inflation model.
+
 v.5.21 [July 12, 2025]
     (*) Fix several issues in multiple PEBs in segment functionality.
 

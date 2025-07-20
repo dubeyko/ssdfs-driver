@@ -238,7 +238,8 @@ void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
 					atomic_read(&si->refs_count) <= 0,
 					SSDFS_DEFAULT_TIMEOUT);
 				if (res < 0) {
-					err = res;
+					SSDFS_ERR("si %p, seg_id %llu\n",
+						  si, si->seg_id);
 					WARN_ON(1);
 				} else if (res > 1) {
 					/*
@@ -246,7 +247,8 @@ void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
 					 */
 				} else {
 					/* timeout is elapsed */
-					err = -ERANGE;
+					SSDFS_ERR("si %p, seg_id %llu\n",
+						  si, si->seg_id);
 					WARN_ON(1);
 				}
 

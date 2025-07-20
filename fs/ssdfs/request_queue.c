@@ -623,7 +623,7 @@ void ssdfs_request_free(struct ssdfs_segment_request *req,
 			   "class %#x, cmd %#x, type %#x, "
 			   "seg %llu, extent (start %u, len %u), "
 			   "ino %llu, logical_offset %llu, "
-			   "data_bytes %u\n",
+			   "data_bytes %u, result.state %#x\n",
 			   atomic64_read(&req->writeback_folios),
 			   req->private.class, req->private.cmd,
 			   req->private.type,
@@ -632,7 +632,8 @@ void ssdfs_request_free(struct ssdfs_segment_request *req,
 			   req->place.len,
 			   req->extent.ino,
 			   req->extent.logical_offset,
-			   req->extent.data_bytes);
+			   req->extent.data_bytes,
+			   atomic_read(&req->result.state));
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -708,6 +709,11 @@ void ssdfs_get_request(struct ssdfs_segment_request *req)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	WARN_ON(atomic_inc_return(&req->private.refs_count) <= 0);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("refs_count %u\n",
+		  atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*
@@ -738,6 +744,11 @@ void ssdfs_put_request(struct ssdfs_segment_request *req)
 		BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("refs_count %u\n",
+		  atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*

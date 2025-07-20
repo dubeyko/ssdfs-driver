@@ -2711,6 +2711,8 @@ bool need_update_parent_index_area(u64 start_hash,
 {
 	int state;
 	u64 child_start_hash = U64_MAX;
+	u64 child_end_hash = U64_MAX;
+	u16 child_items_count = U16_MAX;
 	bool need_update = false;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2735,6 +2737,8 @@ bool need_update_parent_index_area(u64 start_hash,
 
 		down_read(&child->header_lock);
 		child_start_hash = child->index_area.start_hash;
+		child_end_hash = child->index_area.end_hash;
+		child_items_count = child->index_area.index_count;
 		up_read(&child->header_lock);
 		break;
 
@@ -2748,6 +2752,8 @@ bool need_update_parent_index_area(u64 start_hash,
 
 		down_read(&child->header_lock);
 		child_start_hash = child->items_area.start_hash;
+		child_end_hash = child->items_area.end_hash;
+		child_items_count = child->items_area.items_count;
 		up_read(&child->header_lock);
 		break;
 
@@ -2758,8 +2764,17 @@ bool need_update_parent_index_area(u64 start_hash,
 	}
 
 	if (child_start_hash >= U64_MAX) {
-		SSDFS_WARN("invalid start_hash %llx\n",
-			  child_start_hash);
+		if (child_items_count > 0) {
+			SSDFS_WARN("invalid node's state: "
+				   "start_hash %llx, "
+				   "node (type %#x, start_hash %#llx, "
+				   "end_hash %#llx, items_count %u), \n",
+				  start_hash,
+				  atomic_read(&child->type),
+				  child_start_hash, child_end_hash,
+				  child_items_count);
+		}
+
 		return false;
 	}
 

@@ -41,6 +41,7 @@ enum {
  * @peb_valid_blks: PEB container's valid logical blocks count
  * @peb_invalid_blks: PEB container's invalid logical blocks count
  * @peb_free_blks: PEB container's free logical blocks count
+ * @peb_blks_capacity: PEB container's logical blocks capacity
  * @buffers_state: buffers state
  * @lock: buffers lock
  * @init_cno: initialization checkpoint
@@ -60,6 +61,7 @@ struct ssdfs_peb_blk_bmap {
 	atomic_t peb_valid_blks;
 	atomic_t peb_invalid_blks;
 	atomic_t peb_free_blks;
+	atomic_t peb_blks_capacity;
 
 	atomic_t buffers_state;
 	struct rw_semaphore lock;
@@ -108,6 +110,7 @@ int ssdfs_peb_blk_bmap_destroy(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_init(struct ssdfs_peb_blk_bmap *bmap,
 			    struct ssdfs_folio_vector *source,
 			    struct ssdfs_block_bitmap_fragment *hdr,
+			    u32 peb_free_pages,
 			    u64 cno);
 int ssdfs_peb_blk_bmap_clean_init(struct ssdfs_peb_blk_bmap *bmap);
 void ssdfs_peb_blk_bmap_init_failed(struct ssdfs_peb_blk_bmap *bmap);
@@ -117,6 +120,8 @@ int ssdfs_peb_blk_bmap_wait_init_end(struct ssdfs_peb_blk_bmap *bmap);
 
 bool ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *ptr);
 bool is_ssdfs_peb_blk_bmap_dirty(struct ssdfs_peb_blk_bmap *ptr);
+int ssdfs_peb_blk_bmap_inflate(struct ssdfs_peb_blk_bmap *ptr,
+				u32 free_items);
 
 int ssdfs_peb_blk_bmap_get_free_pages(struct ssdfs_peb_blk_bmap *ptr);
 int ssdfs_peb_blk_bmap_get_used_pages(struct ssdfs_peb_blk_bmap *ptr);

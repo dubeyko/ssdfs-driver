@@ -74,7 +74,9 @@ int ssdfs_segment_blk_bmap_partial_init(struct ssdfs_segment_blk_bmap *bmap,
 				    u16 peb_index,
 				    struct ssdfs_folio_vector *source,
 				    struct ssdfs_block_bitmap_fragment *hdr,
-				    u64 cno);
+				    u32 peb_free_pages, u64 cno);
+int ssdfs_segment_blk_bmap_partial_inflate(struct ssdfs_segment_blk_bmap *bmap,
+					   u16 peb_index, u32 free_items);
 int
 ssdfs_segment_blk_bmap_partial_clean_init(struct ssdfs_segment_blk_bmap *bmap,
 					  u16 peb_index);
@@ -101,6 +103,8 @@ int ssdfs_segment_blk_bmap_free_metapages(struct ssdfs_segment_blk_bmap *ptr,
 int ssdfs_segment_blk_bmap_reserve_block(struct ssdfs_segment_blk_bmap *ptr);
 int ssdfs_segment_blk_bmap_reserve_extent(struct ssdfs_segment_blk_bmap *ptr,
 					  u32 count, u32 *reserved_blks);
+int ssdfs_segment_blk_bmap_release_extent(struct ssdfs_segment_blk_bmap *ptr,
+					  u32 count);
 int ssdfs_segment_blk_bmap_pre_allocate(struct ssdfs_segment_blk_bmap *ptr,
 					struct ssdfs_peb_info *pebi,
 					struct ssdfs_block_bmap_range *range);
@@ -113,6 +117,33 @@ int ssdfs_segment_blk_bmap_update_range(struct ssdfs_segment_blk_bmap *ptr,
 				    int range_state,
 				    struct ssdfs_block_bmap_range *range);
 
+/* Inline methods */
+
+static inline
+int __ssdfs_segment_blk_bmap_get_capacity(struct ssdfs_segment_blk_bmap *ptr)
+{
+	int capacity = 0;
+	int i;
+
+	for (i = 0; i < ptr->pebs_count; i++) {
+		capacity += atomic_read(&ptr->peb[i].peb_blks_capacity);
+	}
+
+	return capacity;
+}
+
+static inline
+int ssdfs_segment_blk_bmap_get_capacity(struct ssdfs_segment_blk_bmap *ptr)
+{
+	int capacity;
+
+	down_read(&ptr->modification_lock);
+	capacity = __ssdfs_segment_blk_bmap_get_capacity(ptr);
+	up_read(&ptr->modification_lock);
+
+	return capacity;
+}
+
 static inline
 bool is_pages_balance_correct(struct ssdfs_segment_blk_bmap *ptr)
 {
@@ -120,6 +151,7 @@ bool is_pages_balance_correct(struct ssdfs_segment_blk_bmap *ptr)
 	int free_blks;
 	int valid_blks;
 	int invalid_blks;
+	int capacity;
 	int calculated;
 
 	BUG_ON(!ptr);
@@ -129,23 +161,25 @@ bool is_pages_balance_correct(struct ssdfs_segment_blk_bmap *ptr)
 	valid_blks = atomic_read(&ptr->seg_valid_blks);
 	invalid_blks = atomic_read(&ptr->seg_invalid_blks);
 	calculated = free_blks + valid_blks + invalid_blks;
+	capacity = __ssdfs_segment_blk_bmap_get_capacity(ptr);
 	up_read(&ptr->modification_lock);
 
 	BUG_ON(free_blks < 0);
 	BUG_ON(valid_blks < 0);
 	BUG_ON(invalid_blks < 0);
+	BUG_ON(capacity < 0);
 
 	SSDFS_DBG("free_logical_blks %d, valid_logical_blks %d, "
-		  "invalid_logical_blks %d, pages_per_seg %u\n",
+		  "invalid_logical_blks %d, capacity %d\n",
 		  free_blks, valid_blks, invalid_blks,
-		  ptr->pages_per_seg);
+		  capacity);
 
-	if (calculated > ptr->pages_per_seg) {
+	if (calculated > capacity) {
 		SSDFS_ERR("free_logical_blks %d, valid_logical_blks %d, "
 			  "invalid_logical_blks %d, calculated %d, "
-			  "pages_per_seg %u\n",
+			  "capacity %d\n",
 			  free_blks, valid_blks, invalid_blks,
-			  calculated, ptr->pages_per_seg);
+			  calculated, capacity);
 		return false;
 	}
 

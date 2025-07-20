@@ -2260,6 +2260,7 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 	u32 last_free_blk;
 	u32 metadata_blks;
 	u32 invalid_blks_snapshot;
+	size_t items_capacity;
 	size_t bytes_count;
 	int err = 0;
 
@@ -2341,6 +2342,7 @@ int ssdfs_testing_check_block_bitmap_nolock(struct ssdfs_block_bmap *bmap,
 					&last_free_blk,
 					&metadata_blks,
 					&invalid_blks_snapshot,
+					&items_capacity,
 					&bytes_count);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to snapshot block bitmap: "
@@ -2837,7 +2839,7 @@ fail_define_free_pages_count:
 		goto destroy_snapshot;
 	}
 
-	err = ssdfs_block_bmap_clean(&bmap);
+	err = ssdfs_block_bmap_clean(&bmap, capacity);
 	ssdfs_block_bmap_clear_dirty_state(&bmap);
 	ssdfs_block_bmap_unlock(&bmap);
 
@@ -2884,6 +2886,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 	logical_blk = 0;
 	while ((logical_blk + 1) < capacity) {
 		err = ssdfs_blk2off_table_allocate_block(blk2off_tbl,
+							 capacity,
 							 &logical_blk);
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->partial_init_end;
@@ -2896,6 +2899,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 			}
 
 			err = ssdfs_blk2off_table_allocate_block(blk2off_tbl,
+								 capacity,
 								 &logical_blk);
 		}
 
@@ -2943,7 +2947,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 
 		err = ssdfs_blk2off_table_change_offset(blk2off_tbl,
 							logical_blk,
-							0,
+							0, 0,
 							&blk_desc,
 							&blk_desc_off);
 		if (err == -EAGAIN) {
@@ -2958,7 +2962,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 
 			err = ssdfs_blk2off_table_change_offset(blk2off_tbl,
 								logical_blk,
-								0,
+								0, 0,
 								&blk_desc,
 								&blk_desc_off);
 		}
@@ -3082,7 +3086,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 			  logical_blk, capacity);
 
 		err = ssdfs_blk2off_table_free_block(blk2off_tbl,
-						     0, logical_blk);
+						     0, 0, logical_blk);
 		if (err == -EAGAIN) {
 			end = &blk2off_tbl->full_init_end;
 
@@ -3094,7 +3098,7 @@ int ssdfs_do_blk2off_table_testing(struct ssdfs_fs_info *fsi,
 			}
 
 			err = ssdfs_blk2off_table_free_block(blk2off_tbl,
-							     0, logical_blk);
+							     0, 0, logical_blk);
 		}
 
 		if (unlikely(err)) {

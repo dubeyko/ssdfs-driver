@@ -283,14 +283,21 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap);
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  struct ssdfs_folio_vector *source,
+			  u8 flags,
 			  u32 last_free_blk,
 			  u32 metadata_blks,
-			  u32 invalid_blks);
+			  u32 invalid_blks,
+			  u32 bmap_bytes);
+int ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
+			     u32 free_items);
+int ssdfs_block_bmap_correct_capacity(struct ssdfs_block_bmap *blk_bmap,
+					struct ssdfs_block_bmap_range *range);
 int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 				struct ssdfs_folio_vector *snapshot,
 				u32 *last_free_page,
 				u32 *metadata_blks,
 				u32 *invalid_blks,
+				size_t *items_capacity,
 				size_t *bytes_count);
 void ssdfs_block_bmap_forget_snapshot(struct ssdfs_folio_vector *snapshot);
 
@@ -334,7 +341,8 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 				     u32 start, u32 max_len,
 				     int blk_state,
 				     struct ssdfs_block_bmap_range *range);
-int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap);
+int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
+			   size_t items_capacity);
 int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap);
 
 #define SSDFS_BLK_BMAP_FNS(state, name)					\

@@ -1488,6 +1488,7 @@ void ssdfs_gc_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 
 			ssdfs_segment_put_object(si);
 
+/*
 			if (should_ssdfs_segment_be_destroyed(si)) {
 				err = ssdfs_segment_tree_remove(fsi, si);
 				if (unlikely(err)) {
@@ -1503,6 +1504,7 @@ void ssdfs_gc_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 					}
 				}
 			}
+*/
 		} else {
 			SSDFS_ERR("segment is NULL: "
 				  "item_index %d\n", i);
@@ -1582,6 +1584,26 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 				  si->seg_id, err);
 			return err;
 		}
+	}
+
+	switch (atomic_read(&si->fsi->global_fs_state)) {
+	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
+	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+	case SSDFS_UNMOUNT_DESTROY_METADATA:
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("File system is unmounting: "
+			  "don't stimulate migration: "
+			  "seg_id %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
+
+	default:
+		/* continue logic */
+		break;
 	}
 
 	pebi = ssdfs_get_current_peb_locked(pebc);
@@ -2040,6 +2062,235 @@ int should_be_thread_metadata_structure_user(struct ssdfs_fs_info *fsi,
 }
 
 /*
+ * ssdfs_gc_collect_garbage_now() - try to collect garbage in segment
+ * @fsi: pointer on shared file system object
+ * @si: segment object
+ * @start_leb_index: starting index of LEB in segment
+ * @wq: wait queue
+ *
+ * This function tries to collect garbage in segment.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ * %-EBUSY      - segment is busy.
+ */
+static
+int ssdfs_gc_collect_garbage_now(struct ssdfs_fs_info *fsi,
+				 struct ssdfs_segment_info *si,
+				 u32 start_leb_index,
+				 wait_queue_head_t *wq)
+{
+	struct ssdfs_peb_container *pebc;
+	struct ssdfs_segment_blk_bmap *seg_blkbmap;
+	struct ssdfs_peb_blk_bmap *peb_blkbmap;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *pebd;
+	struct ssdfs_seg2req_pair_array reqs_array;
+	struct ssdfs_io_load_stats io_stats;
+	size_t io_stats_size = sizeof(struct ssdfs_io_load_stats);
+	u32 lebs_per_segment;
+	u64 cur_leb_id;
+	int used_pages;
+	int gc_strategy;
+	u32 i;
+	int err = 0, err1;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !si || !wq);
+
+	SSDFS_DBG("collect garbage now: "
+		  "seg_id %llu, start_leb_index %u\n",
+		  si->seg_id, start_leb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	lebs_per_segment = fsi->pebs_per_seg;
+	memset(&reqs_array, 0, sizeof(struct ssdfs_seg2req_pair_array));
+
+	err = ssdfs_mark_segment_under_gc_activity(si);
+	if (err) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("segment %llu is busy\n",
+			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		ssdfs_segment_put_object(si);
+		return -EBUSY;
+	}
+
+	for (i = start_leb_index; i < lebs_per_segment; i++) {
+		cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+							    si->seg_id,
+							    i);
+		if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unexpected leb_id: "
+				  "seg_id %llu, peb_index %u\n",
+				  si->seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
+			continue;
+		}
+
+		if (kthread_should_stop())
+			goto finish_seg_processing;
+
+		err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
+		if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
+				  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			continue;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to convert LEB to PEB: "
+				  "leb_id %llu, err %d\n",
+				  cur_leb_id, err);
+			goto finish_seg_processing;
+		}
+
+		pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+		switch (pebd->state) {
+		case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+		case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
+		case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
+		case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
+			/* PEB is under migration */
+			break;
+
+		default:
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("LEB %llu is not migrating\n",
+				  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			continue;
+		}
+
+		pebd = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
+
+		switch (pebd->state) {
+		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+			/* stimulate migration */
+			break;
+
+		default:
+			continue;
+		}
+
+		memset(&io_stats, 0, io_stats_size);
+		gc_strategy = SSDFS_UNDEFINED_GC_STATE;
+
+		do {
+			gc_strategy = is_time_collect_garbage(fsi, &io_stats);
+
+			switch (gc_strategy) {
+			case SSDFS_COLLECT_GARBAGE_NOW:
+				goto collect_garbage_now;
+
+			case SSDFS_STOP_GC_ACTIVITY_NOW:
+				goto finish_seg_processing;
+
+			case SSDFS_WAIT_IDLE_STATE:
+				wait_event_interruptible_timeout(*wq,
+						kthread_should_stop(),
+						HZ);
+
+				if (kthread_should_stop()) {
+					goto finish_seg_processing;
+				}
+				break;
+
+			default:
+				err = -ERANGE;
+				SSDFS_ERR("unexpected strategy %#x\n",
+					  gc_strategy);
+				goto finish_seg_processing;
+			}
+		} while (gc_strategy == SSDFS_WAIT_IDLE_STATE);
+
+collect_garbage_now:
+		if (kthread_should_stop())
+			goto finish_seg_processing;
+
+		pebc = &si->peb_array[i];
+		seg_blkbmap = &si->blk_bmap;
+		peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
+
+		if (is_seg2req_pair_array_exhausted(&reqs_array))
+			ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
+
+		used_pages = ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
+		if (used_pages < 0) {
+			err = used_pages;
+			SSDFS_ERR("fail to get used pages: err %d\n",
+				  err);
+			goto finish_seg_processing;
+		}
+
+		if (used_pages == 0) {
+			SSDFS_WARN("need to finish migration: "
+				   "seg %llu, leb_id %llu, "
+				   "used_pages %d\n",
+				   si->seg_id, cur_leb_id, used_pages);
+		} else if (used_pages <= SSDFS_GC_FINISH_MIGRATION) {
+			ssdfs_segment_get_object(si);
+
+			err = ssdfs_gc_finish_migration(si, pebc,
+							&reqs_array);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to finish migration: "
+					  "seg %llu, leb_id %llu, "
+					  "err %d\n",
+					  si->seg_id, cur_leb_id, err);
+				err = 0;
+				ssdfs_segment_put_object(si);
+			}
+		} else {
+			ssdfs_segment_get_object(si);
+
+			err = ssdfs_gc_stimulate_migration(si, pebc,
+							   &reqs_array);
+			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("no data for migration: "
+					  "seg %llu, leb_id %llu, "
+					  "err %d\n",
+					  si->seg_id, cur_leb_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
+				ssdfs_segment_put_object(si);
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to stimulate migration: "
+					  "seg %llu, leb_id %llu, "
+					  "err %d\n",
+					  si->seg_id, cur_leb_id, err);
+				err = 0;
+				ssdfs_segment_put_object(si);
+			}
+		}
+	}
+
+finish_seg_processing:
+	ssdfs_segment_put_object(si);
+	ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
+
+	err1 = ssdfs_revert_segment_to_regular_activity(si);
+	if (unlikely(err1)) {
+		SSDFS_ERR("segment %llu is under unexpected activity\n",
+			  si->seg_id);
+		return err1;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+/*
  * ssdfs_generic_seg_gc_thread_func() - generic function of GC thread
  * @fsi: pointer on shared file system object
  * @thread_type: thread type
@@ -2061,15 +2312,9 @@ int ssdfs_generic_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 {
 	struct ssdfs_segment_info *si = NULL;
 	struct ssdfs_segment_search_state seg_search;
-	struct ssdfs_peb_container *pebc;
 	struct ssdfs_maptbl_peb_relation pebr;
 	struct ssdfs_maptbl_peb_descriptor *pebd;
-	struct ssdfs_io_load_stats io_stats;
-	size_t io_stats_size = sizeof(struct ssdfs_io_load_stats);
 	wait_queue_head_t *wq;
-	struct ssdfs_segment_blk_bmap *seg_blkbmap;
-	struct ssdfs_peb_blk_bmap *peb_blkbmap;
-	struct ssdfs_seg2req_pair_array reqs_array;
 	u8 peb_type = SSDFS_MAPTBL_UNKNOWN_PEB_TYPE;
 	int seg_type = SSDFS_UNKNOWN_SEG_TYPE;
 	u64 seg_id = 0;
@@ -2078,8 +2323,6 @@ int ssdfs_generic_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 	u64 nsegs;
 	u64 cur_leb_id;
 	u32 lebs_per_segment;
-	int gc_strategy;
-	int used_pages;
 	bool is_maptbl_user = false;
 	bool is_segbmap_user = false;
 	u32 i;
@@ -2095,7 +2338,6 @@ int ssdfs_generic_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
 
 	wq = &fsi->gc_wait_queue[thread_type];
 	lebs_per_segment = fsi->pebs_per_seg;
-	memset(&reqs_array, 0, sizeof(struct ssdfs_seg2req_pair_array));
 
 	ssdfs_register_mapping_table_user(fsi, &is_maptbl_user);
 	ssdfs_register_segbmap_user(fsi, &is_segbmap_user);
@@ -2319,194 +2561,21 @@ try_create_seg_object:
 		}
 
 try_collect_garbage:
-		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
-								    seg_id,
-								    i);
-			if (cur_leb_id >= U64_MAX) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unexpected leb_id: "
-					  "seg_id %llu, peb_index %u\n",
-					  seg_id, i);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			}
-
-			if (kthread_should_stop()) {
-				ssdfs_segment_put_object(si);
-				goto finish_seg_processing;
-			}
-
-			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
-			if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
-					  cur_leb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to convert LEB to PEB: "
-					  "leb_id %llu, peb_type %#x, err %d\n",
-					  cur_leb_id, peb_type, err);
-				ssdfs_segment_put_object(si);
-				goto sleep_failed_gc_thread;
-			}
-
-			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
-
-			switch (pebd->state) {
-			case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
-			case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
-			case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
-			case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
-				/* PEB is under migration */
-				break;
-
-			default:
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("LEB %llu is not migrating\n",
-					  cur_leb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			}
-
-			pebd = &pebr.pebs[SSDFS_MAPTBL_RELATION_INDEX];
-
-			switch (pebd->state) {
-			case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
-			case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
-				/* stimulate migration */
-				break;
-
-			default:
-				continue;
-			}
-
-			memset(&io_stats, 0, io_stats_size);
-			gc_strategy = SSDFS_UNDEFINED_GC_STATE;
-
-			do {
-				gc_strategy = is_time_collect_garbage(fsi,
-								    &io_stats);
-
-				switch (gc_strategy) {
-				case SSDFS_COLLECT_GARBAGE_NOW:
-					goto collect_garbage_now;
-
-				case SSDFS_STOP_GC_ACTIVITY_NOW:
-					ssdfs_segment_put_object(si);
-					goto finish_seg_processing;
-
-				case SSDFS_WAIT_IDLE_STATE:
-					wait_event_interruptible_timeout(*wq,
-							kthread_should_stop(),
-							HZ);
-
-					if (kthread_should_stop()) {
-						ssdfs_segment_put_object(si);
-						goto finish_seg_processing;
-					}
-					break;
-
-				default:
-					err = -ERANGE;
-					SSDFS_ERR("unexpected strategy %#x\n",
-						  gc_strategy);
-					ssdfs_segment_put_object(si);
-					goto finish_seg_processing;
-				}
-			} while (gc_strategy == SSDFS_WAIT_IDLE_STATE);
-
-collect_garbage_now:
-			if (kthread_should_stop()) {
-				ssdfs_segment_put_object(si);
-				goto finish_seg_processing;
-			}
-
-			pebc = &si->peb_array[i];
-
-			seg_blkbmap = &si->blk_bmap;
-			peb_blkbmap = &seg_blkbmap->peb[pebc->peb_index];
-
-			if (is_seg2req_pair_array_exhausted(&reqs_array))
-				ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
-
-			err = ssdfs_mark_segment_under_gc_activity(si);
-			if (err) {
-				err = 0;
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("segment %llu is busy\n",
-					  si->seg_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				ssdfs_segment_put_object(si);
-				goto check_next_segment;
-			}
-
-			used_pages =
-				ssdfs_src_blk_bmap_get_used_pages(peb_blkbmap);
-			if (used_pages < 0) {
-				err = used_pages;
-				SSDFS_ERR("fail to get used pages: err %d\n",
-					  err);
-				ssdfs_segment_put_object(si);
-				goto sleep_failed_gc_thread;
-			}
-
-			if (used_pages == 0) {
-				SSDFS_WARN("needs to finish migration: "
-					   "seg %llu, leb_id %llu, "
-					   "used_pages %d\n",
-					   seg_id, cur_leb_id, used_pages);
-			} else if (used_pages <= SSDFS_GC_FINISH_MIGRATION) {
-				ssdfs_segment_get_object(si);
-
-				err = ssdfs_gc_finish_migration(si, pebc,
-								&reqs_array);
-				if (unlikely(err)) {
-					SSDFS_ERR("fail to finish migration: "
-						  "seg %llu, leb_id %llu, "
-						  "err %d\n",
-						  seg_id, cur_leb_id, err);
-					err = 0;
-					ssdfs_segment_put_object(si);
-				}
-			} else {
-				ssdfs_segment_get_object(si);
-
-				err = ssdfs_gc_stimulate_migration(si, pebc,
-								   &reqs_array);
-				if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-					SSDFS_DBG("no data for migration: "
-						  "seg %llu, leb_id %llu, "
-						  "err %d\n",
-						  seg_id, cur_leb_id, err);
-#endif /* CONFIG_SSDFS_DEBUG */
-					err = 0;
-					ssdfs_segment_put_object(si);
-				} else if (unlikely(err)) {
-					SSDFS_ERR("fail to stimulate migration: "
-						  "seg %llu, leb_id %llu, "
-						  "err %d\n",
-						  seg_id, cur_leb_id, err);
-					err = 0;
-					ssdfs_segment_put_object(si);
-				}
-			}
-		}
-
-		ssdfs_segment_put_object(si);
-
-		if (is_seg2req_pair_array_exhausted(&reqs_array))
-			ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
-
-		err = ssdfs_revert_segment_to_regular_activity(si);
-		if (unlikely(err)) {
-			SSDFS_ERR("segment %llu is under unexpected activity\n",
-				  si->seg_id);
+		err = ssdfs_gc_collect_garbage_now(fsi, si, i, wq);
+		if (err == -EBUSY) {
+			err = 0;
+			goto check_next_segment;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to collect garbage: "
+				  "seg_id %llu, err %d\n",
+				  seg_id, err);
 			goto sleep_failed_gc_thread;
 		}
 
+SSDFS_ERR("TODO: rework logic of destroying segments created by GC: "
+	  "seg_id %llu\n", si->seg_id);
+
+/*
 		if (should_ssdfs_segment_be_destroyed(si)) {
 			err = ssdfs_segment_tree_remove(fsi, si);
 			if (unlikely(err)) {
@@ -2522,6 +2591,7 @@ collect_garbage_now:
 				}
 			}
 		}
+*/
 
 check_next_segment:
 		seg_id++;
@@ -2545,8 +2615,6 @@ check_next_segment:
 finish_seg_processing:
 	atomic_set(&fsi->gc_should_act[thread_type], 0);
 
-	ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
-
 	if (is_maptbl_user) {
 		ssdfs_unregister_mapping_table_user(fsi, &is_maptbl_user);
 	}
@@ -2569,8 +2637,6 @@ finish_seg_processing:
 
 sleep_failed_gc_thread:
 	atomic_set(&fsi->gc_should_act[thread_type], 0);
-
-	ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
 
 	if (is_maptbl_user) {
 		ssdfs_unregister_mapping_table_user(fsi, &is_maptbl_user);

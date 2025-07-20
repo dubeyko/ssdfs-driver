@@ -250,7 +250,9 @@ int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
+#ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block bitmap hasn't been initialized\n");
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	if (is_block_bmap_dirty(blk_bmap)) {
@@ -845,9 +847,11 @@ int ssdfs_calculate_used_blocks(struct ssdfs_block_bmap *blk_bmap,
  * ssdfs_block_bmap_init() - initialize block bitmap pagevec
  * @blk_bmap: pointer on block bitmap
  * @source: prepared folio vector after reading from volume
+ * @flags: block bitmap's flags
  * @last_free_blk: saved on volume last free page
  * @metadata_blks: saved on volume reserved metadata blocks count
  * @invalid_blks: saved on volume count of invalid blocks
+ * @bmap_bytes: size in bytes saved on volume block bitmap
  *
  * This function initializes block bitmap's pagevec on
  * the basis of pages @source are read from volume.
@@ -860,11 +864,15 @@ int ssdfs_calculate_used_blocks(struct ssdfs_block_bmap *blk_bmap,
  */
 int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			  struct ssdfs_folio_vector *source,
+			  u8 flags,
 			  u32 last_free_blk,
 			  u32 metadata_blks,
-			  u32 invalid_blks)
+			  u32 invalid_blks,
+			  u32 bmap_bytes)
 {
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
+	size_t calculated_bmap_bytes = 0;
+	size_t calculated_bmap_folios = 0;
 	u32 start_item;
 	int free_pages;
 	int calculated;
@@ -884,6 +892,69 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, source,
 		  last_free_blk, metadata_blks, invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (flags & SSDFS_INFLATED_BLK_BMAP) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("INFLATED_BLK_BMAP: "
+			  "items_capacity %zu, last_free_blk %u, "
+			  "metadata_blks %u, invalid_blks %u\n",
+			  blk_bmap->items_capacity, last_free_blk,
+			  metadata_blks, invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		blk_bmap->items_capacity = max_t(size_t,
+						 blk_bmap->items_capacity,
+						 (size_t)last_free_blk);
+		blk_bmap->items_capacity = max_t(size_t,
+						 blk_bmap->items_capacity,
+						 (size_t)(metadata_blks +
+							  invalid_blks));
+		blk_bmap->allocation_pool = blk_bmap->items_capacity;
+
+		calculated_bmap_bytes =
+				BLK_BMAP_BYTES(blk_bmap->items_capacity);
+		if (calculated_bmap_bytes <= bmap_bytes) {
+			calculated_bmap_bytes = bmap_bytes;
+			blk_bmap->items_capacity = bmap_bytes *
+				SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
+			blk_bmap->allocation_pool = blk_bmap->items_capacity;
+		}
+
+		calculated_bmap_folios = calculated_bmap_bytes + PAGE_SIZE - 1;
+		calculated_bmap_folios /= PAGE_SIZE;
+
+		if (calculated_bmap_folios > max_capacity) {
+			SSDFS_WARN("unable to allocate bmap with %zu folios\n",
+				    calculated_bmap_folios);
+			return -EOPNOTSUPP;
+		}
+
+		blk_bmap->bytes_count = calculated_bmap_bytes;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("INFLATED_BLK_BMAP: "
+			  "items_capacity %zu, allocation_pool %zu, "
+			  "bmap_bytes %zu, bmap_folios %zu\n",
+			  blk_bmap->items_capacity,
+			  blk_bmap->allocation_pool,
+			  calculated_bmap_bytes,
+			  calculated_bmap_folios);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (is_block_bmap_dirty(blk_bmap)) {
+			SSDFS_WARN("block bitmap has been initialized\n");
+			return -ERANGE;
+		}
+
+		ssdfs_block_bmap_storage_destroy(&blk_bmap->storage);
+	} else {
+		if (last_free_blk > blk_bmap->items_capacity) {
+			SSDFS_ERR("invalid values: "
+				  "last_free_blk %u, items_capacity %zu\n",
+				  last_free_blk, blk_bmap->items_capacity);
+			return -EINVAL;
+		}
+	}
 
 	if (is_block_bmap_initialized(blk_bmap)) {
 		if (is_block_bmap_dirty(blk_bmap)) {
@@ -1097,6 +1168,374 @@ finish_define_last_free_page:
 }
 
 /*
+ * __ssdfs_block_bmap_inflate() - inflate block bitmap
+ * @blk_bmap: pointer on block bitmap
+ * @new_items_capacity: new items capacity
+ *
+ * This function tries to increase total number of items
+ * in block bitmap.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
+				size_t new_items_capacity)
+{
+	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
+	struct ssdfs_folio_vector *array;
+	struct folio *folio;
+	size_t old_items_capacity;
+	size_t old_bmap_bytes;
+	size_t new_bmap_bytes;
+	size_t old_bmap_folios;
+	size_t new_bmap_folios;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("blk_bmap %p, new_items_capacity %zu\n",
+		  blk_bmap, new_items_capacity);
+
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap's mutex should be locked\n");
+		return -EINVAL;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -EINVAL;
+	}
+
+	if (new_items_capacity <= blk_bmap->items_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("inflation is not necessary: "
+			  "items_capacity %zu, allocation_pool %zu, "
+			  "new_items_capacity %zu\n",
+			  blk_bmap->items_capacity,
+			  blk_bmap->allocation_pool,
+			  new_items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return 0;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_capacity %zu, allocation_pool %zu\n",
+		  blk_bmap->items_capacity,
+		  blk_bmap->allocation_pool);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_items_capacity = blk_bmap->items_capacity;
+
+	if (old_items_capacity == 0) {
+		SSDFS_ERR("invalid old items_capacity %zu\n",
+			  old_items_capacity);
+		return -ERANGE;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("old_items_capacity %zu, metadata_items %u, "
+		  "used_blks %u, invalid_blks %u, "
+		  "new_items_capacity %zu\n",
+		  old_items_capacity, blk_bmap->metadata_items,
+		  blk_bmap->used_blks, blk_bmap->invalid_blks,
+		  new_items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_bmap_bytes = blk_bmap->bytes_count;
+	old_bmap_folios = (old_bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	new_bmap_bytes = BLK_BMAP_BYTES(new_items_capacity);
+	new_bmap_folios = (new_bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	if (new_bmap_folios > max_capacity) {
+		SSDFS_WARN("unable to inflate bmap with %zu folios\n",
+			    new_bmap_folios);
+		return -EOPNOTSUPP;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("old_bmap_bytes %zu, old_bmap_folios %zu, "
+		  "new_bmap_bytes %zu, new_bmap_folios %zu\n",
+		  old_bmap_bytes, old_bmap_folios,
+		  new_bmap_bytes, new_bmap_folios);
+
+	BUG_ON(old_bmap_bytes > new_bmap_bytes);
+	BUG_ON(old_bmap_folios > new_bmap_folios);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (old_bmap_bytes == new_bmap_bytes) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("we have enough bytes: "
+			  "old_bmap_bytes %zu, new_bmap_bytes %zu\n",
+			  old_bmap_bytes, new_bmap_bytes);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_blk_bmap_inflate;
+	}
+
+	switch (blk_bmap->storage.state) {
+	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
+		if (old_bmap_folios == new_bmap_folios) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("we have enough folios: "
+				  "old_bmap_folios %zu, new_bmap_folios %zu\n",
+				  old_bmap_folios, new_bmap_folios);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_blk_bmap_inflate;
+		}
+
+		array = &blk_bmap->storage.array;
+
+		err = ssdfs_folio_vector_inflate(array, (u8)new_bmap_folios);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to inflate folio vector: "
+				  "bmap_bytes %zu, capacity %zu, err %d\n",
+				  new_bmap_bytes, new_bmap_folios, err);
+			return err;
+		}
+		break;
+
+	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(!blk_bmap->storage.buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (new_bmap_bytes <= PAGE_SIZE) {
+			blk_bmap->storage.buf = krealloc(blk_bmap->storage.buf,
+							 new_bmap_bytes,
+							 GFP_KERNEL);
+			if (!blk_bmap->storage.buf) {
+				blk_bmap->storage.state =
+					SSDFS_BLOCK_BMAP_STORAGE_ABSENT;
+				SSDFS_ERR("fail to re-allocate buffer\n");
+				return -ENOMEM;
+			}
+
+			memset((u8 *)blk_bmap->storage.buf + old_bmap_bytes,
+				0, new_bmap_bytes - old_bmap_bytes);
+		} else {
+			/* transform into folio vector */
+
+			array = &blk_bmap->storage.array;
+
+			err = ssdfs_folio_vector_create(array,
+							get_order(PAGE_SIZE),
+							(u8)new_bmap_folios);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to create folio vector: "
+					  "bmap_bytes %zu, capacity %zu, "
+					  "err %d\n",
+					  new_bmap_bytes, new_bmap_folios, err);
+				return err;
+			}
+
+			err = ssdfs_folio_vector_init(array);
+			if (unlikely(err)) {
+				ssdfs_folio_vector_destroy(array);
+				SSDFS_ERR("fail to init folio vector: "
+					  "bmap_bytes %zu, capacity %zu, "
+					  "err %d\n",
+					  new_bmap_bytes, new_bmap_folios, err);
+				return err;
+			}
+
+			folio = ssdfs_folio_vector_allocate(array);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("fail to allocate folio\n");
+				return err;
+			}
+
+			folio = array->folios[0];
+
+#ifdef CONFIG_SSDFS_DEBUG
+			BUG_ON(!folio);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			ssdfs_folio_lock(folio);
+			__ssdfs_memcpy_to_folio(folio,
+					        0, PAGE_SIZE,
+					        blk_bmap->storage.buf,
+					        0, old_bmap_bytes,
+					        old_bmap_bytes);
+			ssdfs_folio_unlock(folio);
+
+			ssdfs_block_bmap_kfree(blk_bmap->storage.buf);
+			blk_bmap->storage.buf = NULL;
+
+			blk_bmap->storage.state =
+				SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected state %#x\n",
+			  blk_bmap->storage.state);
+		return -ERANGE;
+	}
+
+finish_blk_bmap_inflate:
+	blk_bmap->bytes_count = new_bmap_bytes;
+	blk_bmap->items_capacity = new_items_capacity;
+	blk_bmap->allocation_pool = new_items_capacity;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_capacity %zu, allocation_pool %zu\n",
+		  blk_bmap->items_capacity,
+		  blk_bmap->allocation_pool);
+	SSDFS_DBG("finished\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+}
+
+/*
+ * ssdfs_block_bmap_inflate() - inflate block bitmap
+ * @blk_bmap: pointer on block bitmap
+ * @free_items: number of free items for adding
+ *
+ * This function tries to increase total number of items
+ * in block bitmap by adding @free_items number.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
+			     u32 free_items)
+{
+	size_t used_space;
+	size_t old_items_capacity;
+	size_t new_items_capacity;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("blk_bmap %p, free_items %u\n",
+		  blk_bmap, free_items);
+
+	BUG_ON(!blk_bmap);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap's mutex should be locked\n");
+		return -EINVAL;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -EINVAL;
+	}
+
+	if (free_items == 0) {
+		SSDFS_ERR("invalid request: free_items %u\n",
+			  free_items);
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_capacity %zu, allocation_pool %zu\n",
+		  blk_bmap->items_capacity,
+		  blk_bmap->allocation_pool);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	old_items_capacity = blk_bmap->items_capacity;
+
+	if (old_items_capacity == 0) {
+		SSDFS_ERR("invalid old items_capacity %zu\n",
+			  old_items_capacity);
+		return -ERANGE;
+	}
+
+	used_space = blk_bmap->metadata_items +
+			blk_bmap->used_blks +
+			blk_bmap->invalid_blks;
+
+	new_items_capacity = used_space + free_items;
+
+	return __ssdfs_block_bmap_inflate(blk_bmap, new_items_capacity);
+}
+
+/*
+ * ssdfs_block_bmap_correct_capacity() - correct block bitmap capacity
+ * @blk_bmap: pointer on block bitmap
+ * @range: requested range of blocks
+ *
+ * This function tries to increase total number of items
+ * in block bitmap.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ENOMEM     - unable to allocate memory.
+ * %-ERANGE     - internal error.
+ */
+int ssdfs_block_bmap_correct_capacity(struct ssdfs_block_bmap *blk_bmap,
+					struct ssdfs_block_bmap_range *range)
+{
+	u32 upper_bound;
+	size_t new_items_capacity;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!blk_bmap || !range);
+
+	SSDFS_DBG("blk_bmap %p, range (start %u, len %u)\n",
+		  blk_bmap, range->start, range->len);
+
+	if (!mutex_is_locked(&blk_bmap->lock)) {
+		SSDFS_WARN("block bitmap's mutex should be locked\n");
+		return -EINVAL;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -EINVAL;
+	}
+
+	if (range->start >= U32_MAX || range->len == 0) {
+		SSDFS_ERR("invalid request: range (start %u, len %u)\n",
+			  range->start, range->len);
+		return -EINVAL;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("items_capacity %zu, allocation_pool %zu\n",
+		  blk_bmap->items_capacity,
+		  blk_bmap->allocation_pool);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	upper_bound = range->start + range->len;
+
+	if (upper_bound <= blk_bmap->items_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("inflation is not necessary: "
+			  "items_capacity %zu, allocation_pool %zu, "
+			  "range (start %u, len %u)\n",
+			  blk_bmap->items_capacity,
+			  blk_bmap->allocation_pool,
+			  range->start, range->len);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return 0;
+	}
+
+	new_items_capacity = upper_bound;
+
+	return __ssdfs_block_bmap_inflate(blk_bmap, new_items_capacity);
+}
+
+/*
  * ssdfs_block_bmap_snapshot_storage() - make snapshot of bmap's storage
  * @blk_bmap: pointer on block bitmap
  * @snapshot: folio vector with snapshot of block bitmap state [out]
@@ -1244,6 +1683,7 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
  * @last_free_blk: pointer on last free page value [out]
  * @metadata_blks: pointer on reserved metadata pages count [out]
  * @invalid_blks: pointer on invalid blocks count [out]
+ * @items_capacity: pointer on total number of blocks in bitmap [out]
  * @bytes_count: size of block bitmap in bytes [out]
  *
  * This function copy folios of block bitmap's folio vector into
@@ -1261,6 +1701,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 				u32 *last_free_page,
 				u32 *metadata_blks,
 				u32 *invalid_blks,
+				size_t *items_capacity,
 				size_t *bytes_count)
 {
 	u32 used_pages;
@@ -1271,7 +1712,8 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap || !snapshot);
-	BUG_ON(!last_free_page || !metadata_blks || !bytes_count);
+	BUG_ON(!last_free_page || !metadata_blks);
+	BUG_ON(!bytes_count || !items_capacity);
 	BUG_ON(ssdfs_folio_vector_count(snapshot) != 0);
 
 	if (!mutex_is_locked(&blk_bmap->lock)) {
@@ -1347,6 +1789,7 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 
 	*metadata_blks = blk_bmap->metadata_items;
 	*invalid_blks = blk_bmap->invalid_blks;
+	*items_capacity = blk_bmap->items_capacity;
 	*bytes_count = blk_bmap->bytes_count;
 
 	used_pages = blk_bmap->used_blks + blk_bmap->invalid_blks;
@@ -4460,11 +4903,6 @@ int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!blk_bmap);
 
-	if (blk >= blk_bmap->items_capacity) {
-		SSDFS_ERR("invalid block %u\n", blk);
-		return -EINVAL;
-	}
-
 	if (!mutex_is_locked(&blk_bmap->lock)) {
 		SSDFS_WARN("block bitmap mutex should be locked\n");
 		return -EINVAL;
@@ -4476,6 +4914,21 @@ int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
+	}
+
+	if (blk >= blk_bmap->items_capacity) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("block is out of capacity: "
+			  "block %u, items_capacity %zu, "
+			  "allocation_pool %zu, metadata_items %u, "
+			  "used_blks %u, invalid_blks %u\n",
+			  blk, blk_bmap->items_capacity,
+			  blk_bmap->allocation_pool,
+			  blk_bmap->metadata_items,
+			  blk_bmap->used_blks,
+			  blk_bmap->invalid_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENODATA;
 	}
 
 	err = ssdfs_block_bmap_find_block(blk_bmap, blk, blk + 1,
@@ -5196,12 +5649,19 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (range_corrupted(blk_bmap, range)) {
-			SSDFS_ERR("invalid range: start %u, len %u; "
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("out of space: start %u, len %u; "
 				  "items_capacity %zu\n",
 				  range->start, range->len,
 				  blk_bmap->items_capacity);
-			return -EINVAL;
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -ENOSPC;
 		}
+	}
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5211,12 +5671,26 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items,
 		  blk_bmap->invalid_blks);
-#endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!is_block_bmap_initialized(blk_bmap)) {
-		SSDFS_WARN("block bitmap hasn't been initialized\n");
-		return -ENOENT;
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
 	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		return err;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_block_bmap_get_free_pages(blk_bmap);
 	if (unlikely(err < 0)) {
@@ -5430,12 +5904,19 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (range_corrupted(blk_bmap, range)) {
-			SSDFS_ERR("invalid range: start %u, len %u; "
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("out of space: start %u, len %u; "
 				  "items_capacity %zu\n",
 				  range->start, range->len,
 				  blk_bmap->items_capacity);
-			return -EINVAL;
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -ENOSPC;
 		}
+	}
+
+	if (!is_block_bmap_initialized(blk_bmap)) {
+		SSDFS_WARN("block bitmap hasn't been initialized\n");
+		return -ENOENT;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5444,12 +5925,26 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap->allocation_pool,
 		  blk_bmap->used_blks,
 		  blk_bmap->metadata_items);
-#endif /* CONFIG_SSDFS_DEBUG */
 
-	if (!is_block_bmap_initialized(blk_bmap)) {
-		SSDFS_WARN("block bitmap hasn't been initialized\n");
-		return -ENOENT;
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
 	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		return err;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_block_bmap_get_free_pages(blk_bmap);
 	if (unlikely(err < 0)) {
@@ -5659,6 +6154,25 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
+
+	calculated = ssdfs_calculate_used_blocks(blk_bmap, 0);
+	if (calculated < 0) {
+		err = calculated;
+		SSDFS_ERR("fail to calculate number of used blocks: "
+			  "err %d\n", err);
+		return err;
+	}
+
+	SSDFS_DBG("calculated %d, blk_bmap->used_blks %u\n",
+		  calculated, blk_bmap->used_blks);
+
+	if (calculated != blk_bmap->used_blks) {
+		err = -ERANGE;
+		SSDFS_ERR("invalid number of used blocks: "
+			  "calculated %d, blk_bmap->used_blks %u\n",
+			  calculated, blk_bmap->used_blks);
+		return err;
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (range_corrupted(blk_bmap, range)) {
@@ -5995,6 +6509,7 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 /*
  * ssdfs_block_bmap_clean() - set all blocks as free/clean
  * @blk_bmap: pointer on block bitmap
+ * @items_capacity: total capacity of items in bitmap
  *
  * This function tries to clean the whole bitmap.
  *
@@ -6005,10 +6520,13 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
  * %-EINVAL     - invalid input value.
  * %-ENOENT     - block bitmap doesn't initialized.
  */
-int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
+int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
+			   size_t items_capacity)
 {
 	struct ssdfs_block_bmap_range range;
 	int max_capacity = SSDFS_BLK_BMAP_FRAGMENTS_CHAIN_MAX;
+	size_t bmap_bytes = 0;
+	size_t bmap_folios = 0;
 	int i;
 	int err;
 
@@ -6019,12 +6537,45 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap)
 		return -EINVAL;
 	}
 
-	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
+	SSDFS_DBG("blk_bmap %p, items_capacity %zu\n",
+		  blk_bmap, items_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
+	}
+
+	if (items_capacity < blk_bmap->items_capacity) {
+		SSDFS_ERR("block bitmap cannot shrink: "
+			  "old_capacity %zu, new_capacity %zu\n",
+			  blk_bmap->items_capacity,
+			  items_capacity);
+		return -EINVAL;
+	} else if (blk_bmap->items_capacity < items_capacity) {
+		ssdfs_block_bmap_storage_destroy(&blk_bmap->storage);
+
+		bmap_bytes = BLK_BMAP_BYTES(items_capacity);
+		bmap_folios = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+		if (bmap_folios > max_capacity) {
+			SSDFS_WARN("unable to allocate bmap with %zu folios\n",
+				    bmap_folios);
+			return -EOPNOTSUPP;
+		}
+
+		blk_bmap->items_capacity = items_capacity;
+		blk_bmap->allocation_pool = items_capacity;
+		blk_bmap->bytes_count = bmap_bytes;
+
+		err = ssdfs_block_bmap_create_empty_storage(&blk_bmap->storage,
+							    bmap_bytes);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to create empty bmap's storage: "
+				  "bmap_bytes %zu, err %d\n",
+				  bmap_bytes, err);
+			return err;
+		}
 	}
 
 	blk_bmap->metadata_items = 0;

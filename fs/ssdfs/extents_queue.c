@@ -538,6 +538,8 @@ void ssdfs_destroy_btree_node_content(struct ssdfs_btree_node_content *content)
 		BUG_ON(folio_batch_count(&blk->batch) == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+		ssdfs_btree_node_forget_folio_batch(&blk->batch);
+		ssdfs_ext_queue_account_folio_batch(&blk->batch);
 		ssdfs_ext_queue_folio_batch_release(&blk->batch);
 	}
 }
@@ -927,7 +929,20 @@ int __ssdfs_invalidate_btree_index(struct ssdfs_fs_info *fsi,
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_invalidate_index;
+
+		do {
+			ktime_t timeout = KTIME_MAX;
+			DEFINE_WAIT(wait);
+
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
+			prepare_to_wait(&shextree->wait_queue,
+					&wait, TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
+			finish_wait(&shextree->wait_queue, &wait);
+
+			err = ssdfs_mark_segment_under_invalidation(si);
+		} while (err != 0);
 	}
 
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
@@ -1367,6 +1382,12 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 				goto finish_invalidate_index;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("fork_index %d, start_offset %llu, "
+				  "fork_blks %llu\n",
+				  i, start_offset, fork_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_shextree_add_pre_invalid_fork(shextree,
 								  owner_ino,
 								  &fork);
@@ -1398,7 +1419,20 @@ int ssdfs_invalidate_extents_btree_index(struct ssdfs_fs_info *fsi,
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_invalidate_index;
+
+		do {
+			ktime_t timeout = KTIME_MAX;
+			DEFINE_WAIT(wait);
+
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
+			prepare_to_wait(&shextree->wait_queue,
+					&wait, TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
+			finish_wait(&shextree->wait_queue, &wait);
+
+			err = ssdfs_mark_segment_under_invalidation(si);
+		} while (err != 0);
 	}
 
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);
@@ -1449,6 +1483,10 @@ finish_invalidate_index:
 
 fail_invalidate_extents_btree_index:
 	ssdfs_destroy_btree_node_content(content);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("finished: err %d\n", err);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -1842,6 +1880,7 @@ fail_invalidate_index:
 int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 			    struct ssdfs_raw_extent *extent)
 {
+	struct ssdfs_shared_extents_tree *shextree = NULL;
 	struct ssdfs_segment_info *si;
 	struct ssdfs_segment_search_state seg_search;
 	u64 seg_id;
@@ -1865,6 +1904,13 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("seg_id %llu, start_blk %u, len %u\n",
 		  seg_id, start_blk, len);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	shextree = fsi->shextree;
+
+	if (!shextree) {
+		SSDFS_ERR("shared extents tree is absent\n");
+		return -ERANGE;
+	}
 
 	ssdfs_segment_search_state_init(&seg_search,
 					SSDFS_USER_DATA_SEG_TYPE,
@@ -1894,7 +1940,20 @@ int ssdfs_invalidate_extent(struct ssdfs_fs_info *fsi,
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		goto finish_invalidate_extent;
+
+		do {
+			ktime_t timeout = KTIME_MAX;
+			DEFINE_WAIT(wait);
+
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
+			prepare_to_wait(&shextree->wait_queue,
+					&wait, TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
+			finish_wait(&shextree->wait_queue, &wait);
+
+			err = ssdfs_mark_segment_under_invalidation(si);
+		} while (err != 0);
 	}
 
 	err = ssdfs_segment_invalidate_logical_extent(si, start_blk, len);

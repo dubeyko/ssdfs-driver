@@ -421,13 +421,6 @@ try_invalidate_queue:
 							HZ);
 				continue;
 			}
-		} else if (err == -EBUSY) {
-			err = 0;
-			ssdfs_extents_queue_add_tail(eq, ei);
-			wait_event_interruptible_timeout(*wait_queue,
-						kthread_should_stop(),
-						HZ);
-			continue;
 		} else if (err) {
 			ssdfs_fs_error(tree->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -486,9 +479,9 @@ int ssdfs_shextree_index_thread_func(void *data)
 	struct ssdfs_shared_extents_tree *tree = data;
 	wait_queue_head_t *wait_queue = NULL;
 	struct ssdfs_invalidation_queue *ptr = NULL;
-	struct ssdfs_btree_index_key *key;
-	struct ssdfs_btree_index *index;
-	struct ssdfs_raw_extent *extent;
+	struct ssdfs_btree_index_key *key = NULL;
+	struct ssdfs_btree_index *index = NULL;
+	struct ssdfs_raw_extent *extent = NULL;
 	int id = SSDFS_INDEX_INVALIDATION_QUEUE;
 	int state;
 	int err = 0;
@@ -611,11 +604,12 @@ try_invalidate_queue:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_shextree_invalidate_index(tree, &ptr->content, ei);
-		if (err == -ENODATA) {
-			key = &ei->raw.index;
-			index = &key->index;
-			extent = &index->extent;
 
+		key = &ei->raw.index;
+		index = &key->index;
+		extent = &index->extent;
+
+		if (err == -ENODATA) {
 			if (kthread_should_stop()) {
 				ssdfs_fs_error(tree->fsi->sb,
 					__FILE__, __func__, __LINE__,
@@ -639,7 +633,7 @@ try_invalidate_queue:
 				ssdfs_extents_queue_add_tail(&ptr->queue, ei);
 
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("return extent to queue: "
+				SSDFS_DBG("return index to queue: "
 					  "node_id %u, node_type %#x, "
 					  "height %u, hash %#llx, "
 					  "(seg_id %llu, logical_blk %u, len %u)\n",
@@ -657,13 +651,6 @@ try_invalidate_queue:
 							HZ);
 				continue;
 			}
-		} else if (err == -EBUSY) {
-			err = 0;
-			ssdfs_extents_queue_add_tail(&ptr->queue, ei);
-			wait_event_interruptible_timeout(*wait_queue,
-						kthread_should_stop(),
-						HZ);
-			continue;
 		} else if (err) {
 			ssdfs_fs_error(tree->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -676,8 +663,9 @@ try_invalidate_queue:
 				err);
 			ssdfs_extent_info_free(ei);
 			goto repeat;
-		} else
+		} else {
 			ssdfs_extent_info_free(ei);
+		}
 	} while (has_shextree_pre_invalid_extents(tree, id));
 
 	if (kthread_should_stop())

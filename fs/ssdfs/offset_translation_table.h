@@ -406,20 +406,25 @@ ssdfs_blk2off_table_convert(struct ssdfs_blk2off_table *table,
 			    int *migration_state,
 			    struct ssdfs_offset_position *pos);
 int ssdfs_blk2off_table_allocate_block(struct ssdfs_blk2off_table *table,
+					u32 max_blk,
 					u16 *logical_blk);
 int ssdfs_blk2off_table_allocate_extent(struct ssdfs_blk2off_table *table,
-					u16 len,
+					u16 len, u32 max_blk,
 					struct ssdfs_blk2off_range *extent);
 int ssdfs_blk2off_table_change_offset(struct ssdfs_blk2off_table *table,
 				      u16 logical_blk,
 				      u16 peb_index,
+				      u64 peb_id,
 				      struct ssdfs_block_descriptor *blk_desc,
 				      struct ssdfs_phys_offset_descriptor *off);
 int ssdfs_blk2off_table_free_block(struct ssdfs_blk2off_table *table,
-				   u16 peb_index, u16 logical_blk);
+				   u16 peb_index, u64 peb_id, u16 logical_blk);
 int ssdfs_blk2off_table_free_extent(struct ssdfs_blk2off_table *table,
-				    u16 peb_index,
+				    u16 peb_index, u64 peb_id,
 				    struct ssdfs_blk2off_range *extent);
+bool is_ssdfs_blk2off_table_extent_modified(struct ssdfs_blk2off_table *table,
+					    u16 peb_index,
+					    struct ssdfs_blk2off_range *extent);
 
 int ssdfs_blk2off_table_get_block_migration(struct ssdfs_blk2off_table *table,
 					    u16 logical_blk,
