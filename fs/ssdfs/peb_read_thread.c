@@ -14430,7 +14430,7 @@ void ssdfs_unlock_request_folios(struct ssdfs_segment_request *req)
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio, folio_ref_count(folio));
 			SSDFS_DBG("folio_index %llu, flags %#lx\n",
-				  (u64)folio_index(folio), folio->flags);
+				  (u64)folio->index, folio->flags);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 	}

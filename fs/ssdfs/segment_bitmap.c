@@ -2735,7 +2735,7 @@ int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap)
 				continue;
 
 			SSDFS_ERR("fragment %lu is dirty\n",
-				  folio_index(folio));
+				  folio->index);
 		}
 
 		if (folio_batch_count(&fbatch) > 0) {

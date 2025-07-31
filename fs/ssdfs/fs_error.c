@@ -136,13 +136,13 @@ int ssdfs_set_folio_dirty(struct folio *folio)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio_index: %llu, mapping %p\n",
-		  (u64)folio_index(folio), mapping);
+		  (u64)folio->index, mapping);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!folio_test_locked(folio)) {
 		SSDFS_WARN("folio isn't locked: "
 			   "folio_index %llu, mapping %p\n",
-			   (u64)folio_index(folio), mapping);
+			   (u64)folio->index, mapping);
 		return -ERANGE;
 	}
 
@@ -150,7 +150,7 @@ int ssdfs_set_folio_dirty(struct folio *folio)
 
 	if (mapping) {
 		xa_lock_irqsave(&mapping->i_pages, flags);
-		__xa_set_mark(&mapping->i_pages, folio_index(folio),
+		__xa_set_mark(&mapping->i_pages, folio->index,
 				PAGECACHE_TAG_DIRTY);
 		xa_unlock_irqrestore(&mapping->i_pages, flags);
 	}
@@ -165,13 +165,13 @@ int __ssdfs_clear_dirty_folio(struct folio *folio)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio_index: %llu, mapping %p\n",
-		  (u64)folio_index(folio), mapping);
+		  (u64)folio->index, mapping);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!folio_test_locked(folio)) {
 		SSDFS_WARN("folio isn't locked: "
 			   "folio_index %llu, mapping %p\n",
-			   (u64)folio_index(folio), mapping);
+			   (u64)folio->index, mapping);
 		return -ERANGE;
 	}
 
@@ -179,7 +179,7 @@ int __ssdfs_clear_dirty_folio(struct folio *folio)
 		xa_lock_irqsave(&mapping->i_pages, flags);
 		if (test_bit(PG_dirty, &folio->flags)) {
 			__xa_clear_mark(&mapping->i_pages,
-					folio_index(folio),
+					folio->index,
 					PAGECACHE_TAG_DIRTY);
 		}
 		xa_unlock_irqrestore(&mapping->i_pages, flags);
@@ -197,13 +197,13 @@ int ssdfs_clear_dirty_folio(struct folio *folio)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio_index: %llu, mapping %p\n",
-		  (u64)folio_index(folio), mapping);
+		  (u64)folio->index, mapping);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!folio_test_locked(folio)) {
 		SSDFS_WARN("folio isn't locked: "
 			   "folio_index %llu, mapping %p\n",
-			   (u64)folio_index(folio), mapping);
+			   (u64)folio->index, mapping);
 		return -ERANGE;
 	}
 
@@ -211,7 +211,7 @@ int ssdfs_clear_dirty_folio(struct folio *folio)
 		xa_lock_irqsave(&mapping->i_pages, flags);
 		if (test_bit(PG_dirty, &folio->flags)) {
 			__xa_clear_mark(&mapping->i_pages,
-					folio_index(folio),
+					folio->index,
 					PAGECACHE_TAG_DIRTY);
 			xa_unlock_irqrestore(&mapping->i_pages, flags);
 			return folio_clear_dirty_for_io(folio);
@@ -254,7 +254,7 @@ void ssdfs_clear_dirty_folios(struct address_space *mapping)
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("fail clear folio dirty: "
 					  "folio_index %llu\n",
-					  (u64)folio_index(folio));
+					  (u64)folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 			}
 		}

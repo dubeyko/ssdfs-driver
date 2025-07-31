@@ -851,7 +851,7 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 
 		SSDFS_DBG("folio_index %lu, folio_size %zu, "
 			  "folio_dirty %#x\n",
-			  folio_index(folio), folio_size(folio),
+			  folio->index, folio_size(folio),
 			  folio_test_dirty(folio));
 
 		BUG_ON(!folio_test_dirty(folio));
@@ -873,7 +873,7 @@ int ssdfs_bdev_write_blocks(struct super_block *sb, loff_t offset,
 			SSDFS_ERR("failed to write (err %d): "
 				  "folio_index %llu\n",
 				  err,
-				  (unsigned long long)folio_index(folio));
+				  (unsigned long long)folio->index);
 		} else {
 			ssdfs_clear_dirty_folio(folio);
 			folio_mark_uptodate(folio);

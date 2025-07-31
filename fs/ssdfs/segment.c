@@ -3150,7 +3150,7 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 			  "ino %llu, folio_index %llu, "
 			  "err %d\n",
 			  batch->requested_extent.ino,
-			  (u64)folio_index(folio), err);
+			  (u64)folio->index, err);
 		goto fail_add_request_into_create_queue;
 	}
 
@@ -6393,7 +6393,7 @@ int ssdfs_add_request_into_update_queue(struct ssdfs_segment_info *si,
 			SSDFS_DBG("ino %llu, blk_index %d, folio_index %lu\n",
 				  batch->requested_extent.ino,
 				  blk_index,
-				  folio_index(folio));
+				  folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			err = ssdfs_request_add_folio(folio, i, req);

@@ -862,7 +862,7 @@ int ssdfs_dirty_folios_batch_add_folio(struct folio *folio,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio_index %llu\n",
-		  (u64)folio_index(folio));
+		  (u64)folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	folio_batch_add(&block->batch, folio);

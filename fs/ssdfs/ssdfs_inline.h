@@ -232,7 +232,7 @@ void ssdfs_account_locked_folio(struct folio *folio)
 
 	if (!folio_test_locked(folio)) {
 		SSDFS_WARN("folio %p, folio_index %llu\n",
-			   folio, (u64)folio_index(folio));
+			   folio, (u64)folio->index);
 	}
 
 	if (atomic64_read(&ssdfs_locked_folios) < 0) {
@@ -250,7 +250,7 @@ void ssdfs_folio_unlock(struct folio *folio)
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	if (!folio_test_locked(folio)) {
 		SSDFS_WARN("folio %p, folio_index %llu\n",
-			   folio, (u64)folio_index(folio));
+			   folio, (u64)folio->index);
 	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
@@ -287,14 +287,14 @@ void ssdfs_folio_start_writeback(struct ssdfs_fs_info *fsi,
 			   "seg_id %llu, logical_offset %llu, "
 			   "ssdfs_writeback_folios %lld\n",
 			   (u64)folio->mapping->host->i_ino,
-			   folio_index(folio),
+			   folio->index,
 			   seg_id, logical_offset,
 			   atomic64_read(&fsi->ssdfs_writeback_folios));
 	} else {
 		SSDFS_DBG("seg_id %llu, logical_offset %llu, "
 			  "folio_index %lu, ssdfs_writeback_folios %lld\n",
 			  seg_id, logical_offset,
-			  folio_index(folio),
+			  folio->index,
 			  atomic64_read(&fsi->ssdfs_writeback_folios));
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -323,14 +323,14 @@ void ssdfs_folio_end_writeback(struct ssdfs_fs_info *fsi,
 			  "seg_id %llu, logical_offset %llu, "
 			  "ssdfs_writeback_folios %lld\n",
 			  (u64)folio->mapping->host->i_ino,
-			  folio_index(folio),
+			  folio->index,
 			  seg_id, logical_offset,
 			  atomic64_read(&fsi->ssdfs_writeback_folios));
 	} else {
 		SSDFS_DBG("seg_id %llu, logical_offset %llu, "
 			  "folio_index %lu, ssdfs_writeback_folios %lld\n",
 			  seg_id, logical_offset,
-			  folio_index(folio),
+			  folio->index,
 			  atomic64_read(&fsi->ssdfs_writeback_folios));
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -369,7 +369,7 @@ struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 	SSDFS_DBG("folio %p, count %d, "
 		  "flags %#lx, folio_index %lu\n",
 		  folio, folio_ref_count(folio),
-		  folio->flags, folio_index(folio));
+		  folio->flags, folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -462,7 +462,7 @@ void ssdfs_folio_free(struct folio *folio)
 	SSDFS_DBG("folio %p, count %d, "
 		  "flags %#lx, folio_index %lu\n",
 		  folio, folio_ref_count(folio),
-		  folio->flags, folio_index(folio));
+		  folio->flags, folio->index);
 
 	if (folio_ref_count(folio) <= 0 ||
 	    folio_ref_count(folio) > 2) {
@@ -1191,8 +1191,8 @@ bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 	ino_t ino1 = folio1->mapping->host->i_ino;
 	ino_t ino2 = folio2->mapping->host->i_ino;
 	int pages_per_folio = fsi->pagesize >> PAGE_SHIFT;
-	pgoff_t index1 = folio_index(folio1);
-	pgoff_t index2 = folio_index(folio2);
+	pgoff_t index1 = folio1->index;
+	pgoff_t index2 = folio2->index;
 	pgoff_t diff_index;
 	bool has_identical_type;
 	bool has_identical_ino;

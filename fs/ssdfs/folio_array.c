@@ -1319,7 +1319,7 @@ int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
 		if (folio) {
 			if (!folio_test_dirty(folio)) {
 				SSDFS_ERR("folio %lu is not dirty\n",
-					  folio_index(folio));
+					  folio->index);
 			}
 			ssdfs_folio_get(folio);
 

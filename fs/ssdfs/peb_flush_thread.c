@@ -2044,9 +2044,9 @@ int ssdfs_peb_store_data_block_fragment(struct ssdfs_peb_info *pebi,
 		size = min_t(u32, size, to.compr_size - written_bytes);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("folio_index %lu, folio_index(folio) %lu, "
+		SSDFS_DBG("folio_index %lu, folio->index %lu, "
 			  "offset %u, size %u, written_bytes %u\n",
-			  index, folio_index(folio), offset,
+			  index, folio->index, offset,
 			  size, written_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -14522,12 +14522,12 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 
 			mem_pages_per_folio = folio_size(folio1) >> PAGE_SHIFT;
 
-			if ((folio_index(folio1) + mem_pages_per_folio) !=
-							folio_index(folio2)) {
+			if ((folio1->index + mem_pages_per_folio) !=
+								folio2->index) {
 				SSDFS_ERR("not contiguous log: "
 					  "folio_index1 %lu, folio_index2 %lu\n",
-					  folio_index(folio1),
-					  folio_index(folio2));
+					  folio1->index,
+					  folio2->index);
 			}
 		}
 #endif /* CONFIG_SSDFS_DEBUG */

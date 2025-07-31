@@ -1171,7 +1171,7 @@ int ssdfs_zns_write_blocks(struct super_block *sb, loff_t offset,
 			SSDFS_ERR("failed to write (err %d): "
 				  "folio_index %llu\n",
 				  err,
-				  (unsigned long long)folio_index(folio));
+				  (unsigned long long)folio->index);
 		} else {
 			ssdfs_clear_dirty_folio(folio);
 			folio_mark_uptodate(folio);

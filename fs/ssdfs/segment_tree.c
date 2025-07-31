@@ -375,10 +375,10 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 					continue;
 
 				ssdfs_folio_array_clear_dirty_folio(folios,
-							folio_index(folio));
+								folio->index);
 			}
 
-			index = folio_index(fbatch.folios[nr_folios - 1]) + 1;
+			index = fbatch.folios[nr_folios - 1]->index + 1;
 		}
 	} while (folio_batch_count(&fbatch) > 0);
 }

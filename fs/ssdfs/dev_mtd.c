@@ -202,7 +202,7 @@ static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("sb %p, offset %llu, folio %p, folio_index %llu\n",
 		  sb, (unsigned long long)offset, folio,
-		  (unsigned long long)folio_index(folio));
+		  (unsigned long long)folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	while (processed_bytes < folio_size(folio)) {
