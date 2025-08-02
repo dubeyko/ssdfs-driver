@@ -4102,7 +4102,6 @@ int ssdfs_write_end(const struct kiocb *iocb,
 		    loff_t pos, unsigned len, unsigned copied,
 		    struct folio *folio, void *fsdata)
 {
-	struct file *file = iocb->ki_filp;
 	struct inode *inode = mapping->host;
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(inode->i_sb);
 	pgoff_t index = folio->index;

@@ -7184,7 +7184,7 @@ int ssdfs_maptbl_find_pre_erased_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 			if (is_peb_protected(index)) {
 				/* continue to search */
 				*found = ULONG_MAX;
-			} else if (found_cycles <= threshold) {
+			} else {
 				struct ssdfs_erase_result res;
 				u16 peb_index;
 
@@ -7239,9 +7239,6 @@ int ssdfs_maptbl_find_pre_erased_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 					  *found, found_cycles, threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 				return 0;
-			} else {
-				/* continue to search */
-				*found = ULONG_MAX;
 			}
 			break;
 
@@ -7309,7 +7306,19 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (err == -ENODATA) {
-		SSDFS_DBG("unable to find the unused peb\n");
+		/* try to increase threshold */
+		threshold++;
+
+		err = ssdfs_maptbl_find_clean_unused_peb(tbl, fdesc, hdr,
+							 folio_index,
+							 start, max,
+							 threshold,
+							 found);
+		if (err == -ENODATA) {
+			SSDFS_DBG("unable to find the unused peb\n");
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find the unused peb: err %d\n", err);
+		}
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find the unused peb: err %d\n", err);
 	}

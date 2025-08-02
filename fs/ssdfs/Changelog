@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.23 [August 02, 2025]
+    (*) Rework logic of finding unused PEB in mapping table.
+
 v.5.22 [July 19, 2025]
     (*) Introduce PEB inflation model.
 
