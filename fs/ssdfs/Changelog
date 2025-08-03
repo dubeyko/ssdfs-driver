@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.24 [August 03, 2025]
+    (*) Improve logic of log creation for the case of pre-exhausted
+        erase block.
+
 v.5.23 [August 02, 2025]
     (*) Rework logic of finding unused PEB in mapping table.
 

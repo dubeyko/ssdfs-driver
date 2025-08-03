@@ -1153,6 +1153,7 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 	int log_state;
 	int log_strategy;
 	u32 pages_per_peb;
+	u32 free_data_blocks;
 	u32 log_footer_blocks;
 	int compr_type;
 	int i;
@@ -1201,6 +1202,7 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 	log = &pebi->current_log;
 	pages_per_peb = min_t(u32, si->fsi->leb_pages_capacity,
 				   si->fsi->peb_pages_capacity);
+	free_data_blocks = log->free_data_blocks;
 
 	/*
 	 * Start page of the next log should be defined during commit.
@@ -1307,17 +1309,35 @@ int ssdfs_peb_create_log(struct ssdfs_peb_info *pebi)
 		goto finish_log_create;
 	}
 
-	if (log->free_data_blocks < log->reserved_blocks) {
-		err = -ENOSPC;
-		SSDFS_ERR("log->free_data_blocks %u < log->reserved_blocks %u\n",
-			  log->free_data_blocks, log->reserved_blocks);
-		goto finish_log_create;
-	}
-
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("log_strategy %#x, free_data_blocks %u, reserved_blocks %u\n",
-		  log_strategy, log->free_data_blocks, log->reserved_blocks);
+	SSDFS_DBG("log_strategy %#x, free_data_blocks %u, reserved_blocks %u, "
+		  "reserved_metapages %u, log_footer_metapages %u\n",
+		  log_strategy, log->free_data_blocks, log->reserved_blocks,
+		  ssdfs_peb_define_reserved_metapages(pebi),
+		  ssdfs_peb_log_footer_metapages(pebi));
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (log->free_data_blocks < log->reserved_blocks) {
+		u32 page_size = si->fsi->pagesize;
+		u32 prev_log_metapages = 0;
+
+		log->free_data_blocks = free_data_blocks;
+
+		prev_log_metapages = log->prev_log.bmap_bytes +
+					log->prev_log.blk2off_bytes +
+					log->prev_log.blk_desc_bytes;
+		prev_log_metapages += page_size - 1;
+		prev_log_metapages /= page_size;
+
+		if (prev_log_metapages >= log->free_data_blocks) {
+			err = -ENOSPC;
+			SSDFS_ERR("free_data_blocks %u < reserved_blocks %u\n",
+				  log->free_data_blocks, log->reserved_blocks);
+			goto finish_log_create;
+		} else {
+			log->reserved_blocks = prev_log_metapages;
+		}
+	}
 
 	err = ssdfs_segment_blk_bmap_reserve_metapages(&si->blk_bmap,
 							pebi,
