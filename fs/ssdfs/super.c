@@ -992,6 +992,54 @@ static int ssdfs_define_next_sb_log_place(struct super_block *sb,
 	last_sb_log->leb_id = cur_leb;
 	last_sb_log->peb_id = cur_peb;
 
+	if (fsi->sb_snapi.need_snapshot_sb) {
+		struct ssdfs_peb_extent *last_sb_snap_log;
+
+		last_sb_snap_log = &fsi->sb_snapi.last_log;
+
+		offset = last_sb_snap_log->page_offset;
+
+		if (offset >= pages_per_peb) {
+			SSDFS_ERR("inconsistent metadata state: "
+				  "last_sb_snap_log.page_offset %u, "
+				  "pages_per_peb %u\n",
+				  offset, pages_per_peb);
+			return -EINVAL;
+		}
+
+		offset += last_sb_snap_log->pages_count;
+
+		if (offset >= pages_per_peb) {
+			SSDFS_ERR("inconsistent metadata state: "
+				  "last_sb_snap_log.page_offset %u, "
+				  "last_sb_snap_log.pages_count %u, "
+				  "pages_per_peb %u\n",
+				  last_sb_snap_log->page_offset,
+				  last_sb_snap_log->pages_count,
+				  pages_per_peb);
+			return -ERANGE;
+		}
+
+		last_sb_snap_log->page_offset = offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("last_sb_snap_log (page_offset %u, pages_count %u)\n",
+			  last_sb_snap_log->page_offset,
+			  last_sb_snap_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		err = ssdfs_can_write_sb_log(sb, last_sb_snap_log);
+		if (err) {
+			SSDFS_DBG("possibly logical block has data: "
+				  "PEB %llu: "
+				  "last_sb_log->page_offset %u, "
+				  "last_sb_log->pages_count %u\n",
+				  last_sb_log->peb_id,
+				  last_sb_log->page_offset,
+				  last_sb_log->pages_count);
+		}
+	}
+
 	return 0;
 }
 
@@ -1757,6 +1805,72 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	return 0;
 }
 
+static int ssdfs_snapshot_new_sb_pebs_array(struct super_block *sb)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_peb_extent *last_log;
+	struct ssdfs_segment_request *req;
+	struct ssdfs_requests_queue *rq;
+	u64 offset;
+	u32 log_blocks;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb);
+
+	SSDFS_DBG("sb %p", sb);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi = SSDFS_FS_I(sb);
+
+	fsi->sb_snapi.need_snapshot_sb = true;
+
+	last_log = &fsi->sb_snapi.last_log;
+	offset = last_log->page_offset + last_log->pages_count;
+	log_blocks = last_log->pages_count;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_log (page_offset %u, pages_count %u)\n",
+		  last_log->page_offset, last_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (offset > fsi->pages_per_peb) {
+		SSDFS_ERR("last log has inconsistent state: "
+			  "offset %llu > pages_per_peb %u\n",
+			  offset, fsi->pages_per_peb);
+		return -ERANGE;
+	} else if ((offset + log_blocks) > fsi->pages_per_peb) {
+		req = ssdfs_request_alloc();
+		if (IS_ERR_OR_NULL(req)) {
+			err = (req == NULL ? -ENOMEM : PTR_ERR(req));
+			SSDFS_ERR("fail to allocate segment request: err %d\n",
+				  err);
+			return err;
+		}
+
+		ssdfs_request_init(req, fsi->pagesize);
+		ssdfs_get_request(req);
+
+		ssdfs_request_prepare_internal_data(SSDFS_GLOBAL_FSCK_REQ,
+					SSDFS_FSCK_ERASE_RE_WRITE_SB_SNAP_SEG,
+					SSDFS_REQ_ASYNC_NO_FREE, req);
+
+		rq = &fsi->global_fsck.rq;
+		ssdfs_requests_queue_add_tail_inc(fsi, rq, req);
+		fsi->sb_snapi.req = req;
+		wake_up_all(&fsi->global_fsck.wait_queue);
+
+		last_log->page_offset = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("last_log (page_offset %u, pages_count %u)\n",
+			  last_log->page_offset, last_log->pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+
+	return 0;
+}
+
 static int ssdfs_move_on_next_sb_segs_pair(struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
@@ -1806,6 +1920,13 @@ static int ssdfs_move_on_next_sb_segs_pair(struct super_block *sb)
 		     sb_pebs, 0, array_size,
 		     array_size);
 	up_write(&fsi->sb_segs_sem);
+
+	err = ssdfs_snapshot_new_sb_pebs_array(sb);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare snapshot of new superblock chain: "
+			  "err %d\n", err);
+		return err;
+	}
 
 	return 0;
 }
@@ -2022,7 +2143,8 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr = NULL;
 #endif /* CONFIG_SSDFS_DEBUG */
-	loff_t peb_offset, offset;
+	loff_t peb_offset;
+	loff_t sb_offset, sb_snap_offset;
 	u32 flags = 0;
 	u32 written = 0;
 	u64 seg_id;
@@ -2055,18 +2177,18 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	memset(hdr_desc, 0, hdr_array_bytes);
 	memset(footer_desc, 0, footer_array_bytes);
 
-	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
-	offset += PAGE_SIZE;
+	sb_offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
+	sb_offset += PAGE_SIZE;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_MAPTBL_CACHE_INDEX];
-	ssdfs_prepare_maptbl_cache_descriptor(cur_hdr_desc, (u32)offset,
+	ssdfs_prepare_maptbl_cache_descriptor(cur_hdr_desc, (u32)sb_offset,
 					     &payload->maptbl_cache,
 					     payload->maptbl_cache.bytes_count);
 
-	offset += payload->maptbl_cache.bytes_count;
+	sb_offset += payload->maptbl_cache.bytes_count;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
-	cur_hdr_desc->offset = cpu_to_le32(offset);
+	cur_hdr_desc->offset = cpu_to_le32(sb_offset);
 	cur_hdr_desc->size = cpu_to_le32(footer_size);
 
 	ssdfs_memcpy(hdr->desc_array, 0, hdr_array_bytes,
@@ -2096,11 +2218,11 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		return err;
 	}
 
-	offset += offsetof(struct ssdfs_log_footer, payload);
+	sb_offset += offsetof(struct ssdfs_log_footer, payload);
 	cur_hdr_desc = &footer_desc[SSDFS_SNAPSHOT_RULES_AREA_INDEX];
 
 	err = ssdfs_prepare_snapshot_rules_for_commit(fsi, cur_hdr_desc,
-						      (u32)offset);
+						      (u32)sb_offset);
 	if (err == -ENODATA) {
 		err = 0;
 		SSDFS_DBG("snapshot rules list is empty\n");
@@ -2151,24 +2273,83 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
 	peb_offset <<= fsi->log_pagesize;
-	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
+	sb_offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(peb_offset > (ULLONG_MAX - (offset + PAGE_SIZE)));
+	BUG_ON(peb_offset > (ULLONG_MAX - (sb_offset + PAGE_SIZE)));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset += peb_offset;
+	sb_offset += peb_offset;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", offset);
+	SSDFS_DBG("offset %llu\n", sb_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_block(sb, offset, folio);
+	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
-			  (u64)offset, hdr_size);
+			  (u64)sb_offset, hdr_size);
 		goto cleanup_after_failure;
+	}
+
+	if (fsi->sb_snapi.need_snapshot_sb) {
+		struct ssdfs_peb_extent *last_sb_snap_log;
+
+		last_sb_snap_log = &fsi->sb_snapi.last_log;
+
+		peb_offset = last_sb_snap_log->peb_id * fsi->pages_per_peb;
+		peb_offset <<= fsi->log_pagesize;
+		sb_snap_offset =
+			(loff_t)last_sb_snap_log->page_offset << PAGE_SHIFT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(peb_offset > (ULLONG_MAX - (sb_snap_offset + PAGE_SIZE)));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		sb_snap_offset += peb_offset;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("offset %llu\n", sb_snap_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		/* ->writepage() calls put_folio() */
+		ssdfs_folio_get(folio);
+
+		ssdfs_folio_lock(folio);
+		hdr = SSDFS_SEG_HDR(kmap_local_folio(folio, 0));
+		hdr->seg_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_ID);
+		hdr->leb_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_LEB_ID);
+		hdr->peb_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_PEB_ID);
+		hdr->seg_type = cpu_to_le16(SSDFS_INITIAL_SNAPSHOT_SEG_TYPE);
+		hdr->seg_flags = cpu_to_le32(SSDFS_LOG_HAS_FOOTER);
+		hdr->volume_hdr.check.bytes =
+			cpu_to_le16(sizeof(struct ssdfs_segment_header));
+		hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
+		err = ssdfs_calculate_csum(&hdr->volume_hdr.check,
+					   hdr,
+					   sizeof(struct ssdfs_segment_header));
+		if (unlikely(err)) {
+			SSDFS_ERR("unable to calculate checksum: err %d\n", err);
+		} else {
+			ssdfs_set_folio_private(folio, 0);
+			folio_mark_uptodate(folio);
+			folio_set_dirty(folio);
+		}
+		kunmap_local(hdr);
+		ssdfs_folio_unlock(folio);
+
+		if (err)
+			goto cleanup_after_failure;
+
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		if (err) {
+			SSDFS_ERR("fail to write segment header: "
+				  "offset %llu, size %zu\n",
+				  (u64)sb_snap_offset,
+				  hdr_size);
+			goto cleanup_after_failure;
+		}
 	}
 
 	ssdfs_folio_lock(folio);
@@ -2176,7 +2357,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
 
-	offset += PAGE_SIZE;
+	sb_offset += PAGE_SIZE;
 	written = 0;
 
 	for (i = 0; i < folio_batch_count(&payload->maptbl_cache.batch); i++) {
@@ -2209,14 +2390,14 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		ssdfs_folio_unlock(payload_folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("offset %llu\n", offset);
+		SSDFS_DBG("offset %llu\n", sb_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = fsi->devops->write_block(sb, offset, payload_folio);
+		err = fsi->devops->write_block(sb, sb_offset, payload_folio);
 		if (err) {
 			SSDFS_ERR("fail to write maptbl cache page: "
 				  "offset %llu, folio_index %u, size %zu\n",
-				  (u64)offset, i, PAGE_SIZE);
+				  (u64)sb_offset, i, PAGE_SIZE);
 			goto cleanup_after_failure;
 		}
 
@@ -2225,7 +2406,7 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		ssdfs_clear_folio_private(folio, 0);
 		ssdfs_folio_unlock(payload_folio);
 
-		offset += PAGE_SIZE;
+		sb_offset += PAGE_SIZE;
 	}
 
 	/* TODO: write metadata payload */
@@ -2251,21 +2432,48 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	ssdfs_folio_unlock(folio);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", offset);
+	SSDFS_DBG("offset %llu\n", sb_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_block(sb, offset, folio);
+	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write log footer: "
 			  "offset %llu, size %zu\n",
-			  (u64)offset, fsi->sbi.vs_buf_size);
+			  (u64)sb_offset, fsi->sbi.vs_buf_size);
 		goto cleanup_after_failure;
+	}
+
+	if (fsi->sb_snapi.need_snapshot_sb) {
+		sb_snap_offset += PAGE_SIZE;
+
+		/* ->writepage() calls put_folio() */
+		ssdfs_folio_get(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("offset %llu\n", sb_snap_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		folio_set_dirty(folio);
+		ssdfs_folio_unlock(folio);
+
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		if (err) {
+			SSDFS_ERR("fail to write log footer: "
+				  "offset %llu, size %zu\n",
+				  (u64)sb_snap_offset, fsi->sbi.vs_buf_size);
+			goto cleanup_after_failure;
+		}
 	}
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
 	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
+
+	fsi->sb_snapi.need_snapshot_sb = false;
 
 	ssdfs_super_free_folio(folio);
 	return 0;
@@ -2302,7 +2510,8 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	struct ssdfs_log_footer *footer;
 	size_t footer_size = sizeof(struct ssdfs_log_footer);
 	void *kaddr = NULL;
-	loff_t peb_offset, offset;
+	loff_t peb_offset;
+	loff_t sb_offset, sb_snap_offset;
 	u32 inline_capacity;
 	void *payload_buf;
 	u32 flags = 0;
@@ -2335,21 +2544,21 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	memset(hdr_desc, 0, hdr_array_bytes);
 	memset(footer_desc, 0, footer_array_bytes);
 
-	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
-	offset += hdr_size;
+	sb_offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
+	sb_offset += hdr_size;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_MAPTBL_CACHE_INDEX];
-	ssdfs_prepare_maptbl_cache_descriptor(cur_hdr_desc, (u32)offset,
+	ssdfs_prepare_maptbl_cache_descriptor(cur_hdr_desc, (u32)sb_offset,
 					      &payload->maptbl_cache,
 					      payload_size);
 
-	offset += payload_size;
+	sb_offset += payload_size;
 
-	offset += PAGE_SIZE - 1;
-	offset = (offset >> PAGE_SHIFT) << PAGE_SHIFT;
+	sb_offset += PAGE_SIZE - 1;
+	sb_offset = (sb_offset >> PAGE_SHIFT) << PAGE_SHIFT;
 
 	cur_hdr_desc = &hdr_desc[SSDFS_LOG_FOOTER_INDEX];
-	cur_hdr_desc->offset = cpu_to_le32(offset);
+	cur_hdr_desc->offset = cpu_to_le32(sb_offset);
 	cur_hdr_desc->size = cpu_to_le32(footer_size);
 
 	ssdfs_memcpy(hdr->desc_array, 0, hdr_array_bytes,
@@ -2379,11 +2588,11 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 		return err;
 	}
 
-	offset += offsetof(struct ssdfs_log_footer, payload);
+	sb_offset += offsetof(struct ssdfs_log_footer, payload);
 	cur_hdr_desc = &footer_desc[SSDFS_SNAPSHOT_RULES_AREA_INDEX];
 
 	err = ssdfs_prepare_snapshot_rules_for_commit(fsi, cur_hdr_desc,
-						      (u32)offset);
+						      (u32)sb_offset);
 	if (err == -ENODATA) {
 		err = 0;
 		SSDFS_DBG("snapshot rules list is empty\n");
@@ -2491,32 +2700,89 @@ free_payload_buffer:
 
 	peb_offset = last_sb_log->peb_id * fsi->pages_per_peb;
 	peb_offset <<= fsi->log_pagesize;
-	offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
+	sb_offset = (loff_t)last_sb_log->page_offset << PAGE_SHIFT;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(peb_offset > (ULLONG_MAX - (offset + PAGE_SIZE)));
+	BUG_ON(peb_offset > (ULLONG_MAX - (sb_offset + PAGE_SIZE)));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	offset += peb_offset;
+	sb_offset += peb_offset;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", offset);
+	SSDFS_DBG("offset %llu\n", sb_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_block(sb, offset, folio);
+	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write segment header: "
 			  "offset %llu, size %zu\n",
-			  (u64)offset, hdr_size + payload_size);
+			  (u64)sb_offset, hdr_size + payload_size);
 		goto cleanup_after_failure;
+	}
+
+	if (fsi->sb_snapi.need_snapshot_sb) {
+		struct ssdfs_peb_extent *last_sb_snap_log;
+
+		last_sb_snap_log = &fsi->sb_snapi.last_log;
+
+		peb_offset = last_sb_snap_log->peb_id * fsi->pages_per_peb;
+		peb_offset <<= fsi->log_pagesize;
+		sb_snap_offset =
+			(loff_t)last_sb_snap_log->page_offset << PAGE_SHIFT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(peb_offset > (ULLONG_MAX - (sb_snap_offset + PAGE_SIZE)));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		sb_snap_offset += peb_offset;
+
+		/* ->writepage() calls put_folio() */
+		ssdfs_folio_get(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("offset %llu\n", sb_snap_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio);
+		hdr = SSDFS_SEG_HDR(kmap_local_folio(folio, 0));
+		hdr->seg_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_ID);
+		hdr->leb_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_LEB_ID);
+		hdr->peb_id = cpu_to_le64(SSDFS_INITIAL_SNAPSHOT_SEG_PEB_ID);
+		hdr->seg_type = cpu_to_le16(SSDFS_INITIAL_SNAPSHOT_SEG_TYPE);
+		hdr->seg_flags = cpu_to_le32(SSDFS_LOG_HAS_FOOTER);
+		hdr->volume_hdr.check.bytes =
+			cpu_to_le16(sizeof(struct ssdfs_segment_header));
+		hdr->volume_hdr.check.flags = cpu_to_le16(SSDFS_CRC32);
+		err = ssdfs_calculate_csum(&hdr->volume_hdr.check,
+					   hdr,
+					   sizeof(struct ssdfs_segment_header));
+		if (unlikely(err)) {
+			SSDFS_ERR("unable to calculate checksum: err %d\n", err);
+		} else {
+			ssdfs_set_folio_private(folio, 0);
+			folio_mark_uptodate(folio);
+			folio_set_dirty(folio);
+		}
+		kunmap_local(hdr);
+		ssdfs_folio_unlock(folio);
+
+		if (err)
+			goto cleanup_after_failure;
+
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		if (err) {
+			SSDFS_ERR("fail to write segment header: "
+				  "offset %llu, size %zu\n",
+				  (u64)sb_snap_offset,
+				  hdr_size + payload_size);
+			goto cleanup_after_failure;
+		}
 	}
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
 	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
-
-	offset += PAGE_SIZE;
 
 	/* ->writepage() calls put_folio() */
 	ssdfs_folio_get(folio);
@@ -2538,22 +2804,51 @@ free_payload_buffer:
 	folio_set_dirty(folio);
 	ssdfs_folio_unlock(folio);
 
+	sb_offset += PAGE_SIZE;
+
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("offset %llu\n", offset);
+	SSDFS_DBG("offset %llu\n", sb_offset);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = fsi->devops->write_block(sb, offset, folio);
+	err = fsi->devops->write_block(sb, sb_offset, folio);
 	if (err) {
 		SSDFS_ERR("fail to write log footer: "
 			  "offset %llu, size %zu\n",
-			  (u64)offset, fsi->sbi.vs_buf_size);
+			  (u64)sb_offset, fsi->sbi.vs_buf_size);
 		goto cleanup_after_failure;
+	}
+
+	if (fsi->sb_snapi.need_snapshot_sb) {
+		sb_snap_offset += PAGE_SIZE;
+
+		/* ->writepage() calls put_folio() */
+		ssdfs_folio_get(folio);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("offset %llu\n", sb_snap_offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		ssdfs_folio_lock(folio);
+		ssdfs_set_folio_private(folio, 0);
+		folio_mark_uptodate(folio);
+		folio_set_dirty(folio);
+		ssdfs_folio_unlock(folio);
+
+		err = fsi->devops->write_block(sb, sb_snap_offset, folio);
+		if (err) {
+			SSDFS_ERR("fail to write log footer: "
+				  "offset %llu, size %zu\n",
+				  (u64)sb_snap_offset, fsi->sbi.vs_buf_size);
+			goto cleanup_after_failure;
+		}
 	}
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
 	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
+
+	fsi->sb_snapi.need_snapshot_sb = false;
 
 	ssdfs_super_free_folio(folio);
 	return 0;
@@ -2574,6 +2869,7 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 				struct ssdfs_peb_extent *last_sb_log,
 				struct ssdfs_sb_log_payload *payload)
 {
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	u32 inline_capacity;
 	u32 payload_size;
@@ -2595,6 +2891,37 @@ static int ssdfs_commit_sb_log(struct super_block *sb,
 	SSDFS_DBG("inline_capacity %u, payload_size %u\n",
 		  inline_capacity, payload_size);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (fsi->sb_snapi.req != NULL) {
+		struct ssdfs_segment_request *req = fsi->sb_snapi.req;
+
+		switch (atomic_read(&req->result.state)) {
+		case SSDFS_REQ_CREATED:
+		case SSDFS_REQ_STARTED:
+			fsi->sb_snapi.need_snapshot_sb = false;
+			break;
+
+		case SSDFS_REQ_FINISHED:
+			ssdfs_request_free(fsi->sb_snapi.req, NULL);
+			fsi->sb_snapi.req = NULL;
+			break;
+
+		case SSDFS_REQ_FAILED:
+			SSDFS_ERR("erase and re-write request failed\n");
+			ssdfs_request_free(fsi->sb_snapi.req, NULL);
+			fsi->sb_snapi.req = NULL;
+			fsi->sb_snapi.need_snapshot_sb = false;
+			break;
+
+		default:
+			SSDFS_ERR("invalid result's state %#x\n",
+				  atomic_read(&req->result.state));
+			ssdfs_request_free(fsi->sb_snapi.req, NULL);
+			fsi->sb_snapi.req = NULL;
+			fsi->sb_snapi.need_snapshot_sb = false;
+			break;
+		}
+	}
 
 	if (payload_size > inline_capacity) {
 		err = __ssdfs_commit_sb_log(sb, timestamp, cno,
@@ -2779,6 +3106,8 @@ static void ssdfs_memory_leaks_checker_init(void)
 	ssdfs_file_memory_leaks_init();
 	ssdfs_fs_error_memory_leaks_init();
 
+	ssdfs_global_fsck_memory_leaks_init();
+
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 	ssdfs_fsck_memory_leaks_init();
 #endif /* CONFIG_SSDFS_ONLINE_FSCK */
@@ -2863,6 +3192,8 @@ static void ssdfs_check_memory_leaks(void)
 
 	ssdfs_file_check_memory_leaks();
 	ssdfs_fs_error_check_memory_leaks();
+
+	ssdfs_global_fsck_check_memory_leaks();
 
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 	ssdfs_fsck_check_memory_leaks();
@@ -3049,6 +3380,9 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	atomic_set(&fs_info->global_fs_state, SSDFS_UNKNOWN_GLOBAL_FS_STATE);
 	spin_lock_init(&fs_info->volume_state_lock);
 	init_completion(&fs_info->mount_end);
+
+	init_waitqueue_head(&fs_info->global_fsck.wait_queue);
+	ssdfs_requests_queue_init(&fs_info->global_fsck.rq);
 
 	for (i = 0; i < SSDFS_GC_THREAD_TYPE_MAX; i++) {
 		init_waitqueue_head(&fs_info->gc_wait_queue[i]);
@@ -3298,6 +3632,25 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("starting global FSCK thread...\n");
+#else
+	SSDFS_DBG("starting global FSCK thread...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	err = ssdfs_start_global_fsck_thread(fs_info);
+	if (err == -EINTR) {
+		/*
+		 * Ignore this error.
+		 */
+		err = 0;
+		goto put_root_inode;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to start global FSCK thread: "
+			  "err %d\n", err);
+		goto put_root_inode;
+	}
+
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("starting GC threads...\n");
 #else
 	SSDFS_DBG("starting GC threads...\n");
@@ -3309,11 +3662,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		 * Ignore this error.
 		 */
 		err = 0;
-		goto put_root_inode;
+		goto stop_global_fsck_thread;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to start GC-using-seg thread: "
 			  "err %d\n", err);
-		goto put_root_inode;
+		goto stop_global_fsck_thread;
 	}
 
 	err = ssdfs_start_gc_thread(fs_info, SSDFS_SEG_USED_GC_THREAD);
@@ -3422,6 +3775,9 @@ stop_gc_used_seg_thread:
 stop_gc_using_seg_thread:
 	ssdfs_stop_gc_thread(fs_info, SSDFS_SEG_USING_GC_THREAD);
 
+stop_global_fsck_thread:
+	ssdfs_stop_global_fsck_thread(fs_info);
+
 put_root_inode:
 	iput(root_i);
 
@@ -3466,6 +3822,7 @@ free_erase_folio:
 
 	ssdfs_destruct_sb_info(&fs_info->sbi);
 	ssdfs_destruct_sb_info(&fs_info->sbi_backup);
+	ssdfs_destruct_sb_snap_info(&fs_info->sb_snapi);
 
 	ssdfs_free_workspaces();
 
@@ -3946,6 +4303,22 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_DBG("SSDFS_UNMOUNT_DESTROY_METADATA\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
+#ifdef CONFIG_SSDFS_TRACK_API_CALL
+	SSDFS_ERR("STOP GLOBAL FSCK THREAD...\n");
+#else
+	SSDFS_DBG("STOP GLOBAL FSCK THREAD...\n");
+#endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	err = ssdfs_stop_global_fsck_thread(fsi);
+	if (err) {
+		SSDFS_ERR("fail to stop global FSCK thread: "
+			  "err %d\n", err);
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("Global FSCK thread has been stoped\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	ssdfs_super_folio_batch_release(&payload.maptbl_cache.batch);
 	fsi->devops->sync(sb);
 
@@ -3985,6 +4358,7 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
+	ssdfs_destruct_sb_snap_info(&fsi->sb_snapi);
 
 	ssdfs_free_workspaces();
 

@@ -149,6 +149,10 @@ int __ssdfs_clear_dirty_folio(struct folio *folio);
 int ssdfs_clear_dirty_folio(struct folio *folio);
 void ssdfs_clear_dirty_folios(struct address_space *mapping);
 
+/* global_fsck.c */
+int ssdfs_start_global_fsck_thread(struct ssdfs_fs_info *fsi);
+int ssdfs_stop_global_fsck_thread(struct ssdfs_fs_info *fsi);
+
 /* inode.c */
 bool is_raw_inode_checksum_correct(struct ssdfs_fs_info *fsi,
 				   void *buf, size_t size);
@@ -276,6 +280,9 @@ int ssdfs_init_sb_info(struct ssdfs_fs_info *fsi,
 void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi);
 void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi);
 void ssdfs_restore_sb_info(struct ssdfs_fs_info *fsi);
+int ssdfs_init_sb_snap_info(struct ssdfs_fs_info *fsi,
+			    struct ssdfs_sb_snapshot_seg_info *sb_snapi);
+void ssdfs_destruct_sb_snap_info(struct ssdfs_sb_snapshot_seg_info *sb_snapi);
 int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent);
 
 /* segment.c */
@@ -417,6 +424,8 @@ void ssdfs_flush_memory_leaks_init(void);
 void ssdfs_flush_check_memory_leaks(void);
 void ssdfs_gc_memory_leaks_init(void);
 void ssdfs_gc_check_memory_leaks(void);
+void ssdfs_global_fsck_memory_leaks_init(void);
+void ssdfs_global_fsck_check_memory_leaks(void);
 #ifdef CONFIG_SSDFS_ONLINE_FSCK
 void ssdfs_fsck_memory_leaks_init(void);
 void ssdfs_fsck_check_memory_leaks(void);

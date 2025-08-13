@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.25 [August 12, 2025]
+    (*) Introduce superblock snapshots segment logic.
+
 v.5.24 [August 03, 2025]
     (*) Improve logic of log creation for the case of pre-exhausted
         erase block.

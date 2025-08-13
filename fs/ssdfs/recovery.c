@@ -166,6 +166,45 @@ void ssdfs_destruct_sb_info(struct ssdfs_sb_info *sbi)
 	memset(&sbi->last_log, 0, sizeof(struct ssdfs_peb_extent));
 }
 
+int ssdfs_init_sb_snap_info(struct ssdfs_fs_info *fsi,
+			    struct ssdfs_sb_snapshot_seg_info *sb_snapi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("sb_snapi %p\n", sb_snapi);
+
+	BUG_ON(!fsi || !sb_snapi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	sb_snapi->need_snapshot_sb = false;
+	memset(&sb_snapi->last_log, 0, sizeof(sb_snapi->last_log));
+	sb_snapi->req = NULL;
+	return 0;
+}
+
+void ssdfs_destruct_sb_snap_info(struct ssdfs_sb_snapshot_seg_info *sb_snapi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!sb_snapi);
+
+	SSDFS_DBG("sb_snapi %p, "
+		  "sb_snapi->last_log.leb_id %llu, "
+		  "sb_snapi->last_log.peb_id %llu, "
+		  "sb_snapi->last_log.page_offset %u, "
+		  "sb_snapi->last_log.pages_count %u\n",
+		  sb_snapi, sb_snapi->last_log.leb_id,
+		  sb_snapi->last_log.peb_id, sb_snapi->last_log.page_offset,
+		  sb_snapi->last_log.pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	memset(&sb_snapi->last_log, 0, sizeof(struct ssdfs_peb_extent));
+	sb_snapi->need_snapshot_sb = false;
+	if (sb_snapi->req) {
+		ssdfs_put_request(sb_snapi->req);
+		ssdfs_request_free(sb_snapi->req, NULL);
+		sb_snapi->req = NULL;
+	}
+}
+
 void ssdfs_backup_sb_info(struct ssdfs_fs_info *fsi)
 {
 	size_t hdr_size = sizeof(struct ssdfs_segment_header);
@@ -408,17 +447,389 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 	return -ENODATA;
 }
 
+static inline
+int ssdfs_zns_find_last_non_empty_page(struct ssdfs_fs_info *fsi,
+					u64 leb, u64 peb, u32 log_pages,
+					u32 *cur_off, u32 *low_off,
+					u32 *high_off)
+{
+	struct ssdfs_peb_extent checking_page;
+	loff_t offset;
+	u64 zone_wp;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !cur_off || !low_off || !high_off);
+
+	SSDFS_DBG("leb %llu, peb %llu, log_pages %u, "
+		  "cur_off %u, low_off %u, high_off %u\n",
+		  leb, peb, log_pages,
+		  *cur_off, *low_off, *high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	offset = (loff_t)peb * fsi->zone_size;
+
+	zone_wp = ssdfs_zns_zone_write_pointer(fsi->sb, offset);
+
+	if (zone_wp >= U64_MAX)
+		*cur_off = fsi->zone_capacity;
+	else
+		*cur_off = (zone_wp - offset) >> PAGE_SHIFT;
+
+	*low_off = *cur_off - log_pages;
+
+	for (--(*cur_off); *cur_off >= *low_off; --(*cur_off)) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("peb %llu, offset %llu, zone_wp %llu, "
+			  "log_pages %u, cur_off %u\n",
+			  peb, offset, zone_wp,
+			  log_pages, *cur_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		checking_page.leb_id = leb;
+		checking_page.peb_id = peb;
+		checking_page.page_offset = *cur_off;
+		checking_page.pages_count = 1;
+
+		err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+		if (err == -EIO) {
+			/* log footer has been found */
+			break;
+		} else if (err) {
+			SSDFS_ERR("fail to check for write PEB %llu: err %d\n",
+				  peb, err);
+			return err;
+		}
+	}
+
+	return 0;
+}
+
+static inline
+int ssdfs_find_last_non_empty_page(struct ssdfs_fs_info *fsi,
+				   u64 leb, u64 peb,
+				   u32 *cur_off, u32 *low_off, u32 *high_off)
+{
+	struct ssdfs_peb_extent checking_page;
+	u32 diff_pages;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !cur_off || !low_off || !high_off);
+
+	SSDFS_DBG("leb %llu, peb %llu, "
+		  "cur_off %u, low_off %u, high_off %u\n",
+		  leb, peb, *cur_off, *low_off, *high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	do {
+		checking_page.leb_id = leb;
+		checking_page.peb_id = peb;
+		checking_page.page_offset = *cur_off;
+		checking_page.pages_count = 1;
+
+		err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+		if (err == -EIO) {
+			/* correct low bound */
+			err = 0;
+			*low_off = *cur_off;
+		} else if (err) {
+			SSDFS_ERR("fail to check for write PEB %llu: err %d\n",
+				  peb, err);
+			return err;
+		} else {
+			/* correct upper bound */
+			*high_off = *cur_off;
+		}
+
+		diff_pages = (*high_off - *low_off) / 2;
+		*cur_off = *low_off + diff_pages;
+	} while (*cur_off > *low_off && *cur_off < *high_off);
+
+	return 0;
+}
+
+static int ssdfs_read_checked_sb_info2(struct ssdfs_fs_info *fsi, u64 peb_id,
+					u32 pages_off, bool silent,
+					u32 *cur_off);
+static inline bool is_sb_peb_exhausted2(struct ssdfs_fs_info *fsi,
+					u64 leb_id, u64 peb_id);
+
+static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_segment_header *seg_hdr;
+	struct ssdfs_peb_extent checking_page;
+	u64 leb, peb;
+	u32 cur_off, low_off, high_off;
+	u32 log_pages;
+	u32 start_offset;
+	u32 found_log_off;
+	u32 peb_pages_off;
+	u64 pages_per_peb;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
+	leb = fsi->sb_snapi.last_log.leb_id;
+	peb = fsi->sb_snapi.last_log.peb_id;
+
+	if (leb == U64_MAX || peb == U64_MAX) {
+		SSDFS_ERR("invalid leb_id %llu or peb_id %llu\n",
+			  leb, peb);
+		return -ERANGE;
+	}
+
+	if (fsi->is_zns_device)
+		pages_per_peb = div64_u64(fsi->zone_capacity, PAGE_SIZE);
+	else
+		pages_per_peb = fsi->erasesize / PAGE_SIZE;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(pages_per_peb >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	log_pages = SSDFS_LOG_PAGES(seg_hdr);
+	start_offset = fsi->sb_snapi.last_log.page_offset + log_pages;
+	low_off = start_offset;
+	high_off = (u32)pages_per_peb;
+	cur_off = low_off;
+
+	checking_page.leb_id = leb;
+	checking_page.peb_id = peb;
+	checking_page.page_offset = cur_off;
+	checking_page.pages_count = 1;
+
+	err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
+	if (err == -EIO) {
+		/* correct low bound */
+		err = 0;
+		low_off++;
+	} else if (err) {
+		SSDFS_ERR("fail to check for write PEB %llu\n",
+			  peb);
+		return err;
+	} else {
+		/* previous read log was valid */
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
+			  cur_off, low_off, high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENOENT;
+	}
+
+	if (fsi->is_zns_device) {
+		err = ssdfs_zns_find_last_non_empty_page(fsi,
+							 leb, peb,
+							 log_pages,
+							 &cur_off,
+							 &low_off,
+							 &high_off);
+		if (err) {
+			SSDFS_ERR("fail to find last non-empty page: "
+				  "PEB %llu, err %d\n",
+				  peb, err);
+			return err;
+		}
+	} else {
+		cur_off = high_off - 1;
+
+		err = ssdfs_find_last_non_empty_page(fsi,
+						     leb, peb,
+						     &cur_off,
+						     &low_off,
+						     &high_off);
+		if (err) {
+			SSDFS_ERR("fail to find last non-empty page: "
+				  "PEB %llu, err %d\n",
+				  peb, err);
+			return err;
+		}
+	}
+
+	peb_pages_off = cur_off % (u32)pages_per_peb;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(peb_pages_off >= U32_MAX);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	found_log_off = cur_off;
+	err = ssdfs_read_checked_sb_info2(fsi, peb, peb_pages_off, true,
+					  &found_log_off);
+
+	if (err == -EIO || err == -ENOENT) {
+		/* previous read log was valid */
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("cur_off %u, low_off %u, high_off %u\n",
+			  cur_off, low_off, high_off);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find valid volume header: err %d\n",
+			  err);
+	} else {
+		fsi->sb_snapi.last_log.page_offset = found_log_off;
+		fsi->sb_snapi.last_log.pages_count =
+			SSDFS_LOG_PAGES(SSDFS_SEG_HDR(fsi->sbi.vh_buf));
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_log.leb_id %llu, last_log.peb_id %llu, "
+		  "last_log.page_offset %u, last_log.pages_count %u\n",
+		  fsi->sb_snapi.last_log.leb_id,
+		  fsi->sb_snapi.last_log.peb_id,
+		  fsi->sb_snapi.last_log.page_offset,
+		  fsi->sb_snapi.last_log.pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
+}
+
+static int ssdfs_read_sb_snapshot_segment(struct ssdfs_fs_info *fsi,
+					  loff_t offset,
+					  int silent)
+{
+	struct super_block *sb;
+	struct ssdfs_volume_header *vh;
+	size_t hdr_size = sizeof(struct ssdfs_segment_header);
+	u64 dev_size;
+	bool magic_valid, crc_valid;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+	BUG_ON(!fsi->sbi.vh_buf);
+	BUG_ON(!fsi->devops->read);
+
+	SSDFS_DBG("fsi %p, fsi->sbi.vh_buf %p, silent %#x\n",
+		  fsi, fsi->sbi.vh_buf, silent);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	sb = fsi->sb;
+	dev_size = fsi->devops->device_size(sb);
+
+	if (fsi->devops->peb_isbad) {
+		err = fsi->devops->peb_isbad(sb, offset);
+		if (err) {
+			if (!silent) {
+				SSDFS_NOTICE("offset %llu is in bad PEB\n",
+						(unsigned long long)offset);
+			} else {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("offset %llu is in bad PEB\n",
+					  (unsigned long long)offset);
+#endif /* CONFIG_SSDFS_DEBUG */
+			}
+
+			return -ENOENT;
+		}
+	}
+
+	if (!fsi->devops->read) {
+		SSDFS_ERR("unable to read from device\n");
+		return -EOPNOTSUPP;
+	}
+
+	err = fsi->devops->read(sb, fsi->pagesize,
+				offset, hdr_size,
+				fsi->sbi.vh_buf);
+
+	vh = SSDFS_VH(fsi->sbi.vh_buf);
+	magic_valid = is_ssdfs_magic_valid(&vh->magic);
+	crc_valid = is_ssdfs_volume_header_csum_valid(fsi->sbi.vh_buf,
+							hdr_size);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("magic_valid %#x, crc_valid %#x\n",
+		  magic_valid, crc_valid);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!magic_valid || !crc_valid) {
+		if (!silent)
+			SSDFS_NOTICE("valid magic is not detected\n");
+		else
+			SSDFS_DBG("valid magic is not detected\n");
+		return -ENOENT;
+	}
+
+	if (!is_ssdfs_volume_header_consistent(fsi, vh, dev_size)) {
+		if (!silent)
+			SSDFS_NOTICE("volume header is not consistent\n");
+		else
+			SSDFS_DBG("volume header is not consistent\n");
+		return -ENOENT;
+	}
+
+	fsi->log_pagesize = vh->log_pagesize;
+	fsi->pagesize = 1 << vh->log_pagesize;
+
+	if (fsi->is_zns_device) {
+		fsi->erasesize = fsi->zone_size;
+		fsi->segsize = fsi->erasesize * le16_to_cpu(vh->pebs_per_seg);
+	} else {
+		fsi->erasesize = 1 << vh->log_erasesize;
+		fsi->segsize = 1 << vh->log_segsize;
+	}
+
+	fsi->pages_per_seg = fsi->segsize / fsi->pagesize;
+	fsi->pages_per_peb = fsi->erasesize / fsi->pagesize;
+	fsi->pebs_per_seg = 1 << vh->log_pebs_per_seg;
+
+	fsi->sb_snapi.last_log.leb_id = SSDFS_INITIAL_SNAPSHOT_SEG_LEB_ID;
+	fsi->sb_snapi.last_log.peb_id = SSDFS_INITIAL_SNAPSHOT_SEG_PEB_ID;
+	fsi->sb_snapi.last_log.page_offset = 0;
+	fsi->sb_snapi.last_log.pages_count =
+			SSDFS_LOG_PAGES(SSDFS_SEG_HDR(fsi->sbi.vh_buf));
+
+	if (fsi->fs_ctime >= U64_MAX) {
+		fsi->fs_ctime = le64_to_cpu(vh->create_time);
+		ssdfs_memcpy(fsi->fs_uuid, 0, sizeof(fsi->fs_uuid),
+			     vh->uuid, 0, sizeof(vh->uuid),
+			     sizeof(vh->uuid));
+	} else if (fsi->fs_ctime > le64_to_cpu(vh->create_time))
+		return -ENOENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("last_log.leb_id %llu, last_log.peb_id %llu, "
+		  "last_log.page_offset %u, last_log.pages_count %u\n",
+		  fsi->sb_snapi.last_log.leb_id,
+		  fsi->sb_snapi.last_log.peb_id,
+		  fsi->sb_snapi.last_log.page_offset,
+		  fsi->sb_snapi.last_log.pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	err = ssdfs_find_latest_valid_sb_snap_info(fsi);
+	if (err == -ENOENT) {
+		/*
+		 * We have only one log in segment or
+		 * cannot read the latest log.
+		 * Let search algorithm execute the job.
+		 */
+		return err;
+	} else if (unlikely(err)) {
+		SSDFS_ERR("fail to find latest valid log: err %d\n",
+			  err);
+		return err;
+	}
+
+	return 0;
+}
+
 static int ssdfs_find_any_valid_volume_header(struct ssdfs_fs_info *fsi,
 						loff_t offset,
 						int silent)
 {
 	struct super_block *sb;
+	struct ssdfs_volume_header *vh;
+	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	size_t seg_size = SSDFS_128KB;
 	loff_t start_offset = offset;
-	size_t hdr_size = sizeof(struct ssdfs_segment_header);
 	u64 dev_size;
 	u64 threshold;
-	struct ssdfs_volume_header *vh;
 	bool magic_valid, crc_valid;
 	int err;
 
@@ -939,9 +1350,17 @@ try_again:
 		seg_hdr = SSDFS_SEG_HDR(fsi->sbi.vh_buf);
 		seg_type = SSDFS_SEG_TYPE(seg_hdr);
 
-		if (seg_type == SSDFS_SB_SEG_TYPE)
+		if (seg_type == SSDFS_SB_SEG_TYPE) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("last_log (leb_id %llu, peb_id %llu, "
+				  "page_offset %u, pages_count %u)\n",
+				  fsi->sbi.last_log.leb_id,
+				  fsi->sbi.last_log.peb_id,
+				  fsi->sbi.last_log.page_offset,
+				  fsi->sbi.last_log.pages_count);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return 0;
-		else {
+		} else {
 			err = -EIO;
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("PEB %llu is not sb segment\n",
@@ -1632,81 +2051,32 @@ static int ssdfs_find_latest_valid_sb_info2(struct ssdfs_fs_info *fsi)
 	}
 
 	if (fsi->is_zns_device) {
-		loff_t offset;
-		u64 zone_wp;
-
-		offset = (loff_t)peb * fsi->zone_size;
-
-		zone_wp = ssdfs_zns_zone_write_pointer(fsi->sb, offset);
-
-		if (zone_wp >= U64_MAX) {
-			cur_off = fsi->zone_capacity;
-		} else {
-			cur_off = (zone_wp - offset) >> PAGE_SHIFT;
-		}
-
-		low_off = cur_off - log_pages;
-
-		for (cur_off--; cur_off >= low_off; cur_off--) {
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("peb %llu, pages_per_peb %llu, "
-				  "offset %llu, zone_wp %llu, "
-				  "log_pages %u, cur_off %u\n",
-				  peb, pages_per_peb,
-				  offset, zone_wp,
-				  log_pages, cur_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			checking_page.leb_id = leb;
-			checking_page.peb_id = peb;
-			checking_page.page_offset = cur_off;
-			checking_page.pages_count = 1;
-
-			err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
-			if (err == -EIO) {
-				/* log footer has been found */
-				break;
-			} else if (err) {
-				SSDFS_ERR("fail to check for write PEB %llu\n",
-					  peb);
-				return err;
-			}
+		err = ssdfs_zns_find_last_non_empty_page(fsi,
+							 leb, peb,
+							 log_pages,
+							 &cur_off,
+							 &low_off,
+							 &high_off);
+		if (err) {
+			SSDFS_ERR("fail to find last non-empty page: "
+				  "PEB %llu, err %d\n",
+				  peb, err);
+			return err;
 		}
 	} else {
 		cur_off = high_off - 1;
 
-		do {
-			u32 diff_pages;
-
-#ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("peb %llu, pages_per_peb %llu, "
-				  "log_pages %u, cur_off %u\n",
-				  peb, pages_per_peb,
-				  log_pages, cur_off);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-			checking_page.leb_id = leb;
-			checking_page.peb_id = peb;
-			checking_page.page_offset = cur_off;
-			checking_page.pages_count = 1;
-
-			err = ssdfs_can_write_sb_log(fsi->sb, &checking_page);
-			if (err == -EIO) {
-				/* correct low bound */
-				err = 0;
-				low_off = cur_off;
-			} else if (err) {
-				SSDFS_ERR("fail to check for write PEB %llu\n",
-					  peb);
-				return err;
-			} else {
-				/* correct upper bound */
-				high_off = cur_off;
-			}
-
-			diff_pages = (high_off - low_off) / 2;
-			cur_off = low_off + diff_pages;
-		} while (cur_off > low_off && cur_off < high_off);
+		err = ssdfs_find_last_non_empty_page(fsi,
+						     leb, peb,
+						     &cur_off,
+						     &low_off,
+						     &high_off);
+		if (err) {
+			SSDFS_ERR("fail to find last non-empty page: "
+				  "PEB %llu, err %d\n",
+				  peb, err);
+			return err;
+		}
 	}
 
 	peb_pages_off = cur_off % (u32)pages_per_peb;
@@ -2899,6 +3269,12 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 	SSDFS_DBG("fsi %p, silent %#x\n", fsi, silent);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+	err = ssdfs_init_sb_snap_info(fsi, &fsi->sb_snapi);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to prepare sb snap info: err %d\n", err);
+		goto free_buf;
+	}
+
 	err = ssdfs_init_sb_info(fsi, &fsi->sbi);
 	if (likely(!err)) {
 		err = ssdfs_init_sb_info(fsi, &fsi->sbi_backup);
@@ -2909,11 +3285,16 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 		goto free_buf;
 	}
 
-	err = ssdfs_find_any_valid_volume_header(fsi,
+	err = ssdfs_read_sb_snapshot_segment(fsi,
+					     SSDFS_RESERVED_VBR_SIZE,
+					     silent);
+	if (err) {
+		err = ssdfs_find_any_valid_volume_header(fsi,
 						 SSDFS_RESERVED_VBR_SIZE,
 						 silent);
-	if (err)
-		goto forget_buf;
+		if (err)
+			goto forget_buf;
+	}
 
 	vh = SSDFS_VH(fsi->sbi.vh_buf);
 	fragments_count = le32_to_cpu(vh->maptbl.fragments_count);
@@ -3305,5 +3686,6 @@ forget_buf:
 free_buf:
 	ssdfs_destruct_sb_info(&fsi->sbi);
 	ssdfs_destruct_sb_info(&fsi->sbi_backup);
+	ssdfs_destruct_sb_snap_info(&fsi->sb_snapi);
 	return err;
 }

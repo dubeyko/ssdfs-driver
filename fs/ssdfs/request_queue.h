@@ -25,15 +25,7 @@
 
 #include <linux/pagevec.h>
 
-/*
- * struct ssdfs_requests_queue - requests queue descriptor
- * @lock: requests queue's lock
- * @list: requests queue's list
- */
-struct ssdfs_requests_queue {
-	spinlock_t lock;
-	struct list_head list;
-};
+#include "ssdfs_fs_info.h"
 
 /*
  * Request classes
@@ -56,7 +48,8 @@ enum {
 	SSDFS_ZONE_USER_DATA_MIGRATE_REQ,	/* 0x0E */
 	SSDFS_PEB_USER_DATA_MOVE_REQ,		/* 0x0F */
 	SSDFS_PEB_FSCK_CHECK_REQ,		/* 0x10 */
-	SSDFS_PEB_REQ_CLASS_MAX,		/* 0x11 */
+	SSDFS_GLOBAL_FSCK_REQ,			/* 0x11 */
+	SSDFS_PEB_REQ_CLASS_MAX,		/* 0x12 */
 };
 
 /*
@@ -109,7 +102,9 @@ enum {
 	SSDFS_FSCK_RECOVER_METADATA,		/* 0x2B */
 	SSDFS_FSCK_RECOVER_USER_DATA,		/* 0x2C */
 	SSDFS_FSCK_CMD_MAX,			/* 0x2D */
-	SSDFS_KNOWN_CMD_MAX,			/* 0x2E */
+	SSDFS_FSCK_ERASE_RE_WRITE_SB_SNAP_SEG,	/* 0x2E */
+	SSDFS_GLOBAL_FSCK_CMD_MAX,		/* 0x2F */
+	SSDFS_KNOWN_CMD_MAX,			/* 0x30 */
 };
 
 /*
@@ -726,6 +721,11 @@ bool is_request_command_valid(int class, int cmd)
 	case SSDFS_PEB_FSCK_CHECK_REQ:
 		is_valid = cmd > SSDFS_COLLECT_GARBAGE_CMD_MAX &&
 				cmd < SSDFS_FSCK_CMD_MAX;
+		break;
+
+	case SSDFS_GLOBAL_FSCK_REQ:
+		is_valid = cmd > SSDFS_FSCK_CMD_MAX &&
+				cmd < SSDFS_GLOBAL_FSCK_CMD_MAX;
 		break;
 
 	default:

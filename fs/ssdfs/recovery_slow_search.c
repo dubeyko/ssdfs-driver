@@ -88,12 +88,12 @@ try_next_peb:
 	err = ssdfs_check_next_sb_pebs_pair(env);
 	if (err == -E2BIG)
 		goto continue_search;
-	else if (err == -ENODATA || err == -ENOENT)
-		goto check_reserved_sb_pebs_pair;
-	else if (!err)
+	else if (err == -ENODATA || err == -ENOENT) {
+		err = 0;
+		goto rollback_valid_vh;
+	} else if (!err)
 		goto try_next_peb;
 
-check_reserved_sb_pebs_pair:
 	if (kthread_should_stop()) {
 		err = -ENODATA;
 		goto rollback_valid_vh;

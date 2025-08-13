@@ -37,7 +37,7 @@ ssdfs-y	:= super.o fs_error.o recovery.o \
 		sysfs.o \
 		xattr.o xattr_user.o xattr_trusted.o \
 		compression.o \
-		tunefs.o
+		tunefs.o global_fsck.o
 
 ssdfs-$(CONFIG_SSDFS_POSIX_ACL)			+= acl.o
 ssdfs-$(CONFIG_SSDFS_SECURITY)			+= xattr_security.o

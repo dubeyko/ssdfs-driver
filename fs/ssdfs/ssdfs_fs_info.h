@@ -122,6 +122,20 @@ struct ssdfs_sb_info {
 };
 
 /*
+ * struct ssdfs_sb_snapshot_seg_info - superblock snapshot segment info
+ * @need_snapshot_sb: does it need to snapshot superblock state?
+ * @sequence_id: index of log in the sequence
+ * @last_log: latest segment log
+ * @req: erase and re-write segment request
+ */
+struct ssdfs_sb_snapshot_seg_info {
+	bool need_snapshot_sb;
+	int sequence_id;
+	struct ssdfs_peb_extent last_log;
+	struct ssdfs_segment_request *req;
+};
+
+/*
  * struct ssdfs_device_ops - device operations
  * @device_name: get device name
  * @device_size: get device size in bytes
@@ -406,6 +420,28 @@ struct ssdfs_tunefs_request_copy {
 };
 
 /*
+ * struct ssdfs_requests_queue - requests queue descriptor
+ * @lock: requests queue's lock
+ * @list: requests queue's list
+ */
+struct ssdfs_requests_queue {
+	spinlock_t lock;
+	struct list_head list;
+};
+
+/*
+ * struct ssdfs_global_fsck_thread - global fsck thread info
+ * @thread: thread info
+ * @wait_queue: wait queue
+ * @rq: requests queue
+ */
+struct ssdfs_global_fsck_thread {
+	struct ssdfs_thread_info thread;
+	wait_queue_head_t wait_queue;
+	struct ssdfs_requests_queue rq;
+};
+
+/*
  * struct ssdfs_fs_info - in-core fs information
  * @log_pagesize: log2(page size)
  * @pagesize: page size in bytes
@@ -432,6 +468,7 @@ struct ssdfs_tunefs_request_copy {
  * @vs: volume state
  * @sbi: superblock info
  * @sbi_backup: backup copy of superblock info
+ * @sb_snapi: superblock snapshot segment info
  * @sb_seg_log_pages: full log size in sb segment (pages count)
  * @segbmap_log_pages: full log size in segbmap segment (pages count)
  * @maptbl_log_pages: full log size in maptbl segment (pages count)
@@ -484,6 +521,7 @@ struct ssdfs_tunefs_request_copy {
  * @gc_wait_queue: array of GC threads' wait queues
  * @gc_should_act: array of counters that define necessity of GC activity
  * @flush_reqs: current number of flush requests
+ * @global_fsck: global fsck thread
  * @sb: pointer on VFS superblock object
  * @mtd: MTD info
  * @devops: device access operations
@@ -533,6 +571,7 @@ struct ssdfs_fs_info {
 	struct ssdfs_volume_state *vs;
 	struct ssdfs_sb_info sbi;
 	struct ssdfs_sb_info sbi_backup;
+	struct ssdfs_sb_snapshot_seg_info sb_snapi;
 	u16 sb_seg_log_pages;
 	u16 segbmap_log_pages;
 	u16 maptbl_log_pages;
@@ -597,6 +636,8 @@ struct ssdfs_fs_info {
 	wait_queue_head_t gc_wait_queue[SSDFS_GC_THREAD_TYPE_MAX];
 	atomic_t gc_should_act[SSDFS_GC_THREAD_TYPE_MAX];
 	atomic64_t flush_reqs;
+
+	struct ssdfs_global_fsck_thread global_fsck;
 
 	struct super_block *sb;
 
