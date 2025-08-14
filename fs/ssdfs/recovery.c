@@ -1947,6 +1947,7 @@ static int ssdfs_find_latest_valid_sb_info(struct ssdfs_fs_info *fsi)
 			SSDFS_NOTICE("unable to mount in RW mode: "
 				     "log is corrupted. Please, run FSCK tool.\n");
 			fsi->sb->s_flags |= SB_RDONLY;
+			ssdfs_restore_sb_info(fsi);
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
@@ -2137,6 +2138,7 @@ finish_find_latest_sb_info:
 			SSDFS_NOTICE("unable to mount in RW mode: "
 				     "log is corrupted. Please, run FSCK tool.\n");
 			fsi->sb->s_flags |= SB_RDONLY;
+			ssdfs_restore_sb_info(fsi);
 		} else {
 			SSDFS_ERR("fail to find valid volume header: err %d\n",
 				  err);
@@ -3362,7 +3364,7 @@ int ssdfs_gather_superblock_info(struct ssdfs_fs_info *fsi, int silent)
 					  i, err);
 			}
 
-			for (; i >= 0; i--)
+			for (i--; i >= 0; i--)
 				ssdfs_recovery_stop_thread(&array[i]);
 
 			goto destruct_sb_info;

@@ -247,6 +247,12 @@ int ssdfs_peb_stop_thread(struct ssdfs_peb_container *pebc, int type)
 		 * The wake_up_process() was never called.
 		 */
 		return 0;
+	} else if (err == -EROFS) {
+		/*
+		 * Ignore this error.
+		 * READ-ONLY file system state.
+		 */
+		return 0;
 	} else if (unlikely(err)) {
 		SSDFS_WARN("thread function had some issue: err %d\n",
 			    err);

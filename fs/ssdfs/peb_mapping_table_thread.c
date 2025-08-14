@@ -2725,6 +2725,9 @@ repeat:
 		goto sleep_failed_maptbl_thread;
 	}
 
+	if (fsi->sb->s_flags & SB_RDONLY)
+		goto sleep_maptbl_thread;
+
 	if (!has_maptbl_pre_erase_pebs(tbl) &&
 	    is_ssdfs_peb_mapping_queue_empty(&cache->pm_queue)) {
 		/* go to sleep */

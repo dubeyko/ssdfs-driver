@@ -429,6 +429,9 @@ repeat:
 		break;
 	}
 
+	if (fsi->sb->s_flags & SB_RDONLY)
+		goto sleep_fsck_thread;
+
 	if (is_global_fsck_requests_queue_empty(fsi))
 		goto sleep_fsck_thread;
 
@@ -462,12 +465,13 @@ repeat:
 sleep_fsck_thread:
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	add_wait_queue(wait_queue, &wait);
-	while (!GLOBAL_FSCK_THREAD_WAKE_CONDITION(fsi)) {
+	if (!GLOBAL_FSCK_THREAD_WAKE_CONDITION(fsi)) {
 		if (signal_pending(current)) {
 			err = -ERESTARTSYS;
-			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wait_queue, &wait);
 	goto repeat;

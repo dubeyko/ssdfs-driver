@@ -42,6 +42,7 @@
 #include "peb_container.h"
 #include "segment_bitmap.h"
 #include "segment.h"
+#include "segment_tree.h"
 #include "peb_mapping_table.h"
 #include "request_queue.h"
 #include "btree_search.h"
@@ -14560,6 +14561,175 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 	ssdfs_peb_finish_read_request_cno(pebc);
 }
 
+/*
+ * should_ssdfs_segment_be_destroyed() - check necessity to destroy a segment
+ * @si: pointer on segment object
+ *
+ * This method tries to check the necessity to destroy
+ * a segment object.
+ */
+static
+bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
+{
+	struct ssdfs_peb_container *pebc;
+	struct ssdfs_peb_info *pebi;
+	u64 peb_id;
+	bool is_rq_empty;
+	bool is_fq_empty;
+	bool peb_has_dirty_folios = false;
+	bool is_blk_bmap_dirty = false;
+	u32 reqs_count;
+	u64 cur_cno;
+	u64 future_request_cno;
+	u64 cno_diff;
+	u64 threshold;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+
+	SSDFS_DBG("seg_id %llu, refs_count %d\n",
+		  si->seg_id,
+		  atomic_read(&si->refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_ssdfs_segment_ready_for_requests(si)) {
+		err = ssdfs_wait_segment_init_end(si);
+		if (unlikely(err)) {
+			SSDFS_ERR("segment initialization failed: "
+				  "seg %llu, err %d\n",
+				  si->seg_id, err);
+			return false;
+		}
+	}
+
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_CURRENT_SEG_OBJECT:
+	case SSDFS_SEG_OBJECT_PRE_DELETED:
+		return false;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	switch (si->seg_type) {
+	case SSDFS_SEGBMAP_SEG_TYPE:
+	case SSDFS_MAPTBL_SEG_TYPE:
+		return false;
+
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+	case SSDFS_USER_DATA_SEG_TYPE:
+		/* continue logic */
+		break;
+
+	default:
+		SSDFS_ERR("unexpected segment type %#x\n",
+			  si->seg_type);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		return false;
+	}
+
+	for (i = 0; i < si->pebs_count; i++) {
+		pebc = &si->peb_array[i];
+
+		is_rq_empty = is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc));
+		is_fq_empty = !have_flush_requests(pebc);
+
+		is_blk_bmap_dirty =
+			is_ssdfs_segment_blk_bmap_dirty(&si->blk_bmap, i);
+
+		pebi = ssdfs_get_current_peb_locked(pebc);
+		if (IS_ERR_OR_NULL(pebi))
+			return false;
+
+		ssdfs_peb_current_log_lock(pebi);
+		peb_has_dirty_folios = ssdfs_peb_has_dirty_folios(pebi);
+		peb_id = pebi->peb_id;
+		ssdfs_peb_current_log_unlock(pebi);
+		ssdfs_unlock_current_peb(pebc);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, peb_id %llu, refs_count %d, "
+			  "peb_has_dirty_folios %#x, "
+			  "not empty: (read %#x, flush %#x), "
+			  "is_blk_bmap_dirty %#x\n",
+			  si->seg_id, peb_id,
+			  atomic_read(&si->refs_count),
+			  peb_has_dirty_folios,
+			  !is_rq_empty, !is_fq_empty,
+			  is_blk_bmap_dirty);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!is_rq_empty || !is_fq_empty ||
+		    peb_has_dirty_folios || is_blk_bmap_dirty)
+			return false;
+	}
+
+	spin_lock(&si->protection.cno_lock);
+	cur_cno = ssdfs_current_cno(si->fsi->sb);
+	reqs_count = si->protection.reqs_count;
+	future_request_cno = si->protection.future_request_cno;
+	spin_unlock(&si->protection.cno_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cur_cno %llu, future_request_cno %llu, reqs_count %u\n",
+		  cur_cno, future_request_cno, reqs_count);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (reqs_count > 0)
+		return false;
+	else if (cur_cno <= future_request_cno)
+		return false;
+	else
+		cno_diff = cur_cno - future_request_cno;
+
+	switch (si->seg_type) {
+	case SSDFS_LEAF_NODE_SEG_TYPE:
+		threshold = SSDFS_DEFAULT_TIMEOUT_NS *
+				SSDFS_LEAF_NODE_TIME_FACTOR;
+		break;
+
+	case SSDFS_HYBRID_NODE_SEG_TYPE:
+		threshold = SSDFS_DEFAULT_TIMEOUT_NS *
+				SSDFS_HYBRID_NODE_TIME_FACTOR;
+		break;
+
+	case SSDFS_INDEX_NODE_SEG_TYPE:
+		threshold = SSDFS_DEFAULT_TIMEOUT_NS *
+				SSDFS_INDEX_NODE_TIME_FACTOR;
+		break;
+
+	case SSDFS_USER_DATA_SEG_TYPE:
+		threshold = SSDFS_DEFAULT_TIMEOUT_NS *
+				SSDFS_USER_DATA_TIME_FACTOR;
+		break;
+
+	default:
+		SSDFS_ERR("unexpected segment type %#x\n",
+			  si->seg_type);
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG();
+#endif /* CONFIG_SSDFS_DEBUG */
+		return false;
+	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("cno_diff %llu, threshold %llu\n",
+		  cno_diff, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (cno_diff < threshold)
+		return false;
+
+	return true;
+}
+
 #define READ_THREAD_WAKE_CONDITION(pebc) \
 	(kthread_should_stop() || \
 	 !is_ssdfs_requests_queue_empty(READ_RQ_PTR(pebc)))
@@ -14581,6 +14751,7 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
  */
 int ssdfs_peb_read_thread_func(void *data)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_peb_container *pebc = data;
 	wait_queue_head_t *wait_queue;
 	struct ssdfs_segment_request *req;
@@ -14597,6 +14768,7 @@ int ssdfs_peb_read_thread_func(void *data)
 		  pebc->parent_si->seg_id, pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	fsi = pebc->parent_si->fsi;
 	wait_queue = &pebc->parent_si->wait_queue[SSDFS_PEB_READ_THREAD];
 
 repeat:
@@ -14640,14 +14812,20 @@ repeat:
 sleep_read_thread:
 	wake_up_all(wait_queue);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("seg %llu, peb_index %u, timeout %llu\n",
+		  pebc->parent_si->seg_id, pebc->peb_index,
+		  timeout);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	add_wait_queue(wait_queue, &wait);
-	while (!READ_THREAD_WAKE_CONDITION(pebc)) {
+	if (!READ_THREAD_WAKE_CONDITION(pebc)) {
 		if (signal_pending(current)) {
 			err = -ERESTARTSYS;
-			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE, timeout);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, timeout);
 	}
 	remove_wait_queue(wait_queue, &wait);
 
@@ -14655,6 +14833,41 @@ sleep_read_thread:
 		/* do requests processing */
 		goto repeat;
 	} else {
+		if (should_ssdfs_segment_be_destroyed(pebc->parent_si)) {
+			struct ssdfs_seg_object_info *soi = NULL;
+			struct ssdfs_seg_objects_queue *rq = NULL;
+			int thread_type = SSDFS_DESTROY_SEG_GC_THREAD;
+
+			soi = ssdfs_seg_object_info_alloc();
+			if (IS_ERR_OR_NULL(soi)) {
+				SSDFS_ERR("fail to allocate seg object info\n");
+				goto continue_normal_flow;
+			}
+
+			err = ssdfs_segment_tree_remove(fsi, pebc->parent_si);
+			if (err) {
+				ssdfs_seg_object_info_free(soi);
+				goto continue_normal_flow;
+			}
+
+			atomic_set(&pebc->parent_si->obj_state,
+					SSDFS_SEG_OBJECT_PRE_DELETED);
+
+			rq = &fsi->pre_destroyed_segs_rq;
+			ssdfs_seg_object_info_init(soi, pebc->parent_si);
+			ssdfs_seg_objects_queue_add_tail(rq, soi);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("ADD INTO QUEUE: pre-deleted segment %llu\n",
+				  pebc->parent_si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			atomic_inc(&fsi->gc_should_act[thread_type]);
+			wake_up_all(&fsi->gc_wait_queue[thread_type]);
+			goto sleep_read_thread;
+		}
+
+continue_normal_flow:
 		if (is_it_time_free_peb_cache_memory(pebc)) {
 			err = ssdfs_peb_release_folios(pebc);
 			if (err == -ENODATA) {

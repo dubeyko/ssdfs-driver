@@ -252,6 +252,9 @@ finish_thread:
 		return err;
 	}
 
+	if (fsi->sb->s_flags & SB_RDONLY)
+		goto sleep_snapshots_btree_thread;
+
 	if (!is_time_process_requests(tree) &&
 	    !has_any_snapshot_been_deleted(tree)) {
 		/* sleep time */

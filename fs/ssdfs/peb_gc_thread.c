@@ -114,6 +114,8 @@ struct ssdfs_thread_descriptor thread_desc[SSDFS_GC_THREAD_TYPE_MAX] = {
 	 .fmt = "ssdfs-gc-pre-dirty-seg",},
 	{.threadfn = ssdfs_dirty_seg_gc_thread_func,
 	 .fmt = "ssdfs-gc-dirty-seg",},
+	{.threadfn = ssdfs_destroy_seg_gc_thread_func,
+	 .fmt = "ssdfs-gc-destroy-seg",},
 };
 
 /*
@@ -1046,9 +1048,6 @@ bool should_ssdfs_segment_be_destroyed(struct ssdfs_segment_info *si)
 		  atomic_read(&si->refs_count));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (atomic_read(&si->refs_count) > 0)
-		return false;
-
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
 		err = ssdfs_wait_segment_init_end(si);
 		if (unlikely(err)) {
@@ -1485,26 +1484,7 @@ void ssdfs_gc_wait_commit_logs_end(struct ssdfs_fs_info *fsi,
 
 		if (pair->si != NULL) {
 			struct ssdfs_segment_info *si = pair->si;
-
 			ssdfs_segment_put_object(si);
-
-/*
-			if (should_ssdfs_segment_be_destroyed(si)) {
-				err = ssdfs_segment_tree_remove(fsi, si);
-				if (unlikely(err)) {
-					SSDFS_WARN("fail to remove segment: "
-						   "seg %llu, err %d\n",
-						   si->seg_id, err);
-				} else {
-					err = ssdfs_segment_destroy_object(si);
-					if (err) {
-						SSDFS_WARN("fail to destroy: "
-							   "seg %llu, err %d\n",
-							   si->seg_id, err);
-					}
-				}
-			}
-*/
 		} else {
 			SSDFS_ERR("segment is NULL: "
 				  "item_index %d\n", i);
@@ -1685,6 +1665,7 @@ int ssdfs_gc_stimulate_migration(struct ssdfs_segment_info *si,
 		return err;
 	}
 
+	ssdfs_segment_get_object(si);
 	pair->si = si;
 	array->items_count++;
 
@@ -1823,6 +1804,7 @@ int ssdfs_gc_finish_migration(struct ssdfs_segment_info *si,
 		return err;
 	}
 
+	ssdfs_segment_get_object(si);
 	pair->si = si;
 	array->items_count++;
 
@@ -2115,7 +2097,6 @@ int ssdfs_gc_collect_garbage_now(struct ssdfs_fs_info *fsi,
 		SSDFS_DBG("segment %llu is busy\n",
 			  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		ssdfs_segment_put_object(si);
 		return -EBUSY;
 	}
 
@@ -2235,8 +2216,6 @@ collect_garbage_now:
 				   "used_pages %d\n",
 				   si->seg_id, cur_leb_id, used_pages);
 		} else if (used_pages <= SSDFS_GC_FINISH_MIGRATION) {
-			ssdfs_segment_get_object(si);
-
 			err = ssdfs_gc_finish_migration(si, pebc,
 							&reqs_array);
 			if (unlikely(err)) {
@@ -2245,11 +2224,8 @@ collect_garbage_now:
 					  "err %d\n",
 					  si->seg_id, cur_leb_id, err);
 				err = 0;
-				ssdfs_segment_put_object(si);
 			}
 		} else {
-			ssdfs_segment_get_object(si);
-
 			err = ssdfs_gc_stimulate_migration(si, pebc,
 							   &reqs_array);
 			if (err == -ENODATA) {
@@ -2260,20 +2236,17 @@ collect_garbage_now:
 					  si->seg_id, cur_leb_id, err);
 #endif /* CONFIG_SSDFS_DEBUG */
 				err = 0;
-				ssdfs_segment_put_object(si);
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to stimulate migration: "
 					  "seg %llu, leb_id %llu, "
 					  "err %d\n",
 					  si->seg_id, cur_leb_id, err);
 				err = 0;
-				ssdfs_segment_put_object(si);
 			}
 		}
 	}
 
 finish_seg_processing:
-	ssdfs_segment_put_object(si);
 	ssdfs_gc_wait_commit_logs_end(fsi, &reqs_array);
 
 	err1 = ssdfs_revert_segment_to_regular_activity(si);
@@ -2369,6 +2342,11 @@ repeat:
 	default:
 		/* continue logic */
 		break;
+	}
+
+	if (fsi->sb->s_flags & SB_RDONLY) {
+		atomic_set(&fsi->gc_should_act[thread_type], 0);
+		goto sleep_gc_thread;
 	}
 
 	err = should_be_thread_metadata_structure_user(fsi,
@@ -2533,8 +2511,6 @@ try_to_find_seg_object:
 			}
 		}
 
-		ssdfs_segment_get_object(si);
-
 		if (should_ssdfs_segment_be_destroyed(si)) {
 			/*
 			 * Segment hasn't requests in the queues.
@@ -2542,10 +2518,8 @@ try_to_find_seg_object:
 			 * Try to collect the garbage.
 			 */
 			goto try_collect_garbage;
-		} else {
-			ssdfs_segment_put_object(si);
-			goto check_next_segment;
-		}
+		} else
+			goto put_segment_object;
 
 try_create_seg_object:
 		ssdfs_segment_search_state_init(&seg_search, seg_type,
@@ -2564,36 +2538,20 @@ try_collect_garbage:
 		err = ssdfs_gc_collect_garbage_now(fsi, si, i, wq);
 		if (err == -EBUSY) {
 			err = 0;
-			goto check_next_segment;
+			goto put_segment_object;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to collect garbage: "
 				  "seg_id %llu, err %d\n",
 				  seg_id, err);
+			ssdfs_segment_put_object(si);
 			goto sleep_failed_gc_thread;
 		}
 
-SSDFS_ERR("TODO: rework logic of destroying segments created by GC: "
-	  "seg_id %llu\n", si->seg_id);
-
-/*
-		if (should_ssdfs_segment_be_destroyed(si)) {
-			err = ssdfs_segment_tree_remove(fsi, si);
-			if (unlikely(err)) {
-				SSDFS_WARN("fail to remove segment: "
-					   "seg %llu, err %d\n",
-					   si->seg_id, err);
-			} else {
-				err = ssdfs_segment_destroy_object(si);
-				if (err) {
-					SSDFS_WARN("fail to destroy: "
-						   "seg %llu, err %d\n",
-						   si->seg_id, err);
-				}
-			}
-		}
-*/
+put_segment_object:
+		ssdfs_segment_put_object(si);
 
 check_next_segment:
+		si = NULL;
 		seg_id++;
 
 		atomic_dec(&fsi->gc_should_act[thread_type]);
@@ -2623,6 +2581,7 @@ finish_seg_processing:
 		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
 	}
 
+sleep_gc_thread:
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	add_wait_queue(wq, &wait);
 	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
@@ -2664,367 +2623,6 @@ bool should_continue_processing(int mandatory_ops)
 			return false;
 	} else
 		return true;
-}
-
-/*
- * __ssdfs_dirty_seg_gc_thread_func() - GC thread's function for dirty segments
- * @fsi: pointer on shared file system object
- * @thread_type: thread type
- * @seg_state: type of segment
- * @seg_state_mask: segment types' mask
- *
- * This function is the logic of GC thread for dirty segments.
- *
- * RETURN:
- * [success]
- * [failure] - error code:
- *
- * %-ERANGE     - internal error.
- */
-static
-int __ssdfs_dirty_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
-				     int thread_type,
-				     int seg_state, int seg_state_mask)
-{
-	struct ssdfs_segment_info *si;
-	struct ssdfs_maptbl_peb_relation pebr;
-	struct ssdfs_maptbl_peb_descriptor *pebd;
-	struct ssdfs_segment_bmap *segbmap;
-	struct completion *end = NULL;
-	wait_queue_head_t *wq;
-	u64 seg_id = 0;
-	u64 max_seg_id;
-	u64 nsegs;
-	u64 cur_leb_id;
-	u32 lebs_per_segment;
-	int mandatory_ops = SSDFS_GC_DIRTY_SEG_DEFAULT_OPS;
-	bool is_maptbl_user = false;
-	bool is_segbmap_user = false;
-	u32 i;
-	int err = 0;
-
-#ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi);
-
-	SSDFS_DBG("GC thread: thread_type %#x, "
-		  "seg_state %#x, seg_state_mask %#x\n",
-		  thread_type, seg_state, seg_state_mask);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-	segbmap = fsi->segbmap;
-	wq = &fsi->gc_wait_queue[thread_type];
-	lebs_per_segment = fsi->pebs_per_seg;
-
-	ssdfs_register_mapping_table_user(fsi, &is_maptbl_user);
-	ssdfs_register_segbmap_user(fsi, &is_segbmap_user);
-
-repeat:
-	if (kthread_should_stop()) {
-		if (is_maptbl_user) {
-			ssdfs_unregister_mapping_table_user(fsi,
-							    &is_maptbl_user);
-		}
-		if (is_segbmap_user) {
-			ssdfs_unregister_segbmap_user(fsi,
-						      &is_segbmap_user);
-		}
-		complete_all(&fsi->gc_thread[thread_type].full_stop);
-		return err;
-	} else if (unlikely(err))
-		goto sleep_failed_gc_thread;
-
-	switch (atomic_read(&fsi->global_fs_state)) {
-	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
-		err = SSDFS_WAIT_COMPLETION(&fsi->mount_end);
-		if (unlikely(err)) {
-			SSDFS_ERR("mount failed\n");
-			goto sleep_failed_gc_thread;
-		}
-		break;
-
-	default:
-		/* continue logic */
-		break;
-	}
-
-	err = should_be_thread_metadata_structure_user(fsi,
-							&is_maptbl_user,
-							&is_segbmap_user);
-	if (unlikely(err))
-		goto sleep_failed_gc_thread;
-
-	mutex_lock(&fsi->resize_mutex);
-	nsegs = fsi->nsegs;
-	mutex_unlock(&fsi->resize_mutex);
-
-	if (seg_id >= nsegs)
-		seg_id = 0;
-
-	while (seg_id < nsegs) {
-		max_seg_id = nsegs;
-
-		err = ssdfs_gc_find_next_seg_id(fsi, seg_id, max_seg_id,
-						seg_state, seg_state_mask,
-						&seg_id);
-		if (err == -ENODATA) {
-			err = 0;
-			seg_id = 0;
-			SSDFS_DBG("GC hasn't found any victim\n");
-			goto finish_seg_processing;
-		} else if (unlikely(err)) {
-			SSDFS_ERR("fail to find segment: "
-				  "seg_id %llu, nsegs %llu, err %d\n",
-				  seg_id, nsegs, err);
-			goto sleep_failed_gc_thread;
-		}
-
-#ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("found segment: "
-			  "seg_id %llu, seg_state %#x\n",
-			  seg_id, seg_state);
-#endif /* CONFIG_SSDFS_DEBUG */
-
-		if (!should_continue_processing(mandatory_ops))
-			goto finish_seg_processing;
-
-		i = 0;
-
-		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
-								    seg_id,
-								    i);
-			if (cur_leb_id >= U64_MAX) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unexpected leb_id: "
-					  "seg_id %llu, peb_index %u\n",
-					  seg_id, i);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			}
-
-			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
-			if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
-					  cur_leb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to convert LEB to PEB: "
-					  "leb_id %llu, err %d\n",
-					  cur_leb_id, err);
-				goto sleep_failed_gc_thread;
-			}
-
-			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
-
-			switch (pebd->state) {
-			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
-				/* PEB is dirty */
-				break;
-
-			default:
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("LEB %llu is not dirty: "
-					  "pebd->state %u\n",
-					  cur_leb_id, pebd->state);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto check_next_segment;
-			}
-
-			if (!should_continue_processing(mandatory_ops))
-				goto finish_seg_processing;
-
-			goto try_to_find_seg_object;
-		}
-
-try_to_find_seg_object:
-		si = ssdfs_segment_tree_find(fsi, seg_id);
-		if (IS_ERR_OR_NULL(si)) {
-			err = PTR_ERR(si);
-
-			if (err == -ENODATA) {
-				err = 0;
-				goto try_set_pre_erase_state;
-			} else if (err == 0) {
-				err = -ERANGE;
-				SSDFS_ERR("seg tree returns NULL\n");
-				goto finish_seg_processing;
-			} else {
-				SSDFS_ERR("fail to find segment: "
-					  "seg %llu, err %d\n",
-					  seg_id, err);
-				goto sleep_failed_gc_thread;
-			}
-		}
-
-		ssdfs_segment_get_object(si);
-
-		if (should_ssdfs_segment_be_destroyed(si)) {
-			err = ssdfs_segment_tree_remove(fsi, si);
-			ssdfs_segment_put_object(si);
-
-			if (unlikely(err)) {
-				SSDFS_WARN("fail to remove segment: "
-					   "seg %llu, err %d\n",
-					   si->seg_id, err);
-			} else {
-				err = ssdfs_segment_destroy_object(si);
-				if (err) {
-					SSDFS_WARN("fail to destroy: "
-						   "seg %llu, err %d\n",
-						   si->seg_id, err);
-				}
-			}
-		} else {
-			ssdfs_segment_put_object(si);
-			goto check_next_segment;
-		}
-
-try_set_pre_erase_state:
-		for (; i < lebs_per_segment; i++) {
-			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
-								    seg_id,
-								    i);
-			if (cur_leb_id >= U64_MAX) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unexpected leb_id: "
-					  "seg_id %llu, peb_index %u\n",
-					  seg_id, i);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			}
-
-			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
-			if (err == -ENODATA) {
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("LEB doesn't mapped: leb_id %llu\n",
-					  cur_leb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				continue;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to convert LEB to PEB: "
-					  "leb_id %llu, err %d\n",
-					  cur_leb_id, err);
-				goto sleep_failed_gc_thread;
-			}
-
-			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
-
-			switch (pebd->state) {
-			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
-				/* PEB is dirty */
-				break;
-
-			default:
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("LEB %llu is not dirty: "
-					  "pebd->state %u\n",
-					  cur_leb_id, pebd->state);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto check_next_segment;
-			}
-
-			err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
-								   cur_leb_id,
-								   pebd->type,
-								   &end);
-			if (err == -EAGAIN) {
-				err = SSDFS_WAIT_COMPLETION(end);
-				if (unlikely(err)) {
-					SSDFS_ERR("maptbl init failed: "
-						  "err %d\n", err);
-					goto sleep_failed_gc_thread;
-				}
-
-				err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
-								    cur_leb_id,
-								    pebd->type,
-								    &end);
-			}
-
-			if (err == -EBUSY) {
-				err = 0;
-#ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("unable to prepare pre-erase state: "
-					  "leb_id %llu\n",
-					  cur_leb_id);
-#endif /* CONFIG_SSDFS_DEBUG */
-				goto finish_seg_processing;
-			} else if (unlikely(err)) {
-				SSDFS_ERR("fail to prepare pre-erase state: "
-					  "leb_id %llu, err %d\n",
-					  cur_leb_id, err);
-				goto sleep_failed_gc_thread;
-			}
-		}
-
-		err = ssdfs_segbmap_change_state(segbmap, seg_id,
-						 SSDFS_SEG_CLEAN, &end);
-		if (err == -EAGAIN) {
-			err = SSDFS_WAIT_COMPLETION(end);
-			if (unlikely(err)) {
-				SSDFS_ERR("segbmap init failed: "
-					  "err %d\n", err);
-				goto sleep_failed_gc_thread;
-			}
-
-			err = ssdfs_segbmap_change_state(segbmap, seg_id,
-							 SSDFS_SEG_CLEAN, &end);
-		}
-
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to change segment state: "
-				  "seg %llu, state %#x, err %d\n",
-				  seg_id, SSDFS_SEG_CLEAN, err);
-			goto sleep_failed_gc_thread;
-		}
-
-check_next_segment:
-		mandatory_ops--;
-		seg_id++;
-
-		if (!should_continue_processing(mandatory_ops))
-			goto finish_seg_processing;
-	}
-
-finish_seg_processing:
-	atomic_set(&fsi->gc_should_act[thread_type], 0);
-
-	if (is_maptbl_user) {
-		ssdfs_unregister_mapping_table_user(fsi, &is_maptbl_user);
-	}
-
-	if (is_segbmap_user) {
-		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
-	}
-
-	DEFINE_WAIT_FUNC(wait, woken_wake_function);
-	add_wait_queue(wq, &wait);
-	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
-		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
-			break;
-		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
-	}
-	remove_wait_queue(wq, &wait);
-	goto repeat;
-
-sleep_failed_gc_thread:
-	atomic_set(&fsi->gc_should_act[thread_type], 0);
-
-	if (is_maptbl_user) {
-		ssdfs_unregister_mapping_table_user(fsi, &is_maptbl_user);
-	}
-
-	if (is_segbmap_user) {
-		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
-	}
-
-	wait_event_interruptible(*wq,
-		GLOBAL_GC_FAILED_THREAD_WAKE_CONDITION());
-	goto repeat;
 }
 
 /*
@@ -3171,8 +2769,10 @@ try_to_find_seg_object:
 						   si->seg_id, err);
 				}
 			}
-		} else
+		} else {
+			ssdfs_segment_put_object(si);
 			goto check_next_segment;
+		}
 
 try_set_pre_erase_state:
 		for (; i < lebs_per_segment; i++) {
@@ -3280,6 +2880,369 @@ check_next_segment:
 	return 0;
 }
 
+/*
+ * __ssdfs_dirty_seg_gc_thread_func() - GC thread's function for dirty segments
+ * @fsi: pointer on shared file system object
+ * @thread_type: thread type
+ * @seg_state: type of segment
+ * @seg_state_mask: segment types' mask
+ *
+ * This function is the logic of GC thread for dirty segments.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-ERANGE     - internal error.
+ */
+static
+int __ssdfs_dirty_seg_gc_thread_func(struct ssdfs_fs_info *fsi,
+				     int thread_type,
+				     int seg_state, int seg_state_mask)
+{
+	struct ssdfs_segment_info *si;
+	struct ssdfs_maptbl_peb_relation pebr;
+	struct ssdfs_maptbl_peb_descriptor *pebd;
+	struct ssdfs_segment_bmap *segbmap;
+	struct completion *end = NULL;
+	wait_queue_head_t *wq;
+	u64 seg_id = 0;
+	u64 max_seg_id;
+	u64 nsegs;
+	u64 cur_leb_id;
+	u32 lebs_per_segment;
+	int mandatory_ops = SSDFS_GC_DIRTY_SEG_DEFAULT_OPS;
+	bool is_maptbl_user = false;
+	bool is_segbmap_user = false;
+	u32 i;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("GC thread: thread_type %#x, "
+		  "seg_state %#x, seg_state_mask %#x\n",
+		  thread_type, seg_state, seg_state_mask);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	segbmap = fsi->segbmap;
+	wq = &fsi->gc_wait_queue[thread_type];
+	lebs_per_segment = fsi->pebs_per_seg;
+
+	ssdfs_register_mapping_table_user(fsi, &is_maptbl_user);
+	ssdfs_register_segbmap_user(fsi, &is_segbmap_user);
+
+repeat:
+	if (kthread_should_stop()) {
+		if (is_maptbl_user) {
+			ssdfs_unregister_mapping_table_user(fsi,
+							    &is_maptbl_user);
+		}
+		if (is_segbmap_user) {
+			ssdfs_unregister_segbmap_user(fsi,
+						      &is_segbmap_user);
+		}
+		complete_all(&fsi->gc_thread[thread_type].full_stop);
+		return err;
+	} else if (unlikely(err))
+		goto sleep_failed_gc_thread;
+
+	switch (atomic_read(&fsi->global_fs_state)) {
+	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
+		err = SSDFS_WAIT_COMPLETION(&fsi->mount_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("mount failed\n");
+			goto sleep_failed_gc_thread;
+		}
+		break;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	if (fsi->sb->s_flags & SB_RDONLY) {
+		atomic_set(&fsi->gc_should_act[thread_type], 0);
+		goto sleep_gc_thread;
+	}
+
+	err = should_be_thread_metadata_structure_user(fsi,
+							&is_maptbl_user,
+							&is_segbmap_user);
+	if (unlikely(err))
+		goto sleep_failed_gc_thread;
+
+	mutex_lock(&fsi->resize_mutex);
+	nsegs = fsi->nsegs;
+	mutex_unlock(&fsi->resize_mutex);
+
+	if (seg_id >= nsegs)
+		seg_id = 0;
+
+	while (seg_id < nsegs) {
+		max_seg_id = nsegs;
+
+		err = ssdfs_gc_find_next_seg_id(fsi, seg_id, max_seg_id,
+						seg_state, seg_state_mask,
+						&seg_id);
+		if (err == -ENODATA) {
+			err = 0;
+			seg_id = 0;
+			SSDFS_DBG("GC hasn't found any victim\n");
+			goto finish_seg_processing;
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find segment: "
+				  "seg_id %llu, nsegs %llu, err %d\n",
+				  seg_id, nsegs, err);
+			goto sleep_failed_gc_thread;
+		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("found segment: "
+			  "seg_id %llu, seg_state %#x\n",
+			  seg_id, seg_state);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (!should_continue_processing(mandatory_ops))
+			goto finish_seg_processing;
+
+		i = 0;
+
+		for (; i < lebs_per_segment; i++) {
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
+				continue;
+			}
+
+			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
+			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
+					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb_id, err);
+				goto sleep_failed_gc_thread;
+			}
+
+			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+			switch (pebd->state) {
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				/* PEB is dirty */
+				break;
+
+			default:
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb_id, pebd->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto check_next_segment;
+			}
+
+			if (!should_continue_processing(mandatory_ops))
+				goto finish_seg_processing;
+
+			goto try_to_find_seg_object;
+		}
+
+try_to_find_seg_object:
+		si = ssdfs_segment_tree_find(fsi, seg_id);
+		if (IS_ERR_OR_NULL(si)) {
+			err = PTR_ERR(si);
+
+			if (err == -ENODATA) {
+				err = 0;
+				goto try_set_pre_erase_state;
+			} else if (err == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("seg tree returns NULL\n");
+				goto finish_seg_processing;
+			} else {
+				SSDFS_ERR("fail to find segment: "
+					  "seg %llu, err %d\n",
+					  seg_id, err);
+				goto sleep_failed_gc_thread;
+			}
+		}
+
+		if (should_ssdfs_segment_be_destroyed(si)) {
+			err = ssdfs_segment_tree_remove(fsi, si);
+			if (unlikely(err)) {
+				SSDFS_WARN("fail to remove segment: "
+					   "seg %llu, err %d\n",
+					   si->seg_id, err);
+			} else {
+				err = ssdfs_segment_destroy_object(si);
+				if (err) {
+					SSDFS_WARN("fail to destroy: "
+						   "seg %llu, err %d\n",
+						   si->seg_id, err);
+				}
+			}
+		} else {
+			ssdfs_segment_put_object(si);
+			goto check_next_segment;
+		}
+
+try_set_pre_erase_state:
+		for (; i < lebs_per_segment; i++) {
+			cur_leb_id = ssdfs_get_leb_id_for_peb_index(fsi,
+								    seg_id,
+								    i);
+			if (cur_leb_id >= U64_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unexpected leb_id: "
+					  "seg_id %llu, peb_index %u\n",
+					  seg_id, i);
+#endif /* CONFIG_SSDFS_DEBUG */
+				continue;
+			}
+
+			err = ssdfs_gc_convert_leb2peb(fsi, cur_leb_id, &pebr);
+			if (err == -ENODATA) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
+					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				continue;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to convert LEB to PEB: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb_id, err);
+				goto sleep_failed_gc_thread;
+			}
+
+			pebd = &pebr.pebs[SSDFS_MAPTBL_MAIN_INDEX];
+
+			switch (pebd->state) {
+			case SSDFS_MAPTBL_DIRTY_PEB_STATE:
+				/* PEB is dirty */
+				break;
+
+			default:
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("LEB %llu is not dirty: "
+					  "pebd->state %u\n",
+					  cur_leb_id, pebd->state);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto check_next_segment;
+			}
+
+			err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								   cur_leb_id,
+								   pebd->type,
+								   &end);
+			if (err == -EAGAIN) {
+				err = SSDFS_WAIT_COMPLETION(end);
+				if (unlikely(err)) {
+					SSDFS_ERR("maptbl init failed: "
+						  "err %d\n", err);
+					goto sleep_failed_gc_thread;
+				}
+
+				err = ssdfs_maptbl_prepare_pre_erase_state(fsi,
+								    cur_leb_id,
+								    pebd->type,
+								    &end);
+			}
+
+			if (err == -EBUSY) {
+				err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("unable to prepare pre-erase state: "
+					  "leb_id %llu\n",
+					  cur_leb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+				goto finish_seg_processing;
+			} else if (unlikely(err)) {
+				SSDFS_ERR("fail to prepare pre-erase state: "
+					  "leb_id %llu, err %d\n",
+					  cur_leb_id, err);
+				goto sleep_failed_gc_thread;
+			}
+		}
+
+		err = ssdfs_segbmap_change_state(segbmap, seg_id,
+						 SSDFS_SEG_CLEAN, &end);
+		if (err == -EAGAIN) {
+			err = SSDFS_WAIT_COMPLETION(end);
+			if (unlikely(err)) {
+				SSDFS_ERR("segbmap init failed: "
+					  "err %d\n", err);
+				goto sleep_failed_gc_thread;
+			}
+
+			err = ssdfs_segbmap_change_state(segbmap, seg_id,
+							 SSDFS_SEG_CLEAN, &end);
+		}
+
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to change segment state: "
+				  "seg %llu, state %#x, err %d\n",
+				  seg_id, SSDFS_SEG_CLEAN, err);
+			goto sleep_failed_gc_thread;
+		}
+
+check_next_segment:
+		mandatory_ops--;
+		seg_id++;
+
+		if (!should_continue_processing(mandatory_ops))
+			goto finish_seg_processing;
+	}
+
+finish_seg_processing:
+	atomic_set(&fsi->gc_should_act[thread_type], 0);
+
+	if (is_maptbl_user) {
+		ssdfs_unregister_mapping_table_user(fsi, &is_maptbl_user);
+	}
+
+	if (is_segbmap_user) {
+		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
+	}
+
+sleep_gc_thread:
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wq, &wait);
+	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wq, &wait);
+	goto repeat;
+
+sleep_failed_gc_thread:
+	atomic_set(&fsi->gc_should_act[thread_type], 0);
+
+	if (is_maptbl_user) {
+		ssdfs_unregister_mapping_table_user(fsi, &is_maptbl_user);
+	}
+
+	if (is_segbmap_user) {
+		ssdfs_unregister_segbmap_user(fsi, &is_segbmap_user);
+	}
+
+	wait_event_interruptible(*wq,
+		GLOBAL_GC_FAILED_THREAD_WAKE_CONDITION());
+	goto repeat;
+}
+
 int ssdfs_using_seg_gc_thread_func(void *data)
 {
 	struct ssdfs_fs_info *fsi = data;
@@ -3357,6 +3320,124 @@ int ssdfs_dirty_seg_gc_thread_func(void *data)
 				SSDFS_SEG_DIRTY_GC_THREAD,
 				SSDFS_SEG_DIRTY,
 				SSDFS_SEG_DIRTY_STATE_FLAG);
+}
+
+int ssdfs_destroy_seg_gc_thread_func(void *data)
+{
+	struct ssdfs_fs_info *fsi = data;
+	struct ssdfs_seg_objects_queue *soq;
+	wait_queue_head_t *wq;
+	struct ssdfs_seg_object_info *soi;
+	int thread_type = SSDFS_DESTROY_SEG_GC_THREAD;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!fsi) {
+		SSDFS_ERR("invalid shared FS object\n");
+		return -EINVAL;
+	}
+
+	SSDFS_DBG("GC thread: destroy segments\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	soq = &fsi->pre_destroyed_segs_rq;
+	wq = &fsi->gc_wait_queue[thread_type];
+
+repeat:
+	if (unlikely(err)) {
+		ssdfs_seg_objects_queue_remove_all(soq);
+		wake_up_all(wq);
+
+		if (kthread_should_stop())
+			goto finish_thread;
+		else
+			goto sleep_failed_gc_thread;
+	}
+
+	if (kthread_should_stop()) {
+finish_thread:
+		complete_all(&fsi->gc_thread[thread_type].full_stop);
+		return err;
+	} else if (unlikely(err))
+		goto sleep_failed_gc_thread;
+
+	switch (atomic_read(&fsi->global_fs_state)) {
+	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
+		err = SSDFS_WAIT_COMPLETION(&fsi->mount_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("mount failed\n");
+			goto sleep_failed_gc_thread;
+		}
+		break;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	if (is_ssdfs_seg_objects_queue_empty(soq))
+		goto sleep_gc_thread;
+
+	do {
+		err = ssdfs_seg_objects_queue_remove_first(soq, &soi);
+		if (err == -ENODATA) {
+			/* empty queue */
+			err = 0;
+			break;
+		} else if (err == -ENOENT) {
+			SSDFS_WARN("request queue contains NULL request\n");
+			err = 0;
+			continue;
+		} else if (unlikely(err < 0)) {
+			SSDFS_CRIT("fail to get request from the queue: "
+				   "err %d\n",
+				   err);
+			goto sleep_failed_gc_thread;
+		}
+
+		if (!soi->si) {
+			SSDFS_ERR("segment object pointer is NULL\n");
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("DESTROY PRE-DELETED SEGMENT: seg_id %llu\n",
+				  soi->si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			err = ssdfs_segment_destroy_object(soi->si);
+			if (err) {
+				SSDFS_WARN("fail to destroy: "
+					   "seg %llu, err %d\n",
+					   soi->si->seg_id, err);
+			}
+		}
+
+		ssdfs_seg_object_info_free(soi);
+
+		atomic_dec(&fsi->gc_should_act[thread_type]);
+	} while (!is_ssdfs_seg_objects_queue_empty(soq));
+
+sleep_gc_thread:
+	atomic_set(&fsi->gc_should_act[thread_type], 0);
+	wake_up_all(wq);
+
+	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+	add_wait_queue(wq, &wait);
+	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
+		if (signal_pending(current)) {
+			err = -ERESTARTSYS;
+			break;
+		}
+		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
+	}
+	remove_wait_queue(wq, &wait);
+	goto repeat;
+
+sleep_failed_gc_thread:
+	atomic_set(&fsi->gc_should_act[thread_type], 0);
+
+	wait_event_interruptible(*wq,
+		GLOBAL_GC_FAILED_THREAD_WAKE_CONDITION());
+	goto repeat;
 }
 
 /*

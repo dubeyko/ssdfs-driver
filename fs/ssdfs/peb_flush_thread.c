@@ -18485,6 +18485,7 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 	__le64 cur_segs[SSDFS_CUR_SEGS_COUNT];
 	size_t size = sizeof(__le64) * SSDFS_CUR_SEGS_COUNT;
 	int state;
+	bool log_has_been_commited = false;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -18571,6 +18572,8 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 				return err;
 			}
 
+			thread_state->err = 0;
+
 			if (state != SSDFS_LOG_CREATED) {
 				thread_state->state =
 					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
@@ -18583,6 +18586,10 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 			ssdfs_unlock_current_peb(pebc);
 			return 0;
 		}
+	} else if (have_flush_requests(pebc)) {
+		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
+						&pebc->update_rq,
+						-EROFS);
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -18605,28 +18612,39 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 				ssdfs_peb_clear_cache_dirty_pages(pebi);
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
-			}
+			} else
+				log_has_been_commited = true;
 		}
 	}
 	ssdfs_peb_current_log_unlock(pebi);
 
 	if (!err) {
-		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
-			SSDFS_WARN("seg %llu, peb_index %u\n",
-				   pebc->parent_si->seg_id,
-				   pebc->peb_index);
+		if (log_has_been_commited) {
+			if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
+				SSDFS_WARN("seg %llu, peb_index %u\n",
+					   pebc->parent_si->seg_id,
+					   pebc->peb_index);
+			}
+
+			err = ssdfs_peb_container_change_state(pebc);
+			if (unlikely(err)) {
+				SSDFS_CRIT("fail to change peb state: "
+					  "err %d\n", err);
+				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+				thread_state->err = err;
+			}
 		}
 
-		err = ssdfs_peb_container_change_state(pebc);
-		if (unlikely(err)) {
-			SSDFS_CRIT("fail to change peb state: "
-				  "err %d\n", err);
-			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
+		if (kthread_should_stop()) {
+			err = 0;
 			thread_state->err = err;
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+		} else {
+			err = -EROFS;
+			thread_state->err = err;
+			thread_state->state = SSDFS_FLUSH_THREAD_RO_STATE;
 		}
-
-		err = -EROFS;
-		thread_state->state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 	}
 
 	ssdfs_unlock_current_peb(pebc);
@@ -18841,6 +18859,14 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 					  "seg %llu, peb %llu\n",
 					  pebc->parent_si->seg_id,
 					  peb_id);
+				SSDFS_ERR("peb_id %llu, "
+					  "ssdfs_peb_has_dirty_folios %#x, "
+					  "have_flush_requests %#x, "
+					  "need_create_log %#x, "
+					  "is_peb_exhausted %#x\n",
+					  peb_id, peb_has_dirty_folios,
+					  have_flush_requests(pebc),
+					  need_create_log, is_peb_exhausted);
 
 #ifdef CONFIG_SSDFS_DEBUG
 				ssdfs_peb_check_update_queue(pebc);
@@ -19181,16 +19207,20 @@ process_flush_requests:
 			return err;
 		}
 
-		if (state != SSDFS_LOG_CREATED) {
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-		} else {
-			thread_state->state =
-				SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-		}
-
-		if (have_flush_requests(pebc))
+		if (have_flush_requests(pebc)) {
 			err = -EAGAIN;
+			if (state != SSDFS_LOG_CREATED) {
+				thread_state->state =
+					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
+			} else {
+				thread_state->state =
+					SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
+			}
+		} else {
+			err = 0;
+			thread_state->state =
+				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
+		}
 	}
 
 	return err;
@@ -22622,7 +22652,7 @@ repeat:
 		break;
 	}
 
-	if (thread_state->err) {
+	if (thread_state->err && thread_state->err != -EROFS) {
 		if (is_maptbl_user) {
 			ssdfs_unregister_mapping_table_user(pebc,
 							    &is_maptbl_user);
@@ -22643,15 +22673,24 @@ repeat:
 		}
 	}
 
-	if (thread_state->state != SSDFS_FLUSH_THREAD_ERROR &&
-	    thread_state->state != SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT) {
+	switch (thread_state->state) {
+	case SSDFS_FLUSH_THREAD_ERROR:
+	case SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT:
+	case SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION:
+	case SSDFS_FLUSH_THREAD_MUST_STOP_NOW:
+		/* continue logic */
+		break;
+
+	default:
 		if (kthread_should_stop()) {
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 		} else if (fsi->sb->s_flags & SB_RDONLY) {
+			thread_state->err = 0;
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_RO_STATE;
 		}
+		break;
 	}
 
 next_partial_step:
@@ -22789,7 +22828,7 @@ next_partial_step:
 		} else if (err) {
 			goto repeat;
 		} else {
-			goto next_partial_step;
+			goto sleep_flush_thread;
 		}
 		break;
 
@@ -23403,7 +23442,7 @@ sleep_flush_thread:
 				break;
 			}
 			wait_woken(&wait, TASK_INTERRUPTIBLE,
-						SSDFS_DEFAULT_TIMEOUT);
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(wait_queue, &wait);
 	}
@@ -23420,7 +23459,7 @@ sleep_cur_seg_flush_thread:
 				break;
 			}
 			wait_woken(&wait, TASK_INTERRUPTIBLE,
-						SSDFS_DEFAULT_TIMEOUT);
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
@@ -23437,7 +23476,7 @@ sleep_waiting_pending_updates:
 				break;
 			}
 			wait_woken(&wait, TASK_INTERRUPTIBLE,
-						SSDFS_DEFAULT_TIMEOUT);
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
@@ -23454,7 +23493,7 @@ sleep_waiting_pending_invalidations:
 				break;
 			}
 			wait_woken(&wait, TASK_INTERRUPTIBLE,
-						SSDFS_DEFAULT_TIMEOUT);
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
@@ -23466,6 +23505,6 @@ sleep_failed_flush_thread:
 	}
 	wake_up_all(wait_queue);
 	wait_event_interruptible(*wait_queue,
-				FLUSH_FAILED_THREAD_WAKE_CONDITION());
+				 FLUSH_FAILED_THREAD_WAKE_CONDITION());
 	goto repeat;
 }

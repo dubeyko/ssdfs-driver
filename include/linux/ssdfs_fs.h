@@ -75,6 +75,25 @@ struct ssdfs_metadata_check {
 } __packed;
 
 /*
+ * struct ssdfs_padding_header - padding block header
+ * @magic: magic signature + revision
+ * @check: metadata checksum
+ * @blob: padding blob
+ */
+struct ssdfs_padding_header {
+/* 0x0000 */
+	struct ssdfs_signature magic;
+
+/* 0x0008 */
+	struct ssdfs_metadata_check check;
+
+/* 0x0010 */
+	__le64 blob;
+
+/* 0x0020 */
+} __packed;
+
+/*
  * struct ssdfs_raw_extent - raw (on-disk) extent
  * @seg_id: segment number
  * @logical_blk: logical block number

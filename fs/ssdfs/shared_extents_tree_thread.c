@@ -291,6 +291,9 @@ finish_thread:
 		return err;
 	}
 
+	if (tree->fsi->sb->s_flags & SB_RDONLY)
+		goto sleep_shextree_thread;
+
 	if (!has_shextree_pre_invalid_extents(tree, id))
 		goto sleep_shextree_thread;
 
@@ -518,6 +521,9 @@ finish_thread:
 		complete_all(&ptr->thread.full_stop);
 		return err;
 	}
+
+	if (tree->fsi->sb->s_flags & SB_RDONLY)
+		goto sleep_shextree_thread;
 
 	if (!has_shextree_pre_invalid_extents(tree, id))
 		goto sleep_shextree_thread;

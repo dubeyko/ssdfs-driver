@@ -219,6 +219,7 @@ void ssdfs_segment_free_object(struct ssdfs_segment_info *si)
 	case SSDFS_SEG_OBJECT_CREATED:
 	case SSDFS_CURRENT_SEG_OBJECT:
 	case SSDFS_SEG_OBJECT_FAILURE:
+	case SSDFS_SEG_OBJECT_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -286,6 +287,7 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 	case SSDFS_SEG_OBJECT_UNDER_CREATION:
 	case SSDFS_SEG_OBJECT_CREATED:
 	case SSDFS_CURRENT_SEG_OBJECT:
+	case SSDFS_SEG_OBJECT_PRE_DELETED:
 		/* expected state */
 		break;
 
@@ -294,6 +296,8 @@ int ssdfs_segment_destroy_object(struct ssdfs_segment_info *si)
 			   atomic_read(&si->obj_state));
 		break;
 	}
+
+	atomic_set(&si->obj_state, SSDFS_SEG_OBJECT_PRE_DELETED);
 
 	refs_count = atomic_read(&si->refs_count);
 
@@ -1499,7 +1503,6 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 			return ERR_PTR(err);
 		}
 
-		ssdfs_segment_get_object(si);
 		wq = &si->object_queue;
 
 		res = wait_event_killable_timeout(*wq,
@@ -1550,6 +1553,7 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 		if (unlikely(err)) {
 			int res;
 
+			ssdfs_segment_put_object(si);
 			res = ssdfs_segment_tree_remove(fsi, si);
 			if (unlikely(res)) {
 				SSDFS_WARN("fail to remove segment: "
@@ -1579,7 +1583,6 @@ __ssdfs_create_new_segment(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	ssdfs_segment_get_object(si);
 	return si;
 }
 
@@ -1943,11 +1946,11 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi,
 			}
 		} else {
 			wq = &si->object_queue;
-			ssdfs_segment_get_object(si);
 
 			switch (atomic_read(&si->obj_state)) {
 			case SSDFS_SEG_OBJECT_CREATED:
 			case SSDFS_CURRENT_SEG_OBJECT:
+			case SSDFS_SEG_OBJECT_FAILURE:
 				/* do nothing */
 				break;
 

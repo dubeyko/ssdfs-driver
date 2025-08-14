@@ -488,6 +488,9 @@ void ssdfs_requests_queue_remove_all(struct ssdfs_fs_info *fsi,
 	if (is_empty)
 		return;
 
+	if (!err)
+		err = -EFAULT;
+
 	list_for_each_safe(this, next, &tmp_list) {
 		struct ssdfs_segment_request *req;
 		unsigned int i;

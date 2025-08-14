@@ -212,6 +212,9 @@ finish_thread:
 		return err;
 	}
 
+	if (tree->generic_tree.fsi->sb->s_flags & SB_RDONLY)
+		goto sleep_shared_dict_thread;
+
 	if (!has_queue_unprocessed_names(tree))
 		goto sleep_shared_dict_thread;
 

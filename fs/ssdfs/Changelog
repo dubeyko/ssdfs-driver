@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.26 [August 13, 2025]
+    (*) Introduce logic of destroying unused in-core segments by GC.
+
 v.5.25 [August 12, 2025]
     (*) Introduce superblock snapshots segment logic.
 

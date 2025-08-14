@@ -3908,7 +3908,11 @@ int ssdfs_maptbl_prepare_migration(struct ssdfs_peb_mapping_table *tbl)
 		state = atomic_read(&fdesc->state);
 		switch (state) {
 		case SSDFS_MAPTBL_FRAG_INITIALIZED:
-			/* simply skip *NOT DIRTY* fragment */
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("simply skip *NOT DIRTY* fragment: "
+				   "index %u, state %#x\n",
+				   i, state);
+#endif /* CONFIG_SSDFS_DEBUG */
 			continue;
 
 		case SSDFS_MAPTBL_FRAG_DIRTY:
@@ -4058,6 +4062,14 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 		return -EFAULT;
 	}
 
+	/*
+	 * This flag should be not included into the header.
+	 * The flag is used only during flush operation.
+	 * The inclusion of the flag in the on-disk layout's
+	 * state means the volume corruption.
+	 */
+	atomic_or(SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("prepare migration\n");
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -4090,15 +4102,7 @@ finish_prepare_migration:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(err))
-		return err;
-
-	/*
-	 * This flag should be not included into the header.
-	 * The flag is used only during flush operation.
-	 * The inclusion of the flag in the on-disk layout's
-	 * state means the volume corruption.
-	 */
-	atomic_or(SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+		goto finish_maptbl_flush;
 
 	down_write(&tbl->tbl_lock);
 
@@ -9076,6 +9080,12 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_change_peb_state(cache,
 								  leb_id,
 								  peb_state,
@@ -9104,6 +9114,12 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_change_peb_state(cache,
 								  leb_id,
 								  peb_state,
@@ -9142,6 +9158,12 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_change_peb_state(cache,
 								  leb_id,
 								  peb_state,
@@ -9283,6 +9305,12 @@ finish_change_state:
 
 	if (err == -EAGAIN && should_cache_peb_info(peb_type)) {
 		consistency = SSDFS_PEB_STATE_INCONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("leb_id %llu, consistency %#x\n",
+			  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_cache_change_peb_state(cache,
 							  leb_id,
 							  peb_state,
@@ -9295,6 +9323,12 @@ finish_change_state:
 		}
 	} else if (!err && should_cache_peb_info(peb_type)) {
 		consistency = SSDFS_PEB_STATE_CONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("leb_id %llu, consistency %#x\n",
+			  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_cache_change_peb_state(cache,
 							  leb_id,
 							  peb_state,
@@ -9311,6 +9345,12 @@ finish_change_state:
 
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_CONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_change_peb_state(cache,
 								  leb_id,
 								  peb_state,
@@ -10941,6 +10981,12 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_PRE_DELETED;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
 								leb_id,
 								consistency);
@@ -10967,6 +11013,12 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_PRE_DELETED;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
 								leb_id,
 								consistency);
@@ -11005,6 +11057,12 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_PRE_DELETED;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("leb_id %llu, consistency %#x\n",
+				  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
 								leb_id,
 								consistency);
@@ -11318,6 +11376,12 @@ finish_exclude_migrating_peb:
 
 	if (err == -EAGAIN && should_cache_peb_info(peb_type)) {
 		consistency = SSDFS_PEB_STATE_PRE_DELETED;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("leb_id %llu, consistency %#x\n",
+			  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
 								leb_id,
 								consistency);
@@ -11328,6 +11392,12 @@ finish_exclude_migrating_peb:
 		}
 	} else if (!err && should_cache_peb_info(peb_type)) {
 		consistency = SSDFS_PEB_STATE_CONSISTENT;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("leb_id %llu, consistency %#x\n",
+			  leb_id, consistency);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 		err = ssdfs_maptbl_cache_exclude_migration_peb(cache,
 								leb_id,
 								consistency);

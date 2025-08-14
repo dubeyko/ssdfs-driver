@@ -162,6 +162,7 @@ enum {
 	SSDFS_SEG_OBJECT_CREATED,
 	SSDFS_CURRENT_SEG_OBJECT,
 	SSDFS_SEG_OBJECT_FAILURE,
+	SSDFS_SEG_OBJECT_PRE_DELETED,
 	SSDFS_SEG_OBJECT_STATE_MAX
 };
 
@@ -249,6 +250,7 @@ bool is_ssdfs_segment_created(struct ssdfs_segment_info *si)
 	case SSDFS_SEG_OBJECT_CREATED:
 	case SSDFS_CURRENT_SEG_OBJECT:
 	case SSDFS_SEG_OBJECT_FAILURE:
+	case SSDFS_SEG_OBJECT_PRE_DELETED:
 		is_created = true;
 		break;
 

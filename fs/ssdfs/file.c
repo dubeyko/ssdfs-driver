@@ -4272,6 +4272,7 @@ const struct address_space_operations ssdfs_aops = {
 	.writepages		= ssdfs_writepages,
 	.write_begin		= ssdfs_write_begin,
 	.write_end		= ssdfs_write_end,
+	.migrate_folio		= filemap_migrate_folio,
 	.dirty_folio		= filemap_dirty_folio,
 	.direct_IO		= ssdfs_direct_IO,
 };

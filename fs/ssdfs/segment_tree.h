@@ -24,6 +24,16 @@
 #define _SSDFS_SEGMENT_TREE_H
 
 /*
+ * struct ssdfs_seg_object_info - segment object info
+ * @list: segment objects queue list
+ * @si: pointer on segment object
+ */
+struct ssdfs_seg_object_info {
+	struct list_head list;
+	struct ssdfs_segment_info *si;
+};
+
+/*
  * struct ssdfs_segment_tree - tree of segment objects
  * @lnodes_seg_log_pages: full log size in leaf nodes segment (pages count)
  * @hnodes_seg_log_pages: full log size in hybrid nodes segment (pages count)
@@ -55,6 +65,32 @@ struct ssdfs_segment_tree {
 
 #define SSDFS_SEG_OBJ_PTR_PER_PAGE \
 	(PAGE_SIZE / sizeof(struct ssdfs_segment_info *))
+
+/*
+ * Segment objects queue API
+ */
+void ssdfs_seg_objects_queue_init(struct ssdfs_seg_objects_queue *soq);
+bool is_ssdfs_seg_objects_queue_empty(struct ssdfs_seg_objects_queue *soq);
+void ssdfs_seg_objects_queue_add_tail(struct ssdfs_seg_objects_queue *soq,
+				      struct ssdfs_seg_object_info *soi);
+void ssdfs_seg_objects_queue_add_head(struct ssdfs_seg_objects_queue *soq,
+				      struct ssdfs_seg_object_info *soi);
+int ssdfs_seg_objects_queue_remove_first(struct ssdfs_seg_objects_queue *soq,
+					 struct ssdfs_seg_object_info **soi);
+void ssdfs_seg_objects_queue_remove_all(struct ssdfs_seg_objects_queue *soq);
+
+/*
+ * Segment object info's API
+ */
+void ssdfs_zero_seg_object_info_cache_ptr(void);
+int ssdfs_init_seg_object_info_cache(void);
+void ssdfs_shrink_seg_object_info_cache(void);
+void ssdfs_destroy_seg_object_info_cache(void);
+
+struct ssdfs_seg_object_info *ssdfs_seg_object_info_alloc(void);
+void ssdfs_seg_object_info_free(struct ssdfs_seg_object_info *soi);
+void ssdfs_seg_object_info_init(struct ssdfs_seg_object_info *soi,
+				struct ssdfs_segment_info *si);
 
 /*
  * Segments' tree API
