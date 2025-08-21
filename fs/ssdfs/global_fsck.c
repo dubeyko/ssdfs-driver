@@ -173,7 +173,6 @@ int ssdfs_erase_and_re_write_sb_snapshot_segment(struct super_block *sb)
 		ssdfs_folio_get(folio);
 
 		ssdfs_folio_lock(folio);
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		folio_set_dirty(folio);
 		ssdfs_folio_unlock(folio);
@@ -190,7 +189,6 @@ int ssdfs_erase_and_re_write_sb_snapshot_segment(struct super_block *sb)
 
 		ssdfs_folio_lock(folio);
 		folio_clear_uptodate(folio);
-		ssdfs_clear_folio_private(folio, 0);
 		ssdfs_folio_unlock(folio);
 	}
 

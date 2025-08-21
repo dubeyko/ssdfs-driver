@@ -213,7 +213,6 @@ static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 
 		if (err) {
 			folio_clear_uptodate(folio);
-			ssdfs_clear_folio_private(folio, 0);
 			break;
 		}
 

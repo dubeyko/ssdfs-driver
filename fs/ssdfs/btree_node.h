@@ -24,6 +24,8 @@
 #define _SSDFS_BTREE_NODE_H
 
 #include "request_queue.h"
+#include "folio_array.h"
+#include "peb.h"
 
 /*
  * struct ssdfs_btree_node_operations - node operations specialization
@@ -191,10 +193,12 @@ struct ssdfs_state_bitmap_array {
 
 /*
  * struct ssdfs_btree_node_content - btree node's content
+ * @protection: btree node's content protection window
  * @blocks: array of logical blocks
  * @count: number of blocks in extent
  */
 struct ssdfs_btree_node_content {
+	struct ssdfs_protection_window protection;
 #define SSDFS_BTREE_NODE_EXTENT_LEN_MAX		(SSDFS_EXTENT_LEN_MAX)
 	struct ssdfs_content_block blocks[SSDFS_BTREE_NODE_EXTENT_LEN_MAX];
 	int count;
@@ -209,6 +213,7 @@ union ssdfs_aggregated_btree_node_header {
 
 /*
  * struct ssdfs_btree_node - btree node
+ * @list: btree nodes' list
  * @height: node's height
  * @node_size: node size in bytes
  * @pages_per_node: count of logical blocks per node
@@ -249,6 +254,8 @@ union ssdfs_aggregated_btree_node_header {
  * @content: node's content
  */
 struct ssdfs_btree_node {
+	struct list_head list;
+
 	/* static data */
 	atomic_t height;
 	u32 node_size;
@@ -319,7 +326,9 @@ struct ssdfs_btree_node {
 enum {
 	SSDFS_BTREE_NODE_UNKNOWN_STATE,
 	SSDFS_BTREE_NODE_CREATED,
+	SSDFS_BTREE_NODE_NONE_CONTENT,
 	SSDFS_BTREE_NODE_CONTENT_PREPARED,
+	SSDFS_BTREE_NODE_CONTENT_UNDER_FREE,
 	SSDFS_BTREE_NODE_INITIALIZED,
 	SSDFS_BTREE_NODE_DIRTY,
 	SSDFS_BTREE_NODE_PRE_DELETED,
@@ -606,6 +615,20 @@ int ssdfs_find_node_content_folio(struct ssdfs_btree_node_content *content,
 }
 
 /*
+ * Btree nodes list's API
+ */
+void ssdfs_btree_nodes_list_init(struct ssdfs_btree_nodes_list *bnl);
+bool is_ssdfs_btree_nodes_list_empty(struct ssdfs_btree_nodes_list *bnl);
+void ssdfs_btree_nodes_list_add(struct ssdfs_btree_nodes_list *bnl,
+				struct ssdfs_btree_node *node);
+void ssdfs_btree_nodes_list_delete(struct ssdfs_btree_nodes_list *bnl,
+				   struct ssdfs_btree_node *node);
+
+void ssdfs_btree_node_start_request_cno(struct ssdfs_btree_node *node);
+void ssdfs_btree_node_finish_request_cno(struct ssdfs_btree_node *node);
+bool is_it_time_free_btree_node_content(struct ssdfs_btree_node *node);
+
+/*
  * Btree node API
  */
 struct ssdfs_btree_node *
@@ -665,6 +688,7 @@ int ssdfs_btree_node_delete_range(struct ssdfs_btree_search *search);
 /*
  * Internal Btree node API
  */
+void ssdfs_btree_node_free_content_space(struct ssdfs_btree_node *node);
 int ssdfs_lock_items_range(struct ssdfs_btree_node *node,
 			   u16 start_index, u16 count);
 void ssdfs_unlock_items_range(struct ssdfs_btree_node *node,

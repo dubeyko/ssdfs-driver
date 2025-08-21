@@ -451,8 +451,6 @@ void ssdfs_requests_queue_remove_block(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		folio_clear_uptodate(folio);
-		ssdfs_clear_folio_private(folio, 0);
-		folio_clear_mappedtodisk(folio);
 		ssdfs_clear_dirty_folio(folio);
 		ssdfs_folio_unlock(folio);
 		ssdfs_folio_end_writeback(fsi, U64_MAX, 0, folio);

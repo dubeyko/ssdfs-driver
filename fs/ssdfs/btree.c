@@ -3503,6 +3503,7 @@ int ssdfs_btree_find_leaf_node(struct ssdfs_btree *tree,
 			}
 			break;
 
+		case SSDFS_BTREE_NODE_NONE_CONTENT:
 		case SSDFS_BTREE_NODE_INITIALIZED:
 		case SSDFS_BTREE_NODE_DIRTY:
 			/* expected state */

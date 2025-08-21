@@ -1948,7 +1948,6 @@ int ssdfs_maptbl_fragment_init(struct ssdfs_peb_container *pebc,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio);
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_add_folio(&fdesc->array,
 						  folio, i);
@@ -4962,7 +4961,6 @@ finish_physical_index_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -5090,7 +5088,6 @@ finish_relation_index_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -5209,7 +5206,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -5298,7 +5294,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -5382,7 +5377,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -5512,7 +5506,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -5620,7 +5613,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&ptr->array,
 							folio_index);
@@ -7749,7 +7741,6 @@ finish_folio_processing:
 			  ptr->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							lebtbl_folio);
@@ -8172,7 +8163,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -8991,7 +8981,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 							folio_index);
@@ -9508,7 +9497,6 @@ finish_folio_processing:
 	kunmap_local(kaddr);
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		err = ssdfs_folio_array_set_folio_dirty(&ptr->array,
 							folio_index);
@@ -10182,7 +10170,6 @@ int ssdfs_maptbl_set_peb_descriptor(struct ssdfs_peb_mapping_table *tbl,
 		  peb_desc->state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 	err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 						pebtbl_folio);
@@ -10282,7 +10269,6 @@ int ssdfs_maptbl_set_leb_descriptor(struct ssdfs_maptbl_fragment_desc *fdesc,
 	lebtbl_hdr = (struct ssdfs_leb_table_fragment_header *)kaddr;
 	le16_add_cpu(&lebtbl_hdr->migrating_lebs, 1);
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 	err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
 						lebtbl_folio);

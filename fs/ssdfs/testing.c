@@ -766,7 +766,6 @@ int ssdfs_folio_array_execute_third_check(struct ssdfs_testing_environment *env,
 
 		ssdfs_folio_lock(folio);
 		folio_clear_uptodate(folio);
-		ssdfs_clear_folio_private(folio, 0);
 		ssdfs_folio_unlock(folio);
 
 		ssdfs_folio_free(folio);

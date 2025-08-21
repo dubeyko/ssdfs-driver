@@ -1673,7 +1673,6 @@ int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
 		if (folio) {
 			ssdfs_folio_lock(folio);
 			folio_clear_uptodate(folio);
-			ssdfs_clear_folio_private(folio, 0);
 			ssdfs_folio_unlock(folio);
 
 			ssdfs_folio_put(folio);

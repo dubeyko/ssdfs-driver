@@ -452,6 +452,16 @@ struct ssdfs_global_fsck_thread {
 };
 
 /*
+ * struct ssdfs_btree_nodes_list - btree nodes list
+ * @lock: btree nodes list's lock
+ * @list: btree nodes list's list
+ */
+struct ssdfs_btree_nodes_list {
+	spinlock_t lock;
+	struct list_head list;
+};
+
+/*
  * struct ssdfs_fs_info - in-core fs information
  * @log_pagesize: log2(page size)
  * @pagesize: page size in bytes
@@ -527,6 +537,7 @@ struct ssdfs_global_fsck_thread {
  * @inodes_tree: inodes btree
  * @invextree: invalidated extents btree
  * @snapshots: snapshots subsystem
+ * @btree_nodes: list of all btree nodes
  * @gc_thread: array of GC threads
  * @gc_wait_queue: array of GC threads' wait queues
  * @gc_should_act: array of counters that define necessity of GC activity
@@ -643,6 +654,8 @@ struct ssdfs_fs_info {
 
 	struct ssdfs_snapshot_subsystem snapshots;
 
+	struct ssdfs_btree_nodes_list btree_nodes;
+
 	struct ssdfs_thread_info gc_thread[SSDFS_GC_THREAD_TYPE_MAX];
 	wait_queue_head_t gc_wait_queue[SSDFS_GC_THREAD_TYPE_MAX];
 	atomic_t gc_should_act[SSDFS_GC_THREAD_TYPE_MAX];
@@ -756,6 +769,7 @@ int ssdfs_used_seg_gc_thread_func(void *data);
 int ssdfs_pre_dirty_seg_gc_thread_func(void *data);
 int ssdfs_dirty_seg_gc_thread_func(void *data);
 int ssdfs_destroy_seg_gc_thread_func(void *data);
+int ssdfs_btree_node_gc_thread_func(void *data);
 int ssdfs_start_gc_thread(struct ssdfs_fs_info *fsi, int type);
 int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type);
 int is_time_collect_garbage(struct ssdfs_fs_info *fsi,

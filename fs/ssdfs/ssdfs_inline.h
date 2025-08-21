@@ -1242,16 +1242,13 @@ static
 inline void ssdfs_set_folio_private(struct folio *folio,
 				    unsigned long private)
 {
-	folio_change_private(folio, (void *)private);
-	folio_set_private(folio);
+	folio_attach_private(folio, (void *)private);
 }
 
 static
-inline void ssdfs_clear_folio_private(struct folio *folio,
-				      unsigned long private)
+inline void ssdfs_clear_folio_private(struct folio *folio)
 {
-	folio_change_private(folio, (void *)private);
-	folio_clear_private(folio);
+	folio_detach_private(folio);
 }
 
 static inline

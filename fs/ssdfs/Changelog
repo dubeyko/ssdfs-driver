@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.27 [August 20, 2025]
+    (*) Introduce logic of freeing the content of unused b-tree nodes by GC.
+
 v.5.26 [August 13, 2025]
     (*) Introduce logic of destroying unused in-core segments by GC.
 

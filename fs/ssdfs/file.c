@@ -633,7 +633,6 @@ fail_read_block:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		folio_clear_uptodate(folio);
-		ssdfs_clear_folio_private(folio, 0);
 	}
 
 	if (req) {
@@ -1154,7 +1153,6 @@ fail_readahead_block:
 					folio_size(folio));
 
 		folio_clear_uptodate(folio);
-		ssdfs_clear_folio_private(folio, 0);
 		ssdfs_folio_unlock(folio);
 		ssdfs_folio_put(folio);
 	}

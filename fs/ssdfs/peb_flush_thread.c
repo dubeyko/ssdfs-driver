@@ -875,7 +875,6 @@ int ssdfs_peb_reserve_blk_desc_space(struct ssdfs_peb_info *pebi,
 
 	__ssdfs_memzero_folio(folio, 0, folio_size(folio), folio_size(folio));
 
-	ssdfs_set_folio_private(folio, 0);
 	ssdfs_folio_put(folio);
 	ssdfs_folio_unlock(folio);
 
@@ -1713,7 +1712,6 @@ allocate_folio:
 		__ssdfs_memzero_folio(folio, 0, folio_size(folio),
 				      folio_size(folio));
 
-		ssdfs_set_folio_private(folio, 0);
 		ssdfs_folio_put(folio);
 		ssdfs_folio_unlock(folio);
 
@@ -5232,7 +5230,6 @@ int ssdfs_peb_compress_blk_desc_fragment_in_place(struct ssdfs_peb_info *pebi,
 			  "uncompr_size %zu, err %d\n",
 			  uncompr_size, err);
 	} else {
-		ssdfs_set_folio_private(folio.ptr, 0);
 		folio_mark_uptodate(folio.ptr);
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5345,7 +5342,6 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 		goto unlock_grabbed_folio;
 	}
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&area->array,
@@ -11464,7 +11460,6 @@ try_get_next_folio:
 
 			if (!err) {
 				flush_dcache_folio(dst_folio);
-				ssdfs_set_folio_private(dst_folio, 0);
 				folio_mark_uptodate(dst_folio);
 
 				err =
@@ -11726,7 +11721,6 @@ int ssdfs_peb_store_blk_bmap_fragment(struct ssdfs_bmap_descriptor *desc,
 		goto finish_copy;
 	}
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&desc->pebi->cache,
@@ -12786,7 +12780,6 @@ finish_bmap_hdr_preparation:
 	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, folio_index);
@@ -13914,7 +13907,6 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 			__ssdfs_memset_folio(folio, 0, folio_size(folio),
 					     0xFF, folio_size(folio));
 
-			ssdfs_set_folio_private(folio, 0);
 			folio_mark_uptodate(folio);
 
 			err = ssdfs_folio_array_set_folio_dirty(&pebi->cache,
@@ -13989,7 +13981,6 @@ int ssdfs_peb_store_log_footer(struct ssdfs_peb_info *pebi,
 	flush_dcache_folio(folio);
 	kunmap_local(footer);
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, lf_folio_index);
@@ -14608,7 +14599,6 @@ int ssdfs_peb_flush_current_log_dirty_pages(struct ssdfs_peb_info *pebi,
 			if (i < written_folios) {
 				ssdfs_folio_lock(folio);
 				folio_clear_uptodate(folio);
-				ssdfs_clear_folio_private(folio, 0);
 				batch.folios[i] = NULL;
 				ssdfs_folio_unlock(folio);
 			} else {
@@ -15171,7 +15161,6 @@ int ssdfs_peb_store_pl_header_like_footer(struct ssdfs_peb_info *pebi,
 	flush_dcache_folio(folio);
 	kunmap_local(pl_hdr);
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, plh_folio_index);

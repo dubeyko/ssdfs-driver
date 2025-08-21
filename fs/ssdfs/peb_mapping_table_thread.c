@@ -710,7 +710,11 @@ int __ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("hdr->reserved_pebs %u\n",
 			  le16_to_cpu(hdr->reserved_pebs));
-		BUG_ON(fdesc->reserved_pebs > fdesc->lebs_count);
+		if (fdesc->reserved_pebs > fdesc->lebs_count) {
+			SSDFS_ERR("reserved_pebs %u > lebs_count %u\n",
+				  fdesc->reserved_pebs, fdesc->lebs_count);
+			BUG();
+		}
 		BUG_ON(fdesc->pre_erase_pebs == 0);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -824,7 +828,6 @@ int ssdfs_maptbl_correct_peb_state(struct ssdfs_peb_mapping_table *tbl,
 		goto finish_folio_processing;
 	}
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&fdesc->array,
@@ -1727,7 +1730,6 @@ ssdfs_maptbl_correct_folio_recovered_pebs(struct ssdfs_peb_mapping_table *tbl,
 	}
 
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 
 		err = ssdfs_folio_array_set_folio_dirty(&ptr->array,

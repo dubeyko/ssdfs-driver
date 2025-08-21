@@ -39,6 +39,10 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 #include "segment_tree.h"
+#include "btree_search.h"
+#include "btree_node.h"
+#include "extents_queue.h"
+#include "btree.h"
 
 #include <trace/events/ssdfs.h>
 
@@ -116,6 +120,8 @@ struct ssdfs_thread_descriptor thread_desc[SSDFS_GC_THREAD_TYPE_MAX] = {
 	 .fmt = "ssdfs-gc-dirty-seg",},
 	{.threadfn = ssdfs_destroy_seg_gc_thread_func,
 	 .fmt = "ssdfs-gc-destroy-seg",},
+	{.threadfn = ssdfs_btree_node_gc_thread_func,
+	 .fmt = "ssdfs-gc-btree-node",},
 };
 
 /*
@@ -3437,6 +3443,127 @@ sleep_failed_gc_thread:
 
 	wait_event_interruptible(*wq,
 		GLOBAL_GC_FAILED_THREAD_WAKE_CONDITION());
+	goto repeat;
+}
+
+#define BTREE_NODE_GC_THREAD_WAKE_CONDITION() \
+	(kthread_should_stop())
+#define BTREE_NODE_GC_THREAD_WAKEUP_TIMEOUT	(msecs_to_jiffies(3000))
+
+int ssdfs_btree_node_gc_thread_func(void *data)
+{
+	struct ssdfs_fs_info *fsi = data;
+	struct list_head *this, *next;
+	struct ssdfs_btree_node *node = NULL;
+	wait_queue_head_t *wait_queue;
+	int thread_type = SSDFS_BTREE_NODE_GC_THREAD;
+	u64 timeout = BTREE_NODE_GC_THREAD_WAKEUP_TIMEOUT;
+	int state;
+	bool need2free = false;
+	u64 freed_nodes = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	if (!fsi) {
+		SSDFS_ERR("fsi is NULL\n");
+		BUG();
+	}
+
+	SSDFS_DBG("btree nodes GC thread\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	wait_queue = &fsi->gc_wait_queue[thread_type];
+
+repeat:
+	if (kthread_should_stop()) {
+		complete_all(&fsi->gc_thread[thread_type].full_stop);
+		return err;
+	} else if (unlikely(err))
+		goto sleep_failed_gc_thread;
+
+	switch (atomic_read(&fsi->global_fs_state)) {
+	case SSDFS_UNKNOWN_GLOBAL_FS_STATE:
+		err = SSDFS_WAIT_COMPLETION(&fsi->mount_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("mount failed\n");
+			goto sleep_failed_gc_thread;
+		}
+		break;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	if (is_ssdfs_btree_nodes_list_empty(&fsi->btree_nodes))
+		goto sleep_btree_nodes_gc_thread;
+
+	spin_lock(&fsi->btree_nodes.lock);
+	list_for_each_safe(this, next, &fsi->btree_nodes.list) {
+		node = list_entry(this, struct ssdfs_btree_node, list);
+
+		ssdfs_btree_node_get(node);
+
+		if (is_it_time_free_btree_node_content(node)) {
+			state = atomic_cmpxchg(&node->state,
+					SSDFS_BTREE_NODE_INITIALIZED,
+					SSDFS_BTREE_NODE_CONTENT_UNDER_FREE);
+			if (state != SSDFS_BTREE_NODE_INITIALIZED)
+				need2free = false;
+			else
+				need2free = true;
+		} else
+			need2free = false;
+
+		spin_unlock(&fsi->btree_nodes.lock);
+
+		if (need2free) {
+			down_write(&node->full_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("btree_node_free_content_space: node_id %u\n",
+				  node->node_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			ssdfs_btree_node_free_content_space(node);
+			atomic_set(&node->state, SSDFS_BTREE_NODE_NONE_CONTENT);
+			up_write(&node->full_lock);
+			need2free = false;
+			freed_nodes++;
+		}
+
+		ssdfs_btree_node_put(node);
+
+		if (kthread_should_stop())
+			goto repeat;
+
+		spin_lock(&fsi->btree_nodes.lock);
+	}
+	spin_unlock(&fsi->btree_nodes.lock);
+
+	if (freed_nodes == 0)
+		timeout = min_t(u64, timeout * 2, (u64)SSDFS_DEFAULT_TIMEOUT);
+	else
+		timeout = BTREE_NODE_GC_THREAD_WAKEUP_TIMEOUT;
+
+	freed_nodes = 0;
+
+sleep_btree_nodes_gc_thread:
+	wait_event_interruptible_timeout(*wait_queue,
+					 BTREE_NODE_GC_THREAD_WAKE_CONDITION(),
+					 timeout);
+	if (is_ssdfs_btree_nodes_list_empty(&fsi->btree_nodes)) {
+		timeout = min_t(u64, timeout * 2, (u64)SSDFS_DEFAULT_TIMEOUT);
+		goto sleep_btree_nodes_gc_thread;
+	}
+
+	goto repeat;
+
+sleep_failed_gc_thread:
+	atomic_set(&fsi->gc_should_act[thread_type], 0);
+
+	wait_event_interruptible(*wait_queue,
+			BTREE_NODE_GC_THREAD_WAKE_CONDITION());
 	goto repeat;
 }
 

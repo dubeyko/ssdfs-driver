@@ -991,8 +991,8 @@ init_failed:
 	}
 
 	down_write(&bmap->lock);
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	buffers_state = atomic_read(&bmap->buffers_state);
 
@@ -2650,8 +2650,8 @@ int ssdfs_peb_blk_bmap_reserve_metapages(struct ssdfs_peb_blk_bmap *bmap,
 		break;
 	}
 
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	reserved_pages_per_log = ssdfs_peb_define_reserved_pages_per_log(bmap);
 
@@ -2806,8 +2806,9 @@ finish_calculate_reserving_blks:
 			  reserved_pages_per_log);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		down_write(&bmap->parent->modification_lock);
-		down_write(&bmap->modification_lock);
+		down_write_nested(&bmap->parent->modification_lock,
+							SSDFS_PARENT_LOCK);
+		down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 		if (is_migrating && reserving_blks == 0) {
 			atomic_sub(reserved_pages_per_log,
 					&bmap->parent->seg_reserved_metapages);
@@ -2830,8 +2831,9 @@ finish_calculate_reserving_blks:
 			  "reserving_blks %d, err %d\n",
 			  reserving_blks, err);
 
-		down_write(&bmap->parent->modification_lock);
-		down_write(&bmap->modification_lock);
+		down_write_nested(&bmap->parent->modification_lock,
+							SSDFS_PARENT_LOCK);
+		down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 		if (is_migrating && reserving_blks == 0) {
 			atomic_sub(reserved_pages_per_log,
 					&bmap->parent->seg_reserved_metapages);
@@ -2971,8 +2973,8 @@ init_failed:
 		goto finish_free_metapages;
 	}
 
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	total_blks = atomic_read(&bmap->peb_valid_blks) +
 			atomic_read(&bmap->peb_invalid_blks) +
@@ -3480,8 +3482,8 @@ init_failed:
 	}
 
 	down_read(&bmap->lock);
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE) {
 		cur_bmap = bmap->src;
@@ -3965,8 +3967,8 @@ init_failed:
 	}
 
 	down_read(&bmap->lock);
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE) {
 		cur_bmap = bmap->src;
@@ -4262,8 +4264,8 @@ init_failed:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	down_read(&bmap->lock);
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	if (bmap_index == SSDFS_PEB_BLK_BMAP_SOURCE)
 		cur_bmap = bmap->src;
@@ -4886,8 +4888,8 @@ init_failed:
 	pebc = &si->peb_array[bmap->peb_index];
 
 	down_write(&bmap->lock);
-	down_write(&bmap->parent->modification_lock);
-	down_write(&bmap->modification_lock);
+	down_write_nested(&bmap->parent->modification_lock, SSDFS_PARENT_LOCK);
+	down_write_nested(&bmap->modification_lock, SSDFS_CHILD_LOCK);
 
 	buffers_state = atomic_read(&bmap->buffers_state);
 

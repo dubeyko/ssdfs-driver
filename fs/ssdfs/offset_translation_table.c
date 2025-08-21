@@ -6585,7 +6585,6 @@ int ssdfs_peb_compress_fragment_in_place(struct ssdfs_peb_info *pebi,
 			  log_offset->cur_block, offset_into_folio,
 			  *uncompr_size, err);
 	} else {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 
 		err = ssdfs_folio_array_set_folio_dirty(&pebi->cache,
@@ -6700,7 +6699,6 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 		goto unlock_grabbed_folio;
 	}
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, folio_index);
@@ -7158,7 +7156,6 @@ int ssdfs_peb_store_blk2off_table_header(struct ssdfs_peb_info *pebi, u16 flags)
 		goto finish_copy;
 	}
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 
 	err = ssdfs_folio_array_set_folio_dirty(&pebi->cache, folio_index);

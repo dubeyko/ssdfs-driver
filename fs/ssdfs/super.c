@@ -904,7 +904,6 @@ int ssdfs_write_padding_block(struct super_block *sb,
 	hdr->check.csum = cpu_to_le32(0xdada);
 	kunmap_local(hdr);
 
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 	folio_set_dirty(folio);
 
@@ -923,7 +922,6 @@ int ssdfs_write_padding_block(struct super_block *sb,
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
-	ssdfs_clear_folio_private(folio, 0);
 unlock_folio:
 	ssdfs_folio_unlock(folio);
 
@@ -2496,7 +2494,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				fsi->sbi.vh_buf, 0, hdr_size,
 				hdr_size);
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 	folio_set_dirty(folio);
 	ssdfs_folio_unlock(folio);
@@ -2562,7 +2559,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n", err);
 		} else {
-			ssdfs_set_folio_private(folio, 0);
 			folio_mark_uptodate(folio);
 			folio_set_dirty(folio);
 		}
@@ -2584,7 +2580,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
-	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
 
 	sb_offset += PAGE_SIZE;
@@ -2614,7 +2609,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(payload_folio);
-		ssdfs_set_folio_private(payload_folio, 0);
 		folio_mark_uptodate(payload_folio);
 		folio_set_dirty(payload_folio);
 		ssdfs_folio_unlock(payload_folio);
@@ -2633,7 +2627,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 		ssdfs_folio_lock(payload_folio);
 		folio_clear_uptodate(payload_folio);
-		ssdfs_clear_folio_private(payload_folio, 0);
 		ssdfs_folio_unlock(payload_folio);
 
 		sb_offset += PAGE_SIZE;
@@ -2656,7 +2649,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				fsi->sbi.vs_buf, 0, fsi->sbi.vs_buf_size,
 				PAGE_SIZE);
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 	folio_set_dirty(folio);
 	ssdfs_folio_unlock(folio);
@@ -2684,7 +2676,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio);
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		folio_set_dirty(folio);
 		ssdfs_folio_unlock(folio);
@@ -2700,7 +2691,6 @@ static int __ssdfs_commit_sb_log(struct super_block *sb,
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
-	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
 
 	fsi->sb_snapi.need_snapshot_sb = false;
@@ -2918,7 +2908,6 @@ __ssdfs_commit_sb_log_inline(struct super_block *sb,
 	flush_dcache_folio(folio);
 	kunmap_local(kaddr);
 	if (!err) {
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		folio_set_dirty(folio);
 	}
@@ -2996,7 +2985,6 @@ free_payload_buffer:
 		if (unlikely(err)) {
 			SSDFS_ERR("unable to calculate checksum: err %d\n", err);
 		} else {
-			ssdfs_set_folio_private(folio, 0);
 			folio_mark_uptodate(folio);
 			folio_set_dirty(folio);
 		}
@@ -3018,7 +3006,6 @@ free_payload_buffer:
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
-	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
 
 	/* ->writepage() calls put_folio() */
@@ -3036,7 +3023,6 @@ free_payload_buffer:
 	__ssdfs_memcpy_to_folio(folio, 0, PAGE_SIZE,
 				fsi->sbi.vs_buf, 0, fsi->sbi.vs_buf_size,
 				PAGE_SIZE);
-	ssdfs_set_folio_private(folio, 0);
 	folio_mark_uptodate(folio);
 	folio_set_dirty(folio);
 	ssdfs_folio_unlock(folio);
@@ -3066,7 +3052,6 @@ free_payload_buffer:
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		ssdfs_folio_lock(folio);
-		ssdfs_set_folio_private(folio, 0);
 		folio_mark_uptodate(folio);
 		folio_set_dirty(folio);
 		ssdfs_folio_unlock(folio);
@@ -3082,7 +3067,6 @@ free_payload_buffer:
 
 	ssdfs_folio_lock(folio);
 	folio_clear_uptodate(folio);
-	ssdfs_clear_folio_private(folio, 0);
 	ssdfs_folio_unlock(folio);
 
 	fsi->sb_snapi.need_snapshot_sb = false;
@@ -3614,6 +3598,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	init_waitqueue_head(&fs_info->maptbl_users_wq);
 	atomic_set(&fs_info->segbmap_users, 0);
 	init_waitqueue_head(&fs_info->segbmap_users_wq);
+	ssdfs_btree_nodes_list_init(&fs_info->btree_nodes);
 	atomic_set(&fs_info->global_fs_state, SSDFS_UNKNOWN_GLOBAL_FS_STATE);
 	spin_lock_init(&fs_info->volume_state_lock);
 	init_completion(&fs_info->mount_end);
@@ -4511,7 +4496,6 @@ static void ssdfs_put_super(struct super_block *sb)
 
 		ssdfs_folio_lock(payload_folio);
 		folio_clear_uptodate(payload_folio);
-		ssdfs_clear_folio_private(payload_folio, 0);
 		ssdfs_folio_unlock(payload_folio);
 	}
 

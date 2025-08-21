@@ -365,7 +365,6 @@ int ssdfs_bdev_read_block(struct super_block *sb, struct folio *folio,
 					    REQ_OP_READ, REQ_SYNC);
 	if (err) {
 		folio_clear_uptodate(folio);
-		ssdfs_clear_folio_private(folio, 0);
 	} else {
 		folio_mark_uptodate(folio);
 		flush_dcache_folio(folio);
@@ -409,7 +408,6 @@ int ssdfs_bdev_read_blocks(struct super_block *sb, struct folio_batch *batch,
 
 		if (err) {
 			folio_clear_uptodate(folio);
-			ssdfs_clear_folio_private(folio, 0);
 		} else {
 			folio_mark_uptodate(folio);
 			flush_dcache_folio(folio);
