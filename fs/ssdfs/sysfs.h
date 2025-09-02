@@ -25,6 +25,8 @@
 
 #include <linux/sysfs.h>
 
+struct ssdfs_maptbl_fragment_desc;
+
 struct ssdfs_feature_attr {
 	struct attribute attr;
 	ssize_t (*show)(struct kobject *, struct attribute *,
@@ -86,6 +88,24 @@ struct ssdfs_maptbl_attr {
 	ssize_t (*show)(struct ssdfs_maptbl_attr *, struct ssdfs_fs_info *,
 			char *);
 	ssize_t (*store)(struct ssdfs_maptbl_attr *, struct ssdfs_fs_info *,
+			 const char *, size_t);
+};
+
+struct ssdfs_maptbl_frag_attr {
+	struct attribute attr;
+	ssize_t (*show)(struct ssdfs_maptbl_frag_attr *,
+			struct ssdfs_maptbl_fragment_desc *,
+			char *);
+	ssize_t (*store)(struct ssdfs_maptbl_frag_attr *,
+			 struct ssdfs_maptbl_fragment_desc *,
+			 const char *, size_t);
+};
+
+struct ssdfs_maptbl_frags_attr {
+	struct attribute attr;
+	ssize_t (*show)(struct ssdfs_maptbl_frags_attr *, struct ssdfs_fs_info *,
+			char *);
+	ssize_t (*store)(struct ssdfs_maptbl_frags_attr *, struct ssdfs_fs_info *,
 			 const char *, size_t);
 };
 
@@ -154,6 +174,14 @@ struct ssdfs_maptbl_attr {
 	SSDFS_ATTR(maptbl, name, 0644, \
 		    ssdfs_maptbl_##name##_show, ssdfs_maptbl_##name##_store)
 
+#define SSDFS_MAPTBL_FRAG_INFO_ATTR(name) \
+	SSDFS_ATTR(maptbl_frag, name, 0444, NULL, NULL)
+#define SSDFS_MAPTBL_FRAG_RO_ATTR(name) \
+	SSDFS_ATTR(maptbl_frag, name, 0444, ssdfs_maptbl_frag_##name##_show, NULL)
+#define SSDFS_MAPTBL_FRAG_RW_ATTR(name) \
+	SSDFS_ATTR(maptbl_frag, name, 0644, \
+		    ssdfs_maptbl_frag_##name##_show, ssdfs_maptbl_frag_##name##_store)
+
 #define SSDFS_FEATURE_ATTR_LIST(name) \
 	(&ssdfs_feature_attr_##name.attr)
 #define SSDFS_DEV_ATTR_LIST(name) \
@@ -170,5 +198,7 @@ struct ssdfs_maptbl_attr {
 	(&ssdfs_segbmap_attr_##name.attr)
 #define SSDFS_MAPTBL_ATTR_LIST(name) \
 	(&ssdfs_maptbl_attr_##name.attr)
+#define SSDFS_MAPTBL_FRAG_ATTR_LIST(name) \
+	(&ssdfs_maptbl_frag_attr_##name.attr)
 
 #endif /* _SSDFS_SYSFS_H */

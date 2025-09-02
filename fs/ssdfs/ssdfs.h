@@ -305,6 +305,8 @@ int ssdfs_sysfs_create_seg_group(struct ssdfs_segment_info *si);
 void ssdfs_sysfs_delete_seg_group(struct ssdfs_segment_info *si);
 int ssdfs_sysfs_create_peb_group(struct ssdfs_peb_container *pebc);
 void ssdfs_sysfs_delete_peb_group(struct ssdfs_peb_container *pebc);
+int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi);
+void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi);
 
 /* tunefs.c */
 bool IS_TUNEFS_REQUESTED(struct ssdfs_tunefs_request_copy *request);

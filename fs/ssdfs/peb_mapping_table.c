@@ -1159,6 +1159,13 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 		goto destroy_seg_objects;
 	}
 
+	err = ssdfs_sysfs_create_maptbl_group(fsi);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create sysfs mapping table group: "
+			  "err %d\n", err);
+		goto stop_thread;
+	}
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("DONE: create mapping table\n");
 #else
@@ -1166,6 +1173,9 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	return 0;
+
+stop_thread:
+	ssdfs_maptbl_stop_thread(fsi->maptbl);
 
 destroy_seg_objects:
 	ssdfs_maptbl_destroy_segments(ptr);
@@ -1208,6 +1218,8 @@ void ssdfs_maptbl_destroy(struct ssdfs_fs_info *fsi)
 
 	if (!fsi->maptbl)
 		return;
+
+	ssdfs_sysfs_delete_maptbl_group(fsi);
 
 	ssdfs_maptbl_destroy_segments(fsi->maptbl);
 

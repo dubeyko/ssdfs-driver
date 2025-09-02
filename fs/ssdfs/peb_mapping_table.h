@@ -95,6 +95,10 @@ struct ssdfs_maptbl_fragment_desc {
 	struct ssdfs_maptbl_flush_pair *flush_pair2;
 	u32 flush_req_count;
 	u32 flush_seq_size;
+
+	/* /sys/fs/<ssdfs>/<device>/maptbl/fragments/fragment<N> */
+	struct kobject frag_kobj;
+	struct completion frag_kobj_unregister;
 };
 
 /* Fragment's state */

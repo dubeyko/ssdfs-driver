@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.28 [September 01, 2025]
+    (*) Add showing of mapping table's fragments' in-core information in sysfs.
+
 v.5.27 [August 20, 2025]
     (*) Introduce logic of freeing the content of unused b-tree nodes by GC.
 

@@ -1160,6 +1160,468 @@ void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
 }
 
 /************************************************************************
+ *                       SSDFS maptbl fragment attrs                   *
+ ************************************************************************/
+
+static ssize_t ssdfs_maptbl_frag_id_show(struct ssdfs_maptbl_frag_attr *attr,
+					  struct ssdfs_maptbl_fragment_desc *fdesc,
+					  char *buf)
+{
+	u32 fragment_id;
+
+	down_read(&fdesc->lock);
+	fragment_id = fdesc->fragment_id;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragment_id);
+}
+
+static ssize_t ssdfs_maptbl_frag_state_show(struct ssdfs_maptbl_frag_attr *attr,
+					     struct ssdfs_maptbl_fragment_desc *fdesc,
+					     char *buf)
+{
+	int state = atomic_read(&fdesc->state);
+
+	switch (state) {
+	case SSDFS_MAPTBL_FRAG_CREATED:
+		return snprintf(buf, PAGE_SIZE, "CREATED\n");
+	case SSDFS_MAPTBL_FRAG_INIT_FAILED:
+		return snprintf(buf, PAGE_SIZE, "INIT_FAILED\n");
+	case SSDFS_MAPTBL_FRAG_INITIALIZED:
+		return snprintf(buf, PAGE_SIZE, "INITIALIZED\n");
+	case SSDFS_MAPTBL_FRAG_DIRTY:
+		return snprintf(buf, PAGE_SIZE, "DIRTY\n");
+	case SSDFS_MAPTBL_FRAG_TOWRITE:
+		return snprintf(buf, PAGE_SIZE, "TOWRITE\n");
+	default:
+		return snprintf(buf, PAGE_SIZE, "UNKNOWN(%d)\n", state);
+	}
+}
+
+static ssize_t ssdfs_maptbl_frag_start_leb_show(struct ssdfs_maptbl_frag_attr *attr,
+						 struct ssdfs_maptbl_fragment_desc *fdesc,
+						 char *buf)
+{
+	u64 start_leb;
+
+	down_read(&fdesc->lock);
+	start_leb = fdesc->start_leb;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", start_leb);
+}
+
+static ssize_t ssdfs_maptbl_frag_lebs_count_show(struct ssdfs_maptbl_frag_attr *attr,
+						  struct ssdfs_maptbl_fragment_desc *fdesc,
+						  char *buf)
+{
+	u32 lebs_count;
+
+	down_read(&fdesc->lock);
+	lebs_count = fdesc->lebs_count;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", lebs_count);
+}
+
+static ssize_t ssdfs_maptbl_frag_mapped_lebs_show(struct ssdfs_maptbl_frag_attr *attr,
+						   struct ssdfs_maptbl_fragment_desc *fdesc,
+						   char *buf)
+{
+	u32 mapped_lebs;
+
+	down_read(&fdesc->lock);
+	mapped_lebs = fdesc->mapped_lebs;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", mapped_lebs);
+}
+
+static ssize_t ssdfs_maptbl_frag_migrating_lebs_show(struct ssdfs_maptbl_frag_attr *attr,
+						      struct ssdfs_maptbl_fragment_desc *fdesc,
+						      char *buf)
+{
+	u32 migrating_lebs;
+
+	down_read(&fdesc->lock);
+	migrating_lebs = fdesc->migrating_lebs;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", migrating_lebs);
+}
+
+static ssize_t ssdfs_maptbl_frag_reserved_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
+						     struct ssdfs_maptbl_fragment_desc *fdesc,
+						     char *buf)
+{
+	u32 reserved_pebs;
+
+	down_read(&fdesc->lock);
+	reserved_pebs = fdesc->reserved_pebs;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", reserved_pebs);
+}
+
+static ssize_t ssdfs_maptbl_frag_pre_erase_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
+						      struct ssdfs_maptbl_fragment_desc *fdesc,
+						      char *buf)
+{
+	u32 pre_erase_pebs;
+
+	down_read(&fdesc->lock);
+	pre_erase_pebs = fdesc->pre_erase_pebs;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", pre_erase_pebs);
+}
+
+static ssize_t ssdfs_maptbl_frag_recovering_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
+						       struct ssdfs_maptbl_fragment_desc *fdesc,
+						       char *buf)
+{
+	u32 recovering_pebs;
+
+	down_read(&fdesc->lock);
+	recovering_pebs = fdesc->recovering_pebs;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", recovering_pebs);
+}
+
+static ssize_t ssdfs_maptbl_frag_fragment_folios_show(struct ssdfs_maptbl_frag_attr *attr,
+						       struct ssdfs_maptbl_fragment_desc *fdesc,
+						       char *buf)
+{
+	u32 fragment_folios;
+
+	down_read(&fdesc->lock);
+	fragment_folios = fdesc->fragment_folios;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragment_folios);
+}
+
+static ssize_t ssdfs_maptbl_frag_lebs_per_page_show(struct ssdfs_maptbl_frag_attr *attr,
+						     struct ssdfs_maptbl_fragment_desc *fdesc,
+						     char *buf)
+{
+	u16 lebs_per_page;
+
+	down_read(&fdesc->lock);
+	lebs_per_page = fdesc->lebs_per_page;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", lebs_per_page);
+}
+
+static ssize_t ssdfs_maptbl_frag_lebtbl_pages_show(struct ssdfs_maptbl_frag_attr *attr,
+						    struct ssdfs_maptbl_fragment_desc *fdesc,
+						    char *buf)
+{
+	u16 lebtbl_pages;
+
+	down_read(&fdesc->lock);
+	lebtbl_pages = fdesc->lebtbl_pages;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", lebtbl_pages);
+}
+
+static ssize_t ssdfs_maptbl_frag_pebs_per_page_show(struct ssdfs_maptbl_frag_attr *attr,
+						     struct ssdfs_maptbl_fragment_desc *fdesc,
+						     char *buf)
+{
+	u16 pebs_per_page;
+
+	down_read(&fdesc->lock);
+	pebs_per_page = fdesc->pebs_per_page;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", pebs_per_page);
+}
+
+static ssize_t ssdfs_maptbl_frag_stripe_pages_show(struct ssdfs_maptbl_frag_attr *attr,
+						    struct ssdfs_maptbl_fragment_desc *fdesc,
+						    char *buf)
+{
+	u16 stripe_pages;
+
+	down_read(&fdesc->lock);
+	stripe_pages = fdesc->stripe_pages;
+	up_read(&fdesc->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", stripe_pages);
+}
+
+SSDFS_MAPTBL_FRAG_RO_ATTR(id);
+SSDFS_MAPTBL_FRAG_RO_ATTR(state);
+SSDFS_MAPTBL_FRAG_RO_ATTR(start_leb);
+SSDFS_MAPTBL_FRAG_RO_ATTR(lebs_count);
+SSDFS_MAPTBL_FRAG_RO_ATTR(mapped_lebs);
+SSDFS_MAPTBL_FRAG_RO_ATTR(migrating_lebs);
+SSDFS_MAPTBL_FRAG_RO_ATTR(reserved_pebs);
+SSDFS_MAPTBL_FRAG_RO_ATTR(pre_erase_pebs);
+SSDFS_MAPTBL_FRAG_RO_ATTR(recovering_pebs);
+SSDFS_MAPTBL_FRAG_RO_ATTR(fragment_folios);
+SSDFS_MAPTBL_FRAG_RO_ATTR(lebs_per_page);
+SSDFS_MAPTBL_FRAG_RO_ATTR(lebtbl_pages);
+SSDFS_MAPTBL_FRAG_RO_ATTR(pebs_per_page);
+SSDFS_MAPTBL_FRAG_RO_ATTR(stripe_pages);
+
+static struct attribute *ssdfs_maptbl_frag_attrs[] = {
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(id),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(state),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(start_leb),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(lebs_count),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(mapped_lebs),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(migrating_lebs),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(reserved_pebs),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(pre_erase_pebs),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(recovering_pebs),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(fragment_folios),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(lebs_per_page),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(lebtbl_pages),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(pebs_per_page),
+	SSDFS_MAPTBL_FRAG_ATTR_LIST(stripe_pages),
+	NULL,
+};
+ATTRIBUTE_GROUPS(ssdfs_maptbl_frag);
+
+static ssize_t ssdfs_maptbl_frag_attr_show(struct kobject *kobj,
+					    struct attribute *attr, char *buf)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc = container_of(kobj,
+						struct ssdfs_maptbl_fragment_desc,
+						frag_kobj);
+	struct ssdfs_maptbl_frag_attr *a = container_of(attr,
+						struct ssdfs_maptbl_frag_attr,
+						attr);
+
+	return a->show ? a->show(a, fdesc, buf) : 0;
+}
+
+static ssize_t ssdfs_maptbl_frag_attr_store(struct kobject *kobj,
+					     struct attribute *attr,
+					     const char *buf, size_t len)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc = container_of(kobj,
+						struct ssdfs_maptbl_fragment_desc,
+						frag_kobj);
+	struct ssdfs_maptbl_frag_attr *a = container_of(attr,
+						struct ssdfs_maptbl_frag_attr,
+						attr);
+
+	return a->store ? a->store(a, fdesc, buf, len) : 0;
+}
+
+static void ssdfs_maptbl_frag_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_maptbl_fragment_desc *fdesc = container_of(kobj,
+						struct ssdfs_maptbl_fragment_desc,
+						frag_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("release maptbl fragment %u group\n", fdesc->fragment_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	complete_all(&fdesc->frag_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_maptbl_frag_attr_ops = {
+	.show	= ssdfs_maptbl_frag_attr_show,
+	.store	= ssdfs_maptbl_frag_attr_store,
+};
+
+static struct kobj_type ssdfs_maptbl_frag_ktype = {
+	.default_groups = ssdfs_maptbl_frag_groups,
+	.sysfs_ops	= &ssdfs_maptbl_frag_attr_ops,
+	.release	= ssdfs_maptbl_frag_attr_release,
+};
+
+static inline
+int ssdfs_sysfs_create_maptbl_frag_group(struct ssdfs_maptbl_fragment_desc *fdesc,
+					 struct kobject *parent_kobj)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create maptbl fragment %u group\n", fdesc->fragment_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fdesc->frag_kobj.kset = ssdfs_kset;
+	init_completion(&fdesc->frag_kobj_unregister);
+	err = kobject_init_and_add(&fdesc->frag_kobj,
+				   &ssdfs_maptbl_frag_ktype,
+				   parent_kobj,
+				   "fragment%u",
+				   fdesc->fragment_id);
+	if (err)
+		return err;
+
+	return 0;
+}
+
+static inline
+void ssdfs_sysfs_delete_maptbl_frag_group(struct ssdfs_maptbl_fragment_desc *fdesc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("delete maptbl fragment %u group\n", fdesc->fragment_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fdesc->frag_kobj);
+	kobject_put(&fdesc->frag_kobj);
+	wait_for_completion(&fdesc->frag_kobj_unregister);
+}
+
+static int ssdfs_sysfs_create_maptbl_fragments(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create maptbl fragment sysfs entries\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return -EINVAL;
+	}
+
+	for (i = 0; i < tbl->fragments_count; i++) {
+		fdesc = &tbl->desc_array[i];
+		err = ssdfs_sysfs_create_maptbl_frag_group(fdesc,
+							   &fsi->maptbl_frags_kobj);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to create fragment %d sysfs group: "
+				  "err %d\n", i, err);
+			goto cleanup_fragments;
+		}
+	}
+
+	return 0;
+
+cleanup_fragments:
+	for (i--; i >= 0; i--) {
+		fdesc = &tbl->desc_array[i];
+		ssdfs_sysfs_delete_maptbl_frag_group(fdesc);
+	}
+	return err;
+}
+
+static void ssdfs_sysfs_delete_maptbl_fragments(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_peb_mapping_table *tbl = fsi->maptbl;
+	struct ssdfs_maptbl_fragment_desc *fdesc;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("delete maptbl fragment sysfs entries\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!tbl) {
+		SSDFS_WARN("maptbl is absent\n");
+		return;
+	}
+
+	down_read(&tbl->tbl_lock);
+	for (i = 0; i < tbl->fragments_count; i++) {
+		fdesc = &tbl->desc_array[i];
+
+		down_read(&fdesc->lock);
+		ssdfs_sysfs_delete_maptbl_frag_group(fdesc);
+		up_read(&fdesc->lock);
+	}
+	up_read(&tbl->tbl_lock);
+}
+
+/************************************************************************
+ *                      SSDFS maptbl fragments group                   *
+ ************************************************************************/
+
+static struct attribute *ssdfs_maptbl_frags_attrs[] = {
+	NULL,
+};
+ATTRIBUTE_GROUPS(ssdfs_maptbl_frags);
+
+static ssize_t ssdfs_maptbl_frags_attr_show(struct kobject *kobj,
+					     struct attribute *attr, char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 maptbl_frags_kobj);
+	struct ssdfs_maptbl_frags_attr *a = container_of(attr,
+						struct ssdfs_maptbl_frags_attr,
+						attr);
+	return a->show ? a->show(a, fsi, buf) : 0;
+}
+
+static ssize_t ssdfs_maptbl_frags_attr_store(struct kobject *kobj,
+					      struct attribute *attr,
+					      const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 maptbl_frags_kobj);
+	struct ssdfs_maptbl_frags_attr *a = container_of(attr,
+						struct ssdfs_maptbl_frags_attr,
+						attr);
+	return a->store ? a->store(a, fsi, buf, len) : 0;
+}
+
+static void ssdfs_maptbl_frags_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj,
+						 struct ssdfs_fs_info,
+						 maptbl_frags_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("release maptbl fragments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+	complete_all(&fsi->maptbl_frags_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_maptbl_frags_attr_ops = {
+	.show	= ssdfs_maptbl_frags_attr_show,
+	.store	= ssdfs_maptbl_frags_attr_store,
+};
+
+static struct kobj_type ssdfs_maptbl_frags_ktype = {
+	.default_groups = ssdfs_maptbl_frags_groups,
+	.sysfs_ops	= &ssdfs_maptbl_frags_attr_ops,
+	.release	= ssdfs_maptbl_frags_attr_release,
+};
+
+static int ssdfs_sysfs_create_maptbl_frags_group(struct ssdfs_fs_info *fsi)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create maptbl fragments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi->maptbl_frags_kobj.kset = ssdfs_kset;
+	init_completion(&fsi->maptbl_frags_kobj_unregister);
+	err = kobject_init_and_add(&fsi->maptbl_frags_kobj,
+				   &ssdfs_maptbl_frags_ktype,
+				   &fsi->maptbl_kobj, "fragments");
+	if (err)
+		return err;
+
+	return 0;
+}
+
+static void ssdfs_sysfs_delete_maptbl_frags_group(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("delete maptbl fragments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fsi->maptbl_frags_kobj);
+	kobject_put(&fsi->maptbl_frags_kobj);
+	wait_for_completion(&fsi->maptbl_frags_kobj_unregister);
+}
+
+/************************************************************************
  *                        SSDFS maptbl attrs                            *
  ************************************************************************/
 
@@ -1451,7 +1913,6 @@ static struct kobj_type ssdfs_maptbl_ktype = {
 	.release	= ssdfs_maptbl_attr_release,
 };
 
-static inline
 int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
@@ -1467,16 +1928,34 @@ int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi)
 	if (err)
 		return err;
 
+	err = ssdfs_sysfs_create_maptbl_frags_group(fsi);
+	if (err)
+		goto cleanup_maptbl_kobject;
+
+	err = ssdfs_sysfs_create_maptbl_fragments(fsi);
+	if (err)
+		goto cleanup_maptbl_frags_group;
+
 	return 0;
+
+cleanup_maptbl_frags_group:
+	ssdfs_sysfs_delete_maptbl_frags_group(fsi);
+
+cleanup_maptbl_kobject:
+	kobject_del(&fsi->maptbl_kobj);
+	kobject_put(&fsi->maptbl_kobj);
+	wait_for_completion(&fsi->maptbl_kobj_unregister);
+	return err;
 }
 
-static inline
 void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete maptbl group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	ssdfs_sysfs_delete_maptbl_fragments(fsi);
+	ssdfs_sysfs_delete_maptbl_frags_group(fsi);
 	kobject_del(&fsi->maptbl_kobj);
 	kobject_put(&fsi->maptbl_kobj);
 	wait_for_completion(&fsi->maptbl_kobj_unregister);
@@ -1900,18 +2379,11 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	if (err)
 		goto delete_segments_group;
 
-	err = ssdfs_sysfs_create_maptbl_group(fsi);
-	if (err)
-		goto delete_segbmap_group;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create device group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
-
-delete_segbmap_group:
-	ssdfs_sysfs_delete_segbmap_group(fsi);
 
 delete_segments_group:
 	ssdfs_sysfs_delete_segments_group(fsi);
@@ -1931,7 +2403,6 @@ void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("delete device group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_sysfs_delete_maptbl_group(fsi);
 	ssdfs_sysfs_delete_segbmap_group(fsi);
 	ssdfs_sysfs_delete_segments_group(fsi);
 
