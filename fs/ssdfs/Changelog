@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.29 [September 03, 2025]
+    (*) Add showing of mapping table's fragments' content in sysfs.
+
 v.5.28 [September 01, 2025]
     (*) Add showing of mapping table's fragments' in-core information in sysfs.
 
