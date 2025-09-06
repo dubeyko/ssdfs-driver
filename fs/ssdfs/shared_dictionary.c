@@ -794,6 +794,15 @@ finish_flush:
 }
 
 /*
+ * is_shared_dict_under_init() - check that shared dictionary is initializing
+ */
+static inline
+bool is_shared_dict_under_init(struct ssdfs_shared_dict_btree_info *tree)
+{
+	return atomic_read(&tree->state) == SSDFS_SHDICT_BTREE_UNDER_INIT;
+}
+
+/*
  * ssdfs_shared_dict_get_name() - get name from dictionary
  * @tree: shared dictionary tree
  * @hash: name hash
@@ -841,12 +850,18 @@ try_check_state:
 			SSDFS_ERR("second try to wait the init ending\n");
 			return -ERANGE;
 		} else {
-			DEFINE_WAIT(wait);
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
 
-			prepare_to_wait(&tree->wait_queue, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
-			finish_wait(&tree->wait_queue, &wait);
+			add_wait_queue(&tree->wait_queue, &wait);
+			while (is_shared_dict_under_init(tree)) {
+				if (signal_pending(current)) {
+					break;
+				} else {
+					wait_woken(&wait, TASK_INTERRUPTIBLE,
+						   SSDFS_DEFAULT_TIMEOUT);
+				}
+			}
+			remove_wait_queue(&tree->wait_queue, &wait);
 		}
 
 		is_second_try = true;
@@ -1009,12 +1024,18 @@ try_check_state:
 			SSDFS_ERR("second try to wait the init ending\n");
 			return -ERANGE;
 		} else {
-			DEFINE_WAIT(wait);
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
 
-			prepare_to_wait(&tree->wait_queue, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
-			finish_wait(&tree->wait_queue, &wait);
+			add_wait_queue(&tree->wait_queue, &wait);
+			while (is_shared_dict_under_init(tree)) {
+				if (signal_pending(current)) {
+					break;
+				} else {
+					wait_woken(&wait, TASK_INTERRUPTIBLE,
+						   SSDFS_DEFAULT_TIMEOUT);
+				}
+			}
+			remove_wait_queue(&tree->wait_queue, &wait);
 		}
 
 		is_second_try = true;

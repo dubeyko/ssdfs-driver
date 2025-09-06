@@ -344,10 +344,11 @@ sleep_shared_dict_thread:
 	add_wait_queue(wait_queue, &wait);
 	while (!SHDICT_THREAD_WAKE_CONDITION(tree)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wait_queue, &wait);
 	goto repeat;

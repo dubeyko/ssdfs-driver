@@ -1263,6 +1263,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 		start_id = 0;
 		upper_bound = state->request.start_search_id;
 
+		if (start_id >= upper_bound)
+			upper_bound = start_id + 1;
+
 		err = ssdfs_find_using_segment(fsi, state->request.seg_type,
 						start_id, upper_bound,
 						&state->result.seg_id,
@@ -1288,6 +1291,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 		start_id = state->request.start_search_id + 1;
 		upper_bound = fsi->nsegs;
 
+		if (start_id >= upper_bound)
+			upper_bound = start_id + 1;
+
 		err = ssdfs_find_using_segment(fsi, state->request.seg_type,
 						start_id, upper_bound,
 						&state->result.seg_id,
@@ -1311,6 +1317,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 
 	start_id = 0;
 	upper_bound = state->request.start_search_id;
+
+	if (start_id >= upper_bound)
+		upper_bound = start_id + 1;
 
 	while (start_id < state->request.start_search_id) {
 		err = ssdfs_find_clean_segment(fsi, state->request.seg_type,
@@ -1338,6 +1347,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 	start_id = state->request.start_search_id + 1;
 	upper_bound = fsi->nsegs;
 
+	if (start_id >= upper_bound)
+		upper_bound = start_id + 1;
+
 	while (start_id < fsi->nsegs) {
 		err = ssdfs_find_clean_segment(fsi, state->request.seg_type,
 						start_id, upper_bound,
@@ -1364,6 +1376,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 	start_id = state->request.start_search_id + 1;
 	upper_bound = fsi->nsegs;
 
+	if (start_id >= upper_bound)
+		upper_bound = start_id + 1;
+
 	while (start_id < fsi->nsegs) {
 		err = ssdfs_find_using_segment(fsi, state->request.seg_type,
 						start_id, upper_bound,
@@ -1389,6 +1404,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 
 	start_id = 0;
 	upper_bound = state->request.start_search_id;
+
+	if (start_id >= upper_bound)
+		upper_bound = start_id + 1;
 
 	while (start_id < state->request.start_search_id) {
 		err = ssdfs_find_using_segment(fsi, state->request.seg_type,
@@ -1784,6 +1802,9 @@ ssdfs_find_and_create_new_segment(struct ssdfs_fs_info *fsi,
 		SSDFS_ERR("unexpected request state\n");
 		goto unable_create_new_segment;
 	}
+
+	if (state->request.start_search_id >= U64_MAX)
+		state->request.start_search_id = 0;
 
 	do {
 		err = ssdfs_find_new_segment(fsi, state);

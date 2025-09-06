@@ -462,16 +462,9 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 			DEFINE_WAIT_FUNC(wait, woken_wake_function);
 			add_wait_queue(wq, &wait);
 			if (unfinished_user_data_requests_exist(fsi)) {
-				if (signal_pending(current)) {
-					err = -ERESTARTSYS;
-				} else {
-					wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
-				}
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
 			}
 			remove_wait_queue(wq, &wait);
-
-			if (unlikely(err))
-				break;
 
 			if (!unfinished_user_data_requests_exist(fsi))
 				break;
@@ -492,8 +485,10 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 			spin_unlock(&fsi->volume_state_lock);
 
 			SSDFS_WARN("there are unfinished requests: "
-				   "unfinished_user_data_requests %llu\n",
-				   new_flush_requests);
+				   "unfinished_user_data_requests %llu, "
+				   "number_of_tries %d, err %d\n",
+				   new_flush_requests,
+				   number_of_tries, err);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			ssdfs_show_unfinished_user_data_requests(fsi);
@@ -3815,7 +3810,11 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		down_write(&fs_info->volume_sem);
 		err = ssdfs_inodes_btree_create(fs_info);
 		up_write(&fs_info->volume_sem);
-		if (err)
+		if (err == -ENOSPC) {
+			err = 0;
+			fs_info->sb->s_flags |= SB_RDONLY;
+			SSDFS_DBG("unable to create inodes btree\n");
+		} else if (err)
 			goto destroy_shdictree;
 	} else {
 		err = -EIO;
@@ -4047,16 +4046,9 @@ void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
 			DEFINE_WAIT_FUNC(wait, woken_wake_function);
 			add_wait_queue(wq, &wait);
 			if (unfinished_commit_log_requests_exist(fsi)) {
-				if (signal_pending(current)) {
-					err = -ERESTARTSYS;
-				} else {
-					wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
-				}
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
 			}
 			remove_wait_queue(wq, &wait);
-
-			if (unlikely(err))
-				break;
 
 			if (!unfinished_commit_log_requests_exist(fsi))
 				break;
@@ -4075,8 +4067,10 @@ void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
 			spin_unlock(&fsi->volume_state_lock);
 
 			SSDFS_WARN("there are unfinished commit log requests: "
-				   "commit_log_requests %llu\n",
-				   new_commit_requests);
+				   "commit_log_requests %llu, "
+				   "number_of_tries %d, err %d\n",
+				   new_commit_requests,
+				   number_of_tries, err);
 		}
 	}
 }

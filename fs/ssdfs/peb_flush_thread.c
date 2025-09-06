@@ -228,6 +228,18 @@ struct ssdfs_batch_descriptor {
 	struct ssdfs_peb_log_offset *log_offset;
 };
 
+#ifdef CONFIG_SSDFS_DEBUG
+#define GET_THREAD_STATE(pebc) \
+	(&pebc->thread_state[SSDFS_PEB_FLUSH_THREAD])
+#define GET_CALL_STACK(pebc) \
+	(&GET_THREAD_STATE(pebc)->call_stack)
+#define REMEMBER_CODE_LINE(pebc) \
+	(ssdfs_thread_call_stack_remember(GET_CALL_STACK(pebc), \
+					  __FILE__, __func__, __LINE__))
+#define FORGET_CODE_LINE(pebc) \
+	(ssdfs_thread_call_stack_forget(GET_CALL_STACK(pebc)))
+#endif /* CONFIG_SSDFS_DEBUG */
+
 /******************************************************************************
  *                         FLUSH THREAD FUNCTIONALITY                         *
  ******************************************************************************/
@@ -5316,8 +5328,10 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 					  folio_index, blob_size);
 	if (IS_ERR_OR_NULL(folio)) {
 		err = (folio == NULL ? -ERANGE : PTR_ERR(folio));
-		SSDFS_ERR("fail to get folio %lu for area %#x\n",
-			  folio_index, area_type);
+		SSDFS_ERR("fail to grab folio %lu for area %#x: "
+			  "blob_size %zu, copied_len %zu, err %d\n",
+			  folio_index, area_type,
+			  blob_size, *copied_len, err);
 		return err;
 	}
 
@@ -7199,7 +7213,11 @@ static
 int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				 struct ssdfs_segment_request *req)
 {
+	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	u32 page_size;
+	u32 rest_bytes;
+	u32 free_data_blocks;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -7218,6 +7236,28 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 		req->result.err = -EINVAL;
 		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
 		return -EINVAL;
+	}
+
+	fsi = pebi->pebc->parent_si->fsi;
+
+	page_size = fsi->pagesize;
+	rest_bytes = ssdfs_request_rest_bytes(pebi, req);
+	free_data_blocks = fsi->pages_per_peb - pebi->current_log.start_block;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(rest_bytes == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (free_data_blocks < ((rest_bytes + page_size - 1) / page_size)) {
+#ifdef CONFIG_SSDFS_DEBUG
+SSDFS_ERR_DBG("try again to create block/extent: "
+			  "seg %llu, peb %llu, free_data_blocks %u, "
+			  "rest_bytes %u, page_size %u\n",
+			  req->place.start.seg_id, pebi->peb_id,
+			  free_data_blocks, rest_bytes,
+			  page_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
 	}
 
 	atomic_set(&req->result.state, SSDFS_REQ_STARTED);
@@ -10790,6 +10830,9 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 {
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_segment_info *si;
+	u32 page_size;
+	u32 rest_bytes;
+	u32 free_data_blocks;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -10809,6 +10852,39 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		req->result.err = -EINVAL;
 		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
 		return -EINVAL;
+	}
+
+	switch (req->private.cmd) {
+	case SSDFS_UPDATE_BLOCK:
+	case SSDFS_UPDATE_PRE_ALLOC_BLOCK:
+	case SSDFS_UPDATE_EXTENT:
+	case SSDFS_UPDATE_PRE_ALLOC_EXTENT:
+		page_size = fsi->pagesize;
+		rest_bytes = ssdfs_request_rest_bytes(pebi, req);
+		free_data_blocks = fsi->pages_per_peb -
+					pebi->current_log.start_block;
+
+#ifdef CONFIG_SSDFS_DEBUG
+		BUG_ON(rest_bytes == 0);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (free_data_blocks <
+				((rest_bytes + page_size - 1) / page_size)) {
+#ifdef CONFIG_SSDFS_DEBUG
+SSDFS_ERR_DBG("try again to update block/extent: "
+				  "seg %llu, peb %llu, free_data_blocks %u, "
+				  "rest_bytes %u, page_size %u\n",
+				  req->place.start.seg_id, pebi->peb_id,
+				  free_data_blocks, rest_bytes,
+				  page_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -EAGAIN;
+		}
+		break;
+
+	default:
+		/* continue logic */
+		break;
 	}
 
 	atomic_set(&req->result.state, SSDFS_REQ_STARTED);
@@ -16359,6 +16435,10 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		BUG();
 	};
 
+#ifdef CONFIG_SSDFS_DEBUG
+	REMEMBER_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("seg %llu, peb %llu, current_log.start_block %u\n",
 		  pebi->pebc->parent_si->seg_id, pebi->peb_id,
@@ -16382,7 +16462,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			  "seg %llu, peb %llu, err %d\n",
 			  pebi->pebc->parent_si->seg_id,
 			  pebi->peb_id, err);
-		return err;
+		goto finish_method;
 	}
 
 	invalid_blocks = ssdfs_peb_get_invalid_pages(pebi->pebc);
@@ -16392,7 +16472,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			  "seg %llu, peb %llu, err %d\n",
 			  pebi->pebc->parent_si->seg_id,
 			  pebi->peb_id, err);
-		return err;
+		goto finish_method;
 	}
 
 	data_blocks = used_blocks + invalid_blocks;
@@ -16417,11 +16497,12 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 				  data_blocks, has_dirty_blocks);
 #endif /* CONFIG_SSDFS_DEBUG */
 		} else {
+			err = -ERANGE;
 			SSDFS_ERR("invalid data blocks count: "
 				  "used_blocks %d, invalid_blocks %d, "
 				  "data_blocks %u\n",
 				  used_blocks, invalid_blocks, data_blocks);
-			return -ERANGE;
+			goto finish_method;
 		}
 	}
 
@@ -16430,9 +16511,10 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 								pebs_per_seg,
 								log_strategy);
 	if (reserved_blocks > blocks_per_peb) {
+		err = -ERANGE;
 		SSDFS_ERR("reserved_blocks %u > blocks_per_peb %u\n",
 			  reserved_blocks, blocks_per_peb);
-		return -ERANGE;
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -16454,7 +16536,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			SSDFS_ERR("fail to reserve metadata blocks: "
 				  "count %u, err %d\n",
 				  diff, err);
-			return err;
+			goto finish_method;
 		}
 
 		pebi->current_log.reserved_blocks += diff;
@@ -16471,7 +16553,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			SSDFS_ERR("fail to free metadata blocks: "
 				  "count %u, err %d\n",
 				  diff, err);
-			return err;
+			goto finish_method;
 		}
 
 		pebi->current_log.reserved_blocks -= diff;
@@ -16498,20 +16580,21 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 
 	switch (log_strategy) {
 	case SSDFS_START_FULL_LOG:
+		err = -ERANGE;
 		SSDFS_CRIT("log contains nothing: "
 			   "seg %llu, peb %llu, "
 			   "free_data_blocks %u\n",
 			   pebi->pebc->parent_si->seg_id,
 			   pebi->peb_id,
 			   pebi->current_log.free_data_blocks);
-		return -ERANGE;
+		goto finish_method;
 
 	case SSDFS_START_PARTIAL_LOG:
 		err = ssdfs_peb_commit_first_partial_log(pebi);
 		if (unlikely(err)) {
 			SSDFS_CRIT("fail to commit first partial log: "
 				   "err %d\n", err);
-			return err;
+			goto finish_method;
 		}
 		break;
 
@@ -16520,7 +16603,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		if (unlikely(err)) {
 			SSDFS_CRIT("fail to commit next partial log: "
 				   "err %d\n", err);
-			return err;
+			goto finish_method;
 		}
 		break;
 
@@ -16530,7 +16613,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		if (unlikely(err)) {
 			SSDFS_CRIT("fail to commit last partial log: "
 				   "err %d\n", err);
-			return err;
+			goto finish_method;
 		}
 		break;
 
@@ -16540,14 +16623,15 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 		if (unlikely(err)) {
 			SSDFS_CRIT("fail to commit full log: "
 				   "err %d\n", err);
-			return err;
+			goto finish_method;
 		}
 		break;
 
 	default:
+		err = -ERANGE;
 		SSDFS_CRIT("unexpected log strategy %#x\n",
 			   log_strategy);
-		return -ERANGE;
+		goto finish_method;
 	}
 
 	table = pebi->pebc->parent_si->blk2off_table;
@@ -16561,6 +16645,7 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 			  pebi->peb_id,
 			  pebi->peb_index,
 			  err);
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -16569,6 +16654,10 @@ int ssdfs_peb_commit_log(struct ssdfs_peb_info *pebi,
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -17505,12 +17594,16 @@ finish_get_current_log_state:
 	ssdfs_peb_container_unlock(pebc);
 
 	if (err == -EAGAIN) {
+		ktime_t timeout = KTIME_MAX;
 		DEFINE_WAIT(wait);
 
 		err = 0;
+
+		timeout = ktime_add_ns(ktime_get(), jiffies_to_nsecs(HZ));
 		prepare_to_wait(&pebc->migration_wq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
+				TASK_INTERRUPTIBLE);
+		if (is_peb_preparing_migration(pebc))
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 		finish_wait(&pebc->migration_wq, &wait);
 		goto try_get_current_state;
 	} else if (unlikely(err))
@@ -17819,13 +17912,28 @@ try_change_activity_type:
 		break;
 
 	case SSDFS_SEG_UNDER_GC_ACTIVITY:
+		/*
+		 * GC requests could initiate the migration finishing.
+		 */
+		activity_type = atomic_cmpxchg(&si->activity_type,
+					SSDFS_SEG_UNDER_GC_ACTIVITY,
+					SSDFS_SEG_UNDER_GC_FINISHING_MIGRATION);
+
+		switch (activity_type) {
+		case SSDFS_SEG_UNDER_GC_ACTIVITY:
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("segment %llu is under GC activity\n",
-			  si->seg_id);
+			SSDFS_DBG("segment %llu is under GC + finishing migration\n",
+				  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+			break;
+
+		default:
+			goto try_wait_regular_activity;
+		}
 		break;
 
 	default:
+try_wait_regular_activity:
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("segment %llu is busy under activity %#x\n",
 			   si->seg_id, activity_type);
@@ -17833,12 +17941,17 @@ try_change_activity_type:
 
 		wait_event_killable_timeout(*wait_queue,
 				is_segment_under_regular_activity(si),
-				SSDFS_DEFAULT_TIMEOUT);
+				HZ);
 
 		if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
 			number_of_tries++;
 			goto try_change_activity_type;
 		}
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("segment %llu is busy under activity %#x\n",
+			   si->seg_id, activity_type);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 		return -EBUSY;
 	}
@@ -17869,14 +17982,30 @@ int ssdfs_revert_segment_to_regular_activity(struct ssdfs_segment_info *si)
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
-	case SSDFS_SEG_UNDER_GC_ACTIVITY:
+	case SSDFS_SEG_UNDER_GC_FINISHING_MIGRATION:
+		/*
+		 * GC requests could initiate the migration finishing.
+		 */
+		activity_type = atomic_cmpxchg(&si->activity_type,
+					SSDFS_SEG_UNDER_GC_FINISHING_MIGRATION,
+					SSDFS_SEG_UNDER_GC_ACTIVITY);
+
+		switch (activity_type) {
+		case SSDFS_SEG_UNDER_GC_FINISHING_MIGRATION:
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("segment %llu remains under GC activity\n",
-			  si->seg_id);
+			SSDFS_DBG("segment %llu remains under GC activity\n",
+				  si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+			wake_up_all(&si->wait_queue[SSDFS_PEB_FLUSH_THREAD]);
+			break;
+
+		default:
+			goto report_failure;
+		}
 		break;
 
 	default:
+report_failure:
 		SSDFS_WARN("segment %llu is under activity %#x\n",
 			   si->seg_id, activity_type);
 		return -EFAULT;
@@ -17896,11 +18025,13 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_segment_info *si = pebc->parent_si;
 	struct ssdfs_segment_request *req;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("seg %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id, pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_mark_segment_under_finishing_migration(si);
@@ -17910,7 +18041,7 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
 			  err);
-		return err;
+		goto finish_method;
 	}
 
 	err = ssdfs_peb_finish_migration(pebc);
@@ -17919,7 +18050,7 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  "seg %llu, peb_index %u\n",
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
-		return err;
+		goto finish_method;
 	}
 
 	/*
@@ -17938,7 +18069,7 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			SSDFS_ERR("segment initialization failed: "
 				  "seg %llu, err %d\n",
 				  si->seg_id, err);
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -17947,7 +18078,7 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 		err = (req == NULL ? -ENOMEM : PTR_ERR(req));
 		SSDFS_ERR("fail to allocate request: "
 			  "err %d\n", err);
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_request_init(req, si->fsi->pagesize);
@@ -17960,7 +18091,7 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  "err %d\n", err);
 		ssdfs_put_request(req);
 		ssdfs_request_free(req, si);
-		return err;
+		goto finish_method;
 	}
 
 	err = ssdfs_revert_segment_to_regular_activity(si);
@@ -17970,10 +18101,14 @@ int __ssdfs_peb_finish_migration(struct ssdfs_peb_container *pebc)
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index,
 			  err);
-		return err;
+		goto finish_method;
 	}
 
-	return 0;
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 static inline
@@ -18260,6 +18395,8 @@ int ssdfs_process_error_state(struct ssdfs_peb_container *pebc,
 	SSDFS_DBG("thread after-error state: "
 		  "seg %llu, peb_index %u, err %d\n",
 		  pebc->parent_si->seg_id, pebc->peb_index, err);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	thread_state->err = err;
@@ -18289,11 +18426,17 @@ int ssdfs_process_error_state(struct ssdfs_peb_container *pebc,
 
 	thread_state->state = SSDFS_FLUSH_THREAD_MUST_STOP_NOW;
 
-	if (kthread_should_stop())
-		return 0;
+	if (kthread_should_stop()) {
+		err = 0;
+	} else {
+		/* failed thread goes to sleep */
+		err = -EFAULT;
+	}
 
-	/* failed thread goes to sleep */
-	return -EFAULT;
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -18343,6 +18486,8 @@ int ssdfs_process_free_space_absent_state(struct ssdfs_peb_container *pebc,
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -18353,7 +18498,8 @@ int ssdfs_process_free_space_absent_state(struct ssdfs_peb_container *pebc,
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			res = err;
+			goto finish_method;
 		}
 	}
 
@@ -18369,7 +18515,7 @@ int ssdfs_process_free_space_absent_state(struct ssdfs_peb_container *pebc,
 				   pebc->peb_index, res);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = res;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -18432,20 +18578,27 @@ finish_process_free_space_absence:
 							-ENOSPC);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = res;
-			return res;
+			goto finish_method;
 		}
 
+		res = 0;
 		thread_state->state = SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-		return 0;
+		goto finish_method;
 	} else if (have_flush_requests(pebc)) {
 		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
 						&pebc->update_rq,
 						-ENOSPC);
 	}
 
+	res = -ENOSPC;
 	thread_state->state = SSDFS_FLUSH_THREAD_FREE_SPACE_ABSENT;
 	thread_state->err = -ENOSPC;
-	return -ENOSPC;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return res;
 }
 
 /*
@@ -18493,6 +18646,8 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -18507,7 +18662,7 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -18517,7 +18672,7 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 			  "err %d\n", err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	pebi = ssdfs_get_current_peb_locked(pebc);
@@ -18529,7 +18684,7 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	if (!(fsi->sb->s_flags & SB_RDONLY)) {
@@ -18546,7 +18701,8 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 			ssdfs_unlock_current_peb(pebc);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return -EFAULT;
+			err = -EFAULT;
+			goto finish_method;
 		} else {
 			state = ssdfs_peb_get_current_log_state(pebc);
 			if (state <= SSDFS_LOG_UNKNOWN ||
@@ -18558,22 +18714,24 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 				ssdfs_unlock_current_peb(pebc);
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
-				return err;
+				goto finish_method;
 			}
 
 			thread_state->err = 0;
 
 			if (state != SSDFS_LOG_CREATED) {
+				err = 0;
 				thread_state->state =
 					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
 				ssdfs_unlock_current_peb(pebc);
-				return 0;
+				goto finish_method;
 			}
 
+			err = 0;
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 			ssdfs_unlock_current_peb(pebc);
-			return 0;
+			goto finish_method;
 		}
 	} else if (have_flush_requests(pebc)) {
 		ssdfs_requests_queue_remove_all(pebc->parent_si->fsi,
@@ -18638,6 +18796,10 @@ int ssdfs_process_read_only_state(struct ssdfs_peb_container *pebc)
 
 	ssdfs_unlock_current_peb(pebc);
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -18686,6 +18848,8 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -18694,7 +18858,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 
 	if (fsi->sb->s_flags & SB_RDONLY) {
 		thread_state->state = SSDFS_FLUSH_THREAD_RO_STATE;
-		return 0;
+		goto finish_method;
 	}
 
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -18705,7 +18869,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -18718,7 +18882,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 		} else {
 			thread_state->state =
 			    SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
-			return 0;
+			goto finish_method;
 		}
 	}
 
@@ -18732,7 +18896,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -18743,7 +18907,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 			  si->seg_id, pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	pebi = ssdfs_get_current_peb_locked(pebc);
@@ -18755,7 +18919,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -18781,9 +18945,10 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 	ssdfs_peb_current_log_unlock(pebi);
 
 	if (!need_create_log) {
+		err = -ENOENT;
 		ssdfs_unlock_current_peb(pebc);
 		thread_state->state = SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-		return -ENOENT;
+		goto finish_method;
 	}
 
 	if (has_commit_log_now_requested(pebc) &&
@@ -18799,9 +18964,10 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
+		err = 0;
 		ssdfs_unlock_current_peb(pebc);
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-		return 0;
+		goto finish_method;
 	}
 
 	if (has_start_migration_now_requested(pebc)) {
@@ -18816,9 +18982,10 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 			  pebc->parent_si->seg_id,
 			  pebc->peb_index);
 #endif /* CONFIG_SSDFS_DEBUG */
+		err = 0;
 		ssdfs_unlock_current_peb(pebc);
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-		return 0;
+		goto finish_method;
 	}
 
 	if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
@@ -18863,9 +19030,10 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				BUG();
 			} else {
 				SSDFS_ERR("maptbl is flushing\n");
+				err = -ENOENT;
 				thread_state->state =
 				    SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-				return -ENOENT;
+				goto finish_method;
 			}
 		}
 
@@ -18879,7 +19047,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 					  pebc->peb_index, err);
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
-				return err;
+				goto finish_method;
 			}
 		}
 
@@ -18891,7 +19059,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
@@ -18903,7 +19071,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_peb_current_log_lock(pebi);
@@ -18921,7 +19089,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 					  pebc->peb_index, err);
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
-				return err;
+				goto finish_method;
 			}
 		}
 
@@ -18934,7 +19102,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
@@ -18954,7 +19122,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -18978,7 +19146,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
@@ -18990,7 +19158,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
@@ -19006,7 +19174,7 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -19050,6 +19218,10 @@ fail_create_log:
 		thread_state->state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 	}
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -19095,6 +19267,8 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -19108,7 +19282,7 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -19123,13 +19297,14 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 					   state);
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
-				return err;
+				goto finish_method;
 			}
 
 			if (state != SSDFS_LOG_CREATED) {
+				err = -EAGAIN;
 				thread_state->state =
 					SSDFS_FLUSH_THREAD_NEED_CREATE_LOG;
-				return -EAGAIN;
+				goto finish_method;
 			} else
 				goto process_flush_requests;
 		}
@@ -19143,7 +19318,7 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 				  err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
@@ -19155,7 +19330,7 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_peb_current_log_lock(pebi);
@@ -19172,7 +19347,7 @@ int ssdfs_process_check_stop_state(struct ssdfs_peb_container *pebc)
 				   pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -19193,7 +19368,7 @@ process_flush_requests:
 				   state);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		if (have_flush_requests(pebc)) {
@@ -19212,6 +19387,10 @@ process_flush_requests:
 		}
 	}
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -19233,7 +19412,7 @@ static
 int ssdfs_process_get_create_request_state(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_thread_state *thread_state = NULL;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
@@ -19251,18 +19430,21 @@ int ssdfs_process_get_create_request_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!have_flush_requests(pebc)) {
+		err = -ENOENT;
 		SSDFS_DBG("empty create queue\n");
 		thread_state->state = SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
-		return -ENOENT;
+		goto finish_method;
 	}
 
 	if (!is_peb_joined_into_create_requests_queue(pebc) ||
 	    is_create_requests_queue_empty(pebc)) {
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-		return 0;
+		goto finish_method;
 	}
 
 	spin_lock(&pebc->crq_ptr_lock);
@@ -19271,21 +19453,23 @@ int ssdfs_process_get_create_request_state(struct ssdfs_peb_container *pebc)
 	spin_unlock(&pebc->crq_ptr_lock);
 
 	if (err == -ENODATA) {
+		err = 0;
 		SSDFS_DBG("empty create queue\n");
 		thread_state->err = 0;
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-		return 0;
+		goto finish_method;
 	} else if (err == -ENOENT) {
+		err = 0;
 		SSDFS_WARN("request queue contains NULL request\n");
 		thread_state->err = 0;
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-		return 0;
+		goto finish_method;
 	} else if (unlikely(err < 0)) {
 		SSDFS_CRIT("fail to get request from create queue: "
 			   "err %d\n", err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -19307,7 +19491,12 @@ int ssdfs_process_get_create_request_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	thread_state->state = SSDFS_FLUSH_THREAD_PROCESS_CREATE_REQUEST;
-	return 0;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -19328,7 +19517,7 @@ static
 int ssdfs_process_get_update_request_state(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_thread_state *thread_state = NULL;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
@@ -19346,38 +19535,43 @@ int ssdfs_process_get_update_request_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (is_ssdfs_requests_queue_empty(&pebc->update_rq)) {
 		if (have_flush_requests(pebc)) {
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-			return 0;
+			goto finish_method;
 		} else {
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
-			return -ENOENT;
+			err = -ENOENT;
+			goto finish_method;
 		}
 	}
 
 	err = ssdfs_requests_queue_remove_first(&pebc->update_rq,
 						&thread_state->req);
 	if (err == -ENODATA) {
+		err = 0;
 		SSDFS_DBG("empty update queue\n");
 		thread_state->err = 0;
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-		return 0;
+		goto finish_method;
 	} else if (err == -ENOENT) {
+		err = 0;
 		SSDFS_WARN("request queue contains NULL request\n");
 		thread_state->err = 0;
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
-		return 0;
+		goto finish_method;
 	} else if (unlikely(err < 0)) {
 		SSDFS_CRIT("fail to get request from update queue: "
 			   "err %d\n", err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -19399,7 +19593,12 @@ int ssdfs_process_get_update_request_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	thread_state->state = SSDFS_FLUSH_THREAD_PROCESS_UPDATE_REQUEST;
-	return 0;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -19448,6 +19647,8 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 		  thread_state->req->private.class,
 		  thread_state->req->private.cmd);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	is_user_data = is_ssdfs_peb_containing_user_data(pebc);
@@ -19460,7 +19661,7 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -19474,7 +19675,7 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -19487,7 +19688,7 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -19634,6 +19835,10 @@ finish_create_request_processing:
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -19680,6 +19885,8 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&si->obj_state);
@@ -19693,7 +19900,7 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -19706,7 +19913,7 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -19740,7 +19947,7 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 		err = -ERANGE;
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -19758,7 +19965,7 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_request_init(req, si->fsi->pagesize);
@@ -19773,7 +19980,7 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 			ssdfs_request_free(req, si);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -19793,11 +20000,17 @@ int __ssdfs_restart_create_processing(struct ssdfs_peb_container *pebc)
 	ssdfs_forget_commit_log_request(si);
 
 	if (need_commit_log)
-		return -EAGAIN;
+		err = -EAGAIN;
 	else if (have_flush_requests(pebc))
-		return -EAGAIN;
+		err = -EAGAIN;
 	else
-		return -EBUSY;
+		err = -EBUSY;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -19983,6 +20196,8 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 	SSDFS_DBG("req->private.class %#x, req->private.cmd %#x\n",
 		  thread_state->req->private.class,
 		  thread_state->req->private.cmd);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	is_user_data = is_ssdfs_peb_containing_user_data(pebc);
@@ -19995,7 +20210,7 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -20009,7 +20224,7 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -20022,7 +20237,7 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -20303,6 +20518,10 @@ finish_update_request_processing:
 	SSDFS_DBG("finished\n");
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -20347,6 +20566,8 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -20357,7 +20578,7 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -20370,7 +20591,7 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -20404,7 +20625,7 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 		err = -ERANGE;
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	if (need_commit_log) {
@@ -20415,7 +20636,7 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_request_init(req, si->fsi->pagesize);
@@ -20430,7 +20651,7 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 			ssdfs_request_free(req, si);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -20450,11 +20671,17 @@ int __ssdfs_restart_update_processing(struct ssdfs_peb_container *pebc)
 	ssdfs_forget_commit_log_request(si);
 
 	if (need_commit_log)
-		return -EAGAIN;
+		err = -EAGAIN;
 	else if (have_flush_requests(pebc))
-		return -EAGAIN;
+		err = -EAGAIN;
 	else
-		return -EBUSY;
+		err = -EBUSY;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -20615,6 +20842,8 @@ int __ssdfs_restart_invalidate_processing(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -20625,7 +20854,7 @@ int __ssdfs_restart_invalidate_processing(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -20651,7 +20880,7 @@ request_commit_log_now:
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_request_init(req, fsi->pagesize);
@@ -20666,7 +20895,7 @@ request_commit_log_now:
 			ssdfs_request_free(req, si);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -20680,7 +20909,7 @@ request_commit_log_now:
 		err = -ERANGE;
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	thread_state->state = SSDFS_FLUSH_THREAD_GET_CREATE_REQUEST;
@@ -20691,9 +20920,15 @@ request_commit_log_now:
 	ssdfs_forget_commit_log_request(si);
 
 	if (have_flush_requests(pebc))
-		return -EAGAIN;
+		err = -EAGAIN;
 	else
-		return -EBUSY;
+		err = -EBUSY;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -21130,6 +21365,8 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -21144,7 +21381,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -21181,7 +21418,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 						   wait_queue, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		} else {
 			ssdfs_requests_queue_add_head(&pebc->update_rq,
 							thread_state->req);
@@ -21200,7 +21437,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 				  err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_request_init(req, si->fsi->pagesize);
@@ -21215,7 +21452,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 		atomic64_inc(&fsi->flush_reqs);
 
 		thread_state->postponed_req = req;
-		return err;
+		goto finish_method;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to invalidate extent: "
 			  "seg_id %llu, peb_index %u, err %d\n",
@@ -21224,7 +21461,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 			  err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	pebi = ssdfs_get_current_peb_locked(pebc);
@@ -21236,7 +21473,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	if (is_peb_under_migration(pebc) &&
@@ -21252,7 +21489,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
@@ -21264,7 +21501,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
@@ -21281,7 +21518,7 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 			  "err %d\n", err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -21296,7 +21533,12 @@ int ssdfs_process_extent_invalidate_state(struct ssdfs_peb_container *pebc)
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
-	return 0;
+
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -21347,6 +21589,8 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -21361,7 +21605,7 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -21374,7 +21618,7 @@ int ssdfs_process_start_migration_now_state(struct ssdfs_peb_container *pebc)
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -21480,7 +21724,7 @@ process_migration_failure:
 			if (IS_ERR_OR_NULL(pebi)) {
 				thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 				thread_state->err = err;
-				return err;
+				goto finish_method;
 			}
 
 			ssdfs_peb_current_log_lock(pebi);
@@ -21490,7 +21734,7 @@ process_migration_failure:
 			ssdfs_unlock_current_peb(pebc);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		} else if (IS_ERR_OR_NULL(pebi)) {
 			err = pebi == NULL ? -ERANGE : PTR_ERR(pebi);
 			SSDFS_ERR("fail to get PEB object: "
@@ -21499,7 +21743,7 @@ process_migration_failure:
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		if (is_ssdfs_maptbl_going_to_be_destroyed(maptbl)) {
@@ -21515,7 +21759,7 @@ process_migration_failure:
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	} else if (has_partial_empty_log) {
 			/*
@@ -21538,7 +21782,7 @@ process_migration_failure:
 			   state);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -21552,7 +21796,11 @@ process_migration_failure:
 	else
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
 
-	return 0;
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+	return err;
 }
 
 /*
@@ -21765,6 +22013,8 @@ int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebc->parent_si;
@@ -21779,7 +22029,7 @@ int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -21827,7 +22077,7 @@ int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
 #ifdef CONFIG_SSDFS_DEBUG
 			thread_state->unfinished_reqs--;
 #endif /* CONFIG_SSDFS_DEBUG */
-			return 0;
+			goto finish_method;
 		} else {
 			thread_state->has_migration_check_requested = false;
 		}
@@ -21841,7 +22091,7 @@ make_log_commit:
 			  err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	pebi = ssdfs_get_current_peb_locked(pebc);
@@ -21853,7 +22103,7 @@ make_log_commit:
 			  pebc->peb_index, err);
 		thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 		thread_state->err = err;
-		return err;
+		goto finish_method;
 	}
 
 	ssdfs_peb_current_log_lock(pebi);
@@ -21960,6 +22210,10 @@ make_log_commit:
 		thread_state->err = err;
 	}
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -22003,6 +22257,8 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_segment_ready_for_requests(si)) {
@@ -22013,7 +22269,7 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 				  si->seg_id, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 	}
 
@@ -22050,7 +22306,7 @@ int ssdfs_process_check_migration_state(struct ssdfs_peb_container *pebc)
 				  pebc->peb_index, err);
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
 			thread_state->err = err;
-			return err;
+			goto finish_method;
 		}
 
 		ssdfs_peb_current_log_lock(pebi);
@@ -22158,7 +22414,7 @@ stimulate_migration_done:
 			SSDFS_ERR("fail to prepare range migration: "
 				  "err %d\n", err);
 			thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
-			return err;
+			goto finish_method;
 		}
 
 		thread_state->state = SSDFS_FLUSH_THREAD_GET_UPDATE_REQUEST;
@@ -22173,6 +22429,10 @@ finish_check_migration_need:
 		thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
 	}
 
+finish_method:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -22194,7 +22454,7 @@ static
 int ssdfs_process_delegate_create_role_state(struct ssdfs_peb_container *pebc)
 {
 	struct ssdfs_thread_state *thread_state = NULL;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
@@ -22212,16 +22472,19 @@ int ssdfs_process_delegate_create_role_state(struct ssdfs_peb_container *pebc)
 		  "seg_id %llu, peb_index %u\n",
 		  pebc->parent_si->seg_id,
 		  pebc->peb_index);
+
+	REMEMBER_CODE_LINE(pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_peb_joined_into_create_requests_queue(pebc)) {
 		if (thread_state->err) {
+			err = thread_state->err;
 			thread_state->state = SSDFS_FLUSH_THREAD_ERROR;
-			return thread_state->err;
+			goto finish_delegate_create_role_state;
 		} else {
 			thread_state->state =
 				SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
-			return 0;
+			goto finish_delegate_create_role_state;
 		}
 	}
 
@@ -22246,6 +22509,10 @@ int ssdfs_process_delegate_create_role_state(struct ssdfs_peb_container *pebc)
 			SSDFS_FLUSH_THREAD_CHECK_STOP_CONDITION;
 	}
 
+finish_delegate_create_role_state:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 	return err;
 }
 
@@ -23427,11 +23694,11 @@ sleep_flush_thread:
 		add_wait_queue(wait_queue, &wait);
 		while (!FLUSH_THREAD_WAKE_CONDITION(pebc)) {
 			if (signal_pending(current)) {
-				err = -ERESTARTSYS;
 				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
 			}
-			wait_woken(&wait, TASK_INTERRUPTIBLE,
-				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(wait_queue, &wait);
 	}
@@ -23444,11 +23711,11 @@ sleep_cur_seg_flush_thread:
 		add_wait_queue(&fsi->pending_wq, &wait);
 		while (!FLUSH_THREAD_CUR_SEG_WAKE_CONDITION(pebc)) {
 			if (signal_pending(current)) {
-				err = -ERESTARTSYS;
 				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
 			}
-			wait_woken(&wait, TASK_INTERRUPTIBLE,
-				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
@@ -23461,11 +23728,11 @@ sleep_waiting_pending_updates:
 		add_wait_queue(&fsi->pending_wq, &wait);
 		while (!FLUSH_THREAD_UPDATE_WAKE_CONDITION(pebc)) {
 			if (signal_pending(current)) {
-				err = -ERESTARTSYS;
 				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
 			}
-			wait_woken(&wait, TASK_INTERRUPTIBLE,
-				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}
@@ -23478,11 +23745,11 @@ sleep_waiting_pending_invalidations:
 		add_wait_queue(&fsi->pending_wq, &wait);
 		while (!FLUSH_THREAD_INVALIDATE_WAKE_CONDITION(pebc)) {
 			if (signal_pending(current)) {
-				err = -ERESTARTSYS;
 				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
 			}
-			wait_woken(&wait, TASK_INTERRUPTIBLE,
-				   SSDFS_DEFAULT_TIMEOUT);
 		}
 		remove_wait_queue(&fsi->pending_wq, &wait);
 	}

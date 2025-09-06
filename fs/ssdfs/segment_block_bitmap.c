@@ -566,6 +566,7 @@ try_define_bmap_index:
 
 finish_define_bmap_index:
 	if (err == -EAGAIN) {
+		ktime_t timeout = KTIME_MAX;
 		DEFINE_WAIT(wait);
 
 		err = 0;
@@ -573,9 +574,12 @@ finish_define_bmap_index:
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_peb_container_unlock(pebc);
 
+		timeout = ktime_add_ns(ktime_get(),
+					jiffies_to_nsecs(HZ));
 		prepare_to_wait(&pebc->migration_wq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
+				TASK_INTERRUPTIBLE);
+		if (is_peb_preparing_migration(pebc))
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 		finish_wait(&pebc->migration_wq, &wait);
 
 		pebi = ssdfs_get_current_peb_locked(pebc);
@@ -1708,6 +1712,7 @@ try_define_bmap_index:
 
 finish_define_bmap_index:
 	if (err == -EAGAIN) {
+		ktime_t timeout = KTIME_MAX;
 		DEFINE_WAIT(wait);
 
 		err = 0;
@@ -1715,9 +1720,12 @@ finish_define_bmap_index:
 		ssdfs_peb_current_log_unlock(pebi);
 		ssdfs_peb_container_unlock(pebc);
 
+		timeout = ktime_add_ns(ktime_get(),
+					jiffies_to_nsecs(HZ));
 		prepare_to_wait(&pebc->migration_wq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
+				TASK_INTERRUPTIBLE);
+		if (is_peb_preparing_migration(pebc))
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 		finish_wait(&pebc->migration_wq, &wait);
 
 		pebi = ssdfs_get_current_peb_locked(pebc);

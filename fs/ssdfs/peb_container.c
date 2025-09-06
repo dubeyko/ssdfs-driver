@@ -3281,11 +3281,14 @@ try_define_relation:
 		/* FALLTHRU */
 		fallthrough;
 	case SSDFS_OBSOLETE_DESTINATION: {
+			ktime_t timeout = KTIME_MAX;
 			DEFINE_WAIT(wait);
 
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
 			prepare_to_wait(&ptr->migration_wq, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
+					TASK_INTERRUPTIBLE);
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 			finish_wait(&ptr->migration_wq, &wait);
 			goto try_define_relation;
 		}
@@ -4128,12 +4131,15 @@ finish_check_destination:
 	spin_unlock(&si->migration.lock);
 
 	if (err == -EAGAIN) {
+		ktime_t timeout = KTIME_MAX;
 		DEFINE_WAIT(wait);
 
 		ssdfs_peb_container_unlock(ptr);
+		timeout = ktime_add_ns(ktime_get(),
+					jiffies_to_nsecs(HZ));
 		prepare_to_wait(&ptr->migration_wq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		schedule();
+				TASK_INTERRUPTIBLE);
+		schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 		finish_wait(&ptr->migration_wq, &wait);
 		ssdfs_peb_container_lock(ptr);
 		err = 0;
@@ -4894,16 +4900,18 @@ finish_forget_source:
 			  atomic_read(&ptr->dst_peb_refs));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		while (atomic_read(&ptr->dst_peb_refs) > 1) {
-			DEFINE_WAIT(wait);
+		{
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
 
 			ssdfs_peb_container_unlock(ptr);
-			prepare_to_wait(&ptr->migration_wq, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
-			finish_wait(&ptr->migration_wq, &wait);
+			add_wait_queue(&ptr->migration_wq, &wait);
+			while (atomic_read(&ptr->dst_peb_refs) > 1) {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
+			}
+			remove_wait_queue(&ptr->migration_wq, &wait);
 			ssdfs_peb_container_lock(ptr);
-		};
+		}
 
 		ptr->src_peb = ptr->dst_peb;
 		ptr->dst_peb = NULL;
@@ -5140,12 +5148,15 @@ try_get_current_peb:
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
 	case SSDFS_PEB_FINISHING_MIGRATION: {
+			ktime_t timeout = KTIME_MAX;
 			DEFINE_WAIT(wait);
 
 			ssdfs_peb_container_unlock(pebc);
+			timeout = ktime_add_ns(ktime_get(), jiffies_to_nsecs(HZ));
 			prepare_to_wait(&pebc->migration_wq, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
+					TASK_INTERRUPTIBLE);
+			if (is_peb_preparing_migration(pebc))
+				schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 			finish_wait(&pebc->migration_wq, &wait);
 			ssdfs_peb_container_lock(pebc);
 			goto try_get_current_peb;

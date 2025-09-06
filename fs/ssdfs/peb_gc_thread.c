@@ -779,7 +779,6 @@ int ssdfs_peb_gc_thread_func(void *data)
 {
 	struct ssdfs_peb_container *pebc = data;
 	wait_queue_head_t *wait_queue;
-	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	if (!pebc) {
@@ -809,10 +808,11 @@ sleep_gc_thread:
 	add_wait_queue(wait_queue, &wait);
 	while (!GC_THREAD_WAKE_CONDITION(pebi)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
@@ -1846,14 +1846,44 @@ int ssdfs_mark_segment_under_gc_activity(struct ssdfs_segment_info *si)
 }
 
 static inline
+bool is_segment_under_gc_activity(struct ssdfs_segment_info *si)
+{
+	return atomic_read(&si->activity_type) == SSDFS_SEG_UNDER_GC_ACTIVITY;
+}
+
+static inline
 int ssdfs_revert_segment_to_regular_activity(struct ssdfs_segment_info *si)
 {
+	wait_queue_head_t *wait_queue;
 	int activity_type;
+	int number_of_tries = 0;
 
+	wait_queue = &si->wait_queue[SSDFS_PEB_FLUSH_THREAD];
+
+try_change_activity_type:
 	activity_type = atomic_cmpxchg(&si->activity_type,
 				SSDFS_SEG_UNDER_GC_ACTIVITY,
 				SSDFS_SEG_OBJECT_REGULAR_ACTIVITY);
-	if (activity_type != SSDFS_SEG_UNDER_GC_ACTIVITY) {
+
+	switch (activity_type) {
+	case SSDFS_SEG_UNDER_GC_ACTIVITY:
+		/* continue logic */
+		break;
+
+	case SSDFS_SEG_UNDER_GC_FINISHING_MIGRATION:
+		wait_event_killable_timeout(*wait_queue,
+				is_segment_under_gc_activity(si),
+				HZ);
+
+		if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+			number_of_tries++;
+			goto try_change_activity_type;
+		}else
+			goto report_failure;
+		break;
+
+	default:
+report_failure:
 		SSDFS_WARN("segment %llu is under activity %#x\n",
 			   si->seg_id, activity_type);
 		return -EFAULT;
@@ -2128,6 +2158,7 @@ int ssdfs_gc_collect_garbage_now(struct ssdfs_fs_info *fsi,
 			SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 				  cur_leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+			err = 0;
 			continue;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2436,6 +2467,7 @@ repeat:
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2592,10 +2624,11 @@ sleep_gc_thread:
 	add_wait_queue(wq, &wait);
 	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wq, &wait);
 	goto repeat;
@@ -2716,6 +2749,7 @@ int ssdfs_collect_dirty_segments_now(struct ssdfs_fs_info *fsi)
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -2800,6 +2834,7 @@ try_set_pre_erase_state:
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -3033,6 +3068,7 @@ repeat:
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -3084,17 +3120,28 @@ try_to_find_seg_object:
 		}
 
 		if (should_ssdfs_segment_be_destroyed(si)) {
+			ssdfs_segment_put_object(si);
 			err = ssdfs_segment_tree_remove(fsi, si);
-			if (unlikely(err)) {
+			if (err == -EBUSY) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("seg_id %llu, refs_count %d\n",
+					  si->seg_id,
+					  atomic_read(&si->refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
+				goto check_next_segment;
+			} else if (unlikely(err)) {
 				SSDFS_WARN("fail to remove segment: "
 					   "seg %llu, err %d\n",
 					   si->seg_id, err);
+				goto sleep_failed_gc_thread;
 			} else {
 				err = ssdfs_segment_destroy_object(si);
 				if (err) {
 					SSDFS_WARN("fail to destroy: "
 						   "seg %llu, err %d\n",
 						   si->seg_id, err);
+					goto sleep_failed_gc_thread;
 				}
 			}
 		} else {
@@ -3122,6 +3169,7 @@ try_set_pre_erase_state:
 				SSDFS_DBG("LEB is not mapped: leb_id %llu\n",
 					  cur_leb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+				err = 0;
 				continue;
 			} else if (unlikely(err)) {
 				SSDFS_ERR("fail to convert LEB to PEB: "
@@ -3225,10 +3273,11 @@ sleep_gc_thread:
 	add_wait_queue(wq, &wait);
 	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wq, &wait);
 	goto repeat;
@@ -3430,10 +3479,11 @@ sleep_gc_thread:
 	add_wait_queue(wq, &wait);
 	while (!GLOBAL_GC_THREAD_WAKE_CONDITION(fsi, thread_type)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wq, &wait);
 	goto repeat;
@@ -3669,8 +3719,8 @@ int ssdfs_stop_gc_thread(struct ssdfs_fs_info *fsi, int type)
 		 */
 		return 0;
 	} else if (unlikely(err)) {
-		SSDFS_WARN("thread function had some issue: err %d\n",
-			    err);
+		SSDFS_WARN("thread function had some issue: type %#x, err %d\n",
+			    type, err);
 		return err;
 	}
 

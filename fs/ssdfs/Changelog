@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.30 [September 05, 2025]
+    (*) Fix multiple issues in mapping table, flush thread logic,
+        and synchronization mechanisms.
+
 v.5.29 [September 03, 2025]
     (*) Add showing of mapping table's fragments' content in sysfs.
 

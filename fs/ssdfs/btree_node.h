@@ -175,6 +175,7 @@ struct ssdfs_state_bitmap {
  * @bmap_bytes: size in bytes of every bitmap
  * @index_start_bit: starting bit of index area in the bitmap
  * @item_start_bit: starting bit of items area in the bitmap
+ * @locks_count: count of sucessful locks
  * @bmap: partial locks, alloc and dirty bitmaps
  */
 struct ssdfs_state_bitmap_array {
@@ -183,6 +184,7 @@ struct ssdfs_state_bitmap_array {
 	size_t bmap_bytes;
 	unsigned long index_start_bit;
 	unsigned long item_start_bit;
+	atomic_t locks_count;
 
 #define SSDFS_BTREE_NODE_LOCK_BMAP	(0)
 #define SSDFS_BTREE_NODE_ALLOC_BMAP	(1)

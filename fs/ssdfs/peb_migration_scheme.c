@@ -155,12 +155,16 @@ check_migration_state:
 	case SSDFS_PEB_MIGRATION_PREPARATION:
 	case SSDFS_PEB_RELATION_PREPARATION:
 	case SSDFS_PEB_FINISHING_MIGRATION: {
+			ktime_t timeout = KTIME_MAX;
 			DEFINE_WAIT(wait);
 
 			ssdfs_peb_container_unlock(pebc);
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
 			prepare_to_wait(&pebc->migration_wq, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
+					TASK_INTERRUPTIBLE);
+			if (is_peb_preparing_migration(pebc))
+				schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 			finish_wait(&pebc->migration_wq, &wait);
 			ssdfs_peb_container_lock(pebc);
 			goto check_migration_state;
@@ -291,12 +295,16 @@ try_define_items_state:
 			break;
 
 		case SSDFS_PEB_RELATION_PREPARATION: {
+				ktime_t timeout = KTIME_MAX;
 				DEFINE_WAIT(wait);
 
 				ssdfs_peb_container_unlock(pebc);
+				timeout = ktime_add_ns(ktime_get(),
+							jiffies_to_nsecs(HZ));
 				prepare_to_wait(&pebc->migration_wq, &wait,
-						TASK_UNINTERRUPTIBLE);
-				schedule();
+						TASK_INTERRUPTIBLE);
+				if (is_peb_preparing_migration(pebc))
+					schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 				finish_wait(&pebc->migration_wq, &wait);
 				ssdfs_peb_container_lock(pebc);
 				goto try_define_items_state;
@@ -1238,12 +1246,16 @@ check_migration_state:
 		break;
 
 	case SSDFS_PEB_FINISHING_MIGRATION: {
+			ktime_t timeout = KTIME_MAX;
 			DEFINE_WAIT(wait);
 
 			ssdfs_peb_container_unlock(pebc);
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
 			prepare_to_wait(&pebc->migration_wq, &wait,
-					TASK_UNINTERRUPTIBLE);
-			schedule();
+					TASK_INTERRUPTIBLE);
+			if (is_peb_preparing_migration(pebc))
+				schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 			finish_wait(&pebc->migration_wq, &wait);
 			ssdfs_peb_container_lock(pebc);
 			goto check_migration_state;

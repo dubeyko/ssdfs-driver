@@ -1017,6 +1017,7 @@ int ssdfs_maptbl_create(struct ssdfs_fs_info *fsi)
 	ptr->fsi = fsi;
 
 	init_rwsem(&ptr->tbl_lock);
+	init_completion(&ptr->flush_end);
 
 	atomic_set(&ptr->flags, le16_to_cpu(fsi->vh->maptbl.flags));
 	ptr->fragments_count = le32_to_cpu(fsi->vh->maptbl.fragments_count);
@@ -2058,8 +2059,9 @@ void ssdfs_sb_maptbl_header_correct_state(struct ssdfs_peb_mapping_table *tbl)
 	hdr->fragments_per_peb = cpu_to_le16(tbl->fragments_per_peb);
 
 	flags = atomic_read(&tbl->flags);
-	/* exclude run-time flags*/
+	/* exclude run-time flags */
 	flags &= ~SSDFS_MAPTBL_UNDER_FLUSH;
+	flags &= ~SSDFS_MAPTBL_START_MIGRATION;
 	hdr->flags = cpu_to_le16(flags);
 
 	pre_erase_pebs = atomic_read(&tbl->total_pre_erase_pebs);
@@ -4073,6 +4075,8 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 		return -EFAULT;
 	}
 
+	reinit_completion(&tbl->flush_end);
+
 	/*
 	 * This flag should be not included into the header.
 	 * The flag is used only during flush operation.
@@ -4080,6 +4084,7 @@ int ssdfs_maptbl_flush(struct ssdfs_peb_mapping_table *tbl)
 	 * state means the volume corruption.
 	 */
 	atomic_or(SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+	atomic_or(SSDFS_MAPTBL_START_MIGRATION, &tbl->flags);
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("prepare migration\n");
@@ -4111,6 +4116,8 @@ finish_prepare_migration:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finish prepare migration\n");
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	atomic_and(~SSDFS_MAPTBL_START_MIGRATION, &tbl->flags);
 
 	if (unlikely(err))
 		goto finish_maptbl_flush;
@@ -4193,6 +4200,7 @@ finish_prepare_migration:
 
 finish_maptbl_flush:
 	atomic_and(~SSDFS_MAPTBL_UNDER_FLUSH, &tbl->flags);
+	complete_all(&tbl->flush_end);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("finished\n");
@@ -5948,8 +5956,13 @@ int ssdfs_maptbl_convert_leb2peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (rwsem_is_locked(&tbl->tbl_lock) &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (rwsem_is_locked(&tbl->tbl_lock) &&
+		   atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			err = ssdfs_maptbl_cache_convert_leb2peb(cache, leb_id,
 								 pebr);
@@ -7010,7 +7023,11 @@ int ssdfs_maptbl_find_clean_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (index >= max) {
-			SSDFS_DBG("unable to find the clean unused peb\n");
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find the clean unused peb: "
+				  "index %lu, max %lu\n",
+				  index, max);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return -ENODATA;
 		}
 
@@ -7189,7 +7206,14 @@ int ssdfs_maptbl_find_pre_erased_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 				  index, found_cycles, threshold);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			if (is_peb_protected(index)) {
+			if (is_peb_protected(index) &&
+			    found_cycles >= threshold) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("IGNORE PROTECTED PEB: "
+					  "index %lu, found_cycles %u, "
+					  "threshold %u\n",
+					  index, found_cycles, threshold);
+#endif /* CONFIG_SSDFS_DEBUG */
 				/* continue to search */
 				*found = ULONG_MAX;
 			} else {
@@ -7322,6 +7346,16 @@ int __ssdfs_maptbl_find_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 							 start, max,
 							 threshold,
 							 found);
+		if (err == -ENODATA) {
+			err = ssdfs_maptbl_find_pre_erased_unused_peb(tbl,
+								    fdesc,
+								    hdr,
+								    folio_index,
+								    start, max,
+								    threshold,
+								    found);
+		}
+
 		if (err == -ENODATA) {
 			SSDFS_DBG("unable to find the unused peb\n");
 		} else if (unlikely(err)) {
@@ -7569,7 +7603,10 @@ u16 ssdfs_maptbl_select_unused_peb(struct ssdfs_peb_mapping_table *tbl,
 					   pebs_count, used_pebs,
 					   &found, &erase_cycles);
 	if (err == -ENODATA) {
-		SSDFS_DBG("unable to find the unused peb\n");
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find the unused peb: "
+			  "peb_goal %#x\n", peb_goal);
+#endif /* CONFIG_SSDFS_DEBUG */
 		return U16_MAX;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to find unused peb: "
@@ -8167,7 +8204,12 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("reserved_pebs %u\n",
 		  le16_to_cpu(hdr->reserved_pebs));
-	BUG_ON(fdesc->reserved_pebs > fdesc->lebs_count);
+	if (fdesc->reserved_pebs > fdesc->lebs_count) {
+		SSDFS_ERR("reserved_pebs %u > lebs_count %u\n",
+			  fdesc->reserved_pebs,
+			  fdesc->lebs_count);
+		BUG();
+	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
 finish_folio_processing:
@@ -8362,6 +8404,21 @@ int ssdfs_maptbl_map_leb2peb(struct ssdfs_fs_info *fsi,
 				__FILE__, __func__, __LINE__,
 				"maptbl has corrupted state\n");
 		return -EFAULT;
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("need wait flush ending: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
 	}
 
 	down_read(&tbl->tbl_lock);
@@ -9112,7 +9169,12 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
 
@@ -9133,6 +9195,14 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 			}
 
 			return err;
+		} else {
+			*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("need wait flush ending: "
+				  "leb_id %llu, peb_type %#x\n",
+				  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -EAGAIN;
 		}
 	}
 
@@ -9155,8 +9225,13 @@ int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (rwsem_is_locked(&tbl->tbl_lock) &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (rwsem_is_locked(&tbl->tbl_lock) &&
+		   atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_INCONSISTENT;
 
@@ -9587,7 +9662,12 @@ int ssdfs_maptbl_prepare_pre_erase_state(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		SSDFS_DBG("maptbl is under flush\n");
 		return -EBUSY;
 	}
@@ -10370,6 +10450,21 @@ int ssdfs_maptbl_add_migration_peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("need wait flush ending: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
+	}
+
 	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
@@ -11008,7 +11103,12 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 		return -EFAULT;
 	}
 
-	if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_PRE_DELETED;
 
@@ -11027,6 +11127,14 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 			}
 
 			return err;
+		} else {
+			*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("need wait flush ending: "
+				  "leb_id %llu, peb_type %#x\n",
+				  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -EAGAIN;
 		}
 	}
 
@@ -11051,8 +11159,13 @@ int ssdfs_maptbl_exclude_migration_peb(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (rwsem_is_locked(&tbl->tbl_lock) &&
-	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (rwsem_is_locked(&tbl->tbl_lock) &&
+		   atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
 		if (should_cache_peb_info(peb_type)) {
 			consistency = SSDFS_PEB_STATE_PRE_DELETED;
 
@@ -11899,6 +12012,21 @@ int ssdfs_maptbl_set_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -EFAULT;
 	}
 
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("need wait flush ending: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
+	}
+
 	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
@@ -12215,6 +12343,21 @@ int ssdfs_maptbl_set_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 				__FILE__, __func__, __LINE__,
 				"maptbl has corrupted state\n");
 		return -EFAULT;
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("need wait flush ending: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
 	}
 
 	if (should_cache_peb_info(peb_type)) {
@@ -12785,6 +12928,21 @@ int ssdfs_maptbl_break_indirect_relation(struct ssdfs_peb_mapping_table *tbl,
 		return -ERANGE;
 	}
 
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("need wait flush ending: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
+	}
+
 	if (should_cache_peb_info(peb_type)) {
 		struct ssdfs_maptbl_peb_relation prev_pebr;
 
@@ -13142,6 +13300,21 @@ int ssdfs_maptbl_break_zns_indirect_relation(struct ssdfs_peb_mapping_table *tbl
 				__FILE__, __func__, __LINE__,
 				"maptbl has corrupted state\n");
 		return -EFAULT;
+	}
+
+	if (peb_type == SSDFS_MAPTBL_MAPTBL_PEB_TYPE &&
+	    atomic_read(&tbl->flags) & SSDFS_MAPTBL_START_MIGRATION) {
+		/*
+		 * Continue logic
+		 */
+	} else if (atomic_read(&tbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH) {
+		*end = &tbl->flush_end;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("need wait flush ending: "
+			  "leb_id %llu, peb_type %#x\n",
+			  leb_id, peb_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -EAGAIN;
 	}
 
 	if (should_cache_peb_info(peb_type)) {

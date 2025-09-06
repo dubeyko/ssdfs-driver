@@ -177,7 +177,19 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 	pid_t pid;
 	const char *state = NULL;
 	const char *type = NULL;
+	int thread_state;
+	int unfinished_reqs;
+	int thread_err;
 	int i;
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_thread_call_stack *stack;
+	struct ssdfs_thread_execution_point *point;
+	u32 stack_size;
+	const char *file = NULL;
+	const char *function = NULL;
+	u32 code_line = U32_MAX;
+	int j;
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	for (i = 0; i < SSDFS_PEB_THREAD_TYPE_MAX; i++) {
 		if (!pebc->thread[i].task)
@@ -185,9 +197,46 @@ static ssize_t ssdfs_peb_threads_info_show(struct ssdfs_peb_attr *attr,
 		pid = task_pid_nr(pebc->thread[i].task);
 		state = get_task_state(pebc->thread[i].task);
 		type = thread_type_array[i];
+		thread_state = pebc->thread_state[i].state;
+#ifdef CONFIG_SSDFS_DEBUG
+		unfinished_reqs = pebc->thread_state[i].unfinished_reqs;
+#else
+		unfinished_reqs = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
+		thread_err = pebc->thread_state[i].err;
 		count += snprintf(buf + count, PAGE_SIZE - count,
-				  "%s: pid %d, state %s\n",
-				  type, pid, state);
+				  "%s: pid %d, state %s, "
+				  "thread_state %#x, unfinished_reqs %d, "
+				  "thread_err %d\n",
+				  type, pid, state,
+				  thread_state, unfinished_reqs,
+				  thread_err);
+#ifdef CONFIG_SSDFS_DEBUG
+		stack = &pebc->thread_state[i].call_stack;
+		stack_size = min_t(u32,
+				   (u32)SSDFS_CALL_STACK_CAPACITY,
+				   stack->count);
+		for (j = 0; j < stack_size; j++) {
+			point = &stack->points[j];
+
+			if (point->file)
+				file = point->file;
+			else
+				file = "UNKNOWN";
+
+			if (point->function)
+				function = point->function;
+			else
+				function = "UNKNOWN";
+
+			code_line = point->code_line;
+
+			count += snprintf(buf + count, PAGE_SIZE - count,
+					  "[%d] file %s, function %s, "
+					  "code_line %u\n",
+					  j, file, function, code_line);
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
 	}
 
 	return count;
@@ -715,6 +764,9 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 		case SSDFS_CUR_IDXNODE_SEG:
 			type = "CURRENT_INDEX_NODE_SEGMENT";
 			break;
+		case SSDFS_CUR_DATA_UPDATE_SEG:
+			type = "CURRENT_DATA_UPDATE_SEGMENT";
+			break;
 		default:
 			BUG();
 		}
@@ -746,7 +798,7 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 
 		count += snprintf(buf + count,
 				  PAGE_SIZE - count,
-				  "%s: seg_id %llu: < ",
+				  "%s: seg_id %llu: <",
 				  type, seg_id);
 
 		for (j = 0; j < real_seg->pebs_count; j++) {
@@ -756,7 +808,7 @@ ssize_t ssdfs_segments_current_segments_show(struct ssdfs_segments_attr *attr,
 			if (is_peb_joined_into_create_requests_queue(pebc)) {
 				count += snprintf(buf + count,
 						  PAGE_SIZE - count,
-						  "peb_index %u ",
+						  "peb_index %u",
 						  pebc->peb_index);
 			}
 		}

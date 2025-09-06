@@ -2438,41 +2438,39 @@ bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
 		goto finish_check_block_bmap;
 	}
 
-	if (free_pages == 0) {
-		if (invalid_pages == 0 && used_pages == 0) {
-			SSDFS_ERR("invalid state: "
-				  "free_pages %d, "
-				  "used_pages %d, "
-				  "invalid_pages %d, "
-				  "metadata_pages %d, "
-				  "pages_capacity %d, "
-				  "allocation_pool %d\n",
-				  free_pages,
-				  used_pages,
-				  invalid_pages,
-				  metadata_pages,
-				  pages_capacity,
-				  allocation_pool);
-			goto finish_check_block_bmap;
-		}
-	} else if (free_pages < allocation_pool) {
-		if (metadata_pages == 0 &&
-		    invalid_pages == 0 && used_pages == 0) {
-			SSDFS_ERR("invalid state: "
-				  "free_pages %d, "
-				  "used_pages %d, "
-				  "invalid_pages %d, "
-				  "metadata_pages %d, "
-				  "pages_capacity %d, "
-				  "allocation_pool %d\n",
-				  free_pages,
-				  used_pages,
-				  invalid_pages,
-				  metadata_pages,
-				  pages_capacity,
-				  allocation_pool);
-			goto finish_check_block_bmap;
-		}
+	if (free_pages > allocation_pool) {
+		SSDFS_ERR("invalid state: "
+			  "free_pages %d, "
+			  "used_pages %d, "
+			  "invalid_pages %d, "
+			  "metadata_pages %d, "
+			  "pages_capacity %d, "
+			  "allocation_pool %d\n",
+			  free_pages,
+			  used_pages,
+			  invalid_pages,
+			  metadata_pages,
+			  pages_capacity,
+			  allocation_pool);
+		goto finish_check_block_bmap;
+	}
+
+	if (free_pages == 0 && metadata_pages == 0 &&
+	    invalid_pages == 0 && used_pages == 0) {
+		SSDFS_ERR("invalid state: "
+			  "free_pages %d, "
+			  "used_pages %d, "
+			  "invalid_pages %d, "
+			  "metadata_pages %d, "
+			  "pages_capacity %d, "
+			  "allocation_pool %d\n",
+			  free_pages,
+			  used_pages,
+			  invalid_pages,
+			  metadata_pages,
+			  pages_capacity,
+			  allocation_pool);
+		goto finish_check_block_bmap;
 	}
 
 	is_balance_correct = true;

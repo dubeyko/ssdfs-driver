@@ -456,10 +456,11 @@ sleep_shextree_thread:
 	add_wait_queue(wait_queue, &wait);
 	while (!SHEXTREE_THREAD_WAKE_CONDITION(tree, id)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wait_queue, &wait);
 	goto repeat;
@@ -685,10 +686,11 @@ sleep_shextree_thread:
 	add_wait_queue(wait_queue, &wait);
 	while (!SHEXTREE_THREAD_WAKE_CONDITION(tree, id)) {
 		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
 			break;
+		} else {
+			wait_woken(&wait, TASK_INTERRUPTIBLE,
+				   SSDFS_DEFAULT_TIMEOUT);
 		}
-		wait_woken(&wait, TASK_INTERRUPTIBLE, SSDFS_DEFAULT_TIMEOUT);
 	}
 	remove_wait_queue(wait_queue, &wait);
 	goto repeat;

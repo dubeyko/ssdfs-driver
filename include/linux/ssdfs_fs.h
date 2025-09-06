@@ -239,7 +239,8 @@ struct ssdfs_maptbl_sb_header {
 #define SSDFS_MAPTBL_MAKE_ZLIB_COMPR	(1 << 2)
 #define SSDFS_MAPTBL_MAKE_LZO_COMPR	(1 << 3)
 #define SSDFS_MAPTBL_UNDER_FLUSH	(1 << 4)
-#define SSDFS_MAPTBL_FLAGS_MASK		(0x1F)
+#define SSDFS_MAPTBL_START_MIGRATION	(1 << 5)
+#define SSDFS_MAPTBL_FLAGS_MASK		(0x3F)
 
 /*
  * struct ssdfs_btree_descriptor - generic btree descriptor
@@ -629,7 +630,7 @@ enum {
 	SSDFS_CUR_LNODE_SEG,
 	SSDFS_CUR_HNODE_SEG,
 	SSDFS_CUR_IDXNODE_SEG,
-	SSDFS_CUR_DATA_UPDATE_SEG,	/* ZNS SSD case */
+	SSDFS_CUR_DATA_UPDATE_SEG,
 	SSDFS_CUR_SEGS_COUNT,
 };
 

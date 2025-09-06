@@ -318,12 +318,14 @@ again:
 	}
 
 	if (atomic_read(alloc_workspace) > cpus) {
+		ktime_t timeout = KTIME_MAX;
 		DEFINE_WAIT(wait);
 
 		spin_unlock(workspace_lock);
-		prepare_to_wait(workspace_wait, &wait, TASK_UNINTERRUPTIBLE);
+		timeout = ktime_add_ns(ktime_get(), jiffies_to_nsecs(HZ));
+		prepare_to_wait(workspace_wait, &wait, TASK_INTERRUPTIBLE);
 		if (atomic_read(alloc_workspace) > cpus)
-			schedule();
+			schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
 		finish_wait(workspace_wait, &wait);
 		goto again;
 	}

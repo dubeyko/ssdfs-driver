@@ -153,6 +153,7 @@ struct ssdfs_maptbl_area {
  * @dirty_bmap: bitmap of dirty fragments
  * @desc_array: array of fragment descriptors
  * @wait_queue: wait queue of mapping table's thread
+ * @flush_end: wait of flush ending
  * @thread: descriptor of mapping table's thread
  * @fsi: pointer on shared file system object
  */
@@ -189,6 +190,7 @@ struct ssdfs_peb_mapping_table {
 	struct ssdfs_maptbl_fragment_desc *desc_array;
 
 	wait_queue_head_t wait_queue;
+	struct completion flush_end;
 	struct ssdfs_thread_info thread;
 	struct ssdfs_fs_info *fsi;
 };
@@ -541,6 +543,12 @@ static inline
 bool is_ssdfs_maptbl_under_flush(struct ssdfs_fs_info *fsi)
 {
 	return atomic_read(&fsi->maptbl->flags) & SSDFS_MAPTBL_UNDER_FLUSH;
+}
+
+static inline
+bool is_ssdfs_maptbl_start_migration(struct ssdfs_fs_info *fsi)
+{
+	return atomic_read(&fsi->maptbl->flags) & SSDFS_MAPTBL_START_MIGRATION;
 }
 
 /*

@@ -661,7 +661,7 @@ static int ssdfs_find_latest_valid_sb_snap_info(struct ssdfs_fs_info *fsi)
 	err = ssdfs_read_checked_sb_info2(fsi, peb, peb_pages_off, true,
 					  &found_log_off);
 
-	if (err == -EIO || err == -ENOENT) {
+	if (err == -EIO || err == -ENOENT || err == -ENODATA) {
 		/* previous read log was valid */
 		err = -ENOENT;
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2435,7 +2435,7 @@ static int ssdfs_initialize_fs_info(struct ssdfs_fs_info *fsi)
 	if (err)
 		return err;
 
-	if (fsi->leb_pages_capacity >= U16_MAX) {
+	if (fsi->leb_pages_capacity > U16_MAX) {
 #ifdef CONFIG_SSDFS_TESTING
 		SSDFS_DBG("Continue in testing mode: "
 			  "leb_pages_capacity %u, peb_pages_capacity %u\n",

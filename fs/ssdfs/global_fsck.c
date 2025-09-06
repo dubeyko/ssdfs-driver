@@ -464,9 +464,7 @@ sleep_fsck_thread:
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	add_wait_queue(wait_queue, &wait);
 	if (!GLOBAL_FSCK_THREAD_WAKE_CONDITION(fsi)) {
-		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
-		} else {
+		if (!signal_pending(current)) {
 			wait_woken(&wait, TASK_INTERRUPTIBLE,
 				   SSDFS_DEFAULT_TIMEOUT);
 		}

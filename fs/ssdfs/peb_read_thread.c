@@ -14821,9 +14821,7 @@ sleep_read_thread:
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
 	add_wait_queue(wait_queue, &wait);
 	if (!READ_THREAD_WAKE_CONDITION(pebc)) {
-		if (signal_pending(current)) {
-			err = -ERESTARTSYS;
-		} else {
+		if (!signal_pending(current)) {
 			wait_woken(&wait, TASK_INTERRUPTIBLE, timeout);
 		}
 	}

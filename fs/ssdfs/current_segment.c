@@ -570,6 +570,18 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 		return -ENOSPC;
 	}
 
+	if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG) {
+		if (search_state->result.used_pages > 0 ||
+		    search_state->result.free_pages < (fsi->pages_per_seg / 2) ||
+		    atomic_read(&si->migration.migrating_pebs) > 0) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("segment %llu can't be used as current\n",
+				  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return -ENOSPC;
+		}
+	}
+
 	err = ssdfs_segment_select_flush_threads(si, &max_free_pages);
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG

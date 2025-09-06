@@ -806,6 +806,7 @@ ssdfs_btree_node_create(struct ssdfs_btree *tree,
 	ptr->bmap_array.bmap_bytes = 0;
 	ptr->bmap_array.index_start_bit = ULONG_MAX;
 	ptr->bmap_array.item_start_bit = ULONG_MAX;
+	atomic_set(&ptr->bmap_array.locks_count, 0);
 	for (i = 0; i < SSDFS_BTREE_NODE_BMAP_COUNT; i++) {
 		spin_lock_init(&ptr->bmap_array.bmap[i].lock);
 		ptr->bmap_array.bmap[i].flags = 0;
@@ -5442,7 +5443,6 @@ static
 int __ssdfs_lock_index_range(struct ssdfs_btree_node *node,
 				u16 start_index, u16 count)
 {
-	DEFINE_WAIT(wait);
 	struct ssdfs_state_bitmap *bmap;
 	unsigned long start_area;
 	unsigned long upper_bound;
@@ -5491,22 +5491,32 @@ try_lock_area:
 	}
 
 	if (err == -EBUSY) {
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+
 		err = 0;
 		bitmap_clear(bmap->ptr, start_area + start_index, i);
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
+		spin_unlock(&bmap->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("waiting unlocked state of item %u\n",
 			   start_index + i);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		spin_unlock(&bmap->lock);
+		add_wait_queue(&node->wait_queue, &wait);
+		while (atomic_read(&node->bmap_array.locks_count) > 0) {
+			if (signal_pending(current)) {
+				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
+			}
+		}
+		remove_wait_queue(&node->wait_queue, &wait);
 
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
 		goto try_lock_area;
 	}
+
+	atomic_inc(&node->bmap_array.locks_count);
 
 	spin_unlock(&bmap->lock);
 
@@ -5647,6 +5657,7 @@ void __ssdfs_unlock_index_range(struct ssdfs_btree_node *node,
 
 	spin_lock(&bmap->lock);
 	bitmap_clear(bmap->ptr, start_area + start_index, count);
+	atomic_dec(&node->bmap_array.locks_count);
 	spin_unlock(&bmap->lock);
 }
 
@@ -13564,7 +13575,6 @@ int ssdfs_copy_item_in_buffer(struct ssdfs_btree_node *node,
 			      size_t item_size,
 			      struct ssdfs_btree_search *search)
 {
-	DEFINE_WAIT(wait);
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_state_bitmap *bmap;
 	struct ssdfs_smart_folio folio;
@@ -13625,21 +13635,32 @@ try_lock_area:
 
 	err = bitmap_allocate_region(bmap->ptr, (unsigned int)index, 0);
 	if (err == -EBUSY) {
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+
 		err = 0;
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
+
+		spin_unlock(&bmap->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("waiting unlocked state of item %u\n",
 			   index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		spin_unlock(&bmap->lock);
+		add_wait_queue(&node->wait_queue, &wait);
+		while (atomic_read(&node->bmap_array.locks_count) > 0) {
+			if (signal_pending(current)) {
+				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
+			}
+		}
+		remove_wait_queue(&node->wait_queue, &wait);
 
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
 		goto try_lock_area;
 	}
+
+	atomic_inc(&node->bmap_array.locks_count);
 
 	spin_unlock(&bmap->lock);
 
@@ -13698,6 +13719,7 @@ unlock_area:
 	down_read(&node->bmap_array.lock);
 	spin_lock(&bmap->lock);
 	bitmap_clear(bmap->ptr, (unsigned int)index, 1);
+	atomic_dec(&node->bmap_array.locks_count);
 	spin_unlock(&bmap->lock);
 	up_read(&node->bmap_array.lock);
 
@@ -13729,7 +13751,6 @@ finish_copy_item:
 int ssdfs_lock_items_range(struct ssdfs_btree_node *node,
 			   u16 start_index, u16 count)
 {
-	DEFINE_WAIT(wait);
 	struct ssdfs_state_bitmap *bmap;
 	unsigned long start_area;
 	int i = 0;
@@ -13770,22 +13791,32 @@ try_lock_area:
 	}
 
 	if (err == -EBUSY) {
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+
 		err = 0;
 		bitmap_clear(bmap->ptr, start_area + start_index, i);
-		prepare_to_wait(&node->wait_queue, &wait,
-				TASK_UNINTERRUPTIBLE);
+		spin_unlock(&bmap->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("waiting unlocked state of item %u\n",
 			   start_index + i);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		spin_unlock(&bmap->lock);
+		add_wait_queue(&node->wait_queue, &wait);
+		while (atomic_read(&node->bmap_array.locks_count) > 0) {
+			if (signal_pending(current)) {
+				break;
+			} else {
+				wait_woken(&wait, TASK_INTERRUPTIBLE,
+					   SSDFS_DEFAULT_TIMEOUT);
+			}
+		}
+		remove_wait_queue(&node->wait_queue, &wait);
 
-		schedule();
-		finish_wait(&node->wait_queue, &wait);
 		goto try_lock_area;
 	}
+
+	atomic_inc(&node->bmap_array.locks_count);
 
 	spin_unlock(&bmap->lock);
 
@@ -13826,6 +13857,7 @@ void ssdfs_unlock_items_range(struct ssdfs_btree_node *node,
 
 	spin_lock(&bmap->lock);
 	bitmap_clear(bmap->ptr, start_area + start_index, count);
+	atomic_dec(&node->bmap_array.locks_count);
 	spin_unlock(&bmap->lock);
 
 	up_read(&node->bmap_array.lock);
@@ -14569,7 +14601,6 @@ int __ssdfs_extract_range_by_lookup_index(struct ssdfs_btree_node *node,
 				ssdfs_prepare_result_buffer prepare_buffer,
 				ssdfs_extract_found_item extract_item)
 {
-	DEFINE_WAIT(wait);
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_state_bitmap *bmap;
 	struct ssdfs_smart_folio folio;
@@ -14685,21 +14716,32 @@ try_lock_checking_item:
 		err = bitmap_allocate_region(bmap->ptr,
 					     (unsigned int)start_index, 0);
 		if (err == -EBUSY) {
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
+
 			err = 0;
-			prepare_to_wait(&node->wait_queue, &wait,
-					TASK_UNINTERRUPTIBLE);
+
+			spin_unlock(&bmap->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("waiting unlocked state of item %lu\n",
 				   start_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			spin_unlock(&bmap->lock);
+			add_wait_queue(&node->wait_queue, &wait);
+			while (atomic_read(&node->bmap_array.locks_count) > 0) {
+				if (signal_pending(current)) {
+					break;
+				} else {
+					wait_woken(&wait, TASK_INTERRUPTIBLE,
+						   SSDFS_DEFAULT_TIMEOUT);
+				}
+			}
+			remove_wait_queue(&node->wait_queue, &wait);
 
-			schedule();
-			finish_wait(&node->wait_queue, &wait);
 			goto try_lock_checking_item;
 		}
+
+		atomic_inc(&node->bmap_array.locks_count);
 
 		spin_unlock(&bmap->lock);
 
@@ -14738,6 +14780,7 @@ try_lock_checking_item:
 		down_read(&node->bmap_array.lock);
 		spin_lock(&bmap->lock);
 		bitmap_clear(bmap->ptr, (unsigned int)start_index, 1);
+		atomic_dec(&node->bmap_array.locks_count);
 		spin_unlock(&bmap->lock);
 		up_read(&node->bmap_array.lock);
 
@@ -14872,21 +14915,32 @@ try_lock_extracting_item:
 		err = bitmap_allocate_region(bmap->ptr,
 					     (unsigned int)start_index, 0);
 		if (err == -EBUSY) {
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
+
 			err = 0;
-			prepare_to_wait(&node->wait_queue, &wait,
-					TASK_UNINTERRUPTIBLE);
+
+			spin_unlock(&bmap->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("waiting unlocked state of item %lu\n",
 				   start_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			spin_unlock(&bmap->lock);
+			add_wait_queue(&node->wait_queue, &wait);
+			while (atomic_read(&node->bmap_array.locks_count) > 0) {
+				if (signal_pending(current)) {
+					break;
+				} else {
+					wait_woken(&wait, TASK_INTERRUPTIBLE,
+						   SSDFS_DEFAULT_TIMEOUT);
+				}
+			}
+			remove_wait_queue(&node->wait_queue, &wait);
 
-			schedule();
-			finish_wait(&node->wait_queue, &wait);
 			goto try_lock_extracting_item;
 		}
+
+		atomic_inc(&node->bmap_array.locks_count);
 
 		spin_unlock(&bmap->lock);
 
@@ -14928,6 +14982,7 @@ try_lock_extracting_item:
 		down_read(&node->bmap_array.lock);
 		spin_lock(&bmap->lock);
 		bitmap_clear(bmap->ptr, (unsigned int)start_index, 1);
+		atomic_dec(&node->bmap_array.locks_count);
 		spin_unlock(&bmap->lock);
 		up_read(&node->bmap_array.lock);
 
@@ -16908,7 +16963,6 @@ int __ssdfs_btree_node_extract_range(struct ssdfs_btree_node *node,
 				     size_t item_size,
 				     struct ssdfs_btree_search *search)
 {
-	DEFINE_WAIT(wait);
 	struct ssdfs_fs_info *fsi;
 	struct ssdfs_btree *tree;
 	struct ssdfs_btree_node_items_area items_area;
@@ -17152,21 +17206,32 @@ try_lock_item:
 		err = bitmap_allocate_region(bmap->ptr,
 					     (unsigned int)cur_index, 0);
 		if (err == -EBUSY) {
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
+
 			err = 0;
-			prepare_to_wait(&node->wait_queue, &wait,
-					TASK_UNINTERRUPTIBLE);
+
+			spin_unlock(&bmap->lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("waiting unlocked state of item %lu\n",
 				  cur_index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-			spin_unlock(&bmap->lock);
+			add_wait_queue(&node->wait_queue, &wait);
+			while (atomic_read(&node->bmap_array.locks_count) > 0) {
+				if (signal_pending(current)) {
+					break;
+				} else {
+					wait_woken(&wait, TASK_INTERRUPTIBLE,
+						   SSDFS_DEFAULT_TIMEOUT);
+				}
+			}
+			remove_wait_queue(&node->wait_queue, &wait);
 
-			schedule();
-			finish_wait(&node->wait_queue, &wait);
 			goto try_lock_item;
 		}
+
+		atomic_inc(&node->bmap_array.locks_count);
 
 		spin_unlock(&bmap->lock);
 
@@ -17203,6 +17268,7 @@ try_lock_item:
 		down_read(&node->bmap_array.lock);
 		spin_lock(&bmap->lock);
 		bitmap_clear(bmap->ptr, (unsigned int)cur_index, 1);
+		atomic_dec(&node->bmap_array.locks_count);
 		spin_unlock(&bmap->lock);
 		up_read(&node->bmap_array.lock);
 

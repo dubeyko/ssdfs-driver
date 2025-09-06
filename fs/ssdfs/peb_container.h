@@ -72,6 +72,29 @@ enum {
 };
 
 /*
+ * struct ssdfs_thread_execution_point - execution point in thread logic
+ * @file: file name
+ * @function: function name
+ * @code_line: line number
+ */
+struct ssdfs_thread_execution_point {
+	const char *file;
+	const char *function;
+	u32 code_line;
+};
+
+/*
+ * struct ssdfs_thread_call_stack - thread's call stack
+ * @points: execution points array
+ * @count: current number of execution points in array
+ */
+struct ssdfs_thread_call_stack {
+#define SSDFS_CALL_STACK_CAPACITY	(16)
+	struct ssdfs_thread_execution_point points[SSDFS_CALL_STACK_CAPACITY];
+	u32 count;
+};
+
+/*
  * struct ssdfs_thread_state - PEB container's thread state
  * @state: current state of the thread
  * @req: pointer on segment request
@@ -91,6 +114,7 @@ struct ssdfs_thread_state {
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_thread_call_stack call_stack;
 	int unfinished_reqs;
 #endif /* CONFIG_SSDFS_DEBUG */
 };
@@ -262,6 +286,24 @@ bool is_ssdfs_peb_containing_user_data(struct ssdfs_peb_container *pebc)
 }
 
 static inline
+void SSDFS_THREAD_CALL_STACK_INIT(struct ssdfs_thread_call_stack *call_stack)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_thread_execution_point *point;
+	int i;
+
+	for (i = 0; i < SSDFS_CALL_STACK_CAPACITY; i++) {
+		point = &call_stack->points[i];
+		point->file = NULL;
+		point->function = NULL;
+		point->code_line = U32_MAX;
+	}
+
+	call_stack->count = 0;
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+static inline
 void SSDFS_THREAD_STATE_INIT(struct ssdfs_thread_state *thread_state)
 {
 	thread_state->state = SSDFS_THREAD_UNKNOWN_STATE;
@@ -272,6 +314,7 @@ void SSDFS_THREAD_STATE_INIT(struct ssdfs_thread_state *thread_state)
 	thread_state->err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_THREAD_CALL_STACK_INIT(&thread_state->call_stack);
 	thread_state->unfinished_reqs = 0;
 #endif /* CONFIG_SSDFS_DEBUG */
 }
@@ -413,6 +456,92 @@ bool can_peb_receive_new_blocks(struct ssdfs_fs_info *fsi,
 	}
 
 	return true;
+}
+
+/*
+ * is_peb_preparing_migration() - check that PEB preparing migration
+ * @pebc: pointer on PEB container
+ */
+static inline
+bool is_peb_preparing_migration(struct ssdfs_peb_container *pebc)
+{
+	bool is_preparing = false;
+
+	switch (atomic_read(&pebc->migration_state)) {
+	case SSDFS_PEB_MIGRATION_PREPARATION:
+	case SSDFS_PEB_RELATION_PREPARATION:
+	case SSDFS_PEB_FINISHING_MIGRATION:
+		is_preparing = true;
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return is_preparing;
+}
+
+/*
+ * ssdfs_thread_call_stack_remember() - remember execution point
+ * @stack: thread's call stack
+ * @file: file name pointer
+ * @function: function name pointer
+ * @code_line: code line in file
+ */
+static inline
+void ssdfs_thread_call_stack_remember(struct ssdfs_thread_call_stack *stack,
+					const char *file,
+					const char *function,
+					u32 code_line)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_thread_execution_point *point;
+
+	if (stack->count < SSDFS_CALL_STACK_CAPACITY) {
+		if (stack->count > 0) {
+			point = &stack->points[stack->count - 1];
+
+			if (point->function && function) {
+				if (strcmp(point->function, function) == 0)
+					point->code_line = code_line;
+				else
+					goto process_new_execution_point;
+			} else
+				goto process_new_execution_point;
+		} else {
+process_new_execution_point:
+			point = &stack->points[stack->count];
+			point->file = file;
+			point->function = function;
+			point->code_line = code_line;
+			stack->count++;
+		}
+	} else
+		stack->count++;
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/*
+ * ssdfs_thread_call_stack_forget() - forget execution point
+ * @stack: thread's call stack
+ */
+static inline
+void ssdfs_thread_call_stack_forget(struct ssdfs_thread_call_stack *stack)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	struct ssdfs_thread_execution_point *point;
+
+	stack->count--;
+
+	if (stack->count < SSDFS_CALL_STACK_CAPACITY) {
+		point = &stack->points[stack->count];
+
+		point->file = NULL;
+		point->function = NULL;
+		point->code_line = U32_MAX;
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 }
 
 /*

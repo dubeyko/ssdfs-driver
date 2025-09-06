@@ -597,7 +597,11 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		err = ssdfs_btree_add_node(&ptr->generic_tree, search);
-		if (unlikely(err)) {
+		if (err == -ENOSPC) {
+			SSDFS_DBG("no free space: err %d\n",
+				  err);
+			goto free_search_object;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add the node: err %d\n",
 				  err);
 			goto free_search_object;
