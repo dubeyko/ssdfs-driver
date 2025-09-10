@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.31 [September 09, 2025]
+    (*) Add showing of segment bitmap's fragments' content in sysfs.
+
 v.5.30 [September 05, 2025]
     (*) Fix multiple issues in mapping table, flush thread logic,
         and synchronization mechanisms.

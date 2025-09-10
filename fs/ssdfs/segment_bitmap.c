@@ -593,8 +593,11 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 
 	ptr->desc_array = (struct ssdfs_segbmap_fragment_desc *)kaddr;
 
-	for (i = 0; i < ptr->fragments_count; i++)
+	for (i = 0; i < ptr->fragments_count; i++) {
+		ptr->desc_array[i].fragment_id = i;
 		init_completion(&ptr->desc_array[i].init_end);
+		ptr->desc_array[i].segbmap = ptr;
+	}
 
 	err = ssdfs_create_folio_array(&ptr->folios,
 					get_order(PAGE_SIZE),
@@ -691,6 +694,13 @@ int ssdfs_segbmap_create(struct ssdfs_fs_info *fsi)
 	err = ssdfs_segbmap_init(ptr);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to init segment bitmap: err %d\n",
+			  err);
+		goto destroy_seg_objects;
+	}
+
+	err = ssdfs_sysfs_create_segbmap_group(fsi);
+	if (err) {
+		SSDFS_ERR("fail to create segbmap sysfs group: err %d\n",
 			  err);
 		goto destroy_seg_objects;
 	}
@@ -828,6 +838,8 @@ void ssdfs_segbmap_destroy(struct ssdfs_fs_info *fsi)
 	/*
 	 * Start destruction
 	 */
+	ssdfs_sysfs_delete_segbmap_group(fsi);
+
 	down_write(&fsi->segbmap->resize_lock);
 	down_write(&fsi->segbmap->search_lock);
 

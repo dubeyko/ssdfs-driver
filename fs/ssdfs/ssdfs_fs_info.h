@@ -699,6 +699,10 @@ struct ssdfs_fs_info {
 	struct kobject segbmap_kobj;
 	struct completion segbmap_kobj_unregister;
 
+	/* /sys/fs/<ssdfs>/<device>/segbmap/fragments */
+	struct kobject segbmap_frags_kobj;
+	struct completion segbmap_frags_kobj_unregister;
+
 	/* /sys/fs/<ssdfs>/<device>/segments */
 	struct kobject segments_kobj;
 	struct completion segments_kobj_unregister;

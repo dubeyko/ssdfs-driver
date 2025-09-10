@@ -71,18 +71,25 @@ enum {
 #define SSDFS_SEG_STATE_BITS	4
 #define SSDFS_SEG_STATE_MASK	0xF
 
+struct ssdfs_segment_bmap;
+
 /*
  * struct ssdfs_segbmap_fragment_desc - fragment descriptor
  * @state: fragment's state
+ * @fragment_id: fragment's ID in the whole sequence
  * @total_segs: total count of segments in fragment
  * @clean_or_using_segs: count of clean or using segments in fragment
  * @used_or_dirty_segs: count of used, pre-dirty, dirty or reserved segments
  * @bad_segs: count of bad segments in fragment
  * @init_end: wait of init ending
  * @flush_pairs: array of flush requests
+ * @segbmap: pointer on segment bitmap object
+ * @frag_kobj: fragment kobject for sysfs
+ * @frag_kobj_unregister: completion for fragment kobject cleanup
  */
 struct ssdfs_segbmap_fragment_desc {
 	int state;
+	u16 fragment_id;
 	u16 total_segs;
 	u16 clean_or_using_segs;
 	u16 used_or_dirty_segs;
@@ -94,6 +101,12 @@ struct ssdfs_segbmap_fragment_desc {
 		struct ssdfs_segment_info *si;
 		struct ssdfs_segment_request req;
 	} flush_pairs[SSDFS_SEGBMAP_FLUSH_REQS_MAX];
+
+	struct ssdfs_segment_bmap *segbmap;
+
+	/* /sys/fs/<ssdfs>/<device>/segbmap/fragments/fragment<N> */
+	struct kobject frag_kobj;
+	struct completion frag_kobj_unregister;
 };
 
 /* Fragment's state */

@@ -908,6 +908,1683 @@ static void ssdfs_sysfs_delete_segments_group(struct ssdfs_fs_info *fsi)
 }
 
 /************************************************************************
+ *                      SSDFS segbmap fragment attrs                   *
+ ************************************************************************/
+
+static ssize_t
+ssdfs_segbmap_frag_id_show(struct ssdfs_segbmap_frag_attr *attr,
+			   struct ssdfs_segbmap_fragment_desc *fdesc,
+			   char *buf)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	u16 fragment_id;
+
+	segbmap = fdesc->segbmap;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	fragment_id = fdesc->fragment_id;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", fragment_id);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_state_show(struct ssdfs_segbmap_frag_attr *attr,
+			      struct ssdfs_segbmap_fragment_desc *fdesc,
+			      char *buf)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	int state;
+	const char *state_name;
+
+	segbmap = fdesc->segbmap;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	state = fdesc->state;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	switch (state) {
+	case SSDFS_SEGBMAP_FRAG_CREATED:
+		state_name = "CREATED";
+		break;
+	case SSDFS_SEGBMAP_FRAG_INIT_FAILED:
+		state_name = "INIT_FAILED";
+		break;
+	case SSDFS_SEGBMAP_FRAG_INITIALIZED:
+		state_name = "INITIALIZED";
+		break;
+	case SSDFS_SEGBMAP_FRAG_DIRTY:
+		state_name = "DIRTY";
+		break;
+	case SSDFS_SEGBMAP_FRAG_TOWRITE:
+		state_name = "TOWRITE";
+		break;
+	default:
+		state_name = "UNKNOWN";
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", state_name);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_total_segs_show(struct ssdfs_segbmap_frag_attr *attr,
+				   struct ssdfs_segbmap_fragment_desc *fdesc,
+				   char *buf)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	u16 total_segs;
+
+	segbmap = fdesc->segbmap;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	total_segs = fdesc->total_segs;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", total_segs);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_clean_or_using_segs_show(struct ssdfs_segbmap_frag_attr *attr,
+					struct ssdfs_segbmap_fragment_desc *fdesc,
+					char *buf)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	u16 clean_or_using_segs;
+
+	segbmap = fdesc->segbmap;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	clean_or_using_segs = fdesc->clean_or_using_segs;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", clean_or_using_segs);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_used_or_dirty_segs_show(struct ssdfs_segbmap_frag_attr *attr,
+					   struct ssdfs_segbmap_fragment_desc *fdesc,
+					   char *buf)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	u16 used_or_dirty_segs;
+
+	segbmap = fdesc->segbmap;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	used_or_dirty_segs = fdesc->used_or_dirty_segs;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", used_or_dirty_segs);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bad_segs_show(struct ssdfs_segbmap_frag_attr *attr,
+				 struct ssdfs_segbmap_fragment_desc *fdesc,
+				 char *buf)
+{
+	struct ssdfs_segment_bmap *segbmap;
+	u16 bad_segs;
+
+	segbmap = fdesc->segbmap;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	bad_segs = fdesc->bad_segs;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", bad_segs);
+}
+
+#define SSDFS_SEGBMAP_OUTPUT_THRESHOLD1		(PAGE_SIZE - 300)
+#define SSDFS_SEGBMAP_OUTPUT_THRESHOLD2		(PAGE_SIZE - 200)
+#define SSDFS_SEGBMAP_OUTPUT_THRESHOLD3		(PAGE_SIZE - 100)
+#define SSDFS_SEGBMAP_OUTPUT_THRESHOLD4		(PAGE_SIZE - 150)
+#define SSDFS_SEGBMAP_OUTPUT_CHARS_PER_LINE	(35)
+
+static ssize_t
+ssdfs_segbmap_frag_sections_count_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_bmap *segbmap;
+	u32 sections_count = 0;
+	u32 entries_per_section;
+	u32 total_entries;
+
+	segbmap = fdesc->segbmap;
+	if (!segbmap) {
+		SSDFS_ERR("segment bitmap is NULL\n");
+		return snprintf(buf, PAGE_SIZE, "0\n");
+	}
+
+	fsi = segbmap->fsi;
+
+	if (fdesc->state < SSDFS_SEGBMAP_FRAG_INITIALIZED) {
+		return snprintf(buf, PAGE_SIZE, "0\n");
+	}
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+
+	if (fdesc->fragment_id >= segbmap->fragments_count) {
+		up_read(&segbmap->search_lock);
+		up_read(&segbmap->resize_lock);
+		return snprintf(buf, PAGE_SIZE, "0\n");
+	}
+
+	total_entries = fdesc->total_segs;
+	/* Each segment line takes ~35 chars, so ~115 segments per section */
+	entries_per_section =
+		SSDFS_SEGBMAP_OUTPUT_THRESHOLD2 /
+			SSDFS_SEGBMAP_OUTPUT_CHARS_PER_LINE;
+	sections_count =
+		(total_entries + entries_per_section - 1) / entries_per_section;
+
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", sections_count);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc,
+					int section_index,
+					char *buf)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_bmap *segbmap;
+	struct ssdfs_segbmap_fragment_header *hdr;
+	struct folio *folio;
+	void *kaddr;
+	u8 *bitmap;
+	const char *state_name;
+	u32 items_per_fragment;
+	u32 hdr_size = sizeof(struct ssdfs_segbmap_fragment_header);
+	u32 items_per_byte = SSDFS_ITEMS_PER_BYTE(SSDFS_SEG_STATE_BITS);
+	u16 fragment_id = fdesc->fragment_id;
+	u32 entries_per_section = SSDFS_SEGBMAP_OUTPUT_THRESHOLD2 /
+					SSDFS_SEGBMAP_OUTPUT_CHARS_PER_LINE;
+	u32 section_start = section_index * entries_per_section;
+	u32 section_end;
+	int count = 0;
+	u8 byte_value;
+	u8 seg_state;
+	u32 seg_index;
+	u32 i, j;
+	int err = 0;
+
+	segbmap = fdesc->segbmap;
+	if (!segbmap) {
+		SSDFS_ERR("segment bitmap is NULL\n");
+		return snprintf(buf, PAGE_SIZE, "Fragment bitmap not available\n");
+	}
+
+	fsi = segbmap->fsi;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+
+	if (fdesc->fragment_id >= segbmap->fragments_count) {
+		err = -ERANGE;
+		SSDFS_ERR("fragment_id %u >= fragments_count %u\n",
+			  fdesc->fragment_id, segbmap->fragments_count);
+		goto finish_show_bitmap;
+	}
+
+	folio = ssdfs_folio_array_get_folio_locked(&segbmap->folios,
+						   fragment_id);
+	if (IS_ERR_OR_NULL(folio)) {
+		err = folio == NULL ? -ERANGE : PTR_ERR(folio);
+		SSDFS_ERR("fail to find folio: fragment_id %u, err %d\n",
+			  fragment_id, err);
+		goto finish_show_bitmap;
+	}
+
+	kaddr = kmap_local_folio(folio, 0);
+
+	hdr = (struct ssdfs_segbmap_fragment_header *)kaddr;
+
+	if (le16_to_cpu(hdr->magic) != SSDFS_SEGBMAP_HDR_MAGIC) {
+		count += snprintf(buf + count, PAGE_SIZE - count,
+				  "INVALID MAGIC (0x%x != 0x%x)\n",
+				  le16_to_cpu(hdr->magic),
+				  SSDFS_SEGBMAP_HDR_MAGIC);
+		goto finish_folio;
+	}
+
+	items_per_fragment =
+		ssdfs_segbmap_items_per_fragment(segbmap->fragment_size);
+	items_per_fragment =
+		min_t(u32, items_per_fragment, le16_to_cpu(hdr->total_segs));
+
+	section_end =
+		min_t(u32, section_start + entries_per_section,
+							items_per_fragment);
+
+	if (section_start >= items_per_fragment) {
+		count = snprintf(buf + count, PAGE_SIZE - count,
+				 "Section %d out of range\n", section_index);
+		goto finish_folio;
+	}
+
+	count += snprintf(buf + count, PAGE_SIZE - count,
+			  "SEGMENT BITMAP FRAGMENT %u SECTION %d (segments %u-%u):\n",
+			  fragment_id, section_index,
+			  section_start, section_end - 1);
+	count += snprintf(buf + count, PAGE_SIZE - count,
+			  "  Header: magic=0x%x, seg_index=%u, peb_index=%u\n",
+			  le16_to_cpu(hdr->magic),
+			  le16_to_cpu(hdr->seg_index),
+			  le16_to_cpu(hdr->peb_index));
+	count += snprintf(buf + count, PAGE_SIZE - count,
+			  "  Total segments: %u, Clean/Using: %u, Used/Dirty: %u, Bad: %u\n",
+			  le16_to_cpu(hdr->total_segs),
+			  le16_to_cpu(hdr->clean_or_using_segs),
+			  le16_to_cpu(hdr->used_or_dirty_segs),
+			  le16_to_cpu(hdr->bad_segs));
+
+	bitmap = (u8 *)kaddr + hdr_size;
+
+	for (i = section_start;
+	     i < section_end && count < SSDFS_SEGBMAP_OUTPUT_THRESHOLD3; i++) {
+		if (i >= items_per_fragment)
+			break;
+
+		seg_index = i;
+		j = i % items_per_byte;
+		byte_value = bitmap[i / items_per_byte];
+		seg_state = byte_value >> (j * SSDFS_SEG_STATE_BITS);
+		seg_state &= SSDFS_SEG_STATE_MASK;
+
+		switch (seg_state) {
+		case SSDFS_SEG_CLEAN:
+			state_name = "CLEAN";
+			break;
+		case SSDFS_SEG_DATA_USING:
+			state_name = "DATA_USING";
+			break;
+		case SSDFS_SEG_LEAF_NODE_USING:
+			state_name = "LEAF_NODE_USING";
+			break;
+		case SSDFS_SEG_HYBRID_NODE_USING:
+			state_name = "HYBRID_NODE_USING";
+			break;
+		case SSDFS_SEG_INDEX_NODE_USING:
+			state_name = "INDEX_NODE_USING";
+			break;
+		case SSDFS_SEG_USED:
+			state_name = "USED";
+			break;
+		case SSDFS_SEG_PRE_DIRTY:
+			state_name = "PRE_DIRTY";
+			break;
+		case SSDFS_SEG_DIRTY:
+			state_name = "DIRTY";
+			break;
+		case SSDFS_SEG_BAD:
+			state_name = "BAD";
+			break;
+		case SSDFS_SEG_RESERVED:
+			state_name = "RESERVED";
+			break;
+		default:
+			state_name = "UNKNOWN";
+			break;
+		}
+
+		count += snprintf(buf + count, PAGE_SIZE - count,
+				  "  Segment %u: %s (%u)\n",
+				  seg_index, state_name, seg_state);
+	}
+
+	if (i < section_end) {
+		count += snprintf(buf + count, PAGE_SIZE - count,
+				  "  ... (section truncated at segment %u)\n", i);
+	}
+
+finish_folio:
+	kunmap_local(kaddr);
+	ssdfs_folio_unlock(folio);
+	ssdfs_folio_put(folio);
+
+finish_show_bitmap:
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	if (err)
+		return err;
+
+	return count;
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_show(struct ssdfs_segbmap_frag_attr *attr,
+				struct ssdfs_segbmap_fragment_desc *fdesc,
+				char *buf)
+{
+	struct ssdfs_fs_info *fsi;
+	struct ssdfs_segment_bmap *segbmap;
+	u32 total_entries;
+	u32 entries_per_section = SSDFS_SEGBMAP_OUTPUT_THRESHOLD2 /
+					SSDFS_SEGBMAP_OUTPUT_CHARS_PER_LINE;
+	u32 sections_count;
+	u16 fragment_id;
+
+	segbmap = fdesc->segbmap;
+	if (!segbmap) {
+		SSDFS_ERR("segment bitmap is NULL\n");
+		return snprintf(buf, PAGE_SIZE, "Fragment bitmap not available\n");
+	}
+
+	fsi = segbmap->fsi;
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+	fragment_id = fdesc->fragment_id;
+	total_entries = fdesc->total_segs;
+	sections_count = (total_entries + entries_per_section - 1) / entries_per_section;
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+	return snprintf(buf, PAGE_SIZE,
+			"SEGMENT BITMAP FRAGMENT %u SUMMARY:\n"
+			"  Total segments: %u\n"
+			"  Sections available: %u (~%u segments per section)\n"
+			"  Use 'sections_count' to get exact count\n"
+			"  Use 'bitmap_section_0', 'bitmap_section_1', etc. to view content\n",
+			fragment_id, total_entries,
+			sections_count, entries_per_section);
+}
+
+/* Individual bitmap section show functions */
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_0_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 0, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_1_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 1, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_2_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 2, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_3_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 3, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_4_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 4, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_5_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 5, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_6_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 6, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_7_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 7, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_8_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 8, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_9_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 9, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_10_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 10, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_11_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 11, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_12_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 12, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_13_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 13, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_14_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 14, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_15_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 15, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_16_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 16, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_17_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 17, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_18_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 18, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_19_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 19, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_20_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 20, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_21_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 21, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_22_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 22, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_23_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 23, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_24_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 24, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_25_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 25, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_26_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 26, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_27_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 27, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_28_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 28, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_29_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 29, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_30_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 30, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_31_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 31, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_32_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 32, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_33_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 33, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_34_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 34, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_35_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 35, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_36_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 36, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_37_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 37, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_38_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 38, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_39_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 39, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_40_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 40, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_41_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 41, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_42_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 42, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_43_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 43, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_44_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 44, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_45_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 45, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_46_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 46, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_47_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 47, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_48_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 48, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_49_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 49, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_50_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 50, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_51_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 51, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_52_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 52, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_53_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 53, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_54_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 54, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_55_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 55, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_56_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 56, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_57_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 57, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_58_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 58, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_59_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 59, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_60_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 60, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_61_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 61, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_62_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 62, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_63_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 63, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_64_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 64, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_65_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 65, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_66_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 66, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_67_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 67, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_68_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 68, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_69_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 69, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_70_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 70, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_71_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 71, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_72_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 72, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_73_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 73, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_74_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 74, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_75_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 75, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_76_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 76, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_77_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 77, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_78_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 78, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_79_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 79, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_80_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 80, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_81_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 81, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_82_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 82, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_83_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 83, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_84_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 84, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_85_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 85, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_86_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 86, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_87_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 87, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_88_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 88, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_89_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 89, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_90_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 90, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_91_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 91, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_92_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 92, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_93_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 93, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_94_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 94, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_95_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 95, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_96_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 96, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_97_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 97, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_98_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 98, buf);
+}
+
+static ssize_t
+ssdfs_segbmap_frag_bitmap_section_99_show(struct ssdfs_segbmap_frag_attr *attr,
+				    struct ssdfs_segbmap_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_segbmap_frag_bitmap_section_show(fdesc, 99, buf);
+}
+
+SSDFS_SEGBMAP_FRAG_RO_ATTR(id);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(state);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(total_segs);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(clean_or_using_segs);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(used_or_dirty_segs);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bad_segs);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(sections_count);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_0);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_1);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_2);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_3);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_4);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_5);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_6);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_7);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_8);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_9);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_10);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_11);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_12);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_13);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_14);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_15);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_16);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_17);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_18);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_19);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_20);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_21);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_22);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_23);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_24);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_25);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_26);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_27);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_28);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_29);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_30);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_31);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_32);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_33);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_34);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_35);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_36);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_37);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_38);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_39);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_40);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_41);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_42);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_43);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_44);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_45);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_46);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_47);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_48);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_49);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_50);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_51);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_52);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_53);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_54);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_55);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_56);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_57);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_58);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_59);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_60);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_61);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_62);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_63);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_64);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_65);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_66);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_67);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_68);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_69);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_70);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_71);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_72);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_73);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_74);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_75);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_76);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_77);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_78);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_79);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_80);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_81);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_82);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_83);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_84);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_85);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_86);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_87);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_88);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_89);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_90);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_91);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_92);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_93);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_94);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_95);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_96);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_97);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_98);
+SSDFS_SEGBMAP_FRAG_RO_ATTR(bitmap_section_99);
+
+static struct attribute *ssdfs_segbmap_frag_attrs[] = {
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(id),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(state),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(total_segs),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(clean_or_using_segs),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(used_or_dirty_segs),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bad_segs),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(sections_count),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_0),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_1),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_2),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_3),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_4),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_5),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_6),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_7),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_8),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_9),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_10),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_11),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_12),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_13),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_14),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_15),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_16),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_17),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_18),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_19),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_20),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_21),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_22),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_23),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_24),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_25),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_26),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_27),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_28),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_29),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_30),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_31),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_32),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_33),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_34),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_35),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_36),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_37),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_38),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_39),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_40),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_41),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_42),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_43),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_44),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_45),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_46),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_47),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_48),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_49),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_50),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_51),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_52),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_53),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_54),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_55),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_56),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_57),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_58),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_59),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_60),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_61),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_62),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_63),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_64),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_65),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_66),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_67),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_68),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_69),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_70),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_71),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_72),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_73),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_74),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_75),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_76),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_77),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_78),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_79),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_80),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_81),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_82),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_83),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_84),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_85),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_86),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_87),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_88),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_89),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_90),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_91),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_92),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_93),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_94),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_95),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_96),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_97),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_98),
+	SSDFS_SEGBMAP_FRAG_ATTR_LIST(bitmap_section_99),
+	NULL,
+};
+ATTRIBUTE_GROUPS(ssdfs_segbmap_frag);
+
+static ssize_t ssdfs_segbmap_frag_attr_show(struct kobject *kobj,
+					     struct attribute *attr, char *buf)
+{
+	struct ssdfs_segbmap_fragment_desc *fdesc = container_of(kobj,
+					struct ssdfs_segbmap_fragment_desc,
+					frag_kobj);
+	struct ssdfs_segbmap_frag_attr *a = container_of(attr,
+					struct ssdfs_segbmap_frag_attr,
+					attr);
+
+	return a->show ? a->show(a, fdesc, buf) : 0;
+}
+
+static ssize_t ssdfs_segbmap_frag_attr_store(struct kobject *kobj,
+					      struct attribute *attr,
+					      const char *buf, size_t len)
+{
+	struct ssdfs_segbmap_fragment_desc *fdesc = container_of(kobj,
+					struct ssdfs_segbmap_fragment_desc,
+					frag_kobj);
+	struct ssdfs_segbmap_frag_attr *a = container_of(attr,
+					struct ssdfs_segbmap_frag_attr,
+					attr);
+
+	return a->store ? a->store(a, fdesc, buf, len) : 0;
+}
+
+static void ssdfs_segbmap_frag_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_segbmap_fragment_desc *fdesc = container_of(kobj,
+					struct ssdfs_segbmap_fragment_desc,
+					frag_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("release segbmap fragment %u group\n",
+		  fdesc->fragment_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	complete_all(&fdesc->frag_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_segbmap_frag_attr_ops = {
+	.show	= ssdfs_segbmap_frag_attr_show,
+	.store	= ssdfs_segbmap_frag_attr_store,
+};
+
+static const struct kobj_type ssdfs_segbmap_frag_ktype = {
+	.default_groups	= ssdfs_segbmap_frag_groups,
+	.sysfs_ops	= &ssdfs_segbmap_frag_attr_ops,
+	.release	= ssdfs_segbmap_frag_attr_release,
+};
+
+static inline int
+ssdfs_sysfs_create_segbmap_frag_group(struct ssdfs_segbmap_fragment_desc *fdesc,
+				      struct kobject *parent_kobj)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create segbmap fragment %u group\n", fdesc->fragment_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fdesc->frag_kobj.kset = ssdfs_kset;
+	init_completion(&fdesc->frag_kobj_unregister);
+	err = kobject_init_and_add(&fdesc->frag_kobj,
+				   &ssdfs_segbmap_frag_ktype,
+				   parent_kobj,
+				   "fragment%u",
+				   fdesc->fragment_id);
+
+	return err;
+}
+
+static inline void
+ssdfs_sysfs_delete_segbmap_frag_group(struct ssdfs_segbmap_fragment_desc *fdesc)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("delete segbmap fragment %u group\n", fdesc->fragment_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fdesc->frag_kobj);
+	kobject_put(&fdesc->frag_kobj);
+	wait_for_completion(&fdesc->frag_kobj_unregister);
+}
+
+static int ssdfs_sysfs_create_segbmap_fragments(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_segment_bmap *segbmap = fsi->segbmap;
+	struct ssdfs_segbmap_fragment_desc *fdesc;
+	int i;
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create segbmap fragment sysfs entries\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!segbmap) {
+		SSDFS_ERR("segment bitmap is NULL\n");
+		return -ERANGE;
+	}
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+
+	for (i = 0; i < segbmap->fragments_count; i++) {
+		fdesc = &segbmap->desc_array[i];
+		err = ssdfs_sysfs_create_segbmap_frag_group(fdesc,
+						    &fsi->segbmap_frags_kobj);
+		if (err) {
+			SSDFS_ERR("fail to create segbmap fragment %d group: "
+				  "err %d\n", i, err);
+			goto cleanup_created_groups;
+		}
+	}
+
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("segbmap fragment sysfs entries have been created\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return 0;
+
+cleanup_created_groups:
+	for (--i; i >= 0; i--) {
+		fdesc = &segbmap->desc_array[i];
+		ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
+	}
+
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+	return err;
+}
+
+static void ssdfs_sysfs_delete_segbmap_fragments(struct ssdfs_fs_info *fsi)
+{
+	struct ssdfs_segment_bmap *segbmap = fsi->segbmap;
+	struct ssdfs_segbmap_fragment_desc *fdesc;
+	int i;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("delete segbmap fragment sysfs entries\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!segbmap) {
+		SSDFS_ERR("segment bitmap is NULL\n");
+		return;
+	}
+
+	down_read(&segbmap->resize_lock);
+	down_read(&segbmap->search_lock);
+
+	for (i = 0; i < segbmap->fragments_count; i++) {;
+		fdesc = &segbmap->desc_array[i];
+		ssdfs_sysfs_delete_segbmap_frag_group(fdesc);
+	}
+
+	up_read(&segbmap->search_lock);
+	up_read(&segbmap->resize_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("segbmap fragment sysfs entries have been deleted\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+}
+
+/************************************************************************
+ *                      SSDFS segbmap fragments attrs                  *
+ ************************************************************************/
+
+static struct attribute *ssdfs_segbmap_frags_attrs[] = {
+	NULL,
+};
+ATTRIBUTE_GROUPS(ssdfs_segbmap_frags);
+
+static ssize_t ssdfs_segbmap_frags_attr_show(struct kobject *kobj,
+					      struct attribute *attr, char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 segbmap_frags_kobj);
+	struct ssdfs_segbmap_frags_attr *a = container_of(attr,
+						struct ssdfs_segbmap_frags_attr,
+						attr);
+
+	return a->show ? a->show(a, fsi, buf) : 0;
+}
+
+static ssize_t ssdfs_segbmap_frags_attr_store(struct kobject *kobj,
+					       struct attribute *attr,
+					       const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj->parent,
+						 struct ssdfs_fs_info,
+						 segbmap_frags_kobj);
+	struct ssdfs_segbmap_frags_attr *a = container_of(attr,
+						struct ssdfs_segbmap_frags_attr,
+						attr);
+
+	return a->store ? a->store(a, fsi, buf, len) : 0;
+}
+
+static void ssdfs_segbmap_frags_attr_release(struct kobject *kobj)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj,
+						 struct ssdfs_fs_info,
+						 segbmap_frags_kobj);
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("release segbmap fragments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+	complete_all(&fsi->segbmap_frags_kobj_unregister);
+}
+
+static const struct sysfs_ops ssdfs_segbmap_frags_attr_ops = {
+	.show	= ssdfs_segbmap_frags_attr_show,
+	.store	= ssdfs_segbmap_frags_attr_store,
+};
+
+static struct kobj_type ssdfs_segbmap_frags_ktype = {
+	.default_groups = ssdfs_segbmap_frags_groups,
+	.sysfs_ops	= &ssdfs_segbmap_frags_attr_ops,
+	.release	= ssdfs_segbmap_frags_attr_release,
+};
+
+static int ssdfs_sysfs_create_segbmap_frags_group(struct ssdfs_fs_info *fsi)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("create segbmap fragments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	fsi->segbmap_frags_kobj.kset = ssdfs_kset;
+	init_completion(&fsi->segbmap_frags_kobj_unregister);
+	err = kobject_init_and_add(&fsi->segbmap_frags_kobj,
+				   &ssdfs_segbmap_frags_ktype,
+				   &fsi->segbmap_kobj, "fragments");
+	if (err)
+		return err;
+
+	return 0;
+}
+
+static void ssdfs_sysfs_delete_segbmap_frags_group(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("delete segbmap fragments group\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fsi->segbmap_frags_kobj);
+	kobject_put(&fsi->segbmap_frags_kobj);
+	wait_for_completion(&fsi->segbmap_frags_kobj_unregister);
+}
+
+/************************************************************************
  *                        SSDFS segbmap attrs                           *
  ************************************************************************/
 
@@ -1180,7 +2857,6 @@ static struct kobj_type ssdfs_segbmap_ktype = {
 	.release	= ssdfs_segbmap_attr_release,
 };
 
-static inline
 int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 {
 	int err;
@@ -1196,16 +2872,34 @@ int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi)
 	if (err)
 		return err;
 
+	err = ssdfs_sysfs_create_segbmap_frags_group(fsi);
+	if (err)
+		goto cleanup_segbmap_kobject;
+
+	err = ssdfs_sysfs_create_segbmap_fragments(fsi);
+	if (err)
+		goto cleanup_segbmap_frags_group;
+
 	return 0;
+
+cleanup_segbmap_frags_group:
+	ssdfs_sysfs_delete_segbmap_frags_group(fsi);
+
+cleanup_segbmap_kobject:
+	kobject_del(&fsi->segbmap_kobj);
+	kobject_put(&fsi->segbmap_kobj);
+	wait_for_completion(&fsi->segbmap_kobj_unregister);
+	return err;
 }
 
-static inline
 void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
 {
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("delete segbmap group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	ssdfs_sysfs_delete_segbmap_fragments(fsi);
+	ssdfs_sysfs_delete_segbmap_frags_group(fsi);
 	kobject_del(&fsi->segbmap_kobj);
 	kobject_put(&fsi->segbmap_kobj);
 	wait_for_completion(&fsi->segbmap_kobj_unregister);
@@ -1216,8 +2910,8 @@ void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi)
  ************************************************************************/
 
 static ssize_t ssdfs_maptbl_frag_id_show(struct ssdfs_maptbl_frag_attr *attr,
-					  struct ssdfs_maptbl_fragment_desc *fdesc,
-					  char *buf)
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u32 fragment_id;
 
@@ -1229,8 +2923,8 @@ static ssize_t ssdfs_maptbl_frag_id_show(struct ssdfs_maptbl_frag_attr *attr,
 }
 
 static ssize_t ssdfs_maptbl_frag_state_show(struct ssdfs_maptbl_frag_attr *attr,
-					     struct ssdfs_maptbl_fragment_desc *fdesc,
-					     char *buf)
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	int state = atomic_read(&fdesc->state);
 
@@ -1250,9 +2944,10 @@ static ssize_t ssdfs_maptbl_frag_state_show(struct ssdfs_maptbl_frag_attr *attr,
 	}
 }
 
-static ssize_t ssdfs_maptbl_frag_start_leb_show(struct ssdfs_maptbl_frag_attr *attr,
-						 struct ssdfs_maptbl_fragment_desc *fdesc,
-						 char *buf)
+static ssize_t
+ssdfs_maptbl_frag_start_leb_show(struct ssdfs_maptbl_frag_attr *attr,
+				 struct ssdfs_maptbl_fragment_desc *fdesc,
+				 char *buf)
 {
 	u64 start_leb;
 
@@ -1263,9 +2958,10 @@ static ssize_t ssdfs_maptbl_frag_start_leb_show(struct ssdfs_maptbl_frag_attr *a
 	return snprintf(buf, PAGE_SIZE, "%llu\n", start_leb);
 }
 
-static ssize_t ssdfs_maptbl_frag_lebs_count_show(struct ssdfs_maptbl_frag_attr *attr,
-						  struct ssdfs_maptbl_fragment_desc *fdesc,
-						  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_lebs_count_show(struct ssdfs_maptbl_frag_attr *attr,
+				  struct ssdfs_maptbl_fragment_desc *fdesc,
+				  char *buf)
 {
 	u32 lebs_count;
 
@@ -1276,9 +2972,10 @@ static ssize_t ssdfs_maptbl_frag_lebs_count_show(struct ssdfs_maptbl_frag_attr *
 	return snprintf(buf, PAGE_SIZE, "%u\n", lebs_count);
 }
 
-static ssize_t ssdfs_maptbl_frag_mapped_lebs_show(struct ssdfs_maptbl_frag_attr *attr,
-						   struct ssdfs_maptbl_fragment_desc *fdesc,
-						   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_mapped_lebs_show(struct ssdfs_maptbl_frag_attr *attr,
+				   struct ssdfs_maptbl_fragment_desc *fdesc,
+				   char *buf)
 {
 	u32 mapped_lebs;
 
@@ -1289,9 +2986,10 @@ static ssize_t ssdfs_maptbl_frag_mapped_lebs_show(struct ssdfs_maptbl_frag_attr 
 	return snprintf(buf, PAGE_SIZE, "%u\n", mapped_lebs);
 }
 
-static ssize_t ssdfs_maptbl_frag_migrating_lebs_show(struct ssdfs_maptbl_frag_attr *attr,
-						      struct ssdfs_maptbl_fragment_desc *fdesc,
-						      char *buf)
+static ssize_t
+ssdfs_maptbl_frag_migrating_lebs_show(struct ssdfs_maptbl_frag_attr *attr,
+				      struct ssdfs_maptbl_fragment_desc *fdesc,
+				      char *buf)
 {
 	u32 migrating_lebs;
 
@@ -1302,9 +3000,10 @@ static ssize_t ssdfs_maptbl_frag_migrating_lebs_show(struct ssdfs_maptbl_frag_at
 	return snprintf(buf, PAGE_SIZE, "%u\n", migrating_lebs);
 }
 
-static ssize_t ssdfs_maptbl_frag_reserved_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
-						     struct ssdfs_maptbl_fragment_desc *fdesc,
-						     char *buf)
+static ssize_t
+ssdfs_maptbl_frag_reserved_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     char *buf)
 {
 	u32 reserved_pebs;
 
@@ -1315,9 +3014,10 @@ static ssize_t ssdfs_maptbl_frag_reserved_pebs_show(struct ssdfs_maptbl_frag_att
 	return snprintf(buf, PAGE_SIZE, "%u\n", reserved_pebs);
 }
 
-static ssize_t ssdfs_maptbl_frag_pre_erase_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
-						      struct ssdfs_maptbl_fragment_desc *fdesc,
-						      char *buf)
+static ssize_t
+ssdfs_maptbl_frag_pre_erase_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
+				      struct ssdfs_maptbl_fragment_desc *fdesc,
+				      char *buf)
 {
 	u32 pre_erase_pebs;
 
@@ -1328,9 +3028,10 @@ static ssize_t ssdfs_maptbl_frag_pre_erase_pebs_show(struct ssdfs_maptbl_frag_at
 	return snprintf(buf, PAGE_SIZE, "%u\n", pre_erase_pebs);
 }
 
-static ssize_t ssdfs_maptbl_frag_recovering_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
-						       struct ssdfs_maptbl_fragment_desc *fdesc,
-						       char *buf)
+static ssize_t
+ssdfs_maptbl_frag_recovering_pebs_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u32 recovering_pebs;
 
@@ -1341,9 +3042,10 @@ static ssize_t ssdfs_maptbl_frag_recovering_pebs_show(struct ssdfs_maptbl_frag_a
 	return snprintf(buf, PAGE_SIZE, "%u\n", recovering_pebs);
 }
 
-static ssize_t ssdfs_maptbl_frag_fragment_folios_show(struct ssdfs_maptbl_frag_attr *attr,
-						       struct ssdfs_maptbl_fragment_desc *fdesc,
-						       char *buf)
+static ssize_t
+ssdfs_maptbl_frag_fragment_folios_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u32 fragment_folios;
 
@@ -1354,9 +3056,10 @@ static ssize_t ssdfs_maptbl_frag_fragment_folios_show(struct ssdfs_maptbl_frag_a
 	return snprintf(buf, PAGE_SIZE, "%u\n", fragment_folios);
 }
 
-static ssize_t ssdfs_maptbl_frag_lebs_per_page_show(struct ssdfs_maptbl_frag_attr *attr,
-						     struct ssdfs_maptbl_fragment_desc *fdesc,
-						     char *buf)
+static ssize_t
+ssdfs_maptbl_frag_lebs_per_page_show(struct ssdfs_maptbl_frag_attr *attr,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     char *buf)
 {
 	u16 lebs_per_page;
 
@@ -1367,9 +3070,10 @@ static ssize_t ssdfs_maptbl_frag_lebs_per_page_show(struct ssdfs_maptbl_frag_att
 	return snprintf(buf, PAGE_SIZE, "%u\n", lebs_per_page);
 }
 
-static ssize_t ssdfs_maptbl_frag_lebtbl_pages_show(struct ssdfs_maptbl_frag_attr *attr,
-						    struct ssdfs_maptbl_fragment_desc *fdesc,
-						    char *buf)
+static ssize_t
+ssdfs_maptbl_frag_lebtbl_pages_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u16 lebtbl_pages;
 
@@ -1380,9 +3084,10 @@ static ssize_t ssdfs_maptbl_frag_lebtbl_pages_show(struct ssdfs_maptbl_frag_attr
 	return snprintf(buf, PAGE_SIZE, "%u\n", lebtbl_pages);
 }
 
-static ssize_t ssdfs_maptbl_frag_pebs_per_page_show(struct ssdfs_maptbl_frag_attr *attr,
-						     struct ssdfs_maptbl_fragment_desc *fdesc,
-						     char *buf)
+static ssize_t
+ssdfs_maptbl_frag_pebs_per_page_show(struct ssdfs_maptbl_frag_attr *attr,
+				     struct ssdfs_maptbl_fragment_desc *fdesc,
+				     char *buf)
 {
 	u16 pebs_per_page;
 
@@ -1393,9 +3098,10 @@ static ssize_t ssdfs_maptbl_frag_pebs_per_page_show(struct ssdfs_maptbl_frag_att
 	return snprintf(buf, PAGE_SIZE, "%u\n", pebs_per_page);
 }
 
-static ssize_t ssdfs_maptbl_frag_stripe_pages_show(struct ssdfs_maptbl_frag_attr *attr,
-						    struct ssdfs_maptbl_fragment_desc *fdesc,
-						    char *buf)
+static ssize_t
+ssdfs_maptbl_frag_stripe_pages_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u16 stripe_pages;
 
@@ -1411,9 +3117,10 @@ static ssize_t ssdfs_maptbl_frag_stripe_pages_show(struct ssdfs_maptbl_frag_attr
 #define SSDFS_MAPTBL_OUTPUT_THRESHOLD3		(PAGE_SIZE - 100)
 #define SSDFS_MAPTBL_OUTPUT_THRESHOLD4		(PAGE_SIZE - 150)
 
-static ssize_t ssdfs_maptbl_frag_leb_table_show(struct ssdfs_maptbl_frag_attr *attr,
-						 struct ssdfs_maptbl_fragment_desc *fdesc,
-						 char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_show(struct ssdfs_maptbl_frag_attr *attr,
+				 struct ssdfs_maptbl_fragment_desc *fdesc,
+				 char *buf)
 {
 	struct folio *folio;
 	void *kaddr;
@@ -1536,9 +3243,10 @@ finish_show_leb_table:
 	return count;
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_show(struct ssdfs_maptbl_frag_attr *attr,
-						 struct ssdfs_maptbl_fragment_desc *fdesc,
-						 char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_show(struct ssdfs_maptbl_frag_attr *attr,
+				 struct ssdfs_maptbl_fragment_desc *fdesc,
+				 char *buf)
 {
 	struct folio *folio;
 	void *kaddr;
@@ -1651,9 +3359,10 @@ finish_show_peb_table:
 	return count;
 }
 
-static ssize_t ssdfs_maptbl_frag_summary_show(struct ssdfs_maptbl_frag_attr *attr,
-					       struct ssdfs_maptbl_fragment_desc *fdesc,
-					       char *buf)
+static ssize_t
+ssdfs_maptbl_frag_summary_show(struct ssdfs_maptbl_frag_attr *attr,
+				struct ssdfs_maptbl_fragment_desc *fdesc,
+				char *buf)
 {
 	int count = 0;
 
@@ -1697,9 +3406,10 @@ static ssize_t ssdfs_maptbl_frag_summary_show(struct ssdfs_maptbl_frag_attr *att
 	return count;
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_sections_count_show(struct ssdfs_maptbl_frag_attr *attr,
-							 struct ssdfs_maptbl_fragment_desc *fdesc,
-							 char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_sections_count_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u32 sections_count = 0;
 	u32 entries_per_section;
@@ -1719,16 +3429,18 @@ static ssize_t ssdfs_maptbl_frag_leb_sections_count_show(struct ssdfs_maptbl_fra
 
 	total_entries = fdesc->lebs_count;
 	entries_per_section = SSDFS_MAPTBL_OUTPUT_THRESHOLD2 / 50;
-	sections_count = (total_entries + entries_per_section - 1) / entries_per_section;
+	sections_count =
+		(total_entries + entries_per_section - 1) / entries_per_section;
 
 	up_read(&fdesc->lock);
 
 	return snprintf(buf, PAGE_SIZE, "%u\n", sections_count);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_sections_count_show(struct ssdfs_maptbl_frag_attr *attr,
-							 struct ssdfs_maptbl_fragment_desc *fdesc,
-							 char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_sections_count_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	u32 sections_count = 0;
 	u32 entries_per_section;
@@ -1741,17 +3453,21 @@ static ssize_t ssdfs_maptbl_frag_peb_sections_count_show(struct ssdfs_maptbl_fra
 		return snprintf(buf, PAGE_SIZE, "0\n");
 	}
 
-	total_entries = fdesc->reserved_pebs + fdesc->pre_erase_pebs + fdesc->recovering_pebs;
+	total_entries = fdesc->reserved_pebs +
+				fdesc->pre_erase_pebs +
+					fdesc->recovering_pebs;
 	entries_per_section = SSDFS_MAPTBL_OUTPUT_THRESHOLD2 / 100;
-	sections_count = (total_entries + entries_per_section - 1) / entries_per_section;
+	sections_count =
+		(total_entries + entries_per_section - 1) / entries_per_section;
 
 	up_read(&fdesc->lock);
 
 	return snprintf(buf, PAGE_SIZE, "%u\n", sections_count);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_show(struct ssdfs_maptbl_fragment_desc *fdesc,
-							int section_index, char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_show(struct ssdfs_maptbl_fragment_desc *fdesc,
+					 int section_index, char *buf)
 {
 	struct folio *folio;
 	void *kaddr;
@@ -1782,7 +3498,9 @@ static ssize_t ssdfs_maptbl_frag_leb_table_section_show(struct ssdfs_maptbl_frag
 	}
 
 	start_leb = fdesc->start_leb;
-	section_end = min_t(u32, section_start + entries_per_section, fdesc->lebs_count);
+	section_end = min_t(u32,
+			    section_start + entries_per_section,
+			    fdesc->lebs_count);
 
 	if (section_start >= fdesc->lebs_count) {
 		count = snprintf(buf + count, PAGE_SIZE - count,
@@ -1806,16 +3524,21 @@ static ssize_t ssdfs_maptbl_frag_leb_table_section_show(struct ssdfs_maptbl_frag
 			continue;
 
 		folio_index = i;
-		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array,
+							   folio_index);
 		if (IS_ERR_OR_NULL(folio)) {
 			err = (folio == NULL ? -ENOENT : PTR_ERR(folio));
 			if (err == -ENOENT) {
-				count += snprintf(buf + count, PAGE_SIZE - count,
-						  "  folio %d: <not allocated>\n", i);
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "  folio %d: <not allocated>\n",
+						  i);
 				continue;
 			} else {
-				count += snprintf(buf + count, PAGE_SIZE - count,
-						  "  folio %d: <error %d>\n", i, err);
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "  folio %d: <error %d>\n",
+						  i, err);
 				continue;
 			}
 		}
@@ -1843,7 +3566,8 @@ static ssize_t ssdfs_maptbl_frag_leb_table_section_show(struct ssdfs_maptbl_frag
 				break;
 
 			if (count >= SSDFS_MAPTBL_OUTPUT_THRESHOLD3) {
-				count += snprintf(buf + count, PAGE_SIZE - count,
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
 						  "  ... (page full)\n");
 				goto finish_folio;
 			}
@@ -1869,8 +3593,9 @@ finish_show_section:
 	return count;
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_show(struct ssdfs_maptbl_fragment_desc *fdesc,
-							int section_index, char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_show(struct ssdfs_maptbl_fragment_desc *fdesc,
+					 int section_index, char *buf)
 {
 	struct folio *folio;
 	void *kaddr;
@@ -1897,8 +3622,12 @@ static ssize_t ssdfs_maptbl_frag_peb_table_section_show(struct ssdfs_maptbl_frag
 		goto finish_show_peb_section;
 	}
 
-	total_pebs = fdesc->reserved_pebs + fdesc->pre_erase_pebs + fdesc->recovering_pebs;
-	section_end = min_t(u32, section_start + entries_per_section, total_pebs);
+	total_pebs = fdesc->reserved_pebs +
+				fdesc->pre_erase_pebs +
+						fdesc->recovering_pebs;
+	section_end = min_t(u32,
+			    section_start + entries_per_section,
+			    total_pebs);
 
 	if (section_start >= total_pebs) {
 		count = snprintf(buf + count, PAGE_SIZE - count,
@@ -1915,16 +3644,21 @@ static ssize_t ssdfs_maptbl_frag_peb_table_section_show(struct ssdfs_maptbl_frag
 			break;
 
 		folio_index = i;
-		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array, folio_index);
+		folio = ssdfs_folio_array_get_folio_locked(&fdesc->array,
+							   folio_index);
 		if (IS_ERR_OR_NULL(folio)) {
 			err = (folio == NULL ? -ENOENT : PTR_ERR(folio));
 			if (err == -ENOENT) {
-				count += snprintf(buf + count, PAGE_SIZE - count,
-						  "  folio %d: <not allocated>\n", i);
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "  folio %d: <not allocated>\n",
+						  i);
 				continue;
 			} else {
-				count += snprintf(buf + count, PAGE_SIZE - count,
-						  "  folio %d: <error %d>\n", i, err);
+				count += snprintf(buf + count,
+						  PAGE_SIZE - count,
+						  "  folio %d: <error %d>\n",
+						  i, err);
 				continue;
 			}
 		}
@@ -1942,7 +3676,7 @@ static ssize_t ssdfs_maptbl_frag_peb_table_section_show(struct ssdfs_maptbl_frag
 
 		start_peb = le64_to_cpu(hdr->start_peb);
 
-		peb_desc = (struct ssdfs_peb_descriptor *)((u8 *)kaddr + 
+		peb_desc = (struct ssdfs_peb_descriptor *)((u8 *)kaddr +
 			    sizeof(struct ssdfs_peb_table_fragment_header));
 
 		folio_entry_count = min_t(u32, fdesc->pebs_per_page,
@@ -2008,452 +3742,514 @@ SSDFS_MAPTBL_FRAG_RO_ATTR(summary);
 SSDFS_MAPTBL_FRAG_RO_ATTR(leb_sections_count);
 SSDFS_MAPTBL_FRAG_RO_ATTR(peb_sections_count);
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_0_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_0_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 0, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_1_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_1_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 1, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_2_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_2_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 2, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_3_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_3_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 3, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_4_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_4_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 4, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_0_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
-{
-	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 0, buf);
-}
-
-static ssize_t ssdfs_maptbl_frag_peb_table_section_1_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
-{
-	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 1, buf);
-}
-
-static ssize_t ssdfs_maptbl_frag_peb_table_section_2_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
-{
-	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 2, buf);
-}
-
-static ssize_t ssdfs_maptbl_frag_peb_table_section_3_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
-{
-	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 3, buf);
-}
-
-static ssize_t ssdfs_maptbl_frag_peb_table_section_4_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
-{
-	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 4, buf);
-}
-
-/* Additional LEB table sections 5-31 */
-static ssize_t ssdfs_maptbl_frag_leb_table_section_5_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_5_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 5, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_6_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_6_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 6, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_7_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_7_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 7, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_8_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_8_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 8, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_9_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_9_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 9, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_10_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_10_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 10, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_11_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_11_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 11, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_12_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_12_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 12, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_13_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_13_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 13, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_14_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_14_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 14, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_15_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_15_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 15, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_16_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_16_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 16, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_17_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_17_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 17, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_18_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_18_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 18, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_19_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_19_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 19, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_20_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_20_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 20, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_21_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_21_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 21, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_22_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_22_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 22, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_23_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_23_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 23, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_24_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_24_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 24, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_25_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_25_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 25, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_26_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_26_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 26, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_27_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_27_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 27, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_28_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_28_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 28, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_29_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_29_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 29, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_30_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_30_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 30, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_leb_table_section_31_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_leb_table_section_31_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_leb_table_section_show(fdesc, 31, buf);
 }
 
-/* Additional PEB table sections 5-31 */
-static ssize_t ssdfs_maptbl_frag_peb_table_section_5_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_0_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 0, buf);
+}
+
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_1_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 1, buf);
+}
+
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_2_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 2, buf);
+}
+
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_3_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 3, buf);
+}
+
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_4_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
+{
+	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 4, buf);
+}
+
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_5_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 5, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_6_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_6_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 6, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_7_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_7_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 7, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_8_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_8_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 8, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_9_show(struct ssdfs_maptbl_frag_attr *attr,
-							  struct ssdfs_maptbl_fragment_desc *fdesc,
-							  char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_9_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 9, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_10_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_10_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 10, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_11_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_11_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 11, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_12_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_12_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 12, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_13_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_13_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 13, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_14_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_14_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 14, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_15_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_15_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 15, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_16_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_16_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 16, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_17_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_17_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 17, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_18_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_18_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 18, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_19_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_19_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 19, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_20_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_20_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 20, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_21_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_21_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 21, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_22_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_22_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 22, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_23_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_23_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 23, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_24_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_24_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 24, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_25_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_25_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 25, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_26_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_26_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 26, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_27_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_27_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 27, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_28_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_28_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 28, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_29_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_29_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 29, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_30_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_30_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 30, buf);
 }
 
-static ssize_t ssdfs_maptbl_frag_peb_table_section_31_show(struct ssdfs_maptbl_frag_attr *attr,
-							   struct ssdfs_maptbl_fragment_desc *fdesc,
-							   char *buf)
+static ssize_t
+ssdfs_maptbl_frag_peb_table_section_31_show(struct ssdfs_maptbl_frag_attr *attr,
+				    struct ssdfs_maptbl_fragment_desc *fdesc,
+				    char *buf)
 {
 	return ssdfs_maptbl_frag_peb_table_section_show(fdesc, 31, buf);
 }
@@ -2624,11 +4420,15 @@ static ssize_t ssdfs_maptbl_frag_attr_show(struct kobject *kobj,
 	int section_index;
 
 	if (sscanf(attr_name, "leb_table_section_%d", &section_index) == 1) {
-		return ssdfs_maptbl_frag_leb_table_section_show(fdesc, section_index, buf);
+		return ssdfs_maptbl_frag_leb_table_section_show(fdesc,
+								section_index,
+								buf);
 	}
 
 	if (sscanf(attr_name, "peb_table_section_%d", &section_index) == 1) {
-		return ssdfs_maptbl_frag_peb_table_section_show(fdesc, section_index, buf);
+		return ssdfs_maptbl_frag_peb_table_section_show(fdesc,
+								section_index,
+								buf);
 	}
 
 	return a->show ? a->show(a, fdesc, buf) : 0;
@@ -3608,18 +5408,11 @@ int ssdfs_sysfs_create_device_group(struct super_block *sb)
 	if (err)
 		goto cleanup_dev_kobject;
 
-	err = ssdfs_sysfs_create_segbmap_group(fsi);
-	if (err)
-		goto delete_segments_group;
-
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("DONE: create device group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
-
-delete_segments_group:
-	ssdfs_sysfs_delete_segments_group(fsi);
 
 cleanup_dev_kobject:
 	kobject_del(&fsi->dev_kobj);
@@ -3636,7 +5429,6 @@ void ssdfs_sysfs_delete_device_group(struct ssdfs_fs_info *fsi)
 	SSDFS_DBG("delete device group\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	ssdfs_sysfs_delete_segbmap_group(fsi);
 	ssdfs_sysfs_delete_segments_group(fsi);
 
 	kobject_del(&fsi->dev_kobj);
