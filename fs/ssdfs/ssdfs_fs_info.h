@@ -564,6 +564,14 @@ struct ssdfs_btree_nodes_list {
  * @segbmap_kobj_unregister: completion state for segbmap kernel object
  * @segments_kobj: /sys/fs/<ssdfs>/<device>/segments kernel object
  * @segments_kobj_unregister: completion state for segments kernel object
+ * @inodes_tree_kobj: /sys/fs/<ssdfs>/<device>/inodes_tree kernel object
+ * @inodes_tree_kobj_unregister: completion state for inodes_tree kernel object
+ * @snapshots_tree_kobj: /sys/fs/<ssdfs>/<device>/snapshots_tree kernel object
+ * @snapshots_tree_kobj_unregister: completion state for snapshots_tree kernel object
+ * @shared_dict_kobj: /sys/fs/<ssdfs>/<device>/shared_dict kernel object
+ * @shared_dict_kobj_unregister: completion state for shared_dict kernel object
+ * @invextree_kobj: /sys/fs/<ssdfs>/<device>/invextree kernel object
+ * @invextree_kobj_unregister: completion state for invextree kernel object
  */
 struct ssdfs_fs_info {
 	u8 log_pagesize;
@@ -706,6 +714,22 @@ struct ssdfs_fs_info {
 	/* /sys/fs/<ssdfs>/<device>/segments */
 	struct kobject segments_kobj;
 	struct completion segments_kobj_unregister;
+
+	/* /sys/fs/<ssdfs>/<device>/inodes_tree */
+	struct kobject inodes_tree_kobj;
+	struct completion inodes_tree_kobj_unregister;
+
+	/* /sys/fs/<ssdfs>/<device>/snapshots_tree */
+	struct kobject snapshots_tree_kobj;
+	struct completion snapshots_tree_kobj_unregister;
+
+	/* /sys/fs/<ssdfs>/<device>/shared_dict */
+	struct kobject shared_dict_kobj;
+	struct completion shared_dict_kobj_unregister;
+
+	/* /sys/fs/<ssdfs>/<device>/invextree */
+	struct kobject invextree_kobj;
+	struct completion invextree_kobj_unregister;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	spinlock_t requests_lock;

@@ -309,6 +309,14 @@ int ssdfs_sysfs_create_maptbl_group(struct ssdfs_fs_info *fsi);
 void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi);
 int ssdfs_sysfs_create_segbmap_group(struct ssdfs_fs_info *fsi);
 void ssdfs_sysfs_delete_segbmap_group(struct ssdfs_fs_info *fsi);
+int ssdfs_sysfs_create_inodes_tree_group(struct ssdfs_fs_info *fsi);
+void ssdfs_sysfs_delete_inodes_tree_group(struct ssdfs_fs_info *fsi);
+int ssdfs_sysfs_create_snapshots_tree_group(struct ssdfs_fs_info *fsi);
+void ssdfs_sysfs_delete_snapshots_tree_group(struct ssdfs_fs_info *fsi);
+int ssdfs_sysfs_create_shared_dict_group(struct ssdfs_fs_info *fsi);
+void ssdfs_sysfs_delete_shared_dict_group(struct ssdfs_fs_info *fsi);
+int ssdfs_sysfs_create_invextree_group(struct ssdfs_fs_info *fsi);
+void ssdfs_sysfs_delete_invextree_group(struct ssdfs_fs_info *fsi);
 
 /* tunefs.c */
 bool IS_TUNEFS_REQUESTED(struct ssdfs_tunefs_request_copy *request);

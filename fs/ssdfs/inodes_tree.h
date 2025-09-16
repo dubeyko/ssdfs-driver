@@ -73,6 +73,7 @@ struct ssdfs_free_inode_range_queue {
  * @nodes_count: count of all nodes in the whole tree
  * @raw_inode_size: size in bytes of raw inode
  * @free_inodes_queue: queue of free inode descriptors
+ * @fsi: pointer on shared file system object
  */
 struct ssdfs_inodes_btree_info {
 	struct ssdfs_btree generic_tree;
@@ -106,6 +107,8 @@ struct ssdfs_inodes_btree_info {
 	 * new items should be done from last leaf btree's node.
 	 */
 	struct ssdfs_free_inode_range_queue free_inodes_queue;
+
+	struct ssdfs_fs_info *fsi;
 };
 
 /*

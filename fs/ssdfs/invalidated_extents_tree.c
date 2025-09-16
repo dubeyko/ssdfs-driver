@@ -154,6 +154,10 @@ int ssdfs_invextree_create(struct ssdfs_fs_info *fsi)
 
 	atomic64_set(&ptr->extents_count, 0);
 
+	err = ssdfs_sysfs_create_invextree_group(fsi);
+	if (err)
+		goto fail_create_invextree;
+
 	atomic_set(&ptr->state, SSDFS_INVEXTREE_CREATED);
 
 	ssdfs_debug_invextree_object(ptr);
@@ -196,6 +200,8 @@ void ssdfs_invextree_destroy(struct ssdfs_fs_info *fsi)
 	tree = fsi->invextree;
 
 	ssdfs_debug_invextree_object(tree);
+
+	ssdfs_sysfs_delete_invextree_group(fsi);
 
 	ssdfs_btree_destroy(&tree->generic_tree);
 

@@ -175,6 +175,10 @@ int ssdfs_snapshots_btree_create(struct ssdfs_fs_info *fsi)
 		goto destroy_snapshots_tree_object;
 	}
 
+	err = ssdfs_sysfs_create_snapshots_tree_group(fsi);
+	if (err)
+		goto destroy_snapshots_tree_object;
+
 	ssdfs_debug_snapshots_btree_object(ptr);
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
@@ -218,6 +222,8 @@ void ssdfs_snapshots_btree_destroy(struct ssdfs_fs_info *fsi)
 	tree = fsi->snapshots.tree;
 
 	ssdfs_debug_snapshots_btree_object(tree);
+
+	ssdfs_sysfs_delete_snapshots_tree_group(fsi);
 
 	ssdfs_snapshot_reqs_queue_remove_all(&tree->requests.queue);
 

@@ -455,6 +455,8 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 		return -ENOMEM;
 	}
 
+	ptr->fsi = fsi;
+
 	atomic_set(&ptr->state, SSDFS_SHDICT_BTREE_UNKNOWN_STATE);
 
 	err = ssdfs_btree_create(fsi,
@@ -484,6 +486,10 @@ int ssdfs_shared_dict_btree_create(struct ssdfs_fs_info *fsi)
 			  "err %d\n", err);
 		goto destroy_shared_dict_object;
 	}
+
+	err = ssdfs_sysfs_create_shared_dict_group(fsi);
+	if (err)
+		goto destroy_shared_dict_object;
 
 	atomic_set(&ptr->state, SSDFS_SHDICT_BTREE_CREATED);
 
@@ -525,6 +531,8 @@ void ssdfs_shared_dict_btree_destroy(struct ssdfs_fs_info *fsi)
 
 	if (!fsi->shdictree)
 		return;
+
+	ssdfs_sysfs_delete_shared_dict_group(fsi);
 
 	ssdfs_names_queue_remove_all(&fsi->shdictree->requests.queue);
 

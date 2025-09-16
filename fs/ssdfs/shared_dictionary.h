@@ -90,6 +90,7 @@ struct ssdfs_name_requests_queue {
  * @read_reqs: current count of read requests
  * @requests: name requests queue
  * @wait_queue: wait queue of shared dictionary tree's thread
+ * @fsi: pointer on shared file system object
  */
 struct ssdfs_shared_dict_btree_info {
 	atomic_t state;
@@ -100,6 +101,8 @@ struct ssdfs_shared_dict_btree_info {
 
 	struct ssdfs_name_requests_queue requests;
 	wait_queue_head_t wait_queue;
+
+	struct ssdfs_fs_info *fsi;
 };
 
 /* Shared dictionary tree states */

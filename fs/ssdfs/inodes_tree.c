@@ -511,6 +511,7 @@ int ssdfs_inodes_btree_create(struct ssdfs_fs_info *fsi)
 	}
 
 	fsi->inodes_tree = ptr;
+	ptr->fsi = fsi;
 
 	err = ssdfs_btree_create(fsi,
 				 SSDFS_INODES_BTREE_INO,
@@ -735,6 +736,10 @@ free_search_object:
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
+	err = ssdfs_sysfs_create_inodes_tree_group(fsi);
+	if (err)
+		goto fail_create_inodes_tree;
+
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("DONE: create inodes btree\n");
 #else
@@ -771,6 +776,8 @@ void ssdfs_inodes_btree_destroy(struct ssdfs_fs_info *fsi)
 		return;
 
 	ssdfs_debug_inodes_btree_object(fsi->inodes_tree);
+
+	ssdfs_sysfs_delete_inodes_tree_group(fsi);
 
 	tree = fsi->inodes_tree;
 	ssdfs_btree_destroy(&tree->generic_tree);

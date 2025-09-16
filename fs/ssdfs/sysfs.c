@@ -28,6 +28,12 @@
 #include "segment_bitmap.h"
 #include "segment.h"
 #include "current_segment.h"
+#include "btree_search.h"
+#include "btree.h"
+#include "inodes_tree.h"
+#include "snapshots_tree.h"
+#include "shared_dictionary.h"
+#include "invalidated_extents_tree.h"
 #include "peb_mapping_table.h"
 #include "sysfs.h"
 
@@ -4992,6 +4998,1032 @@ void ssdfs_sysfs_delete_maptbl_group(struct ssdfs_fs_info *fsi)
 	kobject_del(&fsi->maptbl_kobj);
 	kobject_put(&fsi->maptbl_kobj);
 	wait_for_completion(&fsi->maptbl_kobj_unregister);
+}
+
+/************************************************************************
+ *                       SSDFS inodes tree attrs                        *
+ ************************************************************************/
+
+static ssize_t ssdfs_inodes_tree_upper_allocated_ino_show(struct ssdfs_inodes_tree_attr *attr,
+							   struct ssdfs_fs_info *fsi,
+							   char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u64 upper_allocated_ino;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->lock);
+	upper_allocated_ino = inodes_tree->upper_allocated_ino;
+	spin_unlock(&inodes_tree->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", upper_allocated_ino);
+}
+
+static ssize_t ssdfs_inodes_tree_allocated_inodes_show(struct ssdfs_inodes_tree_attr *attr,
+						       struct ssdfs_fs_info *fsi,
+						       char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u64 allocated_inodes;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->lock);
+	allocated_inodes = inodes_tree->allocated_inodes;
+	spin_unlock(&inodes_tree->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", allocated_inodes);
+}
+
+static ssize_t ssdfs_inodes_tree_free_inodes_show(struct ssdfs_inodes_tree_attr *attr,
+						  struct ssdfs_fs_info *fsi,
+						  char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u64 free_inodes;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->lock);
+	free_inodes = inodes_tree->free_inodes;
+	spin_unlock(&inodes_tree->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", free_inodes);
+}
+
+static ssize_t ssdfs_inodes_tree_inodes_capacity_show(struct ssdfs_inodes_tree_attr *attr,
+						      struct ssdfs_fs_info *fsi,
+						      char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u64 inodes_capacity;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->lock);
+	inodes_capacity = inodes_tree->inodes_capacity;
+	spin_unlock(&inodes_tree->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", inodes_capacity);
+}
+
+static ssize_t ssdfs_inodes_tree_leaf_nodes_show(struct ssdfs_inodes_tree_attr *attr,
+						 struct ssdfs_fs_info *fsi,
+						 char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u32 leaf_nodes;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->lock);
+	leaf_nodes = inodes_tree->leaf_nodes;
+	spin_unlock(&inodes_tree->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", leaf_nodes);
+}
+
+static ssize_t ssdfs_inodes_tree_nodes_count_show(struct ssdfs_inodes_tree_attr *attr,
+						  struct ssdfs_fs_info *fsi,
+						  char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u32 nodes_count;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->lock);
+	nodes_count = inodes_tree->nodes_count;
+	spin_unlock(&inodes_tree->lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", nodes_count);
+}
+
+static ssize_t ssdfs_inodes_tree_btree_type_show(struct ssdfs_inodes_tree_attr *attr,
+						  struct ssdfs_fs_info *fsi,
+						  char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u8 type;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	type = inodes_tree->generic_tree.type;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", type);
+}
+
+static ssize_t ssdfs_inodes_tree_btree_state_show(struct ssdfs_inodes_tree_attr *attr,
+						   struct ssdfs_fs_info *fsi,
+						   char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	int state;
+	const char *state_str;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	state = atomic_read(&inodes_tree->generic_tree.state);
+
+	switch (state) {
+	case SSDFS_BTREE_UNKNOWN_STATE:
+		state_str = "UNKNOWN_STATE";
+		break;
+	case SSDFS_BTREE_CREATED:
+		state_str = "CREATED";
+		break;
+	case SSDFS_BTREE_DIRTY:
+		state_str = "DIRTY";
+		break;
+	default:
+		state_str = "INVALID";
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", state_str);
+}
+
+static ssize_t ssdfs_inodes_tree_btree_height_show(struct ssdfs_inodes_tree_attr *attr,
+						    struct ssdfs_fs_info *fsi,
+						    char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	int height;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	height = atomic_read(&inodes_tree->generic_tree.height);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", height);
+}
+
+static ssize_t ssdfs_inodes_tree_node_size_show(struct ssdfs_inodes_tree_attr *attr,
+						 struct ssdfs_fs_info *fsi,
+						 char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u32 node_size;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	node_size = inodes_tree->generic_tree.node_size;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", node_size);
+}
+
+static ssize_t ssdfs_inodes_tree_item_size_show(struct ssdfs_inodes_tree_attr *attr,
+						 struct ssdfs_fs_info *fsi,
+						 char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u16 item_size;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	item_size = inodes_tree->generic_tree.item_size;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", item_size);
+}
+
+static ssize_t ssdfs_inodes_tree_upper_node_id_show(struct ssdfs_inodes_tree_attr *attr,
+						     struct ssdfs_fs_info *fsi,
+						     char *buf)
+{
+	struct ssdfs_inodes_btree_info *inodes_tree;
+	u32 upper_node_id;
+
+	if (!fsi || !fsi->inodes_tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	inodes_tree = fsi->inodes_tree;
+	spin_lock(&inodes_tree->generic_tree.nodes_lock);
+	upper_node_id = inodes_tree->generic_tree.upper_node_id;
+	spin_unlock(&inodes_tree->generic_tree.nodes_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", upper_node_id);
+}
+
+SSDFS_INODES_TREE_RO_ATTR(upper_allocated_ino);
+SSDFS_INODES_TREE_RO_ATTR(allocated_inodes);
+SSDFS_INODES_TREE_RO_ATTR(free_inodes);
+SSDFS_INODES_TREE_RO_ATTR(inodes_capacity);
+SSDFS_INODES_TREE_RO_ATTR(leaf_nodes);
+SSDFS_INODES_TREE_RO_ATTR(nodes_count);
+SSDFS_INODES_TREE_RO_ATTR(btree_type);
+SSDFS_INODES_TREE_RO_ATTR(btree_state);
+SSDFS_INODES_TREE_RO_ATTR(btree_height);
+SSDFS_INODES_TREE_RO_ATTR(node_size);
+SSDFS_INODES_TREE_RO_ATTR(item_size);
+SSDFS_INODES_TREE_RO_ATTR(upper_node_id);
+
+static struct attribute *ssdfs_inodes_tree_attrs[] = {
+	SSDFS_INODES_TREE_ATTR_LIST(upper_allocated_ino),
+	SSDFS_INODES_TREE_ATTR_LIST(allocated_inodes),
+	SSDFS_INODES_TREE_ATTR_LIST(free_inodes),
+	SSDFS_INODES_TREE_ATTR_LIST(inodes_capacity),
+	SSDFS_INODES_TREE_ATTR_LIST(leaf_nodes),
+	SSDFS_INODES_TREE_ATTR_LIST(nodes_count),
+	SSDFS_INODES_TREE_ATTR_LIST(btree_type),
+	SSDFS_INODES_TREE_ATTR_LIST(btree_state),
+	SSDFS_INODES_TREE_ATTR_LIST(btree_height),
+	SSDFS_INODES_TREE_ATTR_LIST(node_size),
+	SSDFS_INODES_TREE_ATTR_LIST(item_size),
+	SSDFS_INODES_TREE_ATTR_LIST(upper_node_id),
+	NULL,
+};
+
+static const struct attribute_group ssdfs_inodes_tree_group = {
+	.attrs = ssdfs_inodes_tree_attrs,
+};
+
+static const struct attribute_group *ssdfs_inodes_tree_groups[] = {
+	&ssdfs_inodes_tree_group,
+	NULL,
+};
+
+static ssize_t ssdfs_inodes_tree_attr_show(struct kobject *kobj,
+					    struct attribute *attr,
+					    char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 inodes_tree_kobj);
+	struct ssdfs_inodes_tree_attr *inodes_tree_attr =
+		container_of(attr, struct ssdfs_inodes_tree_attr, attr);
+
+	if (!inodes_tree_attr->show)
+		return -EIO;
+
+	return inodes_tree_attr->show(inodes_tree_attr, fsi, buf);
+}
+
+static ssize_t ssdfs_inodes_tree_attr_store(struct kobject *kobj,
+					     struct attribute *attr,
+					     const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 inodes_tree_kobj);
+	struct ssdfs_inodes_tree_attr *inodes_tree_attr =
+		container_of(attr, struct ssdfs_inodes_tree_attr, attr);
+
+	if (!inodes_tree_attr->store)
+		return -EIO;
+
+	return inodes_tree_attr->store(inodes_tree_attr, fsi, buf, len);
+}
+
+static const struct sysfs_ops ssdfs_inodes_tree_attr_ops = {
+	.show	= ssdfs_inodes_tree_attr_show,
+	.store	= ssdfs_inodes_tree_attr_store,
+};
+
+static void ssdfs_inodes_tree_kobj_release(struct kobject *kobj)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj,
+						 struct ssdfs_fs_info,
+						 inodes_tree_kobj);
+	complete(&fsi->inodes_tree_kobj_unregister);
+}
+
+static struct kobj_type ssdfs_inodes_tree_ktype = {
+	.default_groups	= ssdfs_inodes_tree_groups,
+	.sysfs_ops	= &ssdfs_inodes_tree_attr_ops,
+	.release	= ssdfs_inodes_tree_kobj_release,
+};
+
+int ssdfs_sysfs_create_inodes_tree_group(struct ssdfs_fs_info *fsi)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	init_completion(&fsi->inodes_tree_kobj_unregister);
+	err = kobject_init_and_add(&fsi->inodes_tree_kobj,
+				   &ssdfs_inodes_tree_ktype,
+				   &fsi->dev_kobj,
+				   "inodes_tree");
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create inodes_tree group: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_inodes_tree_group(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fsi->inodes_tree_kobj);
+	kobject_put(&fsi->inodes_tree_kobj);
+	wait_for_completion(&fsi->inodes_tree_kobj_unregister);
+}
+
+/************************************************************************
+ *                     SSDFS snapshots tree attrs                       *
+ ************************************************************************/
+
+static ssize_t ssdfs_snapshots_tree_snapshots_count_show(struct ssdfs_snapshots_tree_attr *attr,
+							  struct ssdfs_fs_info *fsi,
+							  char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	u64 snapshots_count;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	snapshots_count = atomic64_read(&snapshots_tree->snapshots_count);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", snapshots_count);
+}
+
+static ssize_t ssdfs_snapshots_tree_deleted_snapshots_show(struct ssdfs_snapshots_tree_attr *attr,
+							   struct ssdfs_fs_info *fsi,
+							   char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	u64 deleted_snapshots;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	deleted_snapshots = atomic64_read(&snapshots_tree->deleted_snapshots);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", deleted_snapshots);
+}
+
+static ssize_t ssdfs_snapshots_tree_state_show(struct ssdfs_snapshots_tree_attr *attr,
+					       struct ssdfs_fs_info *fsi,
+					       char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	int state;
+	const char *state_str;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	state = atomic_read(&snapshots_tree->state);
+
+	switch (state) {
+	case SSDFS_SNAPSHOTS_BTREE_UNKNOWN_STATE:
+		state_str = "UNKNOWN_STATE";
+		break;
+	case SSDFS_SNAPSHOTS_BTREE_CREATED:
+		state_str = "CREATED";
+		break;
+	case SSDFS_SNAPSHOTS_BTREE_INITIALIZED:
+		state_str = "INITIALIZED";
+		break;
+	case SSDFS_SNAPSHOTS_BTREE_DIRTY:
+		state_str = "DIRTY";
+		break;
+	case SSDFS_SNAPSHOTS_BTREE_CORRUPTED:
+		state_str = "CORRUPTED";
+		break;
+	default:
+		state_str = "INVALID";
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", state_str);
+}
+
+static ssize_t ssdfs_snapshots_tree_btree_type_show(struct ssdfs_snapshots_tree_attr *attr,
+						     struct ssdfs_fs_info *fsi,
+						     char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	u8 type;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	type = snapshots_tree->generic_tree.type;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", type);
+}
+
+static ssize_t ssdfs_snapshots_tree_btree_state_show(struct ssdfs_snapshots_tree_attr *attr,
+						      struct ssdfs_fs_info *fsi,
+						      char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	int state;
+	const char *state_str;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	state = atomic_read(&snapshots_tree->generic_tree.state);
+
+	switch (state) {
+	case SSDFS_BTREE_UNKNOWN_STATE:
+		state_str = "UNKNOWN_STATE";
+		break;
+	case SSDFS_BTREE_CREATED:
+		state_str = "CREATED";
+		break;
+	case SSDFS_BTREE_DIRTY:
+		state_str = "DIRTY";
+		break;
+	default:
+		state_str = "INVALID";
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", state_str);
+}
+
+static ssize_t ssdfs_snapshots_tree_btree_height_show(struct ssdfs_snapshots_tree_attr *attr,
+						       struct ssdfs_fs_info *fsi,
+						       char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	int height;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	height = atomic_read(&snapshots_tree->generic_tree.height);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", height);
+}
+
+static ssize_t ssdfs_snapshots_tree_node_size_show(struct ssdfs_snapshots_tree_attr *attr,
+						    struct ssdfs_fs_info *fsi,
+						    char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	u32 node_size;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	node_size = snapshots_tree->generic_tree.node_size;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", node_size);
+}
+
+static ssize_t ssdfs_snapshots_tree_item_size_show(struct ssdfs_snapshots_tree_attr *attr,
+						    struct ssdfs_fs_info *fsi,
+						    char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	u16 item_size;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	item_size = snapshots_tree->generic_tree.item_size;
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", item_size);
+}
+
+static ssize_t ssdfs_snapshots_tree_upper_node_id_show(struct ssdfs_snapshots_tree_attr *attr,
+							struct ssdfs_fs_info *fsi,
+							char *buf)
+{
+	struct ssdfs_snapshots_btree_info *snapshots_tree;
+	u32 upper_node_id;
+
+	if (!fsi || !fsi->snapshots.tree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	snapshots_tree = fsi->snapshots.tree;
+	spin_lock(&snapshots_tree->generic_tree.nodes_lock);
+	upper_node_id = snapshots_tree->generic_tree.upper_node_id;
+	spin_unlock(&snapshots_tree->generic_tree.nodes_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%u\n", upper_node_id);
+}
+
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(snapshots_count);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(deleted_snapshots);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(state);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(btree_type);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(btree_state);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(btree_height);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(node_size);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(item_size);
+SSDFS_SNAPSHOTS_TREE_RO_ATTR(upper_node_id);
+
+static struct attribute *ssdfs_snapshots_tree_attrs[] = {
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(snapshots_count),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(deleted_snapshots),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(state),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(btree_type),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(btree_state),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(btree_height),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(node_size),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(item_size),
+	SSDFS_SNAPSHOTS_TREE_ATTR_LIST(upper_node_id),
+	NULL,
+};
+
+static const struct attribute_group ssdfs_snapshots_tree_group = {
+	.attrs = ssdfs_snapshots_tree_attrs,
+};
+
+static const struct attribute_group *ssdfs_snapshots_tree_groups[] = {
+	&ssdfs_snapshots_tree_group,
+	NULL,
+};
+
+static ssize_t ssdfs_snapshots_tree_attr_show(struct kobject *kobj,
+					       struct attribute *attr,
+					       char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 snapshots_tree_kobj);
+	struct ssdfs_snapshots_tree_attr *snapshots_tree_attr =
+		container_of(attr, struct ssdfs_snapshots_tree_attr, attr);
+
+	if (!snapshots_tree_attr->show)
+		return -EIO;
+
+	return snapshots_tree_attr->show(snapshots_tree_attr, fsi, buf);
+}
+
+static ssize_t ssdfs_snapshots_tree_attr_store(struct kobject *kobj,
+						struct attribute *attr,
+						const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 snapshots_tree_kobj);
+	struct ssdfs_snapshots_tree_attr *snapshots_tree_attr =
+		container_of(attr, struct ssdfs_snapshots_tree_attr, attr);
+
+	if (!snapshots_tree_attr->store)
+		return -EIO;
+
+	return snapshots_tree_attr->store(snapshots_tree_attr, fsi, buf, len);
+}
+
+static const struct sysfs_ops ssdfs_snapshots_tree_attr_ops = {
+	.show	= ssdfs_snapshots_tree_attr_show,
+	.store	= ssdfs_snapshots_tree_attr_store,
+};
+
+static void ssdfs_snapshots_tree_kobj_release(struct kobject *kobj)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj,
+						 struct ssdfs_fs_info,
+						 snapshots_tree_kobj);
+	complete(&fsi->snapshots_tree_kobj_unregister);
+}
+
+static struct kobj_type ssdfs_snapshots_tree_ktype = {
+	.default_groups	= ssdfs_snapshots_tree_groups,
+	.sysfs_ops	= &ssdfs_snapshots_tree_attr_ops,
+	.release	= ssdfs_snapshots_tree_kobj_release,
+};
+
+int ssdfs_sysfs_create_snapshots_tree_group(struct ssdfs_fs_info *fsi)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	init_completion(&fsi->snapshots_tree_kobj_unregister);
+	err = kobject_init_and_add(&fsi->snapshots_tree_kobj,
+				   &ssdfs_snapshots_tree_ktype,
+				   &fsi->dev_kobj,
+				   "snapshots_tree");
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create snapshots_tree group: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_snapshots_tree_group(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fsi->snapshots_tree_kobj);
+	kobject_put(&fsi->snapshots_tree_kobj);
+	wait_for_completion(&fsi->snapshots_tree_kobj_unregister);
+}
+
+/************************************************************************
+ *                      SSDFS shared dict attrs                         *
+ ************************************************************************/
+
+static ssize_t ssdfs_shared_dict_read_reqs_show(struct ssdfs_shared_dict_attr *attr,
+						 struct ssdfs_fs_info *fsi,
+						 char *buf)
+{
+	struct ssdfs_shared_dict_btree_info *shared_dict;
+	int read_reqs;
+
+	if (!fsi || !fsi->shdictree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	shared_dict = fsi->shdictree;
+	read_reqs = atomic_read(&shared_dict->read_reqs);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", read_reqs);
+}
+
+static ssize_t ssdfs_shared_dict_state_show(struct ssdfs_shared_dict_attr *attr,
+					     struct ssdfs_fs_info *fsi,
+					     char *buf)
+{
+	struct ssdfs_shared_dict_btree_info *shared_dict;
+	int state;
+	const char *state_str;
+
+	if (!fsi || !fsi->shdictree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	shared_dict = fsi->shdictree;
+	state = atomic_read(&shared_dict->state);
+
+	switch (state) {
+	case SSDFS_SHDICT_BTREE_UNKNOWN_STATE:
+		state_str = "UNKNOWN_STATE";
+		break;
+	case SSDFS_SHDICT_BTREE_CREATED:
+		state_str = "CREATED";
+		break;
+	case SSDFS_SHDICT_BTREE_UNDER_INIT:
+		state_str = "UNDER_INIT";
+		break;
+	case SSDFS_SHDICT_BTREE_INITIALIZED:
+		state_str = "INITIALIZED";
+		break;
+	case SSDFS_SHDICT_BTREE_CORRUPTED:
+		state_str = "CORRUPTED";
+		break;
+	default:
+		state_str = "INVALID";
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", state_str);
+}
+
+SSDFS_SHARED_DICT_RO_ATTR(read_reqs);
+SSDFS_SHARED_DICT_RO_ATTR(state);
+
+static struct attribute *ssdfs_shared_dict_attrs[] = {
+	SSDFS_SHARED_DICT_ATTR_LIST(read_reqs),
+	SSDFS_SHARED_DICT_ATTR_LIST(state),
+	NULL,
+};
+
+static const struct attribute_group ssdfs_shared_dict_group = {
+	.attrs = ssdfs_shared_dict_attrs,
+};
+
+static const struct attribute_group *ssdfs_shared_dict_groups[] = {
+	&ssdfs_shared_dict_group,
+	NULL,
+};
+
+static ssize_t ssdfs_shared_dict_attr_show(struct kobject *kobj,
+					   struct attribute *attr,
+					   char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 shared_dict_kobj);
+	struct ssdfs_shared_dict_attr *shared_dict_attr =
+		container_of(attr, struct ssdfs_shared_dict_attr, attr);
+
+	if (!shared_dict_attr->show)
+		return -EIO;
+
+	return shared_dict_attr->show(shared_dict_attr, fsi, buf);
+}
+
+static ssize_t ssdfs_shared_dict_attr_store(struct kobject *kobj,
+					     struct attribute *attr,
+					     const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 shared_dict_kobj);
+	struct ssdfs_shared_dict_attr *shared_dict_attr =
+		container_of(attr, struct ssdfs_shared_dict_attr, attr);
+
+	if (!shared_dict_attr->store)
+		return -EIO;
+
+	return shared_dict_attr->store(shared_dict_attr, fsi, buf, len);
+}
+
+static const struct sysfs_ops ssdfs_shared_dict_attr_ops = {
+	.show	= ssdfs_shared_dict_attr_show,
+	.store	= ssdfs_shared_dict_attr_store,
+};
+
+static void ssdfs_shared_dict_kobj_release(struct kobject *kobj)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj,
+						 struct ssdfs_fs_info,
+						 shared_dict_kobj);
+	complete(&fsi->shared_dict_kobj_unregister);
+}
+
+static struct kobj_type ssdfs_shared_dict_ktype = {
+	.default_groups	= ssdfs_shared_dict_groups,
+	.sysfs_ops	= &ssdfs_shared_dict_attr_ops,
+	.release	= ssdfs_shared_dict_kobj_release,
+};
+
+int ssdfs_sysfs_create_shared_dict_group(struct ssdfs_fs_info *fsi)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	init_completion(&fsi->shared_dict_kobj_unregister);
+	err = kobject_init_and_add(&fsi->shared_dict_kobj,
+				   &ssdfs_shared_dict_ktype,
+				   &fsi->dev_kobj,
+				   "shared_dict");
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create shared_dict group: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_shared_dict_group(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fsi->shared_dict_kobj);
+	kobject_put(&fsi->shared_dict_kobj);
+	wait_for_completion(&fsi->shared_dict_kobj_unregister);
+}
+
+/************************************************************************
+ *                      SSDFS invextree attrs                           *
+ ************************************************************************/
+
+static ssize_t ssdfs_invextree_extents_count_show(struct ssdfs_invextree_attr *attr,
+						   struct ssdfs_fs_info *fsi,
+						   char *buf)
+{
+	struct ssdfs_invextree_info *invextree;
+	u64 extents_count;
+
+	if (!fsi || !fsi->invextree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	invextree = fsi->invextree;
+	extents_count = atomic64_read(&invextree->extents_count);
+
+	return snprintf(buf, PAGE_SIZE, "%llu\n", extents_count);
+}
+
+static ssize_t ssdfs_invextree_state_show(struct ssdfs_invextree_attr *attr,
+					   struct ssdfs_fs_info *fsi,
+					   char *buf)
+{
+	struct ssdfs_invextree_info *invextree;
+	int state;
+	const char *state_str;
+
+	if (!fsi || !fsi->invextree) {
+		SSDFS_ERR("file system is not mounted\n");
+		return -ENOENT;
+	}
+
+	invextree = fsi->invextree;
+	state = atomic_read(&invextree->state);
+
+	switch (state) {
+	case SSDFS_INVEXTREE_UNKNOWN_STATE:
+		state_str = "UNKNOWN_STATE";
+		break;
+	case SSDFS_INVEXTREE_CREATED:
+		state_str = "CREATED";
+		break;
+	case SSDFS_INVEXTREE_INITIALIZED:
+		state_str = "INITIALIZED";
+		break;
+	case SSDFS_INVEXTREE_DIRTY:
+		state_str = "DIRTY";
+		break;
+	case SSDFS_INVEXTREE_CORRUPTED:
+		state_str = "CORRUPTED";
+		break;
+	default:
+		state_str = "INVALID";
+		break;
+	}
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", state_str);
+}
+
+SSDFS_INVEXTREE_RO_ATTR(extents_count);
+SSDFS_INVEXTREE_RO_ATTR(state);
+
+static struct attribute *ssdfs_invextree_attrs[] = {
+	SSDFS_INVEXTREE_ATTR_LIST(extents_count),
+	SSDFS_INVEXTREE_ATTR_LIST(state),
+	NULL,
+};
+
+static const struct attribute_group ssdfs_invextree_group = {
+	.attrs = ssdfs_invextree_attrs,
+};
+
+static const struct attribute_group *ssdfs_invextree_groups[] = {
+	&ssdfs_invextree_group,
+	NULL,
+};
+
+static ssize_t ssdfs_invextree_attr_show(struct kobject *kobj,
+					  struct attribute *attr,
+					  char *buf)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 invextree_kobj);
+	struct ssdfs_invextree_attr *invextree_attr =
+		container_of(attr, struct ssdfs_invextree_attr, attr);
+
+	if (!invextree_attr->show)
+		return -EIO;
+
+	return invextree_attr->show(invextree_attr, fsi, buf);
+}
+
+static ssize_t ssdfs_invextree_attr_store(struct kobject *kobj,
+					   struct attribute *attr,
+					   const char *buf, size_t len)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj, struct ssdfs_fs_info,
+						 invextree_kobj);
+	struct ssdfs_invextree_attr *invextree_attr =
+		container_of(attr, struct ssdfs_invextree_attr, attr);
+
+	if (!invextree_attr->store)
+		return -EIO;
+
+	return invextree_attr->store(invextree_attr, fsi, buf, len);
+}
+
+static const struct sysfs_ops ssdfs_invextree_attr_ops = {
+	.show	= ssdfs_invextree_attr_show,
+	.store	= ssdfs_invextree_attr_store,
+};
+
+static void ssdfs_invextree_kobj_release(struct kobject *kobj)
+{
+	struct ssdfs_fs_info *fsi = container_of(kobj,
+						 struct ssdfs_fs_info,
+						 invextree_kobj);
+	complete(&fsi->invextree_kobj_unregister);
+}
+
+static struct kobj_type ssdfs_invextree_ktype = {
+	.default_groups	= ssdfs_invextree_groups,
+	.sysfs_ops	= &ssdfs_invextree_attr_ops,
+	.release	= ssdfs_invextree_kobj_release,
+};
+
+int ssdfs_sysfs_create_invextree_group(struct ssdfs_fs_info *fsi)
+{
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	init_completion(&fsi->invextree_kobj_unregister);
+	err = kobject_init_and_add(&fsi->invextree_kobj,
+				   &ssdfs_invextree_ktype,
+				   &fsi->dev_kobj,
+				   "invextree");
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to create invextree group: err %d\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+void ssdfs_sysfs_delete_invextree_group(struct ssdfs_fs_info *fsi)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi);
+
+	SSDFS_DBG("fsi %p\n", fsi);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	kobject_del(&fsi->invextree_kobj);
+	kobject_put(&fsi->invextree_kobj);
+	wait_for_completion(&fsi->invextree_kobj_unregister);
 }
 
 /************************************************************************

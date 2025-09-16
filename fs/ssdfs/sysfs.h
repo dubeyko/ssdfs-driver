@@ -128,6 +128,38 @@ struct ssdfs_segbmap_frags_attr {
 			 const char *, size_t);
 };
 
+struct ssdfs_inodes_tree_attr {
+	struct attribute attr;
+	ssize_t (*show)(struct ssdfs_inodes_tree_attr *, struct ssdfs_fs_info *,
+			char *);
+	ssize_t (*store)(struct ssdfs_inodes_tree_attr *, struct ssdfs_fs_info *,
+			 const char *, size_t);
+};
+
+struct ssdfs_snapshots_tree_attr {
+	struct attribute attr;
+	ssize_t (*show)(struct ssdfs_snapshots_tree_attr *, struct ssdfs_fs_info *,
+			char *);
+	ssize_t (*store)(struct ssdfs_snapshots_tree_attr *, struct ssdfs_fs_info *,
+			 const char *, size_t);
+};
+
+struct ssdfs_shared_dict_attr {
+	struct attribute attr;
+	ssize_t (*show)(struct ssdfs_shared_dict_attr *, struct ssdfs_fs_info *,
+			char *);
+	ssize_t (*store)(struct ssdfs_shared_dict_attr *, struct ssdfs_fs_info *,
+			 const char *, size_t);
+};
+
+struct ssdfs_invextree_attr {
+	struct attribute attr;
+	ssize_t (*show)(struct ssdfs_invextree_attr *, struct ssdfs_fs_info *,
+			char *);
+	ssize_t (*store)(struct ssdfs_invextree_attr *, struct ssdfs_fs_info *,
+			 const char *, size_t);
+};
+
 #define SSDFS_ATTR(type, name, mode, show, store) \
 	static struct ssdfs_##type##_attr ssdfs_##type##_attr_##name = \
 		__ATTR(name, mode, show, store)
@@ -209,6 +241,38 @@ struct ssdfs_segbmap_frags_attr {
 	SSDFS_ATTR(segbmap_frag, name, 0644, \
 		    ssdfs_segbmap_frag_##name##_show, ssdfs_segbmap_frag_##name##_store)
 
+#define SSDFS_INODES_TREE_INFO_ATTR(name) \
+	SSDFS_ATTR(inodes_tree, name, 0444, NULL, NULL)
+#define SSDFS_INODES_TREE_RO_ATTR(name) \
+	SSDFS_ATTR(inodes_tree, name, 0444, ssdfs_inodes_tree_##name##_show, NULL)
+#define SSDFS_INODES_TREE_RW_ATTR(name) \
+	SSDFS_ATTR(inodes_tree, name, 0644, \
+		    ssdfs_inodes_tree_##name##_show, ssdfs_inodes_tree_##name##_store)
+
+#define SSDFS_SNAPSHOTS_TREE_INFO_ATTR(name) \
+	SSDFS_ATTR(snapshots_tree, name, 0444, NULL, NULL)
+#define SSDFS_SNAPSHOTS_TREE_RO_ATTR(name) \
+	SSDFS_ATTR(snapshots_tree, name, 0444, ssdfs_snapshots_tree_##name##_show, NULL)
+#define SSDFS_SNAPSHOTS_TREE_RW_ATTR(name) \
+	SSDFS_ATTR(snapshots_tree, name, 0644, \
+		    ssdfs_snapshots_tree_##name##_show, ssdfs_snapshots_tree_##name##_store)
+
+#define SSDFS_SHARED_DICT_INFO_ATTR(name) \
+	SSDFS_ATTR(shared_dict, name, 0444, NULL, NULL)
+#define SSDFS_SHARED_DICT_RO_ATTR(name) \
+	SSDFS_ATTR(shared_dict, name, 0444, ssdfs_shared_dict_##name##_show, NULL)
+#define SSDFS_SHARED_DICT_RW_ATTR(name) \
+	SSDFS_ATTR(shared_dict, name, 0644, \
+		    ssdfs_shared_dict_##name##_show, ssdfs_shared_dict_##name##_store)
+
+#define SSDFS_INVEXTREE_INFO_ATTR(name) \
+	SSDFS_ATTR(invextree, name, 0444, NULL, NULL)
+#define SSDFS_INVEXTREE_RO_ATTR(name) \
+	SSDFS_ATTR(invextree, name, 0444, ssdfs_invextree_##name##_show, NULL)
+#define SSDFS_INVEXTREE_RW_ATTR(name) \
+	SSDFS_ATTR(invextree, name, 0644, \
+		    ssdfs_invextree_##name##_show, ssdfs_invextree_##name##_store)
+
 #define SSDFS_FEATURE_ATTR_LIST(name) \
 	(&ssdfs_feature_attr_##name.attr)
 #define SSDFS_DEV_ATTR_LIST(name) \
@@ -229,5 +293,13 @@ struct ssdfs_segbmap_frags_attr {
 	(&ssdfs_maptbl_frag_attr_##name.attr)
 #define SSDFS_SEGBMAP_FRAG_ATTR_LIST(name) \
 	(&ssdfs_segbmap_frag_attr_##name.attr)
+#define SSDFS_INODES_TREE_ATTR_LIST(name) \
+	(&ssdfs_inodes_tree_attr_##name.attr)
+#define SSDFS_SNAPSHOTS_TREE_ATTR_LIST(name) \
+	(&ssdfs_snapshots_tree_attr_##name.attr)
+#define SSDFS_SHARED_DICT_ATTR_LIST(name) \
+	(&ssdfs_shared_dict_attr_##name.attr)
+#define SSDFS_INVEXTREE_ATTR_LIST(name) \
+	(&ssdfs_invextree_attr_##name.attr)
 
 #endif /* _SSDFS_SYSFS_H */
