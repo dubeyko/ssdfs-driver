@@ -7250,7 +7250,7 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 
 	if (free_data_blocks < ((rest_bytes + page_size - 1) / page_size)) {
 #ifdef CONFIG_SSDFS_DEBUG
-SSDFS_ERR_DBG("try again to create block/extent: "
+		SSDFS_DBG("try again to create block/extent: "
 			  "seg %llu, peb %llu, free_data_blocks %u, "
 			  "rest_bytes %u, page_size %u\n",
 			  req->place.start.seg_id, pebi->peb_id,
@@ -10871,7 +10871,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		if (free_data_blocks <
 				((rest_bytes + page_size - 1) / page_size)) {
 #ifdef CONFIG_SSDFS_DEBUG
-SSDFS_ERR_DBG("try again to update block/extent: "
+			SSDFS_DBG("try again to update block/extent: "
 				  "seg %llu, peb %llu, free_data_blocks %u, "
 				  "rest_bytes %u, page_size %u\n",
 				  req->place.start.seg_id, pebi->peb_id,

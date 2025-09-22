@@ -17,6 +17,8 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -105,6 +107,8 @@ int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
 	else {
 		capacity = capacity + SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR - 1;
 		capacity /= SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR;
+		if (capacity == 0)
+			capacity = 1;
 		capacity *= SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR;
 
 		if (capacity > ssdfs_folio_vector_max_threshold())
@@ -123,6 +127,7 @@ int ssdfs_folio_vector_create(struct ssdfs_folio_vector *array,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_create);
 
 /*
  * ssdfs_folio_vector_destroy() - destroy folio vector
@@ -163,6 +168,7 @@ void ssdfs_folio_vector_destroy(struct ssdfs_folio_vector *array)
 		array->folios = NULL;
 	}
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_destroy);
 
 /*
  * ssdfs_folio_vector_init() - init folio vector
@@ -192,6 +198,7 @@ int ssdfs_folio_vector_init(struct ssdfs_folio_vector *array)
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_init);
 
 /*
  * ssdfs_folio_vector_reinit() - reinit folio vector
@@ -230,6 +237,7 @@ int ssdfs_folio_vector_reinit(struct ssdfs_folio_vector *array)
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_reinit);
 
 /*
  * ssdfs_folio_vector_inflate() - increase capacity of folio vector
@@ -279,6 +287,7 @@ int ssdfs_folio_vector_inflate(struct ssdfs_folio_vector *array,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_inflate);
 
 /*
  * ssdfs_folio_vector_count() - count of folios in folio vector
@@ -292,6 +301,7 @@ u32 ssdfs_folio_vector_count(struct ssdfs_folio_vector *array)
 
 	return array->count;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_count);
 
 /*
  * ssdfs_folio_vector_space() - free space in folio vector
@@ -311,6 +321,7 @@ u32 ssdfs_folio_vector_space(struct ssdfs_folio_vector *array)
 
 	return array->capacity - array->count;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_space);
 
 /*
  * ssdfs_folio_vector_capacity() - capacity of folio vector
@@ -324,6 +335,7 @@ u32 ssdfs_folio_vector_capacity(struct ssdfs_folio_vector *array)
 
 	return array->capacity;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_capacity);
 
 /*
  * ssdfs_folio_vector_add() - add folio in folio vector
@@ -357,6 +369,7 @@ int ssdfs_folio_vector_add(struct ssdfs_folio_vector *array,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_add);
 
 /*
  * ssdfs_folio_vector_allocate() - allocate + add folio
@@ -414,6 +427,7 @@ struct folio *ssdfs_folio_vector_allocate(struct ssdfs_folio_vector *array)
 
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_allocate);
 
 /*
  * ssdfs_folio_vector_remove() - remove folio
@@ -462,6 +476,7 @@ struct folio *ssdfs_folio_vector_remove(struct ssdfs_folio_vector *array,
 
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_remove);
 
 /*
  * ssdfs_folio_vector_release() - release folios from folio vector
@@ -505,3 +520,4 @@ void ssdfs_folio_vector_release(struct ssdfs_folio_vector *array)
 
 	ssdfs_folio_vector_reinit(array);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_vector_release);

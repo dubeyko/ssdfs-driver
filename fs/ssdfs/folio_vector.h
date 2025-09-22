@@ -15,6 +15,8 @@
 #ifndef _SSDFS_FOLIO_VECTOR_H
 #define _SSDFS_FOLIO_VECTOR_H
 
+#include <linux/slab.h>
+
 #define SSDFS_FOLIO_VECTOR_CAPACITY_FACTOR	(8)
 
 /*
@@ -41,7 +43,7 @@ struct ssdfs_folio_vector {
 static inline
 u32 ssdfs_folio_vector_max_threshold(void)
 {
-	return S32_MAX;
+	return KMALLOC_MAX_SIZE / sizeof(struct folio *);
 }
 
 /*

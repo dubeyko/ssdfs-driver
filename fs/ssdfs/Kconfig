@@ -375,4 +375,22 @@ config SSDFS_UNDER_DEVELOPMENT_FUNC
 	  If you are going to check under development functionality
 	  in SSDFS driver then choose Y here. If unsure, say N.
 
+config SSDFS_KUNIT_TEST
+	tristate "SSDFS KUnit test" if !KUNIT_ALL_TESTS
+	depends on SSDFS && KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  This option enables KUnit tests for SSDFS implementation.
+	  This includes tests for folio vector.
+
+	  KUnit tests run during boot and output the results to the
+	  debug log in TAP format (http://testanything.org/). Only
+	  useful for kernel devs running KUnit test harness and are
+	  not for inclusion into a production build.
+
+	  For more information on KUnit and unit tests in general,
+	  refer to the KUnit documentation in Documentation/dev-tools/kunit/.
+
+	  If unsure, say N.
+
 endmenu
