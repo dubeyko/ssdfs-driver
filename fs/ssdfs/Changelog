@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.35 [September 21, 2025]
+    (*) Introduce Kunit-based folio array's unit-tests.
+
 v.5.34 [September 21, 2025]
     (*) Introduce Kunit-based dynamic array's unit-tests.
 

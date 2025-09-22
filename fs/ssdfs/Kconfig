@@ -381,7 +381,7 @@ config SSDFS_KUNIT_TEST
 	default KUNIT_ALL_TESTS
 	help
 	  This option enables KUnit tests for SSDFS implementation.
-	  This includes tests for folio vector, dynamic array.
+	  This includes tests for folio vector, dynamic array, folio array.
 
 	  KUnit tests run during boot and output the results to the
 	  debug log in TAP format (http://testanything.org/). Only

@@ -25,6 +25,8 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -197,6 +199,7 @@ free_folio_array:
 finish_create_folio_array:
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_create_folio_array);
 
 /*
  * ssdfs_destroy_folio_array() - destroy folio array
@@ -261,6 +264,7 @@ void ssdfs_destroy_folio_array(struct ssdfs_folio_array *array)
 		spin_unlock(&array->bmap[i].lock);
 	}
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_destroy_folio_array);
 
 /*
  * ssdfs_reinit_folio_array() - change the capacity of the folio array
@@ -395,6 +399,7 @@ finish_reinit:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_reinit_folio_array);
 
 /*
  * is_ssdfs_folio_array_empty() - is folio array empty?
@@ -416,6 +421,7 @@ bool is_ssdfs_folio_array_empty(struct ssdfs_folio_array *array)
 
 	return is_empty;
 }
+EXPORT_SYMBOL_IF_KUNIT(is_ssdfs_folio_array_empty);
 
 /*
  * ssdfs_folio_array_get_last_folio_index() - get latest folio index
@@ -438,6 +444,7 @@ ssdfs_folio_array_get_last_folio_index(struct ssdfs_folio_array *array)
 
 	return index;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_get_last_folio_index);
 
 /*
  * ssdfs_folio_array_add_folio() - add memory folio into the folio array
@@ -571,6 +578,7 @@ finish_add_folio:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_add_folio);
 
 /*
  * ssdfs_folio_array_allocate_folio_locked() - allocate and add folio
@@ -643,6 +651,7 @@ ssdfs_folio_array_allocate_folio_locked(struct ssdfs_folio_array *array,
 	ssdfs_folio_lock(folio);
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_allocate_folio_locked);
 
 /*
  * ssdfs_folio_array_get_folio() - get folio unlocked
@@ -746,6 +755,7 @@ finish_get_folio:
 
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_get_folio);
 
 /*
  * ssdfs_folio_array_get_folio_locked() - get folio locked
@@ -791,6 +801,7 @@ struct folio *ssdfs_folio_array_get_folio_locked(struct ssdfs_folio_array *array
 
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_get_folio_locked);
 
 /*
  * ssdfs_folio_array_grab_folio() - get or add folio locked
@@ -852,6 +863,7 @@ struct folio *ssdfs_folio_array_grab_folio(struct ssdfs_folio_array *array,
 
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_grab_folio);
 
 /*
  * ssdfs_folio_array_set_folio_dirty() - set folio dirty
@@ -972,6 +984,7 @@ finish_set_folio_dirty:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_set_folio_dirty);
 
 /*
  * ssdfs_folio_array_clear_dirty_folio() - set folio as clean
@@ -1081,6 +1094,7 @@ finish_clear_folio_dirty:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_clear_dirty_folio);
 
 /*
  * ssdfs_folio_array_clear_dirty_range() - clear dirty folios in the range
@@ -1117,6 +1131,12 @@ int ssdfs_folio_array_clear_dirty_range(struct ssdfs_folio_array *array,
 		  atomic_read(&array->state));
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (start > end) {
+		SSDFS_ERR("start %lu > end %lu\n",
+			  start, end);
+		return -EINVAL;
+	}
+
 	switch (atomic_read(&array->state)) {
 	case SSDFS_FOLIO_ARRAY_CREATED:
 		SSDFS_DBG("no dirty folios in folio array\n");
@@ -1130,12 +1150,6 @@ int ssdfs_folio_array_clear_dirty_range(struct ssdfs_folio_array *array,
 		SSDFS_WARN("unexpected state %#x of folio array\n",
 			  atomic_read(&array->state));
 		return -ERANGE;
-	}
-
-	if (start > end) {
-		SSDFS_ERR("start %lu > end %lu\n",
-			  start, end);
-		return -EINVAL;
 	}
 
 	down_write(&array->lock);
@@ -1171,6 +1185,7 @@ finish_clear_dirty_folios:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_clear_dirty_range);
 
 /*
  * ssdfs_folio_array_clear_all_dirty_folios() - clear all dirty folios
@@ -1205,6 +1220,7 @@ int ssdfs_folio_array_clear_all_dirty_folios(struct ssdfs_folio_array *array)
 
 	return ssdfs_folio_array_clear_dirty_range(array, start, end);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_clear_all_dirty_folios);
 
 /*
  * ssdfs_folio_array_lookup_range() - find folios for a requested tag
@@ -1351,6 +1367,7 @@ finish_search:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_lookup_range);
 
 /*
  * ssdfs_folio_array_define_last_folio() - define last folio index
@@ -1538,6 +1555,7 @@ finish_delete_folio:
 
 	return folio;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_delete_folio);
 
 /*
  * ssdfs_folio_array_release_folios() - release folios in the range
@@ -1723,6 +1741,7 @@ finish_release_folios_range:
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_release_folios);
 
 /*
  * ssdfs_folio_array_release_all_folios() - release all folios
@@ -1757,3 +1776,4 @@ int ssdfs_folio_array_release_all_folios(struct ssdfs_folio_array *array)
 
 	return ssdfs_folio_array_release_folios(array, &start, end);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_folio_array_release_all_folios);
