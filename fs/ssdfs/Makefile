@@ -54,4 +54,5 @@ ssdfs-$(CONFIG_SSDFS_PEB_DEDUPLICATION)		+= fingerprint_array.o \
 							peb_deduplication.o
 
 # KUnit tests
-obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= folio_vector_test.o
+obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= folio_vector_test.o \
+							dynamic_array_test.o

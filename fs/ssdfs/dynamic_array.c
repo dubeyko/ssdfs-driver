@@ -20,6 +20,8 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -214,6 +216,7 @@ int ssdfs_dynamic_array_create(struct ssdfs_dynamic_array *array,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_create);
 
 /*
  * ssdfs_dynamic_array_destroy() - destroy dynamic array
@@ -253,6 +256,7 @@ void ssdfs_dynamic_array_destroy(struct ssdfs_dynamic_array *array)
 	array->bytes_count = 0;
 	array->state = SSDFS_DYNAMIC_ARRAY_STORAGE_ABSENT;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_destroy);
 
 /*
  * SSDFS_DYNAMIC_ARRAY_ITEM_OFFSET() - calculate item offset
@@ -486,6 +490,7 @@ void *ssdfs_dynamic_array_get_locked(struct ssdfs_dynamic_array *array,
 
 	return ptr;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_get_locked);
 
 /*
  * ssdfs_dynamic_array_get_content_locked() - get locked items range
@@ -650,6 +655,7 @@ void *ssdfs_dynamic_array_get_content_locked(struct ssdfs_dynamic_array *array,
 
 	return ptr;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_get_content_locked);
 
 /*
  * ssdfs_dynamic_array_release() - release item
@@ -752,6 +758,7 @@ int ssdfs_dynamic_array_release(struct ssdfs_dynamic_array *array,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_release);
 
 /*
  * ssdfs_dynamic_array_set() - store item into dynamic array
@@ -945,6 +952,7 @@ int ssdfs_dynamic_array_set(struct ssdfs_dynamic_array *array,
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_set);
 
 /*
  * ssdfs_dynamic_array_copy_content() - copy the whole dynamic array
@@ -1112,6 +1120,7 @@ int ssdfs_dynamic_array_copy_content(struct ssdfs_dynamic_array *array,
 finish_copy_content:
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_copy_content);
 
 /*
  * ssdfs_shift_folio_vector_content_right() - shift folio vector content right
@@ -1582,3 +1591,4 @@ int ssdfs_dynamic_array_shift_content_right(struct ssdfs_dynamic_array *array,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_dynamic_array_shift_content_right);
