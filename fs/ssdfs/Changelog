@@ -3,6 +3,10 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.36 [September 24, 2025]
+    (*) Fix multiple issues in block bitmap, segment, mapping table,
+        flush thread logic, and synchronization mechanisms.
+
 v.5.35 [September 21, 2025]
     (*) Introduce Kunit-based folio array's unit-tests.
 

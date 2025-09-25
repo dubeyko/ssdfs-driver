@@ -39,7 +39,7 @@ struct ssdfs_compressed_area {
 /*
  * struct ssdfs_compressed_portion - compressed portion descriptor
  * @area: descriptor of area that contains portion
- * @header_size: size of th eportion header
+ * @header_size: size of the portion header
  * @compressed: descriptor of compressed state of portion
  * @uncompressed: descriptor of decompressed state of portion
  */

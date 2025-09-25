@@ -182,6 +182,7 @@ enum {
  * @request.seg_type: type of segment
  * @request.start_search_id: starting segment ID for search
  * @request.need_find_new_segment: does it need to find a new segment?
+ * @request.search_clean_segment_only: does it need to fins clean segment only?
  * @result.seg_state: segment state
  * @result.seg_id: requested or found segment ID
  * @result.free_pages: number of free pages in found segment
@@ -194,6 +195,7 @@ struct ssdfs_segment_search_state {
 		int seg_type;
 		u64 start_search_id;
 		bool need_find_new_segment;
+		bool search_clean_segment_only;
 	} request;
 
 	struct {
@@ -225,6 +227,7 @@ void ssdfs_segment_search_state_init(struct ssdfs_segment_search_state *state,
 	state->request.seg_type = seg_type;
 	state->request.start_search_id = start_search_id;
 	state->request.need_find_new_segment = false;
+	state->request.search_clean_segment_only = false;
 
 	state->result.seg_state = SSDFS_SEG_STATE_MAX;
 	state->result.seg_id = seg_id;

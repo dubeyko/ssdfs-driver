@@ -571,12 +571,19 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 	}
 
 	if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG) {
-		if (search_state->result.used_pages > 0 ||
-		    search_state->result.free_pages < (fsi->pages_per_seg / 2) ||
+		if (search_state->result.free_pages < (fsi->pages_per_seg / 4) ||
 		    atomic_read(&si->migration.migrating_pebs) > 0) {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("segment %llu can't be used as current\n",
-				  si->seg_id);
+			SSDFS_DBG("segment %llu can't be used as current: "
+				  "used_pages %u, invalid_pages %u, "
+				  "free_pages %u, pages_per_seg %u, "
+				  "migrating_pebs %d\n",
+				  si->seg_id,
+				  search_state->result.used_pages,
+				  search_state->result.invalid_pages,
+				  search_state->result.free_pages,
+				  fsi->pages_per_seg,
+				  atomic_read(&si->migration.migrating_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
 			return -ENOSPC;
 		}

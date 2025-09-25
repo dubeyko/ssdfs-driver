@@ -605,6 +605,70 @@ void ssdfs_account_updated_user_data_pages(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
+int ssdfs_maptbl_change_peb_state(struct ssdfs_fs_info *fsi,
+				  u64 leb_id, u8 peb_type,
+				  int peb_state,
+				  struct completion **end);
+
+/*
+ * ssdfs_maptbl_wait_and_change_peb_state() - wait and change PEB state
+ * @fsi: file system info object
+ * @leb_id: LEB ID number
+ * @peb_type: type of the PEB
+ * @peb_state: new state of the PEB
+ */
+static inline
+int ssdfs_maptbl_wait_and_change_peb_state(struct ssdfs_fs_info *fsi,
+					   u64 leb_id, u8 peb_type,
+					   int peb_state)
+{
+	struct completion *end;
+	int number_of_tries = 0;
+	int err = 0;
+
+	err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
+					    peb_type, peb_state,
+					    &end);
+	if (err == -EAGAIN) {
+wait_completion_end:
+		err = SSDFS_WAIT_COMPLETION(end);
+		if (unlikely(err)) {
+			SSDFS_ERR("waiting failed: "
+				  "err %d\n", err);
+			return err;
+		}
+
+		err = ssdfs_maptbl_change_peb_state(fsi,
+						    leb_id,
+						    peb_type,
+						    peb_state,
+						    &end);
+		if (err == -EAGAIN && is_ssdfs_maptbl_under_flush(fsi)) {
+			if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("mapping table is flushing: "
+					  "leb_id %llu, peb_type %#x, "
+					  "new_state %#x, number_of_tries %d\n",
+					  leb_id, peb_type, peb_state,
+					  number_of_tries);
+#endif /* CONFIG_SSDFS_DEBUG */
+				number_of_tries++;
+				goto wait_completion_end;
+			}
+		}
+	}
+
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to change the PEB state: "
+			  "leb_id %llu, peb_type %#x, "
+			  "new_state %#x, err %d\n",
+			  leb_id, peb_type,
+			  peb_state, err);
+	}
+
+	return err;
+}
+
 /*
  * PEB mapping table's API
  */

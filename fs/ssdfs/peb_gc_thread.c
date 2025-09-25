@@ -2247,12 +2247,7 @@ collect_garbage_now:
 			goto finish_seg_processing;
 		}
 
-		if (used_pages == 0) {
-			SSDFS_WARN("need to finish migration: "
-				   "seg %llu, leb_id %llu, "
-				   "used_pages %d\n",
-				   si->seg_id, cur_leb_id, used_pages);
-		} else if (used_pages <= SSDFS_GC_FINISH_MIGRATION) {
+		if (used_pages <= SSDFS_GC_FINISH_MIGRATION) {
 			err = ssdfs_gc_finish_migration(si, pebc,
 							&reqs_array);
 			if (unlikely(err)) {

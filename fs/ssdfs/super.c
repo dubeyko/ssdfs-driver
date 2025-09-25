@@ -1918,23 +1918,8 @@ static int ssdfs_move_on_first_peb_next_sb_seg(struct super_block *sb,
 		}
 	}
 
-	err = ssdfs_maptbl_change_peb_state(fsi, prev_leb, peb_type,
-					    SSDFS_MAPTBL_DIRTY_PEB_STATE,
-					    &end);
-	if (err == -EAGAIN) {
-		err = SSDFS_WAIT_COMPLETION(end);
-		if (unlikely(err)) {
-			SSDFS_ERR("maptbl init failed: "
-				  "err %d\n", err);
-			goto finish_move_sb_seg;
-		}
-
-		err = ssdfs_maptbl_change_peb_state(fsi,
-						prev_leb, peb_type,
-						SSDFS_MAPTBL_DIRTY_PEB_STATE,
-						&end);
-	}
-
+	err = ssdfs_maptbl_wait_and_change_peb_state(fsi, prev_leb, peb_type,
+						SSDFS_MAPTBL_DIRTY_PEB_STATE);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to change the PEB state: "
 			  "leb_id %llu, new_state %#x, err %d\n",
@@ -1964,7 +1949,6 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 	u64 cur_leb, next_leb;
 	u64 cur_peb;
 	u8 peb_type = SSDFS_MAPTBL_SBSEG_PEB_TYPE;
-	struct completion *end = NULL;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1984,23 +1968,8 @@ static int ssdfs_move_on_next_sb_seg(struct super_block *sb,
 
 	next_leb = cur_leb + 1;
 
-	err = ssdfs_maptbl_change_peb_state(fsi, cur_leb, peb_type,
-					    SSDFS_MAPTBL_USED_PEB_STATE,
-					    &end);
-	if (err == -EAGAIN) {
-		err = SSDFS_WAIT_COMPLETION(end);
-		if (unlikely(err)) {
-			SSDFS_ERR("maptbl init failed: "
-				  "err %d\n", err);
-			return err;
-		}
-
-		err = ssdfs_maptbl_change_peb_state(fsi,
-					cur_leb, peb_type,
-					SSDFS_MAPTBL_USED_PEB_STATE,
-					&end);
-	}
-
+	err = ssdfs_maptbl_wait_and_change_peb_state(fsi, cur_leb, peb_type,
+						SSDFS_MAPTBL_USED_PEB_STATE);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to change the PEB state: "
 			  "leb_id %llu, new_state %#x, err %d\n",

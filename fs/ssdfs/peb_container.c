@@ -5744,7 +5744,6 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	struct ssdfs_peb_info *pebi;
 	struct ssdfs_peb_mapping_table *maptbl;
-	struct completion *end;
 	int items_state;
 	int used_pages, free_pages, invalid_pages;
 	int metadata_pages, pages_capacity;
@@ -5931,28 +5930,15 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			  pebi->peb_id, new_peb_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-						    pebc->peb_type,
-						    new_peb_state, &end);
-		if (err == -EAGAIN) {
-			err = SSDFS_WAIT_COMPLETION(end);
-			if (unlikely(err)) {
-				SSDFS_ERR("maptbl init failed: "
-					  "err %d\n", err);
-				return err;
-			}
-
-			err = ssdfs_maptbl_change_peb_state(fsi,
-							    leb_id,
-							    pebc->peb_type,
-							    new_peb_state,
-							    &end);
-		}
-
+		err = ssdfs_maptbl_wait_and_change_peb_state(fsi, leb_id,
+							     pebc->peb_type,
+							     new_peb_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change the PEB state: "
-				  "peb_id %llu, new_state %#x, err %d\n",
-				  pebi->peb_id, new_peb_state, err);
+				  "peb_id %llu, peb_type %#x, "
+				  "new_state %#x, err %d\n",
+				  pebi->peb_id, pebc->peb_type,
+				  new_peb_state, err);
 			return err;
 		}
 
@@ -6093,23 +6079,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			  pebi->peb_id, new_peb_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-						    pebc->peb_type,
-						    new_peb_state, &end);
-		if (err == -EAGAIN) {
-			err = SSDFS_WAIT_COMPLETION(end);
-			if (unlikely(err)) {
-				SSDFS_ERR("maptbl init failed: "
-					  "err %d\n", err);
-				return err;
-			}
-
-			err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-							    pebc->peb_type,
-							    new_peb_state,
-							    &end);
-		}
-
+		err = ssdfs_maptbl_wait_and_change_peb_state(fsi, leb_id,
+							     pebc->peb_type,
+							     new_peb_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change the PEB state: "
 				  "peb_id %llu, new_state %#x, err %d\n",
@@ -6292,23 +6264,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			  pebi->peb_id, new_peb_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-						    pebc->peb_type,
-						    new_peb_state, &end);
-		if (err == -EAGAIN) {
-			err = SSDFS_WAIT_COMPLETION(end);
-			if (unlikely(err)) {
-				SSDFS_ERR("maptbl init failed: "
-					  "err %d\n", err);
-				return err;
-			}
-
-			err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-							    pebc->peb_type,
-							    new_peb_state,
-							    &end);
-		}
-
+		err = ssdfs_maptbl_wait_and_change_peb_state(fsi, leb_id,
+							     pebc->peb_type,
+							     new_peb_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change the PEB state: "
 				  "peb_id %llu, new_state %#x, err %d\n",
@@ -6456,23 +6414,9 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 			  pebi->peb_id, new_peb_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-						    pebc->peb_type,
-						    new_peb_state, &end);
-		if (err == -EAGAIN) {
-			err = SSDFS_WAIT_COMPLETION(end);
-			if (unlikely(err)) {
-				SSDFS_ERR("maptbl init failed: "
-					  "err %d\n", err);
-				return err;
-			}
-
-			err = ssdfs_maptbl_change_peb_state(fsi, leb_id,
-							    pebc->peb_type,
-							    new_peb_state,
-							    &end);
-		}
-
+		err = ssdfs_maptbl_wait_and_change_peb_state(fsi, leb_id,
+							     pebc->peb_type,
+							     new_peb_state);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to change the PEB state: "
 				  "peb_id %llu, new_state %#x, err %d\n",

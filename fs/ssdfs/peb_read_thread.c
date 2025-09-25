@@ -9564,7 +9564,7 @@ int ssdfs_read_checked_block_bitmap(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("last_free_blk %u, bmap_bytes %u, "
 		  "bmap_folios %u, fragments_count %u, "
-		  "folios_countt %u\n",
+		  "folios_count %u\n",
 		  last_free_blk, bmap_bytes,
 		  bmap_folios, fragments_count,
 		  folios_count);
@@ -10037,6 +10037,10 @@ int ssdfs_peb_init_using_metadata_state(struct ssdfs_peb_info *pebi,
 	}
 
 	if (bytes_count != env->log.blk_bmap.read_bytes) {
+		SSDFS_ERR("fail to init block bitmap: "
+			  "seg %llu, peb %llu, peb_index %u\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id, pebi->peb_index);
 		SSDFS_WARN("bytes_count %u != read_bytes %u\n",
 			   bytes_count, env->log.blk_bmap.read_bytes);
 		err = -EIO;

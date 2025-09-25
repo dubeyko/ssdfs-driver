@@ -1259,7 +1259,8 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
-	if (state->result.number_of_tries == 0) {
+	if (state->result.number_of_tries == 0 &&
+	    !state->request.search_clean_segment_only) {
 		start_id = 0;
 		upper_bound = state->request.start_search_id;
 
@@ -1287,7 +1288,8 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 		}
 	}
 
-	if (state->result.number_of_tries < threshold) {
+	if (state->result.number_of_tries < threshold &&
+	    !state->request.search_clean_segment_only) {
 		start_id = state->request.start_search_id + 1;
 		upper_bound = fsi->nsegs;
 
@@ -1371,6 +1373,16 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		}
+	}
+
+	if (state->request.search_clean_segment_only) {
+		err = -ENOSPC;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("no free space for a new segment: "
+			  "seg_type %#x\n",
+			  state->request.seg_type);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_search;
 	}
 
 	start_id = state->request.start_search_id + 1;
@@ -3595,6 +3607,9 @@ int ssdfs_add_new_current_segment(struct ssdfs_current_segment *cur_seg,
 		seg_search->request.start_search_id = cur_seg->seg_id;
 		seg_search->request.need_find_new_segment = true;
 
+		if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG)
+			seg_search->request.search_clean_segment_only = true;
+
 		si = ssdfs_grab_segment(fsi, seg_search);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
@@ -4135,6 +4150,10 @@ try_current_segment:
 add_new_current_segment:
 		seg_search.request.start_search_id = cur_seg->seg_id;
 		seg_search.request.need_find_new_segment = true;
+
+		if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG)
+			seg_search.request.search_clean_segment_only = true;
+
 		si = ssdfs_grab_segment(cur_seg->fsi, &seg_search);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
@@ -5169,6 +5188,10 @@ try_current_segment:
 add_new_current_segment:
 		seg_search.request.start_search_id = cur_seg->seg_id;
 		seg_search.request.need_find_new_segment = true;
+
+		if (cur_seg->type == SSDFS_CUR_DATA_UPDATE_SEG)
+			seg_search.request.search_clean_segment_only = true;
+
 		si = ssdfs_grab_segment(fsi, &seg_search);
 		if (IS_ERR_OR_NULL(si)) {
 			err = (si == NULL ? -ENOMEM : PTR_ERR(si));
@@ -5438,6 +5461,11 @@ finish_add_extent:
 			  cur_seg->real_seg->seg_id);
 	}
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (*seg_id >= U64_MAX) {
+		SSDFS_ERR("ino %llu, logical_offset %llu, err %d\n",
+			  req->extent.ino, req->extent.logical_offset, err);
+	}
 
 	if (err == -ENOSPC) {
 #ifdef CONFIG_SSDFS_DEBUG

@@ -550,6 +550,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 {
 	struct ssdfs_folio_vector *array;
 	struct folio *folio;
+	u32 expected_folios_count;
 	int i;
 #ifdef CONFIG_SSDFS_DEBUG
 	void *kaddr;
@@ -595,6 +596,11 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 
 	switch (blk_bmap->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
+		expected_folios_count =
+			BLK_BMAP_BYTES(blk_bmap->items_capacity);
+		expected_folios_count =
+			(expected_folios_count + PAGE_SIZE - 1) / PAGE_SIZE;
+
 		for (i = 0; i < ssdfs_folio_vector_count(source); i++) {
 			folio = ssdfs_folio_vector_remove(source, i);
 			if (IS_ERR_OR_NULL(folio)) {
@@ -623,6 +629,21 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 			}
 		}
 
+		for (; i < expected_folios_count; i++) {
+			folio = ssdfs_folio_vector_allocate(array);
+			if (IS_ERR_OR_NULL(folio)) {
+				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
+				SSDFS_ERR("fail to allocate folio\n");
+				return err;
+			}
+
+			ssdfs_folio_lock(folio);
+			__ssdfs_memset_folio(folio,
+					     0, folio_size(folio),
+					     0, folio_size(folio));
+			ssdfs_folio_unlock(folio);
+		}
+
 		err = ssdfs_folio_vector_reinit(source);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to reinit folio vector: "
@@ -632,7 +653,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 		break;
 
 	case SSDFS_BLOCK_BMAP_STORAGE_BUFFER:
-		if (ssdfs_folio_vector_count(source)  > 1) {
+		if (ssdfs_folio_vector_count(source) > 1) {
 			SSDFS_ERR("invalid source batch size %u\n",
 				  ssdfs_folio_vector_count(source));
 			return -ERANGE;
@@ -897,9 +918,10 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("INFLATED_BLK_BMAP: "
 			  "items_capacity %zu, last_free_blk %u, "
-			  "metadata_blks %u, invalid_blks %u\n",
+			  "metadata_blks %u, invalid_blks %u, "
+			  "bmap_bytes %u\n",
 			  blk_bmap->items_capacity, last_free_blk,
-			  metadata_blks, invalid_blks);
+			  metadata_blks, invalid_blks, bmap_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		blk_bmap->items_capacity = max_t(size_t,
@@ -918,6 +940,12 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 			blk_bmap->items_capacity = bmap_bytes *
 				SSDFS_ITEMS_PER_BYTE(SSDFS_BLK_STATE_BITS);
 			blk_bmap->allocation_pool = blk_bmap->items_capacity;
+
+			/*
+			 * Re-calculate bmap_bytes for items_capacity
+			 */
+			calculated_bmap_bytes =
+				BLK_BMAP_BYTES(blk_bmap->items_capacity);
 		}
 
 		calculated_bmap_folios = calculated_bmap_bytes + PAGE_SIZE - 1;
@@ -1195,6 +1223,7 @@ int __ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 	size_t new_bmap_bytes;
 	size_t old_bmap_folios;
 	size_t new_bmap_folios;
+	int i;
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -1322,7 +1351,6 @@ int __ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 				0, new_bmap_bytes - old_bmap_bytes);
 		} else {
 			/* transform into folio vector */
-
 			array = &blk_bmap->storage.array;
 
 			err = ssdfs_folio_vector_create(array,
@@ -1353,12 +1381,6 @@ int __ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 				return err;
 			}
 
-			folio = array->folios[0];
-
-#ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!folio);
-#endif /* CONFIG_SSDFS_DEBUG */
-
 			ssdfs_folio_lock(folio);
 			__ssdfs_memcpy_to_folio(folio,
 					        0, PAGE_SIZE,
@@ -1366,6 +1388,22 @@ int __ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 					        0, old_bmap_bytes,
 					        old_bmap_bytes);
 			ssdfs_folio_unlock(folio);
+
+			for (i = 1; i < new_bmap_folios; i++) {
+				folio = ssdfs_folio_vector_allocate(array);
+				if (IS_ERR_OR_NULL(folio)) {
+					err = (folio == NULL ?
+							-ENOMEM : PTR_ERR(folio));
+					SSDFS_ERR("fail to allocate folio\n");
+					return err;
+				}
+
+				ssdfs_folio_lock(folio);
+				__ssdfs_memset_folio(folio,
+						     0, folio_size(folio),
+						     0, folio_size(folio));
+				ssdfs_folio_unlock(folio);
+			}
 
 			ssdfs_block_bmap_kfree(blk_bmap->storage.buf);
 			blk_bmap->storage.buf = NULL;
@@ -1600,28 +1638,6 @@ int ssdfs_block_bmap_snapshot_storage(struct ssdfs_block_bmap *blk_bmap,
 					     kaddr, PAGE_SIZE);
 			kunmap_local(kaddr);
 #endif /* CONFIG_SSDFS_DEBUG */
-
-			ssdfs_block_bmap_forget_folio(folio);
-			err = ssdfs_folio_vector_add(snapshot, folio);
-			if (unlikely(err)) {
-				SSDFS_ERR("fail to add folio: "
-					  "index %d, err %d\n",
-					  i, err);
-				return err;
-			}
-		}
-
-		for (; i < ssdfs_folio_vector_capacity(array); i++) {
-			folio = ssdfs_block_bmap_alloc_folio(GFP_KERNEL, 0);
-			if (IS_ERR_OR_NULL(folio)) {
-				err = (folio == NULL ? -ENOMEM : PTR_ERR(folio));
-				SSDFS_ERR("unable to allocate #%d folio\n", i);
-				return err;
-			}
-
-			ssdfs_folio_get(folio);
-
-			__ssdfs_memzero_folio(folio, 0, PAGE_SIZE, PAGE_SIZE);
 
 			ssdfs_block_bmap_forget_folio(folio);
 			err = ssdfs_folio_vector_add(snapshot, folio);

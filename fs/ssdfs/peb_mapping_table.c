@@ -6604,8 +6604,9 @@ int ssdfs_maptbl_decrease_reserved_pebs(struct ssdfs_fs_info *fsi,
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("reserved_pebs %u, new_reservation %u, "
-			  "desc->reserved_pebs %u, new_free_pages %llu\n",
-			  reserved_pebs, new_reservation,
+			  "new_unused_pebs %u, desc->reserved_pebs %u, "
+			  "new_free_pages %llu\n",
+			  reserved_pebs, new_reservation, new_unused_pebs,
 			  desc->reserved_pebs, new_free_pages);
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -6664,6 +6665,8 @@ int ssdfs_maptbl_increase_reserved_pebs(struct ssdfs_fs_info *fsi,
 	u32 expected2migrate;
 	u16 pebs_count;
 	u16 reserved_pebs;
+	u16 new_reserved_pebs;
+	u16 reserved_pebs_diff;
 	u16 used_pebs;
 	u16 unused_pebs;
 	u64 free_pages = 0;
@@ -6717,27 +6720,31 @@ int ssdfs_maptbl_increase_reserved_pebs(struct ssdfs_fs_info *fsi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (reserved_pebs < used_pebs && unused_pebs >= used_pebs) {
-			reserved_pebs = used_pebs;
+			new_reserved_pebs = used_pebs;
+			reserved_pebs_diff = new_reserved_pebs - reserved_pebs;
 
 			spin_lock(&fsi->volume_state_lock);
 			free_pages = fsi->free_pages;
 			free_pebs = div64_u64(free_pages, fsi->pages_per_peb);
-			if (reserved_pebs <= free_pebs) {
-				reserved_pages = (u64)reserved_pebs *
+			if (reserved_pebs_diff <= free_pebs) {
+				reserved_pages = (u64)reserved_pebs_diff *
 							fsi->pages_per_peb;
 				fsi->free_pages -= reserved_pages;
 				free_pages = fsi->free_pages;
-				hdr->reserved_pebs = cpu_to_le16(reserved_pebs);
-				desc->reserved_pebs += reserved_pebs;
+				hdr->reserved_pebs =
+						cpu_to_le16(new_reserved_pebs);
+				desc->reserved_pebs += reserved_pebs_diff;
 			} else
 				err = -ENOSPC;
 			spin_unlock(&fsi->volume_state_lock);
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("free_pages %llu, reserved_pages %llu, "
-				  "reserved_pebs %u, err %d\n",
+				  "new_reserved_pebs %u, reserved_pebs_diff %u, "
+				  "err %d\n",
 				  free_pages, reserved_pages,
-				  reserved_pebs, err);
+				  new_reserved_pebs, reserved_pebs_diff,
+				  err);
 			SSDFS_DBG("hdr->reserved_pebs %u\n",
 				  le16_to_cpu(hdr->reserved_pebs));
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -6774,7 +6781,7 @@ int ssdfs_maptbl_increase_reserved_pebs(struct ssdfs_fs_info *fsi,
 		reserved_pages = (u64)reserved_pebs * fsi->pages_per_peb;
 		fsi->free_pages -= reserved_pages;
 		free_pages = fsi->free_pages;
-		le16_add_cpu(&hdr->reserved_pebs, reserved_pebs);
+		hdr->reserved_pebs = cpu_to_le16(reserved_pebs);
 		desc->reserved_pebs += reserved_pebs;
 	} else
 		err = -ENOSPC;
@@ -8193,9 +8200,19 @@ int __ssdfs_maptbl_try_map_leb2peb(struct ssdfs_peb_mapping_table *tbl,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_try2reserve_peb(fsi)) {
+		unsigned long *used_bmap;
+		u16 pebs_count = le16_to_cpu(hdr->pebs_count);
 		u16 reserved_pebs = le16_to_cpu(hdr->reserved_pebs);
+		int used_pebs, unused_pebs;
 
-		if (reserved_pebs < fdesc->pebs_per_page) {
+		used_bmap =
+		    (unsigned long *)&hdr->bmaps[SSDFS_PEBTBL_USED_BMAP][0];
+		used_pebs = bitmap_weight(used_bmap, pebs_count);
+		unused_pebs = pebs_count - used_pebs;
+
+		WARN_ON(unused_pebs < 0);
+
+		if (reserved_pebs < unused_pebs) {
 			le16_add_cpu(&hdr->reserved_pebs, 1);
 			fdesc->reserved_pebs++;
 		}
