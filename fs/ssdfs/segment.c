@@ -3632,8 +3632,34 @@ int ssdfs_add_new_current_segment(struct ssdfs_current_segment *cur_seg,
 			 */
 			ssdfs_segment_put_object(si);
 			err = -ENOSPC;
-			SSDFS_DBG("there is no more clean segments\n");
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("there is no more clean segments: "
+				  "cur_seg %llu, found_seg %llu\n",
+				  cur_seg->seg_id, si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
 			return err;
+		}
+
+		switch (atomic_read(&si->obj_state)) {
+		case SSDFS_CURRENT_SEG_OBJECT:
+			err = -ENOSPC;
+			cur_seg->seg_id = si->seg_id;
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to add segment %llu as current: "
+				  "err %d\n",
+				  si->seg_id, err);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+			/*
+			 * ssdfs_grab_segment() has got object already.
+			 */
+			ssdfs_segment_put_object(si);
+			continue;
+
+		default:
+			/* continue logic */
+			break;
 		}
 
 		err = ssdfs_current_segment_add(cur_seg, si, seg_search);
