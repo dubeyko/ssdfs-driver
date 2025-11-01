@@ -194,7 +194,6 @@ static int ssdfs_mtd_read(struct super_block *sb, u32 block_size,
 static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 				loff_t offset)
 {
-	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	void *kaddr;
 	u32 processed_bytes = 0;
 	int err;
@@ -207,7 +206,8 @@ static int ssdfs_mtd_read_block(struct super_block *sb, struct folio *folio,
 
 	while (processed_bytes < folio_size(folio)) {
 		kaddr = kmap_local_folio(folio, processed_bytes);
-		err = ssdfs_mtd_read(sb, offset + processed_bytes,
+		err = ssdfs_mtd_read(sb, PAGE_SIZE,
+				     offset + processed_bytes,
 				     PAGE_SIZE, kaddr);
 		kunmap_local(kaddr);
 
@@ -409,7 +409,7 @@ static int ssdfs_mtd_write_folio(struct super_block *sb, loff_t offset,
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!folio);
 	BUG_ON((offset >= mtd->size) ||
-		(folio_size(folio) > (mtd->size - to_off)));
+		(folio_size(folio) > (mtd->size - offset)));
 	div_u64_rem((u64)offset, (u64)folio_size(folio), &remainder);
 	BUG_ON(remainder);
 	BUG_ON(!folio_test_dirty(folio));
@@ -477,8 +477,8 @@ static int ssdfs_mtd_write_blocks(struct super_block *sb, loff_t offset,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("sb %p, to_off %llu, pvec %p, from_off %u, len %zu\n",
-		  sb, to_off, pvec, from_off, len);
+	SSDFS_DBG("sb %p, offset %llu, batch %p\n",
+		  sb, offset, batch);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (sb->s_flags & SB_RDONLY) {
@@ -498,7 +498,7 @@ static int ssdfs_mtd_write_blocks(struct super_block *sb, loff_t offset,
 		BUG_ON(!folio);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		err = ssdfs_mtd_write_block(sb, cur_offset, folio);
+		err = ssdfs_mtd_write_folio(sb, cur_offset, folio);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to write block: "
 				  "cur_offset %llu, err %d\n",
@@ -510,11 +510,6 @@ static int ssdfs_mtd_write_blocks(struct super_block *sb, loff_t offset,
 	}
 
 	return 0;
-}
-
-static void ssdfs_erase_callback(struct erase_info *ei)
-{
-	complete((struct completion *)ei->priv);
 }
 
 /*
@@ -536,7 +531,6 @@ static int ssdfs_mtd_erase(struct super_block *sb, loff_t offset, size_t len)
 {
 	struct mtd_info *mtd = SSDFS_FS_I(sb)->mtd;
 	struct erase_info ei;
-	DECLARE_COMPLETION_ONSTACK(complete);
 	u32 remainder;
 	int ret;
 
@@ -562,30 +556,14 @@ static int ssdfs_mtd_erase(struct super_block *sb, loff_t offset, size_t len)
 	}
 
 	memset(&ei, 0, sizeof(ei));
-	ei.mtd = mtd;
 	ei.addr = offset;
 	ei.len = len;
-	ei.callback = ssdfs_erase_callback;
-	ei.priv = (long)&complete;
 
 	ret = mtd_erase(mtd, &ei);
 	if (ret) {
 		SSDFS_ERR("failed to erase (err %d): offset %llu, len %zu\n",
 			  ret, (unsigned long long)offset, len);
 		return ret;
-	}
-
-	err = SSDFS_WAIT_COMPLETION(&complete);
-	if (unlikely(err)) {
-		SSDFS_ERR("timeout is out: "
-			  "err %d\n", err);
-		return err;
-	}
-
-	if (ei.state != MTD_ERASE_DONE) {
-		SSDFS_ERR("ei.state %#x, offset %llu, len %zu\n",
-			  ei.state, (unsigned long long)offset, len);
-		return -EFAULT;
 	}
 
 	return 0;
@@ -631,7 +609,7 @@ static int ssdfs_mtd_peb_isbad(struct super_block *sb, loff_t offset)
  *
  * This function tries to mark PEB as bad.
  */
-int ssdfs_mtd_mark_peb_bad(struct super_block *sb, loff_t offset)
+static int ssdfs_mtd_mark_peb_bad(struct super_block *sb, loff_t offset)
 {
 	return mtd_block_markbad(SSDFS_FS_I(sb)->mtd, offset);
 }
@@ -662,7 +640,7 @@ const struct ssdfs_device_ops ssdfs_mtd_devops = {
 	.read_block		= ssdfs_mtd_read_block,
 	.read_blocks		= ssdfs_mtd_read_blocks,
 	.can_write_block	= ssdfs_mtd_can_write_block,
-	.write_block		= ssdfs_mtd_write_block,
+	.write_block		= ssdfs_mtd_write_folio,
 	.write_blocks		= ssdfs_mtd_write_blocks,
 	.erase			= ssdfs_mtd_erase,
 	.trim			= ssdfs_mtd_trim,

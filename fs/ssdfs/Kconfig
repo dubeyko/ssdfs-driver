@@ -1,6 +1,5 @@
 config SSDFS
 	tristate "SSDFS file system support"
-	depends on BLOCK || MTD
 	help
 	  SSDFS is flash-friendly file system. The architecture of
 	  file system has been designed to be the LFS file system
@@ -12,7 +11,8 @@ config SSDFS
 
 config SSDFS_BLOCK_DEVICE
 	bool "Block layer support"
-	depends on BLOCK && SSDFS
+	depends on SSDFS
+	depends on BLOCK
 	depends on BLK_DEV_ZONED
 	default y
 	help
@@ -22,7 +22,9 @@ config SSDFS_BLOCK_DEVICE
 
 config SSDFS_MTD_DEVICE
 	bool "MTD support"
-	depends on !SSDFS_BLOCK_DEVICE && MTD && SSDFS
+	depends on !SSDFS_BLOCK_DEVICE
+	depends on SSDFS
+	select MTD
 	default n
 	help
 	  This option enables MTD layer support.

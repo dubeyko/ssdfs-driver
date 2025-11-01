@@ -26,6 +26,8 @@
 #include <linux/fs.h>
 #include <linux/crc32.h>
 #include <linux/pagemap.h>
+#include <linux/fs_parser.h>
+#include <linux/fs_context.h>
 #include <linux/ssdfs_fs.h>
 
 #include "ssdfs_constants.h"
@@ -76,6 +78,10 @@ struct ssdfs_block_bmap_range {
 struct ssdfs_blk2off_range {
 	u16 start_lblk;
 	u16 len;
+};
+
+struct ssdfs_mount_context {
+	unsigned long s_mount_opts;
 };
 
 struct ssdfs_peb_info;
@@ -223,7 +229,7 @@ void ssdfs_shrink_blk2off_frag_obj_cache(void);
 void ssdfs_destroy_blk2off_frag_obj_cache(void);
 
 /* options.c */
-int ssdfs_parse_options(struct ssdfs_fs_info *fs_info, char *data);
+int ssdfs_parse_param(struct fs_context *fc, struct fs_parameter *param);
 void ssdfs_initialize_fs_errors_option(struct ssdfs_fs_info *fsi);
 int ssdfs_show_options(struct seq_file *seq, struct dentry *root);
 

@@ -447,6 +447,16 @@ static int find_seg_with_valid_start_peb(struct ssdfs_fs_info *fsi,
 	return -ENODATA;
 }
 
+#ifdef CONFIG_SSDFS_MTD_DEVICE
+static inline
+int ssdfs_zns_find_last_non_empty_page(struct ssdfs_fs_info *fsi,
+					u64 leb, u64 peb, u32 log_pages,
+					u32 *cur_off, u32 *low_off,
+					u32 *high_off)
+{
+	return -EOPNOTSUPP;
+}
+#elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
 static inline
 int ssdfs_zns_find_last_non_empty_page(struct ssdfs_fs_info *fsi,
 					u64 leb, u64 peb, u32 log_pages,
@@ -504,6 +514,9 @@ int ssdfs_zns_find_last_non_empty_page(struct ssdfs_fs_info *fsi,
 
 	return 0;
 }
+#else
+	BUILD_BUG();
+#endif
 
 static inline
 int ssdfs_find_last_non_empty_page(struct ssdfs_fs_info *fsi,

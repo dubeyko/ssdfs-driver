@@ -30,6 +30,8 @@
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
 #include <linux/delay.h>
+#include <linux/fs_parser.h>
+#include <linux/fs_context.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -278,19 +280,20 @@ static void ssdfs_init_inode_once(void *obj)
 	inode_init_once(&ii->vfs_inode);
 }
 
-static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
+static int ssdfs_remount_fs(struct fs_context *fc, struct super_block *sb)
 {
 	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
 	struct ssdfs_peb_extent last_sb_log = {0};
 	struct ssdfs_sb_log_payload payload;
+	unsigned int flags = fc->sb_flags;
 	unsigned long old_sb_flags;
 	unsigned long old_mount_opts;
 	int err;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("sb %p, flags %#x, data %p\n", sb, *flags, data);
+	SSDFS_ERR("sb %p, flags %#x\n", sb, flags);
 #else
-	SSDFS_DBG("sb %p, flags %#x, data %p\n", sb, *flags, data);
+	SSDFS_DBG("sb %p, flags %#x\n", sb, flags);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 	old_sb_flags = sb->s_flags;
@@ -298,16 +301,12 @@ static int ssdfs_remount_fs(struct super_block *sb, int *flags, char *data)
 
 	folio_batch_init(&payload.maptbl_cache.batch);
 
-	err = ssdfs_parse_options(fsi, data);
-	if (err)
-		goto restore_opts;
-
 	set_posix_acl_flag(sb);
 
-	if ((*flags & SB_RDONLY) == (sb->s_flags & SB_RDONLY))
+	if ((flags & SB_RDONLY) == (sb->s_flags & SB_RDONLY))
 		goto out;
 
-	if (*flags & SB_RDONLY) {
+	if (flags & SB_RDONLY) {
 		down_write(&fsi->volume_sem);
 
 		err = ssdfs_prepare_sb_log(sb, &last_sb_log);
@@ -721,7 +720,6 @@ static const struct super_operations ssdfs_super_operations = {
 	.statfs		= ssdfs_statfs,
 	.show_options	= ssdfs_show_options,
 	.put_super	= ssdfs_put_super,
-	.remount_fs	= ssdfs_remount_fs,
 	.sync_fs	= ssdfs_sync_fs,
 };
 
@@ -3439,20 +3437,22 @@ static void ssdfs_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
-static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
+static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 {
 	struct ssdfs_fs_info *fs_info;
+	struct ssdfs_mount_context *ctx = fc->fs_private;
 	struct ssdfs_peb_extent last_sb_log = {0};
 	struct ssdfs_sb_log_payload payload;
 	struct inode *root_i;
+	int silent = fc->sb_flags & SB_SILENT;
 	u64 fs_feature_compat;
 	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("sb %p, data %p, silent %#x\n", sb, data, silent);
+	SSDFS_ERR("sb %p, silent %#x\n", sb, silent);
 #else
-	SSDFS_DBG("sb %p, data %p, silent %#x\n", sb, data, silent);
+	SSDFS_DBG("sb %p, silent %#x\n", sb, silent);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -3508,7 +3508,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 #ifdef CONFIG_SSDFS_MTD_DEVICE
 	fs_info->mtd = sb->s_mtd;
 	fs_info->devops = &ssdfs_mtd_devops;
-	sb->s_bdi = sb->s_mtd->backing_dev_info;
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
 	if (bdev_is_zoned(sb->s_bdev)) {
 		fs_info->devops = &ssdfs_zns_devops;
@@ -3537,7 +3536,6 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 	} else
 		fs_info->devops = &ssdfs_bdev_devops;
 
-	sb->s_bdi = bdi_get(sb->s_bdev->bd_disk->bdi);
 	atomic_set(&fs_info->pending_bios, 0);
 	fs_info->erase_folio = ssdfs_super_alloc_folio(GFP_KERNEL,
 							get_order(PAGE_SIZE));
@@ -3577,15 +3575,7 @@ static int ssdfs_fill_super(struct super_block *sb, void *data, int silent)
 		atomic_set(&fs_info->gc_should_act[i], 1);
 	}
 
-#ifdef CONFIG_SSDFS_TRACK_API_CALL
-	SSDFS_ERR("parse options started...\n");
-#else
-	SSDFS_DBG("parse options started...\n");
-#endif /* CONFIG_SSDFS_TRACK_API_CALL */
-
-	err = ssdfs_parse_options(fs_info, data);
-	if (err)
-		goto free_erase_folio;
+	fs_info->mount_opts = ctx->s_mount_opts;
 
 #ifdef CONFIG_SSDFS_TRACK_API_CALL
 	SSDFS_ERR("gather superblock info started...\n");
@@ -4520,18 +4510,59 @@ static void ssdfs_put_super(struct super_block *sb)
 	SSDFS_INFO("All metadata structures have been destroyed\n");
 }
 
-static struct dentry *ssdfs_mount(struct file_system_type *fs_type,
-				  int flags, const char *dev_name,
-				  void *data)
+static int ssdfs_reconfigure(struct fs_context *fc)
+{
+	struct ssdfs_mount_context *ctx = fc->fs_private;
+	struct super_block *sb = fc->root->d_sb;
+	struct ssdfs_fs_info *fsi = SSDFS_FS_I(sb);
+
+	sync_filesystem(sb);
+	fsi->mount_opts = ctx->s_mount_opts;
+
+	return ssdfs_remount_fs(fc, sb);
+}
+
+static int ssdfs_get_tree(struct fs_context *fc)
 {
 #ifdef CONFIG_SSDFS_MTD_DEVICE
-	return mount_mtd(fs_type, flags, dev_name, data, ssdfs_fill_super);
+	return get_tree_mtd(fc, ssdfs_fill_super);
 #elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
-	return mount_bdev(fs_type, flags, dev_name, data, ssdfs_fill_super);
+	return get_tree_bdev(fc, ssdfs_fill_super);
 #else
 	BUILD_BUG();
-	return NULL;
+	return -EOPNOTSUPP;
 #endif
+}
+
+static void ssdfs_fc_free(struct fs_context *fc)
+{
+	struct ssdfs_mount_context *ctx = fc->fs_private;
+
+	if (!ctx)
+		return;
+
+	kfree(ctx);
+}
+
+static const struct fs_context_operations ssdfs_context_ops = {
+	.parse_param	= ssdfs_parse_param,
+	.get_tree	= ssdfs_get_tree,
+	.reconfigure	= ssdfs_reconfigure,
+	.free		= ssdfs_fc_free,
+};
+
+static int ssdfs_init_fs_context(struct fs_context *fc)
+{
+	struct ssdfs_mount_context *ctx;
+
+	ctx = kzalloc(sizeof(struct ssdfs_mount_context), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+
+	fc->fs_private = ctx;
+	fc->ops = &ssdfs_context_ops;
+
+	return 0;
 }
 
 static void kill_ssdfs_sb(struct super_block *sb)
@@ -4548,7 +4579,7 @@ static void kill_ssdfs_sb(struct super_block *sb)
 static struct file_system_type ssdfs_fs_type = {
 	.name		= "ssdfs",
 	.owner		= THIS_MODULE,
-	.mount		= ssdfs_mount,
+	.init_fs_context = ssdfs_init_fs_context,
 	.kill_sb	= kill_ssdfs_sb,
 #ifdef CONFIG_SSDFS_BLOCK_DEVICE
 	.fs_flags	= FS_REQUIRES_DEV,

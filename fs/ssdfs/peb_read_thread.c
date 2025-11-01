@@ -5283,6 +5283,15 @@ int ssdfs_peb_find_last_partial_log(struct ssdfs_fs_info *fsi,
  * %-ENOMEM     - fail to allocate memory.
  */
 #ifdef CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG
+#ifdef CONFIG_SSDFS_MTD_DEVICE
+static
+int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
+				       struct ssdfs_peb_info *pebi,
+				       struct ssdfs_segment_request *req)
+{
+	return -EOPNOTSUPP;
+}
+#elif defined(CONFIG_SSDFS_BLOCK_DEVICE)
 static
 int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 				       struct ssdfs_peb_info *pebi,
@@ -5530,6 +5539,9 @@ int ssdfs_zone_pre_fetch_last_full_log(struct ssdfs_fs_info *fsi,
 
 	return 0;
 }
+#else
+	BUILD_BUG();
+#endif
 #endif /* CONFIG_SSDFS_SAVE_WHOLE_BLK2OFF_TBL_IN_EVERY_LOG */
 
 /*

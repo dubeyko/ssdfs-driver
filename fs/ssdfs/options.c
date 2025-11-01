@@ -27,6 +27,8 @@
 #include <linux/slab.h>
 #include <linux/seq_file.h>
 #include <linux/pagevec.h>
+#include <linux/fs_parser.h>
+#include <linux/fs_context.h>
 
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
@@ -37,102 +39,78 @@
 /*
  * SSDFS mount options.
  *
+ * Opt_err: behavior if fs error is detected
  * Opt_compr: change default compressor
- * Opt_fs_err_panic: panic if fs error is detected
- * Opt_fs_err_ro: remount in RO state if fs error is detected
- * Opt_fs_err_cont: continue execution if fs error is detected
  * Opt_ignore_fs_state: ignore on-disk file system state during mount
- * Opt_err: just end of array marker
  */
 enum {
-	Opt_compr,
-	Opt_fs_err_panic,
-	Opt_fs_err_ro,
-	Opt_fs_err_cont,
-	Opt_ignore_fs_state,
 	Opt_err,
+	Opt_compr,
+	Opt_ignore_fs_state,
 };
 
-static const match_table_t tokens = {
-	{Opt_compr, "compr=%s"},
-	{Opt_fs_err_panic, "errors=panic"},
-	{Opt_fs_err_ro, "errors=remount-ro"},
-	{Opt_fs_err_cont, "errors=continue"},
-	{Opt_ignore_fs_state, "fs_state=ignore"},
-	{Opt_err, NULL},
+static const struct constant_table ssdfs_param_err[] = {
+	{"panic",	SSDFS_MOUNT_ERRORS_PANIC},
+	{"remount-ro",	SSDFS_MOUNT_ERRORS_RO},
+	{"continue",	SSDFS_MOUNT_ERRORS_CONT},
+	{}
 };
 
-int ssdfs_parse_options(struct ssdfs_fs_info *fs_info, char *data)
-{
-	substring_t args[MAX_OPT_ARGS];
-	char *p, *name;
-
-	if (!data)
-		return 0;
-
-	while ((p = strsep(&data, ","))) {
-		int token;
-
-		if (!*p)
-			continue;
-
-		token = match_token(p, tokens, args);
-		switch (token) {
-		case Opt_compr:
-			name = match_strdup(&args[0]);
-
-			if (!name)
-				return -ENOMEM;
-			if (!strcmp(name, "none"))
-				ssdfs_set_opt(fs_info->mount_opts,
-						COMPR_MODE_NONE);
+static const struct constant_table ssdfs_param_compr[] = {
+	{"none",	SSDFS_MOUNT_COMPR_MODE_NONE},
 #ifdef CONFIG_SSDFS_ZLIB
-			else if (!strcmp(name, "zlib"))
-				ssdfs_set_opt(fs_info->mount_opts,
-						COMPR_MODE_ZLIB);
+	{"zlib",	SSDFS_MOUNT_COMPR_MODE_ZLIB},
 #endif
 #ifdef CONFIG_SSDFS_LZO
-			else if (!strcmp(name, "lzo"))
-				ssdfs_set_opt(fs_info->mount_opts,
-						COMPR_MODE_LZO);
+	{"lzo",		SSDFS_MOUNT_COMPR_MODE_LZO},
 #endif
-			else {
-				SSDFS_ERR("unknown compressor %s\n", name);
-				ssdfs_kfree(name);
-				return -EINVAL;
-			}
-			ssdfs_kfree(name);
-			break;
+	{}
+};
 
-		case Opt_fs_err_panic:
-			/* Clear possible default initialization */
-			ssdfs_clear_opt(fs_info->mount_opts, ERRORS_RO);
-			ssdfs_clear_opt(fs_info->mount_opts, ERRORS_CONT);
-			ssdfs_set_opt(fs_info->mount_opts, ERRORS_PANIC);
-			break;
+static const struct constant_table ssdfs_param_fs_state[] = {
+	{"ignore",	SSDFS_MOUNT_IGNORE_FS_STATE},
+	{}
+};
 
-		case Opt_fs_err_ro:
-			/* Clear possible default initialization */
-			ssdfs_clear_opt(fs_info->mount_opts, ERRORS_PANIC);
-			ssdfs_clear_opt(fs_info->mount_opts, ERRORS_CONT);
-			ssdfs_set_opt(fs_info->mount_opts, ERRORS_RO);
-			break;
+static const struct fs_parameter_spec ssdfs_fs_parameters[] = {
+	fsparam_enum	("errors", Opt_err, ssdfs_param_err),
+	fsparam_enum	("compr", Opt_compr, ssdfs_param_compr),
+	fsparam_enum	("fs_state", Opt_ignore_fs_state, ssdfs_param_fs_state),
+	{}
+};
 
-		case Opt_fs_err_cont:
-			/* Clear possible default initialization */
-			ssdfs_clear_opt(fs_info->mount_opts, ERRORS_PANIC);
-			ssdfs_clear_opt(fs_info->mount_opts, ERRORS_RO);
-			ssdfs_set_opt(fs_info->mount_opts, ERRORS_CONT);
-			break;
+int ssdfs_parse_param(struct fs_context *fc, struct fs_parameter *param)
+{
+	struct ssdfs_mount_context *ctx = fc->fs_private;
+	struct fs_parse_result result;
+	int opt;
 
-		case Opt_ignore_fs_state:
-			ssdfs_set_opt(fs_info->mount_opts, IGNORE_FS_STATE);
-			break;
+	opt = fs_parse(fc, ssdfs_fs_parameters, param, &result);
+	if (opt < 0)
+		return opt;
 
-		default:
-			SSDFS_ERR("unrecognized mount option '%s'\n", p);
-			return -EINVAL;
-		}
+	switch (opt) {
+	case Opt_err:
+		ssdfs_clear_opt(ctx->s_mount_opts, ERRORS_PANIC);
+		ssdfs_clear_opt(ctx->s_mount_opts, ERRORS_RO);
+		ssdfs_clear_opt(ctx->s_mount_opts, ERRORS_CONT);
+		ctx->s_mount_opts |= result.uint_32;
+		break;
+
+	case Opt_compr:
+		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_NONE);
+		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_ZLIB);
+		ssdfs_clear_opt(ctx->s_mount_opts, COMPR_MODE_LZO);
+		ctx->s_mount_opts |= result.uint_32;
+		break;
+
+	case Opt_ignore_fs_state:
+		ctx->s_mount_opts |= result.uint_32;
+		break;
+
+	default:
+		SSDFS_ERR("unrecognized mount option\n");
+		return -EINVAL;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
