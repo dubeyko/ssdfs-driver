@@ -59,4 +59,5 @@ obj-$(CONFIG_SSDFS_KUNIT_TEST)			+= folio_vector_test.o \
 							folio_array_test.o \
 							compression_test.o \
 							compr_zlib_test.o \
-							compr_lzo_test.o
+							compr_lzo_test.o \
+							block_bitmap_test.o

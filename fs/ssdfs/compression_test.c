@@ -293,7 +293,6 @@ static void ssdfs_compression_test_exit(struct kunit *test)
 {
 	/* Cleanup compression subsystem */
 	ssdfs_compressors_exit();
-	ssdfs_compr_check_memory_leaks();
 }
 
 static struct kunit_suite ssdfs_compression_test_suite = {

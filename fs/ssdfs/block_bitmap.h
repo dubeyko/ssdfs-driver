@@ -345,6 +345,10 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 			   size_t items_capacity);
 int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap);
 
+#if IS_ENABLED(CONFIG_KUNIT)
+bool BLK_BMAP_BYTE_CONTAINS_STATE(u8 *value, int blk_state);
+#endif
+
 #define SSDFS_BLK_BMAP_FNS(state, name)					\
 static inline								\
 bool is_block_##name(struct ssdfs_block_bmap *blk_bmap, u32 blk)	\

@@ -384,8 +384,8 @@ config SSDFS_KUNIT_TEST
 	help
 	  This option enables KUnit tests for SSDFS implementation.
 	  This includes tests for folio vector, dynamic array, folio array,
-	  and compression modules (general compression framework, ZLIB,
-	  and LZO).
+	  compression modules (general compression framework, ZLIB,
+	  and LZO), and block bitmap.
 
 	  KUnit tests run during boot and output the results to the
 	  debug log in TAP format (http://testanything.org/). Only

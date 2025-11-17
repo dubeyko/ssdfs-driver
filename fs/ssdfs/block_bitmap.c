@@ -27,6 +27,8 @@
 #include <linux/slab.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -149,11 +151,13 @@ bool ssdfs_block_bmap_dirtied(struct ssdfs_block_bmap *blk_bmap)
 {
 	return is_block_bmap_dirty(blk_bmap);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_dirtied);
 
 bool ssdfs_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap)
 {
 	return is_block_bmap_initialized(blk_bmap);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_initialized);
 
 void ssdfs_set_block_bmap_initialized(struct ssdfs_block_bmap *blk_bmap)
 {
@@ -165,12 +169,14 @@ void ssdfs_block_bmap_clear_dirty_state(struct ssdfs_block_bmap *blk_bmap)
 	SSDFS_DBG("clear dirty state\n");
 	clear_block_bmap_dirty(blk_bmap);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_clear_dirty_state);
 
 void ssdfs_block_bmap_set_dirty_state(struct ssdfs_block_bmap *blk_bmap)
 {
 	SSDFS_DBG("set dirty state\n");
 	set_block_bmap_dirty(blk_bmap);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_set_dirty_state);
 
 static inline
 bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state);
@@ -249,6 +255,9 @@ int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
 		SSDFS_WARN("block bitmap's mutex is locked\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap))
+		return -EINVAL;
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("block bitmap hasn't been initialized\n");
@@ -264,6 +273,7 @@ int ssdfs_block_bmap_destroy(struct ssdfs_block_bmap *blk_bmap)
 
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_destroy);
 
 /*
  * ssdfs_block_bmap_create_empty_storage() - create block bitmap's storage
@@ -282,6 +292,12 @@ int ssdfs_block_bmap_create_empty_storage(struct ssdfs_block_bmap_storage *ptr,
 	SSDFS_DBG("storage %p, bmap_bytes %zu\n",
 		  ptr, bmap_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (bmap_bytes == 0) {
+		SSDFS_ERR("invalid bmap_bytes %zu\n",
+			  bmap_bytes);
+		return -EINVAL;
+	}
 
 	ptr->state = SSDFS_BLOCK_BMAP_STORAGE_ABSENT;
 
@@ -358,6 +374,12 @@ int ssdfs_block_bmap_init_clean_storage(struct ssdfs_block_bmap *ptr,
 		  ptr, ptr->storage.state,
 		  ptr->bytes_count, bmap_folios);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (bmap_folios == 0) {
+		SSDFS_ERR("invalid bmap_folios %zu\n",
+			  bmap_folios);
+		return -EINVAL;
+	}
 
 	switch (ptr->storage.state) {
 	case SSDFS_BLOCK_BMAP_STORAGE_FOLIO_VEC:
@@ -448,6 +470,20 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 		  flag, init_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!fsi) || unlikely(!ptr)) {
+		SSDFS_ERR("fail to create block bitmap: "
+			   "fsi %p, ptr %p\n",
+			   fsi, ptr);
+		return -EINVAL;
+	}
+
+	if (unlikely(items_capacity == 0) || unlikely(allocation_pool == 0)) {
+		SSDFS_ERR("fail to create block bitmap: "
+			   "items_capacity %u, allocation_pool %u\n",
+			   items_capacity, allocation_pool);
+		return -EINVAL;
+	}
+
 	if (allocation_pool > items_capacity) {
 		SSDFS_ERR("invalid request: "
 			  "allocation_pool %u > items_capacity %u\n",
@@ -527,6 +563,7 @@ destroy_block_bmap:
 	ssdfs_block_bmap_destroy(ptr);
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_create);
 
 /*
  * ssdfs_block_bmap_init_storage() - initialize block bitmap storage
@@ -914,6 +951,13 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 		  last_free_blk, metadata_blks, invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap) || unlikely(!source)) {
+		SSDFS_ERR("fail to init block bitmap: "
+			  "blk_bmap %p, source %p\n",
+			  blk_bmap, source);
+		return -EINVAL;
+	}
+
 	if (flags & SSDFS_INFLATED_BLK_BMAP) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("INFLATED_BLK_BMAP: "
@@ -1092,6 +1136,7 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_init);
 
 /*
  * ssdfs_define_last_free_page() - define last free page
@@ -1469,6 +1514,11 @@ int ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to inflate: blk_bmap %p\n", blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -EINVAL;
@@ -1502,6 +1552,7 @@ int ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 
 	return __ssdfs_block_bmap_inflate(blk_bmap, new_items_capacity);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_inflate);
 
 /*
  * ssdfs_block_bmap_correct_capacity() - correct block bitmap capacity
@@ -1536,6 +1587,13 @@ int ssdfs_block_bmap_correct_capacity(struct ssdfs_block_bmap *blk_bmap,
 		return -EINVAL;
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to correct capacity: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -1743,6 +1801,13 @@ int ssdfs_block_bmap_snapshot(struct ssdfs_block_bmap *blk_bmap,
 		  metadata_blks, bytes_count);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (!blk_bmap || !snapshot ||
+	    !last_free_page || !metadata_blks ||
+	    !bytes_count || !items_capacity) {
+		SSDFS_ERR("invalid input\n");
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -EINVAL;
@@ -1842,6 +1907,7 @@ cleanup_snapshot_folio_vector:
 	ssdfs_folio_vector_release(snapshot);
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_snapshot);
 
 void ssdfs_block_bmap_forget_snapshot(struct ssdfs_folio_vector *snapshot)
 {
@@ -1850,6 +1916,7 @@ void ssdfs_block_bmap_forget_snapshot(struct ssdfs_folio_vector *snapshot)
 
 	ssdfs_folio_vector_release(snapshot);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_forget_snapshot);
 
 /*
  * ssdfs_block_bmap_lock() - lock segment's block bitmap
@@ -2498,7 +2565,7 @@ bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state)
 }
 
 /*
- * BYTE_CONTAINS_STATE() - check that provided byte contains state
+ * BLK_BMAP_BYTE_CONTAINS_STATE() - check that provided byte contains state
  * @value: pointer on analysed byte
  * @blk_state: requested block's state
  *
@@ -2506,8 +2573,8 @@ bool is_cache_invalid(struct ssdfs_block_bmap *blk_bmap, int blk_state)
  * [true]  - @value contains @blk_state.
  * [false] - @value hasn't @blk_state.
  */
-static inline
-bool BYTE_CONTAINS_STATE(u8 *value, int blk_state)
+VISIBLE_IF_KUNIT
+bool BLK_BMAP_BYTE_CONTAINS_STATE(u8 *value, int blk_state)
 {
 	switch (blk_state) {
 	case SSDFS_BLK_FREE:
@@ -2525,6 +2592,7 @@ bool BYTE_CONTAINS_STATE(u8 *value, int blk_state)
 
 	return false;
 }
+EXPORT_SYMBOL_IF_KUNIT(BLK_BMAP_BYTE_CONTAINS_STATE);
 
 /*
  * ssdfs_block_bmap_find_block_in_cache() - find block for state in cache
@@ -2632,7 +2700,7 @@ int ssdfs_block_bmap_find_block_in_cache(struct ssdfs_block_bmap *blk_bmap,
 					      SSDFS_BLK_STATE_BITS,
 					      SSDFS_BLK_STATE_MASK,
 					      blks_diff,
-					      BYTE_CONTAINS_STATE,
+					      BLK_BMAP_BYTE_CONTAINS_STATE,
 					      FIRST_STATE_IN_BYTE,
 					      &found_off);
 		if (err == -ENODATA) {
@@ -2769,7 +2837,7 @@ int ssdfs_block_bmap_find_block_in_memory_range(void *kaddr,
 					      SSDFS_BLK_STATE_BITS,
 					      SSDFS_BLK_STATE_MASK,
 					      start_off,
-					      BYTE_CONTAINS_STATE,
+					      BLK_BMAP_BYTE_CONTAINS_STATE,
 					      FIRST_STATE_IN_BYTE,
 					      found_off);
 		if (err == -ENODATA) {
@@ -4820,6 +4888,13 @@ bool ssdfs_block_bmap_test_block(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, blk, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to test block state: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	BUG_ON(!is_block_bmap_initialized(blk_bmap));
 
 	err = ssdfs_block_bmap_find_block(blk_bmap, blk, blk + 1, blk_state,
@@ -4834,6 +4909,7 @@ bool ssdfs_block_bmap_test_block(struct ssdfs_block_bmap *blk_bmap,
 
 	return (found != blk) ? false : true;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_test_block);
 
 /*
  * ssdfs_block_bmap_test_range() - check state of blocks' range
@@ -4878,6 +4954,13 @@ bool ssdfs_block_bmap_test_range(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, range->start, range->len, blk_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to test range state: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
+
 	BUG_ON(!is_block_bmap_initialized(blk_bmap));
 
 	err = ssdfs_block_bmap_find_range(blk_bmap, range->start, range->len,
@@ -4895,6 +4978,7 @@ bool ssdfs_block_bmap_test_range(struct ssdfs_block_bmap *blk_bmap,
 
 	return false;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_test_range);
 
 /*
  * ssdfs_get_block_state() - detect state of block
@@ -4926,6 +5010,13 @@ int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 
 	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get block state: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -5007,6 +5098,13 @@ int ssdfs_get_range_state(struct ssdfs_block_bmap *blk_bmap,
 		  blk_bmap, range->start, range->len);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to get range state: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5079,6 +5177,13 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 	ssdfs_debug_block_bitmap(blk_bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to reserve metadata pages: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5138,6 +5243,7 @@ int ssdfs_block_bmap_reserve_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_reserve_metadata_pages);
 
 /*
  * ssdfs_block_bmap_free_metadata_pages() - free metadata pages
@@ -5181,6 +5287,13 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 
 	ssdfs_debug_block_bitmap(blk_bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(!blk_bmap) || unlikely(!freed_items)) {
+		SSDFS_ERR("fail to free metadata pages: "
+			  "blk_bmap %p, freed_items %p\n",
+			  blk_bmap, freed_items);
+		return -EINVAL;
+	}
 
 	*freed_items = 0;
 
@@ -5247,6 +5360,7 @@ int ssdfs_block_bmap_free_metadata_pages(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_free_metadata_pages);
 
 /*
  * ssdfs_block_bmap_get_free_pages() - determine current free pages count
@@ -5282,6 +5396,13 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	SSDFS_DBG("blk_bmap %p\n", blk_bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get free pages: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -5364,6 +5485,7 @@ int ssdfs_block_bmap_get_free_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	return free_blks;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_free_pages);
 
 /*
  * ssdfs_block_bmap_get_used_pages() - determine current used pages count
@@ -5402,6 +5524,13 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get used pages: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5437,6 +5566,7 @@ int ssdfs_block_bmap_get_used_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	return blk_bmap->used_blks;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_used_pages);
 
 /*
  * ssdfs_block_bmap_get_invalid_pages() - determine current invalid pages count
@@ -5471,6 +5601,13 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get invalid pages: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5478,6 +5615,7 @@ int ssdfs_block_bmap_get_invalid_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	return blk_bmap->invalid_blks;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_invalid_pages);
 
 /*
  * ssdfs_block_bmap_get_pages_capacity() - get pages capacity
@@ -5511,6 +5649,13 @@ int ssdfs_block_bmap_get_pages_capacity(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get pages capacity: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5518,6 +5663,7 @@ int ssdfs_block_bmap_get_pages_capacity(struct ssdfs_block_bmap *blk_bmap)
 
 	return blk_bmap->items_capacity;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_pages_capacity);
 
 /*
  * ssdfs_block_bmap_get_allocation_pool() - get allocation pool
@@ -5551,6 +5697,13 @@ int ssdfs_block_bmap_get_allocation_pool(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get allocation pool: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5558,6 +5711,7 @@ int ssdfs_block_bmap_get_allocation_pool(struct ssdfs_block_bmap *blk_bmap)
 
 	return blk_bmap->allocation_pool;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_allocation_pool);
 
 /*
  * ssdfs_block_bmap_get_metadata_pages() - get metadata pages
@@ -5591,6 +5745,13 @@ int ssdfs_block_bmap_get_metadata_pages(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to get metadata pages: "
+			  "blk_bmap %p\n",
+			  blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -5598,6 +5759,7 @@ int ssdfs_block_bmap_get_metadata_pages(struct ssdfs_block_bmap *blk_bmap)
 
 	return blk_bmap->metadata_items;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_get_metadata_pages);
 
 /*
  * ssdfs_block_bmap_pre_allocate() - pre-allocate segment's range of blocks
@@ -5652,6 +5814,13 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_ERR("start %u, len %p\n",
 		  start, len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to pre-allocate: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
 
 	if (len) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -5852,6 +6021,7 @@ int ssdfs_block_bmap_pre_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_pre_allocate);
 
 /*
  * ssdfs_block_bmap_allocate() - allocate segment's range of blocks
@@ -5907,6 +6077,13 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_ERR("start %u, len %p\n",
 		  start, len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to allocate: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
 
 	if (len) {
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6113,6 +6290,7 @@ int ssdfs_block_bmap_allocate(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_allocate);
 
 /*
  * ssdfs_block_bmap_invalidate() - invalidate segment's range of blocks
@@ -6162,6 +6340,13 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_ERR("range (start %u, len %u)\n",
 		  range->start, range->len);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to invalidate: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -6293,6 +6478,7 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_invalidate);
 
 /*
  * ssdfs_block_bmap_collect_garbage() - find range of valid blocks for GC
@@ -6343,6 +6529,13 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_ERR("start %u, max_len %u, blk_state %#x\n",
 		  start, max_len, blk_state);
 #endif /* CONFIG_SSDFS_TRACK_API_CALL */
+
+	if (unlikely(!blk_bmap) || unlikely(!range)) {
+		SSDFS_ERR("fail to collect garbage: "
+			  "blk_bmap %p, range %p\n",
+			  blk_bmap, range);
+		return -EINVAL;
+	}
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -6402,6 +6595,7 @@ int ssdfs_block_bmap_collect_garbage(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_collect_garbage);
 
 /*
  * ssdfs_block_bmap_invalid2clean() - convert invalidated block into clean
@@ -6422,7 +6616,7 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 {
 	struct ssdfs_block_bmap_range range;
 	u32 start = 0;
-	u32 max_len = blk_bmap->items_capacity;
+	u32 max_len = U32_MAX;
 	int blk_state = SSDFS_BLK_INVALID;
 	int err;
 
@@ -6442,6 +6636,12 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to convert invalid to clean: "
+			  "blk_bmap %p\n", blk_bmap);
+		return -EINVAL;
+	}
+
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
@@ -6450,6 +6650,8 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 #ifdef CONFIG_SSDFS_DEBUG
 	ssdfs_debug_block_bitmap(blk_bmap);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	max_len = blk_bmap->items_capacity;
 
 	err = ssdfs_block_bmap_find_range(blk_bmap, start, 1, max_len,
 					  blk_state, &range);
@@ -6521,6 +6723,7 @@ int ssdfs_block_bmap_invalid2clean(struct ssdfs_block_bmap *blk_bmap)
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_invalid2clean);
 
 /*
  * ssdfs_block_bmap_clean() - set all blocks as free/clean
@@ -6556,6 +6759,12 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 	SSDFS_DBG("blk_bmap %p, items_capacity %zu\n",
 		  blk_bmap, items_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (unlikely(!blk_bmap)) {
+		SSDFS_ERR("fail to clean block bitmap: "
+			  "blk_bmap %p\n", blk_bmap);
+		return -EINVAL;
+	}
 
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
@@ -6625,6 +6834,7 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_block_bmap_clean);
 
 #ifdef CONFIG_SSDFS_DEBUG
 static
