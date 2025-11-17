@@ -28,6 +28,8 @@
 #include <linux/lzo.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -174,11 +176,13 @@ int ssdfs_lzo_init(void)
 {
 	return ssdfs_register_compressor(&lzo_compr);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_lzo_init);
 
 void ssdfs_lzo_exit(void)
 {
 	ssdfs_unregister_compressor(&lzo_compr);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_lzo_exit);
 
 static int ssdfs_lzo_compress(struct list_head *ws,
 				unsigned char *data_in,

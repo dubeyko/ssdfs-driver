@@ -21,6 +21,8 @@
 #include <linux/zlib.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -179,6 +181,7 @@ int ssdfs_register_compressor(struct ssdfs_compressor *compr)
 	ssdfs_compressors[compr->type] = compr;
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_register_compressor);
 
 int ssdfs_unregister_compressor(struct ssdfs_compressor *compr)
 {
@@ -186,6 +189,7 @@ int ssdfs_unregister_compressor(struct ssdfs_compressor *compr)
 	ssdfs_compressors[compr->type] = NULL;
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_unregister_compressor);
 
 int ssdfs_compressors_init(void)
 {
@@ -227,6 +231,7 @@ zlib_exit:
 out:
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors_init);
 
 void ssdfs_free_workspaces(void)
 {
@@ -257,6 +262,7 @@ void ssdfs_free_workspaces(void)
 		}
 	}
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_free_workspaces);
 
 void ssdfs_compressors_exit(void)
 {
@@ -269,6 +275,7 @@ void ssdfs_compressors_exit(void)
 	ssdfs_zlib_exit();
 	ssdfs_lzo_exit();
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors_exit);
 
 /*
  * Find an available workspace or allocate a new one.
@@ -440,6 +447,7 @@ bool ssdfs_can_compress_data(struct page *page,
 
 	return (max - min) >= SSDFS_MIN_MAX_DIFF_THRESHOLD;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_can_compress_data);
 
 int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 		    size_t *srclen, size_t *destlen)
@@ -502,6 +510,7 @@ int ssdfs_compress(int type, unsigned char *data_in, unsigned char *cdata_out,
 failed_compress:
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_compress);
 
 int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 			size_t srclen, size_t destlen)
@@ -556,3 +565,4 @@ int ssdfs_decompress(int type, unsigned char *cdata_in, unsigned char *data_out,
 failed_decompress:
 	return err;
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_decompress);

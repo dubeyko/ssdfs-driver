@@ -27,6 +27,8 @@
 #include <linux/vmalloc.h>
 #include <linux/pagevec.h>
 
+#include <kunit/visibility.h>
+
 #include "peb_mapping_queue.h"
 #include "peb_mapping_table_cache.h"
 #include "folio_vector.h"
@@ -197,11 +199,13 @@ int ssdfs_zlib_init(void)
 {
 	return ssdfs_register_compressor(&zlib_compr);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zlib_init);
 
 void ssdfs_zlib_exit(void)
 {
 	ssdfs_unregister_compressor(&zlib_compr);
 }
+EXPORT_SYMBOL_IF_KUNIT(ssdfs_zlib_exit);
 
 static int ssdfs_zlib_compress(struct list_head *ws,
 				unsigned char *data_in,

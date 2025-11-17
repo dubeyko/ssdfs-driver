@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.38 [November 16, 2025]
+    (*) Introduce Kunit-based compression framework's unit-tests.
+
 v.5.37 [September 28, 2025]
     (*) Fix issue in logic of adding the new current segment.
 
