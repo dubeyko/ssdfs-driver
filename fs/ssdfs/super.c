@@ -68,7 +68,6 @@
 #include <trace/events/ssdfs.h>
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
-VISIBLE_IF_KUNIT
 atomic64_t ssdfs_allocated_folios;
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_allocated_folios);
 
@@ -77,7 +76,6 @@ atomic64_t ssdfs_super_folio_leaks;
 atomic64_t ssdfs_super_memory_leaks;
 atomic64_t ssdfs_super_cache_leaks;
 
-VISIBLE_IF_KUNIT
 atomic64_t ssdfs_locked_folios;
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_locked_folios);
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */

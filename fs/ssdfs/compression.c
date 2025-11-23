@@ -87,7 +87,6 @@ void ssdfs_compr_check_memory_leaks(void)
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 }
 
-VISIBLE_IF_KUNIT
 struct ssdfs_compressor *ssdfs_compressors[SSDFS_COMPR_TYPES_CNT];
 EXPORT_SYMBOL_IF_KUNIT(ssdfs_compressors);
 
