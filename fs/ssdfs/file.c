@@ -686,7 +686,7 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 						    index,
 						    fgp_flags,
 						    mapping_gfp_mask(mapping));
-			if (!folio) {
+			if (!cur_folio) {
 				SSDFS_ERR("fail to grab folio: page_index %lu\n",
 					  index);
 				return -ENOMEM;
@@ -708,6 +708,29 @@ int ssdfs_read_block(struct file *file, struct folio *folio)
 		index += folio_size(cur_folio) >> PAGE_SHIFT;
 		processed_bytes += folio_size(cur_folio);
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	processed_bytes = 0;
+
+	for (i = 0; i < folio_batch_count(&fbatch); i++) {
+		cur_folio = fbatch.folios[i];
+
+		if (!cur_folio)
+			continue;
+
+		processed_bytes += folio_size(cur_folio);
+	}
+
+	if (processed_bytes != fsi->pagesize) {
+		SSDFS_ERR("invalid block batch: "
+			  "ino %lu, folio_index %lu, "
+			  "folio_size %zu, processed_bytes %u, "
+			  "pagesize %u\n",
+			  file_inode(file)->i_ino, folio->index,
+			  folio_size(folio), processed_bytes,
+			  fsi->pagesize);
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	if (need_read_block) {
 		err = ssdfs_read_block_nolock(file, &fbatch,
@@ -974,6 +997,8 @@ ssdfs_issue_read_request(struct ssdfs_readahead_env *env)
 				  env->requested.ino, err);
 			goto fail_issue_read_request;
 		}
+
+		env->batch.folios[i] = NULL;
 	}
 
 	ssdfs_segment_search_state_init(&seg_search,
@@ -3906,13 +3931,15 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 		return first_folio;
 	}
 
-	if (pos % fsi->pagesize) {
+	if (pos % folio_size(first_folio)) {
 		if (folio_test_uptodate(first_folio))
 			return first_folio;
 		else {
 			SSDFS_ERR("invalid request: "
-				  "pos %llu, pagesize %u\n",
-				  pos, fsi->pagesize);
+				  "pos %llu, pagesize %u, "
+				  "folio_size %zu\n",
+				  pos, fsi->pagesize,
+				  folio_size(first_folio));
 			ssdfs_folio_unlock(first_folio);
 			ssdfs_folio_put(first_folio);
 			return ERR_PTR(-ERANGE);

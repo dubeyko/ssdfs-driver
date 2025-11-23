@@ -457,7 +457,7 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 		int number_of_tries = 0;
 		int err;
 
-		while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+		while (number_of_tries < SSDFS_UNMOUNT_NUMBER_OF_TRIES) {
 			spin_lock(&fsi->volume_state_lock);
 			old_flush_requests =
 				fsi->flushing_user_data_requests;
@@ -478,7 +478,10 @@ void wait_unfinished_user_data_requests(struct ssdfs_fs_info *fsi)
 				fsi->flushing_user_data_requests;
 			spin_unlock(&fsi->volume_state_lock);
 
-			if (old_flush_requests <= new_flush_requests)
+			if (old_flush_requests != new_flush_requests) {
+				if (number_of_tries > 0)
+					number_of_tries--;
+			} else
 				number_of_tries++;
 		}
 
@@ -4002,7 +4005,7 @@ void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
 		int number_of_tries = 0;
 		int err;
 
-		while (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+		while (number_of_tries < SSDFS_UNMOUNT_NUMBER_OF_TRIES) {
 			spin_lock(&fsi->volume_state_lock);
 			old_commit_requests = fsi->commit_log_requests;
 			spin_unlock(&fsi->volume_state_lock);
@@ -4021,7 +4024,10 @@ void wait_unfinished_commit_log_requests(struct ssdfs_fs_info *fsi)
 			new_commit_requests = fsi->commit_log_requests;
 			spin_unlock(&fsi->volume_state_lock);
 
-			if (old_commit_requests <= new_commit_requests)
+			if (old_commit_requests != new_commit_requests) {
+				if (number_of_tries > 0)
+					number_of_tries--;
+			} else
 				number_of_tries++;
 		}
 

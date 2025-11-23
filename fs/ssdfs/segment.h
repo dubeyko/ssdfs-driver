@@ -469,6 +469,25 @@ bool is_metadata_going_flushing(struct ssdfs_segment_info *si)
 }
 
 static inline
+bool is_unmount_in_progress(struct ssdfs_segment_info *si)
+{
+	switch (atomic_read(&si->fsi->global_fs_state)) {
+	case SSDFS_UNMOUNT_METADATA_GOING_FLUSHING:
+	case SSDFS_UNMOUNT_METADATA_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+	case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+	case SSDFS_UNMOUNT_DESTROY_METADATA:
+		return true;
+
+	default:
+		/* continue logic */
+		break;
+	}
+
+	return false;
+}
+
+static inline
 void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 					   struct ssdfs_segment_request *req)
 {

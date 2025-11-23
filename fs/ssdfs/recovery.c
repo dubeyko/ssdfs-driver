@@ -199,7 +199,6 @@ void ssdfs_destruct_sb_snap_info(struct ssdfs_sb_snapshot_seg_info *sb_snapi)
 	memset(&sb_snapi->last_log, 0, sizeof(struct ssdfs_peb_extent));
 	sb_snapi->need_snapshot_sb = false;
 	if (sb_snapi->req) {
-		ssdfs_put_request(sb_snapi->req);
 		ssdfs_request_free(sb_snapi->req, NULL);
 		sb_snapi->req = NULL;
 	}

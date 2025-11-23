@@ -9512,7 +9512,7 @@ unlock_fragment:
 #ifdef CONFIG_SSDFS_TESTING
 #ifdef CONFIG_SSDFS_DEBUG
 	down_read(&fragment->lock);
-	for (i = 0; i <= capacity; i++) {
+	for (i = 0; i < capacity; i++) {
 		if (i == logical_blk)
 			continue;
 

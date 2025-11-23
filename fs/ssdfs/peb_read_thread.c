@@ -1927,6 +1927,8 @@ int ssdfs_peb_read_block_descriptor_from_volume(struct ssdfs_peb_info *pebi,
 	u32 blk_desc_off;
 	u32 folio_index;
 	u32 folios_count;
+	u32 bytes_offset;
+	u32 processed_folios = 0;
 	int i;
 	int err;
 
@@ -1946,38 +1948,45 @@ int ssdfs_peb_read_block_descriptor_from_volume(struct ssdfs_peb_info *pebi,
 	area_size = le32_to_cpu(meta_desc->size);
 	blk_desc_off = le32_to_cpu(blk_state->byte_offset);
 
-	folio_index = (area_offset + blk_desc_off) / pebi->cache.folio_size;
-
+	folio_index = area_offset / pebi->cache.folio_size;
 	folios_count = (area_size + fsi->pagesize - 1) / pebi->cache.folio_size;
-	folios_count = min_t(u32, folios_count, SSDFS_EXTENT_LEN_MAX);
 
 	folio_batch_init(&batch);
 
-	for (i = 0; i < folios_count; i++) {
-		folio = ssdfs_folio_array_grab_folio(&pebi->cache,
-							folio_index + i);
+prepare_folio_batch:
+	bytes_offset = (folio_index + processed_folios) * pebi->cache.folio_size;
+
+	for (i = processed_folios; i < folios_count; i++) {
+		u32 cur_index = folio_index + i;
+
+		if (folio_batch_space(&batch) == 0)
+			break;
+
+		folio = ssdfs_folio_array_grab_folio(&pebi->cache, cur_index);
 		if (unlikely(IS_ERR_OR_NULL(folio))) {
 			SSDFS_ERR("fail to grab folio: index %u\n",
-				  folio_index);
+				  cur_index);
 			return -ENOMEM;
 		}
 
 		if (folio_test_uptodate(folio) || folio_test_dirty(folio))
-			break;
+			continue;
 
 		folio_batch_add(&batch, folio);
+		processed_folios++;
 	}
 
-	err = ssdfs_read_folio_batch_from_volume(fsi, pebi->peb_id,
-						 folio_index *
-							pebi->cache.folio_size,
+	if (folio_batch_count(&batch) == 0)
+		goto try_read_block_descriptor;
+
+	err = ssdfs_read_folio_batch_from_volume(fsi,
+						 pebi->peb_id,
+						 bytes_offset,
 						 &batch);
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to read folio batch: "
-			  "peb_id %llu, folio_index %u, "
-			  "folios_count %u, err %d\n",
-			  pebi->peb_id, folio_index,
-			  folios_count, err);
+			  "peb_id %llu, bytes_offset %u, err %d\n",
+			  pebi->peb_id, bytes_offset, err);
 		return err;
 	}
 
@@ -1997,6 +2006,10 @@ int ssdfs_peb_read_block_descriptor_from_volume(struct ssdfs_peb_info *pebi,
 
 	folio_batch_reinit(&batch);
 
+	if (processed_folios < folios_count)
+		goto prepare_folio_batch;
+
+try_read_block_descriptor:
 	err = ssdfs_peb_read_block_descriptor(pebi, req, meta_desc,
 					      blk_state, blk_desc);
 	if (unlikely(err)) {
@@ -2196,7 +2209,22 @@ int ssdfs_peb_find_block_descriptor(struct ssdfs_peb_info *pebi,
 
 	default:
 		if (!is_ssdfs_block_descriptor_valid(fsi, req, blk_desc)) {
-			SSDFS_ERR("invalid block descriptor!!!\n");
+			SSDFS_WARN("invalid block descriptor!!!\n");
+			SSDFS_ERR("seg %llu, peb %llu, "
+				  "log_start_page %u, log_area %#x, "
+				  "peb_migration_id %u, byte_offset %u\n",
+				  pebi->pebc->parent_si->seg_id, pebi->peb_id,
+				  le16_to_cpu(desc_off->blk_state.log_start_page),
+				  desc_off->blk_state.log_area,
+				  desc_off->blk_state.peb_migration_id,
+				  le32_to_cpu(desc_off->blk_state.byte_offset));
+			SSDFS_ERR("ino %llu, logical_offset %u, "
+				  "peb_index %u, peb_page %u\n",
+				  le64_to_cpu(blk_desc->ino),
+				  le32_to_cpu(blk_desc->logical_offset),
+				  le16_to_cpu(blk_desc->peb_index),
+				  le16_to_cpu(blk_desc->peb_page));
+
 			return -ERANGE;
 		}
 		break;

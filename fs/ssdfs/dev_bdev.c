@@ -283,7 +283,7 @@ static int ssdfs_bdev_sync_batch_request(struct super_block *sb,
 
 	if (folio_batch_count(batch) == 0) {
 		SSDFS_WARN("empty folio batch\n");
-		return 0;
+		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG

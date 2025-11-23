@@ -67,6 +67,144 @@ bool ssdfs_peb_blk_bmap_initialized(struct ssdfs_peb_blk_bmap *ptr)
 }
 
 /*
+ * is_blk_bmap_pages_balance_correct() - check block bitmap's pages balance
+ * @bmap: pointer on block bitmap
+ *
+ * This function tries to check pages balance in block bitmap.
+ *
+ */
+#ifdef CONFIG_SSDFS_DEBUG
+static
+bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
+{
+	int used_pages;
+	int free_pages;
+	int invalid_pages;
+	int pages_capacity;
+	int allocation_pool;
+	int metadata_pages;
+	bool is_balance_correct = false;
+	int err;
+
+	BUG_ON(!bmap);
+	SSDFS_DBG("bmap %p\n", bmap);
+
+	err = ssdfs_block_bmap_lock(bmap);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
+		goto finish_check_block_bmap;
+	}
+
+	free_pages = ssdfs_block_bmap_get_free_pages(bmap);
+	if (free_pages < 0) {
+		err = free_pages;
+		SSDFS_ERR("fail to get free pages: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
+	used_pages = ssdfs_block_bmap_get_used_pages(bmap);
+	if (used_pages < 0) {
+		err = used_pages;
+		SSDFS_ERR("fail to get used pages: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
+	invalid_pages = ssdfs_block_bmap_get_invalid_pages(bmap);
+	if (invalid_pages < 0) {
+		err = invalid_pages;
+		SSDFS_ERR("fail to get invalid pages: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
+	metadata_pages = ssdfs_block_bmap_get_metadata_pages(bmap);
+	if (metadata_pages < 0) {
+		err = metadata_pages;
+		SSDFS_ERR("fail to get metadata pages: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
+	pages_capacity = ssdfs_block_bmap_get_pages_capacity(bmap);
+	if (pages_capacity < 0) {
+		err = pages_capacity;
+		SSDFS_ERR("fail to get pages capacity: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
+	allocation_pool = ssdfs_block_bmap_get_allocation_pool(bmap);
+	if (allocation_pool < 0) {
+		err = allocation_pool;
+		SSDFS_ERR("fail to get allocation pool: err %d\n",
+			  err);
+		goto finish_check_block_bmap;
+	}
+
+	ssdfs_block_bmap_unlock(bmap);
+
+	if (allocation_pool == 0 || allocation_pool > pages_capacity) {
+		SSDFS_ERR("invalid state: "
+			  "free_pages %d, "
+			  "used_pages %d, "
+			  "invalid_pages %d, "
+			  "metadata_pages %d, "
+			  "pages_capacity %d, "
+			  "allocation_pool %d\n",
+			  free_pages,
+			  used_pages,
+			  invalid_pages,
+			  metadata_pages,
+			  pages_capacity,
+			  allocation_pool);
+		goto finish_check_block_bmap;
+	}
+
+	if (free_pages > allocation_pool) {
+		SSDFS_ERR("invalid state: "
+			  "free_pages %d, "
+			  "used_pages %d, "
+			  "invalid_pages %d, "
+			  "metadata_pages %d, "
+			  "pages_capacity %d, "
+			  "allocation_pool %d\n",
+			  free_pages,
+			  used_pages,
+			  invalid_pages,
+			  metadata_pages,
+			  pages_capacity,
+			  allocation_pool);
+		goto finish_check_block_bmap;
+	}
+
+	if (free_pages == 0 && metadata_pages == 0 &&
+	    invalid_pages == 0 && used_pages == 0) {
+		SSDFS_ERR("invalid state: "
+			  "free_pages %d, "
+			  "used_pages %d, "
+			  "invalid_pages %d, "
+			  "metadata_pages %d, "
+			  "pages_capacity %d, "
+			  "allocation_pool %d\n",
+			  free_pages,
+			  used_pages,
+			  invalid_pages,
+			  metadata_pages,
+			  pages_capacity,
+			  allocation_pool);
+		goto finish_check_block_bmap;
+	}
+
+	is_balance_correct = true;
+
+finish_check_block_bmap:
+	return is_balance_correct;
+}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+/*
  * ssdfs_peb_blk_bmap_create() - construct PEB's block bitmap
  * @parent: parent segment's block bitmap
  * @peb_index: PEB's index in segment's array
@@ -2343,144 +2481,6 @@ finish_get_dst_pages_capacity:
 }
 
 /*
- * is_blk_bmap_pages_balance_correct() - check block bitmap's pages balance
- * @bmap: pointer on block bitmap
- *
- * This function tries to check pages balance in block bitmap.
- *
- */
-#ifdef CONFIG_SSDFS_DEBUG
-static
-bool is_blk_bmap_pages_balance_correct(struct ssdfs_block_bmap *bmap)
-{
-	int used_pages;
-	int free_pages;
-	int invalid_pages;
-	int pages_capacity;
-	int allocation_pool;
-	int metadata_pages;
-	bool is_balance_correct = false;
-	int err;
-
-	BUG_ON(!bmap);
-	SSDFS_DBG("bmap %p\n", bmap);
-
-	err = ssdfs_block_bmap_lock(bmap);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to lock block bitmap: err %d\n", err);
-		goto finish_check_block_bmap;
-	}
-
-	free_pages = ssdfs_block_bmap_get_free_pages(bmap);
-	if (free_pages < 0) {
-		err = free_pages;
-		SSDFS_ERR("fail to get free pages: err %d\n",
-			  err);
-		goto finish_check_block_bmap;
-	}
-
-	used_pages = ssdfs_block_bmap_get_used_pages(bmap);
-	if (used_pages < 0) {
-		err = used_pages;
-		SSDFS_ERR("fail to get used pages: err %d\n",
-			  err);
-		goto finish_check_block_bmap;
-	}
-
-	invalid_pages = ssdfs_block_bmap_get_invalid_pages(bmap);
-	if (invalid_pages < 0) {
-		err = invalid_pages;
-		SSDFS_ERR("fail to get invalid pages: err %d\n",
-			  err);
-		goto finish_check_block_bmap;
-	}
-
-	metadata_pages = ssdfs_block_bmap_get_metadata_pages(bmap);
-	if (metadata_pages < 0) {
-		err = metadata_pages;
-		SSDFS_ERR("fail to get metadata pages: err %d\n",
-			  err);
-		goto finish_check_block_bmap;
-	}
-
-	pages_capacity = ssdfs_block_bmap_get_pages_capacity(bmap);
-	if (pages_capacity < 0) {
-		err = pages_capacity;
-		SSDFS_ERR("fail to get pages capacity: err %d\n",
-			  err);
-		goto finish_check_block_bmap;
-	}
-
-	allocation_pool = ssdfs_block_bmap_get_allocation_pool(bmap);
-	if (allocation_pool < 0) {
-		err = allocation_pool;
-		SSDFS_ERR("fail to get allocation pool: err %d\n",
-			  err);
-		goto finish_check_block_bmap;
-	}
-
-	ssdfs_block_bmap_unlock(bmap);
-
-	if (allocation_pool == 0 || allocation_pool > pages_capacity) {
-		SSDFS_ERR("invalid state: "
-			  "free_pages %d, "
-			  "used_pages %d, "
-			  "invalid_pages %d, "
-			  "metadata_pages %d, "
-			  "pages_capacity %d, "
-			  "allocation_pool %d\n",
-			  free_pages,
-			  used_pages,
-			  invalid_pages,
-			  metadata_pages,
-			  pages_capacity,
-			  allocation_pool);
-		goto finish_check_block_bmap;
-	}
-
-	if (free_pages > allocation_pool) {
-		SSDFS_ERR("invalid state: "
-			  "free_pages %d, "
-			  "used_pages %d, "
-			  "invalid_pages %d, "
-			  "metadata_pages %d, "
-			  "pages_capacity %d, "
-			  "allocation_pool %d\n",
-			  free_pages,
-			  used_pages,
-			  invalid_pages,
-			  metadata_pages,
-			  pages_capacity,
-			  allocation_pool);
-		goto finish_check_block_bmap;
-	}
-
-	if (free_pages == 0 && metadata_pages == 0 &&
-	    invalid_pages == 0 && used_pages == 0) {
-		SSDFS_ERR("invalid state: "
-			  "free_pages %d, "
-			  "used_pages %d, "
-			  "invalid_pages %d, "
-			  "metadata_pages %d, "
-			  "pages_capacity %d, "
-			  "allocation_pool %d\n",
-			  free_pages,
-			  used_pages,
-			  invalid_pages,
-			  metadata_pages,
-			  pages_capacity,
-			  allocation_pool);
-		goto finish_check_block_bmap;
-	}
-
-	is_balance_correct = true;
-
-finish_check_block_bmap:
-	return is_balance_correct;
-}
-#endif /* CONFIG_SSDFS_DEBUG */
-
-/*
  * ssdfs_peb_blk_bmap_get_block_state() - detect state of block
  * @bmap: pointer on PEB's block bitmap object
  * @bmap_index: source or destination block bitmap?
@@ -3130,6 +3130,10 @@ int ssdfs_peb_inflate_dst_blk_bmap(struct ssdfs_peb_blk_bmap *bmap,
 unlock_blk_bmap:
 	ssdfs_block_bmap_unlock(bmap->dst);
 
+#ifdef CONFIG_SSDFS_DEBUG
+	WARN_ON(!is_blk_bmap_pages_balance_correct(bmap->dst));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -3201,6 +3205,10 @@ int ssdfs_peb_inflate_src_blk_bmap(struct ssdfs_peb_blk_bmap *bmap,
 
 unlock_blk_bmap:
 	ssdfs_block_bmap_unlock(bmap->src);
+
+#ifdef CONFIG_SSDFS_DEBUG
+	WARN_ON(!is_blk_bmap_pages_balance_correct(bmap->src));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -4277,6 +4285,10 @@ init_failed:
 		SSDFS_WARN("bmap pointer is empty\n");
 		goto finish_invalidate;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	WARN_ON(!is_blk_bmap_pages_balance_correct(cur_bmap));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	err = ssdfs_block_bmap_lock(cur_bmap);
 	if (unlikely(err)) {

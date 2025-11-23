@@ -491,6 +491,16 @@ int ssdfs_block_bmap_create(struct ssdfs_fs_info *fsi,
 		return -EINVAL;
 	}
 
+	if (items_capacity > SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+			  "items_capacity %u\n",
+			  items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		items_capacity = SSDFS_BLK_BMAP_CAPACITY_MAX;
+		allocation_pool = items_capacity;
+	}
+
 	bmap_bytes = BLK_BMAP_BYTES(items_capacity);
 	bmap_folios = (bmap_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
@@ -975,6 +985,16 @@ int ssdfs_block_bmap_init(struct ssdfs_block_bmap *blk_bmap,
 						 blk_bmap->items_capacity,
 						 (size_t)(metadata_blks +
 							  invalid_blks));
+
+		if (blk_bmap->items_capacity > SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+				  "items_capacity %zu\n",
+				  blk_bmap->items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+			blk_bmap->items_capacity = SSDFS_BLK_BMAP_CAPACITY_MAX;
+		}
+
 		blk_bmap->allocation_pool = blk_bmap->items_capacity;
 
 		calculated_bmap_bytes =
@@ -1286,6 +1306,18 @@ int __ssdfs_block_bmap_inflate(struct ssdfs_block_bmap *blk_bmap,
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -EINVAL;
+	}
+
+	if (new_items_capacity > SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+			  "items_capacity %zu, allocation_pool %zu, "
+			  "new_items_capacity %zu\n",
+			  blk_bmap->items_capacity,
+			  blk_bmap->allocation_pool,
+			  new_items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		new_items_capacity = SSDFS_BLK_BMAP_CAPACITY_MAX;
 	}
 
 	if (new_items_capacity <= blk_bmap->items_capacity) {
@@ -6769,6 +6801,15 @@ int ssdfs_block_bmap_clean(struct ssdfs_block_bmap *blk_bmap,
 	if (!is_block_bmap_initialized(blk_bmap)) {
 		SSDFS_WARN("block bitmap hasn't been initialized\n");
 		return -ENOENT;
+	}
+
+	if (items_capacity > SSDFS_BLK_BMAP_CAPACITY_MAX) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("block bitmap capacity cannot be bigger 64K: "
+			  "items_capacity %zu\n",
+			  items_capacity);
+#endif /* CONFIG_SSDFS_DEBUG */
+		items_capacity = SSDFS_BLK_BMAP_CAPACITY_MAX;
 	}
 
 	if (items_capacity < blk_bmap->items_capacity) {

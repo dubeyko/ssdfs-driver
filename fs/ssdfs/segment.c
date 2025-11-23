@@ -1845,6 +1845,8 @@ ssdfs_find_and_create_new_segment(struct ssdfs_fs_info *fsi,
 
 				/* try to find another segment */
 				err = -EAGAIN;
+				state->request.start_search_id =
+						state->result.seg_id;
 			} else if (err == -EINTR) {
 				/*
 				 * Ignore this error.
@@ -2021,12 +2023,42 @@ ssdfs_grab_segment(struct ssdfs_fs_info *fsi,
 bool is_ssdfs_segment_ready_for_requests(struct ssdfs_segment_info *si)
 {
 	struct ssdfs_blk2off_table *table;
+	int number_of_tries = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!si);
 
 	SSDFS_DBG("seg %llu\n", si->seg_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+check_seg_obj_state:
+	switch (atomic_read(&si->obj_state)) {
+	case SSDFS_SEG_OBJECT_UNKNOWN_STATE:
+	case SSDFS_SEG_OBJECT_UNDER_CREATION:
+		{
+			ktime_t timeout = KTIME_MAX;
+			DEFINE_WAIT(wait);
+
+			timeout = ktime_add_ns(ktime_get(),
+						jiffies_to_nsecs(HZ));
+			prepare_to_wait(&si->object_queue, &wait,
+					TASK_INTERRUPTIBLE);
+			if (atomic_read(&si->obj_state) <=
+					SSDFS_SEG_OBJECT_UNDER_CREATION)
+				schedule_hrtimeout(&timeout, HRTIMER_MODE_ABS);
+			finish_wait(&si->object_queue, &wait);
+		}
+
+		if (number_of_tries < SSDFS_MAX_NUMBER_OF_TRIES) {
+			number_of_tries++;
+			goto check_seg_obj_state;
+		} else
+			return true;
+
+	default:
+		/* continue logic */
+		break;
+	}
 
 	table = si->blk2off_table;
 
@@ -2052,6 +2084,7 @@ int ssdfs_wait_segment_init_end(struct ssdfs_segment_info *si)
 {
 	struct ssdfs_blk2off_table *table;
 	struct completion *end;
+	int i;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2068,6 +2101,15 @@ int ssdfs_wait_segment_init_end(struct ssdfs_segment_info *si)
 		SSDFS_ERR("blk2off init failed: "
 			  "seg_id %llu, err %d\n",
 			  si->seg_id, err);
+		SSDFS_ERR("blk2off_table->state %#x\n",
+			  atomic_read(&table->state));
+		for (i = 0; i < table->pebs_count; i++) {
+			SSDFS_ERR("PEB[%d] fragments %d, state %#x\n",
+				  i,
+				  atomic_read(&table->peb[i].fragment_count),
+				  atomic_read(&table->peb[i].state));
+		}
+
 		return err;
 	}
 
@@ -3137,6 +3179,13 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 					   req);
 
 #ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("ino %llu, logical_offset %llu, data_bytes %u, "
+		  "start_lblk %u, len %u\n",
+		  batch->requested_extent.ino,
+		  batch->requested_extent.logical_offset,
+		  data_bytes,
+		  batch->allocated_extent.start_lblk,
+		  batch->allocated_extent.len);
 	BUG_ON((batch->processed_blks +
 			batch->allocated_extent.len) >
 					batch->content.count);
@@ -3184,9 +3233,17 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 	if (err) {
 		SSDFS_ERR("fail to add extent: "
 			  "ino %llu, folio_index %llu, "
+			  "extent (seg_id %llu, start %u, len %u), "
+			  "batch_size %u, processed_blks %u, "
 			  "err %d\n",
 			  batch->requested_extent.ino,
-			  (u64)folio->index, err);
+			  (u64)folio->index,
+			  si->seg_id,
+			  batch->allocated_extent.start_lblk,
+			  batch->allocated_extent.len,
+			  batch->content.count,
+			  batch->processed_blks,
+			  err);
 		goto fail_add_request_into_create_queue;
 	}
 
@@ -5234,16 +5291,6 @@ add_new_current_segment:
 			goto finish_add_extent;
 		}
 
-		if (cur_seg->seg_id == si->seg_id) {
-			/*
-			 * ssdfs_grab_segment() has got object already.
-			 */
-			ssdfs_segment_put_object(si);
-			err = -ENOSPC;
-			SSDFS_DBG("there is no more clean segments\n");
-			goto finish_add_extent;
-		}
-
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("add current segment: seg_id %llu\n",
 			  si->seg_id);
@@ -5261,8 +5308,15 @@ add_new_current_segment:
 				  "err %d\n",
 				  si->seg_id, err);
 #endif /* CONFIG_SSDFS_DEBUG */
-			cur_seg->seg_id = si->seg_id;
-			goto add_new_current_segment;
+
+			if (cur_seg->seg_id == si->seg_id) {
+				err = -ENOSPC;
+				SSDFS_DBG("there is no more clean segments\n");
+				goto finish_add_extent;
+			} else {
+				cur_seg->seg_id = si->seg_id;
+				goto add_new_current_segment;
+			}
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to add segment %llu as current: "
 				  "err %d\n",

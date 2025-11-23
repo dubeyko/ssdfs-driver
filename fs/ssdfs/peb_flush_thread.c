@@ -760,6 +760,7 @@ int ssdfs_peb_grow_log_area(struct ssdfs_peb_info *pebi, int area_type,
  *
  * %-ERANGE     - internal error.
  * %-ENOMEM     - fail to allocate the memory.
+ * %-EAGAIN     - log is full.
  */
 static inline
 struct folio *ssdfs_peb_grab_area_folio(struct ssdfs_peb_info *pebi,
@@ -5286,6 +5287,7 @@ int ssdfs_peb_compress_blk_desc_fragment_in_place(struct ssdfs_peb_info *pebi,
  *
  * %-ENOMEM     - unable to allocate memory.
  * %-ERANGE     - internal error.
+ * %-ENOSPC     - log is full.
  */
 static
 int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
@@ -5300,7 +5302,7 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 	pgoff_t folio_index;
 	u32 offset_inside_folio;
 	size_t copy_len;
-	int err = 0;
+	int err = 0, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !blob || !copied_len);
@@ -5328,11 +5330,34 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 					  folio_index, blob_size);
 	if (IS_ERR_OR_NULL(folio)) {
 		err = (folio == NULL ? -ERANGE : PTR_ERR(folio));
-		SSDFS_ERR("fail to grab folio %lu for area %#x: "
-			  "blob_size %zu, copied_len %zu, err %d\n",
-			  folio_index, area_type,
-			  blob_size, *copied_len, err);
-		return err;
+
+		if (err == -EAGAIN) {
+			res = -ENOSPC;
+
+			folio = ssdfs_folio_array_grab_folio(&area->array,
+							     folio_index);
+			if (IS_ERR_OR_NULL(folio)) {
+				SSDFS_ERR("fail to add folio %lu into area %#x space\n",
+					  folio_index, area_type);
+				return -ENOMEM;
+			}
+
+			__ssdfs_memzero_folio(folio, 0, folio_size(folio),
+					      folio_size(folio));
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full: grab last folio %lu for area %#x: "
+				  "blob_size %zu, copied_len %zu\n",
+				  folio_index, area_type,
+				  blob_size, *copied_len);
+#endif /* CONFIG_SSDFS_DEBUG */
+		} else {
+			SSDFS_ERR("fail to grab folio %lu for area %#x: "
+				  "blob_size %zu, copied_len %zu, err %d\n",
+				  folio_index, area_type,
+				  blob_size, *copied_len, err);
+			return err;
+		}
 	}
 
 	offset_inside_folio = offset % folio_size(folio);
@@ -5375,7 +5400,11 @@ int __ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 			  "*copied_len %zu, blob_size %zu\n",
 			  *copied_len, blob_size);
 #endif /* CONFIG_SSDFS_DEBUG */
-		err = -EAGAIN;
+		if (res == -ENOSPC) {
+			res = -ERANGE;
+			SSDFS_ERR("fail to copy blob: log is full\n");
+		} else
+			err = -EAGAIN;
 	}
 
 unlock_grabbed_folio:
@@ -5387,7 +5416,7 @@ unlock_grabbed_folio:
 		  folio, folio_ref_count(folio));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return err;
+	return res == 0 ? err : res;
 }
 
 /*
@@ -5404,6 +5433,7 @@ unlock_grabbed_folio:
  *
  * %-ENOMEM     - unable to allocate memory.
  * %-ERANGE     - internal error.
+ * %-ENOSPC     - log is full.
  */
 static
 int ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
@@ -5438,7 +5468,12 @@ int ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
 							    blob,
 							    blob_size,
 							    &copied_len);
-		if (unlikely(err)) {
+		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy blob into page cache: "
 				  "err %d\n", err);
 			return err;
@@ -5468,6 +5503,7 @@ int ssdfs_peb_copy_blob_into_page_cache(struct ssdfs_peb_info *pebi,
  * %-ENOMEM     - unable to allocate memory.
  * %-ERANGE     - internal error.
  * %-E2BIG      - fragment is stored uncompressed.
+ * %-ENOSPC     - log is full.
  */
 static
 int ssdfs_peb_compress_blk_desc_fragment_in_buffer(struct ssdfs_peb_info *pebi,
@@ -5502,7 +5538,15 @@ int ssdfs_peb_compress_blk_desc_fragment_in_buffer(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_copy_blob_into_page_cache(pebi,
 							  buf->ptr,
 							  uncompr_size);
-		if (unlikely(err)) {
+		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("blob has been stored uncompressed: "
+				  "size %zu\n", uncompr_size);
+			SSDFS_DBG("log is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			*compr_size = uncompr_size;
+			return err;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy blob into page cache: "
 				  "err %d\n", err);
 			return err;
@@ -5545,7 +5589,12 @@ int ssdfs_peb_compress_blk_desc_fragment_in_buffer(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_copy_blob_into_page_cache(pebi,
 							  buf->ptr,
 							  uncompr_size);
-		if (unlikely(err)) {
+		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto free_compr_buf;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy blob into page cache: "
 				  "err %d\n", err);
 			goto free_compr_buf;
@@ -5572,7 +5621,12 @@ int ssdfs_peb_compress_blk_desc_fragment_in_buffer(struct ssdfs_peb_info *pebi,
 		err = ssdfs_peb_copy_blob_into_page_cache(pebi,
 							  compr_buf,
 							  *compr_size);
-		if (unlikely(err)) {
+		if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto free_compr_buf;
+		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to copy blob into page cache: "
 				  "err %d\n", err);
 			goto free_compr_buf;
@@ -5600,6 +5654,7 @@ free_compr_buf:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to get fragment descriptor.
  * %-E2BIG      - fragment is stored uncompressed.
+ * %-ENOSPC     - log is full.
  */
 static
 int ssdfs_peb_compress_blk_descs_fragment(struct ssdfs_peb_info *pebi,
@@ -5649,6 +5704,11 @@ int ssdfs_peb_compress_blk_descs_fragment(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("fragment has been stored uncompressed: "
 				  "size %zu\n", uncompr_size);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_fragment_compress;
+		} else if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_fragment_compress;
 		} else if (unlikely(err)) {
@@ -5746,6 +5806,7 @@ int ssdfs_initialize_next_free_fragment_descriptor(struct ssdfs_peb_info *pebi,
  *
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to get fragment descriptor.
+ * %-ENOSPC     - log is full.
  */
 static
 int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
@@ -5767,7 +5828,7 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 	u16 fragments_count;
 	size_t compr_size = 0;
 	u8 fragment_type = SSDFS_DATA_BLK_DESC;
-	int err;
+	int err, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !req || !blk_desc || !data_off || !desc_off);
@@ -5961,6 +6022,12 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 			compr_size = bytes_count;
 			meta_desc->type = SSDFS_DATA_BLK_DESC;
+		} else if (err == -ENOSPC) {
+			err = 0;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full\n");
+#endif /* CONFIG_SSDFS_DEBUG */
+			res = -ENOSPC;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to compress blk desc fragment: "
 				  "err %d\n", err);
@@ -5996,15 +6063,18 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 		else
 			area->metadata.sequence_id++;
 
-		err = ssdfs_initialize_next_free_fragment_descriptor(pebi,
-						area_type, fragment_type,
-						area->metadata.sequence_id,
-						SSDFS_FRAGMENT_HAS_CSUM,
-						area->compressed_offset);
-		if (unlikely(err)) {
-			SSDFS_ERR("fail to initialize next free fragment: "
-				  "err %d\n", err);
-			return err;
+		if (!err) {
+			err =
+			    ssdfs_initialize_next_free_fragment_descriptor(pebi,
+						    area_type, fragment_type,
+						    area->metadata.sequence_id,
+						    SSDFS_FRAGMENT_HAS_CSUM,
+						    area->compressed_offset);
+			if (unlikely(err)) {
+				SSDFS_ERR("fail to initialize next free fragment: "
+					  "err %d\n", err);
+				return err;
+			}
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6038,7 +6108,7 @@ int ssdfs_peb_store_compressed_block_descriptor(struct ssdfs_peb_info *pebi,
 
 	le32_add_cpu(&chain_hdr->uncompr_bytes, (u32)blk_desc_size);
 
-	return 0;
+	return res;
 }
 
 /*
@@ -6258,6 +6328,7 @@ int __ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
  *
  * %-ERANGE     - internal error.
  * %-EAGAIN     - unable to get fragment descriptor.
+ * %-ENOSPC     - log is full.
  */
 static
 int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
@@ -6297,7 +6368,29 @@ int ssdfs_peb_store_block_descriptor(struct ssdfs_peb_info *pebi,
 							  desc_off);
 	}
 
-	if (unlikely(err)) {
+	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to store block descriptor: "
+			  "seg %llu, peb %llu, ino %llu, "
+			  "logical_offset %llu, processed_blks %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  req->extent.ino,
+			  req->extent.logical_offset,
+			  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (err == -ENOSPC) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("log is full: "
+			  "seg %llu, peb %llu, ino %llu, "
+			  "logical_offset %llu, processed_blks %d\n",
+			  pebi->pebc->parent_si->seg_id,
+			  pebi->peb_id,
+			  req->extent.ino,
+			  req->extent.logical_offset,
+			  req->result.processed_blks);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to store block descriptor: "
 			  "seg %llu, peb %llu, ino %llu, "
 			  "logical_offset %llu, processed_blks %d, "
@@ -6426,6 +6519,8 @@ int ssdfs_peb_store_block_descriptor_offset(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EEXIST     - block has been created by log is full.
+ * %-EAGAIN     - try again to add block.
  */
 static
 int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
@@ -6449,7 +6544,7 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_fingerprint_pair pair;
 	bool is_block_duplicated = false;
 #endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
-	int err;
+	int err, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !req);
@@ -6557,7 +6652,35 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	range.start = logical_block;
 	range.len = len;
 
-	if (!is_ssdfs_block_full(fsi->pagesize, written_bytes)) {
+	if (req->result.err == -EAGAIN) {
+		int blk_state;
+
+		req->result.err = 0;
+
+		blk_state = ssdfs_segment_blk_bmap_get_block_state(&si->blk_bmap,
+								   pebi,
+								   logical_block);
+		if (blk_state < 0) {
+			SSDFS_ERR("fail to detect block %u state: "
+				  "err %d\n",
+				  logical_block, err);
+			return err;
+		}
+
+		switch (blk_state) {
+		case SSDFS_BLK_PRE_ALLOCATED:
+		case SSDFS_BLK_VALID:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_ERR("logical block hasn't been allocated: "
+				  "seg %llu, logical_block %u, peb %llu\n",
+				  req->place.start.seg_id, logical_block,
+				  pebi->peb_id);
+			return -ERANGE;
+		}
+	} else if (!is_ssdfs_block_full(fsi->pagesize, written_bytes)) {
 		err = ssdfs_segment_blk_bmap_pre_allocate(&si->blk_bmap,
 							  pebi, &range);
 	} else {
@@ -6612,7 +6735,24 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 	err = ssdfs_peb_store_block_descriptor(pebi, req,
 						&blk_desc, &data_off,
 						&desc_off);
-	if (unlikely(err)) {
+	if (err == -EAGAIN) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("try again to add block: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id, logical_block,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		req->result.err = -EAGAIN;
+		return err;
+	} else if (err == -ENOSPC) {
+		res = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("log is full: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id, logical_block,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to store block descriptor: "
 			  "seg %llu, logical_block %u, peb %llu, err %d\n",
 			  req->place.start.seg_id, logical_block,
@@ -6651,7 +6791,7 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 		  req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return 0;
+	return res;
 }
 
 /*
@@ -6666,6 +6806,9 @@ int __ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EEXIST     - block has been created by log is full.
+ * %-EAGAIN     - try again to add block.
+ * %-ENOSPC     - block bitmap hasn't free space.
  */
 static
 int ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
@@ -6723,6 +6866,15 @@ int ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
 			  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 		return err;
+	} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("log is full: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id,
+			  req->place.start.blk_index,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return err;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to create block: "
 			  "seg %llu, logical_block %u, peb %llu, err %d\n",
@@ -6747,6 +6899,9 @@ int ssdfs_peb_create_block(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EEXIST     - block has been created by log is full.
+ * %-EAGAIN     - try again to add block.
+ * %-ENOSPC     - block bitmap hasn't free space.
  */
 static
 int ssdfs_peb_create_extent(struct ssdfs_peb_info *pebi,
@@ -6816,6 +6971,15 @@ int ssdfs_peb_create_extent(struct ssdfs_peb_info *pebi,
 			SSDFS_DBG("try again to create block: "
 				  "seg %llu, logical_block %u, peb %llu\n",
 				  req->place.start.seg_id, logical_block,
+				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return err;
+		} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full: "
+				  "seg %llu, logical_block %u, peb %llu\n",
+				  req->place.start.seg_id,
+				  req->place.start.blk_index,
 				  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return err;
@@ -6997,6 +7161,8 @@ int __ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - try again to pre-allocate block.
+ * %-ENOSPC     - block bitmap hasn't free space.
  */
 static
 int ssdfs_peb_pre_allocate_block(struct ssdfs_peb_info *pebi,
@@ -7094,6 +7260,8 @@ int ssdfs_peb_pre_allocate_block(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - try again to pre-allocate extent.
+ * %-ENOSPC     - block bitmap hasn't free space.
  */
 static
 int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
@@ -7208,6 +7376,9 @@ int ssdfs_peb_pre_allocate_extent(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input.
+ * %-EEXIST     - block has been created by log is full.
+ * %-EAGAIN     - try again to add block.
+ * %-ENOSPC     - block bitmap hasn't free space.
  */
 static
 int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
@@ -7293,6 +7464,15 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return err;
+		} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full: "
+				  "seg %llu, logical_block %u, peb %llu\n",
+				  req->place.start.seg_id,
+				  req->place.start.blk_index,
+				  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -7335,6 +7515,26 @@ int ssdfs_process_create_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
+			return err;
+		} else if (err == -EEXIST) {
+			if (ssdfs_request_rest_bytes(pebi, req) > 0) {
+				err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("try again to create extent: "
+					  "seg %llu, peb %llu\n",
+					  req->place.start.seg_id,
+					  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("log is full: "
+					  "seg %llu, logical_block %u, peb %llu\n",
+					  req->place.start.seg_id,
+					  req->place.start.blk_index,
+					  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			}
+
 			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
@@ -7828,6 +8028,7 @@ finish_make_decision:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - try again to update data block.
  * %-ENOENT     - need migrate base state before storing diff.
+ * %-EEXIST     - block has been updated by log is full.
  */
 static
 int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
@@ -7860,7 +8061,7 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 #ifdef CONFIG_SSDFS_DEBUG
 	int i;
 #endif /* CONFIG_SSDFS_DEBUG */
-	int err = 0;
+	int err, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !req);
@@ -8291,7 +8492,15 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 	err = ssdfs_peb_store_block_descriptor(pebi, req,
 						&pos.blk_desc.buf,
 						&data_off, &desc_off);
-	if (unlikely(err)) {
+	if (err == -ENOSPC) {
+		res = -EEXIST;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("log is full: "
+			  "seg %llu, logical_block %u, peb %llu\n",
+			  req->place.start.seg_id, blk,
+			  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to store block descriptor: "
 			  "seg %llu, logical_block %u, peb %llu, err %d\n",
 			  req->place.start.seg_id, blk,
@@ -8357,7 +8566,7 @@ finish_update_block:
 		  req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return 0;
+	return res;
 }
 
 /*
@@ -10386,6 +10595,7 @@ finish_peb_move_extent:
  * %-ERANGE     - internal error.
  * %-EAGAIN     - try again to update data block.
  * %-ENOENT     - need migrate base state before storing diff.
+ * %-EEXIST     - block has been updated by log is full.
  */
 static
 int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
@@ -10442,6 +10652,8 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - try again to update data extent.
+ * %-EEXIST     - block has been updated by log is full.
  */
 static
 int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
@@ -10508,6 +10720,26 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 				  req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return err;
+		} else if (err == -EEXIST) {
+			if (ssdfs_request_rest_bytes(pebi, req) > 0) {
+				err = -EAGAIN;
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("try again to update extent: "
+					  "seg %llu, peb %llu\n",
+					  req->place.start.seg_id,
+					  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			} else {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("log is full: "
+					  "seg %llu, logical_block %u, peb %llu\n",
+					  req->place.start.seg_id,
+					  req->place.start.blk_index,
+					  pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			}
+
+			return err;
 		} else if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("need to migrate base state for diff: "
@@ -10544,6 +10776,8 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
  * [failure] - error code:
  *
  * %-ERANGE     - internal error.
+ * %-EAGAIN     - try again to update data extent.
+ * %-EEXIST     - block has been updated by log is full.
  */
 static
 int ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
@@ -10823,6 +11057,7 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
  *
  * %-EINVAL     - invalid input.
  * %-EAGAIN     - unable to update block.
+ * %-EEXIST     - block has been updated by log is full.
  */
 static
 int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
@@ -10900,6 +11135,13 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
 			return err;
+		} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full: "
+				  "seg %llu, peb %llu\n",
+				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return err;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -10919,6 +11161,13 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		if (err == -EAGAIN) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("unable to update block: "
+				  "seg %llu, peb %llu\n",
+				  req->place.start.seg_id, pebi->peb_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			return err;
+		} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("log is full: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -12256,7 +12505,10 @@ int ssdfs_peb_store_source_blk_bmap(struct ssdfs_peb_info *pebi,
 		goto unlock_block_bmap;
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(pages_capacity >= U16_MAX);
+		if (pages_capacity > U16_MAX) {
+			SSDFS_ERR("pages_capacity %d\n", pages_capacity);
+			BUG();
+		}
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -18219,6 +18471,9 @@ bool need_wait_next_create_data_request(struct ssdfs_peb_info *pebi)
 	if (!is_ssdfs_peb_containing_user_data(pebi->pebc))
 		goto finish_check;
 
+	if (is_unmount_in_progress(si))
+		goto finish_check;
+
 	spin_lock(&si->pending_lock);
 	pending_blocks = si->pending_new_user_data_pages;
 	has_pending_blocks = si->pending_new_user_data_pages > 0;
@@ -18268,6 +18523,9 @@ bool need_wait_next_update_request(struct ssdfs_peb_info *pebi)
 	bool need_wait = false;
 
 	if (!is_ssdfs_peb_containing_user_data(pebi->pebc))
+		goto finish_check;
+
+	if (is_unmount_in_progress(si))
 		goto finish_check;
 
 	spin_lock(&pebi->pebc->pending_lock);
@@ -19093,14 +19351,20 @@ int ssdfs_process_need_create_log_state(struct ssdfs_peb_container *pebc)
 		ssdfs_unlock_current_peb(pebc);
 
 		if (is_ssdfs_maptbl_under_flush(fsi)) {
-			if (is_ssdfs_peb_containing_user_data(pebc)) {
-				/*
-				 * Continue logic for user data.
-				 */
+			if (pebc->peb_type != SSDFS_MAPTBL_MAPTBL_PEB_TYPE) {
 #ifdef CONFIG_SSDFS_DEBUG
-				SSDFS_DBG("ignore mapping table's "
-					  "flush for user data\n");
+				SSDFS_DBG("wait mapping table's flushing end\n");
 #endif /* CONFIG_SSDFS_DEBUG */
+
+				err = SSDFS_WAIT_COMPLETION(&maptbl->flush_end);
+				if (unlikely(err)) {
+					SSDFS_ERR("waiting failed: "
+						  "err %d\n", err);
+					thread_state->state =
+						SSDFS_FLUSH_THREAD_ERROR;
+					thread_state->err = err;
+					goto finish_method;
+				}
 			} else if (have_flush_requests(pebc)) {
 				SSDFS_ERR("maptbl is flushing: "
 					  "unprocessed requests: "
@@ -19842,6 +20106,11 @@ int ssdfs_execute_create_request_state(struct ssdfs_peb_container *pebc)
 		}
 
 		goto finish_create_request_processing;
+	} else if (err == -EEXIST) {
+		/* log is full */
+		err = -EAGAIN;
+		thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+		goto finish_create_request_processing;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to process create request: "
 			  "seg %llu, peb_index %u, err %d\n",
@@ -20169,7 +20438,8 @@ int ssdfs_process_wait_next_create_state(struct ssdfs_peb_container *pebc)
 	state = atomic_read(&si->obj_state);
 	is_current_seg = (state == SSDFS_CURRENT_SEG_OBJECT);
 
-	if (is_current_seg && has_reserved_pages) {
+	if (is_current_seg && has_reserved_pages &&
+	    is_regular_fs_operations(pebc->parent_si)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("wait next data request: "
 			  "reserved_pages %llu, is_current_seg %#x\n",
@@ -20378,6 +20648,16 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 		}
 
 		goto finish_update_request_processing;
+	} else if (err == -EEXIST) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("log is full: "
+			  "seg %llu, peb_index %u\n",
+			  pebc->parent_si->seg_id,
+			  pebc->peb_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+		err = -EAGAIN;
+		thread_state->state = SSDFS_FLUSH_THREAD_COMMIT_LOG;
+		goto finish_update_request_processing;
 	} else if (err == -ENOENT &&
 		   thread_state->req->private.cmd == SSDFS_BTREE_NODE_DIFF) {
 		err = 0;
@@ -20478,7 +20758,11 @@ int ssdfs_execute_update_request_state(struct ssdfs_peb_container *pebc)
 					SSDFS_FLUSH_THREAD_COMMIT_LOG;
 			}
 		} else if (ssdfs_peb_has_dirty_folios(pebi)) {
-			if (need_wait_next_create_data_request(pebi)) {
+			if (is_unmount_in_progress(si)) {
+				err = -EAGAIN;
+				thread_state->state =
+					SSDFS_FLUSH_THREAD_COMMIT_LOG;
+			} else if (need_wait_next_create_data_request(pebi)) {
 				/*
 				 * Prevent put_super() from destroying metadata
 				 */
@@ -22140,7 +22424,7 @@ int ssdfs_process_commit_log_state(struct ssdfs_peb_container *pebc)
 			  thread_state->req->private.cmd);
 		thread_state->unfinished_reqs++;
 #endif /* CONFIG_SSDFS_DEBUG */
-	} else if (thread_state->req != NULL) {
+	} else if (thread_state->req != NULL && !is_unmount_in_progress(si)) {
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("req->private.class %#x, "
 			  "req->private.cmd %#x\n",

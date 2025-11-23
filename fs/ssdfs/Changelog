@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.40 [November 22, 2025]
+    (*) Fix multiple issues in read and flush threads.
+
 v.5.39 [November 16, 2025]
     (*) Introduce Kunit-based block bitmap's unit-tests.
 
