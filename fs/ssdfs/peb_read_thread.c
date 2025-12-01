@@ -1049,54 +1049,86 @@ int __ssdfs_decompress_blk2off_fragment(struct ssdfs_peb_info *pebi,
 		return -E2BIG;
 	}
 
-	cdata_buf = ssdfs_read_kzalloc(compr_size, GFP_KERNEL);
-	if (!cdata_buf) {
-		err = -ENOMEM;
-		SSDFS_ERR("fail to allocate cdata_buf\n");
-		goto free_buf;
-	}
+	switch (frag->type) {
+	case SSDFS_BLK2OFF_EXTENT_DESC_ZLIB:
+	case SSDFS_BLK2OFF_EXTENT_DESC_LZO:
+	case SSDFS_BLK2OFF_DESC_ZLIB:
+	case SSDFS_BLK2OFF_DESC_LZO:
+	case SSDFS_DATA_BLK_DESC_ZLIB:
+	case SSDFS_DATA_BLK_DESC_LZO:
+		cdata_buf = ssdfs_read_kzalloc(compr_size, GFP_KERNEL);
+		if (!cdata_buf) {
+			err = -ENOMEM;
+			SSDFS_ERR("fail to allocate cdata_buf\n");
+			goto free_buf;
+		}
 
-	err = ssdfs_unaligned_read_cache(pebi, req,
-					 area_offset + frag_offset,
-					 compr_size,
-					 cdata_buf);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to read blk desc fragment: "
-			  "area_offset %u, frag_offset %u, compr_size %u, "
-			  "err %d\n",
-			  area_offset, frag_offset, compr_size, err);
-		goto free_buf;
-	}
+		err = ssdfs_unaligned_read_cache(pebi, req,
+						 area_offset + frag_offset,
+						 compr_size,
+						 cdata_buf);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read blk desc fragment: "
+				  "area_offset %u, frag_offset %u, "
+				  "compr_size %u, err %d\n",
+				  area_offset, frag_offset,
+				  compr_size, err);
+			goto free_buf;
+		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("COMPRESSED FRAGMENT DUMP\n");
-	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
-			     cdata_buf, compr_size);
-	SSDFS_DBG("\n");
+		SSDFS_DBG("COMPRESSED FRAGMENT DUMP\n");
+		print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+				     cdata_buf, compr_size);
+		SSDFS_DBG("\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	compr_type = SSDFS_FRAG_TYPE_TO_COMPR_TYPE(frag->type);
+		compr_type = SSDFS_FRAG_TYPE_TO_COMPR_TYPE(frag->type);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("compr_type %#x, cdata_buf %px, read_buffer %px, "
-		  "buf_size %zu, compr_size %u, uncompr_size %u\n",
-		  compr_type, cdata_buf, read_buffer,
-		  buf_size, compr_size, uncompr_size);
+		SSDFS_DBG("compr_type %#x, cdata_buf %px, read_buffer %px, "
+			  "buf_size %zu, compr_size %u, uncompr_size %u\n",
+			  compr_type, cdata_buf, read_buffer,
+			  buf_size, compr_size, uncompr_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = ssdfs_decompress(compr_type,
-				cdata_buf, read_buffer,
-				compr_size, uncompr_size);
-	if (unlikely(err)) {
-		SSDFS_ERR("fail to decompress fragment: "
-			  "seg %llu, peb %llu, "
-			  "compr_size %u, uncompr_size %u, "
-			  "err %d\n",
-			  pebi->pebc->parent_si->seg_id,
-			  pebi->peb_id,
-			  compr_size, uncompr_size,
-			  err);
-		goto free_buf;
+		err = ssdfs_decompress(compr_type,
+					cdata_buf, read_buffer,
+					compr_size, uncompr_size);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to decompress fragment: "
+				  "seg %llu, peb %llu, "
+				  "compr_size %u, uncompr_size %u, "
+				  "err %d\n",
+				  pebi->pebc->parent_si->seg_id,
+				  pebi->peb_id,
+				  compr_size, uncompr_size,
+				  err);
+			goto free_buf;
+		}
+		break;
+
+	case SSDFS_BLK2OFF_EXTENT_DESC:
+	case SSDFS_BLK2OFF_DESC:
+	case SSDFS_DATA_BLK_DESC:
+		err = ssdfs_unaligned_read_cache(pebi, req,
+						 area_offset + frag_offset,
+						 uncompr_size,
+						 read_buffer);
+		if (unlikely(err)) {
+			SSDFS_ERR("fail to read blk desc fragment: "
+				  "area_offset %u, frag_offset %u, "
+				  "uncompr_size %u, err %d\n",
+				  area_offset, frag_offset,
+				  uncompr_size, err);
+			goto free_buf;
+		}
+		break;
+
+	default:
+		SSDFS_ERR("unexpected fragment's type %#x\n",
+			  frag->type);
+		return -EIO;
 	}
 
 	if (frag->flags & SSDFS_FRAGMENT_HAS_CSUM) {
@@ -1245,6 +1277,7 @@ int ssdfs_peb_check_blk_desc_fragment(struct ssdfs_peb_info *pebi,
 	switch (frag->type) {
 	case SSDFS_DATA_BLK_DESC_ZLIB:
 	case SSDFS_DATA_BLK_DESC_LZO:
+	case SSDFS_DATA_BLK_DESC:
 		/* expected type */
 		break;
 
