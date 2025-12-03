@@ -13829,7 +13829,7 @@ void ssdfs_debug_maptbl_object(struct ssdfs_peb_mapping_table *tbl)
 				continue;
 
 			SSDFS_DBG("folio_index %llu, flags %#lx\n",
-				  (u64)folio->index, folio->flags);
+				  (u64)folio->index, folio->flags.f);
 
 			kaddr = kmap_local_folio(folio, 0);
 			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,

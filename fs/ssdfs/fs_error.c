@@ -177,7 +177,7 @@ int __ssdfs_clear_dirty_folio(struct folio *folio)
 
 	if (mapping) {
 		xa_lock_irqsave(&mapping->i_pages, flags);
-		if (test_bit(PG_dirty, &folio->flags)) {
+		if (test_bit(PG_dirty, &folio->flags.f)) {
 			__xa_clear_mark(&mapping->i_pages,
 					folio->index,
 					PAGECACHE_TAG_DIRTY);
@@ -209,7 +209,7 @@ int ssdfs_clear_dirty_folio(struct folio *folio)
 
 	if (mapping) {
 		xa_lock_irqsave(&mapping->i_pages, flags);
-		if (test_bit(PG_dirty, &folio->flags)) {
+		if (test_bit(PG_dirty, &folio->flags.f)) {
 			__xa_clear_mark(&mapping->i_pages,
 					folio->index,
 					PAGECACHE_TAG_DIRTY);

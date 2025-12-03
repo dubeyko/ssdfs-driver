@@ -535,7 +535,7 @@ void ssdfs_segment_tree_destroy_objects_in_folio(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
 	SSDFS_DBG("folio_index %ld, flags %#lx\n",
-		  folio->index, folio->flags);
+		  folio->index, folio->flags.f);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
@@ -741,7 +741,7 @@ int ssdfs_segment_tree_add(struct ssdfs_fs_info *fsi,
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
 	SSDFS_DBG("folio_index %ld, flags %#lx\n",
-		  folio->index, folio->flags);
+		  folio->index, folio->flags.f);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!err)

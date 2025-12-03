@@ -135,7 +135,7 @@ int ssdfs_testing_get_inode(struct ssdfs_fs_info *fsi)
 		return err;
 	}
 
-	BUG_ON(!(inode->i_state & I_NEW));
+	BUG_ON(!(inode_state_read_once(inode) & I_NEW));
 
 	inode->i_mode = S_IFREG;
 	mapping_set_gfp_mask(inode->i_mapping, GFP_KERNEL);

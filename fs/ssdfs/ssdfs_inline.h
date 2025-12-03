@@ -185,7 +185,7 @@ void ssdfs_folio_get(struct folio *folio)
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d, flags %#lx\n",
-		  folio, folio_ref_count(folio), folio->flags);
+		  folio, folio_ref_count(folio), folio->flags.f);
 #endif /* CONFIG_SSDFS_DEBUG */
 }
 
@@ -369,7 +369,7 @@ struct folio *ssdfs_folio_alloc(gfp_t gfp_mask, unsigned int order)
 	SSDFS_DBG("folio %p, count %d, "
 		  "flags %#lx, folio_index %lu\n",
 		  folio, folio_ref_count(folio),
-		  folio->flags, folio->index);
+		  folio->flags.f, folio->index);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
@@ -462,7 +462,7 @@ void ssdfs_folio_free(struct folio *folio)
 	SSDFS_DBG("folio %p, count %d, "
 		  "flags %#lx, folio_index %lu\n",
 		  folio, folio_ref_count(folio),
-		  folio->flags, folio->index);
+		  folio->flags.f, folio->index);
 
 	if (folio_ref_count(folio) <= 0 ||
 	    folio_ref_count(folio) > 2) {

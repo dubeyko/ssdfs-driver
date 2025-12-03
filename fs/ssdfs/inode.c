@@ -477,7 +477,7 @@ struct inode *ssdfs_iget(struct super_block *sb, ino_t ino)
 		return ERR_PTR(err);
 	}
 
-	if (!(inode->i_state & I_NEW)) {
+	if (!(inode_state_read_once(inode) & I_NEW)) {
 		trace_ssdfs_iget(inode);
 		return inode;
 	}

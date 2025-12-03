@@ -129,7 +129,7 @@ void ssdfs_peb_mark_request_block_uptodate(struct ssdfs_peb_container *pebc,
 		SSDFS_DBG("folio %p, count %d\n",
 			  folio, folio_ref_count(folio));
 		SSDFS_DBG("folio_index %ld, flags %#lx\n",
-			  folio->index, folio->flags);
+			  folio->index, folio->flags.f);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 }
