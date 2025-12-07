@@ -8096,6 +8096,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot,
 		  req->private.cmd, req->private.type);
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = pebi->pebc->parent_si;
@@ -8131,7 +8133,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		if (cur_index >= batch_size) {
 			SSDFS_ERR("processed_blks %u > batch_size %u\n",
 				  cur_index, batch_size);
-			return -ERANGE;
+			res = -ERANGE;
+			goto finish_update_block;
 		}
 
 		content_blk = &req->result.content.blocks[cur_index];
@@ -8156,7 +8159,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		SSDFS_ERR("fail to convert: "
 			  "logical_blk %u, err %d\n",
 			  blk, err);
-		return err;
+		res = err;
+		goto finish_update_block;
 	}
 
 	old_logical_offset = le32_to_cpu(blk_desc_off->page_desc.logical_offset);
@@ -8178,7 +8182,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		BUG();
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		return -ERANGE;
+		res = -ERANGE;
+		goto finish_update_block;
 	}
 
 	if (req->private.class == SSDFS_PEB_DIFF_ON_WRITE_REQ) {
@@ -8224,10 +8229,12 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 				SSDFS_ERR("fail to migrate valid blocks: "
 					  "range (start %u, len %u), err %d\n",
 					  range.start, range.len, err);
-				return err;
+				res = err;
+				goto finish_update_block;
 			}
 
-			return -ENOENT;
+			res = -ENOENT;
+			goto finish_update_block;
 		}
 	}
 
@@ -8295,9 +8302,12 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  req->place.start.seg_id, pebi->peb_id,
 			  blk);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return 0;
-	} else if (unlikely(err))
-		return err;
+		res = 0;
+		goto finish_update_block;
+	} else if (unlikely(err)) {
+		res = err;
+		goto finish_update_block;
+	}
 
 	err = ssdfs_peb_reserve_block_descriptor(pebi, req);
 	if (err == -EAGAIN) {
@@ -8306,12 +8316,14 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, blk, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return err;
+		res = err;
+		goto finish_update_block;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to reserve block descriptor: "
 			  "seg %llu, logical_block %u, peb %llu, err %d\n",
 			  req->place.start.seg_id, blk, pebi->peb_id, err);
-		return err;
+		res = err;
+		goto finish_update_block;
 	}
 
 #ifdef CONFIG_SSDFS_PEB_DEDUPLICATION
@@ -8344,12 +8356,14 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  "seg %llu, logical_block %u, peb %llu\n",
 			  req->place.start.seg_id, blk, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return err;
+		res = err;
+		goto finish_update_block;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to add block: "
 			  "seg %llu, logical_block %u, peb %llu, err %d\n",
 			  req->place.start.seg_id, blk, pebi->peb_id, err);
-		return err;
+		res = err;
+		goto finish_update_block;
 	}
 
 	range.start = blk;
@@ -8372,7 +8386,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		if (blk_state < 0) {
 			SSDFS_ERR("fail to detect block %u state: "
 				  "err %d\n", blk, err);
-			return err;
+			res = err;
+			goto finish_update_block;
 		}
 
 		switch (blk_state) {
@@ -8408,7 +8423,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  pebi->pebc->parent_si->seg_id,
 			  pebi->peb_id, range.start, range.len,
 			  err);
-		return err;
+		res = err;
+		goto finish_update_block;
 	}
 
 	data_off.peb_page = (u16)range.start;
@@ -8426,7 +8442,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 					  "peb %llu, err %d\n",
 					  req->place.start.seg_id,
 					  blk, pebi->peb_id, err);
-				return err;
+				res = err;
+				goto finish_update_block;
 			}
 		} else {
 			SSDFS_BLK_DESC_INIT(&pos.blk_desc.buf);
@@ -8505,7 +8522,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			  "seg %llu, logical_block %u, peb %llu, err %d\n",
 			  req->place.start.seg_id, blk,
 			  pebi->peb_id, err);
-		return err;
+		res = err;
+		goto finish_update_block;
 	}
 
 	err = ssdfs_peb_store_block_descriptor_offset(pebi,
@@ -8517,7 +8535,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		SSDFS_ERR("fail to store block descriptor offset: "
 			  "err %d\n",
 			  err);
-		return err;
+		res = err;
+		goto finish_update_block;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -8534,7 +8553,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			SSDFS_ERR("fail to set block commit: "
 				  "logical_blk %u, peb_index %u, err %d\n",
 				  blk, peb_index, err);
-			return err;
+			res = err;
+			goto finish_update_block;
 		}
 	}
 
@@ -8549,7 +8569,8 @@ int __ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 				  "peb %llu, err %d\n",
 				  req->place.start.seg_id, blk,
 				  pebi->peb_id, err);
-			return err;
+			res = err;
+			goto finish_update_block;
 		}
 	}
 #endif /* CONFIG_SSDFS_PEB_DEDUPLICATION */
@@ -8564,6 +8585,7 @@ finish_update_block:
 		  req->extent.ino, req->place.start.seg_id, pebi->peb_id,
 		  req->place.start.blk_index,
 		  req->result.processed_blks);
+	FORGET_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return res;
@@ -10362,6 +10384,8 @@ int ssdfs_peb_move_extent(struct ssdfs_peb_info *pebi,
 	}
 	BUG_ON(req->private.type >= SSDFS_REQ_TYPE_MAX);
 	BUG_ON(atomic_read(&req->private.refs_count) == 0);
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -10539,7 +10563,7 @@ int ssdfs_peb_move_extent(struct ssdfs_peb_info *pebi,
 			  le32_to_cpu(extent.logical_blk),
 			  le32_to_cpu(extent.len),
 			  err);
-		return err;
+		goto finish_peb_move_extent;
 	}
 
 	commit_req = ssdfs_request_alloc();
@@ -10547,7 +10571,7 @@ int ssdfs_peb_move_extent(struct ssdfs_peb_info *pebi,
 		err = (commit_req == NULL ? -ENOMEM : PTR_ERR(commit_req));
 		SSDFS_ERR("fail to allocate request: "
 			  "err %d\n", err);
-		return err;
+		goto finish_peb_move_extent;
 	}
 
 	ssdfs_request_init(commit_req, fsi->pagesize);
@@ -10562,11 +10586,12 @@ int ssdfs_peb_move_extent(struct ssdfs_peb_info *pebi,
 			  "err %d\n", err);
 		ssdfs_put_request(commit_req);
 		ssdfs_request_free(commit_req, pebi->pebc->parent_si);
-		return err;
+		goto finish_peb_move_extent;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("finished\n");
+	FORGET_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return 0;
@@ -10578,6 +10603,10 @@ free_peb_moving_request:
 	}
 
 finish_peb_move_extent:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -10616,6 +10645,8 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot,
 		  req->private.cmd, req->private.type);
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&pebi->pebc->migration_phase)) {
@@ -10636,6 +10667,10 @@ int ssdfs_peb_update_block(struct ssdfs_peb_info *pebi,
 			err = __ssdfs_peb_update_block(pebi, req);
 		break;
 	}
+
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
 }
@@ -10700,6 +10735,8 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 			  req->private.cmd, req->private.type);
 		BUG();
 	}
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -10719,7 +10756,7 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 				  pebi->peb_id,
 				  req->result.processed_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_update_extent;
 		} else if (err == -EEXIST) {
 			if (ssdfs_request_rest_bytes(pebi, req) > 0) {
 				err = -EAGAIN;
@@ -10739,7 +10776,7 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 			}
 
-			return err;
+			goto finish_update_extent;
 		} else if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("need to migrate base state for diff: "
@@ -10748,20 +10785,25 @@ int __ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id, blk,
 				  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_update_extent;
 		} else if (unlikely(err)) {
 			SSDFS_ERR("fail to update block: "
 				  "seg %llu, logical_block %u, "
 				  "peb %llu, err %d\n",
 				  req->place.start.seg_id, blk,
 				  pebi->peb_id, err);
-			return err;
+			goto finish_update_extent;
 		}
 
 		rest_bytes = ssdfs_request_rest_bytes(pebi, req);
 	};
 
-	return 0;
+finish_update_extent:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
 }
 
 /*
@@ -10798,6 +10840,8 @@ int ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 		  req->place.start.seg_id, req->place.start.blk_index,
 		  req->private.cmd, req->private.type,
 		  req->result.processed_blks);
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	switch (atomic_read(&pebi->pebc->migration_phase)) {
@@ -10836,6 +10880,10 @@ int ssdfs_peb_update_extent(struct ssdfs_peb_info *pebi,
 		break;
 	}
 
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	return err;
 }
 
@@ -10872,7 +10920,7 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 	struct ssdfs_offset_position pos = {0};
 	u32 len;
 	u8 id;
-	int err;
+	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!pebi || !pebi->pebc || !req);
@@ -10923,6 +10971,8 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 		  req->extent.data_bytes, req->extent.cno,
 		  req->extent.parent_snapshot,
 		  req->private.cmd, req->private.type);
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -10968,7 +11018,7 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 		SSDFS_ERR("fail to convert: "
 			  "logical_blk %u, err %d\n",
 			  logical_block, err);
-		return err;
+		goto finish_migrate_pre_allocated_block;
 	}
 
 	if (migration_state == SSDFS_LBLOCK_UNDER_COMMIT) {
@@ -10978,7 +11028,8 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 			  req->place.start.seg_id, logical_block,
 			  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-		return -EAGAIN;
+		err = -EAGAIN;
+		goto finish_migrate_pre_allocated_block;
 	}
 
 	range.start = le16_to_cpu(blk_desc_off->page_desc.peb_page);
@@ -11003,7 +11054,7 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 			  pebi->pebc->parent_si->seg_id,
 			  pebi->peb_id, range.start, range.len,
 			  err);
-		return err;
+		goto finish_migrate_pre_allocated_block;
 	}
 
 	id = ssdfs_get_peb_migration_id_checked(pebi);
@@ -11012,7 +11063,8 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 			  "seg %llu, peb_id %llu, err %d\n",
 			  pebi->pebc->parent_si->seg_id,
 			  pebi->peb_id, id);
-		return id;
+		err = id;
+		goto finish_migrate_pre_allocated_block;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -11036,11 +11088,17 @@ int ssdfs_peb_migrate_pre_allocated_block(struct ssdfs_peb_info *pebi,
 			  "logical_block %u, logical_offset %llu, "
 			  "err %d\n",
 			  logical_block, logical_offset, err);
-		return err;
+		goto finish_migrate_pre_allocated_block;
 	}
 
 	req->result.processed_blks += range.len;
-	return 0;
+
+finish_migrate_pre_allocated_block:
+#ifdef CONFIG_SSDFS_DEBUG
+	FORGET_CODE_LINE(pebi->pebc);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	return err;
 }
 
 /*
@@ -11075,6 +11133,8 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 	SSDFS_DBG("req %p, cmd %#x, type %#x\n",
 		  req, req->private.cmd, req->private.type);
+
+	REMEMBER_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	fsi = pebi->pebc->parent_si->fsi;
@@ -11082,11 +11142,12 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 
 	if (req->private.cmd <= SSDFS_CREATE_CMD_MAX ||
 	    req->private.cmd >= SSDFS_COLLECT_GARBAGE_CMD_MAX) {
+		err = -EINVAL;
 		SSDFS_ERR("unknown update command %d, seg %llu, peb %llu\n",
 			  req->private.cmd, si->seg_id, pebi->peb_id);
 		req->result.err = -EINVAL;
 		atomic_set(&req->result.state, SSDFS_REQ_FAILED);
-		return -EINVAL;
+		goto finish_process_update_request;
 	}
 
 	switch (req->private.cmd) {
@@ -11113,7 +11174,8 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  free_data_blocks, rest_bytes,
 				  page_size);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return -EAGAIN;
+			err = -EAGAIN;
+			goto finish_process_update_request;
 		}
 		break;
 
@@ -11134,14 +11196,14 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (err == -EEXIST) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log is full: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11164,14 +11226,14 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (err == -EEXIST) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("log is full: "
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11192,7 +11254,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (err == -ENOENT) {
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("need to migrate base state for diff: "
@@ -11200,7 +11262,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  req->place.start.seg_id,
 				  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11221,7 +11283,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  req->place.start.seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11249,7 +11311,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  pebi->pebc->parent_si->seg_id,
 				  pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11273,7 +11335,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  si->seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11294,7 +11356,7 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 				  "seg %llu, peb %llu\n",
 				  si->seg_id, pebi->peb_id);
 #endif /* CONFIG_SSDFS_DEBUG */
-			return err;
+			goto finish_process_update_request;
 		} else if (unlikely(err)) {
 			ssdfs_fs_error(pebi->pebc->parent_si->fsi->sb,
 				__FILE__, __func__, __LINE__,
@@ -11363,8 +11425,10 @@ int ssdfs_process_update_request(struct ssdfs_peb_info *pebi,
 		}
 	}
 
+finish_process_update_request:
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("finished\n");
+	SSDFS_DBG("finished: err %d\n", err);
+	FORGET_CODE_LINE(pebi->pebc);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;

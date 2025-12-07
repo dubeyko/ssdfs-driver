@@ -1271,7 +1271,9 @@ void ssdfs_readahead(struct readahead_control *rac)
 				err = -ENODATA;
 #ifdef CONFIG_SSDFS_DEBUG
 				SSDFS_DBG("Reading beyond inode: "
+					  "index %lu, folio_size %zu, "
 					  "logical_offset %llu, file_size %llu\n",
+					  index, folio_size(folio),
 					  logical_offset, file_size);
 #endif /* CONFIG_SSDFS_DEBUG */
 				folio_mark_uptodate(folio);
@@ -1687,8 +1689,16 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 				has_request_failed = true;
 			}
 
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("seg_id %llu, i %d, pool->count %u, "
+				  "request's reference count %d\n",
+				  si->seg_id, i, pool->count,
+				  atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 			ssdfs_put_request(req);
 			ssdfs_request_free(req, NULL);
+			pool->pointers[i] = NULL;
 
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("request %d is freed\n", i);
@@ -1715,6 +1725,13 @@ int ssdfs_wait_write_pool_requests_end(struct ssdfs_fs_info *fsi,
 					  i, err);
 				has_request_failed = true;
 			}
+
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("seg_id %llu, i %d, pool->count %u, "
+				  "request's reference count %d\n",
+				  si->seg_id, i, pool->count,
+				  atomic_read(&req->private.refs_count));
+#endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_put_request(req);
 
@@ -2927,8 +2944,12 @@ try_add_folio_into_request:
 
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("logical_offset %llu, upper_bound %llu, "
-			  "last_index %u\n",
-			  (u64)logical_offset, upper_bound, last_index);
+			  "last_blk %u, content.count %u, "
+			  "last_index %u, folio_batch_count %u\n",
+			  (u64)logical_offset, upper_bound,
+			  last_blk, batch->content.count,
+			  last_index,
+			  folio_batch_count(&blk_state->batch));
 
 		BUG_ON(!last_folio);
 #endif /* CONFIG_SSDFS_DEBUG */
@@ -3433,10 +3454,12 @@ continue_unlock:
 					 * Not all folios of the logical block
 					 * is processed: continue processing folios
 					 */
+					done_index = folio->index + nr;
 				} else if (ret == -EROFS) {
 					/*
 					 * continue to discard folios
 					 */
+					done_index = folio->index + nr;
 				} else {
 					/*
 					 * done_index is set past this page,

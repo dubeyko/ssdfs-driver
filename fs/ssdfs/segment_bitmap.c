@@ -1153,7 +1153,6 @@ int ssdfs_segbmap_fragment_init(struct ssdfs_peb_container *pebc,
 
 	segbmap = pebc->parent_si->fsi->segbmap;
 
-	ssdfs_folio_get(folio);
 	folio->index = sequence_id;
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -2748,6 +2747,8 @@ int ssdfs_segbmap_flush(struct ssdfs_segment_bmap *segbmap)
 
 			SSDFS_ERR("fragment %lu is dirty\n",
 				  folio->index);
+
+			ssdfs_folio_put(folio);
 		}
 
 		if (folio_batch_count(&fbatch) > 0) {

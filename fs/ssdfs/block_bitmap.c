@@ -730,6 +730,7 @@ int ssdfs_block_bmap_init_storage(struct ssdfs_block_bmap *blk_bmap,
 		ssdfs_folio_unlock(folio);
 
 		ssdfs_block_bmap_account_folio(folio);
+		ssdfs_folio_put(folio);
 		ssdfs_block_bmap_free_folio(folio);
 
 		ssdfs_folio_vector_release(source);

@@ -549,11 +549,10 @@ int ssdfs_folio_array_add_folio(struct ssdfs_folio_array *array,
 			   folio_index);
 		goto finish_add_folio;
 	} else {
-		ssdfs_folio_get(folio);
-
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("folio %p, count %d\n",
 			  folio, folio_ref_count(folio));
+		BUG_ON(folio_ref_count(folio) != 2);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		array->folios[folio_index] = folio;
@@ -751,6 +750,7 @@ finish_get_folio:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
+	BUG_ON(folio_ref_count(folio) < 3);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return folio;
@@ -850,6 +850,7 @@ struct folio *ssdfs_folio_array_grab_folio(struct ssdfs_folio_array *array,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio, folio_ref_count(folio));
+			BUG_ON(folio_ref_count(folio) != 3);
 #endif /* CONFIG_SSDFS_DEBUG */
 		}
 	} else if (IS_ERR_OR_NULL(folio)) {
@@ -1342,6 +1343,7 @@ int ssdfs_folio_array_lookup_range(struct ssdfs_folio_array *array,
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio, folio_ref_count(folio));
+			BUG_ON(folio_ref_count(folio) < 3);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			folio_batch_add(batch, folio);
@@ -1549,6 +1551,7 @@ finish_delete_folio:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("folio %p, count %d\n",
 		  folio, folio_ref_count(folio));
+	BUG_ON(folio_ref_count(folio) != 2);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	ssdfs_farray_forget_folio(folio);
@@ -1693,11 +1696,10 @@ int ssdfs_folio_array_release_folios(struct ssdfs_folio_array *array,
 			folio_clear_uptodate(folio);
 			ssdfs_folio_unlock(folio);
 
-			ssdfs_folio_put(folio);
-
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio, folio_ref_count(folio));
+			BUG_ON(folio_ref_count(folio) != 2);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 			ssdfs_farray_free_folio(folio);

@@ -4562,6 +4562,37 @@ int ssdfs_extents_tree_add_extent_nolock(struct ssdfs_extents_btree_info *tree,
 			SSDFS_ERR("block exists already: "
 				  "blk %llu, err %d\n",
 				  blk, err);
+
+			if (tree->inline_forks) {
+				int i, j;
+
+				for (i = 0; i < SSDFS_INLINE_FORKS_COUNT; i++) {
+					struct ssdfs_raw_fork *fork;
+
+					fork = &tree->inline_forks[i];
+
+					SSDFS_ERR("INLINE FORK: index %d, "
+						  "start_offset %llu, blks_count %llu\n",
+						  i,
+						  le64_to_cpu(fork->start_offset),
+						  le64_to_cpu(fork->blks_count));
+
+					for (j = 0; j < SSDFS_INLINE_EXTENTS_COUNT; j++) {
+						struct ssdfs_raw_extent *extent;
+
+						extent = &fork->extents[j];
+
+						SSDFS_ERR("EXTENT: index %d, "
+							  "seg_id %llu, logical_blk %u, "
+							  "len %u\n",
+							  j,
+							  le64_to_cpu(extent->seg_id),
+							  le32_to_cpu(extent->logical_blk),
+							  le32_to_cpu(extent->len));
+					}
+				}
+			}
+
 			goto finish_add_extent;
 		}
 

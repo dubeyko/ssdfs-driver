@@ -3475,9 +3475,14 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	ssdfs_memory_folio_locks_checker_init();
 	ssdfs_memory_leaks_checker_init();
 
-	fs_info = ssdfs_super_kzalloc(sizeof(*fs_info), GFP_KERNEL);
+	sb->s_fs_info = NULL;
+
+	fs_info = kzalloc(sizeof(*fs_info), GFP_KERNEL);
 	if (!fs_info)
 		return -ENOMEM;
+
+	fs_info->sb = sb;
+	sb->s_fs_info = fs_info;
 
 #ifdef CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING
 	atomic64_set(&fs_info->ssdfs_writeback_folios, 0);
@@ -3558,8 +3563,6 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	BUILD_BUG();
 #endif
 
-	fs_info->sb = sb;
-	sb->s_fs_info = fs_info;
 	atomic64_set(&fs_info->flush_reqs, 0);
 	init_waitqueue_head(&fs_info->pending_wq);
 	init_waitqueue_head(&fs_info->finish_user_data_flush_wq);
@@ -3974,8 +3977,6 @@ free_erase_folio:
 	ssdfs_destruct_sb_snap_info(&fs_info->sb_snapi);
 
 	ssdfs_free_workspaces();
-
-	ssdfs_super_kfree(fs_info);
 
 	rcu_barrier();
 
@@ -4506,9 +4507,6 @@ static void ssdfs_put_super(struct super_block *sb)
 
 	ssdfs_free_workspaces();
 
-	ssdfs_super_kfree(fsi);
-	sb->s_fs_info = NULL;
-
 	ssdfs_check_memory_folio_locks();
 	ssdfs_check_memory_leaks();
 
@@ -4585,6 +4583,11 @@ static void kill_ssdfs_sb(struct super_block *sb)
 #else
 	BUILD_BUG();
 #endif
+
+	if (sb->s_fs_info) {
+		kfree(sb->s_fs_info);
+		sb->s_fs_info = NULL;
+	}
 }
 
 static struct file_system_type ssdfs_fs_type = {

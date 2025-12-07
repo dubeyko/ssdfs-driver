@@ -465,9 +465,10 @@ void ssdfs_folio_free(struct folio *folio)
 		  folio->flags.f, folio->index);
 
 	if (folio_ref_count(folio) <= 0 ||
-	    folio_ref_count(folio) > 2) {
+	    folio_ref_count(folio) >= 2) {
 		SSDFS_WARN("folio %p, count %d\n",
 			   folio, folio_ref_count(folio));
+		BUG();
 	}
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -1194,6 +1195,7 @@ bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 	pgoff_t index1 = folio1->index;
 	pgoff_t index2 = folio2->index;
 	pgoff_t diff_index;
+	pgoff_t expected_diff;
 	bool has_identical_type;
 	bool has_identical_ino;
 	bool has_adjacent_index;
@@ -1204,12 +1206,16 @@ bool can_be_merged_into_extent(struct folio *folio1, struct folio *folio2)
 					!folio_test_checked(folio2));
 	has_identical_ino = ino1 == ino2;
 
-	if (index1 >= index2)
+	if (index1 >= index2) {
 		diff_index = index1 - index2;
-	else
+		expected_diff = folio_nr_pages(folio2);
+	} else {
 		diff_index = index2 - index1;
+		expected_diff = folio_nr_pages(folio1);
+	}
 
-	has_adjacent_index = diff_index == 1 || diff_index == pages_per_folio;
+	has_adjacent_index = diff_index == expected_diff ||
+					diff_index == pages_per_folio;
 
 	return has_identical_type && has_identical_ino && has_adjacent_index;
 }

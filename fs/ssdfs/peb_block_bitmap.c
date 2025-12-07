@@ -1212,6 +1212,10 @@ finish_block_bitmap_preparation:
 	if (unlikely(err))
 		goto finish_blk_bmap_inflation;
 
+#ifdef CONFIG_SSDFS_DEBUG
+	WARN_ON(!is_blk_bmap_pages_balance_correct(&bmap->buffer[buffer_index]));
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	peb_free_blks = atomic_read(&bmap->peb_free_blks);
 	atomic_set(&bmap->peb_free_blks, free_items);
 

@@ -3179,11 +3179,15 @@ int ssdfs_add_request_into_create_queue(struct ssdfs_current_segment *cur_seg,
 					   req);
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("ino %llu, logical_offset %llu, data_bytes %u, "
-		  "start_lblk %u, len %u\n",
+	SSDFS_DBG("ino %llu, logical_offset %llu, "
+		  "data_bytes %u, page_size %u, "
+		  "requested_extent.data_bytes %u, "
+		  "seg_id %llu, start_lblk %u, len %u\n",
 		  batch->requested_extent.ino,
 		  batch->requested_extent.logical_offset,
-		  data_bytes,
+		  data_bytes, fsi->pagesize,
+		  batch->requested_extent.data_bytes,
+		  si->seg_id,
 		  batch->allocated_extent.start_lblk,
 		  batch->allocated_extent.len);
 	BUG_ON((batch->processed_blks +
@@ -3336,7 +3340,7 @@ int __ssdfs_blk2off_table_allocate_extent(struct ssdfs_current_segment *cur_seg,
 	int free_blks;
 	int used_blks;
 	int invalid_blks;
-	int err = 0;
+	int err, res = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!cur_seg || !pool || !batch || !allocated_blks);
@@ -3403,7 +3407,7 @@ int __ssdfs_blk2off_table_allocate_extent(struct ssdfs_current_segment *cur_seg,
 			  batch->requested_extent.logical_offset,
 			  batch->requested_extent.data_bytes);
 #endif /* CONFIG_SSDFS_DEBUG */
-		err = -EAGAIN;
+		res = -EAGAIN;
 	} else if (unlikely(err)) {
 		free_blks = ssdfs_segment_blk_bmap_get_free_pages(blk_bmap);
 		used_blks = ssdfs_segment_blk_bmap_get_used_pages(blk_bmap);
@@ -3445,7 +3449,7 @@ int __ssdfs_blk2off_table_allocate_extent(struct ssdfs_current_segment *cur_seg,
 		return err;
 	}
 
-	return 0;
+	return res;
 }
 
 /*

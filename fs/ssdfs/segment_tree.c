@@ -638,6 +638,17 @@ void ssdfs_segment_tree_destroy_segment_objects(struct ssdfs_fs_info *fsi)
 			}
 
 			index = fbatch.folios[nr_folios - 1]->index + 1;
+
+			for (i = 0; i < nr_folios; i++) {
+				struct folio *folio;
+
+				folio = fbatch.folios[i];
+
+				if (!folio)
+					continue;
+
+				ssdfs_folio_put(folio);
+			}
 		}
 	} while (folio_batch_count(&fbatch) > 0);
 }

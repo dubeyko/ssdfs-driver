@@ -3362,10 +3362,11 @@ int ssdfs_peb_read_area_fragment(struct ssdfs_peb_info *pebi,
 #endif /* CONFIG_SSDFS_DEBUG */
 
 		if (folio_index >= folio_batch_count(&state->batch)) {
-			SSDFS_ERR("folio_index %d >= batch_count %u\n",
-				  folio_index,
-				  folio_batch_count(&state->batch));
-			return -EIO;
+			if (folio_batch_count(&state->batch) == 0) {
+				err = -ERANGE;
+				SSDFS_ERR("batch is empty\n");
+			}
+			goto free_bufs;
 		}
 
 		folio.ptr = state->batch.folios[folio_index];

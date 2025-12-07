@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.42 [December 06, 2025]
+    (*) Fix memory leak issue in folio array.
+
 v.5.41 [November 30, 2025]
     (*) Fix issue of parsing compressed offset translation table.
 

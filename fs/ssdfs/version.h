@@ -4,6 +4,6 @@
 #ifndef _SSDFS_VERSION_H
 #define _SSDFS_VERSION_H
 
-#define SSDFS_VERSION "SSDFS v.5.41"
+#define SSDFS_VERSION "SSDFS v.5.42"
 
 #endif /* _SSDFS_VERSION_H */
