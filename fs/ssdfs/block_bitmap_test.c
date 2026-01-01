@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/block_bitmap_test.c - KUnit tests for block bitmap implementation.
  *
- * Copyright (c) 2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

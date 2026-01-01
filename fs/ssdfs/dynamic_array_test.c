@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/dynamic_array_test.c - KUnit tests for dynamic array implementation.
  *
- * Copyright (c) 2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

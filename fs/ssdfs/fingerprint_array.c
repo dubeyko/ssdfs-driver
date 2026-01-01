@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/fingerprint_array.c - fingerprint array implementation.
  *
- * Copyright (c) 2023-2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2023-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/compr_lzo_test.c - KUnit tests for LZO compression.
  *
- * Copyright (c) 2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

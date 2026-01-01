@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/recovery_thread.c - recovery thread's logic.
  *
- * Copyright (c) 2019-2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2019-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

@@ -4,7 +4,7 @@
  *
  * fs/ssdfs/compr_zlib_test.c - KUnit tests for ZLIB compression.
  *
- * Copyright (c) 2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

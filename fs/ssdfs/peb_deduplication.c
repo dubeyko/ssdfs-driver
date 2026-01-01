@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/peb_deduplication.c - PEB-based deduplication logic.
  *
- * Copyright (c) 2023-2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2023-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

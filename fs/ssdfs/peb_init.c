@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/peb_init.c - PEB init primitives implementation.
  *
- * Copyright (c) 2024-2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2024-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

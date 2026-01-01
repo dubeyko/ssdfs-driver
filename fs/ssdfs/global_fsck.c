@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/global_fsck.c - global fsck thread functionality.
  *
- * Copyright (c) 2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2025-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *

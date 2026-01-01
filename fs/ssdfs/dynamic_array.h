@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/dynamic_array.h - dynamic array's declarations.
  *
- * Copyright (c) 2022-2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2022-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * Copyright (c) 2022-2023 Bytedance Ltd. and/or its affiliates.
  *              https://www.bytedance.com/

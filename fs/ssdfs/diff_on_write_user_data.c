@@ -5,7 +5,7 @@
  *
  * fs/ssdfs/diff_on_write_user_data.c - Diff-On-Write user data implementation.
  *
- * Copyright (c) 2021-2025 Viacheslav Dubeyko <slava@dubeyko.com>
+ * Copyright (c) 2021-2026 Viacheslav Dubeyko <slava@dubeyko.com>
  *              http://www.ssdfs.org/
  * All rights reserved.
  *
