@@ -1031,6 +1031,172 @@ finish_search:
 }
 
 /*
+ * ssdfs_find_using_invalidated_segment() - find a segment in using state
+ * @fsi: pointer on shared file system object
+ * @seg_type: segment type
+ * @start_search_id: starting ID for segment search
+ * @upper_search_bound: upper ID bound for search
+ * @seg_id: found segment ID [out]
+ * @seg_state: found segment state [out]
+ *
+ * This method tries to find a segment in using invalidated state.
+ *
+ * RETURN:
+ * [success]
+ * [failure] - error code:
+ *
+ * %-EINVAL     - invalid input.
+ * %-ERANGE     - internal error.
+ * %-ENOENT     - unable to find a new segment.
+ */
+static
+int ssdfs_find_using_invalidated_segment(struct ssdfs_fs_info *fsi,
+					 int seg_type,
+					 u64 start_search_id,
+					 u64 upper_search_bound,
+					 u64 *seg_id,
+					 int *seg_state)
+{
+	int new_state;
+	u64 start_seg = start_search_id;
+	u64 end_seg = upper_search_bound;
+	u64 leb_id;
+	u16 pebs_per_fragment;
+	u16 pebs_per_stripe;
+	u16 stripes_per_fragment;
+	struct completion *init_end;
+	int res;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!fsi || !seg_id || !seg_state);
+
+	SSDFS_DBG("fsi %p, seg_type %#x, "
+		  "start_search_id %llu, "
+		  "upper_search_bound %llu\n",
+		  fsi, seg_type,
+		  start_search_id, upper_search_bound);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	*seg_id = U64_MAX;
+	*seg_state = SSDFS_SEG_STATE_MAX;
+
+	switch (seg_type) {
+	case SSDFS_USER_DATA_SEG_TYPE:
+		new_state = SSDFS_SEG_DATA_USING_INVALIDATED;
+		break;
+
+	default:
+		BUG();
+	};
+
+	if (start_seg <= end_seg) {
+		/*
+		 * Continue logic
+		 */
+	} else {
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find segment in range: "
+			  "start_seg %llu, end_seg %llu\n",
+			  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_search;
+	}
+
+	leb_id = ssdfs_get_leb_id_for_peb_index(fsi, start_seg, 0);
+	if (leb_id >= U64_MAX) {
+		err = -ERANGE;
+		SSDFS_ERR("fail to define LEB ID: start_seg %llu\n",
+			  start_seg);
+		goto finish_search;
+	}
+
+	err = ssdfs_maptbl_define_fragment_info(fsi, leb_id,
+						&pebs_per_fragment,
+						&pebs_per_stripe,
+						&stripes_per_fragment);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to define fragment info: "
+			  "err %d\n", err);
+		goto finish_search;
+	}
+
+	end_seg = min_t(u64, upper_search_bound,
+			start_seg + pebs_per_fragment);
+
+	res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+				start_seg, end_seg,
+				SSDFS_SEG_DATA_USING_INVALIDATED,
+				SSDFS_SEG_DATA_USING_INVALIDATED_STATE_FLAG,
+				new_state,
+				seg_id, &init_end);
+	if (res >= 0) {
+		/* Define segment state */
+		*seg_state = res;
+	} else if (res == -EAGAIN) {
+		err = SSDFS_WAIT_COMPLETION(init_end);
+		if (unlikely(err)) {
+			SSDFS_ERR("segbmap init failed: "
+				  "err %d\n", err);
+			goto finish_search;
+		}
+
+		res = ssdfs_segbmap_find_and_set(fsi->segbmap,
+				start_seg, end_seg,
+				SSDFS_SEG_DATA_USING_INVALIDATED,
+				SSDFS_SEG_DATA_USING_INVALIDATED_STATE_FLAG,
+				new_state,
+				seg_id, &init_end);
+		if (res >= 0) {
+			/* Define segment state */
+			*seg_state = res;
+		} else if (res == -ENODATA) {
+			err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find using segment in range: "
+				  "start_seg %llu, end_seg %llu\n",
+				  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		} else if (res == -EAGAIN) {
+			err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("unable to find using segment in range: "
+				  "start_seg %llu, end_seg %llu\n",
+				  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		} else {
+			err = res;
+			SSDFS_ERR("fail to find segment in range: "
+				  "start_seg %llu, end_seg %llu, err %d\n",
+				  start_seg, end_seg, res);
+			goto finish_search;
+		}
+	} else if (res == -ENODATA) {
+		err = -ENOENT;
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("unable to find using segment in range: "
+			  "start_seg %llu, end_seg %llu\n",
+			  start_seg, end_seg);
+#endif /* CONFIG_SSDFS_DEBUG */
+		goto finish_search;
+	} else {
+		SSDFS_ERR("fail to find segment in range: "
+			  "start_seg %llu, end_seg %llu, err %d\n",
+			  start_seg, end_seg, res);
+		goto finish_search;
+	}
+
+finish_search:
+	if (err == -ENOENT)
+		*seg_id = end_seg;
+
+	return err;
+}
+
+/*
  * ssdfs_find_clean_segment() - find a segment in clean state
  * @fsi: pointer on shared file system object
  * @seg_type: segment type
@@ -1297,6 +1463,66 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 			upper_bound = start_id + 1;
 
 		err = ssdfs_find_using_segment(fsi, state->request.seg_type,
+						start_id, upper_bound,
+						&state->result.seg_id,
+						&state->result.seg_state);
+		if (err == -ENOENT) {
+			err = 0;
+			/* continue logic */
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a new segment: "
+				  "start_id %llu, err %d\n",
+				  start_id, err);
+			goto finish_search;
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("found seg_id %llu\n",
+				  state->result.seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		}
+	}
+
+	if (state->result.number_of_tries == 0 &&
+	    state->request.search_clean_segment_only) {
+		start_id = 0;
+		upper_bound = state->request.start_search_id;
+
+		if (start_id >= upper_bound)
+			upper_bound = start_id + 1;
+
+		err = ssdfs_find_using_invalidated_segment(fsi,
+						state->request.seg_type,
+						start_id, upper_bound,
+						&state->result.seg_id,
+						&state->result.seg_state);
+		if (err == -ENOENT) {
+			err = 0;
+			/* continue logic */
+		} else if (unlikely(err)) {
+			SSDFS_ERR("fail to find a new segment: "
+				  "start_id %llu, err %d\n",
+				  start_id, err);
+			goto finish_search;
+		} else {
+#ifdef CONFIG_SSDFS_DEBUG
+			SSDFS_DBG("found seg_id %llu\n",
+				  state->result.seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+			goto finish_search;
+		}
+	}
+
+	if (state->result.number_of_tries < threshold &&
+	    state->request.search_clean_segment_only) {
+		start_id = state->request.start_search_id + 1;
+		upper_bound = fsi->nsegs;
+
+		if (start_id >= upper_bound)
+			upper_bound = start_id + 1;
+
+		err = ssdfs_find_using_invalidated_segment(fsi,
+						state->request.seg_type,
 						start_id, upper_bound,
 						&state->result.seg_id,
 						&state->result.seg_state);
@@ -1689,6 +1915,7 @@ fail_define_seg_state:
 	switch (state->result.seg_state) {
 	case SSDFS_SEG_CLEAN:
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
@@ -2306,8 +2533,10 @@ bool should_segment_being_in_using_state(struct ssdfs_segment_info *si)
 
 		switch (atomic_read(&pebc->peb_state)) {
 		case SSDFS_MAPTBL_USING_PEB_STATE:
+		case SSDFS_MAPTBL_USING_INVALIDATED_PEB_STATE:
 		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 			return true;
 
 		default:
@@ -2550,6 +2779,7 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 		break;
 
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
@@ -2747,6 +2977,9 @@ int ssdfs_segment_change_state(struct ssdfs_segment_info *si)
 		break;
 	}
 
+	if (new_seg_state == SSDFS_SEG_DATA_USING && used_logical_blks == 0)
+		new_seg_state = SSDFS_SEG_DATA_USING_INVALIDATED;
+
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("old_state %#x, new_state %#x, "
 		  "need_change_state %#x, free_pages %d, "
@@ -2840,8 +3073,8 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg);
-	BUG_ON(!mutex_is_locked(&cur_seg->lock));
+	BUG_ON(!cur_seg || !cur_seg->lock);
+	BUG_ON(!mutex_is_locked(cur_seg->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	si = cur_seg->real_seg;
@@ -2867,6 +3100,7 @@ int ssdfs_current_segment_change_state(struct ssdfs_current_segment *cur_seg)
 	switch (seg_state) {
 	case SSDFS_SEG_CLEAN:
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:

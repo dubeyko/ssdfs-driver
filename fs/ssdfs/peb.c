@@ -695,8 +695,11 @@ int ssdfs_peb_object_create(struct ssdfs_peb_info *pebi,
 		break;
 
 	case SSDFS_MAPTBL_USING_PEB_STATE:
+	case SSDFS_MAPTBL_USING_INVALIDATED_PEB_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_INVALIDATED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 		err = ssdfs_create_using_peb_object(pebi);
 		if (unlikely(err)) {
 			SSDFS_ERR("fail to create using PEB object: err %d\n",

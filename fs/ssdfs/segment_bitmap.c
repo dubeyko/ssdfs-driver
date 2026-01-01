@@ -99,6 +99,7 @@ void ssdfs_seg_bmap_check_memory_leaks(void)
 
 extern const bool detect_clean_seg[U8_MAX + 1];
 extern const bool detect_data_using_seg[U8_MAX + 1];
+extern const bool detect_data_using_invalidated_seg[U8_MAX + 1];
 extern const bool detect_lnode_using_seg[U8_MAX + 1];
 extern const bool detect_hnode_using_seg[U8_MAX + 1];
 extern const bool detect_idxnode_using_seg[U8_MAX + 1];
@@ -1056,6 +1057,7 @@ int ssdfs_segbmap_check_fragment_header(struct ssdfs_peb_container *pebc,
 		switch (state) {
 		case SSDFS_SEG_CLEAN:
 		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
@@ -3129,6 +3131,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	case SSDFS_SEG_CLEAN:
 		switch (new_state) {
 		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
@@ -3154,6 +3157,25 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	case SSDFS_SEG_INDEX_NODE_USING:
 		switch (new_state) {
 		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
+		case SSDFS_SEG_USED:
+		case SSDFS_SEG_PRE_DIRTY:
+		case SSDFS_SEG_DIRTY:
+			/* expected state */
+			break;
+
+		default:
+			SSDFS_WARN("unexpected change: "
+				   "old_state %#x, new_state %#x\n",
+				   old_state, new_state);
+			break;
+		}
+		break;
+
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
+		switch (new_state) {
+		case SSDFS_SEG_CLEAN:
+		case SSDFS_SEG_DATA_USING:
 		case SSDFS_SEG_USED:
 		case SSDFS_SEG_PRE_DIRTY:
 		case SSDFS_SEG_DIRTY:
@@ -3172,6 +3194,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		switch (new_state) {
 		case SSDFS_SEG_CLEAN:
 		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
@@ -3192,6 +3215,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		switch (new_state) {
 		case SSDFS_SEG_CLEAN:
 		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
@@ -3226,6 +3250,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 		switch (new_state) {
 		case SSDFS_SEG_CLEAN:
 		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
@@ -3279,6 +3304,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	switch (old_state) {
 	case SSDFS_SEG_CLEAN:
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
@@ -3326,6 +3352,7 @@ void ssdfs_segbmap_correct_fragment_header(struct ssdfs_segment_bmap *segbmap,
 	switch (new_state) {
 	case SSDFS_SEG_CLEAN:
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
@@ -3693,6 +3720,7 @@ unsigned long *ssdfs_segbmap_choose_fbmap(struct ssdfs_segment_bmap *segbmap,
 		switch (state) {
 		case SSDFS_SEG_CLEAN:
 		case SSDFS_SEG_DATA_USING:
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
 		case SSDFS_SEG_LEAF_NODE_USING:
 		case SSDFS_SEG_HYBRID_NODE_USING:
 		case SSDFS_SEG_INDEX_NODE_USING:
@@ -3981,6 +4009,11 @@ u16 ssdfs_segbmap_define_items_count(struct ssdfs_segbmap_fragment_desc *desc,
 		complex_mask = SSDFS_SEG_DATA_USING_STATE_FLAG | mask;
 		break;
 
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
+		complex_mask =
+			SSDFS_SEG_DATA_USING_INVALIDATED_STATE_FLAG | mask;
+		break;
+
 	case SSDFS_SEG_LEAF_NODE_USING:
 		complex_mask = SSDFS_SEG_LEAF_NODE_USING_STATE_FLAG | mask;
 		break;
@@ -4045,6 +4078,9 @@ bool BYTE_CONTAINS_STATE(u8 *value, int state)
 
 	case SSDFS_SEG_DATA_USING:
 		return detect_data_using_seg[*value];
+
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
+		return detect_data_using_invalidated_seg[*value];
 
 	case SSDFS_SEG_LEAF_NODE_USING:
 		return detect_lnode_using_seg[*value];
@@ -4930,8 +4966,13 @@ try_to_find_seg_id:
 		goto finish_find_set;
 	} else if (res == SSDFS_SEG_CLEAN) {
 		/*
-		 * we can change clean state on any other
+		 * We can change clean state on any other
 		 */
+	} else if (IS_STATE_GOOD_FOR_MASK(mask, res)) {
+		/*
+		 * We have found state for mask
+		 */
+		goto finish_find_set;
 	} else {
 		start = *seg + 1;
 		*seg = U64_MAX;

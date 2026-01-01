@@ -554,6 +554,10 @@ static ssize_t ssdfs_seg_seg_state_show(struct ssdfs_seg_attr *attr,
 	case SSDFS_SEG_DATA_USING:
 		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_DATA_USING\n");
 
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
+		return snprintf(buf, PAGE_SIZE,
+				"SSDFS_SEG_DATA_USING_INVALIDATED\n");
+
 	case SSDFS_SEG_LEAF_NODE_USING:
 		return snprintf(buf, PAGE_SIZE, "SSDFS_SEG_LEAF_NODE_USING\n");
 
@@ -1221,6 +1225,9 @@ ssdfs_segbmap_frag_bitmap_section_show(struct ssdfs_segbmap_fragment_desc *fdesc
 			break;
 		case SSDFS_SEG_DATA_USING:
 			state_name = "DATA_USING";
+			break;
+		case SSDFS_SEG_DATA_USING_INVALIDATED:
+			state_name = "DATA_USING_INVALIDATED";
 			break;
 		case SSDFS_SEG_LEAF_NODE_USING:
 			state_name = "LEAF_NODE_USING";

@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.44 [January 01, 2026]
+    (*) Fix issue of new segment searching logic.
+
 v.5.43 [January 01, 2026]
     (*) Fix issue of segment request reference counting.
 

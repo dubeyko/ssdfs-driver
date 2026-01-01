@@ -107,19 +107,21 @@ void ssdfs_cur_seg_check_memory_leaks(void)
  * @fsi: pointer on shared file system object
  * @type: current segment type
  * @seg_id: segment ID
+ * @lock: pointer on lock object
  * @cur_seg: pointer on current segment container [out]
  */
 static
 void ssdfs_current_segment_init(struct ssdfs_fs_info *fsi,
 				int type,
 				u64 seg_id,
+				struct mutex *lock,
 				struct ssdfs_current_segment *cur_seg)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!fsi || !cur_seg);
+	BUG_ON(!fsi || !cur_seg || !lock);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	mutex_init(&cur_seg->lock);
+	cur_seg->lock = lock;
 	cur_seg->type = type;
 	cur_seg->seg_id = seg_id;
 	cur_seg->real_seg = NULL;
@@ -137,7 +139,8 @@ void ssdfs_current_segment_destroy(struct ssdfs_current_segment *cur_seg)
 		return;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(mutex_is_locked(&cur_seg->lock));
+	BUG_ON(!cur_seg->lock);
+	BUG_ON(mutex_is_locked(cur_seg->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (!is_ssdfs_current_segment_empty(cur_seg)) {
@@ -156,10 +159,10 @@ void ssdfs_current_segment_lock(struct ssdfs_current_segment *cur_seg)
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg);
+	BUG_ON(!cur_seg || !cur_seg->lock);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	err = mutex_lock_killable(&cur_seg->lock);
+	err = mutex_lock_killable(cur_seg->lock);
 	WARN_ON(err);
 }
 
@@ -170,11 +173,11 @@ void ssdfs_current_segment_lock(struct ssdfs_current_segment *cur_seg)
 void ssdfs_current_segment_unlock(struct ssdfs_current_segment *cur_seg)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg);
-	WARN_ON(!mutex_is_locked(&cur_seg->lock));
+	BUG_ON(!cur_seg || !cur_seg->lock);
+	WARN_ON(!mutex_is_locked(cur_seg->lock));
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	mutex_unlock(&cur_seg->lock);
+	mutex_unlock(cur_seg->lock);
 }
 
 /*
@@ -184,10 +187,10 @@ void ssdfs_current_segment_unlock(struct ssdfs_current_segment *cur_seg)
 bool is_ssdfs_current_segment_locked(struct ssdfs_current_segment *cur_seg)
 {
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg);
+	BUG_ON(!cur_seg || !cur_seg->lock);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	return mutex_is_locked(&cur_seg->lock);
+	return mutex_is_locked(cur_seg->lock);
 }
 
 /*
@@ -206,6 +209,7 @@ bool need_select_flush_threads(int seg_state)
 	switch (seg_state) {
 	case SSDFS_SEG_CLEAN:
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
@@ -419,6 +423,7 @@ int ssdfs_segment_select_flush_threads(struct ssdfs_segment_info *si,
  * [failure] - error code:
  *
  * %-EINVAL     - invalid input.
+ * %-ENOSPC     - segment can't be used as current
  */
 int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 			      struct ssdfs_segment_info *si,
@@ -431,9 +436,9 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 	int err;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg || !si || !search_state);
+	BUG_ON(!cur_seg || !si || !search_state || !cur_seg->lock);
 
-	if (!mutex_is_locked(&cur_seg->lock)) {
+	if (!mutex_is_locked(cur_seg->lock)) {
 		SSDFS_WARN("current segment container should be locked\n");
 		return -EINVAL;
 	}
@@ -446,6 +451,14 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 	BUG_ON(!is_ssdfs_current_segment_empty(cur_seg));
 
 	fsi = cur_seg->fsi;
+
+	if (atomic_read(&si->obj_state) == SSDFS_CURRENT_SEG_OBJECT) {
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("segment %llu is already current\n",
+			  si->seg_id);
+#endif /* CONFIG_SSDFS_DEBUG */
+		return -ENOSPC;
+	}
 
 	max_free_pages.value = 0;
 	max_free_pages.pos = -1;
@@ -612,9 +625,9 @@ int ssdfs_current_segment_add(struct ssdfs_current_segment *cur_seg,
 				SSDFS_CURRENT_SEG_OBJECT);
 	if (state < SSDFS_SEG_OBJECT_CREATED ||
 	    state >= SSDFS_CURRENT_SEG_OBJECT) {
+		SSDFS_WARN("unexpected state: seg %llu, state %#x\n",
+			   si->seg_id, state);
 		ssdfs_segment_put_object(si);
-		SSDFS_WARN("unexpected state %#x\n",
-			   state);
 		return -ERANGE;
 	}
 
@@ -638,9 +651,9 @@ void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 	int state;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!cur_seg);
+	BUG_ON(!cur_seg || !cur_seg->lock);
 
-	if (!mutex_is_locked(&cur_seg->lock))
+	if (!mutex_is_locked(cur_seg->lock))
 		SSDFS_WARN("current segment container should be locked\n");
 #endif /* CONFIG_SSDFS_DEBUG */
 
@@ -681,6 +694,7 @@ void ssdfs_current_segment_remove(struct ssdfs_current_segment *cur_seg)
 int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 {
 	struct ssdfs_segment_info *si;
+	int mask = 0;
 	int i;
 	int err = 0;
 
@@ -701,6 +715,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 
 	init_rwsem(&fsi->cur_segs->lock);
 
+	for (i = 0; i < SSDFS_CUR_SEG_LOCK_COUNT; i++)
+		mutex_init(&fsi->cur_segs->lock_buffer[i]);
+
 	for (i = 0; i < SSDFS_CUR_SEGS_COUNT; i++) {
 		struct ssdfs_segment_search_state search_state;
 		u64 seg;
@@ -716,7 +733,9 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 		fsi->cur_segs->objects[i] = object;
 		seg = le64_to_cpu(fsi->vs->cur_segs[i]);
 
-		ssdfs_current_segment_init(fsi, i, seg, object);
+		ssdfs_current_segment_init(fsi, i, seg,
+					   CUR_SEG2LOCK(fsi, i),
+					   object);
 
 		if (seg == U64_MAX)
 			continue;
@@ -727,24 +746,29 @@ int ssdfs_current_segment_array_create(struct ssdfs_fs_info *fsi)
 			seg_state = SSDFS_SEG_DATA_USING;
 			seg_type = SSDFS_USER_DATA_SEG_TYPE;
 			log_pages = le16_to_cpu(fsi->vh->user_data_log_pages);
+			mask = SSDFS_SEG_DATA_USING_STATE_FLAG |
+				SSDFS_SEG_DATA_USING_INVALIDATED_STATE_FLAG;
 			break;
 
 		case SSDFS_CUR_LNODE_SEG:
 			seg_state = SSDFS_SEG_LEAF_NODE_USING;
 			seg_type = SSDFS_LEAF_NODE_SEG_TYPE;
 			log_pages = le16_to_cpu(fsi->vh->lnodes_seg_log_pages);
+			mask = SSDFS_SEG_LEAF_NODE_USING_STATE_FLAG;
 			break;
 
 		case SSDFS_CUR_HNODE_SEG:
 			seg_state = SSDFS_SEG_HYBRID_NODE_USING;
 			seg_type = SSDFS_HYBRID_NODE_SEG_TYPE;
 			log_pages = le16_to_cpu(fsi->vh->hnodes_seg_log_pages);
+			mask = SSDFS_SEG_HYBRID_NODE_USING_STATE_FLAG;
 			break;
 
 		case SSDFS_CUR_IDXNODE_SEG:
 			seg_state = SSDFS_SEG_INDEX_NODE_USING;
 			seg_type = SSDFS_INDEX_NODE_SEG_TYPE;
 			log_pages = le16_to_cpu(fsi->vh->inodes_seg_log_pages);
+			mask = SSDFS_SEG_INDEX_NODE_USING_STATE_FLAG;
 			break;
 
 		default:
@@ -774,10 +798,11 @@ fail_define_seg_state:
 			goto destroy_cur_segs;
 		}
 
-		if (cur_seg_state != seg_state) {
+		if (cur_seg_state != seg_state &&
+		    !IS_STATE_GOOD_FOR_MASK(mask, cur_seg_state)) {
 			SSDFS_DBG("seg %llu, cur_seg_state %#x, "
-				  "seg_state %#x\n",
-				  seg, cur_seg_state, seg_state);
+				  "seg_state %#x, cur_seg_index %d\n",
+				  seg, cur_seg_state, seg_state, i);
 			continue;
 		}
 

@@ -32,11 +32,19 @@
  * @fsi: pointer on shared file system object
  */
 struct ssdfs_current_segment {
-	struct mutex lock;
+	struct mutex *lock;
 	int type;
 	u64 seg_id;
 	struct ssdfs_segment_info *real_seg;
 	struct ssdfs_fs_info *fsi;
+};
+
+enum {
+	SSDFS_CUR_DATA_SEG_LOCK,
+	SSDFS_CUR_LNODE_SEG_LOCK,
+	SSDFS_CUR_HNODE_SEG_LOCK,
+	SSDFS_CUR_IDXNODE_SEG_LOCK,
+	SSDFS_CUR_SEG_LOCK_COUNT
 };
 
 /*
@@ -44,11 +52,13 @@ struct ssdfs_current_segment {
  * @lock: current segments array's lock
  * @objects: array of pointers on current segment objects
  * @buffer: buffer for all current segment objects
+ * @lock_buffer: array of current segments' locks
  */
 struct ssdfs_current_segs_array {
 	struct rw_semaphore lock;
 	struct ssdfs_current_segment *objects[SSDFS_CUR_SEGS_COUNT];
 	u8 buffer[sizeof(struct ssdfs_current_segment) * SSDFS_CUR_SEGS_COUNT];
+	struct mutex lock_buffer[SSDFS_CUR_SEG_LOCK_COUNT];
 };
 
 /*
@@ -58,6 +68,33 @@ static inline
 bool is_ssdfs_current_segment_empty(struct ssdfs_current_segment *cur_seg)
 {
 	return cur_seg->real_seg == NULL;
+}
+
+static inline
+struct mutex *CUR_SEG2LOCK(struct ssdfs_fs_info *fsi, int seg_type)
+{
+	struct ssdfs_current_segs_array *array = fsi->cur_segs;
+
+	switch (seg_type) {
+	case SSDFS_CUR_DATA_SEG:
+	case SSDFS_CUR_DATA_UPDATE_SEG:
+		return &array->lock_buffer[SSDFS_CUR_DATA_SEG_LOCK];
+
+	case SSDFS_CUR_LNODE_SEG:
+		return &array->lock_buffer[SSDFS_CUR_LNODE_SEG_LOCK];
+
+	case SSDFS_CUR_HNODE_SEG:
+		return &array->lock_buffer[SSDFS_CUR_HNODE_SEG_LOCK];
+
+	case SSDFS_CUR_IDXNODE_SEG:
+		return &array->lock_buffer[SSDFS_CUR_IDXNODE_SEG_LOCK];
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	return NULL;
 }
 
 /*

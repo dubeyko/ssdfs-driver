@@ -2104,6 +2104,7 @@ int ssdfs_peb_container_get_peb_relation(struct ssdfs_fs_info *fsi,
 		break;
 
 	case SSDFS_SEG_DATA_USING:
+	case SSDFS_SEG_DATA_USING_INVALIDATED:
 	case SSDFS_SEG_LEAF_NODE_USING:
 	case SSDFS_SEG_HYBRID_NODE_USING:
 	case SSDFS_SEG_INDEX_NODE_USING:
@@ -2191,6 +2192,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 			break;
 
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 			err = ssdfs_create_using_peb_container(pebc,
 								SSDFS_DST_PEB);
 			if (err == -EINTR) {
@@ -2274,6 +2276,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_MAPTBL_USING_PEB_STATE:
+	case SSDFS_MAPTBL_USING_INVALIDATED_PEB_STATE:
 		err = ssdfs_create_using_peb_container(pebc,
 							SSDFS_SRC_PEB);
 		if (err == -EINTR) {
@@ -2334,6 +2337,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 		break;
 
 	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_INVALIDATED_STATE:
 		switch (dst_peb_state) {
 		case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
 			peb_blkbmap =
@@ -2387,6 +2391,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 			break;
 
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 			if (peb_has_ext_ptr) {
 				err = ssdfs_create_used_peb_container(pebc,
 								SSDFS_SRC_PEB);
@@ -2439,6 +2444,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 			break;
 
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 			if (peb_has_ext_ptr) {
 				err = ssdfs_create_pre_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
@@ -2512,6 +2518,7 @@ int ssdfs_peb_container_start_threads(struct ssdfs_peb_container *pebc,
 			break;
 
 		case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+		case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 			if (peb_has_ext_ptr) {
 				err = ssdfs_create_dirty_peb_container(pebc,
 								SSDFS_SRC_PEB);
@@ -2844,6 +2851,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 	switch (mtblpd->state) {
 	case SSDFS_MAPTBL_CLEAN_PEB_STATE:
 	case SSDFS_MAPTBL_USING_PEB_STATE:
+	case SSDFS_MAPTBL_USING_INVALIDATED_PEB_STATE:
 	case SSDFS_MAPTBL_USED_PEB_STATE:
 	case SSDFS_MAPTBL_PRE_DIRTY_PEB_STATE:
 	case SSDFS_MAPTBL_DIRTY_PEB_STATE:
@@ -2853,6 +2861,7 @@ int ssdfs_peb_container_create(struct ssdfs_fs_info *fsi,
 		break;
 
 	case SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_SRC_USING_INVALIDATED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_SRC_DIRTY_STATE:
@@ -2885,6 +2894,7 @@ try_process_relation:
 	switch (mtblpd->state) {
 	case SSDFS_MAPTBL_MIGRATION_DST_CLEAN_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_USING_STATE:
+	case SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_USED_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_PRE_DIRTY_STATE:
 	case SSDFS_MAPTBL_MIGRATION_DST_DIRTY_STATE:
@@ -5923,6 +5933,12 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 				SSDFS_MAPTBL_USING_PEB_STATE;
 		}
 
+		if (new_peb_state == SSDFS_MAPTBL_USING_PEB_STATE &&
+		    used_pages == 0) {
+			new_peb_state =
+				SSDFS_MAPTBL_USING_INVALIDATED_PEB_STATE;
+		}
+
 #ifdef CONFIG_SSDFS_DEBUG
 		SSDFS_DBG("seg %llu, peb_index %u, peb %llu, "
 			  "new_peb_state %#x\n",
@@ -6070,6 +6086,12 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		} else {
 			new_peb_state =
 				SSDFS_MAPTBL_USING_PEB_STATE;
+		}
+
+		if (new_peb_state == SSDFS_MAPTBL_USING_PEB_STATE &&
+		    used_pages == 0) {
+			new_peb_state =
+				SSDFS_MAPTBL_USING_INVALIDATED_PEB_STATE;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6250,11 +6272,17 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		} else {
 			if (is_peb_exhausted) {
 				new_peb_state =
-					SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
+				    SSDFS_MAPTBL_MIGRATION_SRC_PRE_DIRTY_STATE;
 			} else {
 				new_peb_state =
 					SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE;
 			}
+		}
+
+		if (new_peb_state == SSDFS_MAPTBL_MIGRATION_SRC_USING_STATE &&
+		    used_pages == 0) {
+			new_peb_state =
+			    SSDFS_MAPTBL_MIGRATION_SRC_USING_INVALIDATED_STATE;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
@@ -6405,6 +6433,12 @@ int ssdfs_peb_container_change_state(struct ssdfs_peb_container *pebc)
 		} else {
 			new_peb_state =
 				SSDFS_MAPTBL_MIGRATION_DST_USING_STATE;
+		}
+
+		if (new_peb_state == SSDFS_MAPTBL_MIGRATION_DST_USING_STATE &&
+		    used_pages == 0) {
+			new_peb_state =
+			    SSDFS_MAPTBL_MIGRATION_DST_USING_INVALIDATED_STATE;
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
