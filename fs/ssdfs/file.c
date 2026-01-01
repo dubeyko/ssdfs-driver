@@ -1825,6 +1825,21 @@ void ssdfs_clean_failed_request_pool(struct ssdfs_segment_request_pool *pool)
 
 	switch (pool->req_type) {
 	case SSDFS_REQ_SYNC:
+		for (i = 0; i < pool->count; i++) {
+			req = pool->pointers[i];
+
+			if (!req) {
+#ifdef CONFIG_SSDFS_DEBUG
+				SSDFS_DBG("request %d is empty\n", i);
+#endif /* CONFIG_SSDFS_DEBUG */
+				continue;
+			}
+
+			ssdfs_put_request(req);
+			ssdfs_request_free(req, NULL);
+		}
+		break;
+
 	case SSDFS_REQ_ASYNC_NO_FREE:
 		for (i = 0; i < pool->count; i++) {
 			req = pool->pointers[i];
@@ -4021,7 +4036,7 @@ struct folio *ssdfs_write_begin_logical_block(struct file *file,
 	err = ssdfs_process_whole_block(file, mapping, first_folio,
 					pos, len, is_new_blk);
 	if (unlikely(err)) {
-		SSDFS_ERR("fail to process thw whole block: "
+		SSDFS_ERR("fail to process the whole block: "
 			  "ino %lu, pos %llu, len %u, err %d\n",
 			  inode->i_ino, pos, len, err);
 		return ERR_PTR(err);

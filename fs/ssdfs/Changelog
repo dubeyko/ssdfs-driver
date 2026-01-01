@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.43 [January 01, 2026]
+    (*) Fix issue of segment request reference counting.
+
 v.5.42 [December 06, 2025]
     (*) Fix memory leak issue in folio array.
 

@@ -641,6 +641,14 @@ void ssdfs_request_free(struct ssdfs_segment_request *req,
 	}
 #endif /* CONFIG_SSDFS_MEMORY_LEAKS_ACCOUNTING */
 
+#ifdef CONFIG_SSDFS_DEBUG
+	if (atomic_read(&req->private.refs_count) != 0) {
+		SSDFS_WARN("invalid state: refs_count %d\n",
+			   atomic_read(&req->private.refs_count));
+		BUG();
+	}
+#endif /* CONFIG_SSDFS_DEBUG */
+
 	req->private.block_size = U32_MAX;
 	ssdfs_req_queue_cache_leaks_decrement(req);
 	memset(req, 0xFF, sizeof(struct ssdfs_segment_request));

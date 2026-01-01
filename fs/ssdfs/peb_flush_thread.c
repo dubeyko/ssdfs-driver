@@ -10535,6 +10535,7 @@ int ssdfs_peb_move_extent(struct ssdfs_peb_info *pebi,
 
 	req->result.content.count = 0;
 
+	ssdfs_put_request(move_req);
 	ssdfs_request_free(move_req, pebi->pebc->parent_si);
 	move_req = NULL;
 
@@ -17468,7 +17469,6 @@ void __ssdfs_finish_request(struct ssdfs_peb_container *pebc,
 		thread_state->unfinished_reqs--;
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ssdfs_put_request(req);
 		complete(&req->result.wait);
 		wake_up_all(wait);
 		break;
