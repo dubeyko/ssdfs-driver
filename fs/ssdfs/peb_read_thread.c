@@ -14547,6 +14547,8 @@ void ssdfs_finish_read_request(struct ssdfs_peb_container *pebc,
 			ssdfs_peb_mark_request_block_uptodate(pebc, req, i);
 	}
 
+	ssdfs_forget_user_data_read_request(pebc->parent_si, req);
+
 	req->result.err = err;
 
 	switch (req->private.type) {

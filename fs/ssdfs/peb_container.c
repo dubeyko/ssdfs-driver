@@ -534,6 +534,7 @@ int ssdfs_create_clean_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req);
 
@@ -711,6 +712,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req1);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -741,6 +743,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req2);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -766,6 +769,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 						    SSDFS_REQ_ASYNC,
 						    req3);
 		ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+		ssdfs_account_user_data_read_request(pebc->parent_si, req3);
 		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
@@ -790,6 +794,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 						    SSDFS_REQ_ASYNC,
 						    req4);
 		ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+		ssdfs_account_user_data_read_request(pebc->parent_si, req4);
 		ssdfs_peb_read_request_cno(pebc);
 		ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 	}
@@ -821,6 +826,7 @@ int ssdfs_create_using_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req5);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req5);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req5);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req5);
 
@@ -1090,6 +1096,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req1);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -1118,6 +1125,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req2);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -1146,6 +1154,7 @@ int ssdfs_create_used_peb_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req3);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req3);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
@@ -1375,6 +1384,7 @@ int ssdfs_create_pre_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req1);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -1402,6 +1412,7 @@ int ssdfs_create_pre_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req2);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -1428,6 +1439,7 @@ int ssdfs_create_pre_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req3);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req3);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
@@ -1454,6 +1466,7 @@ int ssdfs_create_pre_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req4);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req4);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 
@@ -1616,6 +1629,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req1);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -1643,6 +1657,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req2);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -1669,6 +1684,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req3);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req3);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
@@ -1695,6 +1711,7 @@ int ssdfs_create_dirty_using_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req4);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req4);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 
@@ -1857,6 +1874,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req1);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req1);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req1);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req1);
 
@@ -1884,6 +1902,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req2);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req2);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req2);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req2);
 
@@ -1910,6 +1929,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req3);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req3);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req3);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req3);
 
@@ -1936,6 +1956,7 @@ int ssdfs_create_dirty_used_container(struct ssdfs_peb_container *pebc,
 					    SSDFS_REQ_ASYNC,
 					    req4);
 	ssdfs_request_define_segment(pebc->parent_si->seg_id, req4);
+	ssdfs_account_user_data_read_request(pebc->parent_si, req4);
 	ssdfs_peb_read_request_cno(pebc);
 	ssdfs_requests_queue_add_tail(&pebc->read_rq, req4);
 

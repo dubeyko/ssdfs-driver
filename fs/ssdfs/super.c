@@ -395,6 +395,67 @@ restore_opts:
 }
 
 static inline
+bool unfinished_read_data_requests_exist(struct ssdfs_fs_info *fsi)
+{
+	u64 read_requests = 0;
+
+	spin_lock(&fsi->volume_state_lock);
+	read_requests = fsi->read_user_data_requests;
+	spin_unlock(&fsi->volume_state_lock);
+
+	return read_requests > 0;
+}
+
+static inline
+void wait_unfinished_read_data_requests(struct ssdfs_fs_info *fsi)
+{
+	if (unfinished_read_data_requests_exist(fsi)) {
+		wait_queue_head_t *wq = &fsi->finish_user_data_read_wq;
+		u64 old_read_requests, new_read_requests;
+		int number_of_tries = 0;
+		int err;
+
+		while (number_of_tries < SSDFS_UNMOUNT_NUMBER_OF_TRIES) {
+			spin_lock(&fsi->volume_state_lock);
+			old_read_requests = fsi->read_user_data_requests;
+			spin_unlock(&fsi->volume_state_lock);
+
+			DEFINE_WAIT_FUNC(wait, woken_wake_function);
+			add_wait_queue(wq, &wait);
+			if (unfinished_read_data_requests_exist(fsi)) {
+				wait_woken(&wait, TASK_INTERRUPTIBLE, HZ);
+			}
+			remove_wait_queue(wq, &wait);
+
+			if (!unfinished_read_data_requests_exist(fsi))
+				break;
+
+			spin_lock(&fsi->volume_state_lock);
+			new_read_requests = fsi->read_user_data_requests;
+			spin_unlock(&fsi->volume_state_lock);
+
+			if (old_read_requests != new_read_requests) {
+				if (number_of_tries > 0)
+					number_of_tries--;
+			} else
+				number_of_tries++;
+		}
+
+		if (unfinished_read_data_requests_exist(fsi)) {
+			spin_lock(&fsi->volume_state_lock);
+			new_read_requests = fsi->read_user_data_requests;
+			spin_unlock(&fsi->volume_state_lock);
+
+			SSDFS_WARN("there are unfinished requests: "
+				   "unfinished_read_data_requests %llu, "
+				   "number_of_tries %d, err %d\n",
+				   new_read_requests,
+				   number_of_tries, err);
+		}
+	}
+}
+
+static inline
 bool unfinished_user_data_requests_exist(struct ssdfs_fs_info *fsi)
 {
 	u64 flush_requests = 0;
@@ -3565,6 +3626,7 @@ static int ssdfs_fill_super(struct super_block *sb, struct fs_context *fc)
 
 	atomic64_set(&fs_info->flush_reqs, 0);
 	init_waitqueue_head(&fs_info->pending_wq);
+	init_waitqueue_head(&fs_info->finish_user_data_read_wq);
 	init_waitqueue_head(&fs_info->finish_user_data_flush_wq);
 	init_waitqueue_head(&fs_info->finish_commit_log_flush_wq);
 	atomic_set(&fs_info->maptbl_users, 0);
@@ -4156,6 +4218,7 @@ static void ssdfs_put_super(struct super_block *sb)
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	wake_up_all(&fsi->pending_wq);
+	wait_unfinished_read_data_requests(fsi);
 	wait_unfinished_user_data_requests(fsi);
 
 #ifdef CONFIG_SSDFS_DEBUG

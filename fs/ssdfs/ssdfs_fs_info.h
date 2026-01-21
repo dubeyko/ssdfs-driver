@@ -500,9 +500,11 @@ struct ssdfs_btree_nodes_list {
  * @free_pages: free pages count on the volume
  * @reserved_new_user_data_pages: reserved pages of growing files' content
  * @updated_user_data_pages: number of updated pages of files' content
+ * @read_user_data_requests: number of user data processing read/init request
  * @flushing_user_data_requests: number of user data processing flush request
  * @commit_log_requests: number of commit log request
  * @pending_wq: wait queue for flush threads of user data segments
+ * @finish_user_data_read_wq: wait queue for waiting the end of user data reads
  * @finish_user_data_flush_wq: wait queue for waiting the end of user data flush
  * @finish_commit_log_flush_wq: wait queue for waiting the end of commit logs
  * @fs_mount_time: file system mount timestamp
@@ -617,9 +619,11 @@ struct ssdfs_fs_info {
 	u64 free_pages;
 	u64 reserved_new_user_data_pages;
 	u64 updated_user_data_pages;
+	u64 read_user_data_requests;
 	u64 flushing_user_data_requests;
 	u64 commit_log_requests;
 	wait_queue_head_t pending_wq;
+	wait_queue_head_t finish_user_data_read_wq;
 	wait_queue_head_t finish_user_data_flush_wq;
 	wait_queue_head_t finish_commit_log_flush_wq;
 	u64 fs_mount_time;

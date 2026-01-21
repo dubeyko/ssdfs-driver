@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.46 [January 20, 2026]
+    (*) Implement logic of waiting the ending of read threads requests.
+
 v.5.45 [January 20, 2026]
     (*) Fix issue of extracting block state from segment block bitmap.
 

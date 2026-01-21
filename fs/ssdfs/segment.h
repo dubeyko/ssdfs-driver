@@ -489,6 +489,94 @@ bool is_unmount_in_progress(struct ssdfs_segment_info *si)
 }
 
 static inline
+void ssdfs_account_user_data_read_request(struct ssdfs_segment_info *si,
+					  struct ssdfs_segment_request *req)
+{
+	u64 read_requests = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si || !req);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		switch (atomic_read(&si->fsi->global_fs_state)) {
+		case SSDFS_UNMOUNT_MAPTBL_UNDER_FLUSH:
+		case SSDFS_UNMOUNT_COMMIT_SUPERBLOCK:
+		case SSDFS_UNMOUNT_DESTROY_METADATA:
+			/*
+			 * Unexpected state.
+			 */
+			BUG();
+			break;
+
+		default:
+			/* do nothing */
+			break;
+		}
+
+		spin_lock(&si->fsi->volume_state_lock);
+		si->fsi->read_user_data_requests++;
+		read_requests = si->fsi->read_user_data_requests;
+		spin_unlock(&si->fsi->volume_state_lock);
+
+#ifdef CONFIG_SSDFS_DEBUG
+		SSDFS_DBG("seg_id %llu, read_requests %llu, "
+			  "req->private.class %#x, req->private.cmd %#x\n",
+			  si->seg_id, read_requests,
+			  req->private.class,
+			  req->private.cmd);
+		BUG_ON(!is_request_command_valid(req->private.class,
+						 req->private.cmd));
+#endif /* CONFIG_SSDFS_DEBUG */
+	}
+}
+
+static inline
+void ssdfs_forget_user_data_read_request(struct ssdfs_segment_info *si,
+					 struct ssdfs_segment_request *req)
+{
+	u64 read_requests = 0;
+	int err = 0;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!si);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (si->seg_type == SSDFS_USER_DATA_SEG_TYPE) {
+		spin_lock(&si->fsi->volume_state_lock);
+		read_requests = si->fsi->read_user_data_requests;
+		if (read_requests > 0) {
+			si->fsi->read_user_data_requests--;
+			read_requests = si->fsi->read_user_data_requests;
+		} else
+			err = -ERANGE;
+		spin_unlock(&si->fsi->volume_state_lock);
+
+		if (unlikely(err))
+			SSDFS_WARN("fail to decrement\n");
+
+#ifdef CONFIG_SSDFS_DEBUG
+		if (req == NULL) {
+			SSDFS_DBG("seg_id %llu, read_requests %llu\n",
+				  si->seg_id, read_requests);
+		} else {
+			SSDFS_DBG("seg_id %llu, read_requests %llu, "
+				  "req->private.class %#x, "
+				  "req->private.cmd %#x\n",
+				  si->seg_id, read_requests,
+				  req->private.class,
+				  req->private.cmd);
+			BUG_ON(!is_request_command_valid(req->private.class,
+							 req->private.cmd));
+		}
+#endif /* CONFIG_SSDFS_DEBUG */
+
+		if (read_requests == 0)
+			wake_up_all(&si->fsi->finish_user_data_read_wq);
+	}
+}
+
+static inline
 void ssdfs_account_user_data_flush_request(struct ssdfs_segment_info *si,
 					   struct ssdfs_segment_request *req)
 {

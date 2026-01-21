@@ -1536,8 +1536,9 @@ int ssdfs_find_new_segment(struct ssdfs_fs_info *fsi,
 			goto finish_search;
 		} else {
 #ifdef CONFIG_SSDFS_DEBUG
-			SSDFS_DBG("found seg_id %llu\n",
-				  state->result.seg_id);
+			SSDFS_DBG("found seg_id %llu, state %#x\n",
+				  state->result.seg_id,
+				  state->result.seg_state);
 #endif /* CONFIG_SSDFS_DEBUG */
 			goto finish_search;
 		}
@@ -2397,6 +2398,7 @@ int __ssdfs_segment_read_block(struct ssdfs_segment_info *si,
 
 	pebc = &si->peb_array[peb_index];
 
+	ssdfs_account_user_data_read_request(si, req);
 	ssdfs_peb_read_request_cno(pebc);
 
 	rq = &pebc->read_rq;
