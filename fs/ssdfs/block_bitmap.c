@@ -5042,6 +5042,12 @@ int ssdfs_get_block_state(struct ssdfs_block_bmap *blk_bmap, u32 blk)
 	}
 
 	SSDFS_DBG("blk_bmap %p, block %u\n", blk_bmap, blk);
+	SSDFS_DBG("allocation_pool %zu, used_blks %u, "
+		  "metadata_items %u, invalid_blks %u\n",
+		  blk_bmap->allocation_pool,
+		  blk_bmap->used_blks,
+		  blk_bmap->metadata_items,
+		  blk_bmap->invalid_blks);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	if (unlikely(!blk_bmap)) {
@@ -6438,6 +6444,8 @@ int ssdfs_block_bmap_invalidate(struct ssdfs_block_bmap *blk_bmap,
 		default:
 			SSDFS_ERR("range (start %u, len %u) is not valid\n",
 				  range->start, range->len);
+			SSDFS_ERR("blk %u has state %#x\n",
+				  blk, blk_state);
 			return -EINVAL;
 		}
 	}

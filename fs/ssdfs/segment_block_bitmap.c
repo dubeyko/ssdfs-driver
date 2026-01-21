@@ -698,13 +698,14 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
 					   struct ssdfs_peb_info *pebi,
 					   u32 blk)
 {
+	struct ssdfs_peb_container *pebc;
 	struct ssdfs_peb_blk_bmap *peb_blkbmap;
 	int bmap_index = SSDFS_PEB_BLK_BMAP_INDEX_MAX;
-	u16 peb_index;
 	int err = 0;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si || !pebi);
+	BUG_ON(!ptr || !ptr->peb || !ptr->parent_si);
+	BUG_ON(!pebi || !pebi->pebc);
 	BUG_ON(!is_ssdfs_peb_container_locked(pebi->pebc));
 	BUG_ON(!is_ssdfs_peb_current_log_locked(pebi));
 
@@ -729,8 +730,19 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
 		return -ERANGE;
 	}
 
-	err = ssdfs_define_bmap_index(pebi, &bmap_index, &peb_index);
-	if (unlikely(err)) {
+	pebc = pebi->pebc;
+
+	if (pebc->src_peb) {
+		if (pebc->src_peb->peb_id == pebi->peb_id)
+			bmap_index = SSDFS_PEB_BLK_BMAP_SOURCE;
+	}
+
+	if (pebc->dst_peb) {
+		if (pebc->dst_peb->peb_id == pebi->peb_id)
+			bmap_index = SSDFS_PEB_BLK_BMAP_DESTINATION;
+	}
+
+	if (bmap_index == SSDFS_PEB_BLK_BMAP_INDEX_MAX) {
 		SSDFS_ERR("fail to define bmap_index: "
 			  "seg %llu, peb_index %u, err %d\n",
 			  ptr->parent_si->seg_id,
@@ -738,13 +750,22 @@ int ssdfs_segment_blk_bmap_get_block_state(struct ssdfs_segment_blk_bmap *ptr,
 		return err;
 	}
 
-	if (peb_index >= ptr->pebs_count) {
+	if (pebi->peb_index >= ptr->pebs_count) {
 		SSDFS_ERR("peb_index %u >= pebs_count %u\n",
-			  peb_index, ptr->pebs_count);
+			  pebi->peb_index, ptr->pebs_count);
 		return -ERANGE;
 	}
 
-	peb_blkbmap = &ptr->peb[peb_index];
+#ifdef CONFIG_SSDFS_DEBUG
+	SSDFS_DBG("peb_id %llu, src_peb_id %llu, "
+		  "dst_peb_id %llu, bmap_index %u\n",
+		  pebi->peb_id,
+		  pebc->src_peb == NULL ? U64_MAX : pebc->src_peb->peb_id,
+		  pebc->dst_peb == NULL ? U64_MAX : pebc->dst_peb->peb_id,
+		  bmap_index);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	peb_blkbmap = &ptr->peb[pebi->peb_index];
 
 	return ssdfs_peb_blk_bmap_get_block_state(peb_blkbmap,
 						  bmap_index,

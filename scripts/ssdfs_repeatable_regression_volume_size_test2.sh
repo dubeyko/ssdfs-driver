@@ -139,7 +139,7 @@ do
           ./ssdfs_update_user_data_test5.sh $partition $mount_point 0 1000 1000 16384
           ./ssdfs_delete_file_test2.sh $partition $mount_point 0 1000 1000
 
-          folder_name=${block_size[%i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0003"
+          folder_name=${block_size[$i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0003"
           mkdir $folder_name
           chown -hR slavad $folder_name
           cd $folder_name
@@ -152,7 +152,7 @@ do
           ./ssdfs_update_user_data_test5.sh $partition $mount_point 0 10 1000 102400
           ./ssdfs_delete_file_test2.sh $partition $mount_point 0 10 1000
 
-          folder_name=${block_size[%i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0004"
+          folder_name=${block_size[$i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0004"
           mkdir $folder_name
           chown -hR slavad $folder_name
           cd $folder_name
@@ -165,7 +165,7 @@ do
           ./ssdfs_update_user_data_test5.sh $partition $mount_point 0 100 1000 102400
           ./ssdfs_delete_file_test2.sh $partition $mount_point 0 100 1000
 
-          folder_name=${block_size[%i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0005"
+          folder_name=${block_size[$i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0005"
           mkdir $folder_name
           chown -hR slavad $folder_name
           cd $folder_name
@@ -178,7 +178,7 @@ do
           ./ssdfs_update_user_data_test5.sh $partition $mount_point 0 1000 1000 102400
           ./ssdfs_delete_file_test2.sh $partition $mount_point 0 1000 1000
 
-          folder_name=${block_size[%i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0006"
+          folder_name=${block_size[$i]}"-"$peb_size"-"$seg_size"-"$k"-MOUNT-DUMP-0006"
           mkdir $folder_name
           chown -hR slavad $folder_name
           cd $folder_name

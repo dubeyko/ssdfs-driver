@@ -3,6 +3,9 @@
 *                            CHANGELOG SECTION                                 *
 ********************************************************************************
 
+v.5.45 [January 20, 2026]
+    (*) Fix issue of extracting block state from segment block bitmap.
+
 v.5.44 [January 01, 2026]
     (*) Fix issue of new segment searching logic.
 
