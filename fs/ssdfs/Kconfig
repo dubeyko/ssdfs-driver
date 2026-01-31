@@ -194,6 +194,14 @@ config SSDFS_POLYVAL_FINGEPRINT_TYPE
 
 endchoice
 
+config SSDFS_LONG_NAME_DEDUPLICATION
+	bool "SSDFS long name deduplication support"
+	depends on SSDFS
+	help
+	  This option enables long name deduplication support.
+
+	  If unsure, say N.
+
 endmenu
 
 menu "Performance"

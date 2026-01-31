@@ -77,6 +77,9 @@ enum {
 	SSDFS_SHEXTREE_STATE_MAX
 };
 
+#define SSDFS_SHARED_EXT(ptr) \
+	((struct ssdfs_shared_extent *)(ptr))
+
 /*
  * Shared extents tree API
  */

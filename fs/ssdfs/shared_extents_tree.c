@@ -538,6 +538,8 @@ static
 int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
 				struct ssdfs_btree_search *search)
 {
+	size_t desc_size = sizeof(struct ssdfs_shared_extent);
+
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(!extent || !search);
 
@@ -545,35 +547,35 @@ int ssdfs_prepare_shared_extent(struct ssdfs_shared_extent *extent,
 		  extent, search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	switch (search->result.buf_state) {
+	switch (search->result.raw_buf.state) {
 	case SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE:
-		search->result.buf_state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+		search->result.raw_buf.state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(search->result.buf);
+		BUG_ON(search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
-		search->result.buf = &search->raw.shared_extent;
-		search->result.buf_size = sizeof(struct ssdfs_shared_extent);
-		search->result.items_in_buffer = 1;
+		search->result.raw_buf.place.ptr = &search->raw.shared_extent;
+		search->result.raw_buf.size = desc_size;
+		search->result.raw_buf.item_size = desc_size;
+		search->result.raw_buf.items_count = 1;
 		break;
 
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!search->result.buf);
-		BUG_ON(search->result.buf_size !=
-			sizeof(struct ssdfs_shared_extent));
-		BUG_ON(search->result.items_in_buffer != 1);
+		BUG_ON(!search->result.raw_buf.place.ptr);
+		BUG_ON(search->result.raw_buf.size != desc_size);
+		BUG_ON(search->result.raw_buf.items_count != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 		break;
 
 	default:
 		SSDFS_ERR("unexpected buffer state %#x\n",
-			  search->result.buf_state);
+			  search->result.raw_buf.state);
 		return -ERANGE;
 	}
 
-	ssdfs_memcpy(search->result.buf, 0, sizeof(struct ssdfs_shared_extent),
-		     extent, 0, sizeof(struct ssdfs_shared_extent),
-		     sizeof(struct ssdfs_shared_extent));
+	ssdfs_memcpy(search->result.raw_buf.place.ptr, 0, desc_size,
+		     extent, 0, desc_size,
+		     desc_size);
 
 	search->request.flags |= SSDFS_BTREE_SEARCH_INLINE_BUF_HAS_NEW_ITEM;
 
@@ -681,11 +683,11 @@ int ssdfs_shextree_add(struct ssdfs_shared_extents_tree *tree,
 			goto finish_add_shared_extent;
 		}
 
-		if (search->result.buf_state !=
+		if (search->result.raw_buf.state !=
 					SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 			err = -ERANGE;
 			SSDFS_ERR("invalid buf_state %#x\n",
-				  search->result.buf_state);
+				  search->result.raw_buf.state);
 			goto finish_add_shared_extent;
 		}
 
@@ -817,16 +819,17 @@ int ssdfs_shextree_change(struct ssdfs_shared_extents_tree *tree,
 		goto finish_change_shared_extent;
 	}
 
-	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+	if (search->result.raw_buf.state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid buf_state %#x\n",
-			  search->result.buf_state);
+			  search->result.raw_buf.state);
 		goto finish_change_shared_extent;
 	}
 
-	err = ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
-			  extent, 0, sizeof(struct ssdfs_shared_extent),
-			  sizeof(struct ssdfs_shared_extent));
+	err = ssdfs_memcpy(search->result.raw_buf.place.ptr,
+			   0, search->result.raw_buf.size,
+			   extent, 0, sizeof(struct ssdfs_shared_extent),
+			   sizeof(struct ssdfs_shared_extent));
 	if (unlikely(err)) {
 		SSDFS_ERR("fail to prepare new state of shared extent: "
 			  "err %d\n", err);
@@ -1167,10 +1170,10 @@ int ssdfs_shextree_delete(struct ssdfs_shared_extents_tree *tree,
 		goto finish_delete_shared_extent;
 	}
 
-	if (search->result.buf_state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
+	if (search->result.raw_buf.state != SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid buf_state %#x\n",
-			  search->result.buf_state);
+			  search->result.raw_buf.state);
 		goto finish_delete_shared_extent;
 	}
 
@@ -3360,12 +3363,6 @@ int ssdfs_check_found_shared_extent(struct ssdfs_fs_info *fsi,
 
 		default:
 			ssdfs_btree_search_free_result_buf(search);
-
-			search->result.buf_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-			search->result.buf = NULL;
-			search->result.buf_size = 0;
-			search->result.items_in_buffer = 0;
 			break;
 		}
 
@@ -3439,17 +3436,18 @@ int ssdfs_prepare_shared_extents_buffer(struct ssdfs_btree_search *search,
 	}
 
 	if (found_extents == 1) {
-		search->result.buf_state =
+		search->result.raw_buf.state =
 			SSDFS_BTREE_SEARCH_INLINE_BUFFER;
-		search->result.buf = &search->raw.shared_extent;
-		search->result.buf_size = buf_size;
-		search->result.items_in_buffer = 0;
+		search->result.raw_buf.place.ptr = &search->raw.shared_extent;
+		search->result.raw_buf.size = buf_size;
+		search->result.raw_buf.item_size = buf_size;
+		search->result.raw_buf.items_count = 0;
 	} else {
-		if (search->result.buf) {
-			SSDFS_WARN("search->result.buf %p, "
-				   "search->result.buf_state %#x\n",
-				   search->result.buf,
-				   search->result.buf_state);
+		if (search->result.raw_buf.place.ptr) {
+			SSDFS_WARN("search->result.raw_buf.place.ptr %p, "
+				   "search->result.raw_buf.state %#x\n",
+				   search->result.raw_buf.place.ptr,
+				   search->result.raw_buf.state);
 		}
 
 		err = ssdfs_btree_search_alloc_result_buf(search,
@@ -3458,6 +3456,8 @@ int ssdfs_prepare_shared_extents_buffer(struct ssdfs_btree_search *search,
 			SSDFS_ERR("fail to allocate memory for buffer\n");
 			return err;
 		}
+
+		search->result.raw_buf.item_size = buf_size;
 	}
 
 	return 0;
@@ -3503,22 +3503,22 @@ int ssdfs_extract_found_shared_extent(struct ssdfs_fs_info *fsi,
 	*start_hash = U64_MAX;
 	*end_hash = U64_MAX;
 
-	calculated = search->result.items_in_buffer * buf_size;
-	if (calculated > search->result.buf_size) {
+	calculated = search->result.raw_buf.items_count * buf_size;
+	if (calculated > search->result.raw_buf.size) {
 		SSDFS_ERR("calculated %u > buf_size %zu\n",
-			  calculated, search->result.buf_size);
+			  calculated, search->result.raw_buf.size);
 		return -ERANGE;
 	}
 
 #ifdef CONFIG_SSDFS_DEBUG
-	BUG_ON(!search->result.buf);
+	BUG_ON(!search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	extent = (struct ssdfs_shared_extent *)kaddr;
 	ssdfs_get_shared_extents_hash_range(extent, start_hash, end_hash);
 
-	err = ssdfs_memcpy(search->result.buf,
-			   calculated, search->result.buf_size,
+	err = ssdfs_memcpy(search->result.raw_buf.place.ptr,
+			   calculated, search->result.raw_buf.size,
 			   extent, 0, item_size,
 			   item_size);
 	if (unlikely(err)) {
@@ -3526,7 +3526,7 @@ int ssdfs_extract_found_shared_extent(struct ssdfs_fs_info *fsi,
 		return err;
 	}
 
-	search->result.items_in_buffer++;
+	search->result.raw_buf.items_count++;
 	search->result.count++;
 	search->result.state = SSDFS_BTREE_SEARCH_VALID_ITEM;
 
@@ -3615,8 +3615,6 @@ void ssdfs_btree_search_result_no_data(struct ssdfs_btree_node *node,
 
 		default:
 			ssdfs_btree_search_free_result_buf(search);
-			search->result.buf_size = 0;
-			search->result.items_in_buffer = 0;
 			break;
 		}
 	}
@@ -5101,38 +5099,41 @@ int ssdfs_shextree_node_insert_item(struct ssdfs_btree_node *node,
 	}
 
 	if (is_btree_search_contains_new_item(search)) {
-		switch (search->result.buf_state) {
+		switch (search->result.raw_buf.state) {
 		case SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE:
-			search->result.buf_state =
+			search->result.raw_buf.state =
 					SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.buf);
+			BUG_ON(search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
-			search->result.buf = &search->raw.shared_extent;
-			search->result.buf_size =
+			search->result.raw_buf.place.ptr =
+					&search->raw.shared_extent;
+			search->result.raw_buf.size =
 					sizeof(struct ssdfs_shared_extent);
-			search->result.items_in_buffer = 1;
+			search->result.raw_buf.item_size =
+					sizeof(struct ssdfs_shared_extent);
+			search->result.raw_buf.items_count = 1;
 			break;
 
 		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!search->result.buf);
-			BUG_ON(search->result.buf_size !=
+			BUG_ON(!search->result.raw_buf.place.ptr);
+			BUG_ON(search->result.raw_buf.size !=
 					sizeof(struct ssdfs_shared_extent));
-			BUG_ON(search->result.items_in_buffer != 1);
+			BUG_ON(search->result.raw_buf.items_count != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 			break;
 
 		default:
 			SSDFS_ERR("unexpected buffer state %#x\n",
-				  search->result.buf_state);
+				  search->result.raw_buf.state);
 			return -ERANGE;
 		}
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(search->result.count != 1);
-		BUG_ON(!search->result.buf);
-		BUG_ON(search->result.buf_state !=
+		BUG_ON(!search->result.raw_buf.place.ptr);
+		BUG_ON(search->result.raw_buf.state !=
 				SSDFS_BTREE_SEARCH_INLINE_BUFFER);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
@@ -5220,7 +5221,7 @@ int ssdfs_shextree_node_insert_range(struct ssdfs_btree_node *node,
 
 #ifdef CONFIG_SSDFS_DEBUG
 	BUG_ON(search->result.count < 1);
-	BUG_ON(!search->result.buf);
+	BUG_ON(!search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	state = atomic_read(&node->items_area.state);
@@ -5330,30 +5331,30 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!search->result.buf);
+		BUG_ON(!search->result.raw_buf.place.ptr);
 
-		if (search->result.buf_state !=
+		if (search->result.raw_buf.state !=
 				SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 			SSDFS_ERR("invalid state of result buffer %#x\n",
-				  search->result.buf_state);
+				  search->result.raw_buf.state);
 			return -ERANGE;
 		}
 
-		if (search->result.buf_size != item_size) {
+		if (search->result.raw_buf.size != item_size) {
 			SSDFS_ERR("invalid buffer size: "
 				  "current %zu, expected %zu\n",
-				  search->result.buf_size, item_size);
+				  search->result.raw_buf.size, item_size);
 			return -ERANGE;
 		}
 
-		if (search->result.items_in_buffer != 1) {
+		if (search->result.raw_buf.items_count != 1) {
 			SSDFS_ERR("unexpected number of items in buffer %u\n",
-				  search->result.items_in_buffer);
+				  search->result.raw_buf.items_count);
 			return -ERANGE;
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ptr = (struct ssdfs_shared_extent *)search->result.buf;
+		ptr = SSDFS_SHARED_EXT(search->result.raw_buf.place.ptr);
 
 		res = memcmp(shared_extent.fingerprint, ptr->fingerprint,
 			     shared_extent.fingerprint_len);
@@ -5385,30 +5386,31 @@ int ssdfs_change_item_only(struct ssdfs_btree_node *node,
 		}
 
 #ifdef CONFIG_SSDFS_DEBUG
-		BUG_ON(!search->result.buf);
+		BUG_ON(!search->result.raw_buf.place.ptr);
 
-		if (search->result.buf_state !=
+		if (search->result.raw_buf.state !=
 				SSDFS_BTREE_SEARCH_INLINE_BUFFER) {
 			SSDFS_ERR("invalid state of result buffer %#x\n",
-				  search->result.buf_state);
+				  search->result.raw_buf.state);
 			return -ERANGE;
 		}
 
-		if (search->result.buf_size != item_size) {
+		if (search->result.raw_buf.size != item_size) {
 			SSDFS_ERR("invalid buffer size: "
 				  "current %zu, expected %zu\n",
-				  search->result.buf_size, item_size);
+				  search->result.raw_buf.size,
+				  item_size);
 			return -ERANGE;
 		}
 
-		if (search->result.items_in_buffer != 1) {
+		if (search->result.raw_buf.items_count != 1) {
 			SSDFS_ERR("unexpected number of items in buffer %u\n",
-				  search->result.items_in_buffer);
+				  search->result.raw_buf.items_count);
 			return -ERANGE;
 		}
 #endif /* CONFIG_SSDFS_DEBUG */
 
-		ptr = (struct ssdfs_shared_extent *)search->result.buf;
+		ptr = SSDFS_SHARED_EXT(search->result.raw_buf.place.ptr);
 
 		res = memcmp(shared_extent.fingerprint, ptr->fingerprint,
 			     shared_extent.fingerprint_len);
@@ -5549,40 +5551,43 @@ int ssdfs_shextree_node_change_item(struct ssdfs_btree_node *node,
 	}
 
 	if (is_btree_search_contains_new_item(search)) {
-		switch (search->result.buf_state) {
+		switch (search->result.raw_buf.state) {
 		case SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE:
-			search->result.buf_state =
+			search->result.raw_buf.state =
 					SSDFS_BTREE_SEARCH_INLINE_BUFFER;
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(search->result.buf);
+			BUG_ON(search->result.raw_buf.place.ptr);
 #endif /* CONFIG_SSDFS_DEBUG */
-			search->result.buf = &search->raw.shared_extent;
-			search->result.buf_size =
+			search->result.raw_buf.place.ptr =
+					&search->raw.shared_extent;
+			search->result.raw_buf.size =
 					sizeof(struct ssdfs_shared_extent);
-			search->result.items_in_buffer = 1;
+			search->result.raw_buf.item_size =
+					sizeof(struct ssdfs_shared_extent);
+			search->result.raw_buf.items_count = 1;
 			break;
 
 		case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 #ifdef CONFIG_SSDFS_DEBUG
-			BUG_ON(!search->result.buf);
-			BUG_ON(search->result.buf_size !=
+			BUG_ON(!search->result.raw_buf.place.ptr);
+			BUG_ON(search->result.raw_buf.size !=
 					sizeof(struct ssdfs_shared_extent));
-			BUG_ON(search->result.items_in_buffer != 1);
+			BUG_ON(search->result.raw_buf.items_count != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 			break;
 
 		default:
 			SSDFS_ERR("unexpected buffer state %#x\n",
-				  search->result.buf_state);
+				  search->result.raw_buf.state);
 			return -ERANGE;
 		}
 	} else {
 #ifdef CONFIG_SSDFS_DEBUG
 		BUG_ON(search->result.count != 1);
-		BUG_ON(!search->result.buf);
-		BUG_ON(search->result.buf_state !=
+		BUG_ON(!search->result.raw_buf.place.ptr);
+		BUG_ON(search->result.raw_buf.state !=
 				SSDFS_BTREE_SEARCH_INLINE_BUFFER);
-		BUG_ON(search->result.items_in_buffer != 1);
+		BUG_ON(search->result.raw_buf.items_count != 1);
 #endif /* CONFIG_SSDFS_DEBUG */
 	}
 
@@ -6745,7 +6750,7 @@ int ssdfs_shextree_node_extract_range(struct ssdfs_btree_node *node,
 			SSDFS_BTREE_SEARCH_HAS_VALID_FINGERPRINT |
 			SSDFS_BTREE_SEARCH_HAS_VALID_HASH_RANGE |
 			SSDFS_BTREE_SEARCH_HAS_VALID_COUNT;
-	extent = (struct ssdfs_shared_extent *)search->result.buf;
+	extent = SSDFS_SHARED_EXT(search->result.raw_buf.place.ptr);
 	search->request.start.hash = ssdfs_fingerprint2hash(extent->fingerprint,
 							extent->fingerprint_len);
 	extent += search->result.count - 1;

@@ -463,7 +463,8 @@ try_process_queue:
 
 			for (i = 0; i < items_count; i++) {
 				union ssdfs_snapshot_item *item;
-				u8 *start_ptr = (u8 *)search->result.buf;
+				u8 *start_ptr =
+					(u8 *)search->result.raw_buf.place.ptr;
 
 				item = (union ssdfs_snapshot_item *)(start_ptr +
 								(i * item_size));

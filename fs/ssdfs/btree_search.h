@@ -233,39 +233,93 @@ struct ssdfs_name_string {
 };
 
 /*
+ * struct ssdfs_btree_search_buffer - buffer descriptor
+ * @state: state of the buffer
+ * @size: size of the buffer in bytes
+ * @item_size: size of one item in bytes
+ * @items_count: items count in buffer
+ * @place.ptr: pointer on buffer
+ * @place.ltbl2_items: pointer on buffer with lookup2 table's items
+ * @place.htbl_items: pointer on buffer with hash table's items
+ * @place.name: pointer on buffer with name descriptor(s)
+ * @place.name_range: pointer on buffer with names range
+ */
+struct ssdfs_btree_search_buffer {
+	int state;
+	size_t size;
+
+	size_t item_size;
+	u32 items_count;
+
+	union {
+		void *ptr;
+		struct ssdfs_shdict_ltbl2_item *ltbl2_items;
+		struct ssdfs_shdict_htbl_item *htbl_items;
+		struct ssdfs_name_string *name;
+		struct ssdfs_name_string_range *name_range;
+	} place;
+};
+
+/*
+ * struct ssdfs_name_string_range - name string range
+ * @lookup1: lookup1 item descriptor
+ * @lookup2_table.index: index of first item in the lookup2 table
+ * @lookup2_table.buf: lookup2 table's buffer
+ * @hash_table.index: index of first item in the hash table
+ * @hash_table.buf: hash table's buffer
+ * @strings.buf: buffer with strings
+ * @placement: final destination of storing range
+ */
+struct ssdfs_name_string_range {
+	struct ssdfs_lookup_descriptor lookup1;
+
+	struct {
+		u16 index;
+		struct ssdfs_btree_search_buffer buf;
+	} lookup2_table;
+
+	struct {
+		u16 index;
+		struct ssdfs_btree_search_buffer buf;
+	} hash_table;
+
+	struct {
+		struct ssdfs_btree_search_buffer buf;
+	} strings;
+
+	struct ssdfs_string_table_index placement;
+};
+
+/*
  * struct ssdfs_btree_search_result - btree search result
  * @state: result state
  * @err: result error code
+ * @flags: result's flags
  * @start_index: starting found item index
  * @count: count of found items
  * @search_cno: checkpoint of search activity
- * @name_state: state of the name buffer
- * @name: pointer on buffer with name(s)
- * @name_string_size: size of the buffer in bytes
- * @names_in_buffer: count of names in buffer
- * @buf_state: state of the buffer
- * @buf: pointer on buffer with item(s)
- * @buf_size: size of the buffer in bytes
- * @items_in_buffer: count of items in buffer
+ * @name_buf: name(s) buffer
+ * @range_buf: buffer with names range
+ * @raw_buf: raw buffer with item(s)
  */
 struct ssdfs_btree_search_result {
 	int state;
 	int err;
+
+#define SSDFS_BTREE_SEARCH_RESULT_HAS_NAME		(1 << 0)
+#define SSDFS_BTREE_SEARCH_RESULT_HAS_RANGE		(1 << 1)
+#define SSDFS_BTREE_SEARCH_RESULT_HAS_RAW_DATA		(1 << 2)
+#define SSDFS_BTREE_SEARCH_RESULT_FLAGS_MASK		0x7
+	u32 flags;
 
 	u16 start_index;
 	u16 count;
 
 	u64 search_cno;
 
-	int name_state;
-	struct ssdfs_name_string *name;
-	size_t name_string_size;
-	u32 names_in_buffer;
-
-	int buf_state;
-	void *buf;
-	size_t buf_size;
-	u32 items_in_buffer;
+	struct ssdfs_btree_search_buffer name_buf;
+	struct ssdfs_btree_search_buffer range_buf;
+	struct ssdfs_btree_search_buffer raw_buf;
 };
 
 /* Position check results */
@@ -289,7 +343,8 @@ enum {
  * @raw.snapshot: raw snapshot info buffer
  * @raw.peb2time: raw PEB2time set
  * @raw.invalidated_extent: invalidated extent buffer
- * @name: name string
+ * @name.string: name string
+ * @name.range: range of names
  */
 struct ssdfs_btree_search {
 	struct ssdfs_btree_search_request request;
@@ -309,7 +364,10 @@ struct ssdfs_btree_search {
 		struct ssdfs_peb2time_set peb2time;
 		struct ssdfs_raw_extent invalidated_extent;
 	} raw;
-	struct ssdfs_name_string name;
+	struct {
+		struct ssdfs_name_string string;
+		struct ssdfs_name_string_range range;
+	} name;
 };
 
 /* Btree height's classification */
@@ -355,6 +413,11 @@ void ssdfs_btree_search_free_result_buf(struct ssdfs_btree_search *search);
 int ssdfs_btree_search_alloc_result_name(struct ssdfs_btree_search *search,
 					 size_t string_size);
 void ssdfs_btree_search_free_result_name(struct ssdfs_btree_search *search);
+int ssdfs_btree_search_alloc_result_name_range(struct ssdfs_btree_search *search,
+						size_t ltbl2_size,
+						size_t htbl_size,
+						size_t str_buf_size);
+void ssdfs_btree_search_free_result_name_range(struct ssdfs_btree_search *search);
 
 void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search);
 

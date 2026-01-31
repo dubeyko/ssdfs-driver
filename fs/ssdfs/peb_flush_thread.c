@@ -13882,8 +13882,6 @@ finish_current_move:
 				return err;
 			}
 
-			ssdfs_folio_put(folio1);
-
 #ifdef CONFIG_SSDFS_DEBUG
 			SSDFS_DBG("folio %p, count %d\n",
 				  folio1, folio_ref_count(folio1));

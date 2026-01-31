@@ -1432,7 +1432,8 @@ int ssdfs_btree_node_copy_dirty_items(struct ssdfs_btree_node *node,
 
 		if (!is_deleted_item) {
 			err = ssdfs_memcpy(kaddr, *write_offset, PAGE_SIZE,
-					   search->result.buf, 0, item_size,
+					   search->result.raw_buf.place.ptr,
+					   0, item_size,
 					   item_size);
 		} else
 			is_deleted_item = false;

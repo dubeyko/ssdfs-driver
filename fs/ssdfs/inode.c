@@ -234,7 +234,7 @@ static int ssdfs_read_inode(struct inode *inode)
 		goto finish_read_inode;
 	}
 
-	switch (search->result.buf_state) {
+	switch (search->result.raw_buf.state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		/* expected state */
@@ -243,26 +243,26 @@ static int ssdfs_read_inode(struct inode *inode)
 	default:
 		err = -ERANGE;
 		SSDFS_ERR("invalid buffer state %#x\n",
-			  search->result.buf_state);
+			  search->result.raw_buf.state);
 		goto finish_read_inode;
 	}
 
-	if (!search->result.buf) {
+	if (!search->result.raw_buf.place.ptr) {
 		err = -ERANGE;
 		SSDFS_ERR("empty result buffer pointer\n");
 		goto finish_read_inode;
 	}
 
-	if (search->result.items_in_buffer == 0) {
+	if (search->result.raw_buf.items_count == 0) {
 		err = -ERANGE;
 		SSDFS_ERR("items_in_buffer %u\n",
-			  search->result.items_in_buffer);
+			  search->result.raw_buf.items_count);
 		goto finish_read_inode;
 	}
 
-	raw_inode = (struct ssdfs_inode *)search->result.buf;
+	raw_inode = (struct ssdfs_inode *)search->result.raw_buf.place.ptr;
 	raw_inode_size =
-		search->result.buf_size / search->result.items_in_buffer;
+	    search->result.raw_buf.size / search->result.raw_buf.items_count;
 
 	if (!is_raw_inode_checksum_correct(fsi, raw_inode, raw_inode_size)) {
 		err = -EIO;
@@ -1120,7 +1120,7 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	ri->checksum = ssdfs_crc32_le(ri, raw_inode_size);
 
-	switch (search->result.buf_state) {
+	switch (search->result.raw_buf.state) {
 	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
 	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
 		/* expected state */
@@ -1130,32 +1130,34 @@ int ssdfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 		err = -ERANGE;
 		SSDFS_ERR("invalid result's buffer state: "
 			  "%#x\n",
-			  search->result.buf_state);
+			  search->result.raw_buf.state);
 		goto finish_write_inode;
 	}
 
-	if (!search->result.buf) {
+	if (!search->result.raw_buf.place.ptr) {
 		err = -ERANGE;
 		SSDFS_ERR("invalid buffer\n");
 		goto finish_write_inode;
 	}
 
-	if (search->result.buf_size < raw_inode_size) {
+	if (search->result.raw_buf.size < raw_inode_size) {
 		err = -ERANGE;
 		SSDFS_ERR("buf_size %zu < raw_inode_size %zu\n",
-			  search->result.buf_size,
+			  search->result.raw_buf.size,
 			  raw_inode_size);
 		goto finish_write_inode;
 	}
 
-	if (search->result.items_in_buffer != 1) {
+	if (search->result.raw_buf.items_count != 1) {
 		SSDFS_WARN("unexpected value: "
 			   "items_in_buffer %u\n",
-			   search->result.items_in_buffer);
+			   search->result.raw_buf.items_count);
 	}
 
-	ssdfs_memcpy(search->result.buf, 0, search->result.buf_size,
-		     ri, 0, raw_inode_size,
+	ssdfs_memcpy(search->result.raw_buf.place.ptr,
+		     0, search->result.raw_buf.size,
+		     ri,
+		     0, raw_inode_size,
 		     raw_inode_size);
 
 finish_write_inode:

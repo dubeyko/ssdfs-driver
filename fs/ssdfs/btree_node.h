@@ -877,6 +877,12 @@ int __ssdfs_btree_node_clear_range(struct ssdfs_btree_node *node,
 int ssdfs_btree_node_copy_header_nolock(struct ssdfs_btree_node *node,
 					struct folio *folio,
 					u32 *write_offset);
+int ssdfs_btree_node_read_content(struct ssdfs_btree_node *node,
+				  u32 offset, u32 size,
+				  void *buf, u32 buf_size);
+int ssdfs_btree_node_write_content(struct ssdfs_btree_node *node,
+				   u32 offset, u32 size,
+				   void *buf, u32 buf_size);
 
 void ssdfs_btree_node_forget_folio_batch(struct folio_batch *batch);
 void ssdfs_show_btree_node_info(struct ssdfs_btree_node *node);

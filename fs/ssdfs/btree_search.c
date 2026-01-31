@@ -194,9 +194,21 @@ void ssdfs_btree_search_free(struct ssdfs_btree_search *search)
 
 	ssdfs_btree_search_free_result_buf(search);
 	ssdfs_btree_search_free_result_name(search);
+	ssdfs_btree_search_free_result_name_range(search);
 
 	ssdfs_btree_search_cache_leaks_decrement(search);
 	kmem_cache_free(ssdfs_btree_search_obj_cachep, search);
+}
+
+/*
+ * ssdfs_btree_search_buffer_init() - init btree search buffer
+ */
+static inline
+void ssdfs_btree_search_buffer_init(struct ssdfs_btree_search_buffer *buf)
+{
+	buf->state = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+	buf->size = 0;
+	buf->place.ptr = NULL;
 }
 
 /*
@@ -211,6 +223,7 @@ void ssdfs_btree_search_init(struct ssdfs_btree_search *search)
 
 	ssdfs_btree_search_free_result_buf(search);
 	ssdfs_btree_search_free_result_name(search);
+	ssdfs_btree_search_free_result_name_range(search);
 
 	if (search->node.parent) {
 		ssdfs_btree_node_put(search->node.parent);
@@ -227,10 +240,10 @@ void ssdfs_btree_search_init(struct ssdfs_btree_search *search)
 	search->node.state = SSDFS_BTREE_SEARCH_NODE_DESC_EMPTY;
 	search->result.state = SSDFS_BTREE_SEARCH_UNKNOWN_RESULT;
 	search->result.err = 0;
-	search->result.buf = NULL;
-	search->result.buf_state = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-	search->result.name = NULL;
-	search->result.name_state = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+	search->result.flags = 0;
+	ssdfs_btree_search_buffer_init(&search->result.name_buf);
+	ssdfs_btree_search_buffer_init(&search->result.raw_buf);
+	ssdfs_btree_search_buffer_init(&search->result.range_buf);
 }
 
 /*
@@ -578,6 +591,58 @@ void ssdfs_btree_search_forget_parent_node(struct ssdfs_btree_search *search)
 }
 
 /*
+ * ssdfs_btree_search_result_alloc_buffer() - allocate result buffer
+ * @search: search object
+ * @buf_size: buffer size
+ */
+static inline int
+ssdfs_btree_search_result_alloc_buffer(struct ssdfs_btree_search_buffer *buf,
+					size_t buf_size)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	buf->place.ptr = ssdfs_btree_search_kzalloc(buf_size, GFP_KERNEL);
+	if (!buf->place.ptr) {
+		SSDFS_ERR("fail to allocate buffer: size %zu\n",
+			  buf_size);
+		return -ENOMEM;
+	}
+
+	buf->state = SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
+	buf->size = buf_size;
+
+	buf->item_size = 0;
+	buf->items_count = 0;
+	return 0;
+}
+
+/*
+ * ssdfs_btree_search_result_free_buffer() - free result buffer
+ * @search: search object
+ */
+static inline void
+ssdfs_btree_search_result_free_buffer(struct ssdfs_btree_search_buffer *buf)
+{
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!buf);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	if (buf->state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
+		if (buf->place.ptr) {
+			ssdfs_btree_search_kfree(buf->place.ptr);
+		}
+	}
+
+	buf->state = SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+	buf->size = 0;
+	buf->item_size = 0;
+	buf->items_count = 0;
+	buf->place.ptr = NULL;
+}
+
+/*
  * ssdfs_btree_search_alloc_result_buf() - allocate result buffer
  * @search: search object
  * @buf_size: buffer size
@@ -589,17 +654,8 @@ int ssdfs_btree_search_alloc_result_buf(struct ssdfs_btree_search *search,
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	search->result.buf = ssdfs_btree_search_kzalloc(buf_size, GFP_KERNEL);
-	if (!search->result.buf) {
-		SSDFS_ERR("fail to allocate buffer: size %zu\n",
-			  buf_size);
-		return -ENOMEM;
-	}
-
-	search->result.buf_size = buf_size;
-	search->result.buf_state = SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
-	search->result.items_in_buffer = 0;
-	return 0;
+	return ssdfs_btree_search_result_alloc_buffer(&search->result.raw_buf,
+							buf_size);
 }
 
 /*
@@ -612,18 +668,7 @@ void ssdfs_btree_search_free_result_buf(struct ssdfs_btree_search *search)
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (search->result.buf_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
-		if (search->result.buf) {
-			ssdfs_btree_search_kfree(search->result.buf);
-			search->result.buf = NULL;
-			search->result.buf_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-		}
-	} else {
-		search->result.buf = NULL;
-		search->result.buf_state =
-			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-	}
+	ssdfs_btree_search_result_free_buffer(&search->result.raw_buf);
 }
 
 /*
@@ -638,18 +683,8 @@ int ssdfs_btree_search_alloc_result_name(struct ssdfs_btree_search *search,
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	search->result.name = ssdfs_btree_search_kzalloc(string_size,
-							 GFP_KERNEL);
-	if (!search->result.name) {
-		SSDFS_ERR("fail to allocate buffer: size %zu\n",
-			  string_size);
-		return -ENOMEM;
-	}
-
-	search->result.name_string_size = string_size;
-	search->result.name_state = SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER;
-	search->result.names_in_buffer = 0;
-	return 0;
+	return ssdfs_btree_search_result_alloc_buffer(&search->result.name_buf,
+							string_size);
 }
 
 /*
@@ -662,18 +697,136 @@ void ssdfs_btree_search_free_result_name(struct ssdfs_btree_search *search)
 	BUG_ON(!search);
 #endif /* CONFIG_SSDFS_DEBUG */
 
-	if (search->result.name_state == SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER) {
-		if (search->result.name) {
-			ssdfs_btree_search_kfree(search->result.name);
-			search->result.name = NULL;
-			search->result.name_state =
-				SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
-		}
-	} else {
-		search->result.name = NULL;
-		search->result.name_state =
-			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE;
+	ssdfs_btree_search_result_free_buffer(&search->result.name_buf);
+}
+
+/*
+ * ssdfs_btree_search_alloc_result_name_range() - allocate result name range
+ * @search: search object
+ * @ltbl2_size: lookup2 table size in bytes
+ * @htbl_size: hash table size in bytes
+ * @str_buf_size: strings buffer size in bytes
+ */
+int ssdfs_btree_search_alloc_result_name_range(struct ssdfs_btree_search *search,
+						size_t ltbl2_size,
+						size_t htbl_size,
+						size_t str_buf_size)
+{
+	struct ssdfs_name_string_range *name_range;
+	struct ssdfs_btree_search_buffer *buf;
+	size_t ltbl2_item_size = sizeof(struct ssdfs_shdict_ltbl2_item);
+	size_t htbl_item_size = sizeof(struct ssdfs_shdict_htbl_item);
+	int err;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+	BUG_ON(search->result.range_buf.state !=
+			SSDFS_BTREE_SEARCH_UNKNOWN_BUFFER_STATE);
+	BUG_ON(ltbl2_size == 0);
+	BUG_ON(htbl_size == 0);
+	BUG_ON(str_buf_size == 0);
+	BUG_ON(ltbl2_size % ltbl2_item_size);
+	BUG_ON(htbl_size % htbl_item_size);
+	BUG_ON(search->name.range.lookup2_table.buf.place.ltbl2_items);
+	BUG_ON(search->name.range.hash_table.buf.place.htbl_items);
+	BUG_ON(search->name.range.strings.buf.place.ptr);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	name_range = &search->name.range;
+
+	buf = &name_range->lookup2_table.buf;
+	ssdfs_btree_search_buffer_init(buf);
+	buf = &name_range->hash_table.buf;
+	ssdfs_btree_search_buffer_init(buf);
+	buf = &name_range->strings.buf;
+	ssdfs_btree_search_buffer_init(buf);
+	buf = &search->result.range_buf;
+	ssdfs_btree_search_buffer_init(buf);
+
+	buf = &name_range->lookup2_table.buf;
+	err = ssdfs_btree_search_result_alloc_buffer(buf, ltbl2_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate lookup2 table buffer: "
+			  "buf_size %zu, err %d\n",
+			  ltbl2_size, err);
+		goto free_memory;
 	}
+	buf->item_size = ltbl2_item_size;
+
+	buf = &name_range->hash_table.buf;
+	err = ssdfs_btree_search_result_alloc_buffer(buf, htbl_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate hash table buffer: "
+			  "buf_size %zu, err %d\n",
+			  htbl_size, err);
+		goto free_memory;
+	}
+	buf->item_size = htbl_item_size;
+
+	buf = &name_range->strings.buf;
+	err = ssdfs_btree_search_result_alloc_buffer(buf, str_buf_size);
+	if (unlikely(err)) {
+		SSDFS_ERR("fail to allocate strings buffer: "
+			  "buf_size %zu, err %d\n",
+			  str_buf_size, err);
+		goto free_memory;
+	}
+
+	buf = &search->result.range_buf;
+	buf->place.name_range = name_range;
+	buf->state = SSDFS_BTREE_SEARCH_INLINE_BUFFER;
+	buf->size = sizeof(struct ssdfs_name_string_range);
+	buf->item_size = sizeof(struct ssdfs_name_string_range);
+	buf->items_count = 1;
+
+	return 0;
+
+free_memory:
+	buf = &name_range->lookup2_table.buf;
+	ssdfs_btree_search_result_free_buffer(buf);
+	buf = &name_range->hash_table.buf;
+	ssdfs_btree_search_result_free_buffer(buf);
+	buf = &name_range->strings.buf;
+	ssdfs_btree_search_result_free_buffer(buf);
+
+	return -ENOMEM;
+}
+
+/*
+ * ssdfs_btree_search_free_result_name_range() - free result name range
+ * @search: search object
+ */
+void ssdfs_btree_search_free_result_name_range(struct ssdfs_btree_search *search)
+{
+	struct ssdfs_name_string_range *name_range;
+	struct ssdfs_btree_search_buffer *buf;
+
+#ifdef CONFIG_SSDFS_DEBUG
+	BUG_ON(!search);
+#endif /* CONFIG_SSDFS_DEBUG */
+
+	switch (search->result.range_buf.state) {
+	case SSDFS_BTREE_SEARCH_EXTERNAL_BUFFER:
+		BUG();
+		break;
+
+	case SSDFS_BTREE_SEARCH_INLINE_BUFFER:
+		name_range = &search->name.range;
+		buf = &name_range->lookup2_table.buf;
+		ssdfs_btree_search_result_free_buffer(buf);
+		buf = &name_range->hash_table.buf;
+		ssdfs_btree_search_result_free_buffer(buf);
+		buf = &name_range->strings.buf;
+		ssdfs_btree_search_result_free_buffer(buf);
+		break;
+
+	default:
+		/* do nothing */
+		break;
+	}
+
+	buf = &search->result.range_buf;
+	ssdfs_btree_search_result_free_buffer(buf);
 }
 
 void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
@@ -681,6 +834,9 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 #ifdef CONFIG_SSDFS_DEBUG
 	struct ssdfs_btree_index_key *node_index;
 	struct ssdfs_shdict_ltbl2_item *ltbl2_item;
+	struct ssdfs_btree_search_buffer *buf;
+	void *kaddr;
+	size_t bytes_count;
 	size_t item_size;
 	size_t count;
 	int i;
@@ -743,76 +899,75 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 			  atomic_read(&search->node.child->refs_count));
 	}
 
-	SSDFS_DBG("RESULT: state %#x, err %d, start_index %u, count %u, "
-		  "search_cno %llu\n",
+	SSDFS_DBG("RESULT: state %#x, err %d, flags %#x, "
+		  "start_index %u, count %u, search_cno %llu\n",
 		  search->result.state,
 		  search->result.err,
+		  search->result.flags,
 		  search->result.start_index,
 		  search->result.count,
 		  search->result.search_cno);
 
-	SSDFS_DBG("NAME: name_state %#x, name %p, "
-		  "name_string_size %zu, names_in_buffer %u\n",
-		  search->result.name_state,
-		  search->result.name,
-		  search->result.name_string_size,
-		  search->result.names_in_buffer);
+	buf = &search->result.name_buf;
+	SSDFS_DBG("NAME: state %#x, size %zu, "
+		  "item_size %zu, items_count %u, ptr %p\n",
+		  buf->state, buf->size, buf->item_size,
+		  buf->items_count, buf->place.ptr);
 
 	SSDFS_DBG("LOOKUP: index %u, hash_lo %u, "
 		  "start_index %u, range_len %u\n",
-		  search->name.lookup.index,
-		  le32_to_cpu(search->name.lookup.desc.hash_lo),
-		  le16_to_cpu(search->name.lookup.desc.start_index),
-		  le16_to_cpu(search->name.lookup.desc.range_len));
+		  search->name.string.lookup.index,
+		  le32_to_cpu(search->name.string.lookup.desc.hash_lo),
+		  le16_to_cpu(search->name.string.lookup.desc.start_index),
+		  le16_to_cpu(search->name.string.lookup.desc.range_len));
 
-	ltbl2_item = &search->name.strings_range.desc;
-	SSDFS_DBG("STRINGS_RANGE: index %u, hash_lo %u, "
+	ltbl2_item = &search->name.string.strings_range.desc;
+	SSDFS_DBG("STRINGS_RANGE: index %u, hash %#llx, "
 		  "prefix_len %u, str_count %u, "
 		  "hash_index %u\n",
-		  search->name.strings_range.index,
-		  le32_to_cpu(ltbl2_item->hash_lo),
+		  search->name.string.strings_range.index,
+		  le64_to_cpu(ltbl2_item->hash),
 		  ltbl2_item->prefix_len,
 		  ltbl2_item->str_count,
 		  le16_to_cpu(ltbl2_item->hash_index));
 
-	SSDFS_DBG("PREFIX: index %u, hash_hi %u, "
+	SSDFS_DBG("PREFIX: index %u, hash %#llx, "
 		  "str_offset %u, str_len %u, type %#x\n",
-		  search->name.prefix.index,
-		  le32_to_cpu(search->name.prefix.desc.hash_hi),
-		  le16_to_cpu(search->name.prefix.desc.str_offset),
-		  search->name.prefix.desc.str_len,
-		  search->name.prefix.desc.type);
+		  search->name.string.prefix.index,
+		  le64_to_cpu(search->name.string.prefix.desc.hash),
+		  le16_to_cpu(search->name.string.prefix.desc.str_offset),
+		  search->name.string.prefix.desc.str_len,
+		  search->name.string.prefix.desc.type);
 
-	SSDFS_DBG("LEFT_NAME: index %u, hash_hi %u, "
+	SSDFS_DBG("LEFT_NAME: index %u, hash %#llx, "
 		  "str_offset %u, str_len %u, type %#x\n",
-		  search->name.left_name.index,
-		  le32_to_cpu(search->name.left_name.desc.hash_hi),
-		  le16_to_cpu(search->name.left_name.desc.str_offset),
-		  search->name.left_name.desc.str_len,
-		  search->name.left_name.desc.type);
+		  search->name.string.left_name.index,
+		  le64_to_cpu(search->name.string.left_name.desc.hash),
+		  le16_to_cpu(search->name.string.left_name.desc.str_offset),
+		  search->name.string.left_name.desc.str_len,
+		  search->name.string.left_name.desc.type);
 
-	SSDFS_DBG("RIGHT_NAME: index %u, hash_hi %u, "
+	SSDFS_DBG("RIGHT_NAME: index %u, hash %#llx, "
 		  "str_offset %u, str_len %u, type %#x\n",
-		  search->name.right_name.index,
-		  le32_to_cpu(search->name.right_name.desc.hash_hi),
-		  le16_to_cpu(search->name.right_name.desc.str_offset),
-		  search->name.right_name.desc.str_len,
-		  search->name.right_name.desc.type);
+		  search->name.string.right_name.index,
+		  le64_to_cpu(search->name.string.right_name.desc.hash),
+		  le16_to_cpu(search->name.string.right_name.desc.str_offset),
+		  search->name.string.right_name.desc.str_len,
+		  search->name.string.right_name.desc.type);
 
-	if (search->result.name) {
-		count = search->result.names_in_buffer;
+	if (buf->place.ptr) {
+		count = buf->items_count;
 
 		if (count > 0)
-			item_size = search->result.name_string_size / count;
+			item_size = buf->size / count;
 		else
 			item_size = 0;
 
-		for (i = 0; i < search->result.names_in_buffer; i++) {
+		for (i = 0; i < count; i++) {
 			struct ssdfs_name_string *name;
-			u8 *addr;
 
-			addr = (u8 *)search->result.name + (i * item_size);
-			name = (struct ssdfs_name_string *)addr;
+			kaddr = (u8 *)buf->place.ptr + (i * item_size);
+			name = (struct ssdfs_name_string *)kaddr;
 
 			SSDFS_DBG("NAME: index %d, hash %llx, str_len %zu\n",
 				  i, name->hash, name->len);
@@ -825,35 +980,35 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 				  le16_to_cpu(name->lookup.desc.range_len));
 
 			ltbl2_item = &name->strings_range.desc;
-			SSDFS_DBG("STRINGS_RANGE: index %u, hash_lo %u, "
+			SSDFS_DBG("STRINGS_RANGE: index %u, hash %#llx, "
 				  "prefix_len %u, str_count %u, "
 				  "hash_index %u\n",
 				  name->strings_range.index,
-				  le32_to_cpu(ltbl2_item->hash_lo),
+				  le64_to_cpu(ltbl2_item->hash),
 				  ltbl2_item->prefix_len,
 				  ltbl2_item->str_count,
 				  le16_to_cpu(ltbl2_item->hash_index));
 
-			SSDFS_DBG("PREFIX: index %u, hash_hi %u, "
+			SSDFS_DBG("PREFIX: index %u, hash %#llx, "
 				  "str_offset %u, str_len %u, type %#x\n",
 				  name->prefix.index,
-				  le32_to_cpu(name->prefix.desc.hash_hi),
+				  le64_to_cpu(name->prefix.desc.hash),
 				  le16_to_cpu(name->prefix.desc.str_offset),
 				  name->prefix.desc.str_len,
 				  name->prefix.desc.type);
 
-			SSDFS_DBG("LEFT_NAME: index %u, hash_hi %u, "
+			SSDFS_DBG("LEFT_NAME: index %u, hash %#llx, "
 				  "str_offset %u, str_len %u, type %#x\n",
 				  name->left_name.index,
-				  le32_to_cpu(name->left_name.desc.hash_hi),
+				  le64_to_cpu(name->left_name.desc.hash),
 				  le16_to_cpu(name->left_name.desc.str_offset),
 				  name->left_name.desc.str_len,
 				  name->left_name.desc.type);
 
-			SSDFS_DBG("RIGHT_NAME: index %u, hash_hi %u, "
+			SSDFS_DBG("RIGHT_NAME: index %u, hash %#llx, "
 				  "str_offset %u, str_len %u, type %#x\n",
 				  name->right_name.index,
-				  le32_to_cpu(name->right_name.desc.hash_hi),
+				  le64_to_cpu(name->right_name.desc.hash),
 				  le16_to_cpu(name->right_name.desc.str_offset),
 				  name->right_name.desc.str_len,
 				  name->right_name.desc.type);
@@ -867,25 +1022,85 @@ void ssdfs_debug_btree_search_object(struct ssdfs_btree_search *search)
 		}
 	}
 
-	SSDFS_DBG("RESULT BUFFER: buf_state %#x, buf %p, "
-		  "buf_size %zu, items_in_buffer %u\n",
-		  search->result.buf_state,
-		  search->result.buf,
-		  search->result.buf_size,
-		  search->result.items_in_buffer);
+	SSDFS_DBG("NAME STRING RANGE: "
+		  "lookup1 table (index %u), "
+		  "lookup2_table (state %#x, items %p, "
+		  "size %zu, item_size %zu, items_count %u), "
+		  "hash_table (state %#x, items %p, "
+		  "size %zu, item_size %zu, items_count %u), "
+		  "strings (state %#x, buf %p, "
+		  "size %zu)\n",
+		  search->name.range.lookup1.index,
+		  search->name.range.lookup2_table.buf.state,
+		  search->name.range.lookup2_table.buf.place.ltbl2_items,
+		  search->name.range.lookup2_table.buf.size,
+		  search->name.range.lookup2_table.buf.item_size,
+		  search->name.range.lookup2_table.buf.items_count,
+		  search->name.range.hash_table.buf.state,
+		  search->name.range.hash_table.buf.place.htbl_items,
+		  search->name.range.hash_table.buf.size,
+		  search->name.range.hash_table.buf.item_size,
+		  search->name.range.hash_table.buf.items_count,
+		  search->name.range.strings.buf.state,
+		  search->name.range.strings.buf.place.ptr,
+		  search->name.range.strings.buf.size);
 
-	if (search->result.buf) {
-		count = search->result.items_in_buffer;
+	buf = &search->result.range_buf;
+	if (buf->place.ptr) {
+		struct ssdfs_btree_search_buffer *buf1;
+
+		buf1 = &buf->place.name_range->lookup2_table.buf;
+		if (buf1->place.ltbl2_items) {
+			kaddr = buf1->place.ltbl2_items;
+			bytes_count = buf1->size;
+
+			SSDFS_DBG("LOOKUP2 TABLE DUMP:\n");
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr, bytes_count);
+			SSDFS_DBG("\n");
+		}
+
+		buf1 = &buf->place.name_range->hash_table.buf;
+		if (buf1->place.htbl_items) {
+			kaddr = buf1->place.htbl_items;
+			bytes_count = buf1->size;
+
+			SSDFS_DBG("HASH TABLE DUMP:\n");
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr, bytes_count);
+			SSDFS_DBG("\n");
+		}
+
+		buf1 = &buf->place.name_range->strings.buf;
+		if (buf1->place.ptr) {
+			kaddr = buf1->place.ptr;
+			bytes_count = buf1->size;
+
+			SSDFS_DBG("STRINGS DUMP:\n");
+			print_hex_dump_bytes("", DUMP_PREFIX_OFFSET,
+					     kaddr, bytes_count);
+			SSDFS_DBG("\n");
+		}
+	}
+
+	buf = &search->result.raw_buf;
+	SSDFS_DBG("RESULT BUFFER: state %#x, size %zu, "
+		  "item_size %zu, items_count %u, ptr %p\n",
+		  buf->state, buf->size, buf->item_size,
+		  buf->items_count, buf->place.ptr);
+
+	if (buf->place.ptr) {
+		count = buf->items_count;
 
 		if (count > 0)
-			item_size = search->result.buf_size / count;
+			item_size = buf->size / count;
 		else
 			item_size = 0;
 
-		for (i = 0; i < search->result.items_in_buffer; i++) {
+		for (i = 0; i < count; i++) {
 			void *item;
 
-			item = (u8 *)search->result.buf + (i * item_size);
+			item = (u8 *)buf->place.ptr + (i * item_size);
 
 			SSDFS_DBG("RAW BUF DUMP: index %d\n",
 				  i);

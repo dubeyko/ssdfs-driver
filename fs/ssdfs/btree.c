@@ -3226,16 +3226,18 @@ int ssdfs_btree_find_right_sibling_leaf_node(struct ssdfs_btree *tree,
 	is_found = start_hash <= search->request.start.hash &&
 		   search->request.start.hash <= end_hash;
 
-	if (!is_found && items_count >= items_capacity) {
 #ifdef CONFIG_SSDFS_DEBUG
-		SSDFS_DBG("node (start_hash %llx, end_hash %llx), "
-			  "request (start_hash %llx, end_hash %llx), "
-			  "items_count %u, items_capacity %u\n",
-			  start_hash, end_hash,
-			  search->request.start.hash,
-			  search->request.end.hash,
-			  items_count, items_capacity);
+	SSDFS_DBG("node %u (start_hash %llx, end_hash %llx), "
+		  "request (start_hash %llx, end_hash %llx), "
+		  "items_count %u, items_capacity %u\n",
+		  node->node_id,
+		  start_hash, end_hash,
+		  search->request.start.hash,
+		  search->request.end.hash,
+		  items_count, items_capacity);
 #endif /* CONFIG_SSDFS_DEBUG */
+
+	if (!is_found && items_count >= items_capacity) {
 		return -ENOENT;
 	}
 
@@ -3307,10 +3309,11 @@ int ssdfs_btree_check_found_leaf_node(struct ssdfs_btree *tree,
 	is_right_adjacent = search->request.start.hash > end_hash;
 
 #ifdef CONFIG_SSDFS_DEBUG
-	SSDFS_DBG("node (start_hash %llx, end_hash %llx), "
+	SSDFS_DBG("node %u (start_hash %llx, end_hash %llx), "
 		  "request (start_hash %llx, end_hash %llx), "
 		  "is_found %#x, is_right_adjacent %#x, "
 		  "items_count %u, items_capacity %u\n",
+		  node->node_id,
 		  start_hash, end_hash,
 		  search->request.start.hash,
 		  search->request.end.hash,
@@ -3718,11 +3721,12 @@ check_found_node:
 finish_search_leaf_node:
 #ifdef CONFIG_SSDFS_DEBUG
 	SSDFS_DBG("node descriptor: "
-		   "node_state %#x, node_id %llu, "
-		   "height %u\n",
-		   search->node.state,
-		   (u64)search->node.id,
-		   search->node.height);
+		  "node_state %#x, node_id %llu, "
+		  "height %u, err %d\n",
+		  search->node.state,
+		  (u64)search->node.id,
+		  search->node.height,
+		  err);
 #endif /* CONFIG_SSDFS_DEBUG */
 
 	return err;
@@ -4334,6 +4338,7 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 	struct ssdfs_btree_node *node;
 	int state;
 	u64 start_hash, end_hash;
+	u16 index_count, index_capacity;
 	u16 items_count, items_capacity;
 	u16 free_items;
 	u16 flags;
@@ -4492,6 +4497,49 @@ int ssdfs_btree_switch_on_hybrid_parent_node(struct ssdfs_btree *tree,
 		SSDFS_WARN("hybrid node %u hasn't items area\n",
 			   node->node_id);
 		return -ENOENT;
+	}
+
+	state = atomic_read(&node->index_area.state);
+	if (state != SSDFS_BTREE_NODE_INDEX_AREA_EXIST) {
+		SSDFS_ERR("invalid index area's state %#x\n",
+			  state);
+		return -ERANGE;
+	}
+
+	down_read(&node->header_lock);
+	index_count = node->index_area.index_count;
+	index_capacity = node->index_area.index_capacity;
+	start_hash = node->index_area.start_hash;
+	end_hash = node->index_area.end_hash;
+	up_read(&node->header_lock);
+
+	if (start_hash == U64_MAX || end_hash == U64_MAX) {
+		SSDFS_ERR("corrupted index area: "
+			  "start_hash %llx, end_hash %llx\n",
+			  start_hash, end_hash);
+		return -ERANGE;
+	}
+
+	if (start_hash > end_hash) {
+		SSDFS_ERR("corrupted index area: "
+			  "start_hash %llx, end_hash %llx\n",
+			  start_hash, end_hash);
+		return -ERANGE;
+	}
+
+	if (index_count > index_capacity) {
+		SSDFS_ERR("corrupted index area: "
+			  "index_count %u, index_capacity %u\n",
+			  index_count, index_capacity);
+		return -ERANGE;
+	}
+
+	if (index_count > 1) {
+		if (search->request.start.hash < end_hash) {
+			search->result.state =
+				SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+			return -ENOENT;
+		}
 	}
 
 	ssdfs_btree_search_define_child_node(search, node);
@@ -4768,7 +4816,7 @@ try_find_item_again:
 	}
 
 	if (err == -EAGAIN) {
-		if (search->result.items_in_buffer > 0 &&
+		if (search->result.raw_buf.items_count > 0 &&
 		    search->result.state == SSDFS_BTREE_SEARCH_VALID_ITEM) {
 			/* finish search */
 			err = 0;
@@ -5018,7 +5066,7 @@ try_find_range_again:
 	}
 
 	if (err == -EAGAIN) {
-		if (search->result.items_in_buffer > 0 &&
+		if (search->result.raw_buf.items_count > 0 &&
 		    search->result.state == SSDFS_BTREE_SEARCH_VALID_ITEM) {
 			/* finish search */
 			err = 0;
@@ -5609,6 +5657,7 @@ try_find_item:
 		goto finish_add_item;
 	}
 
+try_add_node:
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE) {
 		up_read(&tree->lock);
 		err = ssdfs_btree_insert_node(tree, search);
@@ -5683,6 +5732,9 @@ try_insert_item:
 			goto finish_add_item;
 		} else
 			goto try_find_item;
+	} else if (err == -ENOSPC) {
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		goto try_add_node;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
 			  "start_hash %llx, end_hash %llx, "
@@ -5858,6 +5910,7 @@ try_find_range:
 		goto finish_add_range;
 	}
 
+try_add_node:
 	if (search->result.state == SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE) {
 		up_read(&tree->lock);
 		err = ssdfs_btree_insert_node(tree, search);
@@ -5935,6 +5988,9 @@ try_insert_range:
 			goto finish_add_range;
 		} else
 			goto try_find_range;
+	} else if (err == -ENOSPC) {
+		search->result.state = SSDFS_BTREE_SEARCH_PLEASE_ADD_NODE;
+		goto try_add_node;
 	} else if (unlikely(err)) {
 		SSDFS_ERR("fail to insert item: "
 			  "start_hash %llx, end_hash %llx, "
@@ -7906,19 +7962,19 @@ void ssdfs_debug_show_btree_node_indexes(struct ssdfs_btree *tree,
 			goto finish_index_processing;
 		}
 
-		SSDFS_ERR("index %d, node_id %u, "
-			  "node_type %#x, height %u, "
-			  "flags %#x, hash %llx, seg_id %llu, "
-			  "logical_blk %u, len %u\n",
-			  i,
-			  le32_to_cpu(index_key.node_id),
-			  index_key.node_type,
-			  index_key.height,
-			  le16_to_cpu(index_key.flags),
-			  le64_to_cpu(index_key.index.hash),
-			  le64_to_cpu(index_key.index.extent.seg_id),
-			  le32_to_cpu(index_key.index.extent.logical_blk),
-			  le32_to_cpu(index_key.index.extent.len));
+		SSDFS_ERR_DBG("index %d, node_id %u, "
+			      "node_type %#x, height %u, "
+			      "flags %#x, hash %llx, seg_id %llu, "
+			      "logical_blk %u, len %u\n",
+			      i,
+			      le32_to_cpu(index_key.node_id),
+			      index_key.node_type,
+			      index_key.height,
+			      le16_to_cpu(index_key.flags),
+			      le64_to_cpu(index_key.index.hash),
+			      le64_to_cpu(index_key.index.extent.seg_id),
+			      le32_to_cpu(index_key.index.extent.logical_blk),
+			      le32_to_cpu(index_key.index.extent.len));
 	}
 
 finish_index_processing:

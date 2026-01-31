@@ -115,6 +115,15 @@ enum {
 	SSDFS_SHDICT_BTREE_STATE_MAX
 };
 
+#define SSDFS_HTBL_DESC(ptr) \
+	((struct ssdfs_shdict_htbl_item *)(ptr))
+#define SSDFS_LTBL2_DESC(ptr) \
+	((struct ssdfs_shdict_ltbl2_item *)(ptr))
+#define SSDFS_LTBL1_DESC(ptr) \
+	((struct ssdfs_shdict_ltbl1_item *)(ptr))
+#define SSDFS_SEARCH_KEY(ptr) \
+	((union ssdfs_shdict_search_key *)(ptr))
+
 /*
  * Shared dictionary tree API
  */
@@ -140,6 +149,12 @@ int ssdfs_shared_dict_tree_add(struct ssdfs_shared_dict_btree_info *tree,
 				u64 name_hash,
 				const char *name, size_t len,
 				struct ssdfs_btree_search *search);
+int ssdfs_shared_dict_btree_node_left_items(struct ssdfs_btree_node *node,
+					    u32 threshold,
+					    u16 *free_space);
+int ssdfs_shared_dict_btree_node_right_items(struct ssdfs_btree_node *node,
+					     u32 threshold,
+					     u16 *free_space);
 
 int ssdfs_shared_dict_start_thread(struct ssdfs_shared_dict_btree_info *tree);
 int ssdfs_shared_dict_stop_thread(struct ssdfs_shared_dict_btree_info *tree);

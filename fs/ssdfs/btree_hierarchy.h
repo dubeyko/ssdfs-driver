@@ -146,12 +146,48 @@ struct ssdfs_btree_level_node {
 };
 
 /*
+ * struct ssdfs_btree_node_details - b-tree node details
+ * @ptr: node pointer
+ * @index_area.index_count: count of indexes in index area
+ * @index_area.index_capacity: capacity of indexes in index area
+ * @items_area.area_size: items area's size in bytes
+ * @items_area.free_space: items area's free space in bytes
+ * @items_area.item_size: size of item in bytes
+ * @items_area.min_item_size: minimal size of item in bytes
+ * @items_area.max_item_size: maximum size of item in bytes
+ * @items_area.items_count: count of items in items area
+ * @items_area.items_capacity: capacity of items in items area
+ */
+struct ssdfs_btree_node_details {
+	struct ssdfs_btree_node *ptr;
+
+	struct {
+		u16 index_count;
+		u16 index_capacity;
+	} index_area;
+
+	struct {
+		u32 area_size;
+		u32 free_space;
+		u16 item_size;
+		u8 min_item_size;
+		u16 max_item_size;
+		u16 items_count;
+		u16 items_capacity;
+	} items_area;
+};
+
+/*
  * struct ssdfs_btree_level_node_desc - descriptor of level's nodes
+ * @left_node: left node from the old node of the level
  * @old_node: old node of the level
+ * @right_node: right node from the old node of the level
  * @new_node: created empty node
  */
 struct ssdfs_btree_level_node_desc {
+	struct ssdfs_btree_level_node left_node;
 	struct ssdfs_btree_level_node old_node;
+	struct ssdfs_btree_level_node right_node;
 	struct ssdfs_btree_level_node new_node;
 };
 
@@ -170,7 +206,8 @@ struct ssdfs_btree_level_node_desc {
  * @items_area.hash: hash range of items area
  * @items_area.add: adding item descriptor
  * @items_area.insert: insert position descriptor
- * @items_area.move: move range descriptor
+ * @items_area.child2parent: child to/from parent move range descriptor
+ * @items_area.old2sibling: sibling to/from sibling move range descriptor
  * @nodes: descriptor of level's nodes
  */
 struct ssdfs_btree_level {
@@ -192,7 +229,8 @@ struct ssdfs_btree_level {
 		struct ssdfs_hash_range hash;
 		struct ssdfs_btree_node_insert add;
 		struct ssdfs_btree_node_insert insert;
-		struct ssdfs_btree_node_move move;
+		struct ssdfs_btree_node_move child2parent;
+		struct ssdfs_btree_node_move old2sibling;
 	} items_area;
 
 	struct ssdfs_btree_level_node_desc nodes;
